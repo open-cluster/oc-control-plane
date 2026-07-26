@@ -1,0 +1,26 @@
+# Binaries and build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Coverage and profiling
+coverage.*
+*.prof
+
+# Crash artefacts
+*.stackdump
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local environment (never committed; credentials never live in this repo)
+.env
+*.local.yaml

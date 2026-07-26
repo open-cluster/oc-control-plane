@@ -1,0 +1,11 @@
+Copyright (c) 2026 OpenCluster. All rights reserved.
+
+This software is proprietary and confidential. It is NOT open source.
+
+No permission is granted to use, copy, modify, merge, publish, distribute,
+sublicense, or sell copies of this software, in whole or in part, without prior
+written authorization.
+
+This is deliberate and is not an oversight. The OpenCluster Relay — the component
+installed inside a customer's infrastructure — is Apache-2.0 and lives in its own
+repository. The control plane is the closed side of that boundary.

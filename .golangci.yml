@@ -1,0 +1,56 @@
+# Pinned lint gate (golangci-lint v2 — install via `make tools`).
+#
+# Two layers, both must stay green:
+#
+#   Quality  — errcheck, ineffassign, unused, revive, gocritic, bodyclose,
+#              nilerr, sqlclosecheck, rowserrcheck. Enabled from the FIRST commit.
+#              The Relay repository runs a security-only profile, and that gap is
+#              why a shadowed error wrapping nil and two empty error branches
+#              survived every green CI run there. This repository does not repeat it.
+#
+#   Boundary — depguard, keeping database access inside internal/storage so the
+#              placement seam cannot be bypassed. The build-failing layer lives in
+#              internal/gates, which is immune to nolint directives; this is the
+#              convention-level layer that reports earlier and more cheaply.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - errcheck
+    - gocritic
+    - govet
+    - ineffassign
+    - nilerr
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        storage-owns-the-database:
+          files:
+            - "**/internal/**"
+            - "!**/internal/storage/**"
+            - "!**/internal/gates/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jackc/pgx/v5
+              desc: database access belongs in internal/storage, which owns placement resolution
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    errcheck:
+      # An explicit `_ =` is a deliberate, reviewable discard; a bare unchecked call is not.
+      check-blank: false
+  exclusions:
+    rules:
+      # Table-driven tests legitimately ignore close errors on throwaway resources.
+      - path: _test\.go
+        linters:
+          - bodyclose
