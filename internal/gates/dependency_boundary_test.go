@@ -9,20 +9,18 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-// relayModule is the Relay's own module. It reads Kubernetes clusters, so it depends on
-// client-go and the rest of the Kubernetes libraries.
+// The Relay's own module, which implements customer-side execution.
 const relayModule = "github.com/open-cluster/oc-relay"
 
-// relayProtocolModule is the generated protocol contract, published as a module of its own
-// so that speaking the protocol does not require the machinery that implements it. It needs
-// only gRPC and protobuf.
+// The generated protocol contract, published as a module of its own.
 const relayProtocolModule = relayModule + "/gen/go"
 
-// The control plane speaks the Relay's protocol and never runs anything against a cluster.
-// Reaching for the generated types by requiring the Relay module would pull its entire
-// Kubernetes dependency graph into this module's requirements, vulnerability report and
-// licence inventory — for types that need two libraries. The contract module exists to make
-// that unnecessary, and it is the only part of the Relay this module may ever require.
+// The Relay reads Kubernetes clusters, so its module depends on client-go and the rest of
+// the Kubernetes libraries. This service speaks the Relay's protocol and never touches a
+// cluster. Reaching for the generated types by requiring the Relay module would pull that
+// whole graph into these requirements, this vulnerability report and this licence
+// inventory, for types that need two libraries. The contract module exists to make that
+// unnecessary, and it is the only part of the Relay this module may ever require.
 func TestOnlyTheRelaysProtocolContractMayBeRequired(t *testing.T) {
 	t.Parallel()
 
@@ -40,9 +38,9 @@ func TestOnlyTheRelaysProtocolContractMayBeRequired(t *testing.T) {
 
 // Reading a customer's cluster is the Relay's job, performed inside the customer's own
 // infrastructure over a connection the customer opens outward. A Kubernetes client here
-// would mean the control plane reaching into customer infrastructure directly, which is the
-// property the whole execution design exists to avoid. It would also be invisible in review
-// as an ordinary-looking import.
+// would mean the control plane reaching into customer infrastructure directly, which is
+// the property the whole execution design exists to avoid — and it would look like an
+// ordinary import in review.
 func TestNoKubernetesLibraryIsRequired(t *testing.T) {
 	t.Parallel()
 
@@ -54,9 +52,8 @@ func TestNoKubernetesLibraryIsRequired(t *testing.T) {
 	}
 }
 
-// TestNoPackageImportsKubernetes catches the source-level version of the same mistake one
-// step earlier than the module requirements do, since an import lands before anyone runs
-// `go mod tidy`.
+// The source-level form of the same mistake, caught one step earlier: an import lands
+// before anyone runs `go mod tidy`, so the requirement gates would not see it yet.
 func TestNoPackageImportsKubernetes(t *testing.T) {
 	t.Parallel()
 
@@ -76,7 +73,7 @@ func TestNoPackageImportsKubernetes(t *testing.T) {
 func requiredModules(t *testing.T) []string {
 	t.Helper()
 
-	path := filepath.Join("..", "..", "go.mod")
+	path := filepath.Join(moduleRoot, "go.mod")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)

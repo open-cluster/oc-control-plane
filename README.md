@@ -68,17 +68,15 @@ The contract is consumed as a Go module, pinned by `go.mod` and verified by `go.
 go get github.com/open-cluster/oc-relay/gen/go@v0.1.0
 ```
 
-It requires only gRPC and protobuf. The Relay's own module carries client-go and the
-Kubernetes libraries because it reads clusters; depending on it to obtain the generated
-types would put that graph in this service's vulnerability report and licence inventory.
+It requires only gRPC and protobuf. The Relay's own module carries client-go because it
+reads clusters; depending on that to obtain the generated types would put the whole
+Kubernetes graph in this service's vulnerability report and licence inventory.
 
 Nothing imports the contract yet, so it is absent from `go.mod` — Go drops a requirement no
-package imports. It lands with relay registration; until then the boundary is held by the
-gates rather than by the dependency existing.
+package imports. It lands with relay registration; until then the gates hold the boundary.
 
-While the Relay repository is private, fetching it needs
-`go env -w GOPRIVATE='github.com/open-cluster/*'` and a credential with access to the
-organization.
+Fetching from the private repository needs
+`go env -w GOPRIVATE='github.com/open-cluster/*'` and a credential with organization access.
 
 ## Configuration
 

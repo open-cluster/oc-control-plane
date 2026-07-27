@@ -21,6 +21,10 @@ import (
 
 const modulePath = "github.com/open-cluster/oc-control-plane"
 
+// moduleRoot is where this package sits relative to the module, which is what every gate
+// resolves its inputs against.
+const moduleRoot = "../.."
+
 // loadPackages parses the module's PRODUCTION packages. Test variants are excluded
 // deliberately: a test may construct a database connection to arrange a scenario, and the
 // property these gates protect is what ships in the binary, not what a fixture does.
@@ -30,7 +34,7 @@ func loadPackages(t *testing.T) []*packages.Package {
 	loaded, err := packages.Load(&packages.Config{
 		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedImports,
 		Tests: false,
-		Dir:   "../..",
+		Dir:   moduleRoot,
 	}, "./...")
 	if err != nil {
 		t.Fatalf("loading packages: %v", err)
