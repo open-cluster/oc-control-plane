@@ -2,7 +2,8 @@
 
 Status: READY FOR IMPLEMENTATION
 Date: 2026-07-27
-Repositories touched: the frozen .NET reference repository (OCluster/Zyrenn.ConsumerService) and the Relay repository
+Repositories touched: this one. The Relay and the frozen .NET control plane take part as
+running processes, and neither is modified.
 
 ## Problem Statement
 
@@ -137,6 +138,24 @@ re-run against the Go implementation, where the answers will apply.
 endpoint; nothing in it assumes which implementation is listening. That is what turns it
 from a one-time proof into the differential oracle the reimplementation needs.
 
+**The harness is written in Go, in this repository.** When this specification was drafted it
+assumed the harness would live with the .NET implementation, which was then still being
+worked on. That implementation is now frozen, so a new test suite there would be built into a
+repository scheduled for deletion and then rewritten here — and the retirement criteria say
+plainly that a test surviving only there dies with it. The harness also has a second life as
+the differential oracle for the Go control plane, which is here. Nothing about this changes
+what is proven: both implementations still take part as external processes over the real
+transport, which the specification already required.
+
+**It does not live in the Relay repository**, despite the existing harnesses there being the
+closest prior art. That repository is Apache-2.0 and intended to become public; a harness that
+starts a proprietary control plane does not belong in it.
+
+**The harness is a nested module.** It needs to build or run the Relay, and requiring the
+Relay's module from the shipping module would pull the Kubernetes dependency graph into a
+service that must not have it — which a gate here already forbids. A separate module under the
+test tree may depend on whatever it needs while the shipping module's requirements stay clean.
+
 ## Testing Decisions
 
 **What makes a good test here.** It asserts an observable outcome — a credential was issued,
@@ -169,8 +188,8 @@ exist; only properties that require both sides belong here.
 
 **Prior art.** The Relay repository's session tests establish the interleavings to cover and
 the discipline of driving them deterministically rather than by timing. Its capability tests
-establish the fault cases a healthy cluster never produces. This repository's relay tests
-establish how durable job state is asserted. The existing disposable-cluster tests establish
+establish the fault cases a healthy cluster never produces. The frozen implementation's relay
+tests establish how durable job state is asserted. The existing disposable-cluster tests establish
 the container harness. Nothing here needs inventing; it needs connecting.
 
 ## Out of Scope
