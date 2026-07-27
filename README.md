@@ -46,7 +46,7 @@ go run ./cmd/controlplane
 | `internal/storage` | Placement resolution, pools, embedded migrations. The only package that touches the database |
 | `internal/observability` | slog, OpenTelemetry traces, metrics exported for Prometheus |
 | `internal/api` | Liveness, readiness, metrics. Depends on behaviour, not on storage |
-| `internal/gates` | Build-failing architecture checks |
+| `internal/gates` | Build-failing architecture checks, including the dependency boundary |
 
 Two properties are enforced mechanically rather than by review:
 
@@ -56,6 +56,29 @@ Two properties are enforced mechanically rather than by review:
 - **Only `internal/storage` reaches the database.** A connection built elsewhere would
   bypass placement resolution, which is a tenant-isolation defect rather than a style
   violation.
+- **The Relay's implementation is not a dependency.** The control plane speaks the Relay's
+  protocol and never touches a customer cluster, so no Kubernetes library may appear in its
+  requirements or its imports.
+
+## The Relay protocol
+
+The contract is consumed as a Go module, pinned by `go.mod` and verified by `go.sum`:
+
+```
+go get github.com/open-cluster/oc-relay/gen/go@v0.1.0
+```
+
+It requires only gRPC and protobuf. The Relay's own module carries client-go and the
+Kubernetes libraries because it reads clusters; depending on it to obtain the generated
+types would put that graph in this service's vulnerability report and licence inventory.
+
+Nothing imports the contract yet, so it is absent from `go.mod` — Go drops a requirement no
+package imports. It lands with relay registration; until then the boundary is held by the
+gates rather than by the dependency existing.
+
+While the Relay repository is private, fetching it needs
+`go env -w GOPRIVATE='github.com/open-cluster/*'` and a credential with access to the
+organization.
 
 ## Configuration
 
