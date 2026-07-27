@@ -17,6 +17,19 @@ It exists in this shape so that placement resolution, organization scoping, obse
 migration discipline, and shutdown semantics are in place before any domain depends on
 them.
 
+## Documents
+
+| Location | Holds |
+| --- | --- |
+| `CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
+| `docs/architecture/decisions/` | Decision records, numbered sequentially |
+| `docs/architecture/` | The architecture each decision record summarises |
+| `plans/` | Migration plan and per-slice specifications, with their real status |
+
+These moved here from the frozen .NET implementation on 2026-07-27, because they govern work
+that happens in Go. A gate fails the build if a document cites another that does not exist,
+so a rename cannot silently leave a dangling reference behind.
+
 ## Quick start
 
 Requires Go (see `go.mod`) and a reachable Docker daemon for the integration tests.
