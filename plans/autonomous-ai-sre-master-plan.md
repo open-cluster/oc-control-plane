@@ -1,6 +1,6 @@
 # OpenCluster — Autonomous AI SRE Master Plan
 
-Status: DRAFT FOR FOUNDER APPROVAL — planning only; no implementation is authorized by this document.
+Status: FOUNDER-AUTHORIZED for implementation (2026-07-12). Product definition and sequencing; the .NET stages executed from it are frozen, and current work is sequenced by the migration plan.
 Date: 2026-07-12
 Supersedes: `plans/investigation-platform-master-plan.md` in the frozen .NET reference repository (OCluster/Zyrenn.ConsumerService)
 Scope: product definition, autonomous investigation architecture, truth model, tools, topology, evaluation, frontend, API contracts, scalability, security, sequencing, competitive proof, and implementation gates.

@@ -188,6 +188,25 @@ in it, where the governing documents now live, and where the retirement criteria
 It is a signpost, not a summary; anyone arriving from a bookmark or a search result lands on
 it.
 
+**Amended during implementation: both readme files change too.** The signpost alone was
+insufficient, because the frozen repository's readme opened by calling the project a
+multi-tenant observability backend — the first thing any reader saw, and the clearest
+instance of the problem this migration addresses. Leaving it while adding a signpost beside
+it would have left the misleading claim in the more prominent position. The readme now says
+what the repository is and that the observability and alerting halves are described because
+they exist in the code rather than because they are current scope. The control plane's readme
+gains a table of where documents now live, for the same reason in the opposite direction: a
+reader arriving there needs to know the documents are now this repository's responsibility.
+
+**Amended during implementation: citations from the frozen record are not rewritten.** The
+analysis found four references pointing out of the moving set; implementation found eighteen
+pointing into it, from twelve plans that stay. Rewriting those would mean editing twelve
+historical documents to cite a live repository, which would make the record look maintained
+when it is not, and would be a substantial edit to a frozen repository for the benefit of
+documents nobody should be implementing from. The signpost carries the full manifest instead,
+so any such citation resolves by reading one file. The consequence is accepted deliberately:
+following a citation inside the frozen record may require that one extra step.
+
 **Git history is not preserved across the move.** A cross-repository copy loses it, and
 reconstructing it would be a filter-repository exercise for seventeen documents whose history
 remains fully intact in a repository that is not being deleted. The decision is recorded here

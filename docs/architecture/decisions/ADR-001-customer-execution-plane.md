@@ -9,7 +9,7 @@ Details: `docs/architecture/customer-execution-plane.md`
 Plan: `plans/stage-1b-customer-execution-architecture.md` in the frozen .NET reference repository (OCluster/Zyrenn.ConsumerService)
 
 This is the repository's first ADR; it establishes `docs/architecture/decisions/` with
-sequential `ADR-<number>-<slug>` naming. Prior decisions remain recorded in plan documents and
+sequential `ADR-NNN-slug.md` naming. Prior decisions remain recorded in plan documents and
 the implementation-status decision log.
 
 ## Context
