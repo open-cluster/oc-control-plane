@@ -13,10 +13,19 @@ tools:
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	go install github.com/google/go-licenses@$(GOLICENSES_VERSION)
 
+# The end-to-end harness is a module of its own so it can depend on what running two real
+# implementations takes without those dependencies reaching the shipping binary. A nested
+# module is not reached by "./...", so every per-module gate below names it: a gate that
+# stops covering part of the repository the moment that part moves still reports green,
+# which is worse than not having it.
+HARNESS_MODULE := test/e2e
+
 lint:
 	gofmt -l . | (! grep .)
 	go vet ./...
+	cd $(HARNESS_MODULE) && go vet ./...
 	staticcheck ./...
+	cd $(HARNESS_MODULE) && staticcheck ./...
 	golangci-lint run
 
 # -buildvcs=false keeps the build reproducible, which also disables Go's own VCS stamping,
@@ -33,6 +42,7 @@ build:
 # Integration tests need a reachable Docker daemon (Testcontainers).
 test:
 	CGO_ENABLED=1 go test -race -count=1 ./...
+	cd $(HARNESS_MODULE) && CGO_ENABLED=1 go test -race -count=1 ./...
 
 # Unit-only run for machines without Docker; the composition-root suite is skipped.
 test-short:

@@ -156,6 +156,25 @@ Relay's module from the shipping module would pull the Kubernetes dependency gra
 service that must not have it — which a gate here already forbids. A separate module under the
 test tree may depend on whatever it needs while the shipping module's requirements stay clean.
 
+**Established by measurement, not assumed: the frozen control plane runs as an ordinary
+process.** It needs a Postgres connection string and a relay port; it applies its own
+migrations at startup and serves the relay endpoint on a dedicated listener. No project is
+added to it and no freeze exception is required, which was the open question before the work
+started.
+
+**The harness must terminate TLS, because the two halves do not connect directly.** The Relay
+dials TLS and validates the server by pinned public key, with no plaintext path — deliberately,
+since the pin is its whole trust decision. The control plane serves h2c, behind a
+TLS-terminating edge in production. So the harness generates a certificate per run, derives its
+pin the way the Relay derives it, and forwards to the control plane over h2c. This is not a
+workaround: connecting the two directly would remove the layer the exercise exists to test, and
+running with a fixed certificate would let a run pass by trusting a key an earlier run left
+behind.
+
+**HTTP/2 must survive the proxy.** gRPC needs it end to end, so the terminator forwards over
+h2c rather than downgrading, and streams responses through rather than buffering them.
+Buffering would break the session stream, which is most of the protocol.
+
 ## Testing Decisions
 
 **What makes a good test here.** It asserts an observable outcome — a credential was issued,
