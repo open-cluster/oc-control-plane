@@ -1,5 +1,5 @@
-// Package api serves the control plane's HTTP surface. In slice 0 that is liveness,
-// readiness, and metrics — there is no domain to expose yet.
+// Package api serves the control plane's HTTP surface: liveness, readiness, and metrics.
+// There is no domain to expose yet.
 //
 // The package deliberately does not import internal/storage. It depends on the BEHAVIOUR
 // it needs (can the databases be reached?) rather than on the type that provides it, which

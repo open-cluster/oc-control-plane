@@ -8,14 +8,14 @@ Proprietary. See [LICENSE](./LICENSE).
 
 ## Status
 
-Slice 0 — foundation. The process starts, resolves an organization's placement, applies
-its embedded migrations, serves liveness, readiness, and metrics, and drains on shutdown.
+Foundation only. The process starts, resolves an organization's placement, applies its
+embedded migrations, serves liveness, readiness, and metrics, and drains on shutdown.
 There is **no domain logic yet**: relay registration, signal intake, incidents, and
-investigations are later slices.
+investigations all come later.
 
-The slice exists so that placement resolution, organization scoping, observability,
-migration discipline, and shutdown semantics are in place before any domain assumes their
-absence.
+It exists in this shape so that placement resolution, organization scoping, observability,
+migration discipline, and shutdown semantics are in place before any domain depends on
+them.
 
 ## Quick start
 

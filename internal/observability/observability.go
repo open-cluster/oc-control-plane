@@ -1,5 +1,5 @@
 // Package observability assembles the process's telemetry: structured logs, traces, and
-// metrics. It is built in slice 0 rather than retrofitted, so the first production
+// metrics. It is present from the start rather than retrofitted, so the first production
 // incident is diagnosed with data instead of with an instrumentation branch.
 //
 // Three deliberate choices, recorded here because each has an alternative that looks

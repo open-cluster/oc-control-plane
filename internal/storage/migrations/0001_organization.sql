@@ -1,8 +1,8 @@
 -- The organization directory: the tenant boundary and the durable home of its placement
--- assignment (ADR-002 — where an organization's data lives is resolved from the
--- organization, never ambient).
+-- assignment. Where an organization's data lives is resolved from the organization and is
+-- never ambient.
 --
--- Slice 0 resolves assignments from process configuration; this table is the durable form
+-- Assignments are read from process configuration today; this table is the durable form
 -- that resolution moves to once organizations become creatable. The column is therefore
 -- present and authoritative from the first migration, so the later move is a change of
 -- source rather than a schema change under load.

@@ -3,9 +3,9 @@
 // applies the embedded migrations, serves liveness, readiness, and metrics, and drains
 // in-flight requests when the process is asked to stop.
 //
-// Slice 0 carries no domain logic. Its value is that placement resolution, organization
-// scoping, observability, migration discipline, and shutdown semantics exist before any
-// domain assumes their absence.
+// There is no domain logic here yet. The value of this package is that placement
+// resolution, organization scoping, observability, migration discipline, and shutdown
+// semantics are all in place before any domain depends on them.
 package main
 
 import (

@@ -247,8 +247,8 @@ func TestPool_ResolvesAnAssignedOrganization(t *testing.T) {
 	}
 }
 
-// The property ADR-002 exists to guarantee: two organizations on different placements
-// reach different databases.
+// The core isolation property: two organizations on different placements reach different
+// databases.
 func TestPool_DifferentPlacementsReachDifferentDatabases(t *testing.T) {
 	t.Parallel()
 	adminDSN := postgresDSN(t)

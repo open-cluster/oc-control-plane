@@ -1,7 +1,8 @@
 // Package storage owns every database connection the control plane makes. It resolves an
-// organization to its placement (ADR-002 — where a tenant's data lives is resolved from
-// the organization, never ambient), holds one pool per placement, and applies the embedded
-// migrations under a lock so concurrently starting instances cannot race the schema.
+// organization to its placement — where a tenant's data lives is looked up from the
+// organization and is never ambient — holds one pool per placement, and applies the
+// embedded migrations under a lock so concurrently starting instances cannot race the
+// schema.
 //
 // No other package constructs a database connection. That is enforced by the import gates
 // in internal/gates, not by convention, because a connection built elsewhere is a

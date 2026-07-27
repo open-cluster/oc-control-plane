@@ -24,8 +24,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-// TestMain establishes goroutine-leak detection for the whole package from slice 0, so the
-// discipline exists before the first concurrent slice depends on it.
+// TestMain establishes goroutine-leak detection for the whole package, so the discipline
+// exists before anything concurrent depends on it.
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m,
 		// Test-harness background workers that outlive individual tests. Each belongs to the
@@ -528,7 +528,7 @@ func TestControlPlane_ShutdownCompletesAnInFlightRequest(t *testing.T) {
 	}
 }
 
-// The property ADR-002 exists for, proven through the assembled process rather than only
+// The core isolation property, proven through the assembled process rather than only
 // against the storage package: two organizations on two placements reach two databases,
 // and an unassigned one reaches the default.
 func TestControlPlane_ServesSeveralPlacements(t *testing.T) {
