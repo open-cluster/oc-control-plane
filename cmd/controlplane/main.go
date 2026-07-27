@@ -22,9 +22,15 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"google.golang.org/grpc"
+
+	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
+
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
+	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -160,6 +166,15 @@ func serve(ctx context.Context, process assembled) error {
 		failed <- nil
 	}()
 
+	// The Relay endpoint is a second listener on purpose. It speaks a different protocol to
+	// a different kind of caller, and putting it on the HTTP port would place it behind that
+	// surface's middleware and expose the health surface to relays.
+	stopRelay, err := startRelayEndpoint(process, failed)
+	if err != nil {
+		return err
+	}
+	defer stopRelay()
+
 	select {
 	case serveErr := <-failed:
 		return serveErr
@@ -201,4 +216,37 @@ func logMigrations(logger *slog.Logger, applied map[string][]string) {
 			slog.String("placement", placement),
 			slog.Any("versions", versions))
 	}
+}
+
+// startRelayEndpoint listens for relays when one is configured and returns the function that
+// stops it. A configuration with no relay address returns a no-op, which is correct for a
+// deployment that serves no relays yet rather than a reason to fail.
+//
+// A serve error goes to the same channel the HTTP server uses, so either surface failing
+// ends the process rather than leaving it half-serving.
+func startRelayEndpoint(process assembled, failed chan<- error) (func(), error) {
+	cfg := process.config
+	if cfg.RelayAddress == "" {
+		return func() {}, nil
+	}
+
+	listener, err := net.Listen("tcp", cfg.RelayAddress)
+	if err != nil {
+		return nil, fmt.Errorf("listening for relays on %s: %w", cfg.RelayAddress, err)
+	}
+
+	server := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
+	relayv1.RegisterRelayRegistrationServiceServer(server,
+		relay.NewRegistrationService(process.placements, cfg.RelaySPKIPins, process.logger))
+
+	process.logger.Info("listening for relays",
+		slog.String("address", listener.Addr().String()))
+
+	go func() {
+		if serveErr := server.Serve(listener); serveErr != nil &&
+			!errors.Is(serveErr, grpc.ErrServerStopped) {
+			failed <- serveErr
+		}
+	}()
+	return server.GracefulStop, nil
 }

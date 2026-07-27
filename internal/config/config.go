@@ -6,6 +6,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -30,6 +32,8 @@ const (
 	EnvShutdownTimeout  = "OC_SHUTDOWN_TIMEOUT"
 	EnvServiceName      = "OC_SERVICE_NAME"
 	EnvOTLPEndpoint     = "OC_OTLP_ENDPOINT"
+	EnvRelayAddress     = "OC_RELAY_ADDRESS"
+	EnvRelaySPKIPins    = "OC_RELAY_SPKI_PINS"
 )
 
 // Config is the validated process configuration.
@@ -65,6 +69,17 @@ type Config struct {
 	// OTLPEndpoint is the trace collector, host:port. Empty disables trace export, which
 	// is the correct default for a process with no collector configured.
 	OTLPEndpoint string
+
+	// RelayAddress is the listen address for the Relay endpoint, which is deliberately
+	// separate from the HTTP surface: it speaks a different protocol to a different kind of
+	// caller, and sharing a port would put the two behind one set of middleware. Empty
+	// disables it, which is correct for a deployment that serves no relays.
+	RelayAddress string
+
+	// RelaySPKIPins are this control plane's own public key digests, handed to a Relay at
+	// enrolment so every later connection is pinned to a key rather than trusting a
+	// certificate authority. More than one exists so a rotation can overlap.
+	RelaySPKIPins []string
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -95,6 +110,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OTLPEndpoint, err = optionalHostPort(lookup, EnvOTLPEndpoint); err != nil {
+		return Config{}, err
+	}
+	if cfg.RelayAddress, err = optionalHostPort(lookup, EnvRelayAddress); err != nil {
+		return Config{}, err
+	}
+	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayAddress); err != nil {
 		return Config{}, err
 	}
 
@@ -280,4 +301,35 @@ func optionalName(lookup func(string) (string, bool), key, fallback string) (str
 		return "", fmt.Errorf("%s must not be blank", key)
 	}
 	return trimmed, nil
+}
+
+// relaySPKIPins reads the pin set the Relay endpoint advertises at enrolment. Pins are
+// required whenever the endpoint is enabled: a Relay handed no pin has no trust anchor for
+// its next connection and would have to fall back to trusting a certificate authority,
+// which is the property key pinning exists to remove.
+func relaySPKIPins(lookup func(string) (string, bool), relayAddress string) ([]string, error) {
+	raw, _ := lookup(EnvRelaySPKIPins)
+	fields := strings.Split(raw, ",")
+	pins := make([]string, 0, len(fields))
+	for _, field := range fields {
+		pin := strings.TrimSpace(field)
+		if pin == "" {
+			continue
+		}
+		digest, err := base64.StdEncoding.DecodeString(pin)
+		if err != nil || len(digest) != sha256.Size {
+			return nil, fmt.Errorf(
+				"%s: each pin must be a base64-encoded SHA-256 digest of a SubjectPublicKeyInfo",
+				EnvRelaySPKIPins)
+		}
+		pins = append(pins, pin)
+	}
+
+	if relayAddress == "" {
+		return nil, nil
+	}
+	if len(pins) == 0 {
+		return nil, fmt.Errorf("%s is required when %s is set", EnvRelaySPKIPins, EnvRelayAddress)
+	}
+	return pins, nil
 }
