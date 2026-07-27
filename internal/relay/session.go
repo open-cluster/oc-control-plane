@@ -268,8 +268,13 @@ func (s *SessionService) deliver(session *sessionState) {
 	ticker := time.NewTicker(deliveryInterval)
 	defer ticker.Stop()
 
+	// Which jobs this session has already been told to stop. It belongs to this goroutine
+	// alone, which is what makes it safe without a lock, and it is per session: a successor
+	// tells the relay again, because it has no way to know the predecessor's message landed.
+	told := map[uuid.UUID]bool{}
+
 	for {
-		if err := s.deliverOnce(session); err != nil {
+		if err := s.deliverOnce(session, told); err != nil {
 			if session.ctx.Err() != nil {
 				return
 			}
@@ -283,7 +288,37 @@ func (s *SessionService) deliver(session *sessionState) {
 	}
 }
 
-func (s *SessionService) deliverOnce(session *sessionState) error {
+func (s *SessionService) deliverOnce(session *sessionState, told map[uuid.UUID]bool) error {
+	if err := s.dispatchWork(session); err != nil {
+		return err
+	}
+	return s.dispatchCancellations(session, told)
+}
+
+// dispatchCancellations tells the relay about work it has been asked to stop, once each. A
+// stop is advisory and the job stays leased until its outcome is recorded, so repeating it on
+// every round would put hundreds of messages on a stream that carries real work.
+func (s *SessionService) dispatchCancellations(
+	session *sessionState, told map[uuid.UUID]bool,
+) error {
+	pending, err := s.placements.PendingCancellations(
+		session.ctx, session.organization, session.id)
+	if err != nil {
+		return err
+	}
+	for _, fence := range pending {
+		if told[fence.JobID] {
+			continue
+		}
+		if err = send(session.ctx, session.outbound, cancelling(fence)); err != nil {
+			return err
+		}
+		told[fence.JobID] = true
+	}
+	return nil
+}
+
+func (s *SessionService) dispatchWork(session *sessionState) error {
 	ctx := session.ctx
 
 	// The claim commits before anything is sent. A crash between the two leaves a leased job
@@ -389,6 +424,14 @@ func (s *SessionService) run(
 func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToControl) error {
 	if result := message.GetJobResult(); result != nil {
 		return s.recordAndAcknowledge(session, result)
+	}
+	if acknowledged := message.GetCancelAck(); acknowledged != nil {
+		// Deliberately durable-state-free. A stop that was processed still ends as a result,
+		// and a job that had already finished when the stop arrived had already finished —
+		// recording anything here would decide an outcome from the wrong side of the wire.
+		session.logger.Info("stop acknowledged",
+			slog.String("job_id", acknowledged.GetJobId()),
+			slog.String("disposition", acknowledged.GetDisposition().String()))
 	}
 	return nil
 }
@@ -501,6 +544,17 @@ func accepted(sessionID uuid.UUID) *relayv1.ControlToRelay {
 			HeartbeatInterval: durationpb.New(heartbeatInterval),
 			MaxReceiveBytes:   maxMessageBytes,
 			MaxSendBytes:      maxMessageBytes,
+		},
+	}}
+}
+
+// cancelling asks the relay to stop an execution. It carries the fence so the relay can tell
+// which execution of the job it is being asked to stop, rather than the job in the abstract.
+func cancelling(fence storage.JobFence) *relayv1.ControlToRelay {
+	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_Cancellation{
+		Cancellation: &relayv1.Cancellation{
+			JobId:      fence.JobID.String(),
+			LeaseEpoch: uint64(fence.LeaseEpoch),
 		},
 	}}
 }

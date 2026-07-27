@@ -160,6 +160,127 @@ func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 	}
 }
 
+// Asking a job to stop means three different things depending on where the job has got to,
+// and conflating them either loses an outcome that already happened or leaves a job that
+// nothing will ever finish.
+func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
+	t.Parallel()
+	placements, organization := migratedPlacement(t)
+	registration := uuid.New()
+
+	t.Run("a job that has not started is cancelled outright", func(t *testing.T) {
+		job := enqueue(t, placements, organization, registration)
+
+		outcome, err := placements.RequestJobCancellation(context.Background(), organization, job)
+		if err != nil {
+			t.Fatalf("cancelling: %v", err)
+		}
+		if outcome != storage.CancellationRecorded {
+			t.Fatalf("cancelling an unstarted job gave %v, want it recorded — no relay is "+
+				"executing it, so nothing else can ever finish it", outcome)
+		}
+
+		// It must not then be handed to a relay: it is already over.
+		claimed, err := placements.ClaimJobs(context.Background(), organization, storage.JobClaim{
+			RegistrationID: registration, SessionID: uuid.New(),
+			LeaseFor: time.Minute, Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("claiming: %v", err)
+		}
+		if len(claimed) != 0 {
+			t.Errorf("a cancelled job was dispatched to a relay")
+		}
+	})
+
+	t.Run("a job that is executing is asked to stop and stays live", func(t *testing.T) {
+		enqueue(t, placements, organization, registration)
+		leased := claim(t, placements, organization, registration, uuid.New())[0]
+
+		outcome, err := placements.RequestJobCancellation(
+			context.Background(), organization, leased.ID)
+		if err != nil {
+			t.Fatalf("cancelling: %v", err)
+		}
+		if outcome != storage.CancellationRequested {
+			t.Fatalf("cancelling an executing job gave %v, want it requested", outcome)
+		}
+
+		// The request is advisory, so the relay's report of what actually happened must still
+		// be recordable. Anything else would decide the outcome of an execution it cannot see.
+		fence := storage.JobFence{
+			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
+		}
+		if _, err = placements.RecordResult(context.Background(), organization, fence,
+			storage.JobOutcome{Status: storage.JobFailed}); err != nil {
+			t.Fatalf("the executing relay could not record its outcome: %v", err)
+		}
+	})
+
+	t.Run("a job that has finished cannot be cancelled", func(t *testing.T) {
+		enqueue(t, placements, organization, registration)
+		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		fence := storage.JobFence{
+			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
+		}
+		if _, err := placements.RecordResult(context.Background(), organization, fence,
+			storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("done")}); err != nil {
+			t.Fatalf("recording: %v", err)
+		}
+
+		outcome, err := placements.RequestJobCancellation(
+			context.Background(), organization, leased.ID)
+		if err != nil {
+			t.Fatalf("cancelling: %v", err)
+		}
+		if outcome != storage.CancellationRefused {
+			t.Errorf("cancelling a finished job gave %v, want it refused — a result that "+
+				"already exists is not undone by asking for a stop", outcome)
+		}
+	})
+}
+
+// The session sends a cancellation to the relay executing the job, so the request has to be
+// findable from the session that holds the lease.
+func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
+	t.Parallel()
+	placements, organization := migratedPlacement(t)
+	registration := uuid.New()
+
+	enqueue(t, placements, organization, registration)
+	enqueue(t, placements, organization, registration)
+	session := uuid.New()
+	leased := claim(t, placements, organization, registration, session)
+	asked, untouched := leased[0], leased[1]
+
+	if _, err := placements.RequestJobCancellation(
+		context.Background(), organization, asked.ID); err != nil {
+		t.Fatalf("cancelling: %v", err)
+	}
+
+	pending, err := placements.PendingCancellations(context.Background(), organization, session)
+	if err != nil {
+		t.Fatalf("reading pending cancellations: %v", err)
+	}
+	if len(pending) != 1 || pending[0].JobID != asked.ID {
+		t.Fatalf("found %d cancellations, want exactly the one asked for (not %v)",
+			len(pending), untouched.ID)
+	}
+	if pending[0].LeaseEpoch != asked.LeaseEpoch || pending[0].LeaseSession != session {
+		t.Error("the cancellation carries a different fence from the lease it belongs to; " +
+			"a relay could not tell which execution it was being asked to stop")
+	}
+
+	// Another session must not be told to stop work it is not executing.
+	other, err := placements.PendingCancellations(context.Background(), organization, uuid.New())
+	if err != nil {
+		t.Fatalf("reading pending cancellations: %v", err)
+	}
+	if len(other) != 0 {
+		t.Errorf("a session was handed %d cancellations for work it does not hold", len(other))
+	}
+}
+
 func migratedPlacement(t *testing.T) (*storage.Placements, tenancy.Organization) {
 	t.Helper()
 

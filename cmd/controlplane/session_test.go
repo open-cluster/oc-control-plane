@@ -201,6 +201,64 @@ func TestRelaySession(t *testing.T) {
 		}
 	})
 
+	t.Run("a job asked to stop is told once and still reports its own outcome", func(t *testing.T) {
+		job := enqueueJob(t, placements, owner, relay.registration, workloadArguments("ledger"))
+		assignment := awaitAssignment(t, stream)
+		if assignment.GetJobId() != job.String() {
+			t.Fatalf("delivered job %q, want %v", assignment.GetJobId(), job)
+		}
+
+		asked, err := placements.RequestJobCancellation(context.Background(), owner, job)
+		if err != nil {
+			t.Fatalf("asking the job to stop: %v", err)
+		}
+		if asked != storage.CancellationRequested {
+			t.Fatalf("asking an executing job to stop gave %v, want it requested", asked)
+		}
+
+		cancellation := awaitCancellation(t, stream)
+		if cancellation.GetJobId() != job.String() ||
+			cancellation.GetLeaseEpoch() != assignment.GetLeaseEpoch() {
+			t.Fatalf("asked to stop job %q at generation %d, want %v at %d — a relay cannot "+
+				"tell which execution it is being asked to stop otherwise",
+				cancellation.GetJobId(), cancellation.GetLeaseEpoch(),
+				job, assignment.GetLeaseEpoch())
+		}
+
+		acknowledgeCancellation(t, stream, cancellation)
+
+		// Long enough for several delivery rounds to pass. A stop repeated on every round
+		// would be noise on a stream that carries real work, and a long execution would
+		// receive hundreds of them.
+		time.Sleep(12 * time.Second)
+
+		// The terminal outcome still comes from the relay. A stop that recorded the outcome
+		// itself would be deciding the fate of an execution it cannot see — one that may well
+		// have finished before the request arrived.
+		sendCancelledResult(t, stream, job.String(), assignment.GetLeaseEpoch())
+
+		repeats := 0
+		for {
+			message, recvErr := stream.Recv()
+			if recvErr != nil {
+				t.Fatalf("waiting for the result to be acknowledged: %v", recvErr)
+			}
+			if message.GetCancellation() != nil {
+				repeats++
+			}
+			if acknowledged := message.GetResultAck(); acknowledged != nil {
+				if acknowledged.GetDisposition() != relayv1.ResultAck_DISPOSITION_RECORDED {
+					t.Errorf("the outcome of a cancelled job was acknowledged as %v, want "+
+						"recorded", acknowledged.GetDisposition())
+				}
+				break
+			}
+		}
+		if repeats != 0 {
+			t.Errorf("the stop was repeated %d times while the job was still executing", repeats)
+		}
+	})
+
 	// The two subtests below each register their own relay, because both end a session on
 	// purpose and would otherwise take the one the assertions above depend on with them.
 
@@ -463,6 +521,16 @@ func awaitResultAck(
 		})
 }
 
+func awaitCancellation(
+	t *testing.T, stream relayv1.RelaySessionService_ConnectClient,
+) *relayv1.Cancellation {
+	t.Helper()
+	return awaitMessage(t, stream, "cancellation",
+		func(message *relayv1.ControlToRelay) *relayv1.Cancellation {
+			return message.GetCancellation()
+		})
+}
+
 // awaitMessage reads until the wanted kind arrives, ignoring the rest. Skipping rather than
 // failing on an unexpected kind is deliberate: the server may add messages a real relay
 // tolerates, and a test that breaks on a new heartbeat is testing the wire order instead of
@@ -510,6 +578,48 @@ func sendResult(
 	}})
 	if err != nil {
 		t.Fatalf("sending the result for job %s: %v", job, err)
+	}
+}
+
+// acknowledgeCancellation reports that the stop was processed. It changes nothing durable —
+// the outcome still arrives as a result — so it is sent here mainly to prove that it does not.
+func acknowledgeCancellation(
+	t *testing.T,
+	stream relayv1.RelaySessionService_ConnectClient,
+	cancellation *relayv1.Cancellation,
+) {
+	t.Helper()
+
+	err := stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_CancelAck{
+		CancelAck: &relayv1.CancelAck{
+			JobId:       cancellation.GetJobId(),
+			LeaseEpoch:  cancellation.GetLeaseEpoch(),
+			Disposition: relayv1.CancelAck_DISPOSITION_ABORTED,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("acknowledging the cancellation: %v", err)
+	}
+}
+
+// sendCancelledResult reports that an execution stopped because it was asked to. A cancelled
+// job is a failure with a reason, not an absence of an outcome.
+func sendCancelledResult(
+	t *testing.T, stream relayv1.RelaySessionService_ConnectClient, job string, epoch uint64,
+) {
+	t.Helper()
+
+	err := stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_JobResult{
+		JobResult: &relayv1.JobResult{
+			JobId:      job,
+			LeaseEpoch: epoch,
+			Outcome: &relayv1.JobResult_Failure{Failure: &relayv1.JobFailure{
+				Kind: relayv1.JobFailure_KIND_CANCELLED,
+			}},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("sending the cancelled result for job %s: %v", job, err)
 	}
 }
 
