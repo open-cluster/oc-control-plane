@@ -142,6 +142,13 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			if !ok || !function.Name.IsExported() {
 				continue
 			}
+			// Tenant data is reached only through the placement handle, so a method on any
+			// other receiver — a refusal reason rendering itself, say — cannot reach a row
+			// and has no organization to take. Plain functions are still checked, because a
+			// new one could take a pool directly.
+			if receiver := receiverType(function); receiver != "" && receiver != "Placements" {
+				continue
+			}
 			if _, exempt := placementWide[function.Name.Name]; exempt {
 				continue
 			}
@@ -182,6 +189,15 @@ func parseProductionFiles(t *testing.T, directory string) []*ast.File {
 		t.Fatalf("%s contains no production Go files; the gate would pass vacuously", directory)
 	}
 	return files
+}
+
+// receiverType reports the bare type name a method is declared on, or "" for a plain
+// function. Pointer receivers report the pointed-to name.
+func receiverType(function *ast.FuncDecl) string {
+	if function.Recv == nil || len(function.Recv.List) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(typeExpression(function.Recv.List[0].Type), "*")
 }
 
 func takesOrganization(function *ast.FuncDecl) bool {
