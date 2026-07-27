@@ -200,6 +200,109 @@ func TestRelaySession(t *testing.T) {
 				assignment.GetJobId(), behind, unexpressable)
 		}
 	})
+
+	// The two subtests below each register their own relay, because both end a session on
+	// purpose and would otherwise take the one the assertions above depend on with them.
+
+	t.Run("a reconnection ends the session it replaces", func(t *testing.T) {
+		reconnecting := registerRelay(t, connection, placementDSN, organization)
+
+		replaced := connectSession(t, connection, organization, reconnecting)
+		awaitSessionAccepted(t, replaced)
+
+		successor := connectSession(t, connection, organization, reconnecting)
+		awaitSessionAccepted(t, successor)
+
+		// A relay has one session. Left running, the session it reconnected away from would go
+		// on claiming work it can no longer receive, and hold it for the length of a lease.
+		//
+		// The elapsed bound is what makes this an assertion rather than a formality: the
+		// client's own deadline would eventually end the stream too, and a test that accepted
+		// any error would pass against a server that never supersedes anything.
+		started := time.Now()
+		_, err := replaced.Recv()
+		waited := time.Since(started)
+
+		if err == nil {
+			t.Fatal("the replaced session is still open; it would claim work the relay " +
+				"can no longer receive")
+		}
+		if reported, ok := status.FromError(err); !ok || reported.Code() != codes.Aborted {
+			t.Fatalf("the replaced session ended with %v, want Aborted", err)
+		}
+		if waited > 20*time.Second {
+			t.Errorf("the replaced session took %v to end; the relay is already gone", waited)
+		}
+	})
+
+	t.Run("a session that stops proving it is alive is ended", func(t *testing.T) {
+		silent := registerRelay(t, connection, placementDSN, organization)
+
+		stream := connectSession(t, connection, organization, silent)
+		awaitSessionAccepted(t, stream)
+
+		// This waits out the real idle allowance rather than a shortened one. A relay behind a
+		// half-open connection looks exactly like this, and the allowance is the only thing
+		// that distinguishes it from a quiet but healthy relay — so it is the thing under test.
+		started := time.Now()
+		_, err := stream.Recv()
+		waited := time.Since(started)
+
+		if err == nil {
+			t.Fatal("a silent session was never ended")
+		}
+		if reported, ok := status.FromError(err); !ok ||
+			reported.Code() != codes.DeadlineExceeded {
+			t.Fatalf("a silent session ended with %v, want DeadlineExceeded", err)
+		}
+		if waited < 20*time.Second {
+			t.Errorf("a silent session was ended after %v; a healthy relay between "+
+				"heartbeats must not be cut off", waited)
+		}
+		// The client's own deadline is longer than the allowance, so an upper bound is what
+		// separates the server ending this session from the test's deadline ending it.
+		if waited > 75*time.Second {
+			t.Errorf("a silent session survived %v; a relay behind a half-open connection "+
+				"holds its leases for exactly as long as this takes", waited)
+		}
+	})
+}
+
+// A long-lived stream does not end because the process was asked to stop, so shutdown has to
+// end it. Waiting for the relay to notice would let one unresponsive relay hold the process
+// open for as long as it stayed silent — a deploy that hangs on a customer's network problem.
+func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
+	const organization = "org-a"
+
+	relayAddress := freeAddress(t)
+	var placementDSN string
+	plane := startControlPlane(t, func(cfg *config.Config) {
+		cfg.RelayAddress = relayAddress
+		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
+		cfg.ShutdownTimeout = 5 * time.Second
+		for _, dsn := range cfg.Placements {
+			placementDSN = dsn
+		}
+	})
+
+	connection := dialRelay(t, relayAddress)
+	unresponsive := registerRelay(t, connection, placementDSN, organization)
+	stream := connectSession(t, connection, organization, unresponsive)
+	awaitSessionAccepted(t, stream)
+	// Nothing reads or writes on that stream again. It is established, idle, and holding a
+	// handler open — which is what a relay behind a stalled network looks like from here.
+
+	started := time.Now()
+	plane.shutdown()
+	took := time.Since(started)
+
+	if plane.exitErr != nil {
+		t.Fatalf("the control plane did not stop cleanly: %v", plane.exitErr)
+	}
+	if took > 20*time.Second {
+		t.Errorf("stopping took %v against a shutdown budget of 5s; an idle session must "+
+			"not decide how long a deploy takes", took)
+	}
 }
 
 // A session is refused with one status whatever is wrong with the identity presented. The

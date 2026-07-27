@@ -46,6 +46,11 @@ type controlPlane struct {
 	logs    *syncBuffer
 	stop    context.CancelFunc
 	exited  chan error
+	// waitOnce and exitErr let shutdown be called twice — once by a test that wants to observe
+	// the exit, once by cleanup — without the second call waiting out its timeout on a channel
+	// the first already drained.
+	waitOnce sync.Once
+	exitErr  error
 	// database is a TCP gate in front of Postgres. Closing it models a database outage at
 	// a STABLE address, which is what a real one looks like: a service endpoint that stops
 	// answering and later answers again. Stopping the container instead would move the
@@ -297,13 +302,17 @@ func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane 
 	return plane
 }
 
-// shutdown cancels the process context and waits for a clean exit. Safe to call twice.
+// shutdown cancels the process context and waits for a clean exit, recording what the exit
+// was. Safe to call twice; the second call returns the first call's answer.
 func (c *controlPlane) shutdown() {
 	c.stop()
-	select {
-	case <-c.exited:
-	case <-time.After(30 * time.Second):
-	}
+	c.waitOnce.Do(func() {
+		select {
+		case c.exitErr = <-c.exited:
+		case <-time.After(30 * time.Second):
+			c.exitErr = errors.New("the control plane did not stop")
+		}
+	})
 }
 
 func (c *controlPlane) get(t *testing.T, path string) (int, string) {

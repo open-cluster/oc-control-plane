@@ -169,11 +169,11 @@ func serve(ctx context.Context, process assembled) error {
 	// The Relay endpoint is a second listener on purpose. It speaks a different protocol to
 	// a different kind of caller, and putting it on the HTTP port would place it behind that
 	// surface's middleware and expose the health surface to relays.
-	stopRelay, err := startRelayEndpoint(process, failed)
+	relays, err := startRelayEndpoint(process, failed)
 	if err != nil {
 		return err
 	}
-	defer stopRelay()
+	defer relays.stop(cfg.ShutdownTimeout, logger)
 
 	select {
 	case serveErr := <-failed:
@@ -218,16 +218,16 @@ func logMigrations(logger *slog.Logger, applied map[string][]string) {
 	}
 }
 
-// startRelayEndpoint listens for relays when one is configured and returns the function that
-// stops it. A configuration with no relay address returns a no-op, which is correct for a
-// deployment that serves no relays yet rather than a reason to fail.
+// startRelayEndpoint listens for relays when one is configured. A configuration with no relay
+// address returns nothing to stop, which is correct for a deployment that serves no relays yet
+// rather than a reason to fail.
 //
 // A serve error goes to the same channel the HTTP server uses, so either surface failing
 // ends the process rather than leaving it half-serving.
-func startRelayEndpoint(process assembled, failed chan<- error) (func(), error) {
+func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint, error) {
 	cfg := process.config
 	if cfg.RelayAddress == "" {
-		return func() {}, nil
+		return nil, nil
 	}
 
 	listener, err := net.Listen("tcp", cfg.RelayAddress)
@@ -235,20 +235,59 @@ func startRelayEndpoint(process assembled, failed chan<- error) (func(), error) 
 		return nil, fmt.Errorf("listening for relays on %s: %w", cfg.RelayAddress, err)
 	}
 
-	server := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
-	relayv1.RegisterRelayRegistrationServiceServer(server,
+	endpoint := &relayEndpoint{
+		server:   grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler())),
+		sessions: relay.NewSessionService(process.placements, process.logger),
+	}
+	relayv1.RegisterRelayRegistrationServiceServer(endpoint.server,
 		relay.NewRegistrationService(process.placements, cfg.RelaySPKIPins, process.logger))
-	relayv1.RegisterRelaySessionServiceServer(server,
-		relay.NewSessionService(process.placements, process.logger))
+	relayv1.RegisterRelaySessionServiceServer(endpoint.server, endpoint.sessions)
 
 	process.logger.Info("listening for relays",
 		slog.String("address", listener.Addr().String()))
 
 	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil &&
+		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
 			!errors.Is(serveErr, grpc.ErrServerStopped) {
 			failed <- serveErr
 		}
 	}()
-	return server.GracefulStop, nil
+	return endpoint, nil
+}
+
+// relayEndpoint is the relay-facing listener together with the sessions it carries.
+type relayEndpoint struct {
+	server   *grpc.Server
+	sessions *relay.SessionService
+}
+
+// stop drains the sessions and then stops the endpoint, within the budget.
+//
+// The budget is the point. A streaming call does not end because the process was asked to
+// stop, so waiting for every relay to notice would let one that has stopped reading decide how
+// long a deploy takes. Cutting a session short loses nothing durable: leases expire on their
+// own clock and the work returns.
+//
+// The nil receiver is the configured-without-relays case, so the caller can defer this
+// unconditionally rather than branching around it.
+func (e *relayEndpoint) stop(budget time.Duration, logger *slog.Logger) {
+	if e == nil {
+		return
+	}
+	e.sessions.Drain(budget)
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		e.server.GracefulStop()
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(budget):
+		logger.Warn("relay sessions did not end within the drain budget; stopping now",
+			slog.Duration("budget", budget))
+		e.server.Stop()
+		<-stopped
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,12 @@ const (
 	maxJobsInFlight   = 16
 	maxMessageBytes   = 1 << 20
 
+	// How long a session may say nothing before it is treated as gone. One missed heartbeat is
+	// a hiccup; three in a row is silence. The allowance is what bounds the damage a half-open
+	// connection can do — until it runs out, a relay that is no longer reachable still looks
+	// like the owner of every lease it holds.
+	sessionIdleTimeout = 3 * heartbeatInterval
+
 	// The budget an execution is given is deliberately shorter than the lease behind it. The
 	// lease starts when the job is claimed and the relay's budget starts when it receives the
 	// assignment, so a budget equal to the lease would let an execution still be running after
@@ -52,61 +59,164 @@ type SessionService struct {
 
 	placements *storage.Placements
 	logger     *slog.Logger
+	live       *liveSessions
 }
 
 // NewSessionService returns the service.
 func NewSessionService(placements *storage.Placements, logger *slog.Logger) *SessionService {
-	return &SessionService{placements: placements, logger: logger}
+	return &SessionService{
+		placements: placements,
+		logger:     logger,
+		live:       newLiveSessions(),
+	}
 }
 
 // Connect authenticates a relay, mints a session that owns every lease it takes, and runs
-// until the relay disconnects or the process stops.
+// until the relay disconnects, stops proving it is alive, is replaced by a reconnection, or
+// the process stops.
 func (s *SessionService) Connect(stream relayv1.RelaySessionService_ConnectServer) error {
-	ctx := stream.Context()
-	identity, err := s.authenticate(ctx)
+	identity, err := s.authenticate(stream.Context())
 	if err != nil {
 		return err
 	}
 
-	// The session id is minted here, by the server, because it is the lease owner. A relay
-	// choosing its own could claim another's work by claiming its identity.
-	session := sessionState{
+	session := s.open(stream.Context(), identity)
+	defer s.close(session)
+
+	// One sender goroutine owns every write. gRPC permits exactly one concurrent sender per
+	// direction, and delivery and acknowledgement both produce messages, so they queue here
+	// rather than racing on the stream.
+	sendFailed := make(chan error, 1)
+	go func() { sendFailed <- runSender(session.ctx, stream, session.outbound) }()
+
+	if err = send(session.ctx, session.outbound, accepted(session.id)); err != nil {
+		return err
+	}
+	session.logger.Info("relay session established")
+
+	go s.deliver(session)
+
+	// Receiving runs on its own goroutine so the session loop can wait on a message and on
+	// every other way a session ends at the same time. A blocking receive could not notice a
+	// reconnection or a silence.
+	inbound := make(chan *relayv1.RelayToControl)
+	readFailed := make(chan error, 1)
+	go readInto(stream, inbound, readFailed)
+
+	return s.run(session, inbound, readFailed, sendFailed)
+}
+
+// open mints the session and installs it as the live one for this registration, ending any
+// predecessor. The session id is minted here, by the server, because it is the lease owner: a
+// relay choosing its own could claim another's work by claiming its identity.
+func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sessionState {
+	sessionCtx, stop := context.WithCancel(ctx)
+	session := &sessionState{
 		organization:   identity.organization,
 		registrationID: identity.registrationID,
 		id:             uuid.New(),
 		outbound:       make(chan *relayv1.ControlToRelay, maxJobsInFlight),
+		ctx:            sessionCtx,
+		stop:           stop,
 	}
 	session.logger = s.logger.With(
 		slog.String("organization", session.organization.String()),
 		slog.String("registration_id", session.registrationID.String()),
 		slog.String("session_id", session.id.String()))
 
-	// One sender goroutine owns every write. gRPC permits exactly one concurrent sender per
-	// direction, and delivery and acknowledgement both produce messages, so they queue here
-	// rather than racing on the stream.
-	sending, stopSending := context.WithCancel(ctx)
-	defer stopSending()
-	sendFailed := make(chan error, 1)
-	go func() { sendFailed <- runSender(sending, stream, session.outbound) }()
-
-	if err = send(ctx, session.outbound, accepted(session.id)); err != nil {
-		return err
+	if replaced := s.live.install(session); replaced != nil {
+		// A relay has one session. The one it reconnected away from would otherwise go on
+		// claiming work it can no longer receive, and hold that work for a whole lease.
+		replaced.logger.Info("relay session replaced by a reconnection",
+			slog.String("successor_session_id", session.id.String()))
+		replaced.stop()
 	}
-	session.logger.Info("relay session established")
+	return session
+}
 
-	go s.deliver(sending, session)
-
-	return s.receive(stream, session, sendFailed)
+// close ends the session and stands it down. Its leases are deliberately left to expire on
+// their own clock rather than being released here: the relay may still be executing, and
+// re-dispatching work that is still running is the duplicate execution the fence exists to
+// prevent. A session ending costs a delivery attempt, never a job.
+func (s *SessionService) close(session *sessionState) {
+	session.stop()
+	s.live.remove(session)
 }
 
 // sessionState is one established session: the identity every message is validated
-// against, plus the write queue and logger scoped to it.
+// against, the write queue and logger scoped to it, and the switch that ends it.
 type sessionState struct {
 	organization   tenancy.Organization
 	registrationID uuid.UUID
 	id             uuid.UUID
 	outbound       chan *relayv1.ControlToRelay
 	logger         *slog.Logger
+	ctx            context.Context
+	stop           context.CancelFunc
+}
+
+// liveSessions is the one live session per registration.
+//
+// It is per process, so it cannot see a session held by another control-plane instance. That
+// is what the idle allowance is for: supersession makes the common case immediate, and the
+// allowance bounds every case it cannot see.
+type liveSessions struct {
+	mutex          sync.Mutex
+	byRegistration map[uuid.UUID]*sessionState
+}
+
+func newLiveSessions() *liveSessions {
+	return &liveSessions{byRegistration: map[uuid.UUID]*sessionState{}}
+}
+
+// install makes a session the live one and returns the session it displaced, if any.
+func (l *liveSessions) install(session *sessionState) *sessionState {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	displaced := l.byRegistration[session.registrationID]
+	l.byRegistration[session.registrationID] = session
+	return displaced
+}
+
+// remove drops a session unless it has already been displaced: a replaced session must not
+// evict its successor on the way out.
+func (l *liveSessions) remove(session *sessionState) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	if l.byRegistration[session.registrationID] == session {
+		delete(l.byRegistration, session.registrationID)
+	}
+}
+
+// all snapshots the live sessions, so a caller never holds the lock while working with them.
+func (l *liveSessions) all() []*sessionState {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	sessions := make([]*sessionState, 0, len(l.byRegistration))
+	for _, session := range l.byRegistration {
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
+// Drain tells every live session to stand down within the given window: stop taking new work,
+// flush what it holds, and disconnect. Nothing durable changes — anything left unfinished is
+// recovered by lease expiry and the sweep, which is why cutting a session short is safe.
+//
+// It never blocks. A relay whose queue is already full is not reading, and waiting on it would
+// let one unresponsive relay decide how long a shutdown takes, which is the failure the whole
+// drain path exists to bound.
+func (s *SessionService) Drain(within time.Duration) {
+	for _, session := range s.live.all() {
+		select {
+		case session.outbound <- draining(within):
+		default:
+			session.logger.Warn("a drain instruction could not be queued")
+		}
+	}
 }
 
 type relayIdentity struct {
@@ -154,26 +264,28 @@ func (s *SessionService) authenticate(ctx context.Context) (relayIdentity, error
 // deliver claims work and sends it. It runs on connect and then periodically, so delivery
 // never depends on an event notification that is not durable: a missed notification delays
 // work by one interval instead of losing it.
-func (s *SessionService) deliver(ctx context.Context, session sessionState) {
+func (s *SessionService) deliver(session *sessionState) {
 	ticker := time.NewTicker(deliveryInterval)
 	defer ticker.Stop()
 
 	for {
-		if err := s.deliverOnce(ctx, session); err != nil {
-			if ctx.Err() != nil {
+		if err := s.deliverOnce(session); err != nil {
+			if session.ctx.Err() != nil {
 				return
 			}
 			session.logger.Warn("delivering work", slog.String("error", err.Error()))
 		}
 		select {
-		case <-ctx.Done():
+		case <-session.ctx.Done():
 			return
 		case <-ticker.C:
 		}
 	}
 }
 
-func (s *SessionService) deliverOnce(ctx context.Context, session sessionState) error {
+func (s *SessionService) deliverOnce(session *sessionState) error {
+	ctx := session.ctx
+
 	// The claim commits before anything is sent. A crash between the two leaves a leased job
 	// whose lease expires and is swept, which is recoverable; sending first would leave work
 	// delivered but unrecorded, which is not.
@@ -189,7 +301,7 @@ func (s *SessionService) deliverOnce(ctx context.Context, session sessionState) 
 	for _, job := range claimed {
 		assignment, buildErr := assignmentFor(session, job)
 		if buildErr != nil {
-			s.failUndeliverable(ctx, session, job)
+			s.failUndeliverable(session, job)
 			continue
 		}
 		if err = send(ctx, session.outbound, assignment); err != nil {
@@ -207,9 +319,9 @@ func (s *SessionService) deliverOnce(ctx context.Context, session sessionState) 
 // batch, because one undeliverable job holding up every job behind it turns a defect into an
 // outage — and the jobs behind it are already leased to this session, so they would wait out
 // the whole lease rather than being redelivered.
-func (s *SessionService) failUndeliverable(
-	ctx context.Context, session sessionState, job storage.Job,
-) {
+func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job) {
+	ctx := session.ctx
+
 	// The same failure shape a relay would report, so a reader of the result column has one
 	// taxonomy to understand rather than two.
 	outcome := storage.JobOutcome{
@@ -230,28 +342,74 @@ func (s *SessionService) failUndeliverable(
 	}
 }
 
-// receive reads the relay's messages until the stream ends.
-func (s *SessionService) receive(
-	stream relayv1.RelaySessionService_ConnectServer,
-	session sessionState,
-	sendFailed <-chan error,
+// run carries the session until it ends. Every way a session can end is one case here, so
+// none of them can be missed while waiting on another.
+func (s *SessionService) run(
+	session *sessionState,
+	inbound <-chan *relayv1.RelayToControl,
+	readFailed, sendFailed <-chan error,
 ) error {
+	idle := time.NewTimer(sessionIdleTimeout)
+	defer idle.Stop()
+
 	for {
 		select {
+		case <-session.ctx.Done():
+			return status.Error(codes.Aborted, "session ended")
+
+		case <-idle.C:
+			// Silence is not proof of death, only the end of proof of life. The session is
+			// ended and its leases are left to expire, because a relay behind a half-open
+			// connection may still be executing everything it holds.
+			session.logger.Warn("relay session went silent",
+				slog.Duration("allowance", sessionIdleTimeout))
+			return status.Error(codes.DeadlineExceeded, "session idle")
+
 		case err := <-sendFailed:
 			return err
-		default:
-		}
 
-		message, err := stream.Recv()
-		if err != nil {
+		case err := <-readFailed:
 			session.logger.Info("relay session ended", slog.String("reason", err.Error()))
 			return nil
-		}
-		if result := message.GetJobResult(); result != nil {
-			if err = s.recordAndAcknowledge(stream.Context(), session, result); err != nil {
+
+		case message := <-inbound:
+			// Any message proves liveness, not only a heartbeat: a relay streaming results is
+			// evidently alive. What a heartbeat adds is proof from a relay with nothing to say.
+			idle.Reset(sessionIdleTimeout)
+			if err := s.handle(session, message); err != nil {
 				return err
 			}
+		}
+	}
+}
+
+// handle acts on one message from the relay. Messages this version does not act on are not
+// errors: the envelope evolves additively, and a relay may legitimately send more than the
+// control plane has learned to use.
+func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToControl) error {
+	if result := message.GetJobResult(); result != nil {
+		return s.recordAndAcknowledge(session, result)
+	}
+	return nil
+}
+
+// readInto moves the stream's receive side onto a channel. It ends when the stream does,
+// which is guaranteed once the handler returns.
+func readInto(
+	stream relayv1.RelaySessionService_ConnectServer,
+	inbound chan<- *relayv1.RelayToControl,
+	failed chan<- error,
+) {
+	for {
+		message, err := stream.Recv()
+		if err != nil {
+			failed <- err
+			return
+		}
+		select {
+		case inbound <- message:
+		case <-stream.Context().Done():
+			return
 		}
 	}
 }
@@ -260,10 +418,10 @@ func (s *SessionService) receive(
 // guarantee: acknowledging first would let a relay stop resending a result that was never
 // durably stored.
 func (s *SessionService) recordAndAcknowledge(
-	ctx context.Context,
-	session sessionState,
-	result *relayv1.JobResult,
+	session *sessionState, result *relayv1.JobResult,
 ) error {
+	ctx := session.ctx
+
 	jobID, named := namedJob(result.GetJobId())
 	if !named {
 		// The message names no job, so there is nothing to record and nothing to
@@ -347,7 +505,13 @@ func accepted(sessionID uuid.UUID) *relayv1.ControlToRelay {
 	}}
 }
 
-func assignmentFor(session sessionState, job storage.Job) (*relayv1.ControlToRelay, error) {
+func draining(within time.Duration) *relayv1.ControlToRelay {
+	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_DrainInstruction{
+		DrainInstruction: &relayv1.DrainInstruction{Deadline: durationpb.New(within)},
+	}}
+}
+
+func assignmentFor(session *sessionState, job storage.Job) (*relayv1.ControlToRelay, error) {
 	arguments := &relayv1.CapabilityArguments{}
 	if err := proto.Unmarshal(job.Arguments, arguments); err != nil {
 		return nil, err
