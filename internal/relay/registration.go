@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -53,6 +54,17 @@ type RegistrationService struct {
 	placements *storage.Placements
 	spkiPins   []string
 	logger     *slog.Logger
+	flood      *floodLimiter
+}
+
+// DefaultFloodLimits bound enrolment for a deployment that has not tuned them. Registration
+// is a rare event per relay — once per installation — so the caps can be low enough to make
+// probing impractical without affecting any legitimate operator.
+var DefaultFloodLimits = FloodLimits{
+	Window:                  time.Minute,
+	PerOrganization:         20,
+	Global:                  200,
+	MaxTrackedOrganizations: 10_000,
 }
 
 // NewRegistrationService returns the service. The pins are the control plane's own public
@@ -63,7 +75,12 @@ func NewRegistrationService(
 	spkiPins []string,
 	logger *slog.Logger,
 ) *RegistrationService {
-	return &RegistrationService{placements: placements, spkiPins: spkiPins, logger: logger}
+	return &RegistrationService{
+		placements: placements,
+		spkiPins:   spkiPins,
+		logger:     logger,
+		flood:      newFloodLimiter(DefaultFloodLimits, time.Now),
+	}
 }
 
 // Register consumes a single-use bootstrap token and issues a durable identity. The
@@ -77,6 +94,15 @@ func (s *RegistrationService) Register(
 	if err != nil {
 		s.audit(ctx, "", "malformed registration metadata")
 		return nil, status.Error(codes.FailedPrecondition, refusalMessage)
+	}
+
+	// Shed before the token is examined. A shed must carry no information about whether the
+	// token was valid, or the difference between this response and a refusal becomes an
+	// oracle for probing. It is also a different, RETRYABLE status: a flood is transient,
+	// while a refused token is terminal and the relay must stop rather than retry.
+	if !s.flood.allow(organization.String()) {
+		s.audit(ctx, organization.String(), "shed by flood control")
+		return nil, status.Error(codes.ResourceExhausted, "registration temporarily unavailable")
 	}
 
 	credential, digest, err := mintCredential()

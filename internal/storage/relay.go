@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -141,12 +142,8 @@ func spendBootstrapToken(
 
 // explainUnspendableToken reports why the guarded update matched nothing. Its result reaches
 // the audit trail and never the caller of Register.
-func explainUnspendableToken(
-	ctx context.Context,
-	transaction pgx.Tx,
-	organization tenancy.Organization,
-	tokenDigest []byte,
-) (EnrolmentRefusal, error) {
+func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
+	organization tenancy.Organization, tokenDigest []byte) (EnrolmentRefusal, error) {
 	var (
 		tokenOrganization string
 		consumed          bool
@@ -200,6 +197,29 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 		enrolment.ClusterFingerprint, enrolment.RelayVersion, enrolment.Capabilities)
 	if err != nil {
 		return fmt.Errorf("recording relay registration: %w", err)
+	}
+	return nil
+}
+
+// IssueBootstrapToken records a single-use enrolment token for an organization. Only the
+// digest is stored, so this is the one moment the token exists here; the caller shows it to
+// the operator once and keeps no copy either.
+func (p *Placements) IssueBootstrapToken(
+	ctx context.Context,
+	organization tenancy.Organization,
+	tokenDigest []byte,
+	expiresAt time.Time,
+) error {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO relay_bootstrap_token (token_digest, organization, expires_at)
+		VALUES ($1, $2, $3)`,
+		tokenDigest, organization.String(), expiresAt)
+	if err != nil {
+		return fmt.Errorf("issuing bootstrap token: %w", err)
 	}
 	return nil
 }
