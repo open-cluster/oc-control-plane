@@ -223,3 +223,33 @@ func (p *Placements) IssueBootstrapToken(
 	}
 	return nil
 }
+
+// VerifyRelayCredential reports whether a credential digest matches a live registration.
+// It fails closed: a revoked registration authenticates nothing, and an unknown one is
+// indistinguishable from a wrong credential.
+func (p *Placements) VerifyRelayCredential(
+	ctx context.Context,
+	organization tenancy.Organization,
+	registrationID uuid.UUID,
+	credentialDigest []byte,
+) (bool, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return false, err
+	}
+	var matches bool
+	err = pool.QueryRow(ctx, `
+		SELECT credential_digest = $3
+		  FROM relay_registration
+		 WHERE registration_id = $1
+		   AND organization    = $2
+		   AND revoked_at IS NULL`,
+		registrationID, organization.String(), credentialDigest).Scan(&matches)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("verifying relay credential: %w", err)
+	}
+	return matches, nil
+}

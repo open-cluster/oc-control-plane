@@ -238,6 +238,8 @@ func startRelayEndpoint(process assembled, failed chan<- error) (func(), error) 
 	server := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	relayv1.RegisterRelayRegistrationServiceServer(server,
 		relay.NewRegistrationService(process.placements, cfg.RelaySPKIPins, process.logger))
+	relayv1.RegisterRelaySessionServiceServer(server,
+		relay.NewSessionService(process.placements, process.logger))
 
 	process.logger.Info("listening for relays",
 		slog.String("address", listener.Addr().String()))
