@@ -35,6 +35,12 @@ const (
 	deliveryInterval  = 5 * time.Second
 	maxJobsInFlight   = 16
 	maxMessageBytes   = 1 << 20
+
+	// The budget an execution is given is deliberately shorter than the lease behind it. The
+	// lease starts when the job is claimed and the relay's budget starts when it receives the
+	// assignment, so a budget equal to the lease would let an execution still be running after
+	// the lease authorising it has expired and the work has been handed to someone else.
+	executionBudget = leaseDuration - time.Minute
 )
 
 // SessionService serves the bidirectional stream that carries work to a relay and results
@@ -183,15 +189,45 @@ func (s *SessionService) deliverOnce(ctx context.Context, session sessionState) 
 	for _, job := range claimed {
 		assignment, buildErr := assignmentFor(session, job)
 		if buildErr != nil {
-			// The job cannot be expressed on the wire. Leaving it leased would strand it, so
-			// it is left for the lease to expire and the sweep to reconsider.
-			return buildErr
+			s.failUndeliverable(ctx, session, job)
+			continue
 		}
 		if err = send(ctx, session.outbound, assignment); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// failUndeliverable records the terminal outcome of a job that cannot be put on the wire.
+//
+// The arguments were encoded on this side, so a job that will not decode is a defect here and
+// no execution will ever change that. Recording it as failed ends it; leaving it leased would
+// cycle it through claim and expiry forever. Delivery then continues with the rest of the
+// batch, because one undeliverable job holding up every job behind it turns a defect into an
+// outage — and the jobs behind it are already leased to this session, so they would wait out
+// the whole lease rather than being redelivered.
+func (s *SessionService) failUndeliverable(
+	ctx context.Context, session sessionState, job storage.Job,
+) {
+	// The same failure shape a relay would report, so a reader of the result column has one
+	// taxonomy to understand rather than two.
+	outcome := storage.JobOutcome{
+		Status: storage.JobFailed,
+		Result: mustMarshal(&relayv1.JobFailure{Kind: relayv1.JobFailure_KIND_ARGUMENTS_REJECTED}),
+	}
+	fence := storage.JobFence{
+		JobID: job.ID, LeaseSession: session.id, LeaseEpoch: job.LeaseEpoch,
+	}
+
+	session.logger.ErrorContext(ctx, "job arguments cannot be encoded for dispatch",
+		slog.String("job_id", job.ID.String()),
+		slog.String("capability_id", job.CapabilityID))
+	if _, err := s.placements.RecordResult(ctx, session.organization, fence, outcome); err != nil {
+		session.logger.ErrorContext(ctx, "failing an undeliverable job",
+			slog.String("job_id", job.ID.String()),
+			slog.String("error", err.Error()))
+	}
 }
 
 // receive reads the relay's messages until the stream ends.
@@ -318,13 +354,20 @@ func assignmentFor(session sessionState, job storage.Job) (*relayv1.ControlToRel
 	}
 	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_JobAssignment{
 		JobAssignment: &relayv1.JobAssignment{
-			JobId:          job.ID.String(),
-			OrgId:          session.organization.String(),
+			JobId: job.ID.String(),
+			OrgId: session.organization.String(),
+			// Both identities travel so the relay can check the assignment against the identity
+			// it enrolled with; a mismatch is a possible control-plane compromise, not a routing
+			// mistake to be tolerated.
 			RegistrationId: session.registrationID.String(),
 			CapabilityId:   job.CapabilityID,
-			LeaseEpoch:     uint64(job.LeaseEpoch),
-			IdempotencyKey: job.ID.String(),
-			Arguments:      arguments,
+			// The relay selects its implementation by version, so an assignment without one
+			// names a capability it cannot decide how to execute.
+			CapabilityVersion: job.CapabilityVersion,
+			LeaseEpoch:        uint64(job.LeaseEpoch),
+			DeadlineBudget:    durationpb.New(executionBudget),
+			IdempotencyKey:    job.ID.String(),
+			Arguments:         arguments,
 		},
 	}}, nil
 }

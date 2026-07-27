@@ -61,10 +61,12 @@ func (r ResultRefusal) String() string {
 
 // Job is a unit of work as the control plane holds it.
 type Job struct {
-	ID                uuid.UUID
-	RegistrationID    uuid.UUID
-	CapabilityID      string
-	CapabilityVersion int
+	ID             uuid.UUID
+	RegistrationID uuid.UUID
+	CapabilityID   string
+	// Widened to the protocol's type rather than a plain int, so the version a relay is asked
+	// for is the version this holds, with no conversion in between that could narrow it.
+	CapabilityVersion uint32
 	Arguments         []byte
 	LeaseSession      uuid.UUID
 	LeaseEpoch        int64

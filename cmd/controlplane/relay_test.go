@@ -19,7 +19,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // The endpoint serves plaintext HTTP/2. TLS terminates at the edge, which is where the
@@ -145,24 +144,31 @@ func issueBootstrapToken(t *testing.T, dsn, organization, token string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	digest := sha256.Sum256([]byte(token))
+	if err := openPlacement(t, dsn).IssueBootstrapToken(
+		ctx, namedOrganization(t, organization), digest[:], time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("issuing the bootstrap token: %v", err)
+	}
+}
+
+// openPlacement connects to the same database the running control plane uses, so a test can
+// act as the parts of the system that are not built yet — the operator issuing a token, the
+// planner enqueueing work — through their real storage functions rather than by writing rows.
+func openPlacement(t *testing.T, dsn string) *storage.Placements {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	placements, err := storage.OpenPlacements(ctx, storage.Layout{
 		Placements:       map[string]string{"seed": dsn},
 		DefaultPlacement: "seed",
 	})
 	if err != nil {
-		t.Fatalf("opening the placement to seed a token: %v", err)
+		t.Fatalf("opening the placement: %v", err)
 	}
-	defer placements.Close()
-
-	organizationID, err := tenancy.NewOrganization(organization)
-	if err != nil {
-		t.Fatalf("naming the organization: %v", err)
-	}
-	digest := sha256.Sum256([]byte(token))
-	if err = placements.IssueBootstrapToken(
-		ctx, organizationID, digest[:], time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("issuing the bootstrap token: %v", err)
-	}
+	t.Cleanup(placements.Close)
+	return placements
 }
 
 func dialRelay(t *testing.T, address string) *grpc.ClientConn {
