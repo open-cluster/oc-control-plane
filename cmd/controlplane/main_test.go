@@ -141,8 +141,7 @@ func (g *tcpGate) accept() {
 			_ = connection.Close()
 			continue
 		case gateBlackhole:
-			// Accept and never answer: what a hung database looks like from the client, as
-			// distinct from a refused one. The connection is held until the gate shuts down.
+			// Accept and never answer. The connection is held until the gate shuts down.
 			g.active.Add(1)
 			go func() {
 				defer g.active.Done()

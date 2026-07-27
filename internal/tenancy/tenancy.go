@@ -52,8 +52,8 @@ func (o Organization) String() string {
 	return o.id
 }
 
-// IsZero reports whether this is the zero Organization, which names no tenant and must
+// IsEmpty reports whether this is the zero Organization, which names no tenant and must
 // never reach a query.
-func (o Organization) IsZero() bool {
+func (o Organization) IsEmpty() bool {
 	return o.id == ""
 }

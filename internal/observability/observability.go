@@ -36,8 +36,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	// The semconv version MUST match the one resource.Default() carries, or resource.Merge
-	// refuses the pair with a schema-URL conflict. Bumping the OTel SDK means bumping this
-	// import in the same change.
+	// refuses the pair with a schema-URL conflict.
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 )

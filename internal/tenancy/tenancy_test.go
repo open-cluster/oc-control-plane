@@ -19,7 +19,7 @@ func TestNewOrganization_AcceptsRealisticIdentifiers(t *testing.T) {
 		if organization.String() != id {
 			t.Errorf("String() = %q, want %q", organization.String(), id)
 		}
-		if organization.IsZero() {
+		if organization.IsEmpty() {
 			t.Errorf("a constructed organization must not report zero")
 		}
 	}
@@ -64,8 +64,8 @@ func TestOrganization_ZeroValueIsRecognisable(t *testing.T) {
 	t.Parallel()
 
 	var zero tenancy.Organization
-	if !zero.IsZero() {
-		t.Error("the zero Organization must report IsZero")
+	if !zero.IsEmpty() {
+		t.Error("the zero Organization must report IsEmpty")
 	}
 	if zero.String() != "" {
 		t.Errorf("the zero Organization must stringify empty, got %q", zero.String())

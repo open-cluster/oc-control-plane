@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"sort"
 	"strings"
 
@@ -111,9 +112,7 @@ func OpenPlacements(ctx context.Context, layout Layout) (*Placements, error) {
 		}
 		opened.pools[name] = pool
 	}
-	for organization, placement := range assignments {
-		opened.assignments[organization] = placement
-	}
+	maps.Copy(opened.assignments, assignments)
 	return opened, nil
 }
 
@@ -121,8 +120,8 @@ func OpenPlacements(ctx context.Context, layout Layout) (*Placements, error) {
 // assignment if it has one, otherwise the configured default. With no assignment and no
 // default the organization is unresolvable, and that is an error rather than a guess.
 func (p *Placements) Pool(organization tenancy.Organization) (*pgxpool.Pool, error) {
-	if organization.IsZero() {
-		return nil, fmt.Errorf("%w: the zero organization names no tenant", ErrUnknownOrganization)
+	if organization.IsEmpty() {
+		return nil, fmt.Errorf("%w: the empty organization names no tenant", ErrUnknownOrganization)
 	}
 	placement, assigned := p.assignments[organization.String()]
 	if !assigned {
