@@ -41,9 +41,13 @@ type sessionState struct {
 	capacity atomic.Int64
 	// draining reports that the session has been told to stand down, so no new work is taken.
 	draining atomic.Bool
-	// contested reports that this registration's session is being taken over faster than
-	// reconnection explains, so no account of what is running can be taken as the only one.
+	// contested reports that this registration's session is being taken over faster, or by more
+	// parties, than reconnection explains.
 	contested atomic.Bool
+	// claimAfter is how long this session waits before claiming new work, held as a duration in
+	// nanoseconds. It is set when the session displaces another and throttles nothing else:
+	// work the relay is already running is adopted the moment it says hello.
+	claimAfter atomic.Int64
 	// ended is why the session was stood down, when it was stood down deliberately.
 	ended atomic.Pointer[sessionEnd]
 }

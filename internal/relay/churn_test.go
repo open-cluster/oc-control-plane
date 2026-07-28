@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestChurnWatch(t *testing.T) {
 		// indistinguishable from the case below, which is the distinction that matters.
 		var verdict churnVerdict
 		for port := range churnThreshold {
-			verdict = watch.record(registration, "10.0.0.1:"+portOf(port))
+			verdict = watch.record(registration, "10.0.0.1:"+strconv.Itoa(44001+port))
 			clock.advance(time.Second)
 		}
 
@@ -117,6 +118,80 @@ func TestChurnWatch(t *testing.T) {
 		}
 	})
 
+	// An attacker who knows the rate can simply stay under it. Two hosts trading the session is
+	// a signature that does not depend on how fast they do it, which is what closes that door.
+	t.Run("two hosts trading the session are contested below the rate", func(t *testing.T) {
+		t.Parallel()
+		clock := &testClock{at: time.Unix(1_700_000_000, 0)}
+		watch := newChurnWatch(clock.now)
+		registration := uuid.New()
+
+		watch.record(registration, "10.0.0.1:44001")
+		clock.advance(time.Second)
+		verdict := watch.record(registration, "203.0.113.9:51002")
+
+		if verdict.takeovers >= churnThreshold {
+			t.Fatalf("this test no longer stays under the rate: %d takeovers", verdict.takeovers)
+		}
+		if !verdict.contested {
+			t.Error("two hosts trading one identity under the rate went unreported; staying " +
+				"under the threshold is the first thing anyone would try")
+		}
+	})
+
+	// The other half: one relay whose address changes is not two parties. That is one takeover
+	// from a new host, not two hosts taking turns.
+	t.Run("a relay that moves is not contested", func(t *testing.T) {
+		t.Parallel()
+		clock := &testClock{at: time.Unix(1_700_000_000, 0)}
+		watch := newChurnWatch(clock.now)
+
+		verdict := watch.record(uuid.New(), "10.0.0.7:44001")
+
+		if verdict.contested {
+			t.Error("a relay reconnecting from a new address was reported as contested; " +
+				"rescheduling a pod would raise a credential-theft alert")
+		}
+	})
+
+	t.Run("a first connection claims work at once and a flapping one waits", func(t *testing.T) {
+		t.Parallel()
+		clock := &testClock{at: time.Unix(1_700_000_000, 0)}
+		watch := newChurnWatch(clock.now)
+		registration := uuid.New()
+
+		// Work stranded by a single blip has to come back immediately; that is the whole point
+		// of reconciling on hello. It is repetition that gets held back.
+		if backoff := watch.record(registration, "10.0.0.1:44001").backoff; backoff != 0 {
+			t.Errorf("one reconnection was held back for %v; work stranded by a blip would "+
+				"wait for no reason", backoff)
+		}
+		clock.advance(time.Second)
+		if backoff := watch.record(registration, "10.0.0.1:44002").backoff; backoff <= 0 {
+			t.Error("a session replacing another moments later was not held back, so a flap " +
+				"loop re-runs catch-up on every arrival")
+		}
+	})
+
+	t.Run("a full watch says so rather than reporting nothing wrong", func(t *testing.T) {
+		t.Parallel()
+		clock := &testClock{at: time.Unix(1_700_000_000, 0)}
+		watch := newChurnWatch(clock.now)
+
+		for range maxTrackedRegistrations {
+			watch.record(uuid.New(), "10.0.0.1:44001")
+		}
+		verdict := watch.record(uuid.New(), "203.0.113.9:51002")
+
+		if !verdict.untracked {
+			t.Fatal("a registration past the cap was tracked anyway; the map grows without " +
+				"limit and every takeover pays for the whole fleet")
+		}
+		if verdict.contested {
+			t.Error("an uncounted registration was reported as contested")
+		}
+	})
+
 	t.Run("one registration's history is not another's", func(t *testing.T) {
 		t.Parallel()
 		clock := &testClock{at: time.Unix(1_700_000_000, 0)}
@@ -145,7 +220,3 @@ type testClock struct {
 func (c *testClock) now() time.Time { return c.at }
 
 func (c *testClock) advance(by time.Duration) { c.at = c.at.Add(by) }
-
-func portOf(index int) string {
-	return string(rune('0'+index)) + "4001"
-}

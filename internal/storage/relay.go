@@ -253,7 +253,7 @@ func (p *Placements) RecordSessionConflict(
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, `
 		UPDATE relay_registration
 		   SET session_conflict_at    = now(),
 		       -- The high-water mark, not the latest reading. A conflict that involved two
@@ -265,6 +265,12 @@ func (p *Placements) RecordSessionConflict(
 		registrationID, organization.String(), distinctHosts)
 	if err != nil {
 		return fmt.Errorf("recording a session conflict: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// The registration authenticated a moment ago, so its absence here means it was revoked
+		// in between or the row is gone. Either way the detection has landed nowhere, and a
+		// security signal that quietly writes to no rows is worse than one that never ran.
+		return fmt.Errorf("recording a session conflict: registration %s not found", registrationID)
 	}
 	return nil
 }

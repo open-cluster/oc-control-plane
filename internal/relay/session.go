@@ -57,6 +57,11 @@ const (
 	// instruction is only worth sending if it can arrive, and the bound is what stops a relay
 	// that has stopped reading from delaying the teardown it was told about.
 	flushWindow = 2 * time.Second
+
+	// How long recording a contested identity may take. It is detached from the session that
+	// prompted it, so it needs a bound of its own or a stalled database would hold the goroutine
+	// for as long as it stayed stalled.
+	recordConflictTimeout = 10 * time.Second
 )
 
 // SessionService serves the bidirectional stream that carries work to a relay and results
@@ -174,7 +179,16 @@ func (s *SessionService) supersede(replaced, successor *sessionState) {
 	replaced.logger.Info("relay session replaced by a reconnection",
 		slog.String("successor_session_id", successor.id.String()))
 
-	if verdict := s.churn.record(successor.registrationID, successor.peer); verdict.contested {
+	verdict := s.churn.record(successor.registrationID, successor.peer)
+	successor.claimAfter.Store(int64(verdict.backoff))
+	switch {
+	case verdict.untracked:
+		// Said aloud rather than passed over. A verdict that was never reached is not a verdict
+		// of nothing wrong, and an operator reading the absence of alerts deserves to know the
+		// difference.
+		successor.logger.WarnContext(successor.ctx,
+			"session takeover went uncounted; the watch is full")
+	case verdict.contested:
 		s.escalate(successor, verdict)
 	}
 
@@ -188,12 +202,15 @@ func (s *SessionService) supersede(replaced, successor *sessionState) {
 	replaced.end(codes.Aborted, "session replaced by a reconnection")
 }
 
-// escalate reports a relay identity that is being taken over faster than reconnection explains.
+// escalate reports a relay identity that is being taken over faster, or by more parties, than
+// reconnection explains.
 //
 // It is not refused. Refusing would hand anyone who can trigger this the ability to lock a
-// customer's relay out of the platform, which turns a detection into a weapon. What it does
-// instead is stop trusting either party's account of what is running, and say so where someone
-// will find it later.
+// customer's relay out of the platform, which turns a detection into a weapon. What credential
+// theft actually costs is not bounded here either — anyone holding a valid credential can
+// receive assignments and report whatever they like, and no amount of caution on this path
+// changes that. What this does is make the pattern visible, and stop the one decision that
+// would otherwise let a second party act on the first one's behalf.
 func (s *SessionService) escalate(session *sessionState, verdict churnVerdict) {
 	session.logger.ErrorContext(session.ctx, "relay identity is contested",
 		slog.Int("takeovers", verdict.takeovers),
@@ -205,9 +222,15 @@ func (s *SessionService) escalate(session *sessionState, verdict churnVerdict) {
 
 	session.contested.Store(true)
 
-	if err := s.placements.RecordSessionConflict(session.ctx, session.organization,
+	// Deliberately detached from the session. Whoever is taking the session over can also drop
+	// it immediately, and a record written under the session's own context would be cancelled
+	// by exactly the behaviour it exists to record.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(session.ctx), recordConflictTimeout)
+	defer cancel()
+
+	if err := s.placements.RecordSessionConflict(ctx, session.organization,
 		session.registrationID, verdict.distinctHosts); err != nil {
-		session.logger.ErrorContext(session.ctx, "recording a contested relay identity",
+		session.logger.ErrorContext(ctx, "recording a contested relay identity",
 			slog.String("error", err.Error()))
 	}
 }
@@ -395,10 +418,14 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) erro
 
 	// Releasing turns one relay's silence about a job into a decision that nobody is running
 	// it. That is only sound while there is one relay to be silent. Under contest there are two
-	// accounts of the same registration and no way to tell which is the relay's, so either one
-	// would be revoking the other's work — and if the second account is a stolen credential,
-	// releasing on its word is exactly the damage it could do. Leases go back to expiring on
-	// their own clock, which is slower and cannot be steered by whoever connected last.
+	// accounts of the same registration and no way to tell which is the relay's, so releasing
+	// on either would let one party revoke the other's work.
+	//
+	// Adoption is deliberately still allowed. It is the narrower move — a lease follows the
+	// connection that says it is running the job — and withholding it would strand the real
+	// relay's finished work for a full lease every time this fires, including when it fires on
+	// a relay whose address merely changed. What is withheld is the wider move, the one that
+	// ends other executions rather than continuing one.
 	if s.adopt(session, hello.GetInFlight()) && !session.contested.Load() {
 		s.releaseWhatTheRelayIsNotRunning(session)
 	}

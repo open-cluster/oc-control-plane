@@ -17,6 +17,10 @@ import (
 // delivery never depends on an event notification that is not durable: a missed notification
 // delays work by one interval instead of losing it.
 func (s *SessionService) deliver(session *sessionState) {
+	if !waitBeforeClaiming(session) {
+		return
+	}
+
 	ticker := time.NewTicker(deliveryInterval)
 	defer ticker.Stop()
 
@@ -37,6 +41,33 @@ func (s *SessionService) deliver(session *sessionState) {
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// waitBeforeClaiming holds a session that arrived on the heels of another before it starts
+// taking new work, and reports whether it is still worth starting at all.
+//
+// A session that keeps being replaced would otherwise re-run catch-up on every arrival, so a
+// relay flapping — or two of them taking turns — turns into a stream of claims, leases and
+// dispatches for work that goes nowhere. The wait costs nothing that matters: what the relay
+// is already running was adopted when it said hello, and the ordinary case of one relay
+// reconnecting after a blip waits not at all.
+func waitBeforeClaiming(session *sessionState) bool {
+	after := time.Duration(session.claimAfter.Load())
+	if after <= 0 {
+		return true
+	}
+	session.logger.InfoContext(session.ctx, "holding new work back from a session that keeps "+
+		"being replaced", slog.Duration("for", after))
+
+	timer := time.NewTimer(after)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return true
+	case <-session.ctx.Done():
+		return false
 	}
 }
 
