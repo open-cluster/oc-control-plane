@@ -69,6 +69,7 @@ type SessionService struct {
 	placements *storage.Placements
 	logger     *slog.Logger
 	live       *liveSessions
+	churn      *churnWatch
 }
 
 // NewSessionService returns the service.
@@ -77,6 +78,7 @@ func NewSessionService(placements *storage.Placements, logger *slog.Logger) *Ses
 		placements: placements,
 		logger:     logger,
 		live:       newLiveSessions(),
+		churn:      newChurnWatch(time.Now),
 	}
 }
 
@@ -143,6 +145,7 @@ func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sess
 		outbound:       make(chan *relayv1.ControlToRelay, maxJobsInFlight),
 		ctx:            sessionCtx,
 		stop:           stop,
+		peer:           peerAddress(ctx),
 	}
 	session.logger = s.logger.With(
 		slog.String("organization", session.organization.String()),
@@ -152,16 +155,13 @@ func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sess
 	session.capacity.Store(maxJobsInFlight)
 
 	if replaced := s.live.install(session); replaced != nil {
-		// A relay has one session. The one it reconnected away from would otherwise go on
-		// claiming work it can no longer receive, and hold that work for a whole lease.
-		replaced.logger.Info("relay session replaced by a reconnection",
-			slog.String("successor_session_id", session.id.String()))
-		supersede(replaced)
+		s.supersede(replaced, session)
 	}
 	return session
 }
 
-// supersede stands a replaced session down, telling it to reconnect on the way out.
+// supersede stands a replaced session down, telling it to reconnect on the way out, and judges
+// what the takeover means.
 //
 // Being displaced is stated rather than merely done. A relay dropped without explanation
 // re-enters its backoff and goes quiet, and the relay being displaced is not always the one
@@ -170,7 +170,14 @@ func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sess
 //
 // The delay is a whole idle allowance, so two connections holding one identity cannot displace
 // each other faster than the silence between them could ever be noticed.
-func supersede(replaced *sessionState) {
+func (s *SessionService) supersede(replaced, successor *sessionState) {
+	replaced.logger.Info("relay session replaced by a reconnection",
+		slog.String("successor_session_id", successor.id.String()))
+
+	if verdict := s.churn.record(successor.registrationID, successor.peer); verdict.contested {
+		s.escalate(successor, verdict)
+	}
+
 	// Queued without waiting: the session is ending either way, and the sender flushes what is
 	// already there on its way out.
 	select {
@@ -179,6 +186,30 @@ func supersede(replaced *sessionState) {
 		replaced.logger.Warn("a reconnect instruction could not be queued")
 	}
 	replaced.end(codes.Aborted, "session replaced by a reconnection")
+}
+
+// escalate reports a relay identity that is being taken over faster than reconnection explains.
+//
+// It is not refused. Refusing would hand anyone who can trigger this the ability to lock a
+// customer's relay out of the platform, which turns a detection into a weapon. What it does
+// instead is stop trusting either party's account of what is running, and say so where someone
+// will find it later.
+func (s *SessionService) escalate(session *sessionState, verdict churnVerdict) {
+	session.logger.ErrorContext(session.ctx, "relay identity is contested",
+		slog.Int("takeovers", verdict.takeovers),
+		slog.Duration("within", churnWindow),
+		// The count of hosts, never which ones. More than one host holding a single relay's
+		// credential is the whole signal, and the addresses themselves belong in connection
+		// logs rather than in an alert that gets forwarded onward.
+		slog.Int("distinct_hosts", verdict.distinctHosts))
+
+	session.contested.Store(true)
+
+	if err := s.placements.RecordSessionConflict(session.ctx, session.organization,
+		session.registrationID, verdict.distinctHosts); err != nil {
+		session.logger.ErrorContext(session.ctx, "recording a contested relay identity",
+			slog.String("error", err.Error()))
+	}
 }
 
 // close ends the session and stands it down. Its leases are deliberately left to expire on
@@ -362,7 +393,13 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) erro
 		slog.String("local_policy_hash", hello.GetLocalPolicyHash()),
 		slog.Bool("endpoint_pinning_disabled", hello.GetEndpointPinningDisabled()))
 
-	if s.adopt(session, hello.GetInFlight()) {
+	// Releasing turns one relay's silence about a job into a decision that nobody is running
+	// it. That is only sound while there is one relay to be silent. Under contest there are two
+	// accounts of the same registration and no way to tell which is the relay's, so either one
+	// would be revoking the other's work — and if the second account is a stolen credential,
+	// releasing on its word is exactly the damage it could do. Leases go back to expiring on
+	// their own clock, which is slower and cannot be steered by whoever connected last.
+	if s.adopt(session, hello.GetInFlight()) && !session.contested.Load() {
 		s.releaseWhatTheRelayIsNotRunning(session)
 	}
 	session.delivering.Do(func() { go s.deliver(session) })

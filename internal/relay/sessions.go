@@ -26,6 +26,9 @@ type sessionState struct {
 	logger         *slog.Logger
 	ctx            context.Context
 	stop           context.CancelFunc
+	// peer is where this connection came from, kept only to tell one host apart from another
+	// when a registration's session keeps being taken over.
+	peer string
 
 	// delivering guards the start of delivery. A relay may say hello more than once — the
 	// protocol refreshes attestations that way — and only the first one starts anything.
@@ -38,6 +41,9 @@ type sessionState struct {
 	capacity atomic.Int64
 	// draining reports that the session has been told to stand down, so no new work is taken.
 	draining atomic.Bool
+	// contested reports that this registration's session is being taken over faster than
+	// reconnection explains, so no account of what is running can be taken as the only one.
+	contested atomic.Bool
 	// ended is why the session was stood down, when it was stood down deliberately.
 	ended atomic.Pointer[sessionEnd]
 }

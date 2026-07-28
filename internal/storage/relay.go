@@ -224,6 +224,81 @@ func (p *Placements) IssueBootstrapToken(
 	return nil
 }
 
+// SessionConflict is what the control plane has seen of two parties competing for one relay
+// identity. A zero DetectedAt means it has seen none.
+type SessionConflict struct {
+	DetectedAt time.Time
+	// DistinctHosts is how many hosts were seen taking the session. More than one is the
+	// credential-theft signature; one is a relay that cannot hold a connection.
+	DistinctHosts int
+}
+
+// RecordSessionConflict marks a relay identity as contested.
+//
+// It is written down rather than only logged because of who needs it and when. The operator
+// who acts on a stolen credential is looking days later at a system that has since gone quiet,
+// not watching a log at the moment it happened — and the relay that was displaced cannot see
+// any of this from its own side.
+//
+// Nothing here clears the mark. Whether a contested identity has been dealt with is a judgement
+// about the world outside this system, so it is left for an operator to make rather than
+// erased by the next quiet hour.
+func (p *Placements) RecordSessionConflict(
+	ctx context.Context,
+	organization tenancy.Organization,
+	registrationID uuid.UUID,
+	distinctHosts int,
+) error {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `
+		UPDATE relay_registration
+		   SET session_conflict_at    = now(),
+		       -- The high-water mark, not the latest reading. A conflict that involved two
+		       -- hosts an hour ago is still a conflict that involved two hosts, and a later
+		       -- quieter sighting must not talk an operator out of it.
+		       session_conflict_hosts = GREATEST(session_conflict_hosts, $3)
+		 WHERE registration_id = $1
+		   AND organization    = $2`,
+		registrationID, organization.String(), distinctHosts)
+	if err != nil {
+		return fmt.Errorf("recording a session conflict: %w", err)
+	}
+	return nil
+}
+
+// SessionConflict reports what has been seen of a contested relay identity.
+func (p *Placements) SessionConflict(
+	ctx context.Context, organization tenancy.Organization, registrationID uuid.UUID,
+) (SessionConflict, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return SessionConflict{}, err
+	}
+
+	var (
+		detectedAt *time.Time
+		hosts      int
+	)
+	err = pool.QueryRow(ctx, `
+		SELECT session_conflict_at, session_conflict_hosts
+		  FROM relay_registration
+		 WHERE registration_id = $1 AND organization = $2`,
+		registrationID, organization.String()).Scan(&detectedAt, &hosts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SessionConflict{}, nil
+	}
+	if err != nil {
+		return SessionConflict{}, fmt.Errorf("reading a session conflict: %w", err)
+	}
+	if detectedAt == nil {
+		return SessionConflict{}, nil
+	}
+	return SessionConflict{DetectedAt: *detectedAt, DistinctHosts: hosts}, nil
+}
+
 // VerifyRelayCredential reports whether a credential digest matches a live registration.
 // It fails closed: a revoked registration authenticates nothing, and an unknown one is
 // indistinguishable from a wrong credential.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -470,6 +471,76 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 			t.Fatalf("work carried across a reconnection was acknowledged as %v, want "+
 				"recorded — anything else discards an execution that actually finished",
 				acknowledged.GetDisposition())
+		}
+	})
+}
+
+// A relay identity that keeps being taken over is recorded as contested, and an ordinary
+// reconnection is not. Both halves matter: an alert that fires on every reconnection is an
+// alert nobody reads, and the thing it would be hiding is a stolen credential.
+//
+// What this cannot show from here is the part that distinguishes the two, because every
+// connection a test makes comes from the loopback host. That distinction is exercised where the
+// peer address is an input rather than a property of the machine running the suite.
+func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
+	const organization = "org-a"
+
+	relayAddress := freeAddress(t)
+	var placementDSN string
+	plane := startControlPlane(t, func(cfg *config.Config) {
+		cfg.RelayAddress = relayAddress
+		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
+		for _, dsn := range cfg.Placements {
+			placementDSN = dsn
+		}
+	})
+
+	connection := dialRelay(t, relayAddress)
+	relay := registerRelay(t, connection, placementDSN, organization)
+	placements := openPlacement(t, placementDSN)
+	owner := namedOrganization(t, organization)
+
+	conflict := func(t *testing.T) storage.SessionConflict {
+		t.Helper()
+		seen, err := placements.SessionConflict(context.Background(), owner, relay.registration)
+		if err != nil {
+			t.Fatalf("reading the session conflict: %v", err)
+		}
+		return seen
+	}
+
+	t.Run("reconnecting once is not contested", func(t *testing.T) {
+		for range 2 {
+			stream := connectSession(t, connection, organization, relay)
+			awaitSessionAccepted(t, stream)
+		}
+		if seen := conflict(t); !seen.DetectedAt.IsZero() {
+			t.Errorf("one reconnection was recorded as contested at %v; every relay that "+
+				"restarts would raise a credential-theft alert", seen.DetectedAt)
+		}
+	})
+
+	t.Run("being taken over repeatedly is", func(t *testing.T) {
+		// Enough further connections that the takeovers stop being a sequence of unrelated
+		// reconnections. They are made back to back, which is the shape of two parties holding
+		// one credential rather than one relay recovering.
+		for range 4 {
+			stream := connectSession(t, connection, organization, relay)
+			awaitSessionAccepted(t, stream)
+		}
+
+		seen := conflict(t)
+		if seen.DetectedAt.IsZero() {
+			t.Fatal("a relay identity taken over repeatedly was never recorded as contested; " +
+				"the one party that can see this pattern would be reporting it to nobody")
+		}
+		if seen.DistinctHosts < 1 {
+			t.Errorf("recorded %d hosts, want at least the one that connected",
+				seen.DistinctHosts)
+		}
+		if !strings.Contains(plane.logs.String(), "relay identity is contested") {
+			t.Error("nothing was said about a contested identity where an operator watching " +
+				"would see it")
 		}
 	})
 }
