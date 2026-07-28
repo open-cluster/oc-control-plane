@@ -369,7 +369,13 @@ func (p *Placements) ReleaseStrandedLeases(
 		UPDATE relay_job
 		   SET status           = 0,
 		       lease_session    = NULL,
-		       lease_expires_at = NULL
+		       lease_expires_at = NULL,
+		       -- Raised here rather than left for the next claim. Releasing a lease ends that
+		       -- execution's claim on the job, and until the generation moves, a late result
+		       -- from it reads as an execution nothing has superseded — so the relay would be
+		       -- told nothing, keep the result, and resend it forever against a job that is
+		       -- already on its way to being run again.
+		       lease_epoch      = lease_epoch + 1
 		 WHERE organization     = $1
 		   AND registration_id  = $2
 		   AND status           = 1
@@ -378,8 +384,6 @@ func (p *Placements) ReleaseStrandedLeases(
 	if err != nil {
 		return 0, fmt.Errorf("releasing stranded leases: %w", err)
 	}
-	// The generation is left alone. The next claim raises it, which is what makes a late result
-	// from the released execution refusable rather than recordable.
 	return tag.RowsAffected(), nil
 }
 

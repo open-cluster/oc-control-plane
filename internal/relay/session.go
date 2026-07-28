@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log/slog"
-	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -91,7 +90,6 @@ func (s *SessionService) Connect(stream relayv1.RelaySessionService_ConnectServe
 	}
 
 	session := s.open(stream.Context(), identity)
-	defer s.close(session)
 
 	// One sender goroutine owns every write. gRPC permits exactly one concurrent sender per
 	// direction, and delivery and acknowledgement both produce messages, so they queue here
@@ -102,10 +100,15 @@ func (s *SessionService) Connect(stream relayv1.RelaySessionService_ConnectServe
 		defer close(senderDone)
 		sendFailed <- runSender(session, stream)
 	}()
-	// What is already queued gets a bounded chance to reach the relay before the stream is torn
-	// down, so a parting instruction is something the relay receives rather than something the
-	// control plane merely decided to say.
-	defer waitForSender(senderDone)
+
+	// The order matters and is written out rather than left to how defers stack. Standing the
+	// session down is what releases the sender, and the sender must be finished before this
+	// returns: once the handler returns the stream is gone, and a send still in flight would be
+	// writing to it. Waiting first would wait on a sender nothing had told to stop.
+	defer func() {
+		s.close(session)
+		waitForSender(senderDone)
+	}()
 
 	if err = send(session, accepted(session.id.String())); err != nil {
 		return session.ending(err)
@@ -271,16 +274,20 @@ func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToC
 		return s.greet(session, body.Hello)
 
 	case *relayv1.RelayToControl_JobResult:
-		// Checked before anything durable happens. A payload this build cannot fully read must
-		// not reach the store, because what would be stored is evidence with a hole in it that
-		// nothing downstream could know was there.
-		if carriesUnreadableFields(body.JobResult.GetResult()) {
-			session.logger.Error("relay result carries fields this control plane cannot read",
-				slog.String("job_id", body.JobResult.GetJobId()))
-			return status.Error(codes.InvalidArgument, "capability payload not understood")
-		}
 		return s.recordAndAcknowledge(session, body.JobResult)
 
+	default:
+		note(session, message)
+	}
+	return nil
+}
+
+// note records what the relay says about itself. None of it changes durable state: job truth
+// advances only through results, and a relay's account of its own progress is not evidence of
+// it. They are written down anyway, because a message that arrives and is dropped in silence
+// is indistinguishable from one that was never sent.
+func note(session *sessionState, message *relayv1.RelayToControl) {
+	switch body := message.GetMessage().(type) {
 	case *relayv1.RelayToControl_Heartbeat:
 		// Liveness was already recorded when the message arrived. A heartbeat proves the
 		// session is alive and nothing else: job progress advances only through the store.
@@ -320,7 +327,6 @@ func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToC
 			slog.String("code", body.ProtocolError.GetCode().String()),
 			slog.String("detail", body.ProtocolError.GetDetail()))
 	}
-	return nil
 }
 
 // greet adopts the work a relay says it never stopped executing, then opens delivery.
@@ -333,14 +339,15 @@ func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToC
 // The relay's account is attested and unprivileged. What may be adopted is decided entirely by
 // what the database already says, and a declaration that matches nothing changes nothing.
 func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) error {
-	// Refused strictly rather than tolerated. Two sides that disagree about what a message
-	// means still exchange messages successfully, and the result is evidence whose provenance
-	// nobody can vouch for — which is worse than no evidence. The version this control plane
-	// speaks is in the acceptance the relay has already received, so the mismatch is visible
-	// from both ends.
-	if hello.GetProtocolVersion() != protocolVersion {
-		session.logger.WarnContext(session.ctx, "relay speaks a protocol this control plane does not",
-			slog.Uint64("relay_protocol_version", uint64(hello.GetProtocolVersion())),
+	// The relay states the highest version it speaks, so a newer relay is negotiated down
+	// rather than turned away — that is what makes the protocol able to move at all. What
+	// cannot be tolerated is a relay that does not reach this version: two sides that disagree
+	// about what a message means still exchange messages successfully, and what comes out is
+	// evidence whose provenance nobody can vouch for. The version spoken here is in the
+	// acceptance the relay already holds, so the gap is visible from both ends.
+	if hello.GetProtocolVersion() < protocolVersion {
+		session.logger.WarnContext(session.ctx, "relay does not speak this protocol version",
+			slog.Uint64("relay_speaks_up_to", uint64(hello.GetProtocolVersion())),
 			slog.Uint64("protocol_version", protocolVersion))
 		return status.Error(codes.FailedPrecondition, "unsupported protocol version")
 	}
@@ -406,30 +413,11 @@ func capacityFrom(session *sessionState, hello *relayv1.Hello) int64 {
 // could be taken as complete. An account that had to be trimmed is not complete, and what was
 // trimmed must be left alone rather than treated as work nobody is running.
 func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlightJob) bool {
-	// A relay is never dispatched more than this, so a longer list describes work this control
-	// plane did not assign. The excess is dropped and said aloud rather than silently trimmed.
-	if len(declared) > maxJobsInFlight {
-		session.logger.WarnContext(session.ctx, "relay declared more work than it can hold",
-			slog.Int("declared", len(declared)),
-			slog.Int("considered", maxJobsInFlight))
-		return false
-	}
-	if len(declared) == 0 {
-		// A relay that is running nothing has given a complete account by saying so. This is
-		// what a restarted relay looks like, and everything it once held should come back now.
-		return true
-	}
-
-	inFlight := make([]storage.InFlightJob, 0, len(declared))
-	for _, job := range declared {
-		// The elapsed time a relay reports is provenance, never a fence input: a clock this
-		// side does not own cannot be allowed to decide who owns a lease.
-		jobID, named := namedJob(job.GetJobId())
-		if !named {
-			continue
-		}
-		inFlight = append(inFlight,
-			storage.InFlightJob{JobID: jobID, LeaseEpoch: int64(job.GetLeaseEpoch())})
+	inFlight, complete := readRoster(session, declared)
+	if len(inFlight) == 0 {
+		// A relay running nothing has given a complete account by saying so. That is what a
+		// restarted relay looks like, and everything it once held should come back now.
+		return complete
 	}
 
 	adopted, err := s.placements.AdoptInFlightLeases(session.ctx, session.organization,
@@ -442,158 +430,59 @@ func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlig
 	if err != nil {
 		// Delivery still opens. Nothing was adopted, so the relay's held results arrive under a
 		// lease this session does not own and go unacknowledged until a later hello adopts
-		// them — a delay, not a loss.
+		// them — a delay, not a loss. Nothing may be released either: the declared work is
+		// still leased where it was, and releasing it would treat work the relay is running as
+		// work nobody is.
 		session.logger.ErrorContext(session.ctx, "adopting in-flight work",
 			slog.String("error", err.Error()))
-		// Nothing may be released either: the declared work is still leased where it was, and
-		// releasing it now would treat work the relay is running as work nobody is.
 		return false
 	}
 	session.logger.InfoContext(session.ctx, "adopted work the relay never stopped executing",
 		slog.Int("declared", len(inFlight)),
 		slog.Int("adopted", len(adopted)))
-	return true
+
+	// Anything declared but not adopted is a job the two sides see differently — already
+	// finished here, or at a generation this relay no longer holds. Nothing may be released on
+	// the strength of an account that did not match, because what would be released is the work
+	// the disagreement is about.
+	return complete && len(adopted) == len(inFlight)
 }
 
-// deliver claims work and sends it. It runs on the relay's hello and then periodically, so
-// delivery never depends on an event notification that is not durable: a missed notification
-// delays work by one interval instead of losing it.
-func (s *SessionService) deliver(session *sessionState) {
-	ticker := time.NewTicker(deliveryInterval)
-	defer ticker.Stop()
+// readRoster reduces the relay's account to what can be acted on, and reports whether the whole
+// of it was understood. An account that had to be trimmed or partly skipped is not an account
+// of everything the relay is running, and must not be read as one.
+func readRoster(
+	session *sessionState, declared []*relayv1.InFlightJob,
+) ([]storage.InFlightJob, bool) {
+	complete := true
 
-	// Which executions this session has already asked the relay to stop. It belongs to this
-	// goroutine alone, which is what makes it safe without a lock, and it is per session: a
-	// successor tells the relay again, because it cannot know its predecessor's message landed.
-	told := map[storage.InFlightJob]bool{}
-
-	for {
-		if err := s.deliverOnce(session, told); err != nil {
-			if session.ctx.Err() != nil {
-				return
-			}
-			session.logger.Warn("delivering work", slog.String("error", err.Error()))
-		}
-		select {
-		case <-session.ctx.Done():
-			return
-		case <-ticker.C:
-		}
+	// A relay is never dispatched more than this, so a longer list describes work this control
+	// plane did not assign. The excess is dropped and said aloud rather than silently trimmed —
+	// what is dropped is still adopted up to the bound, because refusing the lot would strand
+	// every result the relay is holding for a full lease.
+	if len(declared) > maxJobsInFlight {
+		session.logger.WarnContext(session.ctx, "relay declared more work than it can hold",
+			slog.Int("declared", len(declared)),
+			slog.Int("considered", maxJobsInFlight))
+		declared = declared[:maxJobsInFlight]
+		complete = false
 	}
-}
 
-func (s *SessionService) deliverOnce(
-	session *sessionState, told map[storage.InFlightJob]bool,
-) error {
-	if err := s.dispatchWork(session); err != nil {
-		return err
-	}
-	return s.dispatchCancellations(session, told)
-}
-
-func (s *SessionService) dispatchWork(session *sessionState) error {
-	if session.draining.Load() {
-		// A draining session takes no new work. Anything claimed now would be leased to a relay
-		// that is disconnecting and would then sit unexecuted until its lease ran out.
-		return nil
-	}
-	ctx := session.ctx
-
-	// The claim commits before anything is sent. A crash between the two leaves a leased job
-	// whose lease expires and is swept, which is recoverable; sending first would leave work
-	// delivered but unrecorded, which is not.
-	//
-	// Capacity is a ceiling on what the relay holds at once, not a batch size. Claiming a
-	// batch every round regardless would lease a whole backlog to one relay within minutes,
-	// stranding all of it behind whatever that relay can actually run.
-	claimed, err := s.placements.ClaimJobs(ctx, session.organization, storage.JobClaim{
-		RegistrationID: session.registrationID,
-		SessionID:      session.id,
-		LeaseFor:       leaseDuration,
-		Capacity:       int(session.capacity.Load()),
-	})
-	if err != nil {
-		return err
-	}
-	for _, job := range claimed {
-		assignment, buildErr := assignmentFor(session, job)
-		if buildErr != nil {
-			s.failUndeliverable(session, job)
+	inFlight := make([]storage.InFlightJob, 0, len(declared))
+	for _, job := range declared {
+		// The elapsed time a relay reports is provenance, never a fence input: a clock this
+		// side does not own cannot be allowed to decide who owns a lease.
+		jobID, named := namedJob(job.GetJobId())
+		if !named {
+			session.logger.WarnContext(session.ctx, "relay declared work it did not name",
+				slog.String("job_id", job.GetJobId()))
+			complete = false
 			continue
 		}
-		if err = send(session, assignment); err != nil {
-			return err
-		}
+		inFlight = append(inFlight,
+			storage.InFlightJob{JobID: jobID, LeaseEpoch: int64(job.GetLeaseEpoch())})
 	}
-	return nil
-}
-
-// dispatchCancellations tells the relay about work it has been asked to stop, once each. A
-// stop is advisory and the job stays leased until its outcome is recorded, so repeating it on
-// every round would put hundreds of messages on a stream that carries real work.
-func (s *SessionService) dispatchCancellations(
-	session *sessionState, told map[storage.InFlightJob]bool,
-) error {
-	pending, err := s.placements.PendingCancellations(
-		session.ctx, session.organization, session.id)
-	if err != nil {
-		return err
-	}
-
-	// Keyed by the execution rather than the job. A lease that expires and is claimed again is
-	// a different execution, and the one running now has not been told anything.
-	outstanding := make(map[storage.InFlightJob]bool, len(pending))
-	for _, fence := range pending {
-		outstanding[storage.InFlightJob{JobID: fence.JobID, LeaseEpoch: fence.LeaseEpoch}] = true
-	}
-	// Forgetting what is no longer outstanding keeps this the size of the work in hand rather
-	// than everything the session was ever asked to stop.
-	maps.DeleteFunc(told, func(execution storage.InFlightJob, _ bool) bool {
-		return !outstanding[execution]
-	})
-
-	for _, fence := range pending {
-		execution := storage.InFlightJob{JobID: fence.JobID, LeaseEpoch: fence.LeaseEpoch}
-		if told[execution] {
-			continue
-		}
-		if err = send(session, cancelling(fence)); err != nil {
-			return err
-		}
-		told[execution] = true
-	}
-	return nil
-}
-
-// failUndeliverable records the terminal outcome of a job that cannot be put on the wire.
-//
-// The arguments were encoded on this side, so a job that will not decode is a defect here and
-// no execution will ever change that. Recording it as failed ends it; leaving it leased would
-// cycle it through claim and expiry forever. Delivery then continues with the rest of the
-// batch, because one undeliverable job holding up every job behind it turns a defect into an
-// outage — and the jobs behind it are already leased to this session, so they would wait out
-// the whole lease rather than being redelivered.
-func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job) {
-	ctx := session.ctx
-
-	// The same failure shape a relay would report, so a reader of the result column has one
-	// taxonomy to understand rather than two.
-	outcome := storage.JobOutcome{
-		Status: storage.JobFailed,
-		Result: mustMarshal(&relayv1.JobFailure{Kind: relayv1.JobFailure_KIND_ARGUMENTS_REJECTED}),
-	}
-	fence := storage.JobFence{
-		JobID: job.ID, LeaseSession: session.id, LeaseEpoch: job.LeaseEpoch,
-	}
-
-	session.logger.ErrorContext(ctx, "job arguments cannot be encoded for dispatch",
-		slog.String("job_id", job.ID.String()),
-		slog.String("capability_id", job.CapabilityID))
-	if _, err := s.placements.RecordResult(ctx, session.organization, fence, outcome); err != nil {
-		session.logger.ErrorContext(ctx, "failing an undeliverable job",
-			slog.String("job_id", job.ID.String()),
-			slog.String("error", err.Error()))
-	}
+	return inFlight, complete
 }
 
 // recordAndAcknowledge records a result and only then acknowledges it. The order is the
@@ -612,13 +501,35 @@ func (s *SessionService) recordAndAcknowledge(
 			slog.String("job_id", result.GetJobId()))
 		return nil
 	}
+	// Read before anything durable happens, because a result this build cannot read must not
+	// reach the store in any form — least of all as the success an unreadable outcome would
+	// otherwise be mistaken for.
+	outcome, err := outcomeOf(result)
+	if err != nil {
+		session.logger.ErrorContext(ctx, "relay result cannot be read by this control plane",
+			slog.String("job_id", result.GetJobId()))
+		return err
+	}
 	fence := storage.JobFence{
 		JobID:        jobID,
 		LeaseSession: session.id,
 		LeaseEpoch:   int64(result.GetLeaseEpoch()),
 	}
 
-	refusal, err := s.placements.RecordResult(ctx, session.organization, fence, outcomeOf(result))
+	refusal, err := s.placements.RecordResult(ctx, session.organization, fence, outcome)
+	return s.acknowledge(session, result, refusal, err)
+}
+
+// acknowledge tells the relay what became of the result it sent, and says nothing at all when
+// nothing definitive can be said. An unsent acknowledgement costs a safe resend; a wrong one
+// costs the result.
+func (s *SessionService) acknowledge(
+	session *sessionState,
+	result *relayv1.JobResult,
+	refusal storage.ResultRefusal,
+	err error,
+) error {
+	ctx := session.ctx
 	switch {
 	case err == nil:
 		return send(session, resultAck(result, relayv1.ResultAck_DISPOSITION_RECORDED))
@@ -635,7 +546,7 @@ func (s *SessionService) recordAndAcknowledge(
 		// result nothing else is going to produce, so it is told nothing and keeps the result
 		// until a hello adopts the lease.
 		s.logger.WarnContext(ctx, "result arrived under a lease this session does not hold",
-			slog.String("job_id", jobID.String()))
+			slog.String("job_id", result.GetJobId()))
 		return nil
 
 	case refusal == storage.ResultAlreadyRecorded:
@@ -646,7 +557,7 @@ func (s *SessionService) recordAndAcknowledge(
 		// A genuinely superseded execution is told to stop resending rather than left to
 		// retry: the job's fate belongs to the execution that owns it now.
 		s.logger.WarnContext(ctx, "result refused",
-			slog.String("job_id", jobID.String()),
+			slog.String("job_id", result.GetJobId()),
 			slog.String("reason", refusal.String()))
 		return send(session,
 			resultAck(result, relayv1.ResultAck_DISPOSITION_STALE_STOP_RESENDING))
@@ -700,20 +611,20 @@ func runSender(
 // flushQueued sends what is already waiting when a session ends, and nothing more. A graceful
 // reconnect or a drain instruction is queued at the moment the session is stood down, so
 // without this the message the relay most needs is the one it never gets.
+//
+// There is no timer here on purpose: the loop takes only what is already in the queue and
+// stops the moment it is empty. What this cannot bound is a send to a relay that has stopped
+// reading, which is why the handler waits on the sender for a bounded time rather than
+// indefinitely.
 func flushQueued(
 	session *sessionState, stream relayv1.RelaySessionService_ConnectServer,
 ) error {
-	window := time.NewTimer(flushWindow)
-	defer window.Stop()
-
 	for {
 		select {
 		case message := <-session.outbound:
 			if err := stream.Send(message); err != nil {
 				return err
 			}
-		case <-window.C:
-			return nil
 		default:
 			return nil
 		}

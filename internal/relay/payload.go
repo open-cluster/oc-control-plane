@@ -72,9 +72,6 @@ func fieldCarriesUnknown(field protoreflect.FieldDescriptor, value protoreflect.
 		return false
 
 	case field.Kind() == protoreflect.MessageKind || field.Kind() == protoreflect.GroupKind:
-		if field.IsList() {
-			return false
-		}
 		return hasUnknown(value.Message())
 
 	default:

@@ -3,6 +3,8 @@ package relay
 import (
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -89,14 +91,44 @@ func resultAck(
 	}}
 }
 
-// outcomeOf reduces a wire result to what is durable. A failure is recorded as a failure
-// rather than discarded: an investigation that could not gather evidence is a fact about the
-// investigation, not an absence of one.
-func outcomeOf(result *relayv1.JobResult) storage.JobOutcome {
-	if result.GetFailure() != nil {
-		return storage.JobOutcome{Status: storage.JobFailed, Result: mustMarshal(result.GetFailure())}
+// outcomeOf reduces a wire result to what is durable, or refuses to.
+//
+// A failure is recorded as a failure rather than discarded: an investigation that could not
+// gather evidence is a fact about the investigation, not an absence of one.
+//
+// Anything this build cannot read is refused instead, and the two ways that happens are the
+// reason this returns an error at all. An outcome that is neither of the two known variants —
+// a newer relay reporting something this version has never heard of — reads as no outcome, and
+// treating it as a success with an empty payload would record that an investigation gathered
+// evidence when what actually happened is that nobody here understood the answer. A payload
+// carrying fields this build cannot see is the same fabrication one level down: part of what
+// came back would never be looked at, and nothing downstream could know there was a hole in it.
+//
+// Only the capability payload is inspected. The envelope around it evolves additively by
+// design, so a newer relay saying more at that level is expected and must not be refused.
+func outcomeOf(result *relayv1.JobResult) (storage.JobOutcome, error) {
+	unreadable := status.Error(codes.InvalidArgument, "capability payload not understood")
+
+	switch outcome := result.GetOutcome().(type) {
+	case *relayv1.JobResult_Failure:
+		if carriesUnreadableFields(outcome.Failure) {
+			return storage.JobOutcome{}, unreadable
+		}
+		return storage.JobOutcome{
+			Status: storage.JobFailed, Result: mustMarshal(outcome.Failure),
+		}, nil
+
+	case *relayv1.JobResult_Result:
+		if carriesUnreadableFields(outcome.Result) {
+			return storage.JobOutcome{}, unreadable
+		}
+		return storage.JobOutcome{
+			Status: storage.JobSucceeded, Result: mustMarshal(outcome.Result),
+		}, nil
+
+	default:
+		return storage.JobOutcome{}, unreadable
 	}
-	return storage.JobOutcome{Status: storage.JobSucceeded, Result: mustMarshal(result.GetResult())}
 }
 
 // mustMarshal returns the encoded message, or nil when there is nothing to encode. A failure
