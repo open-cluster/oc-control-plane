@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -188,7 +189,19 @@ func serve(ctx context.Context, process assembled) error {
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
 	defer cancel()
 
-	if err := server.Shutdown(drainCtx); err != nil {
+	// Both surfaces drain at once, under one budget. Draining them in sequence would let a slow
+	// HTTP drain spend the whole budget and leave relay sessions none of it, and would make a
+	// shutdown take twice as long as it was configured to.
+	var relaysStopped sync.WaitGroup
+	relaysStopped.Add(1)
+	go func() {
+		defer relaysStopped.Done()
+		relays.stop(cfg.ShutdownTimeout, logger)
+	}()
+
+	err = server.Shutdown(drainCtx)
+	relaysStopped.Wait()
+	if err != nil {
 		return fmt.Errorf("draining: %w", err)
 	}
 	<-failed
@@ -259,6 +272,7 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 type relayEndpoint struct {
 	server   *grpc.Server
 	sessions *relay.SessionService
+	stopping sync.Once
 }
 
 // stop drains the sessions and then stops the endpoint, within the budget.
@@ -268,13 +282,23 @@ type relayEndpoint struct {
 // long a deploy takes. Cutting a session short loses nothing durable: leases expire on their
 // own clock and the work returns.
 //
+// Calling this more than once is safe, so it can be deferred as a backstop for the paths that
+// leave early and still be called explicitly on the ordinary shutdown path.
+//
 // The nil receiver is the configured-without-relays case, so the caller can defer this
 // unconditionally rather than branching around it.
 func (e *relayEndpoint) stop(budget time.Duration, logger *slog.Logger) {
 	if e == nil {
 		return
 	}
-	e.sessions.Drain(budget)
+	e.stopping.Do(func() { e.drain(budget, logger) })
+}
+
+func (e *relayEndpoint) drain(budget time.Duration, logger *slog.Logger) {
+	// A relay is given part of the budget to finish and flush; the rest is what the results it
+	// flushes need in order to arrive and be recorded. Granting the whole budget would mean
+	// cutting off a relay that used exactly the time it was told it had.
+	e.sessions.Drain(budget / 2)
 
 	stopped := make(chan struct{})
 	go func() {

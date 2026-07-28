@@ -382,6 +382,67 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	}
 }
 
+// A relay that stops reading, with work queued behind it, must still be ended.
+//
+// This does NOT prove why the liveness watch runs on its own goroutine. That change was made
+// because acknowledgements queue on the same bounded channel as assignments, so the session
+// loop can block inside a send while it is the only thing watching for silence — but the queue
+// cannot actually fill while dispatch is capped at what the relay can hold, and this test was
+// checked against the previous in-loop timer and passed. It is here for the behaviour it
+// states, not as evidence for that reasoning.
+func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
+	const organization = "org-a"
+
+	relayAddress := freeAddress(t)
+	var placementDSN string
+	startControlPlane(t, func(cfg *config.Config) {
+		cfg.RelayAddress = relayAddress
+		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
+		for _, dsn := range cfg.Placements {
+			placementDSN = dsn
+		}
+	})
+
+	connection := dialRelay(t, relayAddress)
+	relay := registerRelay(t, connection, placementDSN, organization)
+	placements := openPlacement(t, placementDSN)
+	owner := namedOrganization(t, organization)
+
+	// More work than the outbound queue holds, so delivery fills it and blocks.
+	for range 40 {
+		enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+	}
+
+	stream := connectSession(t, connection, organization, relay)
+	awaitSessionAccepted(t, stream)
+	assignment := awaitAssignment(t, stream)
+
+	// One result, which is what puts the session loop on the same blocked queue as delivery:
+	// it has to send an acknowledgement, and there is nowhere to put it.
+	sendResult(t, stream, assignment.GetJobId(), assignment.GetLeaseEpoch())
+
+	// Nothing is read for longer than the allowance. A real relay in this state is one whose
+	// process is wedged or whose connection is half-open.
+	time.Sleep(55 * time.Second)
+
+	// Whatever was already queued arrives first; what matters is that the stream then ends,
+	// rather than staying open until this test's own deadline expires.
+	resumed := time.Now()
+	var err error
+	for err == nil {
+		_, err = stream.Recv()
+	}
+	ended := time.Since(resumed)
+
+	if reported, ok := status.FromError(err); !ok || reported.Code() != codes.DeadlineExceeded {
+		t.Fatalf("the session ended with %v, want DeadlineExceeded", err)
+	}
+	if ended > 20*time.Second {
+		t.Errorf("the session was still open %v after reading resumed; it was never ended "+
+			"server-side, and this test's own deadline is what closed it", ended)
+	}
+}
+
 // A long-lived stream does not end because the process was asked to stop, so shutdown has to
 // end it. Waiting for the relay to notice would let one unresponsive relay hold the process
 // open for as long as it stayed silent — a deploy that hangs on a customer's network problem.

@@ -38,12 +38,18 @@ const (
 	// acknowledged, so it is reported as a definitive outcome rather than an error: the
 	// relay must stop resending, and its buffer must drain.
 	ResultAlreadyRecorded ResultRefusal = iota + 1
-	// ResultFenceSuperseded means the result echoed a lease that no longer owns the job —
-	// an older session, or an older generation of this one. Recording it would overwrite the
-	// outcome of the execution that currently owns the work.
+	// ResultFenceSuperseded means a later generation of the lease exists, so another execution
+	// has taken over this job. Recording this result would overwrite the outcome of the
+	// execution that owns the work now.
 	ResultFenceSuperseded
 	// ResultJobUnknown means no such job exists for this organization.
 	ResultJobUnknown
+	// ResultLeaseNotHeld means the generation still matches — nothing has superseded this
+	// execution — but the lease is held by a different session. It is kept apart from a
+	// supersession because the two call for opposite answers: a superseded relay must stop
+	// resending, while this one must not, since no other execution is going to produce this
+	// result and its lease can still be adopted.
+	ResultLeaseNotHeld
 )
 
 func (r ResultRefusal) String() string {
@@ -54,6 +60,8 @@ func (r ResultRefusal) String() string {
 		return "lease superseded"
 	case ResultJobUnknown:
 		return "job unknown"
+	case ResultLeaseNotHeld:
+		return "lease held by another session"
 	default:
 		return "unrecognised"
 	}
@@ -131,13 +139,23 @@ func (p *Placements) ClaimJobs(
 		          AND registration_id = $2
 		          AND (status = 0 OR (status = 1 AND lease_expires_at <= now()))
 		        ORDER BY created_at
-		        LIMIT $5
+		        -- Capacity is a ceiling on what this session holds at once, not a batch size,
+		        -- so what it already holds is subtracted. Claiming a full batch every round
+		        -- would lease a whole backlog to one relay within minutes and strand it there.
+		        -- Leases that have run out are not counted: they are claimable again, and the
+		        -- rows below may well be those very jobs.
+		        LIMIT GREATEST($5 - (SELECT count(*)
+		                               FROM relay_job held
+		                              WHERE held.organization     = $1
+		                                AND held.lease_session    = $3
+		                                AND held.status           = 1
+		                                AND held.lease_expires_at > now()), 0)
 		        -- Concurrent claimers take disjoint work instead of blocking on each other.
 		        FOR UPDATE SKIP LOCKED)
 		RETURNING job_id, registration_id, capability_id, capability_version,
 		          arguments, lease_session, lease_epoch`,
 		organization.String(), claim.RegistrationID, claim.SessionID,
-		claim.LeaseFor.String(), claim.Limit)
+		claim.LeaseFor.String(), claim.Capacity)
 	if err != nil {
 		return nil, fmt.Errorf("claiming jobs: %w", err)
 	}
@@ -160,7 +178,9 @@ type JobClaim struct {
 	RegistrationID uuid.UUID
 	SessionID      uuid.UUID
 	LeaseFor       time.Duration
-	Limit          int
+	// Capacity is the most work this session may hold at once, not the most it may take in
+	// one call. What it already holds is subtracted before anything more is leased.
+	Capacity int
 }
 
 // RecordResult writes a job's outcome in one guarded statement and reports whether this call
@@ -210,10 +230,10 @@ type JobOutcome struct {
 	Result []byte
 }
 
-// explainRefusedResult reads why the guarded update matched nothing. The distinction between
-// a resend and a superseded execution matters to the caller here — unlike enrolment, where
-// telling reasons apart would help an attacker — because a relay must stop resending in one
-// case and an operator must be alerted in the other.
+// explainRefusedResult reads why the guarded update matched nothing. The distinctions matter
+// to the caller here — unlike enrolment, where telling reasons apart would help an attacker —
+// because each one calls for a different answer to the relay, and getting that answer wrong
+// either discards a result or repeats one.
 func (p *Placements) explainRefusedResult(
 	ctx context.Context,
 	organization tenancy.Organization,
@@ -238,10 +258,15 @@ func (p *Placements) explainRefusedResult(
 		return 0, fmt.Errorf("auditing refused result: %w", err)
 	case status != JobPending && status != JobLeased:
 		return ResultAlreadyRecorded, ErrResultRefused
-	default:
-		// The job is live but the fence did not match, so this result belongs to an
-		// execution that has since lost the lease.
+	case epoch > fence.LeaseEpoch:
+		// A later generation exists, so the job has been claimed again and this result belongs
+		// to an execution that lost it.
 		return ResultFenceSuperseded, ErrResultRefused
+	default:
+		// The generation still stands. Nothing superseded this execution; the lease is simply
+		// held by another session, or by none. Claiming supersession here would tell a relay
+		// to discard a result that no other execution is going to produce.
+		return ResultLeaseNotHeld, ErrResultRefused
 	}
 }
 

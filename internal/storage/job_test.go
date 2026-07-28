@@ -106,6 +106,34 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	}
 }
 
+// Losing the fence is not the same as being superseded, and the difference decides whether a
+// finished execution's result survives. A relay told it is superseded drops the result it is
+// holding, so saying that when nothing has taken the job over throws away work no other
+// execution is going to redo.
+func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
+	t.Parallel()
+	placements, organization := migratedPlacement(t)
+	registration := uuid.New()
+	enqueue(t, placements, organization, registration)
+	leased := claim(t, placements, organization, registration, uuid.New())[0]
+
+	// The job is still at the generation this execution was given; only the session holding it
+	// differs, which is what a reconnection without adoption looks like.
+	elsewhere := storage.JobFence{
+		JobID: leased.ID, LeaseSession: uuid.New(), LeaseEpoch: leased.LeaseEpoch,
+	}
+	refusal, err := placements.RecordResult(context.Background(), organization, elsewhere,
+		storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("finished anyway")})
+	if !errors.Is(err, storage.ErrResultRefused) {
+		t.Fatalf("recording under a lease held elsewhere returned %v, want a refusal", err)
+	}
+	if refusal != storage.ResultLeaseNotHeld {
+		t.Errorf("refused as %v, want the lease reported as held elsewhere — calling this a "+
+			"supersession tells the relay to discard a result nothing else will produce",
+			refusal)
+	}
+}
+
 func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
@@ -183,7 +211,7 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 		// It must not then be handed to a relay: it is already over.
 		claimed, err := placements.ClaimJobs(context.Background(), organization, storage.JobClaim{
 			RegistrationID: registration, SessionID: uuid.New(),
-			LeaseFor: time.Minute, Limit: 10,
+			LeaseFor: time.Minute, Capacity: 10,
 		})
 		if err != nil {
 			t.Fatalf("claiming: %v", err)
@@ -444,7 +472,7 @@ func claim(
 		RegistrationID: registration,
 		SessionID:      session,
 		LeaseFor:       time.Minute,
-		Limit:          10,
+		Capacity:       10,
 	})
 	if err != nil {
 		t.Fatalf("claiming: %v", err)

@@ -5,15 +5,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log/slog"
-	"sync"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/durationpb"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
@@ -89,10 +87,11 @@ func (s *SessionService) Connect(stream relayv1.RelaySessionService_ConnectServe
 	sendFailed := make(chan error, 1)
 	go func() { sendFailed <- runSender(session.ctx, stream, session.outbound) }()
 
-	if err = send(session.ctx, session.outbound, accepted(session.id)); err != nil {
-		return err
+	if err = send(session.ctx, session.outbound, accepted(session.id.String())); err != nil {
+		return session.ending(err)
 	}
 	session.logger.Info("relay session established")
+	go watchLiveness(session)
 
 	// Delivery deliberately does not start here. It starts on the relay's hello, so work the
 	// relay is still executing is adopted before anything new is claimed — otherwise a claim
@@ -126,13 +125,15 @@ func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sess
 		slog.String("organization", session.organization.String()),
 		slog.String("registration_id", session.registrationID.String()),
 		slog.String("session_id", session.id.String()))
+	session.heard()
+	session.capacity.Store(maxJobsInFlight)
 
 	if replaced := s.live.install(session); replaced != nil {
 		// A relay has one session. The one it reconnected away from would otherwise go on
 		// claiming work it can no longer receive, and hold that work for a whole lease.
 		replaced.logger.Info("relay session replaced by a reconnection",
 			slog.String("successor_session_id", session.id.String()))
-		replaced.stop()
+		replaced.end(codes.Aborted, "session replaced by a reconnection")
 	}
 	return session
 }
@@ -144,85 +145,6 @@ func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sess
 func (s *SessionService) close(session *sessionState) {
 	session.stop()
 	s.live.remove(session)
-}
-
-// sessionState is one established session: the identity every message is validated
-// against, the write queue and logger scoped to it, and the switch that ends it.
-type sessionState struct {
-	organization   tenancy.Organization
-	registrationID uuid.UUID
-	id             uuid.UUID
-	outbound       chan *relayv1.ControlToRelay
-	logger         *slog.Logger
-	ctx            context.Context
-	stop           context.CancelFunc
-	// delivering guards the start of delivery. A relay may say hello more than once — the
-	// protocol refreshes attestations that way — and only the first one starts anything.
-	delivering sync.Once
-}
-
-// liveSessions is the one live session per registration.
-//
-// It is per process, so it cannot see a session held by another control-plane instance. That
-// is what the idle allowance is for: supersession makes the common case immediate, and the
-// allowance bounds every case it cannot see.
-type liveSessions struct {
-	mutex          sync.Mutex
-	byRegistration map[uuid.UUID]*sessionState
-}
-
-func newLiveSessions() *liveSessions {
-	return &liveSessions{byRegistration: map[uuid.UUID]*sessionState{}}
-}
-
-// install makes a session the live one and returns the session it displaced, if any.
-func (l *liveSessions) install(session *sessionState) *sessionState {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
-	displaced := l.byRegistration[session.registrationID]
-	l.byRegistration[session.registrationID] = session
-	return displaced
-}
-
-// remove drops a session unless it has already been displaced: a replaced session must not
-// evict its successor on the way out.
-func (l *liveSessions) remove(session *sessionState) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
-	if l.byRegistration[session.registrationID] == session {
-		delete(l.byRegistration, session.registrationID)
-	}
-}
-
-// all snapshots the live sessions, so a caller never holds the lock while working with them.
-func (l *liveSessions) all() []*sessionState {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
-	sessions := make([]*sessionState, 0, len(l.byRegistration))
-	for _, session := range l.byRegistration {
-		sessions = append(sessions, session)
-	}
-	return sessions
-}
-
-// Drain tells every live session to stand down within the given window: stop taking new work,
-// flush what it holds, and disconnect. Nothing durable changes — anything left unfinished is
-// recovered by lease expiry and the sweep, which is why cutting a session short is safe.
-//
-// It never blocks. A relay whose queue is already full is not reading, and waiting on it would
-// let one unresponsive relay decide how long a shutdown takes, which is the failure the whole
-// drain path exists to bound.
-func (s *SessionService) Drain(within time.Duration) {
-	for _, session := range s.live.all() {
-		select {
-		case session.outbound <- draining(within):
-		default:
-			session.logger.Warn("a drain instruction could not be queued")
-		}
-	}
 }
 
 type relayIdentity struct {
@@ -267,158 +189,28 @@ func (s *SessionService) authenticate(ctx context.Context) (relayIdentity, error
 	return relayIdentity{organization: organization, registrationID: registrationID}, nil
 }
 
-// deliver claims work and sends it. It runs on connect and then periodically, so delivery
-// never depends on an event notification that is not durable: a missed notification delays
-// work by one interval instead of losing it.
-func (s *SessionService) deliver(session *sessionState) {
-	ticker := time.NewTicker(deliveryInterval)
-	defer ticker.Stop()
-
-	// Which jobs this session has already been told to stop. It belongs to this goroutine
-	// alone, which is what makes it safe without a lock, and it is per session: a successor
-	// tells the relay again, because it has no way to know the predecessor's message landed.
-	told := map[uuid.UUID]bool{}
-
-	for {
-		if err := s.deliverOnce(session, told); err != nil {
-			if session.ctx.Err() != nil {
-				return
-			}
-			session.logger.Warn("delivering work", slog.String("error", err.Error()))
-		}
-		select {
-		case <-session.ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-func (s *SessionService) deliverOnce(session *sessionState, told map[uuid.UUID]bool) error {
-	if err := s.dispatchWork(session); err != nil {
-		return err
-	}
-	return s.dispatchCancellations(session, told)
-}
-
-// dispatchCancellations tells the relay about work it has been asked to stop, once each. A
-// stop is advisory and the job stays leased until its outcome is recorded, so repeating it on
-// every round would put hundreds of messages on a stream that carries real work.
-func (s *SessionService) dispatchCancellations(
-	session *sessionState, told map[uuid.UUID]bool,
-) error {
-	pending, err := s.placements.PendingCancellations(
-		session.ctx, session.organization, session.id)
-	if err != nil {
-		return err
-	}
-	for _, fence := range pending {
-		if told[fence.JobID] {
-			continue
-		}
-		if err = send(session.ctx, session.outbound, cancelling(fence)); err != nil {
-			return err
-		}
-		told[fence.JobID] = true
-	}
-	return nil
-}
-
-func (s *SessionService) dispatchWork(session *sessionState) error {
-	ctx := session.ctx
-
-	// The claim commits before anything is sent. A crash between the two leaves a leased job
-	// whose lease expires and is swept, which is recoverable; sending first would leave work
-	// delivered but unrecorded, which is not.
-	claimed, err := s.placements.ClaimJobs(ctx, session.organization, storage.JobClaim{
-		RegistrationID: session.registrationID,
-		SessionID:      session.id,
-		LeaseFor:       leaseDuration,
-		Limit:          maxJobsInFlight,
-	})
-	if err != nil {
-		return err
-	}
-	for _, job := range claimed {
-		assignment, buildErr := assignmentFor(session, job)
-		if buildErr != nil {
-			s.failUndeliverable(session, job)
-			continue
-		}
-		if err = send(ctx, session.outbound, assignment); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// failUndeliverable records the terminal outcome of a job that cannot be put on the wire.
-//
-// The arguments were encoded on this side, so a job that will not decode is a defect here and
-// no execution will ever change that. Recording it as failed ends it; leaving it leased would
-// cycle it through claim and expiry forever. Delivery then continues with the rest of the
-// batch, because one undeliverable job holding up every job behind it turns a defect into an
-// outage — and the jobs behind it are already leased to this session, so they would wait out
-// the whole lease rather than being redelivered.
-func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job) {
-	ctx := session.ctx
-
-	// The same failure shape a relay would report, so a reader of the result column has one
-	// taxonomy to understand rather than two.
-	outcome := storage.JobOutcome{
-		Status: storage.JobFailed,
-		Result: mustMarshal(&relayv1.JobFailure{Kind: relayv1.JobFailure_KIND_ARGUMENTS_REJECTED}),
-	}
-	fence := storage.JobFence{
-		JobID: job.ID, LeaseSession: session.id, LeaseEpoch: job.LeaseEpoch,
-	}
-
-	session.logger.ErrorContext(ctx, "job arguments cannot be encoded for dispatch",
-		slog.String("job_id", job.ID.String()),
-		slog.String("capability_id", job.CapabilityID))
-	if _, err := s.placements.RecordResult(ctx, session.organization, fence, outcome); err != nil {
-		session.logger.ErrorContext(ctx, "failing an undeliverable job",
-			slog.String("job_id", job.ID.String()),
-			slog.String("error", err.Error()))
-	}
-}
-
-// run carries the session until it ends. Every way a session can end is one case here, so
-// none of them can be missed while waiting on another.
+// run carries the session until it ends.
 func (s *SessionService) run(
 	session *sessionState,
 	inbound <-chan *relayv1.RelayToControl,
 	readFailed, sendFailed <-chan error,
 ) error {
-	idle := time.NewTimer(sessionIdleTimeout)
-	defer idle.Stop()
-
 	for {
 		select {
 		case <-session.ctx.Done():
-			return status.Error(codes.Aborted, "session ended")
-
-		case <-idle.C:
-			// Silence is not proof of death, only the end of proof of life. The session is
-			// ended and its leases are left to expire, because a relay behind a half-open
-			// connection may still be executing everything it holds.
-			session.logger.Warn("relay session went silent",
-				slog.Duration("allowance", sessionIdleTimeout))
-			return status.Error(codes.DeadlineExceeded, "session idle")
+			return session.ending(status.Error(codes.Aborted, "session ended"))
 
 		case err := <-sendFailed:
-			return err
+			return session.ending(err)
 
 		case err := <-readFailed:
 			session.logger.Info("relay session ended", slog.String("reason", err.Error()))
-			return nil
+			return session.ending(nil)
 
 		case message := <-inbound:
-			// Any message proves liveness, not only a heartbeat: a relay streaming results is
-			// evidently alive. What a heartbeat adds is proof from a relay with nothing to say.
-			idle.Reset(sessionIdleTimeout)
+			session.heard()
 			if err := s.handle(session, message); err != nil {
-				return err
+				return session.ending(err)
 			}
 		}
 	}
@@ -456,9 +248,11 @@ func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToC
 // The relay's account is attested and unprivileged. What may be adopted is decided entirely by
 // what the database already says, and a declaration that matches nothing changes nothing.
 func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) {
+	session.capacity.Store(capacityFrom(session, hello))
 	session.logger.InfoContext(session.ctx, "relay said hello",
 		slog.String("relay_version", hello.GetRelayVersion()),
 		slog.Uint64("protocol_version", uint64(hello.GetProtocolVersion())),
+		slog.Int64("capacity", session.capacity.Load()),
 		slog.Int("declared_in_flight", len(hello.GetInFlight())),
 		// Both are the relay's self-report of its own configuration. They are recorded here
 		// for an operator to see and are never a basis for a decision on this side.
@@ -467,6 +261,23 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) {
 
 	s.adopt(session, hello.GetInFlight())
 	session.delivering.Do(func() { go s.deliver(session) })
+}
+
+// capacityFrom decides how much work this relay may hold at once. The relay's own figure wins
+// while it is below the server's, because the relay knows what it can run and its unacked
+// result buffer is sized to match; the server's is the ceiling, because a relay is not
+// entitled to ask for more of the control plane than anyone else.
+//
+// A relay that states nothing gets the server's figure. Treating silence as a capacity of zero
+// would quietly stop dispatching to it altogether, which is a worse answer than a default.
+func capacityFrom(session *sessionState, hello *relayv1.Hello) int64 {
+	declared := int64(hello.GetMaxConcurrentJobs())
+	if declared <= 0 {
+		session.logger.WarnContext(session.ctx, "relay declared no capacity; using the default",
+			slog.Int("capacity", maxJobsInFlight))
+		return maxJobsInFlight
+	}
+	return min(declared, maxJobsInFlight)
 }
 
 func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlightJob) {
@@ -502,8 +313,9 @@ func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlig
 			InFlight:       inFlight,
 		})
 	if err != nil {
-		// Delivery still opens. Nothing was adopted, so the relay's held results will be
-		// refused and the work re-executed after its leases expire — a cost, not a corruption.
+		// Delivery still opens. Nothing was adopted, so the relay's held results arrive under a
+		// lease this session does not own and go unacknowledged until a later hello adopts
+		// them — a delay, not a loss.
 		session.logger.ErrorContext(session.ctx, "adopting in-flight work",
 			slog.String("error", err.Error()))
 		return
@@ -513,24 +325,144 @@ func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlig
 		slog.Int("adopted", len(adopted)))
 }
 
-// readInto moves the stream's receive side onto a channel. It ends when the stream does,
-// which is guaranteed once the handler returns.
-func readInto(
-	stream relayv1.RelaySessionService_ConnectServer,
-	inbound chan<- *relayv1.RelayToControl,
-	failed chan<- error,
-) {
+// deliver claims work and sends it. It runs on the relay's hello and then periodically, so
+// delivery never depends on an event notification that is not durable: a missed notification
+// delays work by one interval instead of losing it.
+func (s *SessionService) deliver(session *sessionState) {
+	ticker := time.NewTicker(deliveryInterval)
+	defer ticker.Stop()
+
+	// Which executions this session has already asked the relay to stop. It belongs to this
+	// goroutine alone, which is what makes it safe without a lock, and it is per session: a
+	// successor tells the relay again, because it cannot know its predecessor's message landed.
+	told := map[storage.InFlightJob]bool{}
+
 	for {
-		message, err := stream.Recv()
-		if err != nil {
-			failed <- err
-			return
+		if err := s.deliverOnce(session, told); err != nil {
+			if session.ctx.Err() != nil {
+				return
+			}
+			session.logger.Warn("delivering work", slog.String("error", err.Error()))
 		}
 		select {
-		case inbound <- message:
-		case <-stream.Context().Done():
+		case <-session.ctx.Done():
 			return
+		case <-ticker.C:
 		}
+	}
+}
+
+func (s *SessionService) deliverOnce(
+	session *sessionState, told map[storage.InFlightJob]bool,
+) error {
+	if err := s.dispatchWork(session); err != nil {
+		return err
+	}
+	return s.dispatchCancellations(session, told)
+}
+
+func (s *SessionService) dispatchWork(session *sessionState) error {
+	if session.draining.Load() {
+		// A draining session takes no new work. Anything claimed now would be leased to a relay
+		// that is disconnecting and would then sit unexecuted until its lease ran out.
+		return nil
+	}
+	ctx := session.ctx
+
+	// The claim commits before anything is sent. A crash between the two leaves a leased job
+	// whose lease expires and is swept, which is recoverable; sending first would leave work
+	// delivered but unrecorded, which is not.
+	//
+	// Capacity is a ceiling on what the relay holds at once, not a batch size. Claiming a
+	// batch every round regardless would lease a whole backlog to one relay within minutes,
+	// stranding all of it behind whatever that relay can actually run.
+	claimed, err := s.placements.ClaimJobs(ctx, session.organization, storage.JobClaim{
+		RegistrationID: session.registrationID,
+		SessionID:      session.id,
+		LeaseFor:       leaseDuration,
+		Capacity:       int(session.capacity.Load()),
+	})
+	if err != nil {
+		return err
+	}
+	for _, job := range claimed {
+		assignment, buildErr := assignmentFor(session, job)
+		if buildErr != nil {
+			s.failUndeliverable(session, job)
+			continue
+		}
+		if err = send(ctx, session.outbound, assignment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dispatchCancellations tells the relay about work it has been asked to stop, once each. A
+// stop is advisory and the job stays leased until its outcome is recorded, so repeating it on
+// every round would put hundreds of messages on a stream that carries real work.
+func (s *SessionService) dispatchCancellations(
+	session *sessionState, told map[storage.InFlightJob]bool,
+) error {
+	pending, err := s.placements.PendingCancellations(
+		session.ctx, session.organization, session.id)
+	if err != nil {
+		return err
+	}
+
+	// Keyed by the execution rather than the job. A lease that expires and is claimed again is
+	// a different execution, and the one running now has not been told anything.
+	outstanding := make(map[storage.InFlightJob]bool, len(pending))
+	for _, fence := range pending {
+		outstanding[storage.InFlightJob{JobID: fence.JobID, LeaseEpoch: fence.LeaseEpoch}] = true
+	}
+	// Forgetting what is no longer outstanding keeps this the size of the work in hand rather
+	// than everything the session was ever asked to stop.
+	maps.DeleteFunc(told, func(execution storage.InFlightJob, _ bool) bool {
+		return !outstanding[execution]
+	})
+
+	for _, fence := range pending {
+		execution := storage.InFlightJob{JobID: fence.JobID, LeaseEpoch: fence.LeaseEpoch}
+		if told[execution] {
+			continue
+		}
+		if err = send(session.ctx, session.outbound, cancelling(fence)); err != nil {
+			return err
+		}
+		told[execution] = true
+	}
+	return nil
+}
+
+// failUndeliverable records the terminal outcome of a job that cannot be put on the wire.
+//
+// The arguments were encoded on this side, so a job that will not decode is a defect here and
+// no execution will ever change that. Recording it as failed ends it; leaving it leased would
+// cycle it through claim and expiry forever. Delivery then continues with the rest of the
+// batch, because one undeliverable job holding up every job behind it turns a defect into an
+// outage — and the jobs behind it are already leased to this session, so they would wait out
+// the whole lease rather than being redelivered.
+func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job) {
+	ctx := session.ctx
+
+	// The same failure shape a relay would report, so a reader of the result column has one
+	// taxonomy to understand rather than two.
+	outcome := storage.JobOutcome{
+		Status: storage.JobFailed,
+		Result: mustMarshal(&relayv1.JobFailure{Kind: relayv1.JobFailure_KIND_ARGUMENTS_REJECTED}),
+	}
+	fence := storage.JobFence{
+		JobID: job.ID, LeaseSession: session.id, LeaseEpoch: job.LeaseEpoch,
+	}
+
+	session.logger.ErrorContext(ctx, "job arguments cannot be encoded for dispatch",
+		slog.String("job_id", job.ID.String()),
+		slog.String("capability_id", job.CapabilityID))
+	if _, err := s.placements.RecordResult(ctx, session.organization, fence, outcome); err != nil {
+		session.logger.ErrorContext(ctx, "failing an undeliverable job",
+			slog.String("job_id", job.ID.String()),
+			slog.String("error", err.Error()))
 	}
 }
 
@@ -560,20 +492,34 @@ func (s *SessionService) recordAndAcknowledge(
 	switch {
 	case err == nil:
 		return send(ctx, session.outbound, resultAck(result, relayv1.ResultAck_DISPOSITION_RECORDED))
-	case errors.Is(err, storage.ErrResultRefused) && refusal == storage.ResultAlreadyRecorded:
-		return send(ctx, session.outbound, resultAck(result, relayv1.ResultAck_DISPOSITION_ALREADY_RECORDED))
-	case errors.Is(err, storage.ErrResultRefused):
-		// A superseded lease is told to stop resending rather than left to retry: the job's
-		// fate belongs to the execution that owns it now.
-		s.logger.WarnContext(ctx, "result refused",
-			slog.String("job_id", jobID.String()),
-			slog.String("reason", refusal.String()))
-		return send(ctx, session.outbound, resultAck(result, relayv1.ResultAck_DISPOSITION_STALE_STOP_RESENDING))
-	default:
+
+	case !errors.Is(err, storage.ErrResultRefused):
 		// Nothing is acknowledged, so the relay resends. An unsent acknowledgement costs a
 		// safe resend; a wrong one costs the result.
 		s.logger.ErrorContext(ctx, "recording result", slog.String("error", err.Error()))
 		return nil
+
+	case refusal == storage.ResultLeaseNotHeld:
+		// The execution has not been superseded — the lease is simply held elsewhere, because
+		// this session never adopted it. Telling the relay to stop resending would throw away a
+		// result nothing else is going to produce, so it is told nothing and keeps the result
+		// until a hello adopts the lease.
+		s.logger.WarnContext(ctx, "result arrived under a lease this session does not hold",
+			slog.String("job_id", jobID.String()))
+		return nil
+
+	case refusal == storage.ResultAlreadyRecorded:
+		return send(ctx, session.outbound,
+			resultAck(result, relayv1.ResultAck_DISPOSITION_ALREADY_RECORDED))
+
+	default:
+		// A genuinely superseded execution is told to stop resending rather than left to
+		// retry: the job's fate belongs to the execution that owns it now.
+		s.logger.WarnContext(ctx, "result refused",
+			slog.String("job_id", jobID.String()),
+			slog.String("reason", refusal.String()))
+		return send(ctx, session.outbound,
+			resultAck(result, relayv1.ResultAck_DISPOSITION_STALE_STOP_RESENDING))
 	}
 }
 
@@ -581,6 +527,27 @@ func (s *SessionService) recordAndAcknowledge(
 func namedJob(identifier string) (uuid.UUID, bool) {
 	parsed, err := uuid.Parse(identifier)
 	return parsed, err == nil
+}
+
+// readInto moves the stream's receive side onto a channel. It ends when the stream does,
+// which is guaranteed once the handler returns.
+func readInto(
+	stream relayv1.RelaySessionService_ConnectServer,
+	inbound chan<- *relayv1.RelayToControl,
+	failed chan<- error,
+) {
+	for {
+		message, err := stream.Recv()
+		if err != nil {
+			failed <- err
+			return
+		}
+		select {
+		case inbound <- message:
+		case <-stream.Context().Done():
+			return
+		}
+	}
 }
 
 // runSender owns the stream's write side. Every message goes through here, so the one
@@ -604,99 +571,13 @@ func runSender(
 
 // send queues a message, giving up if the session is ending. The queue is bounded, so a
 // relay that stops reading applies backpressure instead of growing memory here.
-func send(ctx context.Context, outbound chan<- *relayv1.ControlToRelay, message *relayv1.ControlToRelay) error {
+func send(
+	ctx context.Context, outbound chan<- *relayv1.ControlToRelay, message *relayv1.ControlToRelay,
+) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case outbound <- message:
 		return nil
 	}
-}
-
-func accepted(sessionID uuid.UUID) *relayv1.ControlToRelay {
-	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_SessionAccepted{
-		SessionAccepted: &relayv1.SessionAccepted{
-			SessionId:         sessionID.String(),
-			ProtocolVersion:   protocolVersion,
-			HeartbeatInterval: durationpb.New(heartbeatInterval),
-			MaxReceiveBytes:   maxMessageBytes,
-			MaxSendBytes:      maxMessageBytes,
-		},
-	}}
-}
-
-// cancelling asks the relay to stop an execution. It carries the fence so the relay can tell
-// which execution of the job it is being asked to stop, rather than the job in the abstract.
-func cancelling(fence storage.JobFence) *relayv1.ControlToRelay {
-	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_Cancellation{
-		Cancellation: &relayv1.Cancellation{
-			JobId:      fence.JobID.String(),
-			LeaseEpoch: uint64(fence.LeaseEpoch),
-		},
-	}}
-}
-
-func draining(within time.Duration) *relayv1.ControlToRelay {
-	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_DrainInstruction{
-		DrainInstruction: &relayv1.DrainInstruction{Deadline: durationpb.New(within)},
-	}}
-}
-
-func assignmentFor(session *sessionState, job storage.Job) (*relayv1.ControlToRelay, error) {
-	arguments := &relayv1.CapabilityArguments{}
-	if err := proto.Unmarshal(job.Arguments, arguments); err != nil {
-		return nil, err
-	}
-	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_JobAssignment{
-		JobAssignment: &relayv1.JobAssignment{
-			JobId: job.ID.String(),
-			OrgId: session.organization.String(),
-			// Both identities travel so the relay can check the assignment against the identity
-			// it enrolled with; a mismatch is a possible control-plane compromise, not a routing
-			// mistake to be tolerated.
-			RegistrationId: session.registrationID.String(),
-			CapabilityId:   job.CapabilityID,
-			// The relay selects its implementation by version, so an assignment without one
-			// names a capability it cannot decide how to execute.
-			CapabilityVersion: job.CapabilityVersion,
-			LeaseEpoch:        uint64(job.LeaseEpoch),
-			DeadlineBudget:    durationpb.New(executionBudget),
-			IdempotencyKey:    job.ID.String(),
-			Arguments:         arguments,
-		},
-	}}, nil
-}
-
-func resultAck(result *relayv1.JobResult, disposition relayv1.ResultAck_Disposition) *relayv1.ControlToRelay {
-	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_ResultAck{
-		ResultAck: &relayv1.ResultAck{
-			JobId:       result.GetJobId(),
-			LeaseEpoch:  result.GetLeaseEpoch(),
-			Disposition: disposition,
-		},
-	}}
-}
-
-// outcomeOf reduces a wire result to what is durable. A failure is recorded as a failure
-// rather than discarded: an investigation that could not gather evidence is a fact about the
-// investigation, not an absence of one.
-func outcomeOf(result *relayv1.JobResult) storage.JobOutcome {
-	if result.GetFailure() != nil {
-		return storage.JobOutcome{Status: storage.JobFailed, Result: mustMarshal(result.GetFailure())}
-	}
-	return storage.JobOutcome{Status: storage.JobSucceeded, Result: mustMarshal(result.GetResult())}
-}
-
-// mustMarshal returns the encoded message, or nil when there is nothing to encode. A failure
-// to marshal a message that was just received is not recoverable and not worth propagating;
-// the outcome is still recorded, with an empty payload that is visibly wrong.
-func mustMarshal(message proto.Message) []byte {
-	if message == nil {
-		return nil
-	}
-	encoded, err := proto.Marshal(message)
-	if err != nil {
-		return nil
-	}
-	return encoded
 }
