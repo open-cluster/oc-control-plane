@@ -94,7 +94,10 @@ func (s *SessionService) Connect(stream relayv1.RelaySessionService_ConnectServe
 	}
 	session.logger.Info("relay session established")
 
-	go s.deliver(session)
+	// Delivery deliberately does not start here. It starts on the relay's hello, so work the
+	// relay is still executing is adopted before anything new is claimed — otherwise a claim
+	// could take a job whose lease had expired underneath a relay that never stopped running
+	// it, and that relay's finished result would have nowhere to go.
 
 	// Receiving runs on its own goroutine so the session loop can wait on a message and on
 	// every other way a session ends at the same time. A blocking receive could not notice a
@@ -153,6 +156,9 @@ type sessionState struct {
 	logger         *slog.Logger
 	ctx            context.Context
 	stop           context.CancelFunc
+	// delivering guards the start of delivery. A relay may say hello more than once — the
+	// protocol refreshes attestations that way — and only the first one starts anything.
+	delivering sync.Once
 }
 
 // liveSessions is the one live session per registration.
@@ -422,6 +428,10 @@ func (s *SessionService) run(
 // errors: the envelope evolves additively, and a relay may legitimately send more than the
 // control plane has learned to use.
 func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToControl) error {
+	if hello := message.GetHello(); hello != nil {
+		s.greet(session, hello)
+		return nil
+	}
 	if result := message.GetJobResult(); result != nil {
 		return s.recordAndAcknowledge(session, result)
 	}
@@ -434,6 +444,73 @@ func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToC
 			slog.String("disposition", acknowledged.GetDisposition().String()))
 	}
 	return nil
+}
+
+// greet adopts the work a relay says it never stopped executing, then opens delivery.
+//
+// A relay that reconnects mid-execution is holding results it cannot record: a result must
+// arrive on the session that owns the lease, and its old session is gone. Adoption moves those
+// leases onto this session at the same generation, so the work survives the reconnection
+// instead of being thrown away and done again.
+//
+// The relay's account is attested and unprivileged. What may be adopted is decided entirely by
+// what the database already says, and a declaration that matches nothing changes nothing.
+func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) {
+	session.logger.InfoContext(session.ctx, "relay said hello",
+		slog.String("relay_version", hello.GetRelayVersion()),
+		slog.Uint64("protocol_version", uint64(hello.GetProtocolVersion())),
+		slog.Int("declared_in_flight", len(hello.GetInFlight())),
+		// Both are the relay's self-report of its own configuration. They are recorded here
+		// for an operator to see and are never a basis for a decision on this side.
+		slog.String("local_policy_hash", hello.GetLocalPolicyHash()),
+		slog.Bool("endpoint_pinning_disabled", hello.GetEndpointPinningDisabled()))
+
+	s.adopt(session, hello.GetInFlight())
+	session.delivering.Do(func() { go s.deliver(session) })
+}
+
+func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlightJob) {
+	if len(declared) == 0 {
+		return
+	}
+	// A relay is never dispatched more than this, so a longer list describes work this control
+	// plane did not assign. The excess is dropped and said aloud rather than silently trimmed.
+	if len(declared) > maxJobsInFlight {
+		session.logger.WarnContext(session.ctx, "relay declared more work than it can hold",
+			slog.Int("declared", len(declared)),
+			slog.Int("considered", maxJobsInFlight))
+		declared = declared[:maxJobsInFlight]
+	}
+
+	inFlight := make([]storage.InFlightJob, 0, len(declared))
+	for _, job := range declared {
+		// The elapsed time a relay reports is provenance, never a fence input: a clock this
+		// side does not own cannot be allowed to decide who owns a lease.
+		jobID, named := namedJob(job.GetJobId())
+		if !named {
+			continue
+		}
+		inFlight = append(inFlight,
+			storage.InFlightJob{JobID: jobID, LeaseEpoch: int64(job.GetLeaseEpoch())})
+	}
+
+	adopted, err := s.placements.AdoptInFlightLeases(session.ctx, session.organization,
+		storage.LeaseAdoption{
+			RegistrationID: session.registrationID,
+			SessionID:      session.id,
+			LeaseFor:       leaseDuration,
+			InFlight:       inFlight,
+		})
+	if err != nil {
+		// Delivery still opens. Nothing was adopted, so the relay's held results will be
+		// refused and the work re-executed after its leases expire — a cost, not a corruption.
+		session.logger.ErrorContext(session.ctx, "adopting in-flight work",
+			slog.String("error", err.Error()))
+		return
+	}
+	session.logger.InfoContext(session.ctx, "adopted work the relay never stopped executing",
+		slog.Int("declared", len(inFlight)),
+		slog.Int("adopted", len(adopted)))
 }
 
 // readInto moves the stream's receive side onto a channel. It ends when the stream does,

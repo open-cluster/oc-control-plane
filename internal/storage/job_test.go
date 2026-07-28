@@ -281,6 +281,124 @@ func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 	}
 }
 
+// A relay that reconnects mid-execution is still holding the result of work it was legitimately
+// assigned. Adoption is what lets that result still be recorded — and it is the one place a
+// relay's own account of the world is allowed to change durable state, so what it CANNOT do
+// matters more than what it can.
+func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
+	t.Parallel()
+	placements, organization := migratedPlacement(t)
+	registration := uuid.New()
+
+	t.Run("work still executing moves to the new session and can still be recorded", func(t *testing.T) {
+		enqueue(t, placements, organization, registration)
+		leased := claim(t, placements, organization, registration, uuid.New())[0]
+
+		reconnected := uuid.New()
+		adopt(t, placements, organization, storage.LeaseAdoption{
+			RegistrationID: registration,
+			SessionID:      reconnected,
+			LeaseFor:       time.Minute,
+			InFlight: []storage.InFlightJob{
+				{JobID: leased.ID, LeaseEpoch: leased.LeaseEpoch},
+			},
+		}, 1)
+
+		// The generation must be unchanged. Raising it would invalidate the very result the
+		// relay is holding, which is the thing adoption exists to preserve.
+		fence := storage.JobFence{
+			JobID: leased.ID, LeaseSession: reconnected, LeaseEpoch: leased.LeaseEpoch,
+		}
+		if _, err := placements.RecordResult(context.Background(), organization, fence,
+			storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("carried over")},
+		); err != nil {
+			t.Fatalf("the reconnected relay could not record work it never stopped executing: %v", err)
+		}
+	})
+
+	t.Run("a generation the relay does not hold adopts nothing", func(t *testing.T) {
+		enqueue(t, placements, organization, registration)
+		leased := claim(t, placements, organization, registration, uuid.New())[0]
+
+		// Naming a later generation is how a relay would claim an execution that superseded
+		// its own. The fence decides, not the declaration.
+		adopt(t, placements, organization, storage.LeaseAdoption{
+			RegistrationID: registration,
+			SessionID:      uuid.New(),
+			LeaseFor:       time.Minute,
+			InFlight: []storage.InFlightJob{
+				{JobID: leased.ID, LeaseEpoch: leased.LeaseEpoch + 1},
+			},
+		}, 0)
+	})
+
+	t.Run("another registration's work is untouchable", func(t *testing.T) {
+		enqueue(t, placements, organization, registration)
+		leased := claim(t, placements, organization, registration, uuid.New())[0]
+
+		adopt(t, placements, organization, storage.LeaseAdoption{
+			RegistrationID: uuid.New(),
+			SessionID:      uuid.New(),
+			LeaseFor:       time.Minute,
+			InFlight: []storage.InFlightJob{
+				{JobID: leased.ID, LeaseEpoch: leased.LeaseEpoch},
+			},
+		}, 0)
+	})
+
+	t.Run("finished work is not revived", func(t *testing.T) {
+		enqueue(t, placements, organization, registration)
+		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		fence := storage.JobFence{
+			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
+		}
+		if _, err := placements.RecordResult(context.Background(), organization, fence,
+			storage.JobOutcome{Status: storage.JobSucceeded}); err != nil {
+			t.Fatalf("recording: %v", err)
+		}
+
+		// A job whose outcome exists must not be reopened by a relay that still thinks it is
+		// running it — that would put a finished job back on the wire.
+		adopt(t, placements, organization, storage.LeaseAdoption{
+			RegistrationID: registration,
+			SessionID:      uuid.New(),
+			LeaseFor:       time.Minute,
+			InFlight: []storage.InFlightJob{
+				{JobID: leased.ID, LeaseEpoch: leased.LeaseEpoch},
+			},
+		}, 0)
+	})
+
+	t.Run("work that was never enqueued cannot be invented", func(t *testing.T) {
+		adopt(t, placements, organization, storage.LeaseAdoption{
+			RegistrationID: registration,
+			SessionID:      uuid.New(),
+			LeaseFor:       time.Minute,
+			InFlight:       []storage.InFlightJob{{JobID: uuid.New(), LeaseEpoch: 1}},
+		}, 0)
+	})
+}
+
+// adopt runs an adoption and asserts how much of it was accepted.
+func adopt(
+	t *testing.T,
+	placements *storage.Placements,
+	organization tenancy.Organization,
+	adoption storage.LeaseAdoption,
+	want int,
+) {
+	t.Helper()
+
+	adopted, err := placements.AdoptInFlightLeases(context.Background(), organization, adoption)
+	if err != nil {
+		t.Fatalf("adopting in-flight leases: %v", err)
+	}
+	if len(adopted) != want {
+		t.Fatalf("adopted %d of %d declared jobs, want %d",
+			len(adopted), len(adoption.InFlight), want)
+	}
+}
+
 func migratedPlacement(t *testing.T) (*storage.Placements, tenancy.Organization) {
 	t.Helper()
 

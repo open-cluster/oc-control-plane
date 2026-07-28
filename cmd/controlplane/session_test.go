@@ -326,6 +326,62 @@ func TestRelaySession(t *testing.T) {
 	})
 }
 
+// A relay that reconnects part-way through a job is still holding that job's result. Without
+// adoption the result arrives on a session that does not own the lease, is refused as stale,
+// and the whole execution is thrown away and done again once the lease expires — so a network
+// blip costs an investigation its evidence twice over.
+func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
+	const organization = "org-a"
+
+	relayAddress := freeAddress(t)
+	var placementDSN string
+	startControlPlane(t, func(cfg *config.Config) {
+		cfg.RelayAddress = relayAddress
+		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
+		for _, dsn := range cfg.Placements {
+			placementDSN = dsn
+		}
+	})
+
+	connection := dialRelay(t, relayAddress)
+	relay := registerRelay(t, connection, placementDSN, organization)
+	placements := openPlacement(t, placementDSN)
+	owner := namedOrganization(t, organization)
+
+	job := enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+
+	before := connectSession(t, connection, organization, relay)
+	awaitSessionAccepted(t, before)
+	assignment := awaitAssignment(t, before)
+	if assignment.GetJobId() != job.String() {
+		t.Fatalf("delivered job %q, want %v", assignment.GetJobId(), job)
+	}
+
+	// The relay reconnects while still executing, and declares what it never stopped doing.
+	// Reconnecting is what ends the session before it, so nothing has to be closed here.
+	after := connectSessionDeclaring(t, connection, organization, relay,
+		[]*relayv1.InFlightJob{{
+			JobId:      assignment.GetJobId(),
+			LeaseEpoch: assignment.GetLeaseEpoch(),
+			ElapsedMs:  4_000,
+		}})
+	awaitSessionAccepted(t, after)
+
+	// The execution finishes on the new stream, still echoing the generation it was assigned
+	// under, because adoption deliberately did not raise it.
+	sendResult(t, after, assignment.GetJobId(), assignment.GetLeaseEpoch())
+
+	acknowledged := awaitResultAck(t, after)
+	if acknowledged.GetJobId() != job.String() {
+		t.Fatalf("acknowledged job %q, want %v", acknowledged.GetJobId(), job)
+	}
+	if acknowledged.GetDisposition() != relayv1.ResultAck_DISPOSITION_RECORDED {
+		t.Fatalf("work carried across a reconnection was acknowledged as %v, want recorded — "+
+			"anything else discards an execution that actually finished",
+			acknowledged.GetDisposition())
+	}
+}
+
 // A long-lived stream does not end because the process was asked to stop, so shutdown has to
 // end it. Waiting for the relay to notice would let one unresponsive relay hold the process
 // open for as long as it stayed silent — a deploy that hangs on a customer's network problem.
@@ -437,11 +493,26 @@ func registerRelay(
 	return relayCredentials{registration: registration, credential: response.GetCredential()}
 }
 
-// connectSession opens the stream and leaves it open for the duration of the test. The
-// deadline bounds a failure: without it a message that never arrives hangs until the whole
-// suite times out, which reports nothing about which message was missing.
+// connectSession opens a stream for a relay carrying nothing over from a previous one.
 func connectSession(
 	t *testing.T, connection *grpc.ClientConn, organization string, relay relayCredentials,
+) relayv1.RelaySessionService_ConnectClient {
+	t.Helper()
+	return connectSessionDeclaring(t, connection, organization, relay, nil)
+}
+
+// connectSessionDeclaring opens the stream, says hello as a real relay does, and leaves it
+// open for the duration of the test. The hello is what opens delivery, so a client that
+// skipped it would be testing a session no relay ever has.
+//
+// The deadline bounds a failure: without it a message that never arrives hangs until the whole
+// suite times out, which reports nothing about which message was missing.
+func connectSessionDeclaring(
+	t *testing.T,
+	connection *grpc.ClientConn,
+	organization string,
+	relay relayCredentials,
+	inFlight []*relayv1.InFlightJob,
 ) relayv1.RelaySessionService_ConnectClient {
 	t.Helper()
 
@@ -452,6 +523,21 @@ func connectSession(
 		Connect(sessionMetadata(ctx, organization, relay))
 	if err != nil {
 		t.Fatalf("opening the session: %v", err)
+	}
+
+	err = stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_Hello{
+		Hello: &relayv1.Hello{
+			ProtocolVersion:   1,
+			RelayVersion:      "0.1.0-test",
+			MaxConcurrentJobs: 4,
+			Capabilities: []*relayv1.CapabilityDescriptor{
+				{CapabilityId: capabilityUnderTest, CapabilityVersion: capabilityVersionUnderTest},
+			},
+			InFlight: inFlight,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("saying hello: %v", err)
 	}
 	return stream
 }

@@ -245,6 +245,81 @@ func (p *Placements) explainRefusedResult(
 	}
 }
 
+// InFlightJob is a job a relay says it is still executing, as the relay names it: the job, and
+// the generation of the lease it was assigned under. The session is not part of it, because a
+// relay never learns which session held its lease.
+type InFlightJob struct {
+	JobID      uuid.UUID
+	LeaseEpoch int64
+}
+
+// LeaseAdoption is a reconnected relay's account of what it never stopped doing.
+type LeaseAdoption struct {
+	RegistrationID uuid.UUID
+	SessionID      uuid.UUID
+	LeaseFor       time.Duration
+	InFlight       []InFlightJob
+}
+
+// AdoptInFlightLeases moves the leases for work a relay is still executing onto its new
+// session, and reports which jobs were actually adopted.
+//
+// This is the one place a relay's own account of the world changes durable state, so what it
+// cannot do is the point. The declaration has no authority: it can only renew a lease on a job
+// already leased to this registration at the generation it names. It cannot create work,
+// complete work, take work from another registration, revive work that has finished, or claim
+// an execution that superseded its own — in every one of those cases no row matches and
+// nothing happens, which is the fence deciding rather than the relay.
+//
+// The generation is deliberately not raised. Raising it would invalidate the very result the
+// relay is holding, which is the thing this exists to preserve.
+func (p *Placements) AdoptInFlightLeases(
+	ctx context.Context, organization tenancy.Organization, adoption LeaseAdoption,
+) ([]uuid.UUID, error) {
+	if len(adoption.InFlight) == 0 {
+		return nil, nil
+	}
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return nil, err
+	}
+
+	jobs := make([]uuid.UUID, 0, len(adoption.InFlight))
+	epochs := make([]int64, 0, len(adoption.InFlight))
+	for _, declared := range adoption.InFlight {
+		jobs = append(jobs, declared.JobID)
+		epochs = append(epochs, declared.LeaseEpoch)
+	}
+
+	rows, err := pool.Query(ctx, `
+		UPDATE relay_job
+		   SET lease_session    = $3,
+		       lease_expires_at = now() + $4::interval
+		  FROM unnest($5::uuid[], $6::bigint[]) AS declared(job_id, lease_epoch)
+		 WHERE relay_job.job_id          = declared.job_id
+		   AND relay_job.lease_epoch     = declared.lease_epoch
+		   AND relay_job.organization    = $1
+		   AND relay_job.registration_id = $2
+		   AND relay_job.status          = 1
+		RETURNING relay_job.job_id`,
+		organization.String(), adoption.RegistrationID, adoption.SessionID,
+		adoption.LeaseFor.String(), jobs, epochs)
+	if err != nil {
+		return nil, fmt.Errorf("adopting in-flight leases: %w", err)
+	}
+	defer rows.Close()
+
+	var adopted []uuid.UUID
+	for rows.Next() {
+		var job uuid.UUID
+		if err = rows.Scan(&job); err != nil {
+			return nil, fmt.Errorf("reading an adopted lease: %w", err)
+		}
+		adopted = append(adopted, job)
+	}
+	return adopted, rows.Err()
+}
+
 // JobCancellation is what asking a job to stop actually did. The three cases are genuinely
 // different events, and a caller that cannot tell them apart either reports a stop that never
 // happened or hides an outcome that already did.
