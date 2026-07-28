@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
@@ -278,18 +279,25 @@ func TestRelaySession(t *testing.T) {
 		// client's own deadline would eventually end the stream too, and a test that accepted
 		// any error would pass against a server that never supersedes anything.
 		started := time.Now()
-		_, err := replaced.Recv()
+		told, err := awaitReconnectInstruction(t, replaced)
 		waited := time.Since(started)
 
-		if err == nil {
-			t.Fatal("the replaced session is still open; it would claim work the relay " +
-				"can no longer receive")
-		}
 		if reported, ok := status.FromError(err); !ok || reported.Code() != codes.Aborted {
 			t.Fatalf("the replaced session ended with %v, want Aborted", err)
 		}
 		if waited > 20*time.Second {
 			t.Errorf("the replaced session took %v to end; the relay is already gone", waited)
+		}
+
+		// Being displaced is told, not merely done. A relay that is dropped without explanation
+		// re-enters its backoff and goes quiet — and a relay displaced by something holding its
+		// credential must come back rather than assume it was meant to stop.
+		if told == nil {
+			t.Fatal("the replaced session was closed without being told to reconnect")
+		}
+		if told.GetRetryAfter().AsDuration() <= 0 {
+			t.Error("the reconnect instruction carries no delay, so two relays holding the " +
+				"same identity would displace each other as fast as they can connect")
 		}
 	})
 
@@ -326,6 +334,41 @@ func TestRelaySession(t *testing.T) {
 	})
 }
 
+// A relay speaking a protocol this control plane does not speak must be refused, and told so.
+// Carrying on would mean exchanging messages whose meaning the two sides do not agree on, and
+// the evidence this platform records is only worth what its provenance is worth.
+func TestRelaySessionRefusesAProtocolItDoesNotSpeak(t *testing.T) {
+	const organization = "org-a"
+
+	relayAddress := freeAddress(t)
+	var placementDSN string
+	startControlPlane(t, func(cfg *config.Config) {
+		cfg.RelayAddress = relayAddress
+		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
+		for _, dsn := range cfg.Placements {
+			placementDSN = dsn
+		}
+	})
+
+	connection := dialRelay(t, relayAddress)
+	relay := registerRelay(t, connection, placementDSN, organization)
+
+	stream := openStream(t, connection, organization, relay)
+	awaitSessionAccepted(t, stream)
+	sayHello(t, stream, protocolVersionUnderTest+1, nil)
+
+	var err error
+	for err == nil {
+		_, err = stream.Recv()
+	}
+	reported, ok := status.FromError(err)
+	if !ok || reported.Code() != codes.FailedPrecondition {
+		t.Fatalf("a relay speaking an unknown protocol was ended with %v, want "+
+			"FailedPrecondition — a relay treats that as terminal rather than retrying "+
+			"into the same mismatch", err)
+	}
+}
+
 // A relay that reconnects part-way through a job is still holding that job's result. Without
 // adoption the result arrives on a session that does not own the lease, is refused as stale,
 // and the whole execution is thrown away and done again once the lease expires — so a network
@@ -348,37 +391,145 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	placements := openPlacement(t, placementDSN)
 	owner := namedOrganization(t, organization)
 
-	job := enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+	// Two jobs, so the reconnection has something to carry over and something to give up.
+	enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+	enqueueJob(t, placements, owner, relay.registration, workloadArguments("checkout"))
 
 	before := connectSession(t, connection, organization, relay)
 	awaitSessionAccepted(t, before)
-	assignment := awaitAssignment(t, before)
-	if assignment.GetJobId() != job.String() {
-		t.Fatalf("delivered job %q, want %v", assignment.GetJobId(), job)
-	}
+	running := awaitAssignment(t, before)
+	dropped := awaitAssignment(t, before)
 
-	// The relay reconnects while still executing, and declares what it never stopped doing.
-	// Reconnecting is what ends the session before it, so nothing has to be closed here.
+	// The relay reconnects still executing one of them, and says so. Reconnecting is what ends
+	// the session before it, so nothing has to be closed here.
 	after := connectSessionDeclaring(t, connection, organization, relay,
 		[]*relayv1.InFlightJob{{
-			JobId:      assignment.GetJobId(),
-			LeaseEpoch: assignment.GetLeaseEpoch(),
+			JobId:      running.GetJobId(),
+			LeaseEpoch: running.GetLeaseEpoch(),
 			ElapsedMs:  4_000,
 		}})
 	awaitSessionAccepted(t, after)
 
-	// The execution finishes on the new stream, still echoing the generation it was assigned
-	// under, because adoption deliberately did not raise it.
+	t.Run("work the relay never stopped can still be recorded", func(t *testing.T) {
+		// The execution finishes on the new stream, still echoing the generation it was assigned
+		// under, because adoption deliberately did not raise it.
+		sendResult(t, after, running.GetJobId(), running.GetLeaseEpoch())
+
+		acknowledged := awaitResultAck(t, after)
+		if acknowledged.GetJobId() != running.GetJobId() {
+			t.Fatalf("acknowledged job %q, want %q", acknowledged.GetJobId(), running.GetJobId())
+		}
+		if acknowledged.GetDisposition() != relayv1.ResultAck_DISPOSITION_RECORDED {
+			t.Fatalf("work carried across a reconnection was acknowledged as %v, want "+
+				"recorded — anything else discards an execution that actually finished",
+				acknowledged.GetDisposition())
+		}
+	})
+
+	t.Run("work the relay is not running comes back at once", func(t *testing.T) {
+		// The job it did not declare is being executed by nothing: the session that held it is
+		// gone. Leaving it leased would add a full lease of doing nothing to the far side of
+		// every blip, so it must be redelivered now rather than in ten minutes.
+		redelivered := awaitAssignment(t, after)
+		if redelivered.GetJobId() != dropped.GetJobId() {
+			t.Fatalf("delivered job %q, want the undeclared %q back",
+				redelivered.GetJobId(), dropped.GetJobId())
+		}
+		if redelivered.GetLeaseEpoch() <= dropped.GetLeaseEpoch() {
+			t.Errorf("redelivered at generation %d, which does not supersede %d — the "+
+				"abandoned execution's late result would still be recordable",
+				redelivered.GetLeaseEpoch(), dropped.GetLeaseEpoch())
+		}
+	})
+}
+
+// A capability payload carrying fields this build cannot read is refused, and refusing it
+// touches nothing durable. Recording it would state that a workload was read and understood
+// when part of what came back was never looked at, and evidence is only worth what its
+// provenance is worth.
+func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
+	const organization = "org-a"
+
+	relayAddress := freeAddress(t)
+	var placementDSN string
+	startControlPlane(t, func(cfg *config.Config) {
+		cfg.RelayAddress = relayAddress
+		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
+		for _, dsn := range cfg.Placements {
+			placementDSN = dsn
+		}
+	})
+
+	connection := dialRelay(t, relayAddress)
+	relay := registerRelay(t, connection, placementDSN, organization)
+	placements := openPlacement(t, placementDSN)
+	owner := namedOrganization(t, organization)
+
+	enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+
+	before := connectSession(t, connection, organization, relay)
+	awaitSessionAccepted(t, before)
+	assignment := awaitAssignment(t, before)
+
+	sendUnreadableResult(t, before, assignment.GetJobId(), assignment.GetLeaseEpoch())
+
+	var err error
+	for err == nil {
+		_, err = before.Recv()
+	}
+	if reported, ok := status.FromError(err); !ok || reported.Code() != codes.InvalidArgument {
+		t.Fatalf("a result carrying unreadable fields ended the session with %v, want "+
+			"InvalidArgument", err)
+	}
+
+	// Nothing durable may have happened. The relay reconnects, declares the job it is still
+	// holding a result for, and sends a result this build can read: if the refused one had been
+	// stored, this would come back as already recorded rather than recorded.
+	after := connectSessionDeclaring(t, connection, organization, relay,
+		[]*relayv1.InFlightJob{{
+			JobId:      assignment.GetJobId(),
+			LeaseEpoch: assignment.GetLeaseEpoch(),
+		}})
+	awaitSessionAccepted(t, after)
 	sendResult(t, after, assignment.GetJobId(), assignment.GetLeaseEpoch())
 
 	acknowledged := awaitResultAck(t, after)
-	if acknowledged.GetJobId() != job.String() {
-		t.Fatalf("acknowledged job %q, want %v", acknowledged.GetJobId(), job)
-	}
 	if acknowledged.GetDisposition() != relayv1.ResultAck_DISPOSITION_RECORDED {
-		t.Fatalf("work carried across a reconnection was acknowledged as %v, want recorded — "+
-			"anything else discards an execution that actually finished",
+		t.Errorf("after a refused result the job was acknowledged as %v, want recorded — a "+
+			"protocol refusal must leave job truth exactly as it found it",
 			acknowledged.GetDisposition())
+	}
+}
+
+// sendUnreadableResult reports an outcome carrying a field this build has never heard of,
+// nested inside a repeated message so the refusal has to be looking further than the top level.
+// It is how a relay built against a newer schema would sound.
+func sendUnreadableResult(
+	t *testing.T, stream relayv1.RelaySessionService_ConnectClient, job string, epoch uint64,
+) {
+	t.Helper()
+
+	pod := &relayv1.KubernetesPodRuntime{Name: "api-0", Phase: "Running"}
+	// Field 999, a varint — a number no version of this schema assigns.
+	pod.ProtoReflect().SetUnknown(protoreflect.RawFields{0xb8, 0x3e, 0x01})
+
+	err := stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_JobResult{
+		JobResult: &relayv1.JobResult{
+			JobId:      job,
+			LeaseEpoch: epoch,
+			Outcome: &relayv1.JobResult_Result{Result: &relayv1.CapabilityResult{
+				Result: &relayv1.CapabilityResult_KubernetesWorkloadRuntimeV1{
+					KubernetesWorkloadRuntimeV1: &relayv1.KubernetesWorkloadRuntimeResultV1{
+						Outcome:  relayv1.KubernetesReadOutcome_KUBERNETES_READ_OUTCOME_SUCCESS,
+						Pods:     []*relayv1.KubernetesPodRuntime{pod},
+						Complete: true,
+					},
+				},
+			}},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("sending the unreadable result: %v", err)
 	}
 }
 
@@ -517,6 +668,7 @@ func TestRelaySessionRefusesUnprovenIdentity(t *testing.T) {
 const (
 	capabilityUnderTest        = "kubernetes.workload.runtime"
 	capabilityVersionUnderTest = 1
+	protocolVersionUnderTest   = 1
 )
 
 // relayCredentials is a registered relay's durable identity, as the relay itself holds it.
@@ -577,6 +729,18 @@ func connectSessionDeclaring(
 ) relayv1.RelaySessionService_ConnectClient {
 	t.Helper()
 
+	stream := openStream(t, connection, organization, relay)
+	sayHello(t, stream, protocolVersionUnderTest, inFlight)
+	return stream
+}
+
+// openStream opens the session without saying anything on it, for the tests whose subject is
+// the hello itself.
+func openStream(
+	t *testing.T, connection *grpc.ClientConn, organization string, relay relayCredentials,
+) relayv1.RelaySessionService_ConnectClient {
+	t.Helper()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 
@@ -585,10 +749,20 @@ func connectSessionDeclaring(
 	if err != nil {
 		t.Fatalf("opening the session: %v", err)
 	}
+	return stream
+}
 
-	err = stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_Hello{
+func sayHello(
+	t *testing.T,
+	stream relayv1.RelaySessionService_ConnectClient,
+	protocolVersion uint32,
+	inFlight []*relayv1.InFlightJob,
+) {
+	t.Helper()
+
+	err := stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_Hello{
 		Hello: &relayv1.Hello{
-			ProtocolVersion:   1,
+			ProtocolVersion:   protocolVersion,
 			RelayVersion:      "0.1.0-test",
 			MaxConcurrentJobs: 4,
 			Capabilities: []*relayv1.CapabilityDescriptor{
@@ -600,7 +774,6 @@ func connectSessionDeclaring(
 	if err != nil {
 		t.Fatalf("saying hello: %v", err)
 	}
-	return stream
 }
 
 // refuseSession opens a session that must not be accepted and returns the refusal message.
@@ -666,6 +839,25 @@ func awaitResultAck(
 		func(message *relayv1.ControlToRelay) *relayv1.ResultAck {
 			return message.GetResultAck()
 		})
+}
+
+// awaitReconnectInstruction drains a session that is being closed, returning the reconnect
+// instruction if one arrived before the end and the status that ended it.
+func awaitReconnectInstruction(
+	t *testing.T, stream relayv1.RelaySessionService_ConnectClient,
+) (*relayv1.GracefulReconnect, error) {
+	t.Helper()
+
+	var told *relayv1.GracefulReconnect
+	for {
+		message, err := stream.Recv()
+		if err != nil {
+			return told, err
+		}
+		if reconnect := message.GetGracefulReconnect(); reconnect != nil {
+			told = reconnect
+		}
+	}
 }
 
 func awaitCancellation(

@@ -345,6 +345,44 @@ func (p *Placements) AdoptInFlightLeases(
 	return adopted, rows.Err()
 }
 
+// ReleaseStrandedLeases returns to pending every job this registration has leased to anything
+// other than the given holder, and reports how many.
+//
+// It is the other half of adoption. A relay has one session, so once its current session has
+// adopted everything the relay says it is still executing, whatever is left leased belongs to a
+// session that is gone and to an execution the relay is not running. Waiting out a full lease
+// on that work would add ten minutes of nothing to every network blip.
+//
+// The caller must only use this when it knows the relay's account was complete. Releasing work
+// a relay is in fact still executing does not corrupt anything — the fence still decides who
+// may record — but it does mean that execution's result is refused and the work is done twice.
+func (p *Placements) ReleaseStrandedLeases(
+	ctx context.Context,
+	organization tenancy.Organization,
+	registrationID, holder uuid.UUID,
+) (int64, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return 0, err
+	}
+	tag, err := pool.Exec(ctx, `
+		UPDATE relay_job
+		   SET status           = 0,
+		       lease_session    = NULL,
+		       lease_expires_at = NULL
+		 WHERE organization     = $1
+		   AND registration_id  = $2
+		   AND status           = 1
+		   AND lease_session IS DISTINCT FROM $3`,
+		organization.String(), registrationID, holder)
+	if err != nil {
+		return 0, fmt.Errorf("releasing stranded leases: %w", err)
+	}
+	// The generation is left alone. The next claim raises it, which is what makes a late result
+	// from the released execution refusable rather than recordable.
+	return tag.RowsAffected(), nil
+}
+
 // JobCancellation is what asking a job to stop actually did. The three cases are genuinely
 // different events, and a caller that cannot tell them apart either reports a stop that never
 // happened or hides an outcome that already did.

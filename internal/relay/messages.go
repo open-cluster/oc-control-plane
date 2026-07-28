@@ -62,6 +62,15 @@ func cancelling(fence storage.JobFence) *relayv1.ControlToRelay {
 	}}
 }
 
+// reconnecting tells a relay to come back, and when. A stated reconnect is not the same as a
+// connection that simply ended: an unexplained ending re-enters the relay's backoff, while
+// this tells it the control plane expects it back.
+func reconnecting(after time.Duration) *relayv1.ControlToRelay {
+	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_GracefulReconnect{
+		GracefulReconnect: &relayv1.GracefulReconnect{RetryAfter: durationpb.New(after)},
+	}}
+}
+
 func draining(within time.Duration) *relayv1.ControlToRelay {
 	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_DrainInstruction{
 		DrainInstruction: &relayv1.DrainInstruction{Deadline: durationpb.New(within)},

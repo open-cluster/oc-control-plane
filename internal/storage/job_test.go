@@ -407,6 +407,60 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	})
 }
 
+// Once a reconnected relay has said what it is still executing, whatever else it holds belongs
+// to a session that is gone. Leaving that work leased adds a full lease of doing nothing to the
+// far side of every network blip.
+func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
+	t.Parallel()
+	placements, organization := migratedPlacement(t)
+	registration := uuid.New()
+
+	enqueue(t, placements, organization, registration)
+	enqueue(t, placements, organization, registration)
+	enqueue(t, placements, organization, registration)
+	leased := claim(t, placements, organization, registration, uuid.New())
+	if len(leased) != 3 {
+		t.Fatalf("claimed %d jobs, want three", len(leased))
+	}
+	stillRunning, abandoned, finished := leased[0], leased[1], leased[2]
+
+	if _, err := placements.RecordResult(context.Background(), organization,
+		storage.JobFence{
+			JobID:        finished.ID,
+			LeaseSession: finished.LeaseSession,
+			LeaseEpoch:   finished.LeaseEpoch,
+		},
+		storage.JobOutcome{Status: storage.JobSucceeded}); err != nil {
+		t.Fatalf("recording the finished job: %v", err)
+	}
+
+	reconnected := uuid.New()
+	adopt(t, placements, organization, storage.LeaseAdoption{
+		RegistrationID: registration,
+		SessionID:      reconnected,
+		LeaseFor:       time.Minute,
+		InFlight: []storage.InFlightJob{
+			{JobID: stillRunning.ID, LeaseEpoch: stillRunning.LeaseEpoch},
+		},
+	}, 1)
+
+	released, err := placements.ReleaseStrandedLeases(
+		context.Background(), organization, registration, reconnected)
+	if err != nil {
+		t.Fatalf("releasing stranded leases: %v", err)
+	}
+	if released != 1 {
+		t.Fatalf("released %d jobs, want only the abandoned one — the adopted job is being "+
+			"executed and the finished one is over", released)
+	}
+
+	// The abandoned job comes straight back; the adopted one stays with the relay running it.
+	reclaimed := claim(t, placements, organization, registration, reconnected)
+	if len(reclaimed) != 1 || reclaimed[0].ID != abandoned.ID {
+		t.Fatalf("reclaimed %d jobs, want the abandoned one back at once", len(reclaimed))
+	}
+}
+
 // adopt runs an adoption and asserts how much of it was accepted.
 func adopt(
 	t *testing.T,
