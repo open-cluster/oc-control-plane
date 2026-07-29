@@ -28,6 +28,29 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The shipping module requires github.com/open-cluster/oc-relay/gen/go — the protocol
+      # contract — which lives in a private repository. Without a credential for it, every
+      # step below that resolves modules fails, and it fails deep inside whichever tool
+      # happened to run first, reporting a git exit status rather than a cause.
+      #
+      # This step exists to say the cause out loud and stop. GOPRIVATE keeps the module off
+      # the public proxy, which cannot serve it, and the rewrite hands git the token.
+      - name: Authenticate to the private contract module
+        env:
+          RELAY_REPO_TOKEN: ${{ secrets.RELAY_REPO_TOKEN }}
+        run: |
+          echo "GOPRIVATE=github.com/open-cluster/*" >> "$GITHUB_ENV"
+          if [ -z "$RELAY_REPO_TOKEN" ]; then
+            echo "::error title=No credential for the private contract module::\
+          This repository requires github.com/open-cluster/oc-relay/gen/go, which is private. \
+          Configure a RELAY_REPO_TOKEN secret with read access to open-cluster/oc-relay. \
+          Every CI run since relay registration landed has failed for this reason."
+            exit 1
+          fi
+          git config --global \
+            url."https://x-access-token:${RELAY_REPO_TOKEN}@github.com/open-cluster/".insteadOf \
+            "https://github.com/open-cluster/"
+
       - name: Install pinned tooling
         run: make tools
 
@@ -120,6 +143,15 @@ jobs:
         uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version-file: go.mod
+
+      - name: Authenticate to the private contract module
+        if: steps.credential.outputs.available == 'true'
+        env:
+          RELAY_REPO_TOKEN: ${{ secrets.RELAY_REPO_TOKEN }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${RELAY_REPO_TOKEN}@github.com/open-cluster/".insteadOf \
+            "https://github.com/open-cluster/"
 
       - name: Prove the protocol carries a job
         if: steps.credential.outputs.available == 'true'
