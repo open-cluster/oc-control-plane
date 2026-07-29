@@ -1,8 +1,18 @@
 # Spec — Relay sessions and durable jobs in the Go control plane
 
-Status: BLOCKED on relay registration in Go
+Status: IMPLEMENTED 2026-07-27 — built, reviewed, and pushed
 Date: 2026-07-27
 Repository: the Go control plane
+
+> **What was deliberately left undone.** The guarantee this document is about — a job is
+> never lost and never silently completed twice — is implemented and tested. These were
+> argued rather than observed, and are recorded here so the gap is not mistaken for
+> coverage: an execution-deadline policy (a relay can renew a lease indefinitely by
+> reconnecting), a durable mark for a degraded session, an organization-wide sweep worker
+> (it needs an organization registry that does not exist yet), retention for the session
+> conflict trail, and the two `CapabilityRequirements` and `CredentialRotation` messages,
+> which are specified and never sent. Churn detection is blind behind a load balancer and
+> across replicas; both blind spots are written into the code that has them.
 
 ## Problem Statement
 

@@ -1,8 +1,14 @@
 # Spec — Relay registration in the Go control plane
 
-Status: BLOCKED on the end-to-end proof
+Status: IMPLEMENTED 2026-07-27 — built, reviewed, and pushed
 Date: 2026-07-27
 Repository: the Go control plane
+
+> **Implemented ahead of its recorded blocker.** This document said BLOCKED on the
+> end-to-end proof, and that ordering was not kept: registration was built first. The reason
+> the ordering existed — not building a second unproven half against an unproven first — has
+> not gone away, and is discharged by running the proof against this implementation rather
+> than by having waited for it.
 
 ## Problem Statement
 

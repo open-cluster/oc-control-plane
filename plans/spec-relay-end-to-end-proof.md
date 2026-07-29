@@ -1,9 +1,22 @@
-# Spec — Prove the Relay end to end against the reference control plane
+# Spec — Prove the Relay end to end against the control plane
 
-Status: READY FOR IMPLEMENTATION
-Date: 2026-07-27
-Repositories touched: this one. The Relay and the frozen .NET control plane take part as
-running processes, and neither is modified.
+Status: READY FOR IMPLEMENTATION (revision 2)
+Date: 2026-07-27, revised 2026-07-29
+Repositories touched: this one. The Relay and the control plane take part as running
+processes, and neither is modified.
+
+> **Revision 2 — the counterparty changed.** This document was written when the .NET
+> implementation was the only control plane that existed, so it named that as the process
+> under test and the Go rewrite as the thing queued behind. Registration, sessions and
+> durable jobs are now implemented in Go, and the .NET implementation is frozen and
+> scheduled for deletion. So the proof runs Relay against the **Go** control plane.
+>
+> Nothing this document argues depends on which implementation answers. The value was never
+> "the .NET code works" — it was "two halves built against models of each other have never
+> met", and that is exactly as true of the Go half. What is lost is the differential
+> oracle: the proof no longer compares two implementations, it establishes one. That is a
+> genuine reduction in what a green run means, and it is the consequence of building
+> registration and sessions ahead of this document rather than behind it.
 
 ## Problem Statement
 
@@ -15,7 +28,7 @@ single-writer stream discipline, an unacked-result buffer, and reconnect with ji
 backoff. Every one of those is proven against a programmable fake stream or a typed fake
 Kubernetes client. None is proven against a real control plane.
 
-The .NET control plane has bootstrap registration with single-use token consumption, a
+The Go control plane has bootstrap registration with single-use token consumption, a
 durable job store with server-clock leases, lease epochs, stale-result fencing, idempotent
 recording, and gRPC registration and session services on an isolated port. Every one of
 those is proven against tests that stand in for a Relay. None is proven against a real one.
@@ -26,11 +39,10 @@ what the contract means — message ordering on first connect, what a duplicate 
 implies, whether a fenced result is an error or a no-op. No amount of further unit testing
 on either side finds that.
 
-The work queued behind this makes it urgent rather than merely desirable: the next step is
-to reimplement the control-plane half in Go. Doing that before the protocol has ever carried
-a real job means building a second unproven half against the first, and a failure would be
-attributable to either. The reference implementation is only useful as an oracle if it has
-been shown to work.
+The work queued behind this makes it urgent rather than merely desirable: signal intake is
+what finally gives jobs a reason to exist, and every slice after it assumes the customer
+execution path carries work. Building on a contract that has never carried a real job means
+each later failure has two candidate causes instead of one.
 
 ## Solution
 
@@ -90,9 +102,8 @@ works, and a harness that the Go control plane must satisfy identically.
     that a cluster upgrade cannot silently change what was proven.
 19. As an engineer, I want a failure to say which half failed, so that debugging starts from
     evidence rather than from bisecting two codebases.
-20. As an engineer about to reimplement the control plane in Go, I want this harness to be
-    reusable against the new implementation, so that the reference becomes a differential
-    oracle rather than a one-off.
+20. As an engineer, I want the harness to name the endpoint it drives rather than link
+    against an implementation, so that it survives the control plane being replaced.
 21. As a reviewer, I want the proof to exercise the transport as deployed rather than
     in-process shortcuts, so that what passes resembles what ships.
 22. As a reviewer, I want to see which failure modes are covered and which are not, so that
@@ -156,11 +167,11 @@ Relay's module from the shipping module would pull the Kubernetes dependency gra
 service that must not have it — which a gate here already forbids. A separate module under the
 test tree may depend on whatever it needs while the shipping module's requirements stay clean.
 
-**Established by measurement, not assumed: the frozen control plane runs as an ordinary
-process.** It needs a Postgres connection string and a relay port; it applies its own
-migrations at startup and serves the relay endpoint on a dedicated listener. No project is
-added to it and no freeze exception is required, which was the open question before the work
-started.
+**The control plane runs as an ordinary process.** It needs a Postgres connection string and
+a relay port; it applies its own migrations at startup and serves the relay endpoint on a
+dedicated listener. Nothing is added to it for the harness's benefit — a control plane that
+had to be modified to be testable end to end would be proving a different binary from the one
+that ships.
 
 **The harness must terminate TLS, because the two halves do not connect directly.** The Relay
 dials TLS and validates the server by pinned public key, with no plaintext path — deliberately,
@@ -229,6 +240,7 @@ independently built halves meeting for the first time usually disagree somewhere
 disagreement found here is one that would otherwise have been found later with a second Go
 implementation in the picture and two candidate causes.
 
-The harness has a second life after this: it becomes the differential oracle the Go control
-plane is measured against, which is why it is written to be pointed at an endpoint rather
-than wired to an implementation.
+The harness has a second life after this: it is the regression suite for the protocol
+itself, which is why it is written to be pointed at an endpoint rather than wired to an
+implementation. Every capability, every new message and every change to the fencing rules
+arrives with the question "does the wire still carry it", and this is where that is answered.
