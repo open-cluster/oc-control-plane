@@ -191,6 +191,103 @@ func TestOperatorSurface(t *testing.T) {
 		}
 	})
 
+	// Withdrawing destroys the current finding, which is what makes the trail the point rather
+	// than a formality: without it the second occurrence reads exactly like the first, and
+	// "this has happened before" is the thing an operator most needs to know.
+	t.Run("the history survives the withdrawal that erased the finding", func(t *testing.T) {
+		trail := readTrail(t, base+"/relays/"+relay.registration.String()+"/session-conflicts", token)
+		if len(trail.Events) != 2 {
+			t.Fatalf("the trail holds %d events, want the detection and the withdrawal", len(trail.Events))
+		}
+
+		// Newest first: the withdrawal, then what it withdrew.
+		withdrawn, detected := trail.Events[0], trail.Events[1]
+		if withdrawn.Kind != "withdrawn" || detected.Kind != "detected" {
+			t.Fatalf("the trail reads %q then %q, want the withdrawal then the detection",
+				withdrawn.Kind, detected.Kind)
+		}
+		if detected.DistinctHosts != 2 || !detected.MultipleHosts {
+			t.Errorf("the detection kept %d hosts, want the 2 it was recorded with — the "+
+				"finding is what the trail exists to preserve", detected.DistinctHosts)
+		}
+		if withdrawn.WithdrawnFrom == "" {
+			t.Error("the withdrawal records nowhere it came from; a shared token already " +
+				"means it cannot record who, and an act with neither is anonymous")
+		}
+		if withdrawn.DistinctHosts != 0 {
+			t.Errorf("the withdrawal claims to have observed %d hosts; it observed nothing",
+				withdrawn.DistinctHosts)
+		}
+	})
+
+	t.Run("withdrawing what is not marked changes nothing and says nothing", func(t *testing.T) {
+		before := readTrail(t, base+"/relays/"+relay.registration.String()+"/session-conflicts", token)
+
+		status, _ := operatorRequest(t, http.MethodPost,
+			base+"/relays/"+relay.registration.String()+"/clear-conflict", token)
+		if status != http.StatusNoContent {
+			t.Fatalf("withdrawing an unmarked relay returned %d, want 204 — the state asked "+
+				"for already holds", status)
+		}
+
+		after := readTrail(t, base+"/relays/"+relay.registration.String()+"/session-conflicts", token)
+		if len(after.Events) != len(before.Events) {
+			t.Errorf("an act that changed nothing added %d entries to the history; a trail "+
+				"padded with those is a trail nobody reads",
+				len(after.Events)-len(before.Events))
+		}
+	})
+
+	t.Run("a long history pages without losing or repeating an entry", func(t *testing.T) {
+		trailURL := base + "/relays/" + relay.registration.String() + "/session-conflicts"
+
+		// Enough entries that a page cannot hold them. Off-by-one is the whole failure mode of
+		// a keyset cursor, and it shows up as an entry that is skipped rather than as an error.
+		for range 3 {
+			if err := placements.RecordSessionConflict(
+				context.Background(), owner, relay.registration, 2); err != nil {
+				t.Fatalf("recording a session conflict: %v", err)
+			}
+			status, _ := operatorRequest(t, http.MethodPost,
+				base+"/relays/"+relay.registration.String()+"/clear-conflict", token)
+			if status != http.StatusNoContent {
+				t.Fatalf("withdrawing returned %d", status)
+			}
+		}
+
+		whole := readTrail(t, trailURL, token)
+		if len(whole.Events) < 6 {
+			t.Fatalf("the history holds %d entries, want at least the six just made",
+				len(whole.Events))
+		}
+
+		var paged []conflictEventResponse
+		for url, pages := trailURL+"?limit=2", 0; ; pages++ {
+			if pages > len(whole.Events) {
+				t.Fatal("paging did not end; the cursor is not advancing")
+			}
+			page := readTrail(t, url, token)
+			paged = append(paged, page.Events...)
+			if page.Next == "" {
+				break
+			}
+			url = trailURL + "?limit=2&after=" + page.Next
+		}
+
+		if len(paged) != len(whole.Events) {
+			t.Fatalf("paging yielded %d entries and one read yielded %d; the difference is "+
+				"entries an operator would never see", len(paged), len(whole.Events))
+		}
+		for index := range paged {
+			if !paged[index].At.Equal(whole.Events[index].At) ||
+				paged[index].Kind != whole.Events[index].Kind {
+				t.Fatalf("entry %d differs between paged and whole reads: %v %q against %v %q",
+					index, paged[index].At, paged[index].Kind,
+					whole.Events[index].At, whole.Events[index].Kind)
+			}
+		}
+	})
+
 	t.Run("a relay that does not exist is not found", func(t *testing.T) {
 		status, _ := operatorRequest(t, http.MethodPost,
 			base+"/relays/1ef7e1cf-0000-4000-8000-000000000000/clear-conflict", token)
@@ -357,6 +454,33 @@ func readRoster(t *testing.T, url, token string) rosterResponse {
 		t.Fatalf("decoding the roster: %v (%s)", err, body)
 	}
 	return roster
+}
+
+type trailResponse struct {
+	Events []conflictEventResponse `json:"events"`
+	Next   string                  `json:"next"`
+}
+
+type conflictEventResponse struct {
+	Kind          string    `json:"kind"`
+	At            time.Time `json:"at"`
+	DistinctHosts int       `json:"distinctHosts"`
+	MultipleHosts bool      `json:"multipleHosts"`
+	WithdrawnFrom string    `json:"withdrawnFrom"`
+}
+
+func readTrail(t *testing.T, url, token string) trailResponse {
+	t.Helper()
+
+	status, body := operatorRequest(t, http.MethodGet, url, token)
+	if status != http.StatusOK {
+		t.Fatalf("reading the trail returned %d: %s", status, body)
+	}
+	var trail trailResponse
+	if err := json.Unmarshal([]byte(body), &trail); err != nil {
+		t.Fatalf("decoding the trail: %v (%s)", err, body)
+	}
+	return trail
 }
 
 func relayIn(roster rosterResponse, registration string) *relayResponse {

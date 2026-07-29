@@ -54,6 +54,8 @@ func (h Handlers) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /operator/v1/organizations/{organization}/relays",
 		h.authorized(http.HandlerFunc(h.listRelays)))
+	mux.Handle("GET /operator/v1/organizations/{organization}/relays/{registration}/session-conflicts",
+		h.authorized(http.HandlerFunc(h.conflictTrail)))
 	mux.Handle("POST /operator/v1/organizations/{organization}/relays/{registration}/clear-conflict",
 		h.authorized(http.HandlerFunc(h.clearConflict)))
 	return mux
@@ -144,27 +146,59 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	writeJSON(writer, http.StatusOK, rosterView{Relays: relays, Next: roster.Next})
 }
 
-// clearConflict withdraws the mark on a contested relay identity.
-func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Request) {
-	organization, ok := h.organization(writer, request)
+// conflictTrail reports what has happened to a relay identity.
+//
+// It is the answer to the question the current state cannot answer: withdrawing a finding
+// destroys it, so without this the second occurrence would look exactly like the first.
+func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Request) {
+	organization, registration, ok := h.relay(writer, request)
 	if !ok {
-		return
-	}
-	registration, err := uuid.Parse(request.PathValue("registration"))
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "registration is not an identity"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	cleared, err := h.Placements.ClearSessionConflict(ctx, organization, registration)
+	trail, err := h.Placements.SessionConflictTrail(ctx, organization, registration,
+		storage.RelayPage{Limit: pageSize(request), After: request.URL.Query().Get("after")})
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	if !cleared {
+	h.Logger.InfoContext(ctx, "operator read a session conflict trail",
+		slog.String("organization", organization.String()),
+		slog.String("registration_id", registration.String()),
+		slog.String("caller", callerOf(request)))
+
+	events := make([]conflictEventView, 0, len(trail.Events))
+	for _, event := range trail.Events {
+		events = append(events, eventViewOf(event))
+	}
+	writeJSON(writer, http.StatusOK, trailView{Events: events, Next: trail.Next})
+}
+
+// clearConflict withdraws the mark on a contested relay identity.
+func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Request) {
+	organization, registration, ok := h.relay(writer, request)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
+	defer cancel()
+
+	withdrawal, err := h.Placements.ClearSessionConflict(
+		ctx, organization, registration, callerOf(request))
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	switch withdrawal {
+	case storage.WithdrawalRelayUnknown:
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "relay not found"})
+		return
+	case storage.WithdrawalNothingMarked:
+		// The state asked for already holds. Nothing was written to the trail, because an act
+		// that changed nothing is not part of the history of what happened.
+		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
 	// Withdrawing the mark is a claim that a credential-theft finding has been dealt with, and
@@ -197,6 +231,22 @@ func (h Handlers) organization(
 		return tenancy.Organization{}, false
 	}
 	return organization, true
+}
+
+// relay resolves the tenant and the relay named in the path, for the routes that address one.
+func (h Handlers) relay(
+	writer http.ResponseWriter, request *http.Request,
+) (tenancy.Organization, uuid.UUID, bool) {
+	organization, ok := h.organization(writer, request)
+	if !ok {
+		return tenancy.Organization{}, uuid.UUID{}, false
+	}
+	registration, err := uuid.Parse(request.PathValue("registration"))
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "registration is not an identity"})
+		return tenancy.Organization{}, uuid.UUID{}, false
+	}
+	return organization, registration, true
 }
 
 // fail answers an error, naming the ones a caller can act on. The caller is an operator, so

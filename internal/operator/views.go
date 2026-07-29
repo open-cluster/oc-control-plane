@@ -41,6 +41,38 @@ type conflictView struct {
 	MultipleHosts bool `json:"multipleHosts"`
 }
 
+// trailView is what has happened to one relay identity. It exists because the current state
+// cannot say: withdrawing a finding destroys it, so without this the second occurrence would
+// look exactly like the first.
+type trailView struct {
+	Events []conflictEventView `json:"events"`
+	Next   string              `json:"next,omitempty"`
+}
+
+type conflictEventView struct {
+	// Kind is "detected" or "withdrawn": something the control plane saw, or something a person
+	// said about what it saw.
+	Kind string    `json:"kind"`
+	At   time.Time `json:"at"`
+	// DistinctHosts and MultipleHosts describe a detection, and are absent from a withdrawal,
+	// which observed nothing of its own.
+	DistinctHosts int  `json:"distinctHosts,omitempty"`
+	MultipleHosts bool `json:"multipleHosts,omitempty"`
+	// WithdrawnFrom is where a withdrawal came from. It is an address and not a person: the
+	// surface is behind one shared token, so this is the whole of the attribution there is.
+	WithdrawnFrom string `json:"withdrawnFrom,omitempty"`
+}
+
+func eventViewOf(event storage.ConflictEvent) conflictEventView {
+	return conflictEventView{
+		Kind:          event.Kind.String(),
+		At:            event.At,
+		DistinctHosts: event.DistinctHosts,
+		MultipleHosts: event.DistinctHosts > 1,
+		WithdrawnFrom: event.WithdrawnFrom,
+	}
+}
+
 type errorView struct {
 	Error string `json:"error"`
 }
