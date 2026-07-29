@@ -1,8 +1,3 @@
-// Package e2e runs the Relay and a control plane as real processes and proves the
-// protocol carries a job between them.
-//
-// Nothing here is a test double. Every component that could be faked — the transport, the
-// database, either implementation — is exactly a component whose behaviour is in question.
 package e2e
 
 import (

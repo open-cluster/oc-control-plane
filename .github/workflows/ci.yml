@@ -72,3 +72,60 @@ jobs:
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" gitleaks
           ./gitleaks git . --redact --exit-code 1 --log-opts="--all --full-history"
+
+  # The end-to-end proof runs the Relay and this control plane as real processes against a
+  # real Kubernetes and a real Postgres. It is a separate job because it needs a second
+  # repository and takes minutes, and because a failure in it means something different from
+  # a failure above: the two halves disagree about the protocol.
+  #
+  # It cannot run without a credential for the Relay's repository, which is private and shares
+  # no history with this one. Until that credential exists the job reports plainly that the
+  # proof did not run — and NOT running is the honest outcome, because a green tick on a proof
+  # that never executed is worse than no job at all.
+  end-to-end:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for the Relay repository credential
+        id: credential
+        env:
+          RELAY_REPO_TOKEN: ${{ secrets.RELAY_REPO_TOKEN }}
+        run: |
+          if [ -z "$RELAY_REPO_TOKEN" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## End-to-end proof: NOT RUN"
+              echo
+              echo "No \`RELAY_REPO_TOKEN\` secret is configured, so the Relay's repository"
+              echo "cannot be checked out and the protocol was not exercised by this run."
+              echo "The proof is currently only run on developer machines."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the control plane
+        if: steps.credential.outputs.available == 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Checkout the Relay
+        if: steps.credential.outputs.available == 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: open-cluster/opencluster-relay
+          token: ${{ secrets.RELAY_REPO_TOKEN }}
+          path: .relay
+
+      - name: Set up Go
+        if: steps.credential.outputs.available == 'true'
+        uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+        with:
+          go-version-file: go.mod
+
+      - name: Prove the protocol carries a job
+        if: steps.credential.outputs.available == 'true'
+        env:
+          # The Relay is built from the tree checked out above, not vendored: the two
+          # repositories share no history and no file is copied between them.
+          OC_E2E_RELAY_SOURCE: ${{ github.workspace }}/.relay
+          GOPRIVATE: github.com/open-cluster/*
+        run: cd test/e2e && go test -timeout 45m -count=1 ./...

@@ -27,6 +27,7 @@ lint:
 	staticcheck ./...
 	cd $(HARNESS_MODULE) && staticcheck ./...
 	golangci-lint run
+	cd $(HARNESS_MODULE) && golangci-lint run
 
 # -buildvcs=false keeps the build reproducible, which also disables Go's own VCS stamping,
 # so the version is supplied explicitly. Without this the binary cannot identify its
@@ -54,9 +55,13 @@ cover:
 
 vuln:
 	govulncheck ./...
+	cd $(HARNESS_MODULE) && govulncheck ./...
 
 licenses:
 	go-licenses check ./... \
+		--allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC,MPL-2.0 \
+		--ignore github.com/open-cluster/oc-control-plane
+	cd $(HARNESS_MODULE) && go-licenses check ./... \
 		--allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC,MPL-2.0 \
 		--ignore github.com/open-cluster/oc-control-plane
 

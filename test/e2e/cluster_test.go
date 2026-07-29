@@ -1,0 +1,170 @@
+package e2e
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/k3s"
+)
+
+// clusterImage pins the Kubernetes version under test. It is pinned rather than floating so
+// that a cluster upgrade cannot silently change what was proven — the capability reads
+// workload and pod status, and those shapes are exactly the kind that move between releases.
+const clusterImage = "rancher/k3s:v1.31.4-k3s1"
+
+// Bounds on the cluster. Starting a single-node Kubernetes is slow on a cold image cache,
+// and a workload has to reach a settled state before it is read: endpoint mirroring and pod
+// status settle asynchronously, and racing them produces flakes that look like protocol
+// defects.
+const (
+	clusterStartTimeout = 5 * time.Minute
+	fixtureTimeout      = 3 * time.Minute
+)
+
+// The workload the proof reads. One replica of a container that starts and stays up, so the
+// read has a settled answer rather than one that changes between the assertion and the
+// evidence behind it.
+const (
+	fixtureNamespace = "e2e-workloads"
+	fixtureWorkload  = "settled"
+	fixtureImage     = "registry.k8s.io/pause:3.9"
+)
+
+// cluster is the disposable Kubernetes the Relay reads through.
+type cluster struct {
+	container      *k3s.K3sContainer
+	kubeconfigPath string
+	client         *kubernetes.Clientset
+}
+
+// startCluster brings up a single-node Kubernetes and writes its kubeconfig where the Relay
+// can be pointed at it.
+//
+// The kubeconfig is written to a file rather than handed over another way because that is
+// the Relay's only supported harness path, and its loader refuses anything that is not fully
+// self-contained. Exercising that loader is part of what running the real process buys.
+func startCluster(ctx context.Context, workDir string) (*cluster, error) {
+	startCtx, cancel := context.WithTimeout(ctx, clusterStartTimeout)
+	defer cancel()
+
+	container, err := k3s.Run(startCtx, clusterImage)
+	if err != nil {
+		return nil, fmt.Errorf("starting kubernetes: %w", err)
+	}
+
+	// One place undoes the container, so no later failure can return without it.
+	started, err := configureCluster(startCtx, container, workDir)
+	if err != nil {
+		_ = testcontainers.TerminateContainer(container)
+		return nil, err
+	}
+	return started, nil
+}
+
+func configureCluster(
+	ctx context.Context, container *k3s.K3sContainer, workDir string,
+) (*cluster, error) {
+	kubeconfig, err := container.GetKubeConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading kubeconfig: %w", err)
+	}
+
+	path := filepath.Join(workDir, "kubeconfig")
+	if err = os.WriteFile(path, kubeconfig, 0o600); err != nil {
+		return nil, fmt.Errorf("writing kubeconfig: %w", err)
+	}
+
+	client, err := clientFor(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return &cluster{container: container, kubeconfigPath: path, client: client}, nil
+}
+
+func clientFor(kubeconfig []byte) (*kubernetes.Clientset, error) {
+	config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("reading the kubeconfig the cluster reported: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("building a client from the cluster's kubeconfig: %w", err)
+	}
+	return client, nil
+}
+
+func (c *cluster) close() {
+	if c == nil {
+		return
+	}
+	_ = testcontainers.TerminateContainer(c.container)
+}
+
+// createFixture creates the workload the proof reads and waits for it to settle.
+//
+// Settling is not politeness. The result carries a completeness basis the central
+// certificate logic consumes, and a read taken while pods are still appearing reports a
+// truthful answer about a moving cluster — which is indistinguishable, from the assertion's
+// side, from a protocol that lost a field.
+func (c *cluster) createFixture(ctx context.Context) error {
+	createCtx, cancel := context.WithTimeout(ctx, fixtureTimeout)
+	defer cancel()
+
+	namespaces := c.client.CoreV1().Namespaces()
+	_, err := namespaces.Create(createCtx,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fixtureNamespace}},
+		metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("creating namespace %s: %w", fixtureNamespace, err)
+	}
+
+	labels := map[string]string{"app": fixtureWorkload}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: fixtureWorkload, Namespace: fixtureNamespace},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: ptr(int32(1)),
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name:  "settled",
+					Image: fixtureImage,
+				}}},
+			},
+		},
+	}
+	if _, err = c.client.AppsV1().Deployments(fixtureNamespace).
+		Create(createCtx, deployment, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating deployment %s: %w", fixtureWorkload, err)
+	}
+	return c.awaitSettled(createCtx)
+}
+
+// awaitSettled waits for the workload to report a ready replica.
+func (c *cluster) awaitSettled(ctx context.Context) error {
+	deployments := c.client.AppsV1().Deployments(fixtureNamespace)
+	for {
+		deployment, err := deployments.Get(ctx, fixtureWorkload, metav1.GetOptions{})
+		if err == nil && deployment.Status.ReadyReplicas >= 1 &&
+			deployment.Status.ObservedGeneration >= deployment.Generation {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("the fixture workload never became ready: %w", ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func ptr[T any](value T) *T { return &value }

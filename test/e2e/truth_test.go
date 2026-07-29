@@ -1,0 +1,215 @@
+package e2e
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+// jobStatus mirrors the durable status column. It is redeclared here rather than imported
+// because the schema is the contract this harness holds an implementation to — importing the
+// implementation's own constants would make the harness agree with it by construction.
+type jobStatus int16
+
+const (
+	jobPending jobStatus = iota
+	jobLeased
+	jobSucceeded
+	jobFailed
+	jobCancelled
+)
+
+func (s jobStatus) String() string {
+	switch s {
+	case jobPending:
+		return "pending"
+	case jobLeased:
+		return "leased"
+	case jobSucceeded:
+		return "succeeded"
+	case jobFailed:
+		return "failed"
+	case jobCancelled:
+		return "cancelled"
+	default:
+		return fmt.Sprintf("unrecognised(%d)", int16(s))
+	}
+}
+
+func (s jobStatus) terminal() bool {
+	return s == jobSucceeded || s == jobFailed || s == jobCancelled
+}
+
+const databaseStartTimeout = 3 * time.Minute
+
+// truth is the durable state both halves are measured against.
+//
+// The harness reads and writes it directly, in SQL, rather than through either
+// implementation's helpers or through protocol messages. Messages would prove they were sent;
+// the guarantee is about what was written.
+type truth struct {
+	container *tcpostgres.PostgresContainer
+	pool      *pgxpool.Pool
+	dsn       string
+}
+
+// startTruth brings up the database the control plane will be given.
+func startTruth(ctx context.Context) (*truth, error) {
+	startCtx, cancel := context.WithTimeout(ctx, databaseStartTimeout)
+	defer cancel()
+
+	container, err := tcpostgres.Run(startCtx, "postgres:17-alpine",
+		tcpostgres.WithDatabase("controlplane"),
+		tcpostgres.WithUsername("controlplane"),
+		tcpostgres.WithPassword("controlplane"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(2*time.Minute)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("starting postgres: %w", err)
+	}
+
+	dsn, err := container.ConnectionString(startCtx, "sslmode=disable")
+	if err != nil {
+		_ = testcontainers.TerminateContainer(container)
+		return nil, fmt.Errorf("reading the connection string: %w", err)
+	}
+	return &truth{container: container, dsn: dsn}, nil
+}
+
+// connect opens the harness's own pool and reaches the schema through it. It is deferred
+// until after the control plane has started, because the control plane applies the migrations
+// and there is nothing to read before it has.
+//
+// The read at the end is the point. Building a pool dials nothing — it would succeed against
+// a database that is gone — and the first thing to notice would otherwise be a test failing
+// on an assertion about a job.
+func (t *truth) connect(ctx context.Context) error {
+	pool, err := pgxpool.New(ctx, t.dsn)
+	if err != nil {
+		return fmt.Errorf("connecting to the database: %w", err)
+	}
+	t.pool = pool
+
+	if _, err = pool.Exec(ctx, `SELECT 1 FROM relay_job WHERE false`); err != nil {
+		pool.Close()
+		t.pool = nil
+		return fmt.Errorf("reading the schema the control plane migrated: %w", err)
+	}
+	return nil
+}
+
+func (t *truth) close() {
+	if t == nil {
+		return
+	}
+	if t.pool != nil {
+		t.pool.Close()
+	}
+	_ = testcontainers.TerminateContainer(t.container)
+}
+
+// issueBootstrapToken mints a single-use enrolment token and records its digest, which is
+// what an operator issuing one would leave behind. The token itself is returned once and
+// held nowhere else, exactly as the real issuance path requires.
+func (t *truth) issueBootstrapToken(ctx context.Context, organization string) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generating a bootstrap token: %w", err)
+	}
+	token := hex.EncodeToString(raw)
+	digest := sha256.Sum256([]byte(token))
+
+	_, err := t.pool.Exec(ctx, `
+		INSERT INTO relay_bootstrap_token (token_digest, organization, expires_at)
+		VALUES ($1, $2, $3)`,
+		digest[:], organization, time.Now().Add(time.Hour))
+	if err != nil {
+		return "", fmt.Errorf("issuing a bootstrap token: %w", err)
+	}
+	return token, nil
+}
+
+// registration reports the identity an organization's relay enrolled with, and whether one
+// exists yet. Absence is not an error: the caller is usually waiting for enrolment.
+func (t *truth) registration(ctx context.Context, organization string) (uuid.UUID, bool, error) {
+	var id uuid.UUID
+	err := t.pool.QueryRow(ctx, `
+		SELECT registration_id
+		  FROM relay_registration
+		 WHERE organization = $1
+		 ORDER BY created_at DESC
+		 LIMIT 1`, organization).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("reading the relay registration: %w", err)
+	}
+	return id, true, nil
+}
+
+// countRegistrations reports how many identities an organization has. It is how a spent
+// token is proven not to have minted a second one.
+func (t *truth) countRegistrations(ctx context.Context, organization string) (int, error) {
+	var count int
+	err := t.pool.QueryRow(ctx,
+		`SELECT count(*) FROM relay_registration WHERE organization = $1`,
+		organization).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting relay registrations: %w", err)
+	}
+	return count, nil
+}
+
+// enqueueJob records work to be done, pending and unleased — which is what an investigation
+// planner will do once one exists. Nothing is delivered until a session claims it, so a job
+// enqueued while every relay is offline waits rather than being lost.
+func (t *truth) enqueueJob(
+	ctx context.Context, organization string, registration uuid.UUID,
+	capability string, version uint32, arguments []byte,
+) (uuid.UUID, error) {
+	id := uuid.New()
+	_, err := t.pool.Exec(ctx, `
+		INSERT INTO relay_job
+			(job_id, organization, registration_id, capability_id, capability_version, arguments)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		id, organization, registration, capability, version, arguments)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("enqueueing a job: %w", err)
+	}
+	return id, nil
+}
+
+// jobRecord is a job as the database holds it.
+type jobRecord struct {
+	Status     jobStatus
+	Result     []byte
+	LeaseEpoch int64
+}
+
+func (t *truth) job(ctx context.Context, organization string, id uuid.UUID) (jobRecord, error) {
+	var record jobRecord
+	err := t.pool.QueryRow(ctx, `
+		SELECT status, result, lease_epoch
+		  FROM relay_job
+		 WHERE job_id = $1 AND organization = $2`, id, organization).
+		Scan(&record.Status, &record.Result, &record.LeaseEpoch)
+	if err != nil {
+		return jobRecord{}, fmt.Errorf("reading job %s: %w", id, err)
+	}
+	return record, nil
+}

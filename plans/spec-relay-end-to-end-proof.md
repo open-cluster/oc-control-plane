@@ -1,9 +1,11 @@
 # Spec — Prove the Relay end to end against the control plane
 
-Status: READY FOR IMPLEMENTATION (revision 2)
+Status: IMPLEMENTED 2026-07-29 — partially. The walking-skeleton sentence and four
+interleavings are proven; three named failure modes are not, and are listed below rather than
+left to be discovered.
 Date: 2026-07-27, revised 2026-07-29
-Repositories touched: this one. The Relay and the control plane take part as running
-processes, and neither is modified.
+Repositories touched: this one, and the Relay — which was modified, once, for a defect this
+exercise found. Both halves take part as running processes.
 
 > **Revision 2 — the counterparty changed.** This document was written when the .NET
 > implementation was the only control plane that existed, so it named that as the process
@@ -17,6 +19,40 @@ processes, and neither is modified.
 > oracle: the proof no longer compares two implementations, it establishes one. That is a
 > genuine reduction in what a green run means, and it is the consequence of building
 > registration and sessions ahead of this document rather than behind it.
+
+> **What the implemented harness proves, and what it does not.** Proven: enrolment against a
+> real control plane with a real single-use token; the durable credential authenticating the
+> session that follows; a spent token refused a second identity, with the refusal audited; a
+> typed job crossing the real transport, executing against a real Kubernetes API, and being
+> recorded durably with its completeness basis intact; an absent workload recorded as a typed
+> outcome rather than a failure, and not claiming completeness; work enqueued while no Relay
+> is connected delivered on connect; and a Relay reconnecting to a control plane that was
+> killed.
+>
+> Not proven, for want of a seam rather than a decision — and this list is exhaustive against
+> the Scenarios above, because a partial honesty ledger is the failure this section exists to
+> avoid: fencing under a superseded epoch; cancellation reaching an executing job; idempotent
+> resend of an already-recorded result; a connection dropped mid-execution; a restart in the
+> gap between leasing a job and sending it (what is proven is a restart and a reconnect, not
+> that gap); a reconnect whose hello reports a non-empty in-flight roster; a job carrying
+> another organization's identity; and a session presenting a wrong or absent credential.
+>
+> Most need a window that does not exist: the one compiled capability finishes in about eleven
+> milliseconds, so there is nothing to interrupt. Getting them needs a deliberately slow test
+> capability or an administrative way to expire a lease. The foreign-identity case is
+> different — the control plane builds every assignment from the session it is serving, so it
+> cannot be made to send one, and producing it would need a hostile control plane, which is a
+> fake, which is what this harness exists not to have. All of it is covered on the
+> control-plane side against a programmable stream.
+>
+> Graceful drain is also unproven here and deliberately so: stopping a process in the harness
+> means killing it, which is the more adversarial model and the one the durable guarantees
+> exist for. Drain is tested in each side's own suite, where a signal can be delivered
+> portably.
+>
+> **The proof does not yet run in CI.** It needs a credential for the Relay's private
+> repository. The job exists and reports in the run summary that the proof did not run, rather
+> than reporting a green tick for something that never executed.
 
 ## Problem Statement
 
@@ -104,6 +140,7 @@ works, and a harness that the Go control plane must satisfy identically.
     evidence rather than from bisecting two codebases.
 20. As an engineer, I want the harness to name the endpoint it drives rather than link
     against an implementation, so that it survives the control plane being replaced.
+    *(Not met — see the coupling decision below. The proofs are portable; the setup is not.)*
 21. As a reviewer, I want the proof to exercise the transport as deployed rather than
     in-process shortcuts, so that what passes resembles what ships.
 22. As a reviewer, I want to see which failure modes are covered and which are not, so that
@@ -139,15 +176,35 @@ control plane's clock or the lease deadline, not by sleeping. A restart is induc
 stopping and starting the process. Tests that depend on wall-clock races are the ones that
 get disabled six months later.
 
+One assertion does wait, and the exception is worth stating rather than hiding: proving that
+work enqueued with no Relay connected is *not* delivered means observing that nothing happened,
+and there is no event for that. The harness watches for longer than the control plane's
+delivery round, so anything that was going to be dispatched has had its chance. It is a
+negative observation, not an induced failure mode, and it is the only sleep in the suite.
+
 **Scope stops at the walking-skeleton sentence plus the distributed-systems interleavings.**
 The formal exit review and the edge-compatibility gate are deliberately excluded. The edge
 gate tests middleware behaviour, protocol negotiation and keepalive tuning specific to the
 current server stack — findings about a server that is being replaced. Edge feasibility is
 re-run against the Go implementation, where the answers will apply.
 
-**The harness is written to be pointed at either control plane.** Its configuration names an
-endpoint; nothing in it assumes which implementation is listening. That is what turns it
-from a one-time proof into the differential oracle the reimplementation needs.
+**The harness is coupled to this control plane, and that is a cost worth naming.** The
+decision here was originally that nothing in the harness would assume which implementation
+was listening, so it could serve as a differential oracle. The implementation does not honour
+it: the harness builds `./cmd/controlplane` from this repository, configures it through this
+implementation's environment variables, polls this implementation's readiness path, and reads
+two of its log lines as assertions.
+
+Each of those could have been configuration and none was, because the reason for the decision
+went away — the .NET implementation is frozen and scheduled for deletion, so there is no
+second control plane to point at. What survives is weaker but real: the proofs themselves
+assert on durable state and protocol behaviour, never on internals, so aiming the harness at a
+replacement would be a day of work in the setup layer rather than a rewrite.
+
+The two log-line assertions are deliberate exceptions. Both name events that on purpose write
+nothing else down — a refused enrolment, which must not tell a caller whether a token was
+unknown or spent, and a session being accepted after a restart. For those the audit line is
+the observable there is.
 
 **The harness is written in Go, in this repository.** When this specification was drafted it
 assumed the harness would live with the .NET implementation, which was then still being
@@ -239,6 +296,24 @@ The most valuable outcome of this work may be a defect list rather than a green 
 independently built halves meeting for the first time usually disagree somewhere, and every
 disagreement found here is one that would otherwise have been found later with a second Go
 implementation in the picture and two candidate causes.
+
+**It did.** The first run of the harness passed, and the assertion that mattered turned out
+not to discriminate: dispatching a job at a capability version no Relay has was executed
+anyway and answered as a success. The Relay was handing every assignment to its single
+compiled executor without reading `capability_id` or `capability_version` at all, so
+`KIND_UNSUPPORTED_CAPABILITY_VERSION` — a value in the contract, with a comment on the
+Relay's side saying it re-validates on receipt — could never be produced.
+
+Nothing misbehaves today: there is one capability at one version. The defect is what happens
+the day there are two. Schema versions are frozen, so a v2 means different semantics, and an
+old Relay would have run a v2 job through its v1 implementation and returned an answer under
+the wrong contract, with nothing downstream able to tell. It is exactly the shape this
+exercise was written to catch — a disagreement about what the contract means that neither
+side's own tests could see, because each was tested against a model of the other that shared
+its assumption.
+
+The Relay now refuses an assignment it did not advertise, tested there against a fake stream
+and here against the real one.
 
 The harness has a second life after this: it is the regression suite for the protocol
 itself, which is why it is written to be pointed at an endpoint rather than wired to an
