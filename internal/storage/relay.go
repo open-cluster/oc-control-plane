@@ -305,6 +305,125 @@ func (p *Placements) SessionConflict(
 	return SessionConflict{DetectedAt: *detectedAt, DistinctHosts: hosts}, nil
 }
 
+// ClearSessionConflict withdraws the mark on a contested relay identity, and reports whether
+// there was a registration to withdraw it from.
+//
+// Nothing clears itself. Whether a contested identity has been dealt with — a credential
+// rotated, a stolen one revoked, a flapping relay fixed — is a judgement about the world
+// outside this system, so it takes a deliberate act by someone who made that judgement.
+func (p *Placements) ClearSessionConflict(
+	ctx context.Context, organization tenancy.Organization, registrationID uuid.UUID,
+) (bool, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return false, err
+	}
+	tag, err := pool.Exec(ctx, `
+		UPDATE relay_registration
+		   SET session_conflict_at    = NULL,
+		       session_conflict_hosts = 0
+		 WHERE registration_id = $1
+		   AND organization    = $2`,
+		registrationID, organization.String())
+	if err != nil {
+		return false, fmt.Errorf("clearing a session conflict: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// RelaySummary is a relay identity as an operator needs to see it.
+//
+// It carries no credential digest. Nothing an operator does with this list needs one, and a
+// read model that carries a secret is that secret in one more place — in memory, in a JSON
+// response, and in whatever logs or exports the response passes through afterwards.
+type RelaySummary struct {
+	RegistrationID     uuid.UUID
+	ClusterFingerprint string
+	RelayVersion       string
+	RegisteredAt       time.Time
+	// RevokedAt is zero for a live registration.
+	RevokedAt time.Time
+	Conflict  SessionConflict
+}
+
+// RelayRoster is a page of an organization's relay identities.
+type RelayRoster struct {
+	Relays []RelaySummary
+	// More reports that the organization has relays this page does not show. Saying so is the
+	// point: a truncated list that looks complete is how an operator concludes a relay is gone.
+	More bool
+}
+
+// Bounds on a roster page. An operator asking for everything still gets a bounded answer,
+// because an unbounded list is a query whose cost belongs to whoever calls it most.
+const (
+	defaultRosterPage = 50
+	maxRosterPage     = 200
+)
+
+// ListRelays returns an organization's relay identities, newest first.
+func (p *Placements) ListRelays(
+	ctx context.Context, organization tenancy.Organization, limit int,
+) (RelayRoster, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return RelayRoster{}, err
+	}
+	limit = min(max(limit, 1), maxRosterPage)
+
+	// One more than asked for, so whether anything was left out is read from the data rather
+	// than guessed at by comparing a count to a limit.
+	rows, err := pool.Query(ctx, `
+		SELECT registration_id, cluster_fingerprint, relay_version, created_at,
+		       revoked_at, session_conflict_at, session_conflict_hosts
+		  FROM relay_registration
+		 WHERE organization = $1
+		 ORDER BY created_at DESC
+		 LIMIT $2`,
+		organization.String(), limit+1)
+	if err != nil {
+		return RelayRoster{}, fmt.Errorf("listing relays: %w", err)
+	}
+	defer rows.Close()
+
+	roster := RelayRoster{Relays: make([]RelaySummary, 0, limit)}
+	for rows.Next() {
+		summary, scanErr := scanRelaySummary(rows)
+		if scanErr != nil {
+			return RelayRoster{}, scanErr
+		}
+		if len(roster.Relays) == limit {
+			roster.More = true
+			break
+		}
+		roster.Relays = append(roster.Relays, summary)
+	}
+	if err = rows.Err(); err != nil {
+		return RelayRoster{}, fmt.Errorf("listing relays: %w", err)
+	}
+	return roster, nil
+}
+
+func scanRelaySummary(rows pgx.Rows) (RelaySummary, error) {
+	var (
+		summary    RelaySummary
+		revokedAt  *time.Time
+		conflictAt *time.Time
+		hosts      int
+	)
+	if err := rows.Scan(&summary.RegistrationID, &summary.ClusterFingerprint,
+		&summary.RelayVersion, &summary.RegisteredAt, &revokedAt, &conflictAt, &hosts); err != nil {
+		return RelaySummary{}, fmt.Errorf("reading a relay: %w", err)
+	}
+	if revokedAt != nil {
+		summary.RevokedAt = *revokedAt
+	}
+	if conflictAt != nil {
+		summary.Conflict = SessionConflict{DetectedAt: *conflictAt, DistinctHosts: hosts}
+	}
+	return summary, nil
+}
+
 // VerifyRelayCredential reports whether a credential digest matches a live registration.
 // It fails closed: a revoked registration authenticates nothing, and an unknown one is
 // indistinguishable from a wrong credential.

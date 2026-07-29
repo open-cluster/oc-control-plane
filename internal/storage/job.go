@@ -162,7 +162,7 @@ func (p *Placements) ClaimJobs(
 	defer rows.Close()
 
 	var claimed []Job
-	for rows.Next() {
+	for rows.Next() { // mapping to Job
 		var job Job
 		if err = rows.Scan(&job.ID, &job.RegistrationID, &job.CapabilityID,
 			&job.CapabilityVersion, &job.Arguments, &job.LeaseSession, &job.LeaseEpoch); err != nil {

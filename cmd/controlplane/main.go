@@ -31,6 +31,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
+	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
@@ -176,6 +177,14 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	defer relays.stop(cfg.ShutdownTimeout, logger)
 
+	// The operator surface is a third listener for the same reason the second one exists: it
+	// reads across tenants and belongs on an interface that health and metrics do not.
+	operators, err := startOperatorEndpoint(process, failed)
+	if err != nil {
+		return err
+	}
+	defer operators.stop(cfg.ShutdownTimeout, logger)
+
 	select {
 	case serveErr := <-failed:
 		return serveErr
@@ -192,15 +201,19 @@ func serve(ctx context.Context, process assembled) error {
 	// Both surfaces drain at once, under one budget. Draining them in sequence would let a slow
 	// HTTP drain spend the whole budget and leave relay sessions none of it, and would make a
 	// shutdown take twice as long as it was configured to.
-	var relaysStopped sync.WaitGroup
-	relaysStopped.Add(1)
+	var stopped sync.WaitGroup
+	stopped.Add(2)
 	go func() {
-		defer relaysStopped.Done()
+		defer stopped.Done()
 		relays.stop(cfg.ShutdownTimeout, logger)
+	}()
+	go func() {
+		defer stopped.Done()
+		operators.stop(cfg.ShutdownTimeout, logger)
 	}()
 
 	err = server.Shutdown(drainCtx)
-	relaysStopped.Wait()
+	stopped.Wait()
 	if err != nil {
 		return fmt.Errorf("draining: %w", err)
 	}
@@ -266,6 +279,65 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 		}
 	}()
 	return endpoint, nil
+}
+
+// startOperatorEndpoint listens for operators when one is configured. A deployment with no
+// operator address exposes nothing, which is the right default for a surface that reads across
+// tenants: it has to be put somewhere deliberately.
+func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEndpoint, error) {
+	cfg := process.config
+	if cfg.OperatorAddress == "" {
+		return nil, nil
+	}
+
+	listener, err := net.Listen("tcp", cfg.OperatorAddress)
+	if err != nil {
+		return nil, fmt.Errorf("listening for operators on %s: %w", cfg.OperatorAddress, err)
+	}
+
+	endpoint := &operatorEndpoint{server: &http.Server{
+		Handler: operator.Handlers{
+			Placements:  process.placements,
+			Logger:      process.logger,
+			TokenDigest: cfg.OperatorTokenDigest,
+		}.Router(),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}}
+
+	process.logger.Info("listening for operators",
+		slog.String("address", listener.Addr().String()))
+
+	go func() {
+		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
+			!errors.Is(serveErr, http.ErrServerClosed) {
+			failed <- serveErr
+		}
+	}()
+	return endpoint, nil
+}
+
+// operatorEndpoint is the operator-facing listener.
+type operatorEndpoint struct {
+	server   *http.Server
+	stopping sync.Once
+}
+
+// stop drains the operator surface within the budget. The nil receiver is the
+// configured-without-an-operator-surface case, so the caller can defer this unconditionally.
+func (e *operatorEndpoint) stop(budget time.Duration, logger *slog.Logger) {
+	if e == nil {
+		return
+	}
+	e.stopping.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
+
+		if err := e.server.Shutdown(ctx); err != nil {
+			logger.Warn("operator surface did not drain within the budget; closing it",
+				slog.Duration("budget", budget))
+			_ = e.server.Close()
+		}
+	})
 }
 
 // relayEndpoint is the relay-facing listener together with the sessions it carries.

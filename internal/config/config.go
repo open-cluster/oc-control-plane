@@ -34,7 +34,17 @@ const (
 	EnvOTLPEndpoint     = "OC_OTLP_ENDPOINT"
 	EnvRelayAddress     = "OC_RELAY_ADDRESS"
 	EnvRelaySPKIPins    = "OC_RELAY_SPKI_PINS"
+
+	EnvOperatorAddress   = "OC_OPERATOR_ADDRESS"
+	EnvOperatorTokenFile = "OC_OPERATOR_TOKEN_FILE"
 )
+
+// minOperatorTokenLength is the shortest token the operator surface will accept.
+//
+// The surface it guards reads across every tenant this instance serves, so a token short
+// enough to be guessed is the same as no token at all. Refusing a weak one at startup makes
+// that a deployment that fails to start rather than one that runs and looks fine.
+const minOperatorTokenLength = 32
 
 // Config is the validated process configuration.
 type Config struct {
@@ -80,6 +90,17 @@ type Config struct {
 	// enrolment so every later connection is pinned to a key rather than trusting a
 	// certificate authority. More than one exists so a rotation can overlap.
 	RelaySPKIPins []string
+
+	// OperatorAddress is the listen address for the operator surface, separate from the health
+	// surface because it reads across tenants and belongs on an interface that health and
+	// metrics do not. Empty disables it, which is correct for a deployment that has nowhere
+	// private to put it.
+	OperatorAddress string
+
+	// OperatorTokenDigest is the SHA-256 of the token an operator must present. The token is
+	// read from the file the operator named, reduced to this, and discarded: the process holds
+	// no copy of it, so there is nothing here to log or echo by accident.
+	OperatorTokenDigest []byte
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -116,6 +137,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayAddress); err != nil {
+		return Config{}, err
+	}
+	if cfg.OperatorAddress, err = optionalHostPort(lookup, EnvOperatorAddress); err != nil {
+		return Config{}, err
+	}
+	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.OperatorAddress); err != nil {
 		return Config{}, err
 	}
 
@@ -223,6 +250,60 @@ func defaultPlacement(lookup func(string) (string, bool), known map[string]strin
 		return "", fmt.Errorf("%s names unknown placement %q", EnvDefaultPlacement, name)
 	}
 	return name, nil
+}
+
+// operatorTokenDigest reads the operator credential from its file and returns only the digest.
+//
+// The variable names a path, never the token, for the same reason placements name a DSN file:
+// an environment value is visible to anything that can read the process's environment, ends up
+// in orchestrator manifests, and is printed by half the tooling that touches a container. No
+// error here quotes the file's contents.
+func operatorTokenDigest(
+	lookup func(string) (string, bool), operatorAddress string,
+) ([]byte, error) {
+	path, _ := lookup(EnvOperatorTokenFile)
+	path = strings.TrimSpace(path)
+
+	if operatorAddress == "" {
+		return nil, nil
+	}
+	if path == "" {
+		return nil, fmt.Errorf("%s is required when %s is set",
+			EnvOperatorTokenFile, EnvOperatorAddress)
+	}
+
+	token, err := readSecretFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", EnvOperatorTokenFile, err)
+	}
+	if len(token) < minOperatorTokenLength {
+		return nil, fmt.Errorf("%s: the token must be at least %d characters; the surface it "+
+			"guards reads across every tenant this instance serves",
+			EnvOperatorTokenFile, minOperatorTokenLength)
+	}
+	digest := sha256.Sum256([]byte(token))
+	return digest[:], nil
+}
+
+// readSecretFile reads a credential from disk. Every error is classified rather than wrapped,
+// because the underlying error can quote the file's contents — and for this file those
+// contents are the secret.
+func readSecretFile(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("file does not exist")
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return "", errors.New("file is not readable")
+		}
+		return "", errors.New("file could not be read")
+	}
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		return "", errors.New("file is empty")
+	}
+	return value, nil
 }
 
 func required(lookup func(string) (string, bool), key string) (string, error) {
