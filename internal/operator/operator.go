@@ -16,6 +16,7 @@
 package operator
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -34,6 +35,10 @@ import (
 // readTimeout bounds how long a read may take, so an operator query cannot outlive the
 // attention of whoever made it.
 const readTimeout = 15 * time.Second
+
+// maxLoggedPath bounds what a refused request can write into the log. It runs before anything
+// is authenticated, so the string is attacker-chosen and the repetition is unlimited.
+const maxLoggedPath = 256
 
 // Handlers is the operator surface's dependencies.
 type Handlers struct {
@@ -77,13 +82,23 @@ func (h Handlers) authorized(next http.Handler) http.Handler {
 }
 
 func (h Handlers) refuse(writer http.ResponseWriter, request *http.Request) {
-	// The path is recorded and nothing the caller sent is. A refused request's own headers are
-	// the one thing guaranteed to contain a guess at the credential.
+	// Nothing the caller sent in a header is recorded: a refused request's headers are the one
+	// place guaranteed to hold a guess at the credential. The path is, because it says what was
+	// being reached for — but truncated, because this runs before anything is authenticated and
+	// an unbounded attacker-chosen string repeated without limit is a log amplifier.
 	h.Logger.WarnContext(request.Context(), "operator request refused",
-		slog.String("path", request.URL.Path))
+		slog.String("path", truncate(request.URL.Path, maxLoggedPath)),
+		slog.String("caller", callerOf(request)))
 
 	writer.Header().Set("WWW-Authenticate", "Bearer")
 	writeJSON(writer, http.StatusUnauthorized, errorView{Error: "unauthorized"})
+}
+
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "…"
 }
 
 // bearerToken pulls the credential out of an Authorization header.
@@ -102,20 +117,31 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	if !ok {
 		return
 	}
-	ctx, cancel := contextWithTimeout(request, readTimeout)
+	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	roster, err := h.Placements.ListRelays(ctx, organization, pageSize(request))
+	roster, err := h.Placements.ListRelays(ctx, organization, storage.RelayPage{
+		Limit: pageSize(request),
+		After: request.URL.Query().Get("after"),
+	})
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
+	// Every read of this surface crosses a tenant boundary, so every read is recorded. A token
+	// holder who could enumerate an organization's relays and leave no trace would be the one
+	// thing this surface must not make possible.
+	h.Logger.InfoContext(ctx, "operator read a relay roster",
+		slog.String("organization", organization.String()),
+		slog.Int("relays", len(roster.Relays)),
+		slog.String("caller", callerOf(request)))
+
 	relays := make([]relayView, 0, len(roster.Relays))
 	for _, relay := range roster.Relays {
 		relays = append(relays, viewOf(relay))
 	}
-	writeJSON(writer, http.StatusOK, rosterView{Relays: relays, More: roster.More})
+	writeJSON(writer, http.StatusOK, rosterView{Relays: relays, Next: roster.Next})
 }
 
 // clearConflict withdraws the mark on a contested relay identity.
@@ -129,7 +155,7 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "registration is not an identity"})
 		return
 	}
-	ctx, cancel := contextWithTimeout(request, readTimeout)
+	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
 	cleared, err := h.Placements.ClearSessionConflict(ctx, organization, registration)
@@ -141,13 +167,24 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "relay not found"})
 		return
 	}
-	// Withdrawing the mark is itself worth recording: it is a person saying the thing that was
-	// detected has been dealt with, and that claim should be as findable as the detection.
-	h.Logger.InfoContext(ctx, "session conflict cleared by an operator",
+	// Withdrawing the mark is a claim that a credential-theft finding has been dealt with, and
+	// it destroys the finding, so it is recorded as loudly as the finding was.
+	//
+	// The caller's address is as far as attribution goes. The credential is one shared token, so
+	// this line can say where the claim came from and never who made it — which is a limit of
+	// having one token rather than of this record, and is worth knowing when reading it back.
+	h.Logger.WarnContext(ctx, "session conflict cleared by an operator",
 		slog.String("organization", organization.String()),
-		slog.String("registration_id", registration.String()))
+		slog.String("registration_id", registration.String()),
+		slog.String("caller", callerOf(request)))
 
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+// callerOf reports where a request came from. It is the only identity this surface has: one
+// shared token cannot say who, only from where.
+func callerOf(request *http.Request) string {
+	return request.RemoteAddr
 }
 
 // organization resolves the tenant named in the path.
@@ -162,12 +199,21 @@ func (h Handlers) organization(
 	return organization, true
 }
 
-// fail answers an error, distinguishing an organization this deployment does not serve from
-// something having gone wrong. The caller is an operator, so naming which it was costs nothing
-// and saves them guessing.
+// fail answers an error, naming the ones a caller can act on. The caller is an operator, so
+// saying which it was costs nothing and saves them guessing.
+//
+// An organization this instance has no placement for is reported as not served. Note that a
+// deployment with a default placement serves every name, so there this answer never appears and
+// an unknown organization is an empty list — which is the placement model showing through
+// rather than this surface being evasive.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	if errors.Is(err, storage.ErrUnknownOrganization) {
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not served here"})
+		return
+	}
+	if errors.Is(err, storage.ErrBadCursor) {
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: "after is not a page position from a previous response"})
 		return
 	}
 	h.Logger.ErrorContext(request.Context(), "operator request failed",

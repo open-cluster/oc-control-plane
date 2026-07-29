@@ -96,6 +96,61 @@ func TestOperatorSurface(t *testing.T) {
 		}
 	})
 
+	// More than one relay, because a page size that quietly defaults to one is invisible to any
+	// test with a single row in it — and it would mean an operator scanning for contested
+	// identities sees the first and none of the rest.
+	t.Run("asking for no particular size returns the list", func(t *testing.T) {
+		registered := []string{relay.registration.String()}
+		for range 3 {
+			registered = append(registered,
+				registerRelay(t, connection, placementDSN, organization).registration.String())
+		}
+
+		roster := readRoster(t, base+"/relays", token)
+		if len(roster.Relays) != len(registered) {
+			t.Fatalf("an unqualified read returned %d of %d relays; a default page that shows "+
+				"one row hides every finding after the first",
+				len(roster.Relays), len(registered))
+		}
+		if roster.Next != "" {
+			t.Errorf("a complete list offered a next page at %q", roster.Next)
+		}
+		for _, registration := range registered {
+			if relayIn(roster, registration) == nil {
+				t.Errorf("relay %s is missing from the roster", registration)
+			}
+		}
+	})
+
+	t.Run("a page that leaves relays out says how to reach them", func(t *testing.T) {
+		first := readRoster(t, base+"/relays?limit=2", token)
+		if len(first.Relays) != 2 {
+			t.Fatalf("asked for two relays, got %d", len(first.Relays))
+		}
+		if first.Next == "" {
+			t.Fatal("a truncated page offered no way forward; an operator would take it for " +
+				"the whole list")
+		}
+
+		second := readRoster(t, base+"/relays?limit=2&after="+first.Next, token)
+		if len(second.Relays) == 0 {
+			t.Fatal("the next page is empty")
+		}
+		for _, seen := range first.Relays {
+			if relayIn(second, seen.RegistrationID) != nil {
+				t.Errorf("relay %s appears on both pages", seen.RegistrationID)
+			}
+		}
+	})
+
+	t.Run("a resume point that came from nowhere is refused", func(t *testing.T) {
+		status, _ := operatorRequest(t, http.MethodGet, base+"/relays?after=not-a-cursor", token)
+		if status != http.StatusBadRequest {
+			t.Errorf("an invented cursor returned %d, want 400 — starting over silently would "+
+				"show the first page again and read as the last", status)
+		}
+	})
+
 	t.Run("a contested identity is surfaced as one", func(t *testing.T) {
 		// Recorded through the same storage function the session service uses, rather than by
 		// writing the row: what is under test here is that the finding surfaces, not how it
@@ -275,7 +330,7 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 // whatever reads this months later and quietly stops seeing a finding.
 type rosterResponse struct {
 	Relays []relayResponse `json:"relays"`
-	More   bool            `json:"more"`
+	Next   string          `json:"next"`
 }
 
 type relayResponse struct {

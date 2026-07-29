@@ -1,7 +1,6 @@
 package operator
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -15,9 +14,10 @@ import (
 
 type rosterView struct {
 	Relays []relayView `json:"relays"`
-	// More says the organization has relays this page does not show. A truncated list that
-	// looks complete is how an operator concludes a relay is gone.
-	More bool `json:"more"`
+	// Next resumes the next page, and is absent when this is the last one. Its presence is also
+	// how a caller knows relays were left out: a truncated list that looks complete is how an
+	// operator concludes a relay is gone.
+	Next string `json:"next,omitempty"`
 }
 
 type relayView struct {
@@ -69,16 +69,14 @@ func viewOf(relay storage.RelaySummary) relayView {
 // writeJSON sends a response body. An encoding failure cannot be reported to the caller — the
 // status is already written — so it is dropped here and would surface as a truncated body,
 // which is visibly wrong rather than quietly wrong.
+//
+// Nothing this surface returns may be stored or re-typed by anything in front of it: every
+// response carries data from a named tenant, and a cache holding one operator's answer is a
+// cross-tenant disclosure waiting for the next request.
 func writeJSON(writer http.ResponseWriter, status int, body any) {
 	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(body)
-}
-
-// contextWithTimeout bounds one request's work. The request's own context still cancels it, so
-// a caller that hangs up stops the query it started.
-func contextWithTimeout(
-	request *http.Request, within time.Duration,
-) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(request.Context(), within)
 }

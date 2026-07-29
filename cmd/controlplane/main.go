@@ -43,6 +43,14 @@ var version = "dev"
 // cheapest defence against a slow-loris holding connections open.
 const readHeaderTimeout = 10 * time.Second
 
+// Bounds on the operator surface's connections. They are longer than a request needs and
+// shorter than an idle connection may be held, which is the whole job.
+const (
+	operatorReadTimeout  = 30 * time.Second
+	operatorWriteTimeout = 30 * time.Second
+	operatorIdleTimeout  = 60 * time.Second
+)
+
 // main is the only place that exits, so every deferred cleanup in start runs first.
 func main() {
 	if err := start(); err != nil {
@@ -158,7 +166,9 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	logger.Info("listening", slog.String("address", listener.Addr().String()))
 
-	failed := make(chan error, 1)
+	// One slot per surface that can report a failure. A single slot would leave the second and
+	// third goroutines blocked forever on a send nobody is left to receive.
+	failed := make(chan error, 3)
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil &&
 			!errors.Is(serveErr, http.ErrServerClosed) {
@@ -301,7 +311,13 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 			Logger:      process.logger,
 			TokenDigest: cfg.OperatorTokenDigest,
 		}.Router(),
+		// Bounded at every stage, not just the headers. This port answers across tenants and
+		// its connections are unauthenticated until a request has been read, so a client that
+		// opens one and then goes quiet must not be able to hold it.
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       operatorReadTimeout,
+		WriteTimeout:      operatorWriteTimeout,
+		IdleTimeout:       operatorIdleTimeout,
 	}}
 
 	process.logger.Info("listening for operators",

@@ -2,8 +2,11 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -346,41 +349,65 @@ type RelaySummary struct {
 	Conflict  SessionConflict
 }
 
+// RelayPage is which slice of an organization's relays to return.
+type RelayPage struct {
+	// Limit is how many to return. Zero means the default rather than none: a caller that names
+	// no size wants the list, and answering with one row would hide the very findings this is
+	// read for.
+	Limit int
+	// After resumes from a previous page's Next. An empty value starts at the beginning.
+	After string
+}
+
 // RelayRoster is a page of an organization's relay identities.
 type RelayRoster struct {
 	Relays []RelaySummary
-	// More reports that the organization has relays this page does not show. Saying so is the
-	// point: a truncated list that looks complete is how an operator concludes a relay is gone.
-	More bool
+	// Next resumes the next page, and is empty when there is none. Its presence is also how a
+	// caller knows relays were left out: a truncated list that looks complete is how an
+	// operator concludes a relay is gone.
+	Next string
 }
 
 // Bounds on a roster page. An operator asking for everything still gets a bounded answer,
-// because an unbounded list is a query whose cost belongs to whoever calls it most.
+// because an unbounded list is a query whose cost belongs to whoever calls it most — and the
+// cursor is what makes that bound a page rather than a ceiling on what can ever be seen.
 const (
 	defaultRosterPage = 50
 	maxRosterPage     = 200
 )
 
+// ErrBadCursor reports a resume point that did not come from a previous page.
+var ErrBadCursor = errors.New("cursor is not a page position")
+
 // ListRelays returns an organization's relay identities, newest first.
 func (p *Placements) ListRelays(
-	ctx context.Context, organization tenancy.Organization, limit int,
+	ctx context.Context, organization tenancy.Organization, page RelayPage,
 ) (RelayRoster, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return RelayRoster{}, err
 	}
-	limit = min(max(limit, 1), maxRosterPage)
+	limit := pageLimit(page.Limit)
+	after, afterID, err := decodeCursor(page.After)
+	if err != nil {
+		return RelayRoster{}, err
+	}
 
-	// One more than asked for, so whether anything was left out is read from the data rather
-	// than guessed at by comparing a count to a limit.
+	// The position is (created_at, registration_id) rather than an offset, so a relay enrolled
+	// while an operator is paging cannot shift the rows underneath them and hide one.
+	//
+	// One more row than asked for is read, so whether anything was left out is read from the
+	// data rather than guessed at by comparing a count to a limit.
 	rows, err := pool.Query(ctx, `
 		SELECT registration_id, cluster_fingerprint, relay_version, created_at,
 		       revoked_at, session_conflict_at, session_conflict_hosts
 		  FROM relay_registration
 		 WHERE organization = $1
-		 ORDER BY created_at DESC
+		   AND ($3::timestamptz IS NULL
+		        OR (created_at, registration_id) < ($3::timestamptz, $4::uuid))
+		 ORDER BY created_at DESC, registration_id DESC
 		 LIMIT $2`,
-		organization.String(), limit+1)
+		organization.String(), limit+1, after, afterID)
 	if err != nil {
 		return RelayRoster{}, fmt.Errorf("listing relays: %w", err)
 	}
@@ -393,7 +420,8 @@ func (p *Placements) ListRelays(
 			return RelayRoster{}, scanErr
 		}
 		if len(roster.Relays) == limit {
-			roster.More = true
+			last := roster.Relays[limit-1]
+			roster.Next = encodeCursor(last.RegisteredAt, last.RegistrationID)
 			break
 		}
 		roster.Relays = append(roster.Relays, summary)
@@ -402,6 +430,49 @@ func (p *Placements) ListRelays(
 		return RelayRoster{}, fmt.Errorf("listing relays: %w", err)
 	}
 	return roster, nil
+}
+
+// pageLimit resolves how many rows to return. A caller that named nothing gets the default,
+// not the minimum.
+func pageLimit(asked int) int {
+	if asked <= 0 {
+		return defaultRosterPage
+	}
+	return min(asked, maxRosterPage)
+}
+
+// encodeCursor renders a page position. It is opaque on purpose: a caller that took it apart
+// would be depending on the ordering rather than on the cursor, and the ordering is ours.
+func encodeCursor(at time.Time, id uuid.UUID) string {
+	return base64.RawURLEncoding.EncodeToString(
+		[]byte(strconv.FormatInt(at.UnixNano(), 10) + ":" + id.String()))
+}
+
+// decodeCursor reads a page position back. An empty cursor is the start of the list, which is
+// not an error; anything unreadable is, because silently starting over would show an operator
+// the first page again and let them believe they had seen the last.
+func decodeCursor(cursor string) (*time.Time, *uuid.UUID, error) {
+	if cursor == "" {
+		return nil, nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return nil, nil, ErrBadCursor
+	}
+	nanos, identifier, found := strings.Cut(string(raw), ":")
+	if !found {
+		return nil, nil, ErrBadCursor
+	}
+	unixNano, err := strconv.ParseInt(nanos, 10, 64)
+	if err != nil {
+		return nil, nil, ErrBadCursor
+	}
+	id, err := uuid.Parse(identifier)
+	if err != nil {
+		return nil, nil, ErrBadCursor
+	}
+	at := time.Unix(0, unixNano)
+	return &at, &id, nil
 }
 
 func scanRelaySummary(rows pgx.Rows) (RelaySummary, error) {
