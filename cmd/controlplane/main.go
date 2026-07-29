@@ -30,6 +30,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
@@ -49,6 +50,15 @@ const (
 	operatorReadTimeout  = 30 * time.Second
 	operatorWriteTimeout = 30 * time.Second
 	operatorIdleTimeout  = 60 * time.Second
+)
+
+// Bounds on intake's connections. Shorter than the operator surface's, because a webhook
+// delivery is one bounded body from a machine rather than a person reading a page, and this is
+// the surface reachable from outside.
+const (
+	intakeReadTimeout  = 20 * time.Second
+	intakeWriteTimeout = 20 * time.Second
+	intakeIdleTimeout  = 30 * time.Second
 )
 
 // main is the only place that exits, so every deferred cleanup in start runs first.
@@ -166,9 +176,9 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	logger.Info("listening", slog.String("address", listener.Addr().String()))
 
-	// One slot per surface that can report a failure. A single slot would leave the second and
-	// third goroutines blocked forever on a send nobody is left to receive.
-	failed := make(chan error, 3)
+	// One slot per surface that can report a failure. Too few would leave the last goroutines
+	// blocked forever on a send nobody is left to receive.
+	failed := make(chan error, 4)
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil &&
 			!errors.Is(serveErr, http.ErrServerClosed) {
@@ -195,6 +205,15 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	defer operators.stop(cfg.ShutdownTimeout, logger)
 
+	// Intake is a fourth, and the only one a customer's own infrastructure reaches inbound.
+	// Separating it is what lets a deployment publish alert intake without publishing health,
+	// metrics, the operator surface, or the relay endpoint alongside it.
+	intake, err := startIntakeEndpoint(process, failed)
+	if err != nil {
+		return err
+	}
+	defer intake.stop(cfg.ShutdownTimeout, logger)
+
 	select {
 	case serveErr := <-failed:
 		return serveErr
@@ -212,7 +231,7 @@ func serve(ctx context.Context, process assembled) error {
 	// HTTP drain spend the whole budget and leave relay sessions none of it, and would make a
 	// shutdown take twice as long as it was configured to.
 	var stopped sync.WaitGroup
-	stopped.Add(2)
+	stopped.Add(3)
 	go func() {
 		defer stopped.Done()
 		relays.stop(cfg.ShutdownTimeout, logger)
@@ -220,6 +239,10 @@ func serve(ctx context.Context, process assembled) error {
 	go func() {
 		defer stopped.Done()
 		operators.stop(cfg.ShutdownTimeout, logger)
+	}()
+	go func() {
+		defer stopped.Done()
+		intake.stop(cfg.ShutdownTimeout, logger)
 	}()
 
 	err = server.Shutdown(drainCtx)
@@ -330,6 +353,69 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		}
 	}()
 	return endpoint, nil
+}
+
+// startIntakeEndpoint listens for alert deliveries when one is configured. A deployment with
+// no intake address takes no alerts, which is correct for an instance that only serves relays.
+func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoint, error) {
+	cfg := process.config
+	if cfg.IntakeAddress == "" {
+		return nil, nil
+	}
+
+	listener, err := net.Listen("tcp", cfg.IntakeAddress)
+	if err != nil {
+		return nil, fmt.Errorf("listening for alert intake on %s: %w", cfg.IntakeAddress, err)
+	}
+
+	endpoint := &intakeEndpoint{server: &http.Server{
+		Handler: intake.Handlers{
+			Placements: process.placements,
+			Logger:     process.logger,
+		}.Router(),
+		// Bounded at every stage. This is the one surface a customer's infrastructure reaches
+		// inbound, and its connections are unauthenticated until a request has been read, so a
+		// client that opens one and then goes quiet must not be able to hold it.
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       intakeReadTimeout,
+		WriteTimeout:      intakeWriteTimeout,
+		IdleTimeout:       intakeIdleTimeout,
+	}}
+
+	process.logger.Info("listening for alert intake",
+		slog.String("address", listener.Addr().String()))
+
+	go func() {
+		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
+			!errors.Is(serveErr, http.ErrServerClosed) {
+			failed <- serveErr
+		}
+	}()
+	return endpoint, nil
+}
+
+// intakeEndpoint is the alert-intake listener.
+type intakeEndpoint struct {
+	server   *http.Server
+	stopping sync.Once
+}
+
+// stop drains intake within the budget. The nil receiver is the configured-without-intake
+// case, so the caller can defer this unconditionally.
+func (e *intakeEndpoint) stop(budget time.Duration, logger *slog.Logger) {
+	if e == nil {
+		return
+	}
+	e.stopping.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
+
+		if err := e.server.Shutdown(ctx); err != nil {
+			logger.Warn("alert intake did not drain within the budget; closing it",
+				slog.Duration("budget", budget))
+			_ = e.server.Close()
+		}
+	})
 }
 
 // operatorEndpoint is the operator-facing listener.

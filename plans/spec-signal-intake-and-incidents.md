@@ -1,8 +1,42 @@
 # Spec — Signal intake and incidents
 
-Status: READY FOR IMPLEMENTATION once sessions and jobs are in Go
-Date: 2026-07-27
+Status: IN IMPLEMENTATION. Sessions and jobs are in Go, so the gate is met. The first
+increment is intake to a durable Signal; incidents, grouping and the human-initiated path are
+a second increment against this same document.
+Date: 2026-07-27, first source chosen 2026-07-29
 Repository: the Go control plane
+
+> **First increment, delivered 2026-07-29: intake to a durable Signal.** An Alertmanager
+> delivery authenticated by its source's shared secret becomes a normalised Signal, or is
+> refused with a status that says whether to retry.
+>
+> **Asserted by tests at the composition root** — stories 1, 7, 8, 11, 12, 18, 20, 23 and 28:
+> normalisation; the credential check in both directions; idempotent redelivery; a resolution
+> updating the episode it resolves without erasing when that episode began; the same alert
+> firing again recorded as a NEW episode rather than overwriting the resolved record of the
+> last one; a late redelivery of a firing not resurrecting a resolved episode; malformed,
+> oversized and truncated payloads handled without a partial write; a delivery naming another
+> organization refused while holding the real secret; a database outage answered as retryable
+> rather than as a refusal; and that a delivery is logged with its reason and origin but never
+> with its payload or a presented credential.
+>
+> **True by construction but asserted by nothing** — stories 16, 17, 21, 26. The secret is
+> stored only as a digest, verification runs before the body is read, vendor shapes exist only
+> inside an adapter, and a new source is one adapter. Each is visible in the code and none has
+> a test that would fail if it stopped being true.
+>
+> **Partly met, and the gap matters** — story 10 asks to verify the SIGNATURE of incoming
+> alerts; what is implemented is a shared secret, for the reason set out under the Alertmanager
+> decision below. Story 19 asks intake be bounded in size AND rate; only size is bounded, so a
+> holder of a valid secret can still deliver as fast as it likes.
+>
+> **Not built.** Story 9 — a source is configured by inserting a row, because there is no API
+> yet; that is a gap in the operator surface rather than in intake. Story 22 — the received
+> payload is retained only as a digest, which identifies a redelivery but diagnoses nothing, so
+> a normalisation mistake still cannot be checked against what actually arrived. Incidents and
+> grouping (5, 6, 24, 25), the human-initiated path (3, 4, 30), storm shedding (14, 15),
+> delivery health as an operator surface (13), and intake metrics (27). Story 2 waits on the
+> investigator, which this document puts out of scope.
 
 ## Problem Statement
 
@@ -112,6 +146,39 @@ alert involved. That path exists to escape the ceiling the external path inherit
 verification, deduplication identity, normalisation, and its own tests. Subsequent sources
 are then a known quantity. Building three adapters at once produces three half-shapes and a
 model that accommodates all of them badly.
+
+**The first source is Prometheus Alertmanager** (founder decision, 2026-07-29). It is what
+the target customer already runs, its payload is a documented and stable contract, and it
+carries its own notion of identity — a per-alert `fingerprint` within a `groupKey` — so
+deduplication does not have to be invented.
+
+**Alertmanager has no signing scheme, and that changes what "verify the signature" can mean.**
+It can attach static headers to a webhook and nothing more: there is no HMAC over the body and
+no timestamp to bind. So authentication is a per-source shared secret presented in a header,
+stored only as a digest and compared in constant time — the same shape the operator surface
+uses. This is weaker than a signature in two specific ways, and both are worth stating rather
+than discovering: the secret is replayable by anyone who captures one request, and it
+authenticates the sender but attests nothing about the body.
+
+What it buys is narrower than story 10 asks for, and worth stating as such rather than
+declaring sufficient. An unauthenticated caller cannot inject signals, which is the property
+that matters most. What is lost is body integrity: the payload is authenticated by nobody, so
+story 18's "treat the alert payload as untrusted" now has to carry weight it was not written
+to carry alone.
+
+Two mitigations are real and one is a deployment obligation rather than code. Deduplication
+makes a replayed delivery idempotent rather than a second signal — implemented and tested. The
+secret is per-source, so a disclosure is bounded to one source — implemented. Transport
+security is NOT provided by this process: intake serves plain HTTP and is expected behind a
+TLS-terminating edge, exactly as the relay endpoint is. That is a deployment requirement, and
+a deployment that publishes intake without terminating TLS in front of it is handing out a
+replayable credential in cleartext.
+
+Two things are consequently owed and not yet built: a minimum length enforced on a source's
+secret at the point it is created (the operator token has one; this has no creation path to
+enforce it in yet), and a rate limit, which is the only remaining defence once a credential
+leaks. A source that can sign gets signature verification when its adapter is written; the
+verification step is per-adapter for exactly this reason.
 
 **A vendor payload shape exists only inside its adapter.** Nothing downstream of
 normalisation can tell which system delivered a Signal. This is the boundary that keeps

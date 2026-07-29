@@ -37,6 +37,8 @@ const (
 
 	EnvOperatorAddress   = "OC_OPERATOR_ADDRESS"
 	EnvOperatorTokenFile = "OC_OPERATOR_TOKEN_FILE"
+
+	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 )
 
 // minOperatorTokenLength is the shortest token the operator surface will accept.
@@ -101,6 +103,15 @@ type Config struct {
 	// read from the file the operator named, reduced to this, and discarded: the process holds
 	// no copy of it, so there is nothing here to log or echo by accident.
 	OperatorTokenDigest []byte
+
+	// IntakeAddress is the listen address for alert intake. It is separate from every other
+	// surface because it is the only one a customer's own infrastructure connects to inbound,
+	// so a deployment can expose it and expose nothing else. Empty disables it, which is
+	// correct for an instance that serves relays but takes no alerts.
+	//
+	// It carries no credential of its own: each configured source authenticates with its own
+	// secret, so there is nothing here that would be shared across tenants.
+	IntakeAddress string
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -143,6 +154,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.OperatorAddress); err != nil {
+		return Config{}, err
+	}
+	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
 		return Config{}, err
 	}
 

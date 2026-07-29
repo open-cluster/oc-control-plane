@@ -85,9 +85,6 @@ It requires only gRPC and protobuf. The Relay's own module carries client-go bec
 reads clusters; depending on that to obtain the generated types would put the whole
 Kubernetes graph in this service's vulnerability report and licence inventory.
 
-Nothing imports the contract yet, so it is absent from `go.mod` — Go drops a requirement no
-package imports. It lands with relay registration; until then the gates hold the boundary.
-
 Fetching from the private repository needs
 `go env -w GOPRIVATE='github.com/open-cluster/*'` and a credential with organization access.
 
@@ -102,6 +99,20 @@ Fetching from the private repository needs
 | `OC_SHUTDOWN_TIMEOUT` | no | Drain budget on SIGTERM. Default `15s` |
 | `OC_SERVICE_NAME` | no | Telemetry service name. Default `oc-control-plane` |
 | `OC_OTLP_ENDPOINT` | no | Trace collector `host:port`. Empty disables trace export |
+| `OC_RELAY_ADDRESS` | no | Listen address for the Relay endpoint. Empty serves no relays |
+| `OC_RELAY_SPKI_PINS` | with relays | This endpoint's own public key digests, handed to a Relay at enrolment. Comma separated; more than one so a rotation can overlap |
+| `OC_OPERATOR_ADDRESS` | no | Listen address for the operator surface. Empty exposes it nowhere |
+| `OC_OPERATOR_TOKEN_FILE` | with operators | File holding the operator token. At least 32 characters |
+| `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
+
+Each surface has its own listener, and that is what makes a deployment able to publish one
+without publishing the rest. Intake is the only one a customer's own infrastructure reaches
+inbound; the operator surface reads across tenants and belongs somewhere private; health and
+metrics belong wherever the cluster scrapes from.
+
+Intake carries no credential of its own — each configured alerting source authenticates with
+its own secret, stored as a digest and never read back — which is why there is no
+`OC_INTAKE_TOKEN_FILE` beside the operator one.
 
 At least one of `OC_DEFAULT_PLACEMENT` or `OC_PLACEMENT_ASSIGNMENTS` is required; with
 neither, no organization could be resolved. The default is the shared tier — enumerating
@@ -119,6 +130,12 @@ carries a credential, and no error quotes a DSN file's contents.
 | `GET /healthz` | Liveness. Process health only — never consults a dependency, so a database outage cannot cause a restart loop |
 | `GET /readyz` | Readiness. Reports unready when the placement this instance must have is unreachable, and recovers without a restart. It deliberately does **not** require every placement: once a tenant has a dedicated database, an all-must-be-up check would let one customer's outage withdraw the instance from service for everyone |
 | `GET /metrics` | Prometheus scrape. Served outside the tracing middleware, and carries no per-organization label |
+
+On the intake listener:
+
+| Path | Purpose |
+| --- | --- |
+| `POST /intake/v1/organizations/{organization}/sources/{source}` | One webhook delivery from a configured alerting source. Authenticated by that source's shared secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
 
 ## Development
 
