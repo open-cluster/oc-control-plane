@@ -1,6 +1,8 @@
 # Go Control-Plane Migration — Plan
 
-Status: ACCEPTED. Revision 3 records the founder decisions; slice 0 is implemented.
+Status: ACCEPTED. Revision 3 records the founder decisions. Slices 0, 1 and 2 are implemented
+and in CI; slice 3 is half done — intake to a Signal is built, incidents and grouping are not.
+The sequence in section 6 ends there, so what follows slice 3 has no specification yet.
 Date: 2026-07-26 (revision 3 — founder decisions: trigger model is external intake plus
 human-initiated; a new clean Go control-plane repository is created; the .NET repository
 becomes a frozen reference implementation; strangler migration by bounded vertical slice)

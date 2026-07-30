@@ -1,8 +1,8 @@
 # Spec — Prove the Relay end to end against the control plane
 
-Status: IMPLEMENTED 2026-07-29 — partially. The walking-skeleton sentence and four
-interleavings are proven; three named failure modes are not, and are listed below rather than
-left to be discovered.
+Status: IMPLEMENTED 2026-07-29, and running in CI since 2026-07-30. The walking-skeleton
+sentence and five interleavings are proven; eight named failure modes are not, and are listed
+below rather than left to be discovered. It found one protocol defect, fixed in the Relay.
 Date: 2026-07-27, revised 2026-07-29
 Repositories touched: this one, and the Relay — which was modified, once, for a defect this
 exercise found. Both halves take part as running processes.
@@ -50,9 +50,11 @@ exercise found. Both halves take part as running processes.
 > exist for. Drain is tested in each side's own suite, where a signal can be delivered
 > portably.
 >
-> **The proof does not yet run in CI.** It needs a credential for the Relay's private
-> repository. The job exists and reports in the run summary that the proof did not run, rather
-> than reporting a green tick for something that never executed.
+> **It runs in CI as of 2026-07-30**, once a credential for the Relay's private repository was
+> provisioned. The first run against relay `main` failed on the capability-version refusal —
+> correctly, because the fix for it was still an unmerged pull request. That is the harness
+> doing its job rather than a flake, and it is worth recording as the moment the proof first
+> earned its place: a protocol regression in either repository now turns the other's CI red.
 
 ## Problem Statement
 
