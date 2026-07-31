@@ -134,6 +134,16 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"Ping":           "reachability of every placement; reads no data",
 		"Close":          "releases pools",
 		"MigrationCount": "reports how many migrations the binary carries",
+		// The one read that DISCOVERS a tenant instead of being given one, and the reason it
+		// has to is recorded in ADR-003's second amendment. An inbound delivery names its
+		// Connection and nothing else, because a path is chosen by the caller and a caller who
+		// could name a tenant could try every tenant — so there is no organization in the
+		// request to resolve a placement from. Each placement is asked for the identifier and
+		// the row that is found is itself the authority for the organization and the
+		// environment. It is safe for the same reason it exists: nothing the caller sent
+		// contributes to the tenant the answer belongs to.
+		"ConnectionByID": "resolves a tenant FROM an opaque connection identifier; " +
+			"the row found is the authority, and no caller-supplied value selects it",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {

@@ -28,6 +28,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/connection"
+	"github.com/open-cluster/oc-control-plane/internal/environment"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -50,6 +52,11 @@ type Handlers struct {
 }
 
 // Router returns the operator surface.
+//
+// This package owns the listener and the credential; each business capability owns its own
+// routes and the shape of what they return, and mounts them behind the authorization decided
+// here. One surface deciding who may reach it is the point — a second copy of that decision
+// is a second place for it to be wrong.
 func (h Handlers) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /operator/v1/organizations/{organization}/relays",
@@ -58,6 +65,9 @@ func (h Handlers) Router() http.Handler {
 		h.authorized(http.HandlerFunc(h.conflictTrail)))
 	mux.Handle("POST /operator/v1/organizations/{organization}/relays/{registration}/clear-conflict",
 		h.authorized(http.HandlerFunc(h.clearConflict)))
+
+	environment.Handlers{Placements: h.Placements, Logger: h.Logger}.Mount(mux, h.authorized)
+	connection.Handlers{Placements: h.Placements, Logger: h.Logger}.Mount(mux, h.authorized)
 	return mux
 }
 
@@ -122,7 +132,7 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	roster, err := h.Placements.ListRelays(ctx, organization, storage.RelayPage{
+	roster, err := h.Placements.ListRelays(ctx, organization, storage.Page{
 		Limit: pageSize(request),
 		After: request.URL.Query().Get("after"),
 	})
@@ -159,7 +169,7 @@ func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Reques
 	defer cancel()
 
 	trail, err := h.Placements.SessionConflictTrail(ctx, organization, registration,
-		storage.RelayPage{Limit: pageSize(request), After: request.URL.Query().Get("after")})
+		storage.Page{Limit: pageSize(request), After: request.URL.Query().Get("after")})
 	if err != nil {
 		h.fail(writer, request, err)
 		return

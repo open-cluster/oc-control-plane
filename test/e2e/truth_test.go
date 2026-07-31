@@ -175,19 +175,61 @@ func (t *truth) countRegistrations(ctx context.Context, organization string) (in
 	return count, nil
 }
 
+// evidenceConnection records the Kubernetes Connection every job reaches, in the
+// organization's Default Environment and served by the enrolled relay.
+//
+// The Connection is what a job reaches; the relay is where it runs. Both rows are written here
+// in SQL for the same reason everything else in this harness is: the schema is the contract an
+// implementation is being held to, and going through the implementation's own helpers would
+// make the harness agree with it by construction.
+func (t *truth) evidenceConnection(
+	ctx context.Context, organization string, registration uuid.UUID,
+) (uuid.UUID, error) {
+	environment := uuid.New()
+	if _, err := t.pool.Exec(ctx, `
+		INSERT INTO environment (environment_id, organization, name, is_default)
+		VALUES ($1, $2, 'Default', TRUE)
+		ON CONFLICT (organization) WHERE is_default DO NOTHING`,
+		environment, organization); err != nil {
+		return uuid.Nil, fmt.Errorf("creating the default environment: %w", err)
+	}
+	if err := t.pool.QueryRow(ctx,
+		`SELECT environment_id FROM environment WHERE organization = $1 AND is_default`,
+		organization).Scan(&environment); err != nil {
+		return uuid.Nil, fmt.Errorf("reading the default environment: %w", err)
+	}
+
+	connection := uuid.New()
+	if _, err := t.pool.Exec(ctx, `
+		INSERT INTO connection
+			(connection_id, organization, environment_id, integration, name,
+			 role, locality, relay_registration_id)
+		VALUES ($1, $2, $3, 'kubernetes', $4, 2, 2, $5)`,
+		connection, organization, environment, "the cluster "+connection.String(),
+		registration); err != nil {
+		return uuid.Nil, fmt.Errorf("creating the evidence connection: %w", err)
+	}
+	return connection, nil
+}
+
 // enqueueJob records work to be done, pending and unleased — which is what an investigation
 // planner will do once one exists. Nothing is delivered until a session claims it, so a job
 // enqueued while every relay is offline waits rather than being lost.
+//
+// The Connection is named rather than left out, because the schema will not accept a job
+// without one: the environment boundary is a checked precondition on the execution path, and a
+// job with nothing to compare against could not be one.
 func (t *truth) enqueueJob(
-	ctx context.Context, organization string, registration uuid.UUID,
+	ctx context.Context, organization string, registration, connection uuid.UUID,
 	capability string, version uint32, arguments []byte,
 ) (uuid.UUID, error) {
 	id := uuid.New()
 	_, err := t.pool.Exec(ctx, `
 		INSERT INTO relay_job
-			(job_id, organization, registration_id, capability_id, capability_version, arguments)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, organization, registration, capability, version, arguments)
+			(job_id, organization, connection_id, registration_id,
+			 capability_id, capability_version, arguments)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, organization, connection, registration, capability, version, arguments)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("enqueueing a job: %w", err)
 	}

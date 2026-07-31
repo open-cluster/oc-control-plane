@@ -103,6 +103,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/open-cluster/oc-relay/gen/go v0.1.0 h1:kiY9eUWeuquDtOOixSoLNeXZvTpYIRl/wVzZmL4whfU=
 github.com/open-cluster/oc-relay/gen/go v0.1.0/go.mod h1:jVwKw32hebmKeJ5N6uAwkp7T0ZVwaIlhYXUJlvwjmMo=
+github.com/open-cluster/oc-relay/gen/go v0.2.0 h1:PF7wdMzn4cywZ6kzF6UC6qiSQJ87c1TCyy0IW8TNM3k=
+github.com/open-cluster/oc-relay/gen/go v0.2.0/go.mod h1:8FHX2AWZQ+HTlKt1eIT0WFnnR8wrZtpVy9jeAtXorWc=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=

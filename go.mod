@@ -9,7 +9,7 @@ require (
 	github.com/exaring/otelpgx v0.11.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/open-cluster/oc-relay/gen/go v0.1.0
+	github.com/open-cluster/oc-relay/gen/go v0.2.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0

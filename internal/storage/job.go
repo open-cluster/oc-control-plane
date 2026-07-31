@@ -69,7 +69,12 @@ func (r ResultRefusal) String() string {
 
 // Job is a unit of work as the control plane holds it.
 type Job struct {
-	ID             uuid.UUID
+	ID uuid.UUID
+	// ConnectionID is what this job reaches: one configured instance of an Integration, inside
+	// one Environment. The registration below is where it RUNS. Keeping both is what lets a
+	// customer with two clusters behind one Relay have a result attributed to the cluster it
+	// was read from rather than to the installation that read it.
+	ConnectionID   uuid.UUID
 	RegistrationID uuid.UUID
 	CapabilityID   string
 	// Widened to the protocol's type rather than a plain int, so the version a relay is asked
@@ -89,24 +94,103 @@ type JobFence struct {
 	LeaseEpoch   int64
 }
 
+// ErrJobRefused reports work that was not enqueued because its Connection could not carry it.
+// Nothing was written.
+var ErrJobRefused = errors.New("job refused")
+
+// JobRefusal is why work was not enqueued. Each is a different mistake by whoever planned the
+// job, and telling them apart is what makes the boundary diagnosable rather than mysterious.
+type JobRefusal int
+
+const (
+	// JobConnectionUnknown means no such Connection exists in this organization, or it has
+	// been disabled. Both are one answer: an operator who turned a Connection off wants work
+	// against it refused, not merely recorded.
+	JobConnectionUnknown JobRefusal = iota + 1
+	// JobConnectionIsNotEvidence means the Connection exists but is trigger-only. It delivers
+	// Signals inbound and answers nothing outbound, so there is nothing for a capability to
+	// read through it.
+	JobConnectionIsNotEvidence
+	// JobRelayIsNotTheConnections means the job names a Relay that is not the one bound to its
+	// Connection — including a Connection whose locality is control_plane and which no Relay
+	// serves. Dispatching anyway would send a read for one customer's cluster to an
+	// installation sitting in another.
+	JobRelayIsNotTheConnections
+)
+
+func (r JobRefusal) String() string {
+	switch r {
+	case JobConnectionUnknown:
+		return "connection unknown or disabled"
+	case JobConnectionIsNotEvidence:
+		return "connection does not answer evidence reads"
+	case JobRelayIsNotTheConnections:
+		return "relay is not the one bound to this connection"
+	default:
+		return "unrecognised"
+	}
+}
+
 // EnqueueJob records work to be done. It is pending and unleased: nothing is delivered until
 // a session claims it, so a job that is enqueued while every relay is offline waits rather
 // than being lost.
-func (p *Placements) EnqueueJob(ctx context.Context, organization tenancy.Organization, job Job) error {
+//
+// The Connection is a PRECONDITION rather than a column copied in. The insert only produces a
+// row when a live evidence Connection exists in this organization AND the Relay it is bound to
+// is the one the job names, so the environment boundary is checked on the execution path
+// rather than left to whichever query happened to scope itself correctly. Deciding it inside
+// the insert also means a Connection disabled between a check and a write cannot leave work
+// queued against it.
+func (p *Placements) EnqueueJob(
+	ctx context.Context, organization tenancy.Organization, job Job,
+) (JobRefusal, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, `
 		INSERT INTO relay_job
-			(job_id, organization, registration_id, capability_id, capability_version, arguments)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		job.ID, organization.String(), job.RegistrationID,
+			(job_id, organization, connection_id, registration_id,
+			 capability_id, capability_version, arguments)
+		SELECT $1, $2, connection.connection_id, connection.relay_registration_id, $5, $6, $7
+		  FROM connection
+		 WHERE connection.connection_id  = $3
+		   AND connection.organization   = $2
+		   AND connection.disabled_at   IS NULL
+		   -- 2 evidence, 3 both. A trigger-only Connection answers nothing outbound.
+		   AND connection.role          IN (2, 3)
+		   -- The registration is taken FROM the Connection and compared to the one the job
+		   -- names, rather than trusted from the job. A caller that got it wrong is refused
+		   -- instead of silently redirected.
+		   AND connection.relay_registration_id = $4`,
+		job.ID, organization.String(), job.ConnectionID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments)
 	if err != nil {
-		return fmt.Errorf("enqueueing job: %w", err)
+		return 0, fmt.Errorf("enqueueing job: %w", err)
 	}
-	return nil
+	if tag.RowsAffected() == 1 {
+		return 0, nil
+	}
+	return p.explainRefusedJob(ctx, organization, job)
+}
+
+// explainRefusedJob reads why the guarded insert matched nothing.
+func (p *Placements) explainRefusedJob(
+	ctx context.Context, organization tenancy.Organization, job Job,
+) (JobRefusal, error) {
+	connection, err := p.ConnectionForOrganization(ctx, organization, job.ConnectionID)
+	switch {
+	case errors.Is(err, ErrConnectionUnknown):
+		return JobConnectionUnknown, ErrJobRefused
+	case err != nil:
+		return 0, fmt.Errorf("auditing a refused job: %w", err)
+	case connection.Disabled():
+		return JobConnectionUnknown, ErrJobRefused
+	case !connection.Role.Includes(RoleEvidence):
+		return JobConnectionIsNotEvidence, ErrJobRefused
+	default:
+		return JobRelayIsNotTheConnections, ErrJobRefused
+	}
 }
 
 // ClaimJobs leases up to limit jobs for a session and returns them. The transition to leased
@@ -152,7 +236,7 @@ func (p *Placements) ClaimJobs(
 		                                AND held.lease_expires_at > now()), 0)
 		        -- Concurrent claimers take disjoint work instead of blocking on each other.
 		        FOR UPDATE SKIP LOCKED)
-		RETURNING job_id, registration_id, capability_id, capability_version,
+		RETURNING job_id, connection_id, registration_id, capability_id, capability_version,
 		          arguments, lease_session, lease_epoch`,
 		organization.String(), claim.RegistrationID, claim.SessionID,
 		claim.LeaseFor.String(), claim.Capacity)
@@ -164,7 +248,7 @@ func (p *Placements) ClaimJobs(
 	var claimed []Job
 	for rows.Next() { // mapping to Job
 		var job Job
-		if err = rows.Scan(&job.ID, &job.RegistrationID, &job.CapabilityID,
+		if err = rows.Scan(&job.ID, &job.ConnectionID, &job.RegistrationID, &job.CapabilityID,
 			&job.CapabilityVersion, &job.Arguments, &job.LeaseSession, &job.LeaseEpoch); err != nil {
 			return nil, fmt.Errorf("reading claimed job: %w", err)
 		}

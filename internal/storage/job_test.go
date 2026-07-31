@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ const testOrganization = "org-a"
 func TestJob_ClaimingLeasesTheWorkAndFencesIt(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 	job := enqueue(t, placements, organization, registration)
 
 	claimed := claim(t, placements, organization, registration, uuid.New())
@@ -40,7 +41,7 @@ func TestJob_ClaimingLeasesTheWorkAndFencesIt(t *testing.T) {
 func TestJob_ResultIsRecordedOnceAndResendsAreAnsweredDefinitively(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 	enqueue(t, placements, organization, registration)
 	session := uuid.New()
 	leased := claim(t, placements, organization, registration, session)[0]
@@ -71,7 +72,7 @@ func TestJob_ResultIsRecordedOnceAndResendsAreAnsweredDefinitively(t *testing.T)
 func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 	enqueue(t, placements, organization, registration)
 
 	first := claim(t, placements, organization, registration, uuid.New())[0]
@@ -113,7 +114,7 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 	enqueue(t, placements, organization, registration)
 	leased := claim(t, placements, organization, registration, uuid.New())[0]
 
@@ -137,7 +138,7 @@ func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 
 	// Both jobs are claimed together, then one is finished and the other abandoned. Claiming
 	// them separately would not work: a claim reclaims expired leases itself, so the second
@@ -177,7 +178,7 @@ func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.
 func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 
 	first := enqueue(t, placements, organization, registration)
 	second := enqueue(t, placements, organization, registration)
@@ -194,7 +195,7 @@ func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 
 	t.Run("a job that has not started is cancelled outright", func(t *testing.T) {
 		job := enqueue(t, placements, organization, registration)
@@ -273,7 +274,7 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 
 	enqueue(t, placements, organization, registration)
 	enqueue(t, placements, organization, registration)
@@ -316,7 +317,7 @@ func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 
 	t.Run("work still executing moves to the new session and can still be recorded", func(t *testing.T) {
 		enqueue(t, placements, organization, registration)
@@ -413,7 +414,7 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	t.Parallel()
 	placements, organization := migratedPlacement(t)
-	registration := uuid.New()
+	registration := enrolledRelay(t, placements, organization)
 
 	enqueue(t, placements, organization, registration)
 	enqueue(t, placements, organization, registration)
@@ -502,18 +503,96 @@ func enqueue(
 	organization tenancy.Organization, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
+	return enqueueThrough(t, placements, organization, registration,
+		evidenceConnection(t, placements, organization, registration))
+}
+
+// enqueueThrough records work against a named Connection, for the tests that care which one.
+func enqueueThrough(
+	t *testing.T, placements *storage.Placements,
+	organization tenancy.Organization, registration, connection uuid.UUID,
+) uuid.UUID {
+	t.Helper()
 
 	job := storage.Job{
 		ID:                uuid.New(),
+		ConnectionID:      connection,
 		RegistrationID:    registration,
 		CapabilityID:      "kubernetes.workload.runtime",
 		CapabilityVersion: 1,
 		Arguments:         []byte("arguments"),
 	}
-	if err := placements.EnqueueJob(context.Background(), organization, job); err != nil {
-		t.Fatalf("enqueueing: %v", err)
+	refusal, err := placements.EnqueueJob(context.Background(), organization, job)
+	if err != nil {
+		t.Fatalf("enqueueing: %v (%s)", err, refusal)
 	}
 	return job.ID
+}
+
+// enrolledRelay records a real relay identity through the enrolment path.
+//
+// A bare identifier no longer satisfies the schema: a job names a Connection, and a Connection
+// names the installation that serves it. That is the boundary being enforced rather than a
+// friction to work around, so these tests enrol rather than inventing a UUID.
+func enrolledRelay(
+	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+) uuid.UUID {
+	t.Helper()
+
+	token := randomDigest(t)
+	ctx := context.Background()
+	if err := placements.IssueBootstrapToken(
+		ctx, organization, token, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("issuing a bootstrap token: %v", err)
+	}
+	registration, refusal, err := placements.EnrolRelay(ctx, organization, storage.RelayEnrolment{
+		TokenDigest:        token,
+		CredentialDigest:   randomDigest(t),
+		ClusterFingerprint: uuid.NewString(),
+		RelayVersion:       "test",
+		Capabilities:       []byte(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("enrolling a relay: %v (%v)", err, refusal)
+	}
+	return registration
+}
+
+// evidenceConnection creates a Kubernetes Connection in the organization's Default
+// Environment, served by the given relay. It is what a job reaches; the relay is where the
+// job runs.
+func evidenceConnection(
+	t *testing.T, placements *storage.Placements,
+	organization tenancy.Organization, registration uuid.UUID,
+) uuid.UUID {
+	t.Helper()
+
+	ctx := context.Background()
+	environment, err := placements.EnsureDefaultEnvironment(ctx, organization)
+	if err != nil {
+		t.Fatalf("ensuring the default environment: %v", err)
+	}
+	created, err := placements.CreateConnection(ctx, organization, storage.NewConnection{
+		Environment:       environment.ID,
+		Integration:       "kubernetes",
+		Name:              "cluster " + uuid.NewString(),
+		Role:              storage.RoleEvidence,
+		Locality:          storage.LocalityRelay,
+		RelayRegistration: registration,
+	})
+	if err != nil {
+		t.Fatalf("creating an evidence connection: %v", err)
+	}
+	return created.ID
+}
+
+func randomDigest(t *testing.T) []byte {
+	t.Helper()
+	digest := make([]byte, 32)
+	if _, err := rand.Read(digest); err != nil {
+		t.Fatalf("reading entropy: %v", err)
+	}
+	return digest
 }
 
 func claim(

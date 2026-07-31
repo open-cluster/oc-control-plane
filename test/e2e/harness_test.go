@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 )
@@ -20,10 +21,12 @@ import (
 // is in question here is the protocol, which does not vary by tenant.
 const organization = "e2e-org"
 
-// The one compiled capability, named here rather than at each call site because the version
-// is something several tests vary deliberately.
+// The compiled capabilities, named here rather than at each call site because the version is
+// something several tests vary deliberately.
 const (
 	capabilityID      = "kubernetes.workload.runtime"
+	eventsCapability  = "kubernetes.namespace.events"
+	logsCapability    = "kubernetes.container.logs"
 	capabilityVersion = 1
 )
 
@@ -58,7 +61,10 @@ type harness struct {
 	plane        *controlPlane
 	relay        *relay
 	registration uuid.UUID
-	workDir      string
+	// connection is what every job in this harness reaches: a Kubernetes Connection in the
+	// organization's Default Environment, served by the enrolled relay.
+	connection uuid.UUID
+	workDir    string
 	// token is the bootstrap token the first Relay consumed. It is kept so a second Relay can
 	// present it and be refused, which is the only way single-use consumption is observable
 	// from outside this process.
@@ -219,6 +225,12 @@ func (h *harness) startRelay(ctx context.Context, t *testing.T) {
 		t.Fatalf("starting the relay: %v", err)
 	}
 	h.registration = h.awaitRegistration(t)
+
+	connection, err := h.truth.evidenceConnection(ctx, organization, h.registration)
+	if err != nil {
+		t.Fatalf("creating the evidence connection: %v", err)
+	}
+	h.connection = connection
 }
 
 // installation describes a Relay pointed at this harness's control plane and cluster. Every
@@ -287,12 +299,69 @@ func (h *harness) dispatchVersion(
 		t.Fatalf("encoding job arguments: %v", err)
 	}
 
-	id, err := h.truth.enqueueJob(context.Background(), organization, h.registration,
-		capabilityID, version, arguments)
+	return h.enqueueCapability(t, capabilityID, version, arguments)
+}
+
+// enqueueCapability enqueues one job for any compiled capability.
+func (h *harness) enqueueCapability(
+	t *testing.T, capability string, version uint32, arguments []byte,
+) uuid.UUID {
+	t.Helper()
+
+	id, err := h.truth.enqueueJob(context.Background(), organization,
+		h.registration, h.connection, capability, version, arguments)
 	if err != nil {
 		t.Fatalf("enqueueing the job: %v", err)
 	}
 	return id
+}
+
+// dispatchEvents enqueues a namespace-events read over the window given.
+func (h *harness) dispatchEvents(
+	t *testing.T, namespace string, since time.Duration, maxEvents uint32,
+) uuid.UUID {
+	t.Helper()
+
+	now := time.Now().UTC()
+	arguments, err := proto.Marshal(&relayv1.CapabilityArguments{
+		Arguments: &relayv1.CapabilityArguments_KubernetesNamespaceEventsV1{
+			KubernetesNamespaceEventsV1: &relayv1.KubernetesNamespaceEventsArgsV1{
+				Namespace:   namespace,
+				WindowStart: timestamppb.New(now.Add(-since)),
+				WindowEnd:   timestamppb.New(now.Add(time.Minute)),
+				MaxEvents:   maxEvents,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encoding events arguments: %v", err)
+	}
+	return h.enqueueCapability(t, eventsCapability, capabilityVersion, arguments)
+}
+
+// dispatchLogs enqueues a container-logs read.
+func (h *harness) dispatchLogs(
+	t *testing.T, namespace, pod, container string, previous bool,
+	maxLines, maxBytes uint32,
+) uuid.UUID {
+	t.Helper()
+
+	arguments, err := proto.Marshal(&relayv1.CapabilityArguments{
+		Arguments: &relayv1.CapabilityArguments_KubernetesContainerLogsV1{
+			KubernetesContainerLogsV1: &relayv1.KubernetesContainerLogsArgsV1{
+				Namespace:     namespace,
+				PodName:       pod,
+				ContainerName: container,
+				Previous:      previous,
+				MaxLines:      maxLines,
+				MaxBytes:      maxBytes,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encoding logs arguments: %v", err)
+	}
+	return h.enqueueCapability(t, logsCapability, capabilityVersion, arguments)
 }
 
 // awaitTerminal waits for a job to reach a recorded terminal state and returns it.

@@ -1,12 +1,14 @@
 package relay
 
 import (
+	"errors"
 	"log/slog"
 	"maps"
 	"time"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/capability"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -107,7 +109,7 @@ func (s *SessionService) dispatchWork(session *sessionState) error {
 	for _, job := range claimed {
 		assignment, buildErr := assignmentFor(session, job)
 		if buildErr != nil {
-			s.failUndeliverable(session, job)
+			s.failUndeliverable(session, job, buildErr)
 			continue
 		}
 		if err = send(session, assignment); err != nil {
@@ -156,31 +158,56 @@ func (s *SessionService) dispatchCancellations(
 
 // failUndeliverable records the terminal outcome of a job that cannot be put on the wire.
 //
-// The arguments were encoded on this side, so a job that will not decode is a defect here and
-// no execution will ever change that. Recording it as failed ends it; leaving it leased would
-// cycle it through claim and expiry forever. Delivery then continues with the rest of the
-// batch, because one undeliverable job holding up every job behind it turns a defect into an
-// outage — and the jobs behind it are already leased to this session, so they would wait out
-// the whole lease rather than being redelivered.
-func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job) {
+// Two things reach here and both are ours. The arguments were encoded on this side, so a job
+// that will not decode is a defect here; and a job whose typed arguments could not produce a
+// usable read was planned wrong, which no execution will change either. Recording it as failed
+// ends it; leaving it leased would cycle it through claim and expiry forever. Delivery then
+// continues with the rest of the batch, because one undeliverable job holding up every job
+// behind it turns a defect into an outage — and the jobs behind it are already leased to this
+// session, so they would wait out the whole lease rather than being redelivered.
+func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job, cause error) {
 	ctx := session.ctx
 
-	// The same failure shape a relay would report, so a reader of the result column has one
-	// taxonomy to understand rather than two.
+	// The same failure shape a relay would report, and the same KIND it would have reported
+	// for the same cause. One taxonomy across both halves is what lets a reader of the result
+	// column answer "why did this job fail" without first asking which side refused it — and a
+	// capability nobody carries reported as malformed arguments would send an operator to
+	// inspect a payload that was never the problem.
 	outcome := storage.JobOutcome{
 		Status: storage.JobFailed,
-		Result: mustMarshal(&relayv1.JobFailure{Kind: relayv1.JobFailure_KIND_ARGUMENTS_REJECTED}),
+		Result: mustMarshal(&relayv1.JobFailure{Kind: refusalKind(cause)}),
 	}
 	fence := storage.JobFence{
 		JobID: job.ID, LeaseSession: session.id, LeaseEpoch: job.LeaseEpoch,
 	}
 
-	session.logger.ErrorContext(ctx, "job arguments cannot be encoded for dispatch",
+	session.logger.ErrorContext(ctx, "job refused before dispatch",
 		slog.String("job_id", job.ID.String()),
-		slog.String("capability_id", job.CapabilityID))
+		slog.String("connection_id", job.ConnectionID.String()),
+		slog.String("capability_id", job.CapabilityID),
+		slog.Uint64("capability_version", uint64(job.CapabilityVersion)),
+		// The cause is this control plane's own message about its own job, so it carries no
+		// customer data and is worth saying: without it the operator sees a job that failed
+		// and no reason it could not have succeeded.
+		slog.String("error", cause.Error()))
 	if _, err := s.placements.RecordResult(ctx, session.organization, fence, outcome); err != nil {
 		session.logger.ErrorContext(ctx, "failing an undeliverable job",
 			slog.String("job_id", job.ID.String()),
 			slog.String("error", err.Error()))
 	}
+}
+
+// refusalKind maps why a job could not be dispatched onto the wire taxonomy the relay uses for
+// the same causes.
+//
+// The distinction it draws is the one an operator acts on. A capability or version this build
+// does not carry means the two halves of the fleet disagree about what exists — someone is too
+// old, and the fix is a deployment. Anything else means the job itself could not have worked,
+// and the fix is in whatever planned it. Reporting the first as the second sends an operator to
+// read a payload that was never wrong.
+func refusalKind(cause error) relayv1.JobFailure_Kind {
+	if errors.Is(cause, capability.ErrUnknownCapability) {
+		return relayv1.JobFailure_KIND_UNSUPPORTED_CAPABILITY_VERSION
+	}
+	return relayv1.JobFailure_KIND_ARGUMENTS_REJECTED
 }

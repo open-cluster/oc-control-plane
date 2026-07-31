@@ -34,11 +34,25 @@
 //   - A read of a workload that is not there is recorded as a typed outcome rather than a
 //     failure, and does not claim to have been complete. The distinction is the one certified
 //     absence rests on.
-//   - A job naming a capability version the Relay does not have is refused with a typed
-//     failure and never executed. This is the one that found something: before it existed the
-//     Relay dispatched every assignment to its single executor without reading the capability
-//     or the version at all, so a job at any version would have been run and answered under
-//     v1 semantics.
+//   - A job naming a capability version no half of the fleet has is refused with a typed
+//     failure and never executed. This is the one that found something twice: before it
+//     existed the Relay dispatched every assignment to its single executor without reading the
+//     capability or the version at all, so a job at any version would have been run and
+//     answered under v1 semantics; and when central pre-dispatch validation landed it recorded
+//     the refusal as malformed arguments, which would have sent an operator to inspect a
+//     payload that was never the problem.
+//   - The cluster's own account of what it did, and a container's own words, cross the
+//     protocol with their completeness bases intact — the returned counts, the completeness
+//     flags, which bound bound, the effective bounds applied, and the attested event-retention
+//     horizon. The executors' unit tests prove those are computed; only this proves they
+//     survive encoding, the stream, the recording transaction and the column they land in,
+//     which is what the central certificate depends on.
+//   - The container that DIED is readable rather than the one that replaced it, and a
+//     previous-container read on a container that never restarted is a distinct typed outcome
+//     from a container that is not there.
+//   - A missing pod, a missing container, and an empty namespace are typed outcomes, and only
+//     the last of them reports a complete read. That distinction is the one certified absence
+//     rests on.
 //   - Work enqueued while no Relay is connected is delivered when one connects.
 //   - A Relay whose control plane is killed mid-life reconnects on its own and keeps working.
 //
@@ -64,6 +78,14 @@
 //     builds every assignment from the session it is serving, so it cannot be made to send
 //     one; producing it would need a hostile control plane, which is a fake, which is what
 //     this harness exists not to have.
+//   - The RELAY refusing an assignment naming a capability it never advertised. Both halves
+//     compile the same contract, so there is no version one has and the other does not, and
+//     the control plane now refuses such a job before it is sent. It is proven in the Relay's
+//     own suite, where the advertised set can be varied.
+//   - A namespace outside the Relay's local allowlist being refused, and a local cap lowering
+//     an effective bound. Both are customer-authored configuration this harness runs with
+//     unset, and setting it would prove the Relay reads its own environment rather than
+//     anything about the protocol.
 //   - A session presenting a wrong or absent credential.
 //
 // Excluded by decision rather than by difficulty:

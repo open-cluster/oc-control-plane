@@ -40,6 +40,20 @@ const (
 	fixtureImage     = "registry.k8s.io/pause:3.9"
 )
 
+// The workloads the log capability reads. One that starts and keeps talking, and one that says
+// something and dies — because the container that DIED is the one that explains a failure, and
+// reading it needs a container that has actually restarted.
+//
+// Their output is a fixed marker rather than anything incidental, so an assertion can say the
+// application's own words arrived rather than that some bytes did.
+const (
+	talkativeWorkload = "talkative"
+	crashingWorkload  = "crashing"
+	logImage          = "busybox:1.36"
+	livingMarker      = "e2e-living-container-said-this"
+	dyingMarker       = "e2e-dying-container-said-this"
+)
+
 // cluster is the disposable Kubernetes the Relay reads through.
 type cluster struct {
 	container      *k3s.K3sContainer
@@ -147,7 +161,89 @@ func (c *cluster) createFixture(ctx context.Context) error {
 		Create(createCtx, deployment, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("creating deployment %s: %w", fixtureWorkload, err)
 	}
+
+	// A container that talks and stays up, for reading a running container's output.
+	if err = c.createTalker(createCtx, talkativeWorkload,
+		"echo "+livingMarker+"; sleep 3600"); err != nil {
+		return err
+	}
+	// A container that talks and exits, so it restarts. Reading its PREVIOUS instance is the
+	// whole point of the capability's previous flag, and it also produces the BackOff warnings
+	// the events read looks for.
+	if err = c.createTalker(createCtx, crashingWorkload,
+		"echo "+dyingMarker+"; exit 1"); err != nil {
+		return err
+	}
 	return c.awaitSettled(createCtx)
+}
+
+// createTalker creates a one-replica deployment whose container runs a shell command. The
+// command is a fixture of this harness rather than anything the product does: the Relay has no
+// path that can run one, which is enforced by its own build-failing gates.
+func (c *cluster) createTalker(ctx context.Context, name, command string) error {
+	labels := map[string]string{"app": name}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: fixtureNamespace},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: ptr(int32(1)),
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name:    name,
+					Image:   logImage,
+					Command: []string{"sh", "-c", command},
+				}}},
+			},
+		},
+	}
+	if _, err := c.client.AppsV1().Deployments(fixtureNamespace).
+		Create(ctx, deployment, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating deployment %s: %w", name, err)
+	}
+	return nil
+}
+
+// podFor reports the name of the one pod behind a fixture workload, once it exists. The pod's
+// name is not knowable in advance, and the log capability addresses a pod rather than a
+// workload — reading what the cluster called it is the only honest way to name it.
+func (c *cluster) podFor(ctx context.Context, workload string) (string, error) {
+	pods, err := c.client.CoreV1().Pods(fixtureNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=" + workload,
+		Limit:         5,
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing pods for %s: %w", workload, err)
+	}
+	if len(pods.Items) == 0 {
+		return "", fmt.Errorf("no pod for %s yet", workload)
+	}
+	return pods.Items[0].Name, nil
+}
+
+// awaitRestarted waits until a workload's pod has died and been restarted at least once, which
+// is what makes a previous-container read possible at all.
+func (c *cluster) awaitRestarted(ctx context.Context, workload string) (string, error) {
+	for {
+		pods, err := c.client.CoreV1().Pods(fixtureNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app=" + workload,
+			Limit:         5,
+		})
+		if err == nil {
+			for _, pod := range pods.Items {
+				for _, status := range pod.Status.ContainerStatuses {
+					if status.RestartCount >= 1 && status.LastTerminationState.Terminated != nil {
+						return pod.Name, nil
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("%s never restarted: %w", workload, ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // awaitSettled waits for the workload to report a ready replica.

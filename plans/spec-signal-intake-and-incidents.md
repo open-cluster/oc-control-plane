@@ -1,11 +1,25 @@
 # Spec — Signal intake and incidents
 
-Status: IN IMPLEMENTATION. Sessions and jobs are in Go, so the gate is met. The first
-increment is intake to a durable Signal; incidents, grouping and the human-initiated path are
-a second increment against this same document.
+Status: FIRST INCREMENT IMPLEMENTED 2026-07-29, and REBUILT ON CONNECTIONS 2026-07-31. Intake to
+a durable Signal is built and in CI. The second increment — incidents, grouping and the
+human-initiated path — is no longer blocked, and is deferred by ADR-008 rather than by a missing
+model: it waits on evidence from the first investigation, not on anything intake needs.
 Date: 2026-07-27, first source chosen 2026-07-29
 Repository: the Go control plane
 
+> **The blocker recorded here on 2026-07-30 is RESOLVED as of 2026-07-31.** It read: ADR-003
+> states that incidents and investigations inherit their environment from the connection that
+> discovered them and are never assigned one directly, and neither Environment nor Connection
+> existed — so an Incident built then would have had to be given a scope some other way, creating
+> the second grouping authority ADR-003 was written to prevent. The `alert_source` this increment
+> introduced was itself a Connection under another name, introduced without reference to the model
+> because the model was not there.
+>
+> Both now exist (`spec-environments-and-connections.md`). `alert_source` is gone; a delivery
+> names its Connection and nothing else, and every Signal carries the Environment of the
+> Connection it arrived through. What this document describes below as an "alert source" is a
+> **trigger Connection**, and the two are the same thing under the name the model now uses.
+>
 > **First increment, delivered 2026-07-29: intake to a durable Signal.** An Alertmanager
 > delivery authenticated by its source's shared secret becomes a normalised Signal, or is
 > refused with a status that says whether to retry.

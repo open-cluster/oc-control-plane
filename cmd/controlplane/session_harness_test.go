@@ -349,19 +349,52 @@ func enqueueJob(
 ) uuid.UUID {
 	t.Helper()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	job := storage.Job{
 		ID:                uuid.New(),
+		ConnectionID:      evidenceConnection(t, placements, organization, registration),
 		RegistrationID:    registration,
 		CapabilityID:      capabilityUnderTest,
 		CapabilityVersion: capabilityVersionUnderTest,
 		Arguments:         arguments,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := placements.EnqueueJob(ctx, organization, job); err != nil {
-		t.Fatalf("enqueueing a job: %v", err)
+	refusal, err := placements.EnqueueJob(ctx, organization, job)
+	if err != nil {
+		t.Fatalf("enqueueing a job: %v (%s)", err, refusal)
 	}
 	return job.ID
+}
+
+// evidenceConnection creates a Kubernetes Connection in the organization's Default
+// Environment, served by this relay. Every job names one: the Connection is what the job
+// reaches, and the relay is where it runs.
+func evidenceConnection(
+	t *testing.T, placements *storage.Placements,
+	organization tenancy.Organization, registration uuid.UUID,
+) uuid.UUID {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	environment, err := placements.EnsureDefaultEnvironment(ctx, organization)
+	if err != nil {
+		t.Fatalf("ensuring the default environment: %v", err)
+	}
+	created, err := placements.CreateConnection(ctx, organization, storage.NewConnection{
+		Environment:       environment.ID,
+		Integration:       "kubernetes",
+		Name:              "cluster " + uuid.NewString(),
+		Role:              storage.RoleEvidence,
+		Locality:          storage.LocalityRelay,
+		RelayRegistration: registration,
+	})
+	if err != nil {
+		t.Fatalf("creating an evidence connection: %v", err)
+	}
+	return created.ID
 }
 
 func namedOrganization(t *testing.T, organization string) tenancy.Organization {

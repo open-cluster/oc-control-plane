@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -24,23 +23,6 @@ const (
 	SignalResolved
 )
 
-// ErrUnknownSource reports a delivery that named no configured source, or one that has been
-// disabled. Both produce this single error for the same reason enrolment refusals do: telling
-// an unknown source from a disabled one is how a caller learns which half of a guess was right.
-var ErrUnknownSource = errors.New("alert source unknown")
-
-// AlertSource is a configured webhook, as intake needs it: enough to authenticate a delivery
-// and choose an adapter, and nothing more.
-type AlertSource struct {
-	ID           uuid.UUID
-	Organization string
-	Kind         string
-	Name         string
-	// SecretDigest is the SHA-256 of the shared secret. The secret itself exists here only at
-	// creation and is never read back.
-	SecretDigest []byte
-}
-
 // Signal is one episode of a normalised alert: this occurrence of it, not the alert in the
 // abstract. The distinction is the model's, not a detail — the same alert fires many times.
 type Signal struct {
@@ -58,40 +40,20 @@ type Signal struct {
 }
 
 // Delivery is one accepted webhook body and everything in it. The parts travel together
-// because they are one fact: this body, from this source, carried these signals.
+// because they are one fact: this body, through this Connection, carried these signals.
 type Delivery struct {
-	Source     uuid.UUID
-	BodyDigest []byte
+	// Connection is the trigger Connection the body arrived through, and the only authority
+	// for what follows.
+	Connection uuid.UUID
+	// Environment is inherited from that Connection and never declared by the caller. It is
+	// persisted with each Signal rather than joined, so a Connection that later moves does not
+	// silently rewrite the scope everything it already delivered was gathered under.
+	Environment uuid.UUID
+	BodyDigest  []byte
 	// Truncated is how many alerts the source says it left out. Non-zero means this record of
 	// the moment is incomplete because the sender chose not to send the rest.
 	Truncated int
 	Signals   []Signal
-}
-
-// AlertSourceByID reads a source for authentication. A disabled source reads as unknown: an
-// operator who turned one off wants deliveries refused, not merely recorded.
-func (p *Placements) AlertSourceByID(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-) (AlertSource, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return AlertSource{}, err
-	}
-
-	var source AlertSource
-	err = pool.QueryRow(ctx, `
-		SELECT source_id, organization, kind, name, secret_digest
-		  FROM alert_source
-		 WHERE source_id = $1 AND organization = $2 AND disabled_at IS NULL`,
-		id, organization.String()).
-		Scan(&source.ID, &source.Organization, &source.Kind, &source.Name, &source.SecretDigest)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return AlertSource{}, ErrUnknownSource
-	}
-	if err != nil {
-		return AlertSource{}, fmt.Errorf("reading alert source: %w", err)
-	}
-	return source, nil
 }
 
 // DeliveryOutcome is what happened to one delivery.
@@ -139,7 +101,7 @@ func (p *Placements) RecordDelivery(
 	// self-inflicted failure that costs nothing to avoid.
 	ordered := slices.SortedFunc(slices.Values(delivery.Signals), compareSignals)
 	for _, signal := range ordered {
-		if err = upsertSignal(ctx, transaction, organization, delivery.Source, signal); err != nil {
+		if err = upsertSignal(ctx, transaction, organization, delivery, signal); err != nil {
 			return DeliveryOutcome{}, err
 		}
 	}
@@ -164,10 +126,10 @@ func claimDelivery(
 ) (bool, error) {
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO signal_delivery
-			(delivery_id, organization, source_id, body_digest, signal_count, truncated)
+			(delivery_id, organization, connection_id, body_digest, signal_count, truncated)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (source_id, body_digest) DO NOTHING`,
-		uuid.New(), organization.String(), delivery.Source, delivery.BodyDigest,
+		ON CONFLICT (connection_id, body_digest) DO NOTHING`,
+		uuid.New(), organization.String(), delivery.Connection, delivery.BodyDigest,
 		len(delivery.Signals), delivery.Truncated)
 	if err != nil {
 		return false, fmt.Errorf("recording delivery: %w", err)
@@ -189,7 +151,7 @@ func claimDelivery(
 // resolved, so a state guard says that more directly than comparing timestamps would.
 func upsertSignal(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	source uuid.UUID, signal Signal,
+	delivery Delivery, signal Signal,
 ) error {
 	labels, err := json.Marshal(signal.Labels)
 	if err != nil {
@@ -202,12 +164,16 @@ func upsertSignal(
 		resolvedAt = &resolved
 	}
 
+	// The environment is written from the delivery, which took it from the Connection. It is
+	// deliberately NOT in the update list: a Signal keeps the scope it was gathered under even
+	// if the Connection is later moved, because rewriting the scope of past evidence is exactly
+	// what an environment boundary exists to prevent.
 	_, err = transaction.Exec(ctx, `
 		INSERT INTO signal
-			(signal_id, organization, source_id, source_key, status,
+			(signal_id, organization, connection_id, environment_id, source_key, status,
 			 title, summary, labels, started_at, resolved_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (source_id, source_key, started_at) DO UPDATE
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (connection_id, source_key, started_at) DO UPDATE
 		   SET status      = EXCLUDED.status,
 		       title       = EXCLUDED.title,
 		       summary     = EXCLUDED.summary,
@@ -215,7 +181,8 @@ func upsertSignal(
 		       resolved_at = EXCLUDED.resolved_at,
 		       updated_at  = now()
 		 WHERE signal.status = 1`,
-		uuid.New(), organization.String(), source, signal.SourceKey, int16(signal.Status),
+		uuid.New(), organization.String(), delivery.Connection, delivery.Environment,
+		signal.SourceKey, int16(signal.Status),
 		signal.Title, signal.Summary, labels, signal.StartedAt, resolvedAt)
 	if err != nil {
 		return fmt.Errorf("recording signal: %w", err)

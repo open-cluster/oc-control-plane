@@ -88,6 +88,17 @@ func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 	// result under the wrong semantics, and nothing downstream can tell. Rejecting the
 	// assignment is what makes "this Relay is too old" a fact the control plane learns rather
 	// than a difference it never sees.
+	// WHERE this is refused moved, and the move is worth stating rather than leaving to be
+	// noticed. The control plane now validates a job's capability and version against its own
+	// compiled registry before dispatch, so a version neither half carries is refused before it
+	// costs a lease and a round trip. What this test still proves is the property that matters:
+	// such a job reaches a recorded terminal failure carrying the kind that says the fleet
+	// disagrees about what exists, and is never executed under another version's semantics.
+	//
+	// The Relay's own refusal of an assignment it never advertised is no longer reachable from
+	// here, because both halves compile the same contract and there is no version one has and
+	// the other does not. It is proven in the Relay's suite instead, where the advertised set
+	// can be varied.
 	t.Run("a capability version the relay does not have is refused, not executed", func(t *testing.T) {
 		job := h.dispatchVersion(t, 99, fixtureNamespace, fixtureWorkload)
 		record := h.awaitTerminal(t, job)

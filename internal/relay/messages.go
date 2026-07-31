@@ -10,6 +10,7 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/capability"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -28,7 +29,18 @@ func accepted(sessionID string) *relayv1.ControlToRelay {
 	}}
 }
 
+// assignmentFor builds one job's wire assignment, refusing to send anything this build cannot
+// vouch for.
+//
+// Validating here rather than only at the Relay is what makes "neither side trusts the other"
+// true in both directions. The Relay re-validates on receipt and refuses what it cannot serve;
+// this refuses the same thing before it costs a dispatch, a lease and a round trip — and it
+// means a Relay is never the only thing standing between a planner's mistake and a customer's
+// cluster.
 func assignmentFor(session *sessionState, job storage.Job) (*relayv1.ControlToRelay, error) {
+	if err := capability.Validate(job.CapabilityID, job.CapabilityVersion, job.Arguments); err != nil {
+		return nil, err
+	}
 	arguments := &relayv1.CapabilityArguments{}
 	if err := proto.Unmarshal(job.Arguments, arguments); err != nil {
 		return nil, err

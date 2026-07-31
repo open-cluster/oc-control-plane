@@ -491,7 +491,7 @@ func (p *Placements) SessionConflictTrail(
 	ctx context.Context,
 	organization tenancy.Organization,
 	registrationID uuid.UUID,
-	page RelayPage,
+	page Page,
 ) (ConflictTrail, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -593,8 +593,10 @@ type RelaySummary struct {
 	Conflict  SessionConflict
 }
 
-// RelayPage is which slice of an organization's relays to return.
-type RelayPage struct {
+// Page is which slice of a listing to return. It is not relay-specific: every paged read on
+// this surface takes the same shape, and naming it for the first caller would have made
+// "Relay" mean something it does not the moment the second one arrived.
+type Page struct {
 	// Limit is how many to return. Zero means the default rather than none: a caller that names
 	// no size wants the list, and answering with one row would hide the very findings this is
 	// read for.
@@ -612,7 +614,7 @@ type RelayRoster struct {
 	Next string
 }
 
-// Bounds on a roster page. An operator asking for everything still gets a bounded answer,
+// Bounds on a page. An operator asking for everything still gets a bounded answer,
 // because an unbounded list is a query whose cost belongs to whoever calls it most — and the
 // cursor is what makes that bound a page rather than a ceiling on what can ever be seen.
 const (
@@ -625,7 +627,7 @@ var ErrBadCursor = errors.New("cursor is not a page position")
 
 // ListRelays returns an organization's relay identities, newest first.
 func (p *Placements) ListRelays(
-	ctx context.Context, organization tenancy.Organization, page RelayPage,
+	ctx context.Context, organization tenancy.Organization, page Page,
 ) (RelayRoster, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {

@@ -1,4 +1,15 @@
-package intake
+// Package alertmanager normalises Prometheus Alertmanager's v4 webhook payload into Signals.
+//
+// It is a provider adapter and lives below the capability it implements, which is what makes
+// ADR-007's claim checkable rather than asserted: a vendor's payload shape exists inside its
+// own adapter and nowhere else, so nothing downstream of Normalise can tell which system
+// delivered a Signal. The payload types are unexported, so that boundary is enforced by the
+// compiler rather than by a reviewer noticing.
+//
+// Everything this package reads is untrusted text from a customer's systems. It may be
+// attacker-influenced and must never become an instruction, a destination, or an authorisation
+// claim downstream.
+package alertmanager
 
 import (
 	"encoding/json"
@@ -8,9 +19,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
-
-// alertmanagerKind is the value the alert_source.kind column holds for this adapter.
-const alertmanagerKind = "prometheus.alertmanager"
 
 // Bounds on what one delivery may contain. The body size limit already bounds this
 // indirectly; these exist so an over-long field is a normalisation decision made here rather
@@ -22,18 +30,18 @@ const (
 	maxAlertsPerBody = 2048
 )
 
-// alertmanagerPayload is the v4 webhook contract. Only the fields this platform uses are
-// declared: an unknown field is ignored rather than refused, because Alertmanager adds to this
-// payload between releases and a customer upgrading theirs must not stop being able to deliver.
-type alertmanagerPayload struct {
-	Alerts []alertmanagerAlert `json:"alerts"`
+// payload is the v4 webhook contract. Only the fields this platform uses are declared: an
+// unknown field is ignored rather than refused, because Alertmanager adds to this payload
+// between releases and a customer upgrading theirs must not stop being able to deliver.
+type payload struct {
+	Alerts []alert `json:"alerts"`
 	// TruncatedAlerts is how many Alertmanager left out because the payload hit its configured
 	// maximum. It sends this instead of the alerts, so ignoring it would record a partial
 	// picture of a storm as a complete one — which is the moment a complete picture matters.
 	TruncatedAlerts int `json:"truncatedAlerts"`
 }
 
-type alertmanagerAlert struct {
+type alert struct {
 	Status string `json:"status"`
 	// Fingerprint is Alertmanager's own identity for this alert. It is the deduplication key
 	// because the source already has one, and inventing a different one guarantees
@@ -45,61 +53,61 @@ type alertmanagerAlert struct {
 	EndsAt      time.Time         `json:"endsAt"`
 }
 
-// alertmanagerAdapter normalises Prometheus Alertmanager's v4 webhook payload.
-type alertmanagerAdapter struct{}
+// Adapter normalises Prometheus Alertmanager's v4 webhook payload.
+type Adapter struct{}
 
-// Normalise turns one delivery into Signals.
+// Normalise turns one delivery into Signals and reports how many the source says it left out.
 //
 // A delivery carrying no alerts is an error rather than an empty success. Alertmanager does
 // not send one, so it means the body was not the payload it claims to be — and accepting it
 // would record a delivery that proves the integration works while carrying nothing.
-func (alertmanagerAdapter) Normalise(body []byte) (Normalised, error) {
-	var payload alertmanagerPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return Normalised{}, fmt.Errorf("payload is not alertmanager json: %w", err)
+func (Adapter) Normalise(body []byte) ([]storage.Signal, int, error) {
+	var decoded payload
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, 0, fmt.Errorf("payload is not alertmanager json: %w", err)
 	}
-	if len(payload.Alerts) == 0 {
-		return Normalised{}, errors.New("payload carries no alerts")
+	if len(decoded.Alerts) == 0 {
+		return nil, 0, errors.New("payload carries no alerts")
 	}
-	if len(payload.Alerts) > maxAlertsPerBody {
-		return Normalised{}, fmt.Errorf("payload carries %d alerts, more than the %d accepted",
-			len(payload.Alerts), maxAlertsPerBody)
+	if len(decoded.Alerts) > maxAlertsPerBody {
+		return nil, 0, fmt.Errorf("payload carries %d alerts, more than the %d accepted",
+			len(decoded.Alerts), maxAlertsPerBody)
 	}
-	if payload.TruncatedAlerts < 0 {
-		return Normalised{}, errors.New("payload reports a negative number of omitted alerts")
+	if decoded.TruncatedAlerts < 0 {
+		return nil, 0, errors.New("payload reports a negative number of omitted alerts")
 	}
 
-	signals := make([]storage.Signal, 0, len(payload.Alerts))
-	for _, alert := range payload.Alerts {
-		signal, err := signalFrom(alert)
+	signals := make([]storage.Signal, 0, len(decoded.Alerts))
+	for _, one := range decoded.Alerts {
+		signal, err := signalFrom(one)
 		if err != nil {
 			// One unusable alert fails the whole delivery. Accepting the rest would leave the
 			// source told it succeeded while part of what it sent was silently dropped, and it
 			// will never send that part again.
-			return Normalised{}, err
+			return nil, 0, err
 		}
 		signals = append(signals, signal)
 	}
-	return Normalised{Signals: signals, Truncated: payload.TruncatedAlerts}, nil
+	return signals, decoded.TruncatedAlerts, nil
 }
 
-func signalFrom(alert alertmanagerAlert) (storage.Signal, error) {
-	if alert.Fingerprint == "" {
+func signalFrom(one alert) (storage.Signal, error) {
+	if one.Fingerprint == "" {
 		return storage.Signal{}, errors.New("alert carries no fingerprint to identify it by")
 	}
-	if len(alert.Fingerprint) > maxSourceKeyLen {
+	if len(one.Fingerprint) > maxSourceKeyLen {
 		return storage.Signal{}, errors.New("alert fingerprint is longer than any identity")
 	}
 
-	signal, err := stateOf(alert)
+	signal, err := stateOf(one)
 	if err != nil {
 		return storage.Signal{}, err
 	}
 
-	signal.SourceKey = alert.Fingerprint
-	signal.Title = truncate(titleOf(alert), maxTitleRunes)
-	signal.Summary = truncate(summaryOf(alert), maxSummaryRunes)
-	signal.Labels = alert.Labels
+	signal.SourceKey = one.Fingerprint
+	signal.Title = truncate(titleOf(one), maxTitleRunes)
+	signal.Summary = truncate(summaryOf(one), maxSummaryRunes)
+	signal.Labels = one.Labels
 	return signal, nil
 }
 
@@ -109,52 +117,50 @@ func signalFrom(alert alertmanagerAlert) (storage.Signal, error) {
 // the episode, so a resolution has to carry the same one the firing did or it would resolve
 // nothing and open a second episode instead. Alertmanager sends it on both, which is what makes
 // this model possible at all.
-func stateOf(alert alertmanagerAlert) (storage.Signal, error) {
-	if alert.StartsAt.IsZero() {
+func stateOf(one alert) (storage.Signal, error) {
+	if one.StartsAt.IsZero() {
 		return storage.Signal{}, errors.New("alert carries no start time to identify its episode by")
 	}
 
-	switch alert.Status {
+	switch one.Status {
 	case "firing":
-		return storage.Signal{Status: storage.SignalFiring, StartedAt: alert.StartsAt}, nil
+		return storage.Signal{Status: storage.SignalFiring, StartedAt: one.StartsAt}, nil
 	case "resolved":
-		if alert.EndsAt.IsZero() {
+		if one.EndsAt.IsZero() {
 			return storage.Signal{}, errors.New("a resolved alert carries no end time")
 		}
-		if alert.EndsAt.Before(alert.StartsAt) {
+		if one.EndsAt.Before(one.StartsAt) {
 			return storage.Signal{}, errors.New("an alert ended before it started")
 		}
 		return storage.Signal{
 			Status:     storage.SignalResolved,
-			StartedAt:  alert.StartsAt,
-			ResolvedAt: alert.EndsAt,
+			StartedAt:  one.StartsAt,
+			ResolvedAt: one.EndsAt,
 		}, nil
 	default:
 		// No fall-through default that guesses. A status this adapter does not know is a
 		// payload it does not understand, and inventing "firing" would create an incident from
 		// something that might be the opposite.
-		return storage.Signal{}, fmt.Errorf("alert status %q is not one this adapter knows", alert.Status)
+		return storage.Signal{}, fmt.Errorf("alert status %q is not one this adapter knows", one.Status)
 	}
 }
 
 // titleOf names the alert. Alertmanager always sets alertname, but a payload that omits it is
 // still usable — the identity is the fingerprint — so this degrades rather than refusing.
-func titleOf(alert alertmanagerAlert) string {
-	if name := alert.Labels["alertname"]; name != "" {
+func titleOf(one alert) string {
+	if name := one.Labels["alertname"]; name != "" {
 		return name
 	}
 	return "unnamed alert"
 }
 
 // summaryOf prefers the annotation meant for humans, then the longer one. Both are free text
-// from a customer's systems and stay untrusted for their whole life: they may be
-// attacker-influenced and must never become an instruction, a destination, or an
-// authorisation claim downstream.
-func summaryOf(alert alertmanagerAlert) string {
-	if summary := alert.Annotations["summary"]; summary != "" {
+// from a customer's systems and stay untrusted for their whole life.
+func summaryOf(one alert) string {
+	if summary := one.Annotations["summary"]; summary != "" {
 		return summary
 	}
-	return alert.Annotations["description"]
+	return one.Annotations["description"]
 }
 
 // truncate bounds a field by runes rather than bytes, so cutting a multi-byte character in

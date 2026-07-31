@@ -8,8 +8,10 @@ modifications: Go Relay, gRPC v1, Protobuf source of truth, Relay-only Kubernete
 C# retirement, separate clean-history repository)
 Decision record: `docs/architecture/decisions/ADR-001-customer-execution-plane.md`
 Implementation plan: `plans/stage-1b-customer-execution-architecture.md` in the frozen .NET reference repository (OCluster/Zyrenn.ConsumerService)
-Authority: supplements `plans/autonomous-ai-sre-master-plan.md`. Three deviations from the
-master plan (section 3.5) are accepted with the founder decision.
+Authority: the decision records under `docs/architecture/decisions/`. The master plan this
+document once supplemented was deleted on 2026-07-31: the product direction moved, and a
+standing definition nobody maintains is worse than none. The three deviations it recorded
+(section 3.5) stand as accepted and are described here rather than by reference.
 
 ---
 

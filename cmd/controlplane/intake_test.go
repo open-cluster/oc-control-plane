@@ -30,12 +30,14 @@ const (
 	intakeSecret       = "a-source-secret-long-enough-to-be-one"
 )
 
-// intakePlane is a control plane with intake listening, plus a configured source to deliver to.
+// intakePlane is a control plane with intake listening, plus a configured trigger Connection
+// to deliver through.
 type intakePlane struct {
 	*controlPlane
-	address string
-	source  uuid.UUID
-	dsn     string
+	address     string
+	connection  uuid.UUID
+	environment uuid.UUID
+	dsn         string
 }
 
 func startIntake(t *testing.T) *intakePlane {
@@ -48,14 +50,17 @@ func startIntake(t *testing.T) *intakePlane {
 	})
 
 	address := listeningAddress(t, plane, "listening for alert intake")
-	source := configureSource(t, dsn, alertmanagerKind)
-	return &intakePlane{controlPlane: plane, address: address, source: source, dsn: dsn}
+	connection, environment := configureConnection(t, dsn, intakeOrganization, alertmanagerIntegration)
+	return &intakePlane{
+		controlPlane: plane, address: address,
+		connection: connection, environment: environment, dsn: dsn,
+	}
 }
 
-// alertmanagerKind mirrors the adapter name the source row stores. It is written out rather
-// than imported so that renaming the constant in intake cannot silently change what a
-// configured source in the database means.
-const alertmanagerKind = "prometheus.alertmanager"
+// alertmanagerIntegration mirrors the Integration a Connection row stores. It is written out
+// rather than imported so that renaming the constant in the adapter cannot silently change
+// what a configured Connection in the database means.
+const alertmanagerIntegration = "alertmanager"
 
 // listeningAddress pulls a surface's bound address out of the startup log, which is the only
 // place an ephemeral port is reported for a listener the test did not open itself.
@@ -78,36 +83,58 @@ func listeningAddress(t *testing.T, plane *controlPlane, message string) string 
 	}
 }
 
-// configureSource records an alerting source the way an operator eventually will, storing only
-// the digest of its secret.
-func configureSource(t *testing.T, dsn, kind string) uuid.UUID {
+// configureConnection records a trigger Connection in a Default Environment, storing only the
+// digest of its secret. It writes the rows directly rather than going through the operator
+// API: what these tests are about is the delivery path, and a second surface between them and
+// it would mean a failure here could be either one.
+//
+// The Environment is created here too, because a Connection cannot exist outside one — which
+// is the schema saying that everything arriving through a Connection has a scope, rather than
+// a convention these tests could forget.
+func configureConnection(t *testing.T, dsn, organization, integration string) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
-	connection, err := pgx.Connect(ctx, dsn)
+	database, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = connection.Close(ctx) }()
+	defer func() { _ = database.Close(ctx) }()
+
+	environment := uuid.New()
+	_, err = database.Exec(ctx, `
+		INSERT INTO environment (environment_id, organization, name, is_default)
+		VALUES ($1, $2, 'Default', TRUE)
+		ON CONFLICT (organization) WHERE is_default DO NOTHING`,
+		environment, organization)
+	if err != nil {
+		t.Fatalf("creating the default environment: %v", err)
+	}
+	if err = database.QueryRow(ctx,
+		`SELECT environment_id FROM environment WHERE organization = $1 AND is_default`,
+		organization).Scan(&environment); err != nil {
+		t.Fatalf("reading the default environment: %v", err)
+	}
 
 	id := uuid.New()
 	digest := sha256.Sum256([]byte(intakeSecret))
-	_, err = connection.Exec(ctx, `
-		INSERT INTO alert_source (source_id, organization, kind, name, secret_digest)
-		VALUES ($1, $2, $3, $4, $5)`,
-		id, intakeOrganization, kind, "the-source", digest[:])
+	_, err = database.Exec(ctx, `
+		INSERT INTO connection
+			(connection_id, organization, environment_id, integration, name,
+			 role, locality, secret_digest)
+		VALUES ($1, $2, $3, $4, $5, 1, 1, $6)`,
+		id, organization, environment, integration, "the source "+id.String(), digest[:])
 	if err != nil {
-		t.Fatalf("configuring the alert source: %v", err)
+		t.Fatalf("configuring the connection: %v", err)
 	}
-	return id
+	return id, environment
 }
 
 // deliver posts a body to intake with the given secret, and reports the status.
 func (p *intakePlane) deliver(t *testing.T, secret, body string) int {
 	t.Helper()
 
-	url := fmt.Sprintf("http://%s/intake/v1/organizations/%s/sources/%s",
-		p.address, intakeOrganization, p.source)
+	url := fmt.Sprintf("http://%s/intake/v1/connections/%s/signals", p.address, p.connection)
 	request, err := http.NewRequestWithContext(
 		context.Background(), http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
@@ -183,6 +210,117 @@ func (p *intakePlane) truncatedCount(t *testing.T) int {
 		t.Fatalf("reading truncation counts: %v", err)
 	}
 	return total
+}
+
+// scopes reports which tenant and Environment each recorded Signal landed under, across EVERY
+// organization in the database rather than one. Scoping the query to the expected tenant would
+// make a signal written to the wrong one invisible, which is the failure being tested for.
+func (p *intakePlane) scopes(t *testing.T) []recordedScope {
+	t.Helper()
+	ctx := context.Background()
+
+	database, err := pgx.Connect(ctx, p.dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = database.Close(ctx) }()
+
+	rows, err := database.Query(ctx,
+		`SELECT organization, connection_id, environment_id FROM signal ORDER BY received_at`)
+	if err != nil {
+		t.Fatalf("reading signal scopes: %v", err)
+	}
+	defer rows.Close()
+
+	var recorded []recordedScope
+	for rows.Next() {
+		var scope recordedScope
+		if err = rows.Scan(&scope.organization, &scope.connection, &scope.environment); err != nil {
+			t.Fatalf("scanning a signal scope: %v", err)
+		}
+		recorded = append(recorded, scope)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("reading signal scopes: %v", err)
+	}
+	return recorded
+}
+
+// setDisabled turns this plane's Connection off or back on.
+func (p *intakePlane) setDisabled(t *testing.T, disabled bool) {
+	t.Helper()
+	ctx := context.Background()
+
+	database, err := pgx.Connect(ctx, p.dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = database.Close(ctx) }()
+
+	var at *time.Time
+	if disabled {
+		now := time.Now()
+		at = &now
+	}
+	if _, err = database.Exec(ctx,
+		`UPDATE connection SET disabled_at = $2 WHERE connection_id = $1`,
+		p.connection, at); err != nil {
+		t.Fatalf("setting the disabled state: %v", err)
+	}
+}
+
+// addEnvironment creates a further scope for an organization.
+func addEnvironment(t *testing.T, dsn, organization, name string) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+
+	database, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = database.Close(ctx) }()
+
+	id := uuid.New()
+	if _, err = database.Exec(ctx,
+		`INSERT INTO environment (environment_id, organization, name) VALUES ($1, $2, $3)`,
+		id, organization, name); err != nil {
+		t.Fatalf("creating an environment: %v", err)
+	}
+	return id
+}
+
+// connectionWithSecret adds a further trigger Connection in an Environment, holding a
+// different secret.
+func connectionWithSecret(
+	t *testing.T, dsn, organization string, environment uuid.UUID, secret string,
+) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+
+	database, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = database.Close(ctx) }()
+
+	id := uuid.New()
+	digest := sha256.Sum256([]byte(secret))
+	if _, err = database.Exec(ctx, `
+		INSERT INTO connection
+			(connection_id, organization, environment_id, integration, name,
+			 role, locality, secret_digest)
+		VALUES ($1, $2, $3, $4, $5, 1, 1, $6)`,
+		id, organization, environment, alertmanagerIntegration,
+		"another source "+id.String(), digest[:]); err != nil {
+		t.Fatalf("configuring a second connection: %v", err)
+	}
+	return id
+}
+
+type recordedScope struct {
+	organization string
+	connection   uuid.UUID
+	environment  uuid.UUID
 }
 
 type recordedSignal struct {
@@ -537,15 +675,16 @@ func TestIntake_RefusesAnOversizedPayload(t *testing.T) {
 	}
 }
 
-// A delivery naming an organization other than the source's own must not reach that source,
-// even holding the source's real secret. One tenant creating signals in another is the failure
-// the placement model exists to prevent.
+// A delivery names its Connection and nothing else, so the tenancy question changes shape:
+// there is no longer a path parameter to get wrong, and what has to be proven is that the
+// Signal lands under the organization and Environment of the Connection row rather than under
+// anything a caller could influence.
 //
-// The second organization shares the first's placement deliberately. An organization with no
-// placement fails before any query runs, which would leave this passing against an
-// implementation whose source lookup was not scoped by tenant at all — the exact defect it
-// exists to catch. Sharing a database means the lookup is the only thing standing in the way.
-func TestIntake_ADeliveryCannotReachAnotherOrganizationsSource(t *testing.T) {
+// Both organizations share one placement deliberately. An organization with no placement fails
+// before any query runs, which would leave this passing against an implementation with no
+// scoping at all — the exact defect it exists to catch. That mistake was made once already in
+// this suite and caught in review.
+func TestIntake_ADeliveryLandsUnderItsConnectionsTenantAndNoOther(t *testing.T) {
 	const neighbour = "org-neighbour"
 
 	var dsn string
@@ -555,29 +694,126 @@ func TestIntake_ADeliveryCannotReachAnotherOrganizationsSource(t *testing.T) {
 		dsn = cfg.Placements["shared"]
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
-	source := configureSource(t, dsn, alertmanagerKind)
-	owner := &intakePlane{controlPlane: plane, address: address, source: source, dsn: dsn}
 
-	url := fmt.Sprintf("http://%s/intake/v1/organizations/%s/sources/%s",
-		address, neighbour, source)
-	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url,
-		strings.NewReader(firing("fp-x", time.Now().UTC())))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
+	// Two Connections in two organizations on one database, each with its own secret digest —
+	// which here is the same secret, so a scoping mistake would be invisible if the lookup
+	// leaked between them.
+	mine, myEnvironment := configureConnection(t, dsn, intakeOrganization, alertmanagerIntegration)
+	theirs, theirEnvironment := configureConnection(t, dsn, neighbour, alertmanagerIntegration)
+	owner := &intakePlane{
+		controlPlane: plane, address: address,
+		connection: mine, environment: myEnvironment, dsn: dsn,
 	}
-	request.Header.Set(intake.TokenHeader, intakeSecret)
 
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("deliver: %v", err)
+	if status := owner.deliver(t, intakeSecret, firing("fp-x", time.Now().UTC())); status !=
+		http.StatusAccepted {
+		t.Fatalf("the delivery = %d, want 202", status)
 	}
-	defer func() { _ = response.Body.Close() }()
 
-	if response.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a delivery naming another organization = %d, want 401", response.StatusCode)
+	recorded := owner.scopes(t)
+	if len(recorded) != 1 {
+		t.Fatalf("one delivery recorded %d signals across every tenant, want 1", len(recorded))
 	}
-	if recorded := owner.signals(t); len(recorded) != 0 {
-		t.Errorf("a cross-tenant delivery produced %d signals for the source's real tenant",
+	if recorded[0].organization != intakeOrganization {
+		t.Errorf("the signal landed under %q, want the connection's own %q",
+			recorded[0].organization, intakeOrganization)
+	}
+	if recorded[0].environment != myEnvironment {
+		t.Errorf("the signal carries environment %s, want the connection's %s",
+			recorded[0].environment, myEnvironment)
+	}
+	if recorded[0].connection != mine {
+		t.Errorf("the signal names connection %s, want %s", recorded[0].connection, mine)
+	}
+	if recorded[0].environment == theirEnvironment || recorded[0].connection == theirs {
+		t.Error("the delivery reached the neighbouring tenant's scope")
+	}
+}
+
+// Two Connections against the same Integration, in two DIFFERENT Environments, each with its
+// own secret. This is the shape a customer running production and staging Alertmanager has, and
+// it is the whole reason the Integration and the Connection are separate concepts: one adapter,
+// two records, two credentials, two scopes.
+//
+// The Environments must differ. Putting both in one would leave the assertion passing against
+// an implementation that scoped the secret lookup by Environment rather than by Connection.
+func TestIntake_TwoConnectionsOneIntegrationTwoEnvironmentsEachWithItsOwnSecret(t *testing.T) {
+	var dsn string
+	plane := startControlPlane(t, func(cfg *config.Config) {
+		cfg.IntakeAddress = "127.0.0.1:0"
+		dsn = cfg.Placements["shared"]
+	})
+	address := listeningAddress(t, plane, "listening for alert intake")
+
+	const stagingSecret = "a-different-secret-that-is-long-enough"
+	production, productionEnvironment := configureConnection(
+		t, dsn, intakeOrganization, alertmanagerIntegration)
+	stagingEnvironment := addEnvironment(t, dsn, intakeOrganization, "Staging")
+	staging := connectionWithSecret(t, dsn, intakeOrganization, stagingEnvironment, stagingSecret)
+
+	if productionEnvironment == stagingEnvironment {
+		t.Fatal("the two connections must be in different environments for this to prove anything")
+	}
+
+	both := map[string]*intakePlane{
+		"production": {controlPlane: plane, address: address,
+			connection: production, environment: productionEnvironment, dsn: dsn},
+		"staging": {controlPlane: plane, address: address,
+			connection: staging, environment: stagingEnvironment, dsn: dsn},
+	}
+
+	// Each accepts its own secret.
+	if status := both["production"].deliver(t, intakeSecret,
+		firing("fp-prod", time.Now().UTC())); status != http.StatusAccepted {
+		t.Errorf("production with its own secret = %d, want 202", status)
+	}
+	if status := both["staging"].deliver(t, stagingSecret,
+		firing("fp-staging", time.Now().UTC())); status != http.StatusAccepted {
+		t.Errorf("staging with its own secret = %d, want 202", status)
+	}
+
+	// And refuses the other's, in both directions.
+	if status := both["staging"].deliver(t, intakeSecret,
+		firing("fp-x", time.Now().UTC())); status != http.StatusUnauthorized {
+		t.Errorf("production's secret on staging = %d, want 401", status)
+	}
+	if status := both["production"].deliver(t, stagingSecret,
+		firing("fp-y", time.Now().UTC())); status != http.StatusUnauthorized {
+		t.Errorf("staging's secret on production = %d, want 401", status)
+	}
+
+	// Each Signal carries the Environment of the Connection that delivered it, and nothing
+	// crossed.
+	scopes := both["production"].scopes(t)
+	if len(scopes) != 2 {
+		t.Fatalf("two accepted deliveries recorded %d signals, want 2", len(scopes))
+	}
+	byEnvironment := map[uuid.UUID]int{}
+	for _, scope := range scopes {
+		byEnvironment[scope.environment]++
+	}
+	if byEnvironment[productionEnvironment] != 1 || byEnvironment[stagingEnvironment] != 1 {
+		t.Fatalf("the signals did not land one per environment: %v", byEnvironment)
+	}
+}
+
+// A Connection an operator turned off refuses deliveries. It is still a row — disabling is not
+// deleting, so the record of what it produced survives — but nothing new arrives through it.
+func TestIntake_ADisabledConnectionRefusesDeliveries(t *testing.T) {
+	plane := startIntake(t)
+
+	if status := plane.deliver(t, intakeSecret, firing("fp-before", time.Now().UTC())); status !=
+		http.StatusAccepted {
+		t.Fatalf("the delivery before disabling = %d, want 202", status)
+	}
+	plane.setDisabled(t, true)
+
+	if status := plane.deliver(t, intakeSecret, firing("fp-after", time.Now().UTC())); status !=
+		http.StatusUnauthorized {
+		t.Errorf("a delivery to a disabled connection = %d, want 401", status)
+	}
+	if recorded := plane.signals(t); len(recorded) != 1 {
+		t.Errorf("a disabled connection recorded %d signals, want only the one from before",
 			len(recorded))
 	}
 }
