@@ -255,3 +255,65 @@ func (t *truth) job(ctx context.Context, organization string, id uuid.UUID) (job
 	}
 	return record, nil
 }
+
+// occurrencesOf searches EVERY text and binary column of every table for a string, and reports
+// where it was found.
+//
+// This is deliberately a sweep rather than a read of the one column a secret was expected in. The
+// claim being tested is that a secret does not reach the control plane's durable state AT ALL,
+// and a test that checked only the column somebody thought of would pass against an
+// implementation that also wrote it to an audit row, a log table or a cached projection. The
+// schema is read from the catalogue rather than listed here, so a table added later is swept
+// without anyone remembering to add it.
+func (t *truth) occurrencesOf(ctx context.Context, needle string) ([]string, error) {
+	rows, err := t.pool.Query(ctx, `
+		SELECT table_name, column_name, data_type
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND data_type IN ('text', 'character varying', 'character', 'json', 'jsonb', 'bytea')
+		 ORDER BY table_name, column_name`)
+	if err != nil {
+		return nil, fmt.Errorf("reading the schema to sweep: %w", err)
+	}
+
+	type column struct{ table, name, kind string }
+	var columns []column
+	for rows.Next() {
+		var found column
+		if err = rows.Scan(&found.table, &found.name, &found.kind); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("reading the schema to sweep: %w", err)
+		}
+		columns = append(columns, found)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the schema to sweep: %w", err)
+	}
+	// A sweep that found no columns would report success while having looked at nothing, which is
+	// exactly the failure mode a negative assertion has to be built against.
+	if len(columns) == 0 {
+		return nil, errors.New("no text or binary columns found; the sweep would be vacuous")
+	}
+
+	var found []string
+	for _, candidate := range columns {
+		// bytea is cast rather than skipped: a serialized protocol message is stored as bytes, and
+		// it is the single most likely place for an unredacted value to survive.
+		expression := fmt.Sprintf("%q::text", candidate.name)
+		if candidate.kind == "bytea" {
+			expression = fmt.Sprintf("encode(%q, 'escape')", candidate.name)
+		}
+		var count int64
+		query := fmt.Sprintf(
+			`SELECT count(*) FROM %q WHERE %s LIKE '%%' || $1 || '%%'`, candidate.table, expression)
+		if err = t.pool.QueryRow(ctx, query, needle).Scan(&count); err != nil {
+			return nil, fmt.Errorf("sweeping %s.%s: %w", candidate.table, candidate.name, err)
+		}
+		if count > 0 {
+			found = append(found, fmt.Sprintf("%s.%s (%d row(s))",
+				candidate.table, candidate.name, count))
+		}
+	}
+	return found, nil
+}

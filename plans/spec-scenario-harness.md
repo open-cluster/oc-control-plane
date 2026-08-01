@@ -1,8 +1,19 @@
 # Spec — The scenario harness
 
-Status: READY FOR IMPLEMENTATION. Built in the same slice as `spec-first-investigation.md`, not
-after it.
-Date: 2026-07-31
+Status: BUILT 2026-08-01, and **not yet runnable to a scored result**. The instrument exists: ten
+scenarios provisioned from code and verified against a real cluster, readiness verified or the run
+discarded loudly, a real investigation opened through the real control plane and a real Relay, an
+artifact filed apart from ground truth, blind two-scorer recording, and the kill criterion.
+
+What is missing is the model. **There is no live provider**, so a run drives the model boundary
+from a recorded transcript and REFUSES a live-provider run rather than quietly replaying one — and
+**no transcripts ship**, because there is nothing to record from. A hand-written transcript would
+be the builder's imagination scored as though it were a model's reasoning, which is the exact
+failure blind scoring exists to prevent. So `scenario run` cannot presently produce an artifact
+for any scenario: it needs either a provider to record from, or recordings supplied from elsewhere.
+This is stated in the harness's tests, `test/e2e/doc.go`, the README and the status tracker rather
+than left to be discovered. Built in the same slice as `spec-first-investigation.md`, not after it.
+Date: 2026-07-31 (built 2026-08-01)
 Repository: the Go control plane, as a program rather than a test
 Decision records: ADR-008 (investigator first — the harness is named as part of that slice),
 ADR-011 (abstention standard and the kill criterion), ADR-009 (choice and conclusion scored

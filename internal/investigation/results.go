@@ -50,14 +50,22 @@ func Interpret(request Request, read Read, scope Scope, window Window, connectio
 		}}}
 	}
 
+	// What the customer's own policy withheld is read from the envelope rather than from any one
+	// capability's payload, because the Relay masks at one point for every capability. Reading it
+	// per capability would be three places for a fourth capability to be forgotten in.
+	masking := MaskingFrom(result.GetRedaction())
+
+	var validated Validated
 	switch request.CapabilityID {
 	case capability.KubernetesWorkloadRuntime:
-		return interpretWorkload(request, result.GetKubernetesWorkloadRuntimeV1(), scope, connection)
+		validated = interpretWorkload(
+			request, result.GetKubernetesWorkloadRuntimeV1(), scope, connection, masking)
 	case capability.KubernetesNamespaceEvents:
-		return interpretEvents(
-			request, result.GetKubernetesNamespaceEventsV1(), scope, window, connection)
+		validated = interpretEvents(
+			request, result.GetKubernetesNamespaceEventsV1(), scope, window, connection, masking)
 	case capability.KubernetesContainerLogs:
-		return interpretLogs(request, result.GetKubernetesContainerLogsV1(), scope, connection)
+		validated = interpretLogs(
+			request, result.GetKubernetesContainerLogsV1(), scope, connection, masking)
 	default:
 		return Validated{Gaps: []Gap{{
 			Cause:        GapCapabilityUnavailable,
@@ -66,6 +74,9 @@ func Interpret(request Request, read Read, scope Scope, window Window, connectio
 			Consequence:  "this build cannot interpret what that read returned",
 		}}}
 	}
+
+	validated.Gaps = append(validated.Gaps, masking.Gaps(request)...)
+	return validated
 }
 
 // failureGap describes a read that did not return. The kinds are told apart because they call for
@@ -113,7 +124,7 @@ func failureGap(request Request, read Read) Gap {
 // interpretWorkload reads what the cluster says the workload is and how its pods are running.
 func interpretWorkload(
 	request Request, result *relayv1.KubernetesWorkloadRuntimeResultV1,
-	scope Scope, connection uuid.UUID,
+	scope Scope, connection uuid.UUID, masking Masking,
 ) Validated {
 	if result == nil {
 		return Validated{Gaps: []Gap{unreadable(request)}}
@@ -155,6 +166,7 @@ func interpretWorkload(
 		SearchedScope:      subject,
 		PaginationComplete: result.GetComplete(),
 		FullyAuthorized:    true,
+		MaskedFields:       masking.Fields(),
 		AttestedBy:         TrustRelayAttested,
 	}
 	readAt := timeOf(result.GetReadAt())
@@ -272,7 +284,7 @@ func podStatement(pod *relayv1.KubernetesPodRuntime) string {
 // same thing.
 func interpretEvents(
 	request Request, result *relayv1.KubernetesNamespaceEventsResultV1,
-	scope Scope, window Window, connection uuid.UUID,
+	scope Scope, window Window, connection uuid.UUID, masking Masking,
 ) Validated {
 	if result == nil {
 		return Validated{Gaps: []Gap{unreadable(request)}}
@@ -305,6 +317,7 @@ func interpretEvents(
 		PaginationComplete: result.GetComplete(),
 		FullyAuthorized:    true,
 		SourceFreshness:    result.GetAppliedRetentionHorizon().AsDuration(),
+		MaskedFields:       masking.Fields(),
 		AttestedBy:         TrustRelayAttested,
 	}
 
@@ -336,8 +349,10 @@ func interpretEvents(
 	}
 
 	// A complete read that found nothing is a certified negative and is usable. An incomplete one
-	// is a gap, because a read that stopped at a bound cannot say the window was quiet.
-	if len(validated.Items) == 0 && result.GetComplete() &&
+	// is a gap, because a read that stopped at a bound cannot say the window was quiet — and so is
+	// one whose scope was partly masked, because a hole the platform was not allowed to look into
+	// is not a place it can report nothing was found.
+	if len(validated.Items) == 0 && certificate.Certifies() &&
 		!result.GetWindowPredatesRetention() {
 		validated.Items = append(validated.Items, Item{
 			RequestID:         request.ID,
@@ -469,7 +484,7 @@ func groupEvents(events []*relayv1.KubernetesEvent) []eventGroup {
 // incident.
 func interpretLogs(
 	request Request, result *relayv1.KubernetesContainerLogsResultV1,
-	scope Scope, connection uuid.UUID,
+	scope Scope, connection uuid.UUID, masking Masking,
 ) Validated {
 	if result == nil {
 		return Validated{Gaps: []Gap{unreadable(request)}}
@@ -506,6 +521,7 @@ func interpretLogs(
 		SearchedScope:      subject,
 		PaginationComplete: result.GetComplete() && !truncated,
 		FullyAuthorized:    true,
+		MaskedFields:       masking.Fields(),
 		AttestedBy:         TrustRelayAttested,
 	}
 
@@ -544,16 +560,18 @@ func interpretLogs(
 		})
 	}
 
-	// Masking is visible rather than silent. A field this organization's own redaction policy
-	// withheld arrives as a declared gap with its cause, never as empty content — otherwise a
-	// customer's privacy policy degrades their investigations and the product is blamed for the
-	// hole (ADR-012).
+	// Bytes the Relay read and then dropped to stay inside the effective bounds. This is a BOUND
+	// binding, not masking: the two were conflated here before the redaction report existed, which
+	// told an operator their privacy policy had withheld evidence when what had actually happened
+	// was that they asked for fewer bytes than the container had written. Masking now arrives as
+	// its own report and its own gap; this is the one it used to be mistaken for.
 	if withheld := result.GetWithheldByteCount(); withheld > 0 {
 		validated.Gaps = append(validated.Gaps, Gap{
-			Cause: GapRedactionMasked, CapabilityID: request.CapabilityID, Subject: subject,
+			Cause: GapResultTruncated, CapabilityID: request.CapabilityID, Subject: subject,
 			Consequence: fmt.Sprintf(
-				"%d bytes were withheld by this organization's own redaction policy, so what "+
-					"they said cannot be weighed here and is not absent from the container's log",
+				"%d bytes the read obtained were dropped to stay inside its byte bound, so what "+
+					"they said is not part of this investigation and nothing here supports a claim "+
+					"that the container never said something",
 				withheld),
 		})
 	}

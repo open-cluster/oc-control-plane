@@ -65,6 +65,10 @@ type cluster struct {
 	workload *relayv1.KubernetesWorkloadRuntimeResultV1
 	events   *relayv1.KubernetesNamespaceEventsResultV1
 	logs     *relayv1.KubernetesContainerLogsResultV1
+	// redaction is what the relay's own enforcement point reports it masked, attached to every
+	// result this cluster answers with. It rides on the envelope rather than per capability
+	// because that is where the Relay puts it: one enforcement point, one report.
+	redaction *relayv1.RedactionReport
 	// failing names capabilities the relay reports a failure for rather than a result.
 	failing map[string]relayv1.JobFailure_Kind
 }
@@ -145,7 +149,7 @@ func (c *cluster) answer(assignment *relayv1.JobAssignment) *relayv1.RelayToCont
 		}}
 	}
 
-	result := &relayv1.CapabilityResult{}
+	result := &relayv1.CapabilityResult{Redaction: c.redaction}
 	switch assignment.GetCapabilityId() {
 	case "kubernetes.workload.runtime":
 		result.Result = &relayv1.CapabilityResult_KubernetesWorkloadRuntimeV1{

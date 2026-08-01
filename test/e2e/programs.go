@@ -46,8 +46,36 @@ var (
 // disproved anything.
 var errRelaySourceMissing = errors.New("the Relay's working tree was not found")
 
-// controlPlaneSource is this repository's root, two levels above the harness.
-func controlPlaneSource() string { return filepath.Join("..", "..") }
+// controlPlaneSource is this repository's root.
+//
+// It is FOUND rather than assumed to be two levels up, because the scenario harness is a
+// program in this module as well as a test package, and a program is run from wherever the
+// person running it happens to be. A relative path that only works from one directory is a
+// harness that fails with a compile error instead of running.
+func controlPlaneSource() string { return repositoryRoot() }
+
+// repositoryRoot walks up from the working directory to the module that names this repository.
+// Falling back to the historical relative path keeps the tests working in the one case the walk
+// cannot serve — a checkout whose go.mod is unreadable — rather than turning it into a panic.
+var repositoryRoot = sync.OnceValue(func() string {
+	const modulePath = "module github.com/open-cluster/oc-control-plane"
+
+	directory, err := os.Getwd()
+	if err != nil {
+		return filepath.Join("..", "..")
+	}
+	for {
+		declaration, readErr := os.ReadFile(filepath.Join(directory, "go.mod"))
+		if readErr == nil && strings.Contains(string(declaration), modulePath+"\n") {
+			return directory
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return filepath.Join("..", "..")
+		}
+		directory = parent
+	}
+})
 
 // relaySource resolves the Relay's working tree: the configured path, or the sibling
 // directory that a side-by-side checkout produces.
@@ -61,12 +89,25 @@ func relaySource() (string, error) {
 		return configured, nil
 	}
 
-	sibling := filepath.Join("..", "..", "..", "opencluster-relay")
+	sibling := filepath.Join(repositoryRoot(), "..", "opencluster-relay")
 	if _, err := os.Stat(filepath.Join(sibling, "go.mod")); err != nil {
 		return "", fmt.Errorf("%w beside this repository; set %s to its path",
 			errRelaySourceMissing, envRelaySource)
 	}
 	return sibling, nil
+}
+
+// useBuildRoot points the compiled binaries at a directory, and reports how to remove it. The
+// test run sets it once in TestMain; the scenario harness sets it once at startup. Building the
+// two halves per invocation rather than per caller is what keeps a Kubernetes dependency graph
+// from dominating the run.
+func useBuildRoot() (func(), error) {
+	root, err := os.MkdirTemp("", "oc-e2e-build")
+	if err != nil {
+		return nil, fmt.Errorf("creating the build root: %w", err)
+	}
+	buildRoot = root
+	return func() { _ = os.RemoveAll(root) }, nil
 }
 
 // build compiles one package of one module into the shared build root.

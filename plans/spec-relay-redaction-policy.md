@@ -1,9 +1,13 @@
 # Spec — Relay-side redaction policy
 
-Status: READY FOR IMPLEMENTATION. **Blocking gate: no cluster containing real data may be
-connected until this exists.** Not a prerequisite for the scenario harness, whose clusters are
-synthetic.
-Date: 2026-07-31
+Status: BUILT 2026-08-01. The enforcement point, the built-in defaults, add-only customer policy,
+fail-closed behaviour, the declared-free-text-field build gate, the dry run, and the control
+plane's coverage-gap consumer all exist. The end-to-end negative assertion — a synthetic secret in
+a real container's log appears nowhere in the control plane's database — was verified to FAIL with
+the enforcement point removed. **The blocking gate it existed to lift is lifted: a cluster
+containing real data may be connected once a policy is in force.** Not a prerequisite for the
+scenario harness, whose clusters are synthetic.
+Date: 2026-07-31 (built 2026-08-01)
 Repository: the Relay (`oc-relay`); the coverage-gap consumer is the Go control plane
 Decision records: ADR-012 (untrusted evidence and redaction), ADR-001 point 8 (customer-authored,
 server-immutable local policy), ADR-011 (abstention standard), ADR-004 (local configuration sets a

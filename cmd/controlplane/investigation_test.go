@@ -811,7 +811,14 @@ func TestInvestigation_ARedactedFieldIsAGapRatherThanEmptyContent(t *testing.T) 
 	t.Parallel()
 
 	answering := healthyCluster()
-	answering.logs.WithheldByteCount = 412
+	// What the Relay's enforcement point reports: which field, how many occurrences, which rule.
+	// Never the value — that is the whole design, and asserting on it here is what pins the
+	// control plane to consuming counts rather than content.
+	answering.redaction = &relayv1.RedactionReport{Fields: []*relayv1.RedactedField{{
+		FieldName:             "kubernetes_container_logs_v1.lines.content",
+		MaskedOccurrenceCount: 2,
+		RuleIds:               []string{"builtin.credentialed_connection_string"},
+	}}}
 
 	plane := startInvestigationPlane(t,
 		replaying(t, crashLoopTranscript()), answering, investigation.Controls{})
@@ -823,17 +830,27 @@ func TestInvestigation_ARedactedFieldIsAGapRatherThanEmptyContent(t *testing.T) 
 	if !containsCause(gaps, "field masked by this organization's redaction policy") {
 		t.Fatalf("masking must be visible as a gap, got %+v", gaps.Items)
 	}
+	var masked int
 	for _, gap := range gaps.Items {
 		if gap.Cause != "field masked by this organization's redaction policy" {
 			continue
 		}
+		masked++
 		if gap.Consequence == "" {
 			t.Error("a redaction gap must say what could not be weighed because of it")
 		}
-		// The gap describes what was withheld without carrying it.
+		// The gap names the rule, so a reader can ask the right person to adjust the right rule.
+		if !strings.Contains(gap.Consequence, "builtin.credentialed_connection_string") {
+			t.Errorf("a redaction gap must name the rule that masked the field, got %q",
+				gap.Consequence)
+		}
+		// It describes what was withheld without carrying it.
 		if strings.Contains(gap.Subject, "10.4.0.17") {
 			t.Errorf("a redaction gap must not carry the content it describes, got %q", gap.Subject)
 		}
+	}
+	if masked == 0 {
+		t.Error("the redaction report produced no gap")
 	}
 
 	// And the evidence that DID come back is still there, with content — masking removes a field,

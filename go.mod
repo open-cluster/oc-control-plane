@@ -9,7 +9,7 @@ require (
 	github.com/exaring/otelpgx v0.11.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/open-cluster/oc-relay/gen/go v0.2.0
+	github.com/open-cluster/oc-relay/gen/go v0.3.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
@@ -94,3 +94,15 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// TEMPORARY, and it must not survive the branch it arrived on.
+//
+// The redaction report is a contract change: CapabilityResult carries a RedactionReport, and
+// the coverage gaps this control plane records for a masked field are read from it. The
+// contract module is published from the Relay repository by tag, so until `gen/go/v0.3.0`
+// exists there this cannot resolve — and a build that cannot resolve its contract is a worse
+// signal than one that says out loud where the contract is.
+//
+// Delete this line once the tag is pushed. CI has no sibling checkout of the Relay for the
+// shipping module and will fail on it, which is the intended reminder rather than an oversight.
+replace github.com/open-cluster/oc-relay/gen/go => ../opencluster-relay/gen/go

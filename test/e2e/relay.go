@@ -40,6 +40,10 @@ type relayInstallation struct {
 	SPKIPin             string
 	Organization        string
 	KubeconfigPath      string
+	// Extra is per-installation configuration a caller needs and the protocol proof does not.
+	// The scenario harness uses it for the one scenario whose subject is the operator's attested
+	// event-retention horizon; it is applied last, so a caller can also correct a default above.
+	Extra map[string]string
 }
 
 // newRelay writes the Relay's files and prepares its environment without starting it.
@@ -55,7 +59,7 @@ func newRelay(installation relayInstallation) (*relay, error) {
 		return nil, fmt.Errorf("writing the bootstrap token: %w", err)
 	}
 
-	return &relay{
+	installed := &relay{
 		output:         &syncBuffer{},
 		name:           installation.Name,
 		credentialPath: credentialPath,
@@ -72,7 +76,11 @@ func newRelay(installation relayInstallation) (*relay, error) {
 			"RELAY_HEARTBEAT_INTERVAL": "2s",
 			"RELAY_RESEND_INTERVAL":    "2s",
 		},
-	}, nil
+	}
+	for key, value := range installation.Extra {
+		installed.environment[key] = value
+	}
+	return installed, nil
 }
 
 func (r *relay) start() error {

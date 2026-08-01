@@ -29,13 +29,23 @@ import (
 // generous.
 const restartTimeout = 3 * time.Minute
 
-func eventsResultOf(t *testing.T, record jobRecord) *relayv1.KubernetesNamespaceEventsResultV1 {
+// recordedResultOf decodes the whole capability payload as it was durably stored. Tests that only
+// need one capability's half go through the helpers below; this exists for the ones whose subject
+// is the envelope itself, such as what redaction reported.
+func recordedResultOf(t *testing.T, record jobRecord) *relayv1.CapabilityResult {
 	t.Helper()
 
 	result := &relayv1.CapabilityResult{}
 	if err := proto.Unmarshal(record.Result, result); err != nil {
 		t.Fatalf("decoding the recorded result: %v", err)
 	}
+	return result
+}
+
+func eventsResultOf(t *testing.T, record jobRecord) *relayv1.KubernetesNamespaceEventsResultV1 {
+	t.Helper()
+
+	result := recordedResultOf(t, record)
 	events := result.GetKubernetesNamespaceEventsV1()
 	if events == nil {
 		t.Fatalf("the recorded result is not a namespace-events result: %+v", result)
@@ -46,10 +56,7 @@ func eventsResultOf(t *testing.T, record jobRecord) *relayv1.KubernetesNamespace
 func logsResultOf(t *testing.T, record jobRecord) *relayv1.KubernetesContainerLogsResultV1 {
 	t.Helper()
 
-	result := &relayv1.CapabilityResult{}
-	if err := proto.Unmarshal(record.Result, result); err != nil {
-		t.Fatalf("decoding the recorded result: %v", err)
-	}
+	result := recordedResultOf(t, record)
 	logs := result.GetKubernetesContainerLogsV1()
 	if logs == nil {
 		t.Fatalf("the recorded result is not a container-logs result: %+v", result)

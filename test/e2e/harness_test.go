@@ -39,16 +39,15 @@ const jobTimeout = 2 * time.Minute
 // binary once rather than per test matters: the Relay pulls a Kubernetes dependency graph,
 // and per-test builds would cost more than the tests do.
 func TestMain(m *testing.M) {
-	root, err := os.MkdirTemp("", "oc-e2e-build")
+	remove, err := useBuildRoot()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "creating the build root: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	buildRoot = root
 
 	code := m.Run()
 
-	_ = os.RemoveAll(root)
+	remove()
 	os.Exit(code)
 }
 

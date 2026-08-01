@@ -23,9 +23,23 @@ uncited claim before it reaches storage. And a case's read models carry one mono
 advances on *any* change within the case, so a client polling it is never blind to the evidence it
 is waiting for.
 
-Not built: signal-triggered investigation, incidents and grouping, a live model provider (the
-boundary and its replay exist; see below), and Relay-side redaction, which gates any installation
-against real data.
+**It can be evaluated.** The scenario harness (`test/e2e/cmd/scenario`) is ten Kubernetes clusters
+broken in known ways, on purpose, with the cause written down before the system ever sees them. It
+provisions each one, discards the run loudly if the cluster did not reach its declared broken
+state, investigates it through the real control plane and a real Relay, and files two things
+apart: an artifact a scorer reads, and the ground truth they must not. Evidence selection and the
+conclusion are scored separately, by engineers who did not build the system, blind. One wrong and
+confident answer fails the whole set and is not averaged against successes elsewhere.
+
+**Secrets do not leave a customer's cluster.** Relay-side redaction masks high-confidence secret
+shapes from the first install; the control plane records a CoverageGap per masked field, so
+masking is visible rather than indistinguishable from absence, and a masked field can never
+support a certified absence. The end-to-end proof puts a synthetic credential in a real
+container's log and asserts it appears nowhere in this database.
+
+Not built: signal-triggered investigation, incidents and grouping, and a live model provider —
+the boundary and its replay exist (see below), so the harness runs against recorded transcripts
+and refuses a live-provider run rather than quietly replaying one.
 
 What this slice deliberately hard-codes is written down rather than left to be discovered:
 [docs/architecture/hard-coded-in-the-first-investigation.md](docs/architecture/hard-coded-in-the-first-investigation.md).
@@ -221,3 +235,33 @@ call, and what is in question about it — whether its explanations are any good
 scenario harness against a live provider rather than by a commit gate. CI replays transcripts keyed
 by model, prompt version, output schema version and investigator version, and a recording made for
 different components is refused rather than replayed.
+
+### The scenario harness
+
+```
+cd test/e2e
+go run ./cmd/scenario list
+go run ./cmd/scenario run   -results ./harness-run -transcripts ./transcripts
+go run ./cmd/scenario run   -results ./harness-run -transcripts ./transcripts -scenario red-herring
+go run ./cmd/scenario score -results ./harness-run
+```
+
+It is a program rather than a test, and **never a commit gate**: a gate that fails on ordinary
+model variance is ignored within two weeks. Run it manually, before a release, and periodically —
+model drift is a first-class reason, because the same set against a new provider version is the
+only way to learn that an upgrade degraded investigations before a customer reports it.
+
+`run` files artifacts under `<results>/artifacts` and ground truth under `<results>/ground-truth`.
+Hand over the artifact directory and nothing beside it: a scorer who knows the answer grades
+recognition rather than reasoning. `score` joins them afterwards and applies the kill criterion.
+
+It needs a container runtime and the Relay's working tree beside this repository (or named by
+`OC_E2E_RELAY_SOURCE`). A run stands up a database and a single-node Kubernetes per scenario, so
+the whole set takes tens of minutes.
+
+**It cannot yet be run to a scored result.** `-transcripts` must name a directory holding one
+recording per scenario, and none ship — there is no live provider to record from, and a
+hand-written transcript would be the builder's imagination scored as though a model had reasoned
+it, which is what blind scoring exists to prevent. A run without `-transcripts` refuses and says
+so. Everything else — provisioning, readiness verification, the artifact, scoring, the kill
+criterion — is built and tested.

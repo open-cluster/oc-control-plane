@@ -54,6 +54,25 @@ const (
 	dyingMarker       = "e2e-dying-container-said-this"
 )
 
+// The workload that leaks, and what it leaks.
+//
+// leakedSecret is SYNTHETIC and belongs to nothing. It is shaped like a credential a
+// built-in redaction rule recognises with near-certainty, because what is being proven is
+// that redaction stands between a real container's output and the control plane's durable
+// state — not that any particular pattern is clever.
+//
+// It is a distinct constant from the markers above so that the assertion can search the
+// whole database for THIS string and find nothing, which is the only form of that claim
+// worth making.
+const (
+	leakingWorkload = "leaking"
+	leakedSecret    = "AKIAIOSFODNN7EXAMPLE"
+	// keptAlongside is printed on the same line. A rule that masked the entire line rather than
+	// the credential in it would destroy evidence while passing a test that only looked for the
+	// secret's absence, so the assertion checks this survived.
+	keptAlongside = "e2e-line-that-must-survive-redaction"
+)
+
 // cluster is the disposable Kubernetes the Relay reads through.
 type cluster struct {
 	container      *k3s.K3sContainer
@@ -172,6 +191,13 @@ func (c *cluster) createFixture(ctx context.Context) error {
 	// the events read looks for.
 	if err = c.createTalker(createCtx, crashingWorkload,
 		"echo "+dyingMarker+"; exit 1"); err != nil {
+		return err
+	}
+	// A container that prints a credential the way a misconfigured client does. It is what the
+	// negative assertion about redaction reads: the claim is about what leaves a cluster, so it
+	// has to leave a real one.
+	if err = c.createTalker(createCtx, leakingWorkload,
+		"echo "+keptAlongside+" aws_access_key_id="+leakedSecret+"; sleep 3600"); err != nil {
 		return err
 	}
 	return c.awaitSettled(createCtx)

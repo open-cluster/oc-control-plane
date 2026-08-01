@@ -3,6 +3,7 @@ package investigation
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,12 +66,12 @@ type Candidate struct {
 	// Connection is the customer system this came through, and the source an operator filters by.
 	Connection uuid.UUID
 	// Certificate is the recorded basis on which an absence may be stated as fact. Absent, an
-	// absence is a coverage gap rather than evidence.
+	// absence is a coverage gap rather than evidence. What a customer's redaction policy masked
+	// is part of that basis and lives on it — see Certificate.MaskedFields — rather than beside
+	// it here, so there is one answer to "may this read support an absence" instead of two that
+	// can disagree.
 	Certificate *Certificate
 	Trust       TrustClass
-	// Redactions names the fields a customer's own redaction policy masked. Each one becomes a
-	// CoverageGap with its cause, never an empty field on the item.
-	Redactions []string
 }
 
 // Certificate is the recorded basis on which an absence may be stated as fact: what scopes were
@@ -90,12 +91,31 @@ type Certificate struct {
 	// SourceFreshness is how far back the source itself can answer for. A read whose window
 	// extends past it did not search the window that was asked for.
 	SourceFreshness time.Duration
-	AttestedBy      TrustClass
+	// MaskedFields names what this organization's own redaction policy withheld inside the scope
+	// this certificate covers. It is part of the basis rather than a note beside it: the platform
+	// did not see those values, so it cannot say what was or was not in them.
+	MaskedFields []string
+	AttestedBy   TrustClass
 }
 
 // Certifies reports whether this basis supports stating an absence as fact.
+//
+// Masking defeats it for the same reason truncation and partial authorization do. In each case
+// part of the scope was not seen, and an absence claim over a scope that was not fully seen is
+// the certified negative this whole mechanism exists to prevent — the only difference is that
+// here the customer's own policy is what stopped the looking, which makes the mistake more
+// tempting rather than less serious.
 func (c *Certificate) Certifies() bool {
-	return c != nil && c.PaginationComplete && c.FullyAuthorized
+	return c != nil && c.PaginationComplete && c.FullyAuthorized && len(c.MaskedFields) == 0
+}
+
+// masked is what this basis says was withheld, nil-safe so a candidate carrying no certificate
+// answers the question the same way as one carrying an unmasked read.
+func (c *Certificate) masked() []string {
+	if c == nil {
+		return nil
+	}
+	return c.MaskedFields
 }
 
 // ErrEvidence reports a candidate that could not become an EvidenceItem.
@@ -224,6 +244,11 @@ func Validate(candidate Candidate, window Window) (Item, error) {
 // version of this function — admit it and note the doubt — is how an RBAC misconfiguration
 // becomes a certified negative.
 func ValidateAbsence(candidate Candidate, window Window) (Item, error) {
+	if masked := candidate.Certificate.masked(); len(masked) > 0 {
+		return Item{}, fmt.Errorf(
+			"%w: this organization's redaction policy masked %s in this read, so its absence "+
+				"cannot be stated as fact", ErrEvidence, strings.Join(masked, ", "))
+	}
 	if !candidate.Certificate.Certifies() {
 		return Item{}, fmt.Errorf(
 			"%w: an absence needs a completeness certificate and this read has none", ErrEvidence)
