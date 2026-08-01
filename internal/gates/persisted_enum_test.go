@@ -59,6 +59,19 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 	}
 }
 
+// The value sets, named once so a file below says which enum governs it rather than restating
+// the numbers.
+var (
+	jobStatusValues = []int{
+		int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
+		int(storage.JobFailed), int(storage.JobCancelled),
+	}
+	signalStatusValues   = []int{int(storage.SignalFiring), int(storage.SignalResolved)}
+	connectionRoleValues = []int{
+		int(storage.RoleTrigger), int(storage.RoleEvidence), int(storage.RoleBoth),
+	}
+)
+
 // enumColumns maps a file in internal/storage to the values its SQL may compare each enum
 // column against. Two different enums are both stored in a column called status — a job's and a
 // signal's — so the legal set is decided per file rather than per column name. A gate that
@@ -66,21 +79,15 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 //
 // A file is listed here when its SQL names one of these columns. Adding SQL that does so to any
 // other file fails the gate below, which is the point: the new file has to say which enum
-// governs it.
+// governs it. That is not hypothetical — splitting the job queries into these files is what
+// first fired it.
 var enumColumns = map[string]map[string][]int{
-	"job.go": {
-		"status": {
-			int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
-			int(storage.JobFailed), int(storage.JobCancelled),
-		},
-		"role": {int(storage.RoleTrigger), int(storage.RoleEvidence), int(storage.RoleBoth)},
-	},
-	"signal.go": {
-		"status": {int(storage.SignalFiring), int(storage.SignalResolved)},
-	},
-	"connection.go": {
-		"role": {int(storage.RoleTrigger), int(storage.RoleEvidence), int(storage.RoleBoth)},
-	},
+	"job.go":          {"role": connectionRoleValues},
+	"lease.go":        {"status": jobStatusValues},
+	"result.go":       {"status": jobStatusValues},
+	"cancellation.go": {"status": jobStatusValues},
+	"signal.go":       {"status": signalStatusValues},
+	"connection.go":   {"role": connectionRoleValues},
 }
 
 // Every integer an enum column is compared against must be a value some constant holds. This
@@ -112,8 +119,14 @@ func TestSQLComparesEnumColumnsOnlyToDeclaredValues(t *testing.T) {
 				inspected += len(literals)
 				for _, literal := range literals {
 					if !containsValue(legal, literal) {
-						t.Errorf("%s compares %s to %d, which no declared constant holds; "+
-							"legal values are %v", name, column, literal, legal)
+						// The wording matters when the value is new rather than wrong. A
+						// constant that was genuinely added is declared in Go and still fails
+						// here until it is recorded, and the message has to say so or it reads
+						// as the gate being broken.
+						t.Errorf("%s compares %s to %d; the values recorded for that column are "+
+							"%v. If a constant was added, record it above — these values are a "+
+							"storage contract, and extending them is a decision",
+							name, column, literal, legal)
 					}
 				}
 			}
