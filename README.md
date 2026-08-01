@@ -59,9 +59,17 @@ go run ./cmd/controlplane
 | `internal/storage` | Placement resolution, pools, embedded migrations. The only package that touches the database |
 | `internal/observability` | slog, OpenTelemetry traces, metrics exported for Prometheus |
 | `internal/api` | Liveness, readiness, metrics. Depends on behaviour, not on storage |
+| `internal/relay` | Relay registration, sessions, and job delivery over the protocol |
+| `internal/intake` | Inbound SignalUpdates, verification, rate limiting. One sub-package per provider |
+| `internal/connection` | Connections and their secrets: the configured instances of an Integration |
+| `internal/environment` | Environments: the scope that groups Connections and bounds evidence |
+| `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute |
+| `internal/operator` | The cross-tenant read surface, behind its own token and its own listener |
 | `internal/gates` | Build-failing architecture checks, including the dependency boundary |
 
-Two properties are enforced mechanically rather than by review:
+A package is named after a business capability and never after a layer, and a provider adapter
+lives below the capability it implements. Three properties are enforced mechanically rather
+than by review:
 
 - **Placement is resolved, never ambient.** Where an organization's data lives is looked up
   from the organization. An unresolvable organization is a typed error, never a fallback to
