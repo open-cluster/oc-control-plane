@@ -65,7 +65,22 @@ An Alertmanager webhook authenticated by a per-Connection shared secret becomes 
 normalised Signal carrying that Connection's Environment, deduplicated by episode. The intake
 URL names the Connection and nothing else.
 
-**Nothing consumes a Signal.** There is no Incident, no Investigation, and no investigator.
+**The investigator exists and runs.** An engineer names a Kubernetes Connection, a namespace, a
+workload and a window through the operator surface. The control plane derives the Environment from
+the Connection, opens a durable case, and a background worker claims a round under a server-clock
+lease fenced exactly as `relay_job` is. The round assembles a deterministic brief from two live
+reads, forms competing hypotheses, makes up to two further bounded adaptive passes of typed
+read-only requests, and terminates in a most supported explanation whose every claim cites the
+EvidenceItems it rests on — or in an abstention naming what was missing. The whole case is readable
+through a summary a client polls by version, paginated sections stamped with the version they
+represent, and a server-side assembly at a pinned version.
+
+**Nothing consumes a Signal.** There is still no Incident and no signal-triggered investigation;
+the manual trigger is the only one, which is what ADR-008 sequenced.
+
+**There is no live model provider.** The boundary exists, transcripts replay in CI keyed by model,
+prompt, schema and investigator version, and a deployment given no provider fails rounds honestly
+rather than guessing. A live provider belongs to the scenario harness slice.
 
 ---
 
@@ -113,7 +128,8 @@ changed behaviour; see `plans/architecture-hardening.md`.
 
 | Slice | Specification | Repository the work lands in | State |
 | --- | --- | --- | --- |
-| 4 — First investigation | `spec-first-investigation.md` | Go control plane | 📝 Specified |
+| 4 — First investigation | `spec-first-investigation.md` | Go control plane | ✅ Done 2026-08-01 |
+| 4 — Investigation read models | `spec-investigation-read-models.md` | Go control plane | ✅ Done 2026-08-01 |
 | 4 — Environments and Connections | `spec-environments-and-connections.md` | Go control plane | ✅ Done (revision 3 — Integration separated from Connection) |
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
 | 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | 📝 Specified |
@@ -121,8 +137,9 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
 
 **Not specified, deliberately.** Signal-triggered investigation, Incidents and grouping, canonical
-resource identity, the second alerting adapter, tenant-scoped operator identity (ADR-006), and the
-frontend read model. The first four wait on evidence from the harness. Operator identity is a known
+resource identity, the second alerting adapter, and tenant-scoped operator identity (ADR-006). The
+frontend read model was specified and built on 2026-08-01 — see the row above — which resolves the
+last clause of this paragraph as it was written. The first four wait on evidence from the harness. Operator identity is a known
 gap with no new decision behind it. The frontend has no recorded decision about its future at all —
 assumption 3 below — and specifying a read model for a client nobody has decided to build would be
 the same mistake this session was called to correct.
@@ -145,9 +162,11 @@ on the execution path rather than a property of whichever query was written corr
 
 - Incidents and grouping; the human-initiated investigation path; storm shedding; delivery health
   as an operator surface; intake metrics. All specified in the intake document, none built.
-- Investigation: the run, the case pack, hypothesis handling, the truth chain from Observation
-  through EvidenceCandidate and EvidenceValidation to EvidenceItem, completeness certificates,
-  coverage gaps.
+- **RESOLVED 2026-08-01. Investigation is built**: the durable case, its bounded rounds, the case
+  pack, hypothesis handling with stances, the truth chain from Observation through
+  EvidenceCandidate and EvidenceValidation to EvidenceItem, completeness certificates, and coverage
+  gaps with their consequences. What remains absent under this heading is the live model provider
+  and signal-triggered investigation.
 
   **CORRECTED 2026-07-30. The earlier claim here — that a .NET reference makes this "a port with
   an oracle, not greenfield" — is false, and assumption 2 in section 8 was right to doubt it.**

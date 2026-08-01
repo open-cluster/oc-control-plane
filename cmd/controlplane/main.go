@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
@@ -82,17 +84,39 @@ func start() error {
 	if err != nil {
 		return err
 	}
-	return run(ctx, cfg, os.Stderr, nil)
+	return run(ctx, cfg, os.Stderr, wiring{})
+}
+
+// wiring is what a test may put in place of the real thing. There is exactly one entry, and it is
+// the model boundary — the only component in this program that is faked in CI, for the reasons
+// recorded at the seam itself in internal/investigation/reasoner.go.
+//
+// Production supplies nothing here. With no reasoner configured the investigator is wired to the
+// provider-unavailable boundary, so a deployment that has not been given one produces honest failed
+// rounds saying the reasoning step could not run — rather than starting, looking ready, and
+// abstaining on every case for a reason nobody can find.
+type wiring struct {
+	onListen func(net.Addr)
+	reasoner investigation.Reasoner
+	// investigatorInterval overrides how often the worker looks for work. Production polls at a
+	// rate suited to work that arrives a few times an hour; a test that waited that out would spend
+	// most of its wall clock asleep.
+	investigatorInterval time.Duration
+	// controls tightens what a round runs under. A test that had to wait out the product's real
+	// bounds would either be slow or would assert against bounds nobody ships; this lets it assert
+	// the exhaustion path in seconds against the same code the real bounds run through. Zero fields
+	// mean the product's own defaults, which is what production uses.
+	controls investigation.Controls
 }
 
 // run assembles and serves the control plane until ctx is cancelled, then drains within
 // the configured timeout. It returns nil on a clean shutdown.
 //
-// onListen, when non-nil, receives the bound address once the listener is open. Production
-// passes nil; tests pass a callback so they can address an ephemeral port without racing
-// the listener.
+// replace carries what a test puts in place of the real thing: the address callback, so an
+// ephemeral port can be addressed without racing the listener, and the model boundary. Production
+// passes an empty value.
 func run(
-	ctx context.Context, cfg config.Config, logOutput io.Writer, onListen func(net.Addr),
+	ctx context.Context, cfg config.Config, logOutput io.Writer, replace wiring,
 ) error {
 	telemetry, err := observability.Start(ctx, observability.Options{
 		ServiceName:    cfg.ServiceName,
@@ -133,13 +157,51 @@ func run(
 	}
 	logMigrations(logger, applied)
 
+	reasoner, err := modelBoundary(cfg, replace)
+	if err != nil {
+		return err
+	}
+
+	claimInterval := investigatorInterval
+	if replace.investigatorInterval > 0 {
+		claimInterval = replace.investigatorInterval
+	}
+
 	return serve(ctx, assembled{
 		config:     cfg,
+		controls:   investigation.DefaultControls().Restrict(replace.controls),
+		interval:   claimInterval,
 		logger:     logger,
 		telemetry:  telemetry,
 		placements: placements,
-		onListen:   onListen,
+		reasoner:   reasoner,
+		versions:   investigatorVersions(reasoner),
+		onListen:   replace.onListen,
 	})
+}
+
+// modelBoundary resolves what will answer the reasoning step.
+//
+// A test's own boundary wins, then a recorded transcript the deployment was given, and with
+// neither the boundary is the provider-unavailable one. Failing closed is deliberate: an instance
+// that cannot reason must say so on every round rather than look healthy and abstain for a reason
+// nobody can find.
+//
+// A transcript that does not load is a REFUSAL TO START. An operator who pointed at one and got a
+// control plane reasoning about nothing would have no way to tell that from one they never
+// configured, and this is the last moment anyone can be told.
+func modelBoundary(cfg config.Config, replace wiring) (investigation.Reasoner, error) {
+	if replace.reasoner != nil {
+		return replace.reasoner, nil
+	}
+	if len(cfg.ModelTranscript) == 0 {
+		return investigation.Unavailable{}, nil
+	}
+	recorded, err := investigation.LoadTranscript(cfg.ModelTranscript, investigatorVersions(nil))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", config.EnvModelTranscriptFile, err)
+	}
+	return recorded, nil
 }
 
 // assembled is the constructed process: the pieces serve needs, which are meaningless
@@ -149,7 +211,15 @@ type assembled struct {
 	logger     *slog.Logger
 	telemetry  *observability.Telemetry
 	placements *storage.Placements
-	onListen   func(net.Addr)
+	reasoner   investigation.Reasoner
+	// controls is what a round opened through this process runs under.
+	controls investigation.Controls
+	// interval is how often the investigator looks for work.
+	interval time.Duration
+	// versions is what every round this build opens is stamped with, so a recorded transcript made
+	// for different components is detected rather than silently replayed.
+	versions investigation.Versions
+	onListen func(net.Addr)
 }
 
 // serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
@@ -213,6 +283,13 @@ func serve(ctx context.Context, process assembled) error {
 		return err
 	}
 	defer intake.stop(cfg.ShutdownTimeout, logger)
+
+	// The investigator is not a listener: it claims durable work rather than answering a caller.
+	// It stops with the process context and finishes what it holds, and anything it cannot finish
+	// stays leased until the lease runs out and another instance takes it — which is what makes a
+	// deploy in the middle of an investigation recoverable rather than a lost run.
+	investigators := startInvestigator(process)
+	defer investigators.stop()
 
 	select {
 	case serveErr := <-failed:
@@ -333,6 +410,8 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 			Placements:  process.placements,
 			Logger:      process.logger,
 			TokenDigest: cfg.OperatorTokenDigest,
+			Controls:    process.controls,
+			Versions:    process.versions,
 		}.Router(),
 		// Bounded at every stage, not just the headers. This port answers across tenants and
 		// its connections are unauthenticated until a request has been read, so a client that
@@ -392,6 +471,96 @@ func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoin
 		}
 	}()
 	return endpoint, nil
+}
+
+// Bounds on the investigator. They are conservative on purpose: a worker that claims more than it
+// can run holds leases nothing is executing, and a poll interval short enough to feel instant is a
+// query per instance per second forever for work that arrives a few times an hour.
+const (
+	investigatorInterval = 2 * time.Second
+	investigatorLease    = 2 * time.Minute
+	investigatorCapacity = 4
+)
+
+// investigatorVersions is what every round this build opens is pinned with. The investigator's
+// version is the binary's, so a case read months later names the build that produced it.
+//
+// A nil reasoner asks for the versions a RECORDING must have been made against, which is what a
+// transcript is checked against before it is accepted. The check has to happen before the boundary
+// exists, so it cannot ask the boundary what it is.
+func investigatorVersions(reasoner investigation.Reasoner) investigation.Versions {
+	model := "recorded"
+	if reasoner != nil {
+		model = modelIdentity(reasoner)
+	}
+	return investigation.Versions{
+		Planner:       "bounded-adaptive-v1",
+		Model:         model,
+		PromptVersion: "1",
+		SchemaVersion: "1",
+		Investigator:  version,
+	}
+}
+
+// modelIdentity names the boundary in use, so a round's pinned versions say what actually answered
+// it rather than what the configuration hoped would.
+func modelIdentity(reasoner investigation.Reasoner) string {
+	if _, unavailable := reasoner.(investigation.Unavailable); unavailable {
+		return "unavailable"
+	}
+	// Everything else is a recording, in this build. A live provider names itself here when there
+	// is one, and the round's pinned versions then say which model actually answered it.
+	return "recorded"
+}
+
+// startInvestigator runs the worker that claims investigation rounds and executes them.
+func startInvestigator(process assembled) *investigatorWorker {
+	ctx, stop := context.WithCancel(context.Background())
+	worker := investigation.Worker{
+		Runner: investigation.Runner{
+			Store:    process.placements,
+			Reasoner: process.reasoner,
+			Logger:   process.logger,
+			Versions: process.versions,
+		},
+		Store:     process.placements,
+		Pending:   process.placements,
+		Logger:    process.logger,
+		Interval:  process.interval,
+		LeaseFor:  investigatorLease,
+		Capacity:  investigatorCapacity,
+		SessionID: uuid.New(),
+	}
+
+	running := &investigatorWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		worker.Run(ctx)
+	}()
+	process.logger.Info("investigator started",
+		slog.String("session_id", worker.SessionID.String()),
+		slog.String("model", process.versions.Model))
+	return running
+}
+
+// investigatorWorker is the running worker and the handle that stops it.
+type investigatorWorker struct {
+	stopping context.CancelFunc
+	done     chan struct{}
+	once     sync.Once
+}
+
+// stop asks the worker to finish and waits for it. It is deliberately unbudgeted: what it is
+// waiting for is rounds recording the outcome they reached, and cutting that short would leave a
+// case reading as running with nothing working on it until its lease expired.
+func (w *investigatorWorker) stop() {
+	if w == nil {
+		return
+	}
+	w.once.Do(func() {
+		w.stopping()
+		<-w.done
+	})
 }
 
 // intakeEndpoint is the alert-intake listener.

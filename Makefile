@@ -41,13 +41,20 @@ build:
 # The race detector requires cgo, so tests run with CGO_ENABLED=1. This is distinct from
 # the shipped artefact: `build` stays CGO_ENABLED=0 for a static, reproducible binary.
 # Integration tests need a reachable Docker daemon (Testcontainers).
+#
+# The timeout is stated rather than left to Go's ten-minute default. The composition-root suite
+# starts a real process, a real database and a real relay session per test, and its cost grows with
+# the product; a default nobody chose becoming the thing that fails the build is a gate that reports
+# the wrong problem. This is the budget, and it is a number to argue with when it is exceeded.
+TEST_TIMEOUT ?= 30m
+
 test:
-	CGO_ENABLED=1 go test -race -count=1 ./...
-	cd $(HARNESS_MODULE) && CGO_ENABLED=1 go test -race -count=1 ./...
+	CGO_ENABLED=1 go test -race -count=1 -timeout $(TEST_TIMEOUT) ./...
+	cd $(HARNESS_MODULE) && CGO_ENABLED=1 go test -race -count=1 -timeout $(TEST_TIMEOUT) ./...
 
 # Unit-only run for machines without Docker; the composition-root suite is skipped.
 test-short:
-	CGO_ENABLED=1 go test -race -short -count=1 ./...
+	CGO_ENABLED=1 go test -race -short -count=1 -timeout $(TEST_TIMEOUT) ./...
 
 cover:
 	go test -covermode=atomic -coverprofile=coverage.out ./...

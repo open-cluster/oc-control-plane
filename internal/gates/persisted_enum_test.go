@@ -11,14 +11,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
-// Three enums in internal/storage are persisted as integers in columns, and the same integers
-// are written as bare literals inside the SQL that reads and writes those columns. Nothing in
-// the language connects the two: reordering a constant block shifts every value after it while
-// every literal keeps its old meaning, and the rows already stored keep the old numbering. The
-// compiler cannot see it, the linter cannot see it, and it is invisible in review.
+// Enums across this module are persisted as integers in columns, and some of the same integers are
+// written as bare literals inside the SQL that reads and writes those columns. Nothing in the
+// language connects the two: reordering a constant block shifts every value after it while every
+// literal keeps its old meaning, and the rows already stored keep the old numbering. The compiler
+// cannot see it, the linter cannot see it, and it is invisible in review.
+//
+// The investigation vocabulary lives in internal/investigation rather than in internal/storage,
+// because the capability owns its types and persistence reconstructs them (ADR-017). Where it lives
+// does not change what it is: a value in a column, constrained by a CHECK in migration 0009.
 //
 // Two gates cover it. The first freezes the values. The second checks that no SQL literal names
 // a value no constant holds.
@@ -48,13 +53,99 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"RoleTrigger", int(storage.RoleTrigger), 1},
 		{"RoleEvidence", int(storage.RoleEvidence), 2},
 		{"RoleBoth", int(storage.RoleBoth), 3},
+
+		// The investigation vocabulary. These live in internal/investigation rather than in
+		// internal/storage — the capability owns its types and persistence reconstructs them
+		// (ADR-017) — but they are stored in columns and constrained by CHECKs in migration 0009,
+		// so they are a storage contract exactly as the values above are.
+		{"LifecyclePending", int(investigation.LifecyclePending), 1},
+		{"LifecycleBriefing", int(investigation.LifecycleBriefing), 2},
+		{"LifecycleReasoning", int(investigation.LifecycleReasoning), 3},
+		{"LifecycleGathering", int(investigation.LifecycleGathering), 4},
+		{"LifecycleConcluded", int(investigation.LifecycleConcluded), 5},
+		{"LifecycleAbstained", int(investigation.LifecycleAbstained), 6},
+		{"LifecycleCancelled", int(investigation.LifecycleCancelled), 7},
+		{"LifecycleFailed", int(investigation.LifecycleFailed), 8},
+
+		{"TriggerManual", int(investigation.TriggerManual), 1},
+		{"TriggerSignal", int(investigation.TriggerSignal), 2},
+
+		// These match the protocol's WorkloadKind. A value that moved here would ask a relay for a
+		// different kind of object than the case says it is scoped to.
+		{"WorkloadDeployment", int(investigation.WorkloadDeployment), 1},
+		{"WorkloadStatefulSet", int(investigation.WorkloadStatefulSet), 2},
+		{"WorkloadDaemonSet", int(investigation.WorkloadDaemonSet), 3},
+
+		{"RoundConcluded", int(investigation.RoundConcluded), 1},
+		{"RoundAbstained", int(investigation.RoundAbstained), 2},
+		{"RoundCancelled", int(investigation.RoundCancelled), 3},
+		{"RoundFailed", int(investigation.RoundFailed), 4},
+
+		{"LimitRequests", int(investigation.LimitRequests), 1},
+		{"LimitResultBytes", int(investigation.LimitResultBytes), 2},
+		{"LimitDeadline", int(investigation.LimitDeadline), 3},
+		{"LimitCost", int(investigation.LimitCost), 4},
+		{"LimitAdaptivePasses", int(investigation.LimitAdaptivePasses), 5},
+
+		{"HypothesisLive", int(investigation.HypothesisLive), 1},
+		{"HypothesisSupported", int(investigation.HypothesisSupported), 2},
+		{"HypothesisFalsified", int(investigation.HypothesisFalsified), 3},
+		{"HypothesisSetAside", int(investigation.HypothesisSetAside), 4},
+
+		{"StanceSupports", int(investigation.StanceSupports), 1},
+		{"StanceContradicts", int(investigation.StanceContradicts), 2},
+		{"StanceNeutral", int(investigation.StanceNeutral), 3},
+
+		{"RequestProposed", int(investigation.RequestProposed), 1},
+		{"RequestRefused", int(investigation.RequestRefused), 2},
+		{"RequestDispatched", int(investigation.RequestDispatched), 3},
+		{"RequestAnswered", int(investigation.RequestAnswered), 4},
+		{"RequestUnproductive", int(investigation.RequestUnproductive), 5},
+		{"RequestFailed", int(investigation.RequestFailed), 6},
+
+		{"RefusedUnknownCapability", int(investigation.RefusedUnknownCapability), 1},
+		{"RefusedNotPermitted", int(investigation.RefusedNotPermitted), 2},
+		{"RefusedOutOfScope", int(investigation.RefusedOutOfScope), 3},
+		{"RefusedOutOfWindow", int(investigation.RefusedOutOfWindow), 4},
+		{"RefusedArguments", int(investigation.RefusedArguments), 5},
+		{"RefusedLimitReached", int(investigation.RefusedLimitReached), 6},
+		{"RefusedUnjustified", int(investigation.RefusedUnjustified), 7},
+		{"RefusedConnection", int(investigation.RefusedConnection), 8},
+
+		{"TrustCentrallyVerified", int(investigation.TrustCentrallyVerified), 1},
+		{"TrustRelayAttested", int(investigation.TrustRelayAttested), 2},
+
+		{"GapCapabilityUnavailable", int(investigation.GapCapabilityUnavailable), 1},
+		{"GapCapabilityNotPermitted", int(investigation.GapCapabilityNotPermitted), 2},
+		{"GapSourceUnreachable", int(investigation.GapSourceUnreachable), 3},
+		{"GapAuthorizationDenied", int(investigation.GapAuthorizationDenied), 4},
+		{"GapLimitReached", int(investigation.GapLimitReached), 5},
+		{"GapRedactionMasked", int(investigation.GapRedactionMasked), 6},
+		{"GapRetentionHorizon", int(investigation.GapRetentionHorizon), 7},
+		{"GapResultTruncated", int(investigation.GapResultTruncated), 8},
+		{"GapRequestRefused", int(investigation.GapRequestRefused), 9},
+		{"GapTargetNotFound", int(investigation.GapTargetNotFound), 10},
+
+		{"CoverageChecked", int(investigation.CoverageChecked), 1},
+		{"CoverageCheckedEmpty", int(investigation.CoverageCheckedEmpty), 2},
+		{"CoverageIncomplete", int(investigation.CoverageIncomplete), 3},
+		{"CoverageUnavailable", int(investigation.CoverageUnavailable), 4},
+		{"CoverageNotApplicable", int(investigation.CoverageNotApplicable), 5},
+
+		{"OutcomeSupported", int(investigation.OutcomeSupported), 1},
+		{"OutcomeCaveated", int(investigation.OutcomeCaveated), 2},
+		{"OutcomeAbstained", int(investigation.OutcomeAbstained), 3},
+
+		{"ClaimSupporting", int(investigation.ClaimSupporting), 1},
+		{"ClaimContradicting", int(investigation.ClaimContradicting), 2},
+		{"ClaimAffectedScope", int(investigation.ClaimAffectedScope), 3},
 	}
 
 	for _, constant := range frozen {
 		if constant.got != constant.fixed {
-			t.Errorf("storage.%s is %d and is stored as %d; the value is persisted in a column "+
-				"and written as a literal in SQL, so changing it rewrites what existing rows mean",
-				constant.name, constant.got, constant.fixed)
+			t.Errorf("%s is %d and is stored as %d; the value is persisted in a column and, for "+
+				"some of these, written as a literal in SQL, so changing it rewrites what every "+
+				"existing row means", constant.name, constant.got, constant.fixed)
 		}
 	}
 }
@@ -82,12 +173,17 @@ var (
 // governs it. That is not hypothetical — splitting the job queries into these files is what
 // first fired it.
 var enumColumns = map[string]map[string][]int{
-	"job.go":          {"role": connectionRoleValues},
-	"lease.go":        {"status": jobStatusValues},
-	"result.go":       {"status": jobStatusValues},
-	"cancellation.go": {"status": jobStatusValues},
-	"signal.go":       {"status": signalStatusValues},
-	"connection.go":   {"role": connectionRoleValues},
+	"job.go": {"role": connectionRoleValues},
+	// The investigator reaches a customer's cluster through a Connection, so the same role check
+	// guards opening a case and dispatching one of its reads. Cancelling a case also touches
+	// relay_job's status, which is why that file names two enums.
+	"investigation.go":      {"role": connectionRoleValues, "status": jobStatusValues},
+	"investigation_pack.go": {"role": connectionRoleValues},
+	"lease.go":              {"status": jobStatusValues},
+	"result.go":             {"status": jobStatusValues},
+	"cancellation.go":       {"status": jobStatusValues},
+	"signal.go":             {"status": signalStatusValues},
+	"connection.go":         {"role": connectionRoleValues},
 }
 
 // Every integer an enum column is compared against must be a value some constant holds. This

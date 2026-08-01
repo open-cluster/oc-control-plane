@@ -39,6 +39,8 @@ const (
 	EnvOperatorTokenFile = "OC_OPERATOR_TOKEN_FILE"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
+
+	EnvModelTranscriptFile = "OC_MODEL_TRANSCRIPT_FILE"
 )
 
 // minOperatorTokenLength is the shortest token the operator surface will accept.
@@ -112,6 +114,19 @@ type Config struct {
 	// It carries no credential of its own: each configured source authenticates with its own
 	// secret, so there is nothing here that would be shared across tenants.
 	IntakeAddress string
+
+	// ModelTranscript is a recorded transcript of the model boundary, read from the file the
+	// operator named. It is what lets a deployment that has no live provider still run
+	// investigations — a scenario harness replaying a scenario, or an end-to-end proof.
+	//
+	// Empty means no boundary is configured, and the investigator then fails rounds honestly
+	// saying the reasoning step could not run. That is the fail-closed default on purpose: an
+	// instance with no way to reason must say so rather than abstain on every case for a reason
+	// nobody can find.
+	//
+	// It is a FILE for the same reason a placement's DSN is: the content is large and
+	// structured, and an environment value is the wrong place for either.
+	ModelTranscript []byte
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -154,6 +169,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.OperatorAddress); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelTranscript, err = optionalFile(lookup, EnvModelTranscriptFile); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
@@ -318,6 +336,28 @@ func readSecretFile(path string) (string, error) {
 		return "", errors.New("file is empty")
 	}
 	return value, nil
+}
+
+// optionalFile reads a file a setting names, or nothing when the setting is absent. A named file
+// that cannot be read is an error rather than a silent nothing: an operator who pointed at a
+// transcript and got a control plane that reasons about nothing would have no way to tell that
+// from one they never configured.
+//
+// Unlike readSecretFile the error names the path, because this file holds no credential and
+// finding it is the whole difficulty when a deployment is wrong.
+func optionalFile(lookup func(string) (string, bool), key string) ([]byte, error) {
+	path, ok := lookup(key)
+	if !ok || strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(strings.TrimSpace(path))
+	if err != nil {
+		return nil, fmt.Errorf("%s names %s, which could not be read", key, strings.TrimSpace(path))
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("%s names %s, which is empty", key, strings.TrimSpace(path))
+	}
+	return raw, nil
 }
 
 func required(lookup func(string) (string, bool), key string) (string, error) {

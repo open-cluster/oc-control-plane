@@ -49,6 +49,34 @@ func encodeCursor(at time.Time, id uuid.UUID) string {
 		[]byte(strconv.FormatInt(at.UnixNano(), 10) + ":" + id.String()))
 }
 
+// encodeOrdinalCursor renders a page position in a listing ordered by a stable per-case ordinal.
+// It is a second codec rather than a reuse of the timestamp one because the ordering it resumes is
+// genuinely different: an ordinal is assigned once and never moves, which is what lets a section
+// stay in one order while the case it belongs to is still growing.
+func encodeOrdinalCursor(ordinal int) string {
+	return base64.RawURLEncoding.EncodeToString([]byte("#" + strconv.Itoa(ordinal)))
+}
+
+// decodeOrdinalCursor reads such a position back. Zero is the start of the listing.
+func decodeOrdinalCursor(cursor string) (int, error) {
+	if cursor == "" {
+		return 0, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, ErrBadCursor
+	}
+	digits, found := strings.CutPrefix(string(raw), "#")
+	if !found {
+		return 0, ErrBadCursor
+	}
+	ordinal, err := strconv.Atoi(digits)
+	if err != nil || ordinal < 0 {
+		return 0, ErrBadCursor
+	}
+	return ordinal, nil
+}
+
 // decodeCursor reads a page position back. An empty cursor is the start of the list, which is
 // not an error; anything unreadable is, because silently starting over would show an operator
 // the first page again and let them believe they had seen the last.

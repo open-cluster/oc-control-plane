@@ -65,7 +65,7 @@ carries the same provisional identity and renames in the same atomic change.
 | `internal/gates` | Build-failing architecture checks | Built |
 | `internal/identity` | Canonical principal; Clerk and OIDC adapters behind one boundary | Not built. ADR-006 is a decision with no implementation specification |
 | `internal/incident` | Incident grouping and lifecycle. Singular, per ADR-016 | Not built. Deferred by ADR-008 |
-| `internal/investigation` | The truth chain. Singular, per ADR-016 | Not built. **The "exists empty until then" clause is void**: ADR-016 forbids creating a package for a slice that is not being built |
+| `internal/investigation` | The truth chain. Singular, per ADR-016. Owns the case, its bounded rounds, the brief, the truth chain from Observation to EvidenceItem, hypotheses, coverage gaps, outcomes, the runner, the model boundary and the read models — the capability owns its own vocabulary, per ADR-017 | Built 2026-08-01. It was created with its slice and not before, which is what the void clause required |
 | ~~`proto`~~ | — | **Rejected by ADR-016.** The protocol contract lives in the Relay repository as its own module and is consumed at a pinned version; a second surface here would have no consumer and two places to change a message |
 | ~~`gen`~~ | — | **Rejected by ADR-016**, with `proto` |
 | `deploy` | Helm chart and manifests | Not built |

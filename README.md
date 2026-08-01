@@ -8,14 +8,27 @@ Proprietary. See [LICENSE](./LICENSE).
 
 ## Status
 
-Foundation only. The process starts, resolves an organization's placement, applies its
-embedded migrations, serves liveness, readiness, and metrics, and drains on shutdown.
-There is **no domain logic yet**: relay registration, signal intake, incidents, and
-investigations all come later.
+**It investigates.** An engineer names a Kubernetes Connection, a namespace, a workload and a
+time window; the control plane derives the Environment from the Connection, opens a durable case,
+assembles a deterministic brief from live reads, forms competing hypotheses, makes up to two
+further bounded rounds of typed read-only requests, and ends in a most supported explanation whose
+every claim cites the evidence it rests on — or in an abstention that names what was missing.
 
-It exists in this shape so that placement resolution, organization scoping, observability,
-migration discipline, and shutdown semantics are in place before any domain depends on
-them.
+Everything before it is in place: relay registration and sessions, typed bounded capability jobs
+under a fenced lease, Environments and Connections, and alert intake.
+
+Two properties are worth stating plainly because they are what the product is for. A confident
+conclusion without sufficient support is **not a permitted outcome** — the output schema rejects an
+uncited claim before it reaches storage. And a case's read models carry one monotonic version that
+advances on *any* change within the case, so a client polling it is never blind to the evidence it
+is waiting for.
+
+Not built: signal-triggered investigation, incidents and grouping, a live model provider (the
+boundary and its replay exist; see below), and Relay-side redaction, which gates any installation
+against real data.
+
+What this slice deliberately hard-codes is written down rather than left to be discovered:
+[docs/architecture/hard-coded-in-the-first-investigation.md](docs/architecture/hard-coded-in-the-first-investigation.md).
 
 ## Documents
 
@@ -64,6 +77,7 @@ go run ./cmd/controlplane
 | `internal/connection` | Connections and their secrets: the configured instances of an Integration |
 | `internal/environment` | Environments: the scope that groups Connections and bounds evidence |
 | `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute |
+| `internal/investigation` | The case, its rounds, the brief, evidence, hypotheses, coverage gaps, outcomes, the runner and the read models |
 | `internal/operator` | The cross-tenant read surface, behind its own token and its own listener |
 | `internal/gates` | Build-failing architecture checks, including the dependency boundary |
 
@@ -80,9 +94,24 @@ than by review:
 - **The Relay's implementation is not a dependency.** The control plane speaks the Relay's
   protocol and never touches a customer cluster, so no Kubernetes library may appear in its
   requirements or its imports.
-- **Persisted enum values are frozen.** Job status, signal status and connection role are
-  stored as integers and appear as bare literals in SQL. A constant that moves keeps its old
-  meaning in every row already written, so the values are pinned and the literals checked.
+- **Persisted enum values are frozen.** Job status, signal status, connection role and the whole
+  investigation vocabulary are stored as integers, and some appear as bare literals in SQL. A
+  constant that moves keeps its old meaning in every row already written, so the values are pinned
+  and the literals checked.
+
+Three properties of the investigator are enforced by the database rather than by application
+discipline, because each is invisible in review:
+
+- **The case version advances on any change within the case**, not only on a lifecycle transition.
+  A trigger on every child table touches the case; a trigger on the case advances its version. The
+  frozen .NET frontend audit recorded the alternative and its consequence.
+- **A claim cannot cite another case's evidence.** The citation's foreign key carries the
+  investigation, so "every claim resolves to an EvidenceItem in the same case" is something the
+  database refuses to break.
+- **An adaptive request cannot exist without the hypothesis that justified it**, and an absence
+  cannot be recorded without a completeness certificate. Both are check constraints. The first is
+  what stops evidence text steering execution; the second is what stops an RBAC misconfiguration
+  becoming a certified negative.
 
 ## The Relay protocol
 
@@ -115,6 +144,7 @@ Fetching from the private repository needs
 | `OC_OPERATOR_ADDRESS` | no | Listen address for the operator surface. Empty exposes it nowhere |
 | `OC_OPERATOR_TOKEN_FILE` | with operators | File holding the operator token. At least 32 characters |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
+| `OC_MODEL_TRANSCRIPT_FILE` | no | A recorded transcript of the model boundary. With none, the investigator fails every round honestly saying the reasoning step could not run — an instance that cannot reason must say so rather than look healthy. A transcript recorded against different components refuses to start rather than replaying |
 
 Each surface has its own listener, and that is what makes a deployment able to publish one
 without publishing the rest. Intake is the only one a customer's own infrastructure reaches
@@ -148,6 +178,28 @@ On the intake listener:
 | --- | --- |
 | `POST /intake/v1/organizations/{organization}/sources/{source}` | One webhook delivery from a configured alerting source. Authenticated by that source's shared secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
 
+On the operator listener, under `/operator/v1/organizations/{organization}`, behind the operator
+token. Relays, environments and connections are configured there; investigations are read there:
+
+| Path | Purpose |
+| --- | --- |
+| `POST /investigations` | Open a case. Names a Connection, a namespace, a workload kind and name, and a window. It cannot name an Environment — that is derived from the Connection, and a field for it would imply a value that is honoured |
+| `GET /investigations` | The list. Ordered by lifecycle state then recency, with attributed severity as a secondary signal. Carries per-row counts and the case's present tense, so rendering it is one request whatever the row count |
+| `GET /investigations/{id}` | The summary, and the only thing a client polls. Carries identity, brief, state, current round, the outcome with its basis, counts, spend and the case version. Send the version back in `If-None-Match` and an unchanged case answers `304` from one primary-key read |
+| `GET /investigations/{id}/timeline` | Evidence carrying a defensible source time, in source order. Items without one are listed beside it by the evidence read rather than placed on it |
+| `GET /investigations/{id}/evidence` | The evidence, without content. Filterable by `capability`, `source` and `stance` |
+| `GET /investigations/{id}/evidence/{evidence}` | One item with its bounded content. Separate from the listing so a listing is not the size of its contents |
+| `GET /investigations/{id}/hypotheses` | What was proposed, what falsifies each, and where each got to |
+| `GET /investigations/{id}/coverage-gaps` | What could not be checked, and what could not be concluded because of it |
+| `GET /investigations/{id}/coverage` | Per typed capability: one of five states, with its reason. Not-applicable is not a gap |
+| `GET /investigations/{id}/activity` | Every read the case asked for with the hypothesis that justified it, including the ones that returned nothing useful |
+| `GET /investigations/{id}/case-file` | The whole case assembled server-side. `?version=` pins it; a version the case has passed is refused rather than answered from the current state. One code path serves the shared link, the export and the harness artifact |
+| `POST /investigations/{id}/cancel` | Stop a case. Terminal, and it dispatches nothing further |
+| `POST /investigations/{id}/reinvestigate` | Add a round to the same case. Never a second case: the identity, the URL and the permalink survive, and the earlier outcome stays readable and attributed |
+
+Every section response carries the case version it represents, both in the body and as an `ETag`,
+so a client can tell a stale section from a current one without guessing.
+
 ## Development
 
 ```
@@ -162,3 +214,10 @@ Tests use one behavioural seam: the composition root, started in-process against
 Postgres with a real listener and real signals. There is no database mock and no interface
 per package. Seams are introduced only for external dependencies that cannot be run
 locally.
+
+There is exactly one exception, and it is recorded at the seam itself in
+`internal/investigation/reasoner.go`: the model boundary. It is nondeterministic and priced per
+call, and what is in question about it — whether its explanations are any good — is answered by the
+scenario harness against a live provider rather than by a commit gate. CI replays transcripts keyed
+by model, prompt version, output schema version and investigator version, and a recording made for
+different components is refused rather than replayed.

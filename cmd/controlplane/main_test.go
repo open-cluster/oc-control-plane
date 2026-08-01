@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // TestMain establishes goroutine-leak detection for the whole package, so the discipline
@@ -35,6 +37,10 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreAnyFunction("net/http.(*persistConn).writeLoop"),
 		// Windows-only: the Docker client's named-pipe I/O completion processor.
 		goleak.IgnoreAnyFunction("github.com/Microsoft/go-winio.ioCompletionProcessor"),
+		// Testcontainers' reaper, which watches the container this package shares. It outlives the
+		// tests deliberately: the container is not torn down per test, so the connection that
+		// guards it must not be either.
+		goleak.IgnoreAnyFunction("github.com/testcontainers/testcontainers-go.(*Reaper).connect.func1"),
 	)
 }
 
@@ -230,12 +236,12 @@ func (g *tcpGate) shutdown() {
 	g.active.Wait()
 }
 
-func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test: requires a Docker daemon")
-	}
-
+// postgresServer starts one Postgres for the whole package, once.
+//
+// It is deliberately not terminated by a cleanup: it outlives every test that uses it, and
+// Testcontainers' reaper removes it when the process ends. A per-test container would be torn down
+// while another test was still using it once anything here runs in parallel.
+var postgresServer = sync.OnceValues(func() (string, error) {
 	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx, "postgres:17-alpine",
 		tcpostgres.WithDatabase("controlplane"),
@@ -247,14 +253,54 @@ func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane 
 				WithStartupTimeout(2*time.Minute)),
 	)
 	if err != nil {
+		return "", err
+	}
+	return container.ConnectionString(ctx, "sslmode=disable")
+})
+
+// databases numbers the databases this package creates, so two planes never share one.
+var databases atomic.Int64
+
+// freshDatabase returns a DSN for an empty database on the shared server.
+func freshDatabase(t *testing.T) string {
+	t.Helper()
+
+	admin, err := postgresServer()
+	if err != nil {
 		t.Skipf("cannot start postgres (is the Docker daemon reachable?): %v", err)
 	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	return createDatabase(t, admin, "plane"+strconv.FormatInt(databases.Add(1), 10))
+}
 
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
+func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane {
+	t.Helper()
+	return startControlPlaneWith(t, adjust, nil)
+}
+
+// startControlPlaneWith is startControlPlane with the model boundary replaced. It is the only
+// component any test here fakes, and the deviation is recorded at the seam itself.
+func startControlPlaneWith(
+	t *testing.T, adjust func(*config.Config), reasoner investigation.Reasoner,
+) *controlPlane {
+	t.Helper()
+	return startControlPlaneRunning(t, adjust, wiring{reasoner: reasoner})
+}
+
+// startControlPlaneRunning is the whole harness: the assembled process, a real database, a real
+// listener, real signals, and whatever the test puts in place of the model boundary.
+func startControlPlaneRunning(
+	t *testing.T, adjust func(*config.Config), replace wiring,
+) *controlPlane {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test: requires a Docker daemon")
 	}
+
+	// One server for the package, a fresh DATABASE per plane. Starting a container per test cost
+	// more wall clock than every test in this package spends doing its actual work, and it put the
+	// package past the default test timeout as the suite grew. Each plane still gets an empty
+	// schema, which is the isolation these tests actually depend on.
+	dsn := freshDatabase(t)
 
 	upstream, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -280,7 +326,10 @@ func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane 
 	addresses := make(chan net.Addr, 1)
 	exited := make(chan error, 1)
 
-	go func() { exited <- run(runCtx, cfg, logs, func(addr net.Addr) { addresses <- addr }) }()
+	go func() {
+		replace.onListen = func(addr net.Addr) { addresses <- addr }
+		exited <- run(runCtx, cfg, logs, replace)
+	}()
 
 	var address net.Addr
 	select {
@@ -673,7 +722,7 @@ func TestRun_RefusesAnUnusableListenAddress(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	err := run(ctx, cfg, io.Discard, nil)
+	err := run(ctx, cfg, io.Discard, wiring{})
 	if err == nil {
 		t.Fatal("binding an occupied address must fail")
 	}

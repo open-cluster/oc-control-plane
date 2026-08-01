@@ -1,6 +1,8 @@
 # Spec — The first investigation
 
-Status: READY FOR IMPLEMENTATION. This is the slice the product exists for.
+Status: IMPLEMENTED 2026-08-01. This is the slice the product exists for.
+What it hard-codes is written down in `docs/architecture/hard-coded-in-the-first-investigation.md`,
+which this specification asks for as part of the deliverable.
 Date: 2026-07-31
 Repository: the Go control plane (capabilities in the Relay — see
 `spec-capabilities-kubernetes-events-and-logs.md`; evaluation in `spec-scenario-harness.md`)

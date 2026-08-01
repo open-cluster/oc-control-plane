@@ -30,6 +30,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/connection"
 	"github.com/open-cluster/oc-control-plane/internal/environment"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -49,6 +50,12 @@ type Handlers struct {
 	// TokenDigest is the SHA-256 of the token a caller must present. Only the digest is held:
 	// the process never keeps the token itself, so there is nothing here to log by accident.
 	TokenDigest []byte
+	// Controls and Versions are what an investigation opened through this surface runs under and
+	// is stamped with. They are the composition root's to decide, not this package's: the
+	// investigator's version is the binary's, and a control snapshot is pinned per round so that
+	// "why did this round stop" survives the configuration that produced it.
+	Controls investigation.Controls
+	Versions investigation.Versions
 }
 
 // Router returns the operator surface.
@@ -68,6 +75,16 @@ func (h Handlers) Router() http.Handler {
 
 	environment.Handlers{Placements: h.Placements, Logger: h.Logger}.Mount(mux, h.authorized)
 	connection.Handlers{Placements: h.Placements, Logger: h.Logger}.Mount(mux, h.authorized)
+	// The investigation surface takes the read side and the write side separately, because a
+	// handler given the writing interface is one typo away from mutating what it was asked to
+	// display. Both happen to be the same value here; the types are what keep them apart.
+	investigation.Handlers{
+		Reader:   h.Placements,
+		Store:    h.Placements,
+		Logger:   h.Logger,
+		Controls: h.Controls,
+		Versions: h.Versions,
+	}.Mount(mux, h.authorized)
 	return mux
 }
 

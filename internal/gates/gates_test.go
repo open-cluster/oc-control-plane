@@ -154,6 +154,12 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// contributes to the tenant the answer belongs to.
 		"ConnectionByID": "resolves a tenant FROM an opaque connection identifier; " +
 			"the row found is the authority, and no caller-supplied value selects it",
+		// The investigator's worker asks which tenants have a claimable round. It cannot take an
+		// organization because finding out which organizations there are work for IS the question,
+		// and it reads no tenant data — only which tenants have work. Every claim it leads to is
+		// tenant-scoped, and each one takes the organization this read discovered.
+		"InvestigationsAwaitingWork": "discovers which tenants have a claimable investigation " +
+			"round; reads no tenant data, and every claim it leads to is tenant-scoped",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {

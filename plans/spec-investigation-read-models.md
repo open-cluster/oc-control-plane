@@ -1,6 +1,6 @@
 # Spec — Investigation read models
 
-Status: READY FOR IMPLEMENTATION, alongside `spec-first-investigation.md`. The frontend cannot begin
+Status: IMPLEMENTED 2026-08-01, alongside `spec-first-investigation.md`. The frontend cannot begin
 its case file without these, and they are cheaper to design with the writer than after it.
 Date: 2026-07-31
 Repository: the Go control plane. Consumed by the frontend, whose specifications live in
