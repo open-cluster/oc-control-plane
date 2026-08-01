@@ -165,8 +165,12 @@ phrasing that made the old name sound right.
 
 ### Done when
 
-The module builds, the full suite passes, and no reference to the old import path remains
-anywhere in the repository including comments and documentation.
+The module builds and the full suite passes, no import path or source reference to
+`internal/api` remains, and the only surviving mentions are the deliberate historical ones —
+the annotated row in the strangler table, this plan, and the status document — which the
+founder decision requires rather than forbids. The original criterion said no reference of any
+kind, which the decision to annotate rather than rewrite made impossible to meet; it is
+corrected here rather than reported as passed.
 
 ---
 
@@ -185,36 +189,57 @@ its refusal taxonomy and enqueue, 157), `lease.go` (claiming, adoption, release,
 caller. The two bounds it uses were named `defaultRosterPage` and `maxRosterPage` and are now
 `defaultPageSize` and `maxPageSize`, since all three listings share them.
 
-Every production file in the package is now under 370 lines. No call site changed, both driver
-gates are untouched, and the enum gate from item 1 fired on the new files during the split and
-had to be told which enum governs each — which is the behaviour it was built for.
+The two files that were past the threshold are no longer past it: the largest of the seven is
+`conflict.go` at 366. `connection.go` is 430 and was not part of this item — it was never at the
+threshold when the item was written, and it is the next file to reach it.
+
+No call site changed, both driver gates are untouched, and the enum gate from item 1 fired on the
+new files during the split and had to be told which enum governs each — which is the behaviour it
+was built for. The split was verified as pure code motion by diffing the declaration sets before
+and after; the check covered functions, types and vars, and the constant blocks were verified by
+the compiler and the suite rather than by that diff.
 
 The reasoning that ruled out sub-packages is kept below, because it is the part that will be
 re-proposed.
 
 ### Why sub-packages were rejected
 
+**Corrected 2026-08-01 after review.** The first version of this section overstated its own
+argument in three places, and the corrections are kept visible because an argument that has to be
+overstated is one worth re-examining rather than quietly repairing.
+
 ### Why it was proposed
 
 ADR-016's amendment names roughly six hundred lines as the point where one domain's queries stop
 being navigable in a single file, and names `relay.go` and `job.go` as already being at it. They
-are 772 and 601 lines. The amendment pre-approves the move: a sub-package under
+were 772 and 601 lines. The amendment pre-approves the move: a sub-package under
 `internal/storage`, taking an already-resolved handle from the placement entry point, with the
 driver gate widening from an exact match on one package to a prefix over the storage tree.
 
-### Why it cannot start
+### What it costs
 
-The amendment describes this as a move. It is not one.
+The amendment describes this as a move, and for the package's **exported surface** it is not one.
 
-Every storage function is a method on `*Placements` — around thirty of them, called from 91 sites
-across `internal/relay`, `internal/intake`, `internal/connection`, `internal/environment`,
-`internal/operator`, `cmd/controlplane` and the test suites. Go does not permit a package to
-declare a method on a type owned by another package, so a sub-package cannot host
-`EnqueueJob` while it stays a method on `*Placements`.
+Every exported storage operation is a method on `*Placements` — 32 of them. Go does not permit a
+package to declare a method on a type owned by another package, so a sub-package cannot host
+`EnqueueJob` while it stays a method on `*Placements`. Moving the exported surface therefore
+changes the calling shape at every site that uses it: 32 outside `internal/storage`, and 71
+counting the package's own tests.
 
-The split therefore forces a change to the calling shape at every one of those 91 sites. That is
-an interface decision, and it was not made when the amendment was written because the obstacle
-was not visible from the file sizes.
+Three corrections to the original wording:
+
+- "Every storage function is a method on `*Placements`" was false. The package also holds
+  unexported helpers that take a `pgx.Tx` — `spendBootstrapToken`, `insertRegistration`,
+  `appendConflictEvent`, `upsertSignal`, `claimDelivery` — and those could move with no call-site
+  churn at all. What cannot move without churn is the exported surface, which is the part that
+  matters.
+- "91 sites" counted loosely and is not reproducible. The defensible figures are 32 external and
+  71 including this package's tests.
+- "the obstacle was not visible from the file sizes" was unfair to the amendment. It says the
+  sub-package takes "an already-resolved handle from the placement entry point", which is the
+  accessor shape and already implies the call sites change. The amendment did not overlook the
+  cost; it did not quantify it. The honest statement of the decision is that the cost was
+  quantified and judged not worth paying yet — not that the amendment was wrong.
 
 ### The decision to make
 
@@ -223,7 +248,8 @@ Three shapes are available, and one of them is already ruled out.
 **An accessor per domain.** The placement entry point gains a method returning a domain store
 built with the already-resolved pool, and callers say what they want through it rather than
 calling a method on the entry point directly. Placement resolution still happens in one place.
-Cost: all 91 call sites change, and the change is mechanical but wide.
+Cost: every site using the exported surface changes — 32 outside this package, 71 including its
+own tests — and the change is mechanical but wide.
 
 **Thin delegating methods left on the entry point.** The methods stay where they are and forward
 into the sub-packages. Cost: zero call sites change. This is ruled out — it is a shallow layer

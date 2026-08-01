@@ -107,7 +107,7 @@ the persistence package by momentum, which is the expensive version of this deci
 applied incrementally and explicitly does not license a refactor before the first investigation.
 
 The same day, `internal/api` became `internal/health` because `api` named a layer, the job and
-relay query files were split by domain noun so no file in `internal/storage` exceeds 370 lines,
+relay query files were split by domain noun so neither is past the threshold ADR-016 names,
 and a gate was added freezing the enum values that the SQL writes as bare literals. None of it
 changed behaviour; see `plans/architecture-hardening.md`.
 
