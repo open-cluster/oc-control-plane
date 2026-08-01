@@ -1,0 +1,19 @@
+# Line endings are LF in the repository and in every working tree, on every platform.
+#
+# This is a build property rather than a preference. The lint gate runs
+# `gofmt -l . | (! grep .)`, and gofmt reports a CRLF file as unformatted — so on a machine
+# with core.autocrlf=true, which is the Git default on Windows, every file Git checks out
+# fails a gate that CI passes. The failure is confusing in the way that wastes the most
+# time: the file is untouched, `git diff` shows nothing, and the gate still refuses it.
+#
+# Pinning eol=lf makes a Windows checkout identical to the one CI builds, so the gate means
+# the same thing everywhere it runs.
+#
+# The migrations carry a second reason. internal/storage embeds them into the binary with
+# go:embed, so their bytes ship — line endings included — and which platform ran the build
+# must not be something the artifact records.
+#
+# text=auto still lets Git detect and leave binary content alone. There is none today: every
+# tracked file is Go, Markdown, SQL, YAML, the module files, the Makefile or the licence.
+
+* text=auto eol=lf
