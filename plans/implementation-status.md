@@ -99,6 +99,18 @@ tenant is routed to a placement; **ADR-016** records that packages follow busine
 `internal/storage` stays the single owner of the database driver, with the reason the second half
 is not the layer-package it resembles.
 
+**ADR-017 landed on 2026-08-01**, extending ADR-016 from where a package sits to who owns a type:
+`internal/storage` is infrastructure and must not own the domain vocabulary, so a domain type
+belongs to the capability that defines its meaning and persistence reconstructs it. It matters to
+the next slice rather than to the last one — the investigator's vocabulary would otherwise land in
+the persistence package by momentum, which is the expensive version of this decision. It is
+applied incrementally and explicitly does not license a refactor before the first investigation.
+
+The same day, `internal/api` became `internal/health` because `api` named a layer, the job and
+relay query files were split by domain noun so no file in `internal/storage` exceeds 370 lines,
+and a gate was added freezing the enum values that the SQL writes as bare literals. None of it
+changed behaviour; see `plans/architecture-hardening.md`.
+
 | Slice | Specification | Repository the work lands in | State |
 | --- | --- | --- | --- |
 | 4 — First investigation | `spec-first-investigation.md` | Go control plane | 📝 Specified |

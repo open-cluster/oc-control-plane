@@ -1,10 +1,21 @@
 # Architecture hardening
 
-Status: IN PROGRESS. Created 2026-08-01 from an architecture review of the proposed directory
-structure against ADR-016.
+Status: COMPLETE 2026-08-01. Created the same day from an architecture review of a proposed
+directory structure against ADR-016.
 
-This plan covers four findings from that review. Two are ready to build and are specified below
-in full. Two are blocked on a decision and state what the decision is rather than guessing at it.
+Four findings. All four are settled: three were built, and the fourth was a decision that is now
+ADR-017. Each section keeps the reasoning that produced its outcome, including the two that were
+blocked mid-flight, because what was rejected and why is the part that gets re-proposed.
+
+| # | Finding | Outcome |
+| --- | --- | --- |
+| 1 | Persisted enum values duplicated as SQL literals | Two gates, verified by mutation |
+| 2 | `internal/api` is named after a layer | Renamed `internal/health`; strangler table reconciled |
+| 3 | `relay.go` and `job.go` past the navigability threshold | Split by file; sub-packages rejected |
+| 4 | Domain vocabulary owned by `internal/storage` | ADR-017; applied incrementally |
+
+No behaviour changed anywhere in this plan. Every item is structural, and the full suite was run
+against real Postgres to prove it.
 
 ---
 
@@ -159,9 +170,29 @@ anywhere in the repository including comments and documentation.
 
 ---
 
-## 3. Split the storage tree — BLOCKED, needs a decision
+## 3. Split the storage tree — DONE, by file rather than by package
 
-Status: BLOCKED. Do not start.
+Status: DONE 2026-08-01. Founder decision: split by file, not into sub-packages.
+
+`relay.go` became `relay.go` (enrolment and credential, 255), `conflict.go` (contested identity
+and its trail, 366) and `roster.go` (the operator's read, 109). `job.go` became `job.go` (the Job,
+its refusal taxonomy and enqueue, 157), `lease.go` (claiming, adoption, release, sweep, 228),
+`result.go` (recording an outcome, 141) and `cancellation.go` (115).
+
+`page.go` (77) came out of both. It was the find that justified the exercise on its own: `Page`,
+`pageLimit`, `ErrBadCursor` and the cursor codec lived in `relay.go` while `connection.go` and
+`environment.go` were already using them, so shared paging vocabulary was filed under one
+caller. The two bounds it uses were named `defaultRosterPage` and `maxRosterPage` and are now
+`defaultPageSize` and `maxPageSize`, since all three listings share them.
+
+Every production file in the package is now under 370 lines. No call site changed, both driver
+gates are untouched, and the enum gate from item 1 fired on the new files during the split and
+had to be told which enum governs each — which is the behaviour it was built for.
+
+The reasoning that ruled out sub-packages is kept below, because it is the part that will be
+re-proposed.
+
+### Why sub-packages were rejected
 
 ### Why it was proposed
 
@@ -211,10 +242,24 @@ a check that has been loosened.
 
 ---
 
-## 4. Where the domain vocabulary lives — BLOCKED, needs a decision
+## 4. Where the domain vocabulary lives — DECIDED, recorded as ADR-017
 
-Status: BLOCKED. Do not start. This is an architectural decision and belongs in an ADR before it
-belongs in a plan.
+Status: DECIDED 2026-08-01. Recorded as
+`docs/architecture/decisions/ADR-017-capabilities-own-the-domain-vocabulary.md`.
+
+The decision: `internal/storage` is infrastructure and must not own the domain vocabulary. A
+domain type belongs to the capability that defines its meaning, and persistence depends on those
+types and reconstructs them. Signal to `internal/signal`, Connection to `internal/connection`,
+the investigation vocabulary to `internal/investigation`, relay execution jobs to an explicitly
+named relay-job capability.
+
+**Applied incrementally and never as a repository-wide refactor.** New investigator vocabulary
+follows it immediately; existing storage-owned types move only when an active slice already
+touches them; no package is created before its slice. Nothing here licenses a migration pass
+before the first valuable investigation exists.
+
+The observation that prompted it is kept below, because the ADR states the rule and this states
+what was actually in the tree when the rule was written.
 
 ### The observation
 
