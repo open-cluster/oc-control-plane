@@ -1,11 +1,16 @@
-// Package api serves the control plane's HTTP surface: liveness, readiness, and metrics.
-// There is no domain to expose yet.
+// Package health serves the operational surface every deployment needs whether or not any
+// domain is exposed: liveness, readiness, and the metrics scrape, with the request
+// correlation those routes run under.
+//
+// It is named after what it does rather than after being an HTTP layer. Each capability
+// serves its own surface — intake, the operator surface, the relay endpoint — and a package
+// named for the layer would collect them, which is the grouping ADR-016 exists to prevent.
 //
 // The package deliberately does not import internal/storage. It depends on the BEHAVIOUR
 // it needs (can the databases be reached?) rather than on the type that provides it, which
 // keeps database access inside the package that owns placement resolution. The import gate
 // in internal/gates enforces this.
-package api
+package health
 
 import (
 	"context"

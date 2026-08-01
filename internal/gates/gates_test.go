@@ -83,22 +83,32 @@ func TestOnlyStorageImportsTheDatabaseDriver(t *testing.T) {
 	}
 }
 
-// The HTTP surface depends on the BEHAVIOUR it needs, not on the type that provides it.
-// Letting internal/api reach into internal/storage would put query construction one import
+// The health surface depends on the BEHAVIOUR it needs, not on the type that provides it.
+// Letting internal/health reach into internal/storage would put query construction one import
 // away from a handler.
-func TestAPIDoesNotImportStorage(t *testing.T) {
+// The package is named rather than discovered, so a rename that did not reach this line would
+// leave the gate looking for a package nobody has and reporting nothing wrong. It is asserted
+// to have been found for the same reason the other gates refuse to read an empty list.
+func TestHealthDoesNotImportStorage(t *testing.T) {
 	t.Parallel()
 
+	const surface = "internal/health"
+
+	found := false
 	for _, loaded := range loadPackages(t) {
-		if internalPackagePath(loaded.PkgPath) != "internal/api" {
+		if internalPackagePath(loaded.PkgPath) != surface {
 			continue
 		}
+		found = true
 		for imported := range loaded.Imports {
 			if imported == modulePath+"/internal/storage" {
-				t.Error("internal/api must not import internal/storage; " +
+				t.Error(surface + " must not import internal/storage; " +
 					"it depends on a readiness function, not on the storage type")
 			}
 		}
+	}
+	if !found {
+		t.Fatalf("%s was not found; the gate would pass vacuously", surface)
 	}
 }
 

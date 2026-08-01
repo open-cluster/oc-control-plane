@@ -28,8 +28,8 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
@@ -156,7 +156,7 @@ type assembled struct {
 func serve(ctx context.Context, process assembled) error {
 	cfg, logger := process.config, process.logger
 
-	handlers := api.Handlers{
+	handlers := health.Handlers{
 		Ready:   process.placements.Ping,
 		Metrics: process.telemetry.MetricsHandler,
 		Logger:  logger,

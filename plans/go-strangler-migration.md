@@ -40,26 +40,36 @@ revision 1 (rollout and rollback) come back into force unchanged.
 
 ## 3. Repository structure
 
+**SUPERSEDED in part by ADR-016 (2026-07-31), reconciled 2026-08-01.** This table was written
+in revision 3 before any of it was built. ADR-016 governs package layout wherever the two
+disagree, and the rows it overtook are corrected below rather than left to be discovered by
+whoever copies the table next. The rows it did not touch stand.
+
 Module path follows the naming clearance already pending for the Relay; the control plane
 carries the same provisional identity and renames in the same atomic change.
 
-| Path | Contents |
-| --- | --- |
-| `cmd/controlplane` | The single binary. Thin main, `run(ctx) error` beneath it, explicit construction — no dependency-injection container |
-| `internal/config` | One validated `Config` struct loaded once; secrets by file reference, never environment values |
-| `internal/observability` | `slog` setup, OpenTelemetry tracing, metrics registry. Present from slice 0, not retrofitted |
-| `internal/storage` | Placement resolution, connection pools, transaction helpers, embedded migrations |
-| `internal/tenancy` | Organization, environment, placement, and the tenant scope every query carries |
-| `internal/identity` | Canonical principal; Clerk and OIDC adapters behind one boundary |
-| `internal/relay` | Relay control plane: registration, session, job store, leases, dispatch, recording |
-| `internal/signals` | External intake adapters and normalization into Signals |
-| `internal/incidents` | Incident grouping and lifecycle |
-| `internal/investigations` | Truth layers. Last to migrate; the package exists empty until then |
-| `internal/api` | Connect handlers over the frontend contract |
-| `proto` | The control-plane public contract — frontend and API clients. The Relay protocol is NOT here |
-| `gen` | Generated code, committed, drift-gated |
-| `deploy` | Helm chart and manifests |
-| `docs` | Architecture, contracts, operations |
+| Path | Contents | Status |
+| --- | --- | --- |
+| `cmd/controlplane` | The single binary. Thin main, `run(ctx) error` beneath it, explicit construction — no dependency-injection container. ADR-016 keeps composition and the composition-root tests here | Built |
+| `internal/config` | One validated `Config` struct loaded once; secrets by file reference, never environment values | Built |
+| `internal/observability` | `slog` setup, OpenTelemetry tracing, metrics registry. Present from slice 0, not retrofitted | Built |
+| `internal/storage` | Placement resolution, connection pools, transaction helpers, embedded migrations | Built |
+| `internal/tenancy` | Organization, environment, placement, and the tenant scope every query carries | Built |
+| `internal/health` | Liveness, readiness, metrics, request correlation. **Was `internal/api`**; renamed 2026-08-01 because `api` names a layer, and ADR-016 forbids that. The frontend contract, when it is built, is its own module named for what it serves | Built |
+| `internal/relay` | Relay control plane: registration, session, job store, leases, dispatch, recording | Built |
+| `internal/intake` | External intake adapters and normalization into Signals. **Was `internal/signals`**; built under the name of the capability rather than the noun it produces, with one sub-package per provider per ADR-016 | Built |
+| `internal/connection` | Connections and their secrets: the configured instances of an Integration | Built |
+| `internal/environment` | Environments: the scope that groups Connections and bounds evidence | Built |
+| `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute | Built |
+| `internal/operator` | The cross-tenant read surface, behind its own token and its own listener | Built |
+| `internal/gates` | Build-failing architecture checks | Built |
+| `internal/identity` | Canonical principal; Clerk and OIDC adapters behind one boundary | Not built. ADR-006 is a decision with no implementation specification |
+| `internal/incident` | Incident grouping and lifecycle. Singular, per ADR-016 | Not built. Deferred by ADR-008 |
+| `internal/investigation` | The truth chain. Singular, per ADR-016 | Not built. **The "exists empty until then" clause is void**: ADR-016 forbids creating a package for a slice that is not being built |
+| ~~`proto`~~ | — | **Rejected by ADR-016.** The protocol contract lives in the Relay repository as its own module and is consumed at a pinned version; a second surface here would have no consumer and two places to change a message |
+| ~~`gen`~~ | — | **Rejected by ADR-016**, with `proto` |
+| `deploy` | Helm chart and manifests | Not built |
+| `docs` | Architecture, contracts, operations | Built |
 
 No `pkg` directory. Everything is `internal` until something outside genuinely needs to
 import it, which for a private control plane is never. This matches the Relay repository
@@ -251,7 +261,7 @@ same way:
 - `govulncheck` clean; dependency licences checked as a hard failure, not advisory.
 - Secret scanning over full history before any push.
 - An architecture test asserting that no exported store function omits the tenant scope,
-  and that `internal/api` does not import `internal/storage` directly.
+  and that `internal/health` does not import `internal/storage` directly.
 - Goroutine-leak detection in the test suite, so slice 0 establishes the discipline every
   later concurrent slice depends on.
 

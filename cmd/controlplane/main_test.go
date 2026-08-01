@@ -20,8 +20,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"go.uber.org/goleak"
 
-	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/health"
 )
 
 // TestMain establishes goroutine-leak detection for the whole package, so the discipline
@@ -574,7 +574,7 @@ func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
 	}
 	// A client-supplied identifier must not be trusted: it would let a caller collide two
 	// unrelated requests in the logs.
-	request.Header.Set(api.RequestIDHeader, "attacker-supplied")
+	request.Header.Set(health.RequestIDHeader, "attacker-supplied")
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -583,7 +583,7 @@ func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
 	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, response.Body)
 
-	requestID := response.Header.Get(api.RequestIDHeader)
+	requestID := response.Header.Get(health.RequestIDHeader)
 	if requestID == "" {
 		t.Fatal("the response must carry a request identifier")
 	}

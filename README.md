@@ -58,7 +58,7 @@ go run ./cmd/controlplane
 | `internal/tenancy` | The tenant boundary vocabulary. No I/O |
 | `internal/storage` | Placement resolution, pools, embedded migrations. The only package that touches the database |
 | `internal/observability` | slog, OpenTelemetry traces, metrics exported for Prometheus |
-| `internal/api` | Liveness, readiness, metrics. Depends on behaviour, not on storage |
+| `internal/health` | Liveness, readiness, metrics. Depends on behaviour, not on storage |
 | `internal/relay` | Relay registration, sessions, and job delivery over the protocol |
 | `internal/intake` | Inbound SignalUpdates, verification, rate limiting. One sub-package per provider |
 | `internal/connection` | Connections and their secrets: the configured instances of an Integration |
@@ -68,7 +68,7 @@ go run ./cmd/controlplane
 | `internal/gates` | Build-failing architecture checks, including the dependency boundary |
 
 A package is named after a business capability and never after a layer, and a provider adapter
-lives below the capability it implements. Three properties are enforced mechanically rather
+lives below the capability it implements. Four properties are enforced mechanically rather
 than by review:
 
 - **Placement is resolved, never ambient.** Where an organization's data lives is looked up
@@ -80,6 +80,9 @@ than by review:
 - **The Relay's implementation is not a dependency.** The control plane speaks the Relay's
   protocol and never touches a customer cluster, so no Kubernetes library may appear in its
   requirements or its imports.
+- **Persisted enum values are frozen.** Job status, signal status and connection role are
+  stored as integers and appear as bare literals in SQL. A constant that moves keeps its old
+  meaning in every row already written, so the values are pinned and the literals checked.
 
 ## The Relay protocol
 

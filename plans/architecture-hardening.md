@@ -80,9 +80,13 @@ tests prove it catches a violation and clears a clean file.
 
 ## 2. Rename `internal/api` to `internal/health`
 
-Status: BLOCKED 2026-08-01 on a conflict found while starting it. Do not start.
+Status: DONE 2026-08-01. Founder decision: rename, and reconcile the strangler plan's structure
+table wherever ADR-016 has superseded it rather than only this row.
 
-`plans/go-strangler-migration.md` is ACCEPTED and its structure table reserves `internal/api` for
+The conflict that prompted the decision is recorded below, because the reasoning is what a future
+reader needs and the table it concerns is now annotated rather than rewritten.
+
+`plans/go-strangler-migration.md` is ACCEPTED and its structure table reserved `internal/api` for
 "Connect handlers over the frontend contract" — a surface that does not exist yet. Renaming the
 module now takes a name that an accepted plan has allocated.
 
