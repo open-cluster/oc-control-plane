@@ -78,22 +78,37 @@ represent, and a server-side assembly at a pinned version.
 **Nothing consumes a Signal.** There is still no Incident and no signal-triggered investigation;
 the manual trigger is the only one, which is what ADR-008 sequenced.
 
-**The live model provider is built and has not yet answered a live scenario.** Written 2026-08-02.
-`internal/reasoning` implements the investigation-owned boundary against a provider-neutral
-contract; `internal/reasoning/anthropic` and `internal/reasoning/zai` are the two adapters, and a
-gate fails the build if the domain ever imports either. Which vendor and which model answer is
-configuration, priced from a declared four-rate table that refuses an unpriced model at startup.
-Refusal, outage, rejected request, malformed output, timeout and budget exhaustion are distinct
-named outcomes, none of which is an abstention. Cross-provider fallback is an explicit configured
-chain that checks consent per hop and records what actually answered.
+**The live model provider is built.** Written 2026-08-02. `internal/reasoning` implements the
+investigation-owned boundary against a provider-neutral contract; `internal/reasoning/anthropic`
+and `internal/reasoning/zai` are the two adapters, and a gate fails the build if the domain ever
+imports either. Which vendor and which model answer is configuration, priced from a declared
+four-rate table that refuses an unpriced model at startup. Refusal, outage, rejected request,
+malformed output, timeout and cost-ceiling reached are distinct named outcomes, none of which is an
+abstention. Cross-provider fallback is an explicit configured chain that checks consent per hop and
+records what actually answered, including in the transcript key.
 
-**What is NOT yet proved is the only thing that matters about it.** The suite is offline by
-construction and asserts what the adapters send and what they do with what comes back; it cannot
-say whether the prompt elicits usable reasoning or whether the schemas ask for the right things.
-`cmd/redherring` is the instrument for that — one live investigation against a real provider,
-reporting the transcript, attribution, token and cost breakdown, latency, cache effectiveness and
-every refusal, retry and fallback. **It has not been run.** Until it has, nothing here is
-production-ready no matter how green the suite is.
+**It has answered one live scenario, on GLM-5, and the red herring did not work.** Run
+2026-08-02 via `cmd/redherring` (`scripts/live-model.sh scenario`). The model reached the planted
+cause — a rejected database credential — and explicitly exonerated the deploy that happened thirty
+minutes earlier. Every claim cited evidence, the output schema admitted the draft, and there was no
+refusal, retry, fallback or contract failure. Cost was about $0.03 for three calls, 14,188 billable
+tokens, 3m20s wall clock with the conclusion alone taking 2m12s.
+
+**Three findings from it are worth more than the pass.** First, **reasoning was 78% of output
+tokens** (6,130 of 7,859) — on this model the cost of a round is set by how hard it thinks, so
+effort is the lever to tune before anything else. Second, **prompt caching works on this vendor**
+(1,280 tokens served warm, 20% of input) and it reports no cache-write count at all, exactly as its
+capability matrix declares — which is the matrix doing real work rather than describing. Third, and
+most important: **the conclusion it reached was never one of its own hypotheses.** All four were
+falsified or set aside, and the outcome was still admitted as `supported`, because the output
+schema requires a supporting claim and never requires the explanation to be a hypothesis anyone
+proposed. That is a real hole in the falsification machinery and it is a domain question, not a
+provider one.
+
+**What remains unproved.** Whether the gathering pipeline works end to end — `cmd/redherring`
+serves pre-baked evidence and touches no cluster or Relay, so the ten-scenario harness is still the
+instrument for that. Anthropic has never been called: the adapter is exercised only against a
+canned transport. And one scenario on one model is one data point, not a measurement.
 
 **The product can be evaluated, and secrets do not leave a cluster.** Written 2026-08-01. The
 scenario harness exists as a program (`test/e2e/cmd/scenario`): ten clusters broken on purpose —
@@ -168,7 +183,7 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Environments and Connections | `spec-environments-and-connections.md` | Go control plane | ✅ Done (revision 3 — Integration separated from Connection) |
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
 | 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ⚠️ Built 2026-08-01, **not yet runnable**: no provider and no transcripts |
-| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ⚠️ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters). **No live scenario has been run**, so it is unproven |
+| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved on one live GLM-5 scenario**. Anthropic itself still uncalled |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
 

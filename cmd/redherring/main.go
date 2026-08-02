@@ -64,6 +64,11 @@ func run() error {
 	baseURL := flag.String("base-url", "", "override the provider's host")
 	transcriptPath := flag.String("transcript", "", "write the recorded transcript here")
 	deadline := flag.Duration("deadline", 10*time.Minute, "wall clock for the whole round")
+	// One call, not the whole round. A model that thinks before answering can sit well past the
+	// default on a prompt this size, and a timeout that fires on a working provider reports an
+	// outage that never happened.
+	requestTimeout := flag.Duration(
+		"request-timeout", 5*time.Minute, "wall clock for a single call to the provider")
 	flag.Parse()
 
 	if *keyFile == "" {
@@ -85,6 +90,7 @@ func run() error {
 		// Generous, because thinking and answer text share this bound on some models and a value
 		// sized around the answer alone truncates mid-thought.
 		MaxOutputTokens: 32_000,
+		RequestTimeout:  *requestTimeout,
 	}.WithDefaults()
 
 	opened, err := providers.Open(deployment, providers.Options{})

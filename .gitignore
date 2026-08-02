@@ -24,3 +24,7 @@ Thumbs.db
 # Local environment (never committed; credentials never live in this repo)
 .env
 *.local.yaml
+
+# Local credentials. Never committed: the model key is read from a file path so that it
+# cannot leak through a process listing or a diagnostic dump of the environment.
+.secrets/
