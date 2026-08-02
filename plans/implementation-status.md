@@ -218,13 +218,25 @@ failed rounds that were working.
   the next sweep can answer this question and this one cannot.
 
   Two candidate causes survive, and they point at different people. A per-call timeout is ruled out
-  (five minutes, and the whole round spent 200 seconds), and so is the round deadline (45 minutes).
-  What remains is a provider-side outage or rate limit from running ten scenarios back to back — the
-  vendor's problem — or a persistently malformed answer, which ALSO unwraps to model-unavailable and
-  would be this change's fault, because schema version 3 is what these rounds were answering. The
-  four rounds that concluded populated `explains` correctly, so nothing is systematically broken;
-  intermittent is all that can be said. **Re-run the three failed scenarios on the current build
-  before trusting either explanation.**
+  (five minutes, and the longest failing round spent 200 seconds), and so is the round deadline
+  (45 minutes). What remains is a provider-side outage or rate limit from running scenarios back to
+  back — the vendor's problem — or a persistently malformed answer, which ALSO unwraps to
+  model-unavailable and would be this change's fault, because schema version 3 is what these rounds
+  were answering.
+
+  **The stage each round died at is what separates them, and it points away from this change.** In
+  run order: checkout concluded, ledger concluded, search failed at 2,519 tokens with its hypotheses
+  formed and no adaptive read, billing failed the same way at 3,654, render concluded, gateway
+  failed at 7,897 after four reads, scheduler failed at 7,798 after three. Two died at the planning
+  call and two at the conclusion call. A defect in the conclusion schema cannot explain a round that
+  died before any conclusion document existed, and a defect in the proposals schema cannot explain
+  gateway and scheduler, which planned successfully and dispatched adaptive reads. Both calls
+  demonstrably work in the runs that concluded, interleaved with the ones that did not. That is the
+  signature of transient provider failure rather than a deterministic schema regression.
+
+  It does not exclude intermittently malformed output, and four failures in seven is a high rate to
+  attribute to a vendor without evidence. **Re-run the failed scenarios on the current build before
+  trusting either explanation** — the named failure will say which it was in one word.
 
 - **A live harness run writes no transcript.** `spec-live-model-provider.md` asks for one per
   scenario so commit CI can replay what the model actually said; `OC_MODEL_TRANSCRIPT_FILE` is set
