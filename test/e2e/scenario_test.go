@@ -321,12 +321,12 @@ func TestTheArtifactCarriesTheWholeAssembledCase(t *testing.T) {
 	}
 }
 
-// A run asked for a live provider gets a refusal that says exactly what is missing, rather than
-// falling back to a recording and being scored as though a model had answered.
-func TestALiveProviderRunIsRefusedRatherThanQuietlyReplayed(t *testing.T) {
+// A run given nothing to reason with is refused by name, rather than falling back to something and
+// being scored as though a model had answered.
+func TestARunWithNoModelSourceIsRefusedRatherThanQuietlyFallingBack(t *testing.T) {
 	_, err := transcriptFor(Scenarios()[0], ModelSource{})
-	if !errors.Is(err, ErrNoLiveProvider) {
-		t.Fatalf("a live-provider run must be refused, got %v", err)
+	if !errors.Is(err, ErrNoModelSource) {
+		t.Fatalf("a run with no model source must be refused, got %v", err)
 	}
 
 	path, err := transcriptFor(Scenarios()[0], ModelSource{TranscriptDir: "recordings"})
@@ -335,5 +335,47 @@ func TestALiveProviderRunIsRefusedRatherThanQuietlyReplayed(t *testing.T) {
 	}
 	if want := filepath.Join("recordings", Scenarios()[0].ID+".json"); path != want {
 		t.Errorf("transcript path = %q, want %q", path, want)
+	}
+}
+
+// A live deployment needs no recording, and outranks one it was given alongside: a run that named
+// a provider was asked for the real thing, and replaying at it would answer a different question.
+func TestALiveProviderNeedsNoRecordingAndOutranksOne(t *testing.T) {
+	live := ModelSource{Provider: "zai", Model: "glm-5", KeyFile: "/tmp/zai.key"}
+	if !live.Live() {
+		t.Fatal("a fully named deployment does not read as live")
+	}
+
+	path, err := transcriptFor(Scenarios()[0], live)
+	if err != nil {
+		t.Fatalf("a live run must resolve without a recording: %v", err)
+	}
+	if path != "" {
+		t.Errorf("a live run resolved recording %q; it should need none", path)
+	}
+
+	both := live
+	both.TranscriptDir = "recordings"
+	if path, err = transcriptFor(Scenarios()[0], both); err != nil || path != "" {
+		t.Errorf("a recording outranked the live provider: path %q, err %v", path, err)
+	}
+
+	// The artifact has to say which model answered, so a scorer is never guessing.
+	if got := live.Describe(); got != "live provider zai/glm-5" {
+		t.Errorf("the artifact would describe the source as %q", got)
+	}
+}
+
+// A partially named deployment is not live. It would otherwise reach the control plane missing a
+// model or a credential and fail there, hours of provisioning later.
+func TestAPartiallyNamedDeploymentIsNotLive(t *testing.T) {
+	for name, source := range map[string]ModelSource{
+		"no model":      {Provider: "zai", KeyFile: "/tmp/k"},
+		"no credential": {Provider: "zai", Model: "glm-5"},
+		"no provider":   {Model: "glm-5", KeyFile: "/tmp/k"},
+	} {
+		if source.Live() {
+			t.Errorf("%s reads as a live deployment", name)
+		}
 	}
 }

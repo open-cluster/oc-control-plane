@@ -25,6 +25,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Local configuration, if there is any. It holds PATHS rather than secrets — every credential in
+# this product is a file the configuration names — so sourcing it puts no key in the environment.
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 # Where credentials live. One file per provider, holding the key and nothing else.
 SECRETS_DIR="${OC_SECRETS_DIR:-.secrets}"
 ZAI_KEY="${SECRETS_DIR}/zai.key"

@@ -33,38 +33,60 @@ import (
 // It is not called a budget. CONTEXT.md reserves that word away from Execution limits — the
 // numeric bounds on an investigator execution — and this is the harness's patience rather than
 // one of the case's own limits, so calling it a budget would collide with the term twice over.
-const investigationDeadline = 10 * time.Minute
+//
+// It must exceed the round's OWN deadline, or the harness abandons investigations the product
+// would have finished and files them as failures of the product rather than of the instrument. The
+// round is bounded at forty-five minutes; this is the harness waiting slightly longer than that so
+// that whichever bound fires, it is the one whose expiry means something.
+const investigationDeadline = 50 * time.Minute
 
 // scenarioOrganization is the tenant every scenario run belongs to. One is enough: tenant
 // isolation is proven in the control plane's own suite, and nothing about an explanation varies
 // by tenant.
 const scenarioOrganization = "scenario-harness"
 
-// ErrNoLiveProvider reports the one thing this build cannot do.
+// ErrNoModelSource reports a run that was given nothing to reason with.
 //
-// The specification says the harness always calls the real provider and records the transcript as
-// a by-product. There is no live provider in this build — the model boundary has a recorded
-// replay and an unavailable stub and nothing else — so a run either replays a recording or says
-// this, out loud, rather than quietly scoring something that was never asked of a model.
-var ErrNoLiveProvider = errors.New(
-	"this build has no live model provider: the Reasoner seam carries a recorded replay and an " +
-		"unavailable stub only. Run with recorded transcripts, or build the provider that " +
-		"implements investigation.Reasoner against a real API and record from it")
+// The specification says the harness calls a real provider and records the transcript as a
+// by-product. A run must therefore be given either a live deployment or a directory of recordings;
+// with neither it says so out loud rather than quietly scoring something that was never asked of a
+// model.
+var ErrNoModelSource = errors.New(
+	"this run was given no model source: name a live provider with -provider, -model and " +
+		"-key-file, or a directory of recordings with -transcripts")
 
 // ModelSource is where a run's reasoning comes from.
+//
+// A live deployment outranks a recording, because a run given both was asked for the real thing
+// and replaying at it would answer a different question.
 type ModelSource struct {
-	// TranscriptDir holds one recording per scenario, named <scenario-id>.json. Empty means a
-	// live provider was asked for.
+	// TranscriptDir holds one recording per scenario, named <scenario-id>.json.
 	TranscriptDir string
+
+	// The live deployment. The credential is a PATH: it reaches the control plane as an
+	// environment variable naming a file, never as the key itself, because that process's
+	// environment is readable from a process listing.
+	Provider string
+	Model    string
+	KeyFile  string
+	Effort   string
+}
+
+// Live reports whether a real provider was configured.
+func (m ModelSource) Live() bool {
+	return m.Provider != "" && m.Model != "" && m.KeyFile != ""
 }
 
 // Describe names the source for the artifact, so a scorer reading a replayed run knows they are
-// reading a reproduction.
+// reading a reproduction — and one reading a live run knows exactly which model answered.
 func (m ModelSource) Describe() string {
-	if m.TranscriptDir == "" {
-		return "live provider"
+	if m.Live() {
+		return "live provider " + m.Provider + "/" + m.Model
 	}
-	return "recorded transcript"
+	if m.TranscriptDir != "" {
+		return "recorded transcript"
+	}
+	return "none"
 }
 
 // Options is how one invocation of the harness is configured.
@@ -205,9 +227,16 @@ func (o Options) discard(truth GroundTruthRecord, cause error) error {
 }
 
 // transcriptFor resolves the recording that answers for this scenario's model boundary.
+//
+// A live deployment needs none, and says so by returning an empty path rather than an error: the
+// control plane is then configured with a provider instead, and the recording this run produces is
+// a by-product rather than an input.
 func transcriptFor(scenario Scenario, source ModelSource) (string, error) {
+	if source.Live() {
+		return "", nil
+	}
 	if source.TranscriptDir == "" {
-		return "", fmt.Errorf("scenario %s: %w", scenario.ID, ErrNoLiveProvider)
+		return "", fmt.Errorf("scenario %s: %w", scenario.ID, ErrNoModelSource)
 	}
 	return filepath.Join(source.TranscriptDir, scenario.ID+".json"), nil
 }
@@ -245,7 +274,7 @@ func newScenarioRun(
 	}
 
 	options.say("  starting the control plane and a relay")
-	if err = run.startPlane(ctx, transcript); err != nil {
+	if err = run.startPlane(ctx, transcript, options.Model); err != nil {
 		run.close()
 		return nil, err
 	}
@@ -256,7 +285,9 @@ func newScenarioRun(
 	return run, nil
 }
 
-func (r *scenarioRun) startPlane(ctx context.Context, transcript string) error {
+func (r *scenarioRun) startPlane(
+	ctx context.Context, transcript string, source ModelSource,
+) error {
 	plane, err := newControlPlane(r.workDir, r.truth.dsn)
 	if err != nil {
 		return err
@@ -266,7 +297,12 @@ func (r *scenarioRun) startPlane(ctx context.Context, transcript string) error {
 	if err = plane.serveOperator(uuid.NewString()); err != nil {
 		return err
 	}
-	plane.replayTranscript(transcript)
+	// A live deployment outranks a recording: a run given one was asked for the real thing.
+	if source.Live() {
+		plane.useModel(source.Provider, source.Model, source.KeyFile, source.Effort)
+	} else {
+		plane.replayTranscript(transcript)
+	}
 
 	terminator, err := StartTLSTerminator("127.0.0.1", plane.relayAddress)
 	if err != nil {
@@ -329,15 +365,62 @@ func (r *scenarioRun) awaitRegistration(ctx context.Context) (uuid.UUID, error) 
 	}
 }
 
+// defaultEnvironment resolves the Environment every scenario's Connection is created in.
+//
+// It is RESOLVED rather than assumed. An Environment is addressed by identity, and the harness
+// used to spell a name into the path — which the operator surface refuses, because a name can be
+// changed and an identity cannot. Reading the list is also what creates the Default for an
+// organization that has never been seen before, which is what a scenario run always is.
+func (r *scenarioRun) defaultEnvironment(ctx context.Context) (uuid.UUID, error) {
+	var listed struct {
+		Environments []struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			IsDefault bool   `json:"isDefault"`
+		} `json:"environments"`
+	}
+	status, raw, err := r.call(ctx, http.MethodGet,
+		fmt.Sprintf("/operator/v1/organizations/%s/environments", scenarioOrganization),
+		nil, &listed)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if status != http.StatusOK {
+		return uuid.Nil, fmt.Errorf("listing environments returned %d: %s",
+			status, truncateForMessage(raw))
+	}
+
+	for _, environment := range listed.Environments {
+		// The Default is taken from the flag rather than from the name, because the flag is the
+		// fact and the name is only what somebody called it.
+		if !environment.IsDefault {
+			continue
+		}
+		id, parseErr := uuid.Parse(environment.ID)
+		if parseErr != nil {
+			return uuid.Nil, fmt.Errorf("the default environment has no usable identity: %w",
+				parseErr)
+		}
+		return id, nil
+	}
+	return uuid.Nil, fmt.Errorf(
+		"this organization has no default environment; %d were listed", len(listed.Environments))
+}
+
 func (r *scenarioRun) createConnection(ctx context.Context, registration uuid.UUID) error {
+	environment, err := r.defaultEnvironment(ctx)
+	if err != nil {
+		return err
+	}
+
 	var created struct {
 		Connection struct {
 			ID string `json:"id"`
 		} `json:"connection"`
 	}
-	status, err := r.call(ctx, http.MethodPost,
-		fmt.Sprintf("/operator/v1/organizations/%s/environments/default/connections",
-			scenarioOrganization),
+	status, raw, err := r.call(ctx, http.MethodPost,
+		fmt.Sprintf("/operator/v1/organizations/%s/environments/%s/connections",
+			scenarioOrganization, environment),
 		map[string]any{
 			"integration":         "kubernetes",
 			"name":                "scenario cluster",
@@ -349,7 +432,8 @@ func (r *scenarioRun) createConnection(ctx context.Context, registration uuid.UU
 		return err
 	}
 	if status != http.StatusCreated {
-		return fmt.Errorf("creating the evidence connection returned %d", status)
+		return fmt.Errorf("creating the evidence connection returned %d: %s",
+			status, truncateForMessage(raw))
 	}
 
 	id, err := uuid.Parse(created.Connection.ID)
@@ -385,7 +469,7 @@ func (r *scenarioRun) investigate(ctx context.Context, scenario Scenario) (inves
 			ID string `json:"id"`
 		} `json:"investigation"`
 	}
-	status, err := r.call(ctx, http.MethodPost,
+	status, raw, err := r.call(ctx, http.MethodPost,
 		fmt.Sprintf("/operator/v1/organizations/%s/investigations", scenarioOrganization),
 		map[string]any{
 			"connectionId": r.connection.String(),
@@ -399,7 +483,8 @@ func (r *scenarioRun) investigate(ctx context.Context, scenario Scenario) (inves
 		return investigated{}, err
 	}
 	if status != http.StatusCreated {
-		return investigated{}, fmt.Errorf("opening an investigation returned %d", status)
+		return investigated{}, fmt.Errorf("opening an investigation returned %d: %s",
+			status, truncateForMessage(raw))
 	}
 	return r.awaitTerminal(ctx, opened.Investigation.ID)
 }
@@ -410,22 +495,27 @@ func (r *scenarioRun) awaitTerminal(ctx context.Context, id string) (investigate
 		scenarioOrganization, id)
 
 	for {
+		// This is the SUMMARY's shape, and getting it wrong is silent: an array that does not
+		// exist decodes to nothing, and the artifact then reports a run that cost nothing and was
+		// produced by no model. The summary carries the current round, the case's accumulated
+		// spend, and counts — not a rounds array.
 		var summary struct {
 			Investigation struct {
 				Terminal  bool   `json:"terminal"`
 				Lifecycle string `json:"lifecycle"`
 			} `json:"investigation"`
-			Rounds []struct {
+			CurrentRound *struct {
 				Versions versionStamp `json:"versions"`
-				Spend    struct {
-					Tokens      int64 `json:"tokens"`
-					MicroCents  int64 `json:"microCents"`
-					Requests    int   `json:"requests"`
-					ResultBytes int64 `json:"resultBytes"`
-				} `json:"spend"`
-			} `json:"rounds"`
+			} `json:"currentRound"`
+			Counts struct {
+				Requests int `json:"activity"`
+			} `json:"counts"`
+			Spend struct {
+				Tokens     int64 `json:"tokens"`
+				MicroCents int64 `json:"microCents"`
+			} `json:"spend"`
 		}
-		status, err := r.call(ctx, http.MethodGet, path, nil, &summary)
+		status, _, err := r.call(ctx, http.MethodGet, path, nil, &summary)
 		if err != nil {
 			return investigated{}, err
 		}
@@ -434,13 +524,23 @@ func (r *scenarioRun) awaitTerminal(ctx context.Context, id string) (investigate
 		}
 
 		if summary.Investigation.Terminal {
-			finished := investigated{id: id}
-			for _, round := range summary.Rounds {
-				finished.versions = round.Versions
-				finished.tokens += round.Spend.Tokens
-				finished.microCents += round.Spend.MicroCents
-				finished.requests += round.Spend.Requests
-				finished.resultBytes += round.Spend.ResultBytes
+			finished := investigated{
+				id:         id,
+				tokens:     summary.Spend.Tokens,
+				microCents: summary.Spend.MicroCents,
+				requests:   summary.Counts.Requests,
+			}
+			if summary.CurrentRound != nil {
+				finished.versions = summary.CurrentRound.Versions
+			}
+			// The components are what a blind scorer needs most: an artifact that cannot say
+			// which model produced the explanation cannot be compared to any other run. If the
+			// summary no longer carries them, say so here rather than filing an empty field that
+			// reads as though nothing answered.
+			if finished.versions.Model == "" {
+				return investigated{}, fmt.Errorf(
+					"the investigation finished but the summary named no model; the artifact " +
+						"would be unattributable")
 			}
 			return finished, nil
 		}
@@ -462,7 +562,7 @@ func (r *scenarioRun) awaitTerminal(ctx context.Context, id string) (investigate
 // customer would see.
 func (r *scenarioRun) caseFile(ctx context.Context, id string) (json.RawMessage, error) {
 	var assembled json.RawMessage
-	status, err := r.call(ctx, http.MethodGet,
+	status, _, err := r.call(ctx, http.MethodGet,
 		fmt.Sprintf("/operator/v1/organizations/%s/investigations/%s/case-file",
 			scenarioOrganization, id), nil, &assembled)
 	if err != nil {
@@ -475,14 +575,20 @@ func (r *scenarioRun) caseFile(ctx context.Context, id string) (json.RawMessage,
 }
 
 // call is one operator-API request. Everything the harness does to the product goes through here.
+// call performs one operator request and hands back the raw body as well as the status.
+//
+// The body travels because a failing status without one is undiagnosable: a 400 says the request
+// was refused and the reason is the only part worth reading. The harness provisions a cluster and
+// two processes before it gets here, so a message that sends the reader back to reproduce it by
+// hand costs minutes every time.
 func (r *scenarioRun) call(
 	ctx context.Context, method, path string, body any, into any,
-) (int, error) {
+) (int, []byte, error) {
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return 0, fmt.Errorf("encoding a %s %s: %w", method, path, err)
+			return 0, nil, fmt.Errorf("encoding a %s %s: %w", method, path, err)
 		}
 		payload = bytes.NewReader(encoded)
 	}
@@ -490,7 +596,7 @@ func (r *scenarioRun) call(
 	request, err := http.NewRequestWithContext(ctx, method,
 		"http://"+r.plane.operatorAddress+path, payload)
 	if err != nil {
-		return 0, fmt.Errorf("building a %s %s: %w", method, path, err)
+		return 0, nil, fmt.Errorf("building a %s %s: %w", method, path, err)
 	}
 	request.Header.Set("Authorization", "Bearer "+r.plane.operatorToken)
 	if body != nil {
@@ -499,21 +605,25 @@ func (r *scenarioRun) call(
 
 	response, err := r.client.Do(request)
 	if err != nil {
-		return 0, fmt.Errorf("%s %s: %w", method, path, err)
+		return 0, nil, fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return response.StatusCode, fmt.Errorf("reading the answer to %s %s: %w", method, path, err)
+		return response.StatusCode, nil, fmt.Errorf(
+			"reading the answer to %s %s: %w", method, path, err)
 	}
-	if into != nil && len(raw) > 0 {
+	// Only a success is decoded. A refusal's body is an error document rather than the shape the
+	// caller asked for, and failing to decode it would replace the reason with a parse error.
+	if into != nil && len(raw) > 0 && response.StatusCode < 300 {
 		if err = json.Unmarshal(raw, into); err != nil {
-			return response.StatusCode, fmt.Errorf("reading the answer to %s %s: %w (%s)",
+			return response.StatusCode, raw, fmt.Errorf(
+				"reading the answer to %s %s: %w (%s)",
 				method, path, err, truncateForMessage(raw))
 		}
 	}
-	return response.StatusCode, nil
+	return response.StatusCode, raw, nil
 }
 
 // diagnostics renders what each half said, labelled. A failure here has two candidate causes by

@@ -87,28 +87,43 @@ malformed output, timeout and cost-ceiling reached are distinct named outcomes, 
 abstention. Cross-provider fallback is an explicit configured chain that checks consent per hop and
 records what actually answered, including in the transcript key.
 
-**It has answered one live scenario, on GLM-5, and the red herring did not work.** Run
-2026-08-02 via `cmd/redherring` (`scripts/live-model.sh scenario`). The model reached the planted
-cause — a rejected database credential — and explicitly exonerated the deploy that happened thirty
-minutes earlier. Every claim cited evidence, the output schema admitted the draft, and there was no
-refusal, retry, fallback or contract failure. Cost was about $0.03 for three calls, 14,188 billable
-tokens, 3m20s wall clock with the conclusion alone taking 2m12s.
+**It has answered live scenarios on GLM-5, including one END TO END through the real product.**
+Run 2026-08-02. Two instruments were used and they prove different things.
 
-**Three findings from it are worth more than the pass.** First, **reasoning was 78% of output
-tokens** (6,130 of 7,859) — on this model the cost of a round is set by how hard it thinks, so
-effort is the lever to tune before anything else. Second, **prompt caching works on this vendor**
-(1,280 tokens served warm, 20% of input) and it reports no cache-write count at all, exactly as its
-capability matrix declares — which is the matrix doing real work rather than describing. Third, and
-most important: **the conclusion it reached was never one of its own hypotheses.** All four were
-falsified or set aside, and the outcome was still admitted as `supported`, because the output
-schema requires a supporting claim and never requires the explanation to be a hypothesis anyone
-proposed. That is a real hole in the falsification machinery and it is a domain question, not a
-provider one.
+`cmd/redherring` serves pre-baked evidence and touches no cluster: it proved the model boundary
+itself — prompt, schemas, decoding, scope invariants, costing, recording — against a real provider.
 
-**What remains unproved.** Whether the gathering pipeline works end to end — `cmd/redherring`
-serves pre-baked evidence and touches no cluster or Relay, so the ten-scenario harness is still the
-instrument for that. Anthropic has never been called: the adapter is exercised only against a
-canned transport. And one scenario on one model is one data point, not a measurement.
+The scenario harness then ran the `red-herring` scenario THROUGH THE WHOLE PRODUCT: a real k3s
+cluster broken on purpose, a real Relay, a real control plane process, real Postgres, and GLM-5
+answering over the operator API. It concluded correctly — a StatefulSet whose pod cannot start
+because it references a Secret that does not exist — while a frontend deployment that had changed
+twice in the preceding minutes sat there as the distractor. It did not name the change. 13 evidence
+items, 4 hypotheses, 1 coverage gap it found itself (the cluster keeps events for about an hour and
+the window asked for exactly an hour, so the start of the window is unreconstructable). About
+$0.021, 13,118 tokens, 2m36s.
+
+**Where it is only partially right.** The scenario's ground truth says the correct behaviour is to
+name the distractor as considered and SET ASIDE, with the reason — that is what the hypothesis
+record exists to show. It never hypothesised the frontend at all. Avoiding a trap is not the same
+as discriminating against it, and the artifact cannot show a reader that the alternative was
+examined.
+
+**The falsification machinery is not reliably load-bearing.** Across three live runs the
+explanation traced to a supported hypothesis ONCE. In the other two every hypothesis was falsified
+or set aside and the outcome was still admitted as `supported`, stating a cause nobody had
+proposed. `AdmitOutcome` requires a supporting CLAIM and never requires the explanation to be a
+hypothesis the investigator actually tested, so whether the record shows reasoning or merely a
+conclusion is left to chance. This is a domain question rather than a provider one and is the
+single most valuable thing these runs surfaced.
+
+**Cost and latency, measured rather than guessed.** Reasoning was 78% of output tokens on the
+pre-baked run, so effort is the first lever to tune. A single conclusion call took 2m12s, which is
+why the per-call timeout and the round deadline were both raised — the previous defaults would have
+failed rounds that were working.
+
+**What remains unproved.** Anthropic has never been called: that adapter is exercised only against
+a canned transport. Nine of the ten scenarios have never been run live. And three runs on one model
+is a handful of data points, not a measurement.
 
 **The product can be evaluated, and secrets do not leave a cluster.** Written 2026-08-01. The
 scenario harness exists as a program (`test/e2e/cmd/scenario`): ten clusters broken on purpose —
@@ -182,8 +197,8 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Investigation read models | `spec-investigation-read-models.md` | Go control plane | ✅ Done 2026-08-01 |
 | 4 — Environments and Connections | `spec-environments-and-connections.md` | Go control plane | ✅ Done (revision 3 — Integration separated from Connection) |
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
-| 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ⚠️ Built 2026-08-01, **not yet runnable**: no provider and no transcripts |
-| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved on one live GLM-5 scenario**. Anthropic itself still uncalled |
+| 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ✅ Runnable and RUN 2026-08-02 against a live provider end to end. One of ten scenarios exercised |
+| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. Anthropic itself still uncalled |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
 

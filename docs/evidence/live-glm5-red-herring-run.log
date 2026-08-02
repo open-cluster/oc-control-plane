@@ -1,0 +1,12 @@
+building both halves
+[1/1] red-herring
+  starting a database and a cluster
+  starting the control plane and a relay
+  provisioning and verifying the declared broken state
+  opening an investigation
+  ..\..\.secrets\harness-run\artifacts\b531956d-0723-4a29-8e42-6344f2d653b5.json (2m36s)
+2026/08/02 22:05:20 httputil: ReverseProxy read error during body copy: client disconnected
+
+artifacts are in ..\..\.secrets\harness-run\artifacts
+Give that directory — and nothing beside it — to two engineers who did not build the system.
+They score blind; ground truth is joined afterwards by `scenario score`.

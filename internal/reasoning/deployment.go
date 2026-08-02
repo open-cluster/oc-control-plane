@@ -68,9 +68,13 @@ type Deployment struct {
 // and every one of them is a restriction rather than a target.
 const (
 	defaultMaxOutputTokens = 32_000
-	defaultRequestTimeout  = 120 * time.Second
-	defaultMaxAttempts     = 3
-	defaultMaxConcurrent   = 4
+	// Sized by measurement rather than by taste. A model that thinks before answering has been
+	// observed taking over two minutes on a single conclusion, and a timeout that fires on a
+	// provider which is working reports an outage that never happened — which sends someone to
+	// look at a healthy vendor while the real answer was one minute away.
+	defaultRequestTimeout = 5 * time.Minute
+	defaultMaxAttempts    = 3
+	defaultMaxConcurrent  = 4
 )
 
 // WithDefaults fills what an operator did not name. It never loosens what they did.

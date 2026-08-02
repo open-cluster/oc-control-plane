@@ -44,6 +44,14 @@ type controlPlane struct {
 	operatorToken     string
 	operatorTokenPath string
 	transcriptPath    string
+
+	// The live model deployment, when one was configured. The credential is a PATH rather than
+	// the key: this process's environment is readable from a process listing, so the key travels
+	// on disk and the variable names where.
+	modelProvider string
+	modelName     string
+	modelKeyFile  string
+	modelEffort   string
 }
 
 // serveOperator binds the operator surface behind a token of this run's own. The token is written
@@ -70,6 +78,15 @@ func (c *controlPlane) serveOperator(token string) error {
 // harness's own documentation says so as a named gap rather than leaving a reader to infer it
 // from the absence of a flag.
 func (c *controlPlane) replayTranscript(path string) { c.transcriptPath = path }
+
+// useModel points the model boundary at a real provider. It outranks a recording: a deployment
+// given one was asked for the real thing.
+func (c *controlPlane) useModel(provider, model, keyFile, effort string) {
+	c.modelProvider = provider
+	c.modelName = model
+	c.modelKeyFile = keyFile
+	c.modelEffort = effort
+}
 
 // newControlPlane reserves the addresses the control plane will serve on, without starting
 // it. The relay address is needed before the process exists, because the TLS terminator that
@@ -125,6 +142,17 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 	}
 	if c.transcriptPath != "" {
 		environment["OC_MODEL_TRANSCRIPT_FILE"] = c.transcriptPath
+	}
+	if c.modelProvider != "" {
+		environment["OC_MODEL_PROVIDER"] = c.modelProvider
+		environment["OC_MODEL_NAME"] = c.modelName
+		environment["OC_MODEL_KEY_FILE"] = c.modelKeyFile
+		// Consent is per provider and nothing listed permits nothing, so the provider this run was
+		// told to use is named here explicitly rather than implied by having configured it.
+		environment["OC_MODEL_CONSENTED_PROVIDERS"] = c.modelProvider
+		if c.modelEffort != "" {
+			environment["OC_MODEL_EFFORT"] = c.modelEffort
+		}
 	}
 
 	running, err := startProgram("control plane", binary, environment, c.output)

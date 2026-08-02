@@ -95,6 +95,15 @@ func runSet(arguments []string) error {
 	only := flags.String("scenario", "",
 		"run one scenario by identifier, so iterating on the planner does not require the whole set")
 	version := flags.String("version", "dev", "the build under evaluation, recorded with every run")
+
+	// The live deployment. A run given one calls a real model and records the transcript as a
+	// by-product; a run given a transcripts directory instead replays. Given both, the live
+	// provider wins, because a run that named one was asked for the real thing.
+	provider := flags.String("provider", "", "live model provider: anthropic or zai")
+	model := flags.String("model", "", "the exact model identifier the provider serves")
+	keyFile := flags.String("key-file", "",
+		"path to a file holding the provider credential; never the credential itself")
+	effort := flags.String("effort", "", "how hard to think: low, medium, high, xhigh, max")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -123,8 +132,14 @@ func runSet(arguments []string) error {
 	defer stop()
 
 	err = e2e.RunSet(ctx, scenarios, e2e.Options{
-		Results:     filed,
-		Model:       e2e.ModelSource{TranscriptDir: *transcripts},
+		Results: filed,
+		Model: e2e.ModelSource{
+			TranscriptDir: *transcripts,
+			Provider:      *provider,
+			Model:         *model,
+			KeyFile:       *keyFile,
+			Effort:        *effort,
+		},
 		CodeVersion: *version,
 		Progress:    func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
 	})

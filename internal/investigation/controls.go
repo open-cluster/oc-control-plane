@@ -38,17 +38,41 @@ type Controls struct {
 // product's own defaults rather than a policy, and they are pinned into the round exactly as a
 // customer's would be, so a case read next quarter does not have to know which it was.
 //
-// The numbers are deliberately small. This slice's claim is that bounded typed reads plus
-// reasoning can produce a useful explanation, and a bound wide enough never to bite would leave
-// the exhaustion path — the one ADR-009 says is where the abstention standard will break first —
-// untested.
+// These are sized for an INVESTIGATION rather than for a demonstration. The first set was
+// deliberately small so that the exhaustion path would be exercised, which was the right trade
+// while nothing had ever called a model; it stopped being right the moment one did. A real
+// incident spans more than one source — a workload, its events, its logs, and in time the
+// integrations either side of it — and a round that may make eight reads across two passes cannot
+// follow a chain of evidence far enough to be worth reading. A bound that stops an investigation
+// before it has finished thinking does not save money; it spends it on an answer nobody can use.
+//
+// The exhaustion path is still tested, and better: a test tightens these through the composition
+// root's wiring, so it asserts the same code against bounds it chooses rather than against bounds
+// the product happens to ship. Nothing about the exhaustion behaviour depends on these numbers
+// being small.
+//
+// Two of them are set by what a live provider actually does rather than by taste. A single
+// reasoning call on a model that thinks before answering has been measured at over two minutes, so
+// a round making several of them across several passes needs a wall clock in the tens of minutes;
+// five would have failed a round that was working.
 func DefaultControls() Controls {
 	return Controls{
-		MaxRequests:       8,
-		MaxAdaptivePasses: 2,
-		MaxResultBytes:    2 << 20,
-		Deadline:          5 * time.Minute,
-		RequestTimeout:    90 * time.Second,
+		// Across every pass. Enough to establish a workload, read what the cluster said, follow
+		// two or three chains of evidence to their source, and still have reads left to falsify
+		// the explanation that emerges.
+		MaxRequests: 40,
+		// Enough passes for a chain: orient, look, form a view, test it, and revise once when the
+		// test says something unexpected. Two allows the first half of that and stops.
+		MaxAdaptivePasses: 6,
+		// The total size of every result one round may accept. What reaches the model is bounded
+		// far below this when the prompt is rendered; this bounds what the round will hold.
+		MaxResultBytes: 32 << 20,
+		// The wall clock for the whole round, sized around reasoning calls that take minutes
+		// rather than around reads that take seconds.
+		Deadline: 45 * time.Minute,
+		// One dispatched capability read. It bounds a source that has stopped answering, and it is
+		// generous because a slow source is not a broken one.
+		RequestTimeout: 3 * time.Minute,
 	}
 }
 

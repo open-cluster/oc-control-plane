@@ -1,0 +1,61 @@
+{
+  "runId": "b531956d-0723-4a29-8e42-6344f2d653b5",
+  "components": {
+    "codeVersion": "live-glm5-e2e",
+    "model": "zai/glm-5",
+    "promptVersion": "2",
+    "schemaVersion": "2",
+    "investigator": "dev",
+    "modelSource": "live provider zai/glm-5"
+  },
+  "cost": {
+    "tokens": 13118,
+    "microCents": 2099440,
+    "capabilityRequests": 2,
+    "resultKiB": 0
+  },
+  "elapsed": "2m35.716s",
+  "outcome": {
+    "kind": "supported",
+    "statement": "The orders-0 pod is stuck in Pending with CreateContainerConfigError because the Kubernetes secret 'orders-credentials' referenced by the pod's container configuration does not exist in the commerce namespace. The pod was successfully scheduled (evidence 4) and the image was pulled (evidence 7, 10), but container creation failed due to the missing secret (evidence 11), leaving the pod in a waiting state with CreateContainerConfigError (evidence 2).",
+    "supportingClaims": [
+      "The orders-0 pod failed to create its container due to a missing Kubernetes secret named 'orders-credentials' that the pod configuration references.",
+      "The orders-0 pod is in a CreateContainerConfigError state, which is a container-level failure to start.",
+      "The orders-0 pod was successfully scheduled to node fe002bbec14a.",
+      "The container image busybox:1.36 was successfully pulled for the orders-0 pod."
+    ],
+    "independentSources": 1
+  },
+  "hypotheses": [
+    {
+      "ordinal": 1,
+      "state": "falsified",
+      "statement": "The orders-0 pod is stuck in Pending due to a scheduling failure (insufficient resources, node affinity, taints, or other scheduling constraints)."
+    },
+    {
+      "ordinal": 2,
+      "state": "falsified",
+      "statement": "The orders-0 pod is stuck in Pending due to a persistent volume claim (PVC) that cannot be bound or mounted."
+    },
+    {
+      "ordinal": 3,
+      "state": "supported",
+      "statement": "The orders-0 pod's container is failing to start or crashing immediately after the image pull, leaving the pod stuck."
+    },
+    {
+      "ordinal": 4,
+      "state": "falsified",
+      "statement": "The orders-0 pod was just created near the end of the investigation window and has not yet completed startup."
+    }
+  ],
+  "coverageGaps": [
+    {
+      "cause": "source cannot answer for the whole window",
+      "consequence": "the cluster keeps events for about 1h0m0s and the window asked for 1h0m0s, so what happened at the start of it cannot be reconstructed from this source"
+    }
+  ],
+  "counts": {
+    "evidence": 13,
+    "rounds": 1
+  }
+}
