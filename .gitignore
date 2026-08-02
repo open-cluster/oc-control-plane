@@ -28,3 +28,9 @@ Thumbs.db
 # Local credentials. Never committed: the model key is read from a file path so that it
 # cannot leak through a process listing or a diagnostic dump of the environment.
 .secrets/
+
+# Harness output. A run files artifacts, ground truth and scores here; they are EVIDENCE of one
+# run rather than source, and the ones worth keeping are copied into docs/evidence by hand so that
+# what is committed is a decision rather than whatever the last run happened to leave behind.
+/artifacts/
+/artifacts-sweep/

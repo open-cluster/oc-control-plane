@@ -51,6 +51,19 @@ The strongest explanation surviving alternatives and contradictions. Deliberatel
 called a cause.
 _Avoid_: root cause, likely cause, verified cause
 
+**Traced explanation**:
+An explanation that IS one of the hypotheses on the record, named by it and settled as supported.
+An outcome that cannot name one is refused: a cause corresponding to nothing the investigator
+proposed is a conclusion, not a finding, and the record cannot show what it beat.
+_Avoid_: linked hypothesis, root hypothesis, primary hypothesis
+
+**Untested explanation**:
+A traced explanation resting on a hypothesis no dispatched read pointed at, so nothing was read
+that could have disproved it. Real and weaker: it is admitted as caveated rather than supported and
+carries the coverage gap saying so. Decided from what the platform sent, never from what the
+reasoner claims about its own rigour.
+_Avoid_: unverified explanation, low-confidence explanation, weak hypothesis
+
 **VerifiedCause**:
 An explanation meeting a defined verification standard, with the verification basis
 shown. Confidence alone never produces one.

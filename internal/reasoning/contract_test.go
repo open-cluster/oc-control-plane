@@ -42,6 +42,10 @@ func TestSchemas_AdmitNoIdentifierQuerySelectorPathOrCommand(t *testing.T) {
 		"weighings": {}, "hypothesis": {}, "evidence": {}, "stance": {},
 		"settlings": {}, "state": {},
 		"kind": {}, "claims": {}, "role": {}, "unresolved": {}, "relevant_gaps": {},
+		// The hypothesis an outcome is the explanation of. An integer ordinal among what the
+		// reasoner was shown or proposed, exactly like every other reference here: it can carry a
+		// position and nothing else, so a prompt-injected identifier still has nowhere to go.
+		"explains": {},
 	}
 
 	schemas := map[string]reasoning.Schema{

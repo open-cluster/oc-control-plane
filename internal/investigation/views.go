@@ -217,14 +217,17 @@ type outcomeView struct {
 	Statement string `json:"statement"`
 	// Supporting, Contradicting and AffectedScope are the same shape because they are the same
 	// thing: a cited statement. Affected scope is not a set of numbers.
-	Supporting         []claimView `json:"supporting"`
-	Contradicting      []claimView `json:"contradicting"`
-	AffectedScope      []claimView `json:"affectedScope"`
-	RelevantGaps       []string    `json:"relevantCoverageGapIds"`
-	UnresolvedIDs      []string    `json:"unresolvedHypothesisIds"`
-	IndependentSources int         `json:"independentSources"`
-	Superseded         bool        `json:"superseded"`
-	ReachedAt          time.Time   `json:"reachedAt"`
+	Supporting    []claimView `json:"supporting"`
+	Contradicting []claimView `json:"contradicting"`
+	AffectedScope []claimView `json:"affectedScope"`
+	// ExplainsID is the hypothesis this outcome IS, so a reader lands on what it was weighed
+	// against rather than on a sentence. Absent on an abstention, which states no explanation.
+	ExplainsID         string    `json:"explainsHypothesisId,omitempty"`
+	RelevantGaps       []string  `json:"relevantCoverageGapIds"`
+	UnresolvedIDs      []string  `json:"unresolvedHypothesisIds"`
+	IndependentSources int       `json:"independentSources"`
+	Superseded         bool      `json:"superseded"`
+	ReachedAt          time.Time `json:"reachedAt"`
 }
 
 type claimView struct {
@@ -276,13 +279,17 @@ type hypothesisView struct {
 	RoundID string `json:"roundId"`
 	// Ordinal is the planner's ranking as an ORDINAL. There is deliberately no score: an internal
 	// ranking may order these, and publishing the number would hand a reader a confidence figure.
-	Ordinal        int       `json:"ordinal"`
-	Statement      string    `json:"statement"`
-	Falsifies      string    `json:"falsifies"`
-	State          string    `json:"state"`
-	SetAsideReason string    `json:"setAsideReason,omitempty"`
-	ProposedAt     time.Time `json:"proposedAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	Ordinal        int    `json:"ordinal"`
+	Statement      string `json:"statement"`
+	Falsifies      string `json:"falsifies"`
+	State          string `json:"state"`
+	SetAsideReason string `json:"setAsideReason,omitempty"`
+	// Pass is which call proposed it. Zero is the opening, from the brief alone; a higher number is
+	// one the evidence produced. It is what tells a reader whether an explanation was predicted or
+	// discovered, which the statement alone never shows.
+	Pass       int       `json:"pass"`
+	ProposedAt time.Time `json:"proposedAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type gapView struct {

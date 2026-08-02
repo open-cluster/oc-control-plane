@@ -126,16 +126,18 @@ func TestConclude_CarriesTheDraftAndItsSettlings(t *testing.T) {
 	}
 }
 
-// The conclusion is admitted by the domain against the hypotheses still live AFTER this same
-// answer's settlings are applied, which is a shorter list with different positions than the one the
-// reasoner answered in. Handing the first set of numbers to the second list would refuse a sound
-// conclusion for naming a hypothesis that exists.
-func TestConclude_UnresolvedOrdinalsAreTranslatedOntoTheLiveHypotheses(t *testing.T) {
-	// The reasoner settles hypothesis 1 and calls hypothesis 2 unresolved. Once the settling is
-	// applied only hypothesis 2 is live, so it is live-position 1 rather than 2.
+// One rule for ordinals at every call: they name what the reasoner was shown plus what the same
+// answer proposed, and nothing translates them on the way to the domain. An earlier build admitted
+// the conclusion against the hypotheses still LIVE after its own settlings, so this package had to
+// renumber — and a renumbering that drifted from the domain's list would have refused sound
+// conclusions for naming a hypothesis that exists.
+func TestConclude_UnresolvedOrdinalsNameTheHypothesesTheReasonerWasShown(t *testing.T) {
+	// The reasoner settles hypothesis 1 and calls hypothesis 2 unresolved. Both ordinals name the
+	// list it answered in, which is the list the domain now checks them against — the round holds
+	// every hypothesis it proposed, settled or not.
 	document := `{
-	  "kind":"abstained","statement":"nothing is sufficiently supported",
-	  "claims":[],"unresolved":[2],"relevant_gaps":[1],"weighings":[],
+	  "kind":"abstained","statement":"nothing is sufficiently supported","explains":0,
+	  "hypotheses":[],"claims":[],"unresolved":[2],"relevant_gaps":[1],"weighings":[],
 	  "settlings":[{"hypothesis":1,"state":"falsified","reason":"a pod on the new image is ready"}]}`
 	provider := newFakeProvider("primary", answer{document: document})
 	service := serviceUnder(t, provider)
@@ -144,17 +146,141 @@ func TestConclude_UnresolvedOrdinalsAreTranslatedOntoTheLiveHypotheses(t *testin
 	if err != nil {
 		t.Fatalf("concluding: %v", err)
 	}
-	if len(concluded.Draft.Unresolved) != 1 || concluded.Draft.Unresolved[0] != 1 {
-		t.Fatalf("unresolved is %v, want [1] — the position among the hypotheses still live",
+	if len(concluded.Draft.Unresolved) != 1 || concluded.Draft.Unresolved[0] != 2 {
+		t.Fatalf("unresolved is %v, want [2] — the ordinal the reasoner answered in",
 			concluded.Draft.Unresolved)
 	}
 
-	// The proof that the translation is right: the domain admits it.
-	live := []investigation.Hypothesis{deliberationFixture().Hypotheses[1]}
-	if _, admitErr := investigation.AdmitOutcome(
-		concluded.Draft, deliberationFixture().Evidence, deliberationFixture().Gaps, live,
-	); admitErr != nil {
+	// The proof that the ordinals mean what this package says they mean: the domain admits them.
+	held := deliberationFixture().Hypotheses
+	held[0].State = investigation.HypothesisFalsified
+	if _, admitErr := investigation.AdmitOutcome(concluded.Draft, investigation.Shown{
+		Evidence:   deliberationFixture().Evidence,
+		Gaps:       deliberationFixture().Gaps,
+		Hypotheses: held,
+	}); admitErr != nil {
 		t.Errorf("the domain refused a draft this package produced: %v", admitErr)
+	}
+}
+
+// THE TRACED EXPLANATION, AT THE DECODING SEAM.
+//
+// The domain refuses an explanation that names no supported hypothesis. These assert the half this
+// package owns: that a reasoner CAN name one it discovered, and that it cannot name one that will
+// not exist.
+
+func TestConclude_AConclusionMayExplainAHypothesisItProposedInTheSameDocument(t *testing.T) {
+	// Two were shown; this proposes a third and explains it. Without that the only way to state a
+	// cause the evidence revealed would be to attach it to nothing.
+	document := `{
+	  "kind":"supported","statement":"the Secret it references does not exist","explains":3,
+	  "hypotheses":[{"statement":"a referenced Secret is absent",
+	                 "falsifies":"the Secret exists in the namespace"}],
+	  "claims":[{"role":"supporting","statement":"the container never started","evidence":[1]}],
+	  "unresolved":[],"relevant_gaps":[],"weighings":[],
+	  "settlings":[{"hypothesis":3,"state":"supported","reason":"the event names the Secret"}]}`
+	provider := newFakeProvider("primary", answer{document: document})
+	service := serviceUnder(t, provider)
+
+	concluded, err := service.Conclude(context.Background(), deliberationFixture())
+	if err != nil {
+		t.Fatalf("concluding: %v", err)
+	}
+	if len(concluded.Hypotheses) != 1 {
+		t.Fatalf("the proposed hypothesis must survive decoding, got %d",
+			len(concluded.Hypotheses))
+	}
+	if concluded.Hypotheses[0].Ordinal != 3 {
+		t.Errorf("ordinal = %d, want the next after the two it was shown",
+			concluded.Hypotheses[0].Ordinal)
+	}
+	if concluded.Draft.Explains != 3 {
+		t.Errorf("explains = %d, want the hypothesis it proposed", concluded.Draft.Explains)
+	}
+}
+
+// The prompt invites the planner to discover a hypothesis and then ask for a read that would test
+// it. Bounding the justification by what it was SHOWN would refuse the whole document for following
+// the instruction it was given, and the failure would read as the model being malformed.
+func TestRequests_AReadMayPointAtAHypothesisTheSameAnswerProposed(t *testing.T) {
+	// Two were shown; this proposes a third and points a read at it.
+	document := `{
+	  "proposals":[{"capability":"kubernetes.container.logs","justification":3,
+	                "reason":"what it said before it died would disprove the new explanation",
+	                "arguments":{"pod":2,"container":"checkout","previous":true,
+	                             "max_pods":0,"max_events":0,"max_lines":0}}],
+	  "hypotheses":[{"statement":"a referenced Secret is absent",
+	                 "falsifies":"the Secret exists in the namespace"}],
+	  "weighings":[{"hypothesis":3,"evidence":1,"stance":"supports",
+	                "reason":"the event names a missing Secret"}],
+	  "settlings":[]}`
+	provider := newFakeProvider("primary", answer{document: document})
+	service := serviceUnder(t, provider)
+
+	proposed, err := service.Requests(context.Background(), deliberationFixture())
+	if err != nil {
+		t.Fatalf("proposing: %v", err)
+	}
+	if len(proposed.Proposals) != 1 || proposed.Proposals[0].Justification != 3 {
+		t.Fatalf("the read must survive pointing at the hypothesis just proposed, got %+v",
+			proposed.Proposals)
+	}
+	if len(proposed.Hypotheses) != 1 || proposed.Hypotheses[0].Ordinal != 3 {
+		t.Errorf("the hypothesis must take the next ordinal, got %+v", proposed.Hypotheses)
+	}
+	// Weighed against evidence it was shown: the discovery came FROM that evidence, and recording
+	// how it stands is most of what shows the discovery was reasoning rather than assertion.
+	if len(proposed.Weighings) != 1 || proposed.Weighings[0].Hypothesis != 3 {
+		t.Errorf("the weighing must survive naming the hypothesis just proposed, got %+v",
+			proposed.Weighings)
+	}
+}
+
+func TestRequests_AReadPointingPastEverythingShownAndProposedIsRefused(t *testing.T) {
+	document := `{
+	  "proposals":[{"capability":"kubernetes.namespace.events","justification":4,
+	                "reason":"it would disprove something",
+	                "arguments":{"pod":0,"container":"","previous":false,
+	                             "max_pods":0,"max_events":0,"max_lines":0}}],
+	  "hypotheses":[],"weighings":[],"settlings":[]}`
+	provider := newFakeProvider("primary", answer{document: document})
+	service := serviceUnder(t, provider)
+
+	if _, err := service.Requests(
+		context.Background(), deliberationFixture()); !errors.Is(err, reasoning.ErrMalformed) {
+		t.Fatalf("got %v, want a malformed-output failure", err)
+	}
+}
+
+func TestConclude_AProposedHypothesisWithNothingThatWouldDisproveItIsRefused(t *testing.T) {
+	// An explanation nothing could disprove is a belief, and letting one in through the late-
+	// proposal path would make the falsification condition optional wherever it matters most.
+	document := `{
+	  "kind":"supported","statement":"the Secret it references does not exist","explains":3,
+	  "hypotheses":[{"statement":"a referenced Secret is absent","falsifies":""}],
+	  "claims":[{"role":"supporting","statement":"the container never started","evidence":[1]}],
+	  "unresolved":[],"relevant_gaps":[],"weighings":[],"settlings":[]}`
+	provider := newFakeProvider("primary", answer{document: document})
+	service := serviceUnder(t, provider)
+
+	if _, err := service.Conclude(
+		context.Background(), deliberationFixture()); !errors.Is(err, reasoning.ErrMalformed) {
+		t.Fatalf("got %v, want a malformed-output failure", err)
+	}
+}
+
+func TestConclude_ExplainingAHypothesisThatWillNotExistIsRefused(t *testing.T) {
+	// Two shown, none proposed: ordinal 3 names a hypothesis that will never be in the round.
+	document := `{
+	  "kind":"supported","statement":"something","explains":3,"hypotheses":[],
+	  "claims":[{"role":"supporting","statement":"y","evidence":[1]}],
+	  "unresolved":[],"relevant_gaps":[],"weighings":[],"settlings":[]}`
+	provider := newFakeProvider("primary", answer{document: document})
+	service := serviceUnder(t, provider)
+
+	if _, err := service.Conclude(
+		context.Background(), deliberationFixture()); !errors.Is(err, reasoning.ErrMalformed) {
+		t.Fatalf("got %v, want a malformed-output failure", err)
 	}
 }
 

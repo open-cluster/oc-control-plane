@@ -30,6 +30,10 @@ type report struct {
 	settlings    []investigation.Settling
 	draft        investigation.Draft
 	outcome      *investigation.Outcome
+	// untested reports the explanation resting on a hypothesis no read pointed at, which is what
+	// demoted it from supported to caveated. It is printed because a caveat whose reason is not
+	// shown is the thing a reader skips.
+	untested bool
 
 	// admissionFailure is the output schema refusing the draft. It is a CONTRACT failure and is
 	// reported as one rather than folded into the outcome.
@@ -130,13 +134,16 @@ func (r *report) printAttribution() {
 func (r *report) printTranscript() {
 	r.section("THE TRANSCRIPT")
 
-	fmt.Println("HYPOTHESES PROPOSED FROM THE BRIEF ALONE")
+	fmt.Println("HYPOTHESES")
 	if len(r.hypotheses) == 0 {
 		fmt.Println("  (none)")
 	}
 	for _, hypothesis := range r.hypotheses {
-		fmt.Printf("  %d. %s\n     disproved by: %s\n",
-			hypothesis.Ordinal, hypothesis.Statement, hypothesis.Falsifies)
+		// The pass is printed because it is the difference between an explanation the brief
+		// suggested and one the evidence forced, and the statement alone never shows it.
+		fmt.Printf("  %d. [%s] %s\n     disproved by: %s\n",
+			hypothesis.Ordinal, proposedAt(hypothesis.Pass), hypothesis.Statement,
+			hypothesis.Falsifies)
 	}
 
 	fmt.Println("\nREADS PROPOSED")
@@ -189,7 +196,23 @@ func (r *report) printResult() {
 	}
 
 	fmt.Printf("Kind:      %s\n", r.draft.Kind)
-	fmt.Printf("Statement: %s\n\n", r.draft.Statement)
+	if r.outcome != nil && r.outcome.Kind != r.draft.Kind {
+		// The control plane demoted it. Printing only the final kind would hide that the reasoner
+		// asked for something stronger, which is half of what a scorer needs to see.
+		fmt.Printf("           demoted to %s by the control plane\n", r.outcome.Kind)
+	}
+	fmt.Printf("Statement: %s\n", r.draft.Statement)
+
+	// The traced explanation. An outcome that names no hypothesis never reaches here — it is
+	// refused — so what this line shows is WHICH alternative won, and a reader can go and see what
+	// it beat.
+	if r.draft.Explains == 0 {
+		fmt.Printf("Explains:  no hypothesis (an abstention states no explanation)\n\n")
+	} else {
+		fmt.Printf("Explains:  hypothesis %d — %s\n\n",
+			r.draft.Explains, r.statementOf(r.draft.Explains))
+	}
+
 	for index, claim := range r.draft.Claims {
 		fmt.Printf("  claim %d [%s] %s\n     cites evidence %v\n",
 			index+1, claim.Role, claim.Statement, claim.Evidence)
@@ -200,11 +223,36 @@ func (r *report) printResult() {
 	if len(r.draft.Unresolved) > 0 {
 		fmt.Printf("  hypotheses left unresolved:  %v\n", r.draft.Unresolved)
 	}
+	if r.untested {
+		fmt.Printf("\n  COVERAGE GAP: %s\n", investigation.UntestedExplanationGap().Consequence)
+	}
 
 	if r.outcome != nil {
 		fmt.Printf("\nADMITTED by the output schema. %d claim(s) across %d independent source(s).\n",
 			len(r.outcome.Claims), r.outcome.IndependentSources)
 	}
+}
+
+// proposedAt says which call produced a hypothesis, in words rather than in a number nobody would
+// decode while scoring.
+func proposedAt(pass int) string {
+	switch pass {
+	case 0:
+		return "from the brief"
+	case 1:
+		return "from the evidence, mid-round"
+	default:
+		return "at the conclusion, untestable in this round"
+	}
+}
+
+// statementOf names a hypothesis by ordinal, so the explanation line reads as a sentence rather
+// than as a number a scorer has to go and resolve.
+func (r *report) statementOf(ordinal int) string {
+	if ordinal < 1 || ordinal > len(r.hypotheses) {
+		return "an ordinal outside what was proposed"
+	}
+	return r.hypotheses[ordinal-1].Statement
 }
 
 // printFailures is every refusal, retry, fallback and contract failure the run saw.

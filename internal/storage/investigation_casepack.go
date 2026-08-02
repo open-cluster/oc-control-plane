@@ -260,8 +260,7 @@ func readOutcomes(
 	investigationID, roundID uuid.UUID,
 ) ([]investigation.Outcome, error) {
 	rows, err := on.Query(ctx, `
-		SELECT outcome_id, round_id, round_ordinal, kind, statement, independent_sources,
-		       superseded, reached_at
+		SELECT `+outcomeColumns+`
 		  FROM investigation_outcome
 		 WHERE investigation_id = $1
 		   AND organization     = $2
@@ -274,17 +273,11 @@ func readOutcomes(
 
 	var found []investigation.Outcome
 	for rows.Next() {
-		var (
-			outcome investigation.Outcome
-			kind    int16
-		)
-		if err = rows.Scan(&outcome.ID, &outcome.RoundID, &outcome.Round, &kind,
-			&outcome.Statement, &outcome.IndependentSources, &outcome.Superseded,
-			&outcome.ReachedAt); err != nil {
+		outcome, scanErr := scanOutcome(rows)
+		if scanErr != nil {
 			rows.Close()
-			return nil, fmt.Errorf("reading an outcome: %w", err)
+			return nil, fmt.Errorf("reading an outcome: %w", scanErr)
 		}
-		outcome.Kind = investigation.OutcomeKind(kind)
 		found = append(found, outcome)
 	}
 	rows.Close()

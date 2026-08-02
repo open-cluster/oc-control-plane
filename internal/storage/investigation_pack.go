@@ -38,17 +38,17 @@ func (p *Placements) RecordHypotheses(
 		row := pool.QueryRow(ctx, `
 			INSERT INTO investigation_hypothesis
 				(hypothesis_id, organization, investigation_id, round_id, ordinal,
-				 statement, falsifies, state, set_aside_reason)
+				 statement, falsifies, state, set_aside_reason, pass)
 			SELECT $5, $2, investigation_round.investigation_id, $1,
 			       (SELECT coalesce(max(ordinal), 0) + 1
 			          FROM investigation_hypothesis existing
 			         WHERE existing.round_id = $1),
-			       $6, $7, $8, $9`+fencedRound+`
+			       $6, $7, $8, $9, $10`+fencedRound+`
 			RETURNING hypothesis_id, investigation_id, round_id, ordinal, statement, falsifies,
-			          state, set_aside_reason, proposed_at, updated_at`,
+			          state, set_aside_reason, pass, proposed_at, updated_at`,
 			fence.RoundID, organization.String(), fence.LeaseSession, fence.LeaseEpoch,
 			uuid.New(), hypothesis.Statement, hypothesis.Falsifies,
-			int16(hypothesis.State), hypothesis.SetAsideReason)
+			int16(hypothesis.State), hypothesis.SetAsideReason, hypothesis.Pass)
 
 		written, scanErr := scanHypothesis(row)
 		if errors.Is(scanErr, pgx.ErrNoRows) {
@@ -349,12 +349,13 @@ func (p *Placements) RecordOutcome(
 	err = transaction.QueryRow(ctx, `
 		INSERT INTO investigation_outcome
 			(outcome_id, organization, investigation_id, round_id, round_ordinal,
-			 kind, statement, independent_sources)
+			 kind, statement, independent_sources, explains_hypothesis_id)
 		SELECT $5, $2, investigation_round.investigation_id, $1, investigation_round.ordinal,
-		       $6, $7, $8`+fencedRound+`
+		       $6, $7, $8, $9`+fencedRound+`
 		RETURNING outcome_id, investigation_id`,
 		fence.RoundID, organization.String(), fence.LeaseSession, fence.LeaseEpoch,
-		uuid.New(), int16(outcome.Kind), outcome.Statement, outcome.IndependentSources).
+		uuid.New(), int16(outcome.Kind), outcome.Statement, outcome.IndependentSources,
+		nullableUUID(outcome.Explains)).
 		Scan(&outcomeID, &investigationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return investigation.ErrLeaseLost

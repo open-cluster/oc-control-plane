@@ -208,6 +208,7 @@ func (s *Service) Requests(
 				return err
 			}
 			answer.Proposals = proposed.Proposals
+			answer.Hypotheses = proposed.Hypotheses
 			answer.Weighings = proposed.Weighings
 			answer.Settlings = proposed.Settlings
 			return nil
@@ -233,6 +234,7 @@ func (s *Service) Conclude(
 				return err
 			}
 			answer.Draft = concluded.Draft
+			answer.Hypotheses = concluded.Hypotheses
 			answer.Weighings = concluded.Weighings
 			answer.Settlings = concluded.Settlings
 			return nil

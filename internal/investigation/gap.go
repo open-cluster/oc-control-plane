@@ -44,6 +44,14 @@ const (
 	// GapTargetNotFound means the source says the thing named is not there. It is a gap and never
 	// absence evidence: a not-found from one read says nothing about whether it ever existed.
 	GapTargetNotFound
+	// GapExplanationUntested means the explanation this round landed on rests on a hypothesis no
+	// dispatched read pointed at, so nothing was read that could have disproved it.
+	//
+	// None of the causes above fits: no capability was unavailable, no limit ran out, no source
+	// declined. What ran out was OPPORTUNITY — the hypothesis arrived at the last call the round
+	// makes, and there is no pass left in which to test it. That is why the consequence names
+	// reinvestigation: a further round can do what this one could not.
+	GapExplanationUntested
 )
 
 func (c GapCause) String() string {
@@ -68,8 +76,24 @@ func (c GapCause) String() string {
 		return "request refused before dispatch"
 	case GapTargetNotFound:
 		return "target not found"
+	case GapExplanationUntested:
+		return "the explanation was never put at risk"
 	default:
 		return "unrecognised"
+	}
+}
+
+// UntestedExplanationGap is what a round records beside an explanation it could not test.
+//
+// The wording lives here rather than at the call site because it is part of the standard: the
+// caveat and the reason for it are written together, so a round cannot record one without the
+// other.
+func UntestedExplanationGap() Gap {
+	return Gap{
+		Cause:   GapExplanationUntested,
+		Subject: "the hypothesis this round's explanation rests on",
+		Consequence: "no read was dispatched to disprove the explanation this round settled on, " +
+			"so it survived nothing; a further round can test it",
 	}
 }
 

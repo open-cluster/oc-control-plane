@@ -38,21 +38,32 @@ func (r Runner) conclude(ctx context.Context, execution *round) (RoundOutcome, e
 		return 0, err
 	}
 
-	deliberation := r.deliberation(execution, execution.controls.MaxAdaptivePasses)
+	// The pass one past the last adaptive one. A hypothesis proposed here has had no read
+	// dispatched against it and cannot have: this is the last call the round makes.
+	concludingPass := execution.controls.MaxAdaptivePasses + 1
+
 	var lastRefusal error
 	for attempt := range 2 {
-		concluded, err := r.Reasoner.Conclude(ctx, deliberation)
+		// Recomputed per attempt rather than hoisted, so a second attempt is shown what the first
+		// one added. A retry answering against a stale list would place its ordinals against a
+		// shorter one than admission checks them against.
+		concluded, err := r.Reasoner.Conclude(
+			ctx, r.deliberation(execution, execution.controls.MaxAdaptivePasses))
 		if err != nil {
 			return r.modelFailure(ctx, execution, err)
 		}
 		execution.spend(concluded.Usage)
+		// Recorded before the settlings, because this same answer may settle a hypothesis it just
+		// proposed — which is what lets a cause the evidence revealed be stated at all.
+		if err = r.propose(ctx, execution, concluded.Hypotheses, concludingPass); err != nil {
+			return 0, err
+		}
 		if err = r.settle(
 			ctx, execution, concluded.Weighings, concluded.Settlings); err != nil {
 			return 0, err
 		}
 
-		outcome, admitErr := AdmitOutcome(
-			concluded.Draft, execution.evidence, execution.gaps, execution.live())
+		admitted, admitErr := AdmitOutcome(concluded.Draft, execution.shown())
 		if admitErr != nil {
 			lastRefusal = admitErr
 			r.Logger.WarnContext(ctx, "a model response was refused by the output schema",
@@ -60,6 +71,18 @@ func (r Runner) conclude(ctx context.Context, execution *round) (RoundOutcome, e
 				slog.Int("attempt", attempt+1),
 				slog.String("reason", admitErr.Error()))
 			continue
+		}
+
+		outcome := admitted.Outcome
+		if admitted.Untested {
+			// The caveat and the reason for it are written together. A demoted outcome whose gap
+			// was not recorded would tell a reader an explanation is qualified without saying by
+			// what, which is the shape a coverage gap exists to prevent.
+			gap, gapErr := r.recordGap(ctx, execution, UntestedExplanationGap())
+			if gapErr != nil {
+				return 0, gapErr
+			}
+			outcome.RelevantGaps = append(outcome.RelevantGaps, gap.ID)
 		}
 		if err = r.Store.RecordOutcome(
 			ctx, execution.organization, execution.fence, outcome); err != nil {
@@ -71,8 +94,44 @@ func (r Runner) conclude(ctx context.Context, execution *round) (RoundOutcome, e
 		return RoundConcluded, nil
 	}
 
-	return r.abstain(ctx, execution, "the reasoner could not produce an answer whose claims cite "+
-		"the evidence they rest on: "+lastRefusal.Error())
+	return r.abstain(ctx, execution, whyRefused(lastRefusal))
+}
+
+// whyRefused says which standard the reasoner missed, in a sentence an operator can act on.
+//
+// "It could not cite its claims" and "it stated a cause nothing tested" call for different things —
+// the first is a decoding or prompt problem, the second says the falsification machinery did not
+// carry the round — so an abstention that collapsed them would send whoever reads the case to the
+// wrong place.
+func whyRefused(refusal error) string {
+	if errors.Is(refusal, ErrUntraced) {
+		return "the reasoner stated an explanation that corresponds to no hypothesis it proposed " +
+			"and the evidence supported: " + refusal.Error()
+	}
+	return "the reasoner could not produce an answer whose claims cite the evidence they rest " +
+		"on: " + refusal.Error()
+}
+
+// propose records hypotheses an answer produced that nothing earlier had, stamping the pass that
+// proposed them so a reader can tell one the brief suggested from one the evidence forced.
+func (r Runner) propose(
+	ctx context.Context, execution *round, proposed []Hypothesis, pass int,
+) error {
+	if len(proposed) == 0 {
+		return nil
+	}
+	stamped := make([]Hypothesis, 0, len(proposed))
+	for _, hypothesis := range proposed {
+		hypothesis.Pass = pass
+		stamped = append(stamped, hypothesis)
+	}
+	recorded, err := r.Store.RecordHypotheses(
+		ctx, execution.organization, execution.fence, stamped)
+	if err != nil {
+		return err
+	}
+	execution.hypotheses = append(execution.hypotheses, recorded...)
+	return nil
 }
 
 // abstain records a first-class abstention carrying content: what was missing, what was left
@@ -85,16 +144,17 @@ func (r Runner) abstain(
 	for index := range execution.gaps {
 		draft.RelevantGaps = append(draft.RelevantGaps, index+1)
 	}
-	live := execution.live()
-	for index := range live {
-		draft.Unresolved = append(draft.Unresolved, index+1)
+	for index, hypothesis := range execution.hypotheses {
+		if hypothesis.State == HypothesisLive {
+			draft.Unresolved = append(draft.Unresolved, index+1)
+		}
 	}
 
-	outcome, err := AdmitOutcome(draft, execution.evidence, execution.gaps, live)
+	admitted, err := AdmitOutcome(draft, execution.shown())
 	if err != nil {
 		// Nothing to name: no gap, no live hypothesis, no contradiction. That is itself the thing
 		// to say, and it has to be sayable or the abstention path has a hole in it.
-		outcome = Outcome{
+		admitted.Outcome = Outcome{
 			ID:   uuid.New(),
 			Kind: OutcomeAbstained,
 			Statement: why + ". No coverage gap and no unresolved hypothesis was recorded, so " +
@@ -102,7 +162,7 @@ func (r Runner) abstain(
 		}
 	}
 	if err = r.Store.RecordOutcome(
-		ctx, execution.organization, execution.fence, outcome); err != nil {
+		ctx, execution.organization, execution.fence, admitted.Outcome); err != nil {
 		return 0, err
 	}
 	return RoundAbstained, nil
@@ -265,16 +325,31 @@ func (e *round) evidenceAt(ordinal int) (Item, bool) {
 	return e.evidence[ordinal-1], true
 }
 
-// live is the hypotheses nothing has settled. An abstention names these, because "what was still
-// unresolved" is half of what makes one usable.
-func (e *round) live() []Hypothesis {
-	live := make([]Hypothesis, 0, len(e.hypotheses))
-	for _, hypothesis := range e.hypotheses {
-		if hypothesis.State == HypothesisLive {
-			live = append(live, hypothesis)
+// shown is what admission checks a draft against: everything the reasoner was given, plus which
+// hypotheses this round actually put at risk.
+func (e *round) shown() Shown {
+	return Shown{
+		Evidence:   e.evidence,
+		Gaps:       e.gaps,
+		Hypotheses: e.hypotheses,
+		Tested:     e.tested(),
+	}
+}
+
+// tested is the hypotheses at least one DISPATCHED read pointed at.
+//
+// It is read from what this control plane sent rather than from what the planner proposed: a
+// request refused before dispatch never reached a cluster and so disproved nothing, and taking the
+// proposal as evidence of a test is how a hypothesis could be "tested" by a read that was refused
+// for naming a namespace outside the case's scope.
+func (e *round) tested() map[uuid.UUID]struct{} {
+	put := make(map[uuid.UUID]struct{}, len(e.sent))
+	for _, request := range e.sent {
+		if request.Justification != uuid.Nil {
+			put[request.Justification] = struct{}{}
 		}
 	}
-	return live
+	return put
 }
 
 // truncated reports whether a capability's read produced a truncation gap, which is what keeps a

@@ -2,6 +2,7 @@ package investigation_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,16 +23,38 @@ func items(count int) []investigation.Item {
 	return made
 }
 
+// shownWithATestedHypothesis is what the reasoner was shown together with one supported hypothesis
+// a dispatched read actually pointed at. It is the ordinary case, so the tests that are about
+// something else do not have to construct it.
+func shownWithATestedHypothesis(
+	evidence []investigation.Item, gaps []investigation.Gap,
+) investigation.Shown {
+	hypothesis := investigation.Hypothesis{
+		ID:        uuid.New(),
+		Ordinal:   1,
+		Statement: "the container cannot read the configuration it needs",
+		Falsifies: "the container starts",
+		State:     investigation.HypothesisSupported,
+	}
+	return investigation.Shown{
+		Evidence:   evidence,
+		Gaps:       gaps,
+		Hypotheses: []investigation.Hypothesis{hypothesis},
+		Tested:     map[uuid.UUID]struct{}{hypothesis.ID: {}},
+	}
+}
+
 func TestAdmitOutcome_RefusesAnUncitedClaim(t *testing.T) {
 	t.Parallel()
 
 	_, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:      investigation.OutcomeSupported,
 		Statement: "the container exits because its configuration names an unreachable host",
+		Explains:  1,
 		Claims: []investigation.DraftClaim{
 			{Role: investigation.ClaimSupporting, Statement: "it exits with code 1"},
 		},
-	}, items(2), nil, nil)
+	}, shownWithATestedHypothesis(items(2), nil))
 
 	if !errors.Is(err, investigation.ErrUncited) {
 		t.Fatalf("a claim citing nothing must be refused, got %v", err)
@@ -44,11 +67,12 @@ func TestAdmitOutcome_RefusesACitationOfEvidenceThatWasNeverShown(t *testing.T) 
 	_, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:      investigation.OutcomeSupported,
 		Statement: "the workload is failing",
+		Explains:  1,
 		Claims: []investigation.DraftClaim{
 			// Two items were shown; this cites a third.
 			{Role: investigation.ClaimSupporting, Statement: "it exits", Evidence: []int{3}},
 		},
-	}, items(2), nil, nil)
+	}, shownWithATestedHypothesis(items(2), nil))
 
 	if !errors.Is(err, investigation.ErrOutcome) {
 		t.Fatalf("citing evidence that was never shown must be refused, got %v", err)
@@ -61,11 +85,12 @@ func TestAdmitOutcome_RefusesASupportedExplanationWithNoSupportingClaim(t *testi
 	_, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:      investigation.OutcomeSupported,
 		Statement: "the workload is failing",
+		Explains:  1,
 		Claims: []investigation.DraftClaim{
 			{Role: investigation.ClaimContradicting, Statement: "the node is healthy",
 				Evidence: []int{1}},
 		},
-	}, items(2), nil, nil)
+	}, shownWithATestedHypothesis(items(2), nil))
 
 	if !errors.Is(err, investigation.ErrOutcome) {
 		t.Fatalf("a supported explanation resting on nothing must be refused, got %v", err)
@@ -79,7 +104,7 @@ func TestAdmitOutcome_RefusesAnAbstentionThatNamesNothing(t *testing.T) {
 	_, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:      investigation.OutcomeAbstained,
 		Statement: "no explanation is sufficiently supported",
-	}, items(1), nil, nil)
+	}, investigation.Shown{Evidence: items(1)})
 
 	if !errors.Is(err, investigation.ErrOutcome) {
 		t.Fatalf("an abstention naming nothing must be refused, got %v", err)
@@ -91,16 +116,17 @@ func TestAdmitOutcome_AnAbstentionNamingAGapIsAdmitted(t *testing.T) {
 
 	gaps := []investigation.Gap{{ID: uuid.New(), Cause: investigation.GapRetentionHorizon}}
 
-	outcome, err := investigation.AdmitOutcome(investigation.Draft{
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:         investigation.OutcomeAbstained,
 		Statement:    "the decisive events had already expired",
 		RelevantGaps: []int{1},
-	}, items(1), gaps, nil)
+	}, investigation.Shown{Evidence: items(1), Gaps: gaps})
 	if err != nil {
 		t.Fatalf("an abstention naming what was missing must be admitted: %v", err)
 	}
-	if len(outcome.RelevantGaps) != 1 || outcome.RelevantGaps[0] != gaps[0].ID {
-		t.Errorf("the abstention must resolve the gap it named, got %v", outcome.RelevantGaps)
+	relevant := admitted.Outcome.RelevantGaps
+	if len(relevant) != 1 || relevant[0] != gaps[0].ID {
+		t.Errorf("the abstention must resolve the gap it named, got %v", relevant)
 	}
 }
 
@@ -111,19 +137,21 @@ func TestAdmitOutcome_ClaimsResolveToTheEvidenceTheyCited(t *testing.T) {
 
 	shown := items(3)
 
-	outcome, err := investigation.AdmitOutcome(investigation.Draft{
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:      investigation.OutcomeSupported,
 		Statement: "the container cannot reach its configured host",
+		Explains:  1,
 		Claims: []investigation.DraftClaim{
 			{Role: investigation.ClaimSupporting, Statement: "it logs a refused connection",
 				Evidence: []int{1, 3}},
 			{Role: investigation.ClaimAffectedScope, Statement: "three pods are unready",
 				Evidence: []int{2}},
 		},
-	}, shown, nil, nil)
+	}, shownWithATestedHypothesis(shown, nil))
 	if err != nil {
 		t.Fatalf("admitting: %v", err)
 	}
+	outcome := admitted.Outcome
 	if len(outcome.Claims) != 2 {
 		t.Fatalf("both claims must survive, got %d", len(outcome.Claims))
 	}
@@ -148,20 +176,317 @@ func TestAdmitOutcome_IndependentSourcesCountsDistinctConnections(t *testing.T) 
 		{ID: uuid.New(), Connection: shared},
 	}
 
-	outcome, err := investigation.AdmitOutcome(investigation.Draft{
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
 		Kind:      investigation.OutcomeSupported,
 		Statement: "the workload cannot start",
+		Explains:  1,
 		Claims: []investigation.DraftClaim{
 			{Role: investigation.ClaimSupporting, Statement: "twice observed",
 				Evidence: []int{1, 2}},
 		},
-	}, shown, nil, nil)
+	}, shownWithATestedHypothesis(shown, nil))
 	if err != nil {
 		t.Fatalf("admitting: %v", err)
 	}
-	if outcome.IndependentSources != 1 {
+	if admitted.Outcome.IndependentSources != 1 {
 		t.Errorf("two items from one Connection are one source, got %d",
-			outcome.IndependentSources)
+			admitted.Outcome.IndependentSources)
+	}
+}
+
+// THE TRACED EXPLANATION.
+//
+// An outcome that states a cause nobody proposed and nobody tested is the failure these assert
+// against. It looked identical to a real conclusion in the record, and across three live runs it
+// happened twice.
+
+func supporting() []investigation.DraftClaim {
+	return []investigation.DraftClaim{
+		{Role: investigation.ClaimSupporting, Statement: "the Secret it names is not there",
+			Evidence: []int{1}},
+	}
+}
+
+func hypotheses(states ...investigation.HypothesisState) []investigation.Hypothesis {
+	made := make([]investigation.Hypothesis, 0, len(states))
+	for index, state := range states {
+		made = append(made, investigation.Hypothesis{
+			ID:        uuid.New(),
+			Ordinal:   index + 1,
+			Statement: "an explanation",
+			Falsifies: "an observation that would disprove it",
+			State:     state,
+		})
+	}
+	return made
+}
+
+func TestAdmitOutcome_RefusesASupportedExplanationThatNamesNoHypothesis(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisFalsified, investigation.HypothesisSetAside)
+
+	_, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeSupported,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Claims:    supporting(),
+	}, investigation.Shown{Evidence: items(1), Hypotheses: held})
+
+	if !errors.Is(err, investigation.ErrUntraced) {
+		t.Fatalf("an explanation traced to no hypothesis must be refused, got %v", err)
+	}
+}
+
+func TestAdmitOutcome_RefusesAnExplanationTracedToAFalsifiedHypothesis(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisFalsified)
+
+	_, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeSupported,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Explains:  1,
+		Claims:    supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		Tested:     map[uuid.UUID]struct{}{held[0].ID: {}},
+	})
+
+	if !errors.Is(err, investigation.ErrUntraced) {
+		t.Fatalf("an explanation traced to a falsified hypothesis must be refused, got %v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "falsified") {
+		t.Errorf("the refusal must name the state it found, got %q", err.Error())
+	}
+}
+
+func TestAdmitOutcome_RefusesAnExplanationTracedToASetAsideHypothesis(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisSetAside)
+
+	_, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeSupported,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Explains:  1,
+		Claims:    supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		Tested:     map[uuid.UUID]struct{}{held[0].ID: {}},
+	})
+
+	if !errors.Is(err, investigation.ErrUntraced) {
+		t.Fatalf("an explanation the round declined to pursue must be refused, got %v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "set_aside") {
+		t.Errorf("the refusal must name the state it found, got %q", err.Error())
+	}
+}
+
+func TestAdmitOutcome_RefusesAnExplanationTracedToAHypothesisThatWasNeverShown(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisSupported)
+
+	_, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeSupported,
+		Statement: "the pod cannot start",
+		// One hypothesis was shown; this names a second.
+		Explains: 2,
+		Claims:   supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		Tested:     map[uuid.UUID]struct{}{held[0].ID: {}},
+	})
+
+	if !errors.Is(err, investigation.ErrOutcome) {
+		t.Fatalf("naming a hypothesis nobody was shown must be refused, got %v", err)
+	}
+}
+
+func TestAdmitOutcome_RefusesAnAbstentionThatAlsoExplainsAHypothesis(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisSupported)
+
+	_, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:       investigation.OutcomeAbstained,
+		Statement:  "no explanation is sufficiently supported",
+		Explains:   1,
+		Unresolved: nil,
+		RelevantGaps: []int{
+			1,
+		},
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Gaps:       []investigation.Gap{{ID: uuid.New()}},
+		Hypotheses: held,
+		Tested:     map[uuid.UUID]struct{}{held[0].ID: {}},
+	})
+
+	if !errors.Is(err, investigation.ErrOutcome) {
+		t.Fatalf("an abstention that also names an explanation contradicts itself, got %v", err)
+	}
+}
+
+func TestAdmitOutcome_AnExplanationTracedToATestedSupportedHypothesisIsAdmitted(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisFalsified, investigation.HypothesisSupported)
+
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeSupported,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Explains:  2,
+		Claims:    supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		Tested:     map[uuid.UUID]struct{}{held[1].ID: {}},
+	})
+	if err != nil {
+		t.Fatalf("a traced, tested explanation must be admitted: %v", err)
+	}
+	if admitted.Outcome.Kind != investigation.OutcomeSupported {
+		t.Errorf("kind = %s, want supported carried through", admitted.Outcome.Kind)
+	}
+	if admitted.Outcome.Explains != held[1].ID {
+		t.Errorf("the outcome must resolve to the hypothesis it explains, got %v",
+			admitted.Outcome.Explains)
+	}
+	if admitted.Untested {
+		t.Error("a hypothesis a dispatched read pointed at was tested")
+	}
+}
+
+// A hypothesis nothing was read to disprove was never put at risk. The explanation may still
+// stand — it is what the evidence says — but calling it supported would make "supported" mean two
+// different things, and the difference is the one a reader is buying.
+func TestAdmitOutcome_AnExplanationNoReadTestedIsCaveatedRatherThanSupported(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisSupported)
+
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeSupported,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Explains:  1,
+		Claims:    supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		// Nothing dispatched pointed at it.
+		Tested: nil,
+	})
+	if err != nil {
+		t.Fatalf("an untested explanation is demoted rather than refused: %v", err)
+	}
+	if admitted.Outcome.Kind != investigation.OutcomeCaveated {
+		t.Errorf("kind = %s, want caveated", admitted.Outcome.Kind)
+	}
+	if !admitted.Untested {
+		t.Error("the caller has to be told, because it is the caller that records the gap")
+	}
+}
+
+// The two halves of "tested" have to agree on what identifies a hypothesis, and they are written in
+// different files: a request carries the identity Admit resolved from an ordinal, and admission
+// looks that identity up. If they ever disagreed nothing would fail loudly — every explanation would
+// simply be caveated, for a reason no reader could distinguish from the honest one.
+func TestAdmit_AJustifiedReadCarriesTheIdentityAdmissionLooksFor(t *testing.T) {
+	t.Parallel()
+
+	scope := investigation.Scope{
+		Namespace:    "commerce",
+		WorkloadName: "orders",
+		WorkloadKind: investigation.WorkloadStatefulSet,
+	}
+	held := hypotheses(investigation.HypothesisLive, investigation.HypothesisLive)
+
+	admission := investigation.Admit(investigation.Proposal{
+		CapabilityID:      "kubernetes.workload.runtime",
+		CapabilityVersion: 1,
+		Arguments: investigation.Arguments{
+			Namespace:    scope.Namespace,
+			WorkloadName: scope.WorkloadName,
+			WorkloadKind: scope.WorkloadKind,
+		},
+		Justification: 2,
+		Reason:        "the runtime state would disprove it",
+	}, investigation.Bounds{
+		Scope:      scope,
+		Window:     investigation.Window{Start: time.Now().Add(-time.Hour), End: time.Now()},
+		Controls:   investigation.DefaultControls(),
+		Hypotheses: held,
+		Pass:       1,
+	})
+
+	if !admission.Admitted {
+		t.Fatalf("the read must be admitted, refused as %s", admission.Refusal)
+	}
+	if admission.Request.Justification != held[1].ID {
+		t.Errorf("the request carries %v; admission looks up %v",
+			admission.Request.Justification, held[1].ID)
+	}
+}
+
+// The reasoner's own kind is never promoted. It is demoted or left alone, because a model asked to
+// grade its own rigour grades it generously.
+func TestAdmitOutcome_ACaveatedDraftIsNotPromotedByBeingTested(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisSupported)
+
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeCaveated,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Explains:  1,
+		Claims:    supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		Tested:     map[uuid.UUID]struct{}{held[0].ID: {}},
+	})
+	if err != nil {
+		t.Fatalf("admitting: %v", err)
+	}
+	if admitted.Outcome.Kind != investigation.OutcomeCaveated {
+		t.Errorf("kind = %s, want caveated left alone", admitted.Outcome.Kind)
+	}
+	if admitted.Untested {
+		t.Error("a tested hypothesis is not untested merely because the draft was caveated")
+	}
+}
+
+// A caveated draft resting on an untested hypothesis is still untested. The kind does not move —
+// there is nowhere below caveated to move it to — but the gap must still be recorded, or a reader
+// sees a caveat and no reason for it.
+func TestAdmitOutcome_ACaveatedDraftOnAnUntestedHypothesisStillReportsUntested(t *testing.T) {
+	t.Parallel()
+
+	held := hypotheses(investigation.HypothesisSupported)
+
+	admitted, err := investigation.AdmitOutcome(investigation.Draft{
+		Kind:      investigation.OutcomeCaveated,
+		Statement: "the pod cannot start because a Secret it references does not exist",
+		Explains:  1,
+		Claims:    supporting(),
+	}, investigation.Shown{
+		Evidence:   items(1),
+		Hypotheses: held,
+		Tested:     nil,
+	})
+	if err != nil {
+		t.Fatalf("admitting: %v", err)
+	}
+	if admitted.Outcome.Kind != investigation.OutcomeCaveated {
+		t.Errorf("kind = %s, want caveated", admitted.Outcome.Kind)
+	}
+	if !admitted.Untested {
+		t.Error("the gap has to be recorded whatever kind the reasoner drafted")
 	}
 }
 

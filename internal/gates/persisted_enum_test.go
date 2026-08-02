@@ -125,6 +125,7 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"GapResultTruncated", int(investigation.GapResultTruncated), 8},
 		{"GapRequestRefused", int(investigation.GapRequestRefused), 9},
 		{"GapTargetNotFound", int(investigation.GapTargetNotFound), 10},
+		{"GapExplanationUntested", int(investigation.GapExplanationUntested), 11},
 
 		{"CoverageChecked", int(investigation.CoverageChecked), 1},
 		{"CoverageCheckedEmpty", int(investigation.CoverageCheckedEmpty), 2},

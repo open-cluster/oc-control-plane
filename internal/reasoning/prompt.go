@@ -22,7 +22,7 @@ import (
 // PromptVersion is the version of the wording below. It is part of the transcript key, so a change
 // to the prompt refuses every recording made before it rather than replaying against wording that
 // no longer exists.
-const PromptVersion = "2"
+const PromptVersion = "3"
 
 // maxRenderedEvidenceBytes bounds the total evidence text one prompt carries. Individual items are
 // already bounded when they are validated; this bounds their sum, because a round that gathered
@@ -76,6 +76,11 @@ not make. Contradicting evidence is reported rather than resolved silently in fa
 you find most likely; evidence that was considered and moved nothing is worth recording, because it
 is what shows a hypothesis was examined rather than ignored.
 
+An explanation is a hypothesis, not a sentence. Whatever you conclude has to be one of the
+explanations on the record, settled as supported — either one you proposed earlier or one you add
+when the evidence reveals it. Stating a cause that corresponds to no hypothesis is refused, because
+the record would then show a conclusion with no account of what it was weighed against.
+
 Declining to conclude is a first-class answer. If no explanation is sufficiently supported, abstain
 and name what was missing, what was left unresolved, or what contradicted what. An abstention that
 names none of those is not usable. A confident conclusion that outruns its evidence is the one
@@ -93,6 +98,11 @@ comparable between runs. Propose explanations that the reads available to you co
 distinguish between, each with the observation that would disprove it. Prefer a small number of
 genuinely different explanations over many variations of one.
 
+If the orientation reports anything changing inside the window, one of your explanations is that
+the change is the cause. Propose it whether or not you think it likely. An alternative you never
+proposed is one the record cannot show you examined, and a change ruled out with a reason tells a
+reader more than a change nobody mentioned.
+
 Return the hypotheses document.`
 
 	proposalsTask = `TASK: Choose the next reads, and say what you make of the evidence so far.
@@ -104,6 +114,11 @@ and a round that spends them on confirmation rather than discrimination learns n
 Record how the evidence you have already been shown stands towards each hypothesis, including
 evidence that moved nothing, and settle any hypothesis the evidence has decided.
 
+If the evidence has revealed an explanation none of your hypotheses covers, add it, with the
+observation that would disprove it. It takes the next ordinal after the ones you hold, and you may
+then ask for a read that would test it. A cause noticed but never proposed is one nothing will be
+read to disprove.
+
 If you have nothing further worth asking for, return an empty proposals list. That is a decision,
 not a failure.
 
@@ -111,14 +126,24 @@ Return the proposals document.`
 
 	conclusionTask = `TASK: State the most supported explanation, or abstain.
 
-Weigh what you were shown. Cite every claim by evidence ordinal. Name the hypotheses still
-unresolved and the coverage gaps that mattered to this outcome.
+Weigh what you were shown. Cite every claim by evidence ordinal. Name the coverage gaps that
+mattered to this outcome and the hypotheses still unresolved.
+
+Your explanation must BE one of the hypotheses. Name it by ordinal in "explains", and settle that
+same hypothesis as supported. If the evidence points somewhere none of them reached, add it to
+"hypotheses" with what would disprove it and explain that one — it takes the next ordinal after the
+ones you were shown. This is the last call in the round, so a hypothesis added here will not be
+tested by any read, and the case will say so beside your explanation.
+
+Settle every alternative you are not explaining, with the reason: falsified where the evidence
+disproved it, set aside where you did not pursue it. An alternative left silent is one a reader
+cannot check, and a loud change that turned out to be innocent is worth setting aside explicitly.
 
 Choose the kind honestly. "supported" is an explanation the evidence carries and the alternatives
 do not survive. "caveated" is an explanation whose support is real and whose coverage is not — it
 stands, and the gap that could overturn it is named beside it. "abstained" is no explanation being
-sufficiently supported, and it must name what was missing, what was unresolved, or what
-contradicted what.
+sufficiently supported: it names no hypothesis in "explains", and it must say what was missing,
+what was unresolved, or what contradicted what.
 
 Return the conclusion document.`
 )

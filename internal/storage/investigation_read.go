@@ -25,7 +25,11 @@ import (
 const (
 	hypothesisColumns = `
 		hypothesis_id, investigation_id, round_id, ordinal, statement, falsifies,
-		state, set_aside_reason, proposed_at, updated_at`
+		state, set_aside_reason, pass, proposed_at, updated_at`
+
+	outcomeColumns = `
+		outcome_id, round_id, round_ordinal, kind, statement, independent_sources,
+		explains_hypothesis_id, superseded, reached_at`
 
 	requestColumns = `
 		request_id, investigation_id, round_id, ordinal, pass, capability_id, capability_version,

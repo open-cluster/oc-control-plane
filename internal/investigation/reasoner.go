@@ -69,17 +69,29 @@ type Hypothesized struct {
 // far, and what choosing them cost.
 type Proposed struct {
 	Proposals []Proposal
-	Weighings []Weighing
-	Settlings []Settling
-	Usage     Usage
+	// Hypotheses are explanations this pass proposed that the opening could not have: the brief
+	// alone does not contain them. They are appended to the round and take the next ordinals.
+	Hypotheses []Hypothesis
+	Weighings  []Weighing
+	Settlings  []Settling
+	Usage      Usage
 }
 
 // Concluded is the draft outcome, the last movements of the hypotheses, and what reaching it cost.
 type Concluded struct {
-	Draft     Draft
-	Weighings []Weighing
-	Settlings []Settling
-	Usage     Usage
+	Draft Draft
+	// Hypotheses are explanations the evidence produced that nothing earlier proposed.
+	//
+	// The opening call sees the brief alone, so a cause only the evidence could reveal — a log line
+	// naming a Secret nobody knew was referenced — cannot be among the explanations it proposed.
+	// With no way to add one, a reasoner that found such a cause had two moves: state it attached
+	// to no hypothesis, or abstain on evidence naming the answer. Both are worse than letting it
+	// say what it found and what would disprove it. These may therefore be settled by this same
+	// answer and may be the one the outcome explains.
+	Hypotheses []Hypothesis
+	Weighings  []Weighing
+	Settlings  []Settling
+	Usage      Usage
 }
 
 // Weighing is how one EvidenceItem stands towards one Hypothesis, both named by their ordinal

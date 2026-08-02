@@ -24,11 +24,29 @@ func scanHypothesis(row scanned) (investigation.Hypothesis, error) {
 	)
 	if err := row.Scan(&hypothesis.ID, new(uuid.UUID), &hypothesis.RoundID, &hypothesis.Ordinal,
 		&hypothesis.Statement, &hypothesis.Falsifies, &state, &hypothesis.SetAsideReason,
-		&hypothesis.ProposedAt, &hypothesis.UpdatedAt); err != nil {
+		&hypothesis.Pass, &hypothesis.ProposedAt, &hypothesis.UpdatedAt); err != nil {
 		return investigation.Hypothesis{}, err
 	}
 	hypothesis.State = investigation.HypothesisState(state)
 	return hypothesis, nil
+}
+
+func scanOutcome(row scanned) (investigation.Outcome, error) {
+	var (
+		outcome  investigation.Outcome
+		kind     int16
+		explains *uuid.UUID
+	)
+	if err := row.Scan(&outcome.ID, &outcome.RoundID, &outcome.Round, &kind, &outcome.Statement,
+		&outcome.IndependentSources, &explains, &outcome.Superseded,
+		&outcome.ReachedAt); err != nil {
+		return investigation.Outcome{}, err
+	}
+	outcome.Kind = investigation.OutcomeKind(kind)
+	if explains != nil {
+		outcome.Explains = *explains
+	}
+	return outcome, nil
 }
 
 func scanRequest(row scanned) (investigation.Request, error) {

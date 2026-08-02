@@ -191,6 +191,9 @@ func outcomeViewOf(outcome Outcome) outcomeView {
 		Superseded:         outcome.Superseded,
 		ReachedAt:          outcome.ReachedAt,
 	}
+	if outcome.Explains != uuid.Nil {
+		view.ExplainsID = outcome.Explains.String()
+	}
 	for _, claim := range outcome.Claims {
 		rendered := claimView{
 			ID:        claim.ID.String(),
@@ -258,6 +261,7 @@ func hypothesisViewOf(hypothesis Hypothesis) hypothesisView {
 		Falsifies:      hypothesis.Falsifies,
 		State:          hypothesis.State.String(),
 		SetAsideReason: hypothesis.SetAsideReason,
+		Pass:           hypothesis.Pass,
 		ProposedAt:     hypothesis.ProposedAt,
 		UpdatedAt:      hypothesis.UpdatedAt,
 	}

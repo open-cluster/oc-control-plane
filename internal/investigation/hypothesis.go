@@ -97,8 +97,13 @@ type Hypothesis struct {
 	State     HypothesisState
 	// SetAsideReason is why this was not pursued, and is required when the state is set aside.
 	SetAsideReason string
-	ProposedAt     time.Time
-	UpdatedAt      time.Time
+	// Pass is which call proposed it. Zero is the opening, from the brief alone; one and two are
+	// the adaptive passes; one past the last pass is the conclusion. A number rather than a flag,
+	// because the useful question later is not whether a hypothesis arrived late but how late —
+	// one proposed at the conclusion has had no read dispatched against it and cannot have.
+	Pass       int
+	ProposedAt time.Time
+	UpdatedAt  time.Time
 }
 
 // Weighed is one EvidenceItem's stance towards one Hypothesis, with the planner's reason for it.

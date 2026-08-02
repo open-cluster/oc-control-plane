@@ -27,7 +27,7 @@ package reasoning
 // SchemaVersion is the version of the three documents below. Bumping it invalidates every
 // recording made against the old shape through the transcript key that already exists, which is
 // the mechanism working rather than a cost.
-const SchemaVersion = "2"
+const SchemaVersion = "3"
 
 // Schemas is the three output contracts, one per method on the boundary.
 func Schemas() (hypotheses, proposals, conclusion Schema) {
@@ -41,19 +41,27 @@ func HypothesesSchema() Schema {
 		Version: SchemaVersion,
 		Document: object(
 			properties{
-				"hypotheses": array(object(
-					properties{
-						// What might explain what was observed.
-						"statement": stringField,
-						// What would disprove it. It is required rather than optional because an
-						// explanation nothing could disprove is a belief, and the whole apparatus
-						// under this exists to tell those two apart.
-						"falsifies": stringField,
-					},
-				)),
+				"hypotheses": array(hypothesisSchema()),
 			},
 		),
 	}
+}
+
+// hypothesisSchema is one proposed explanation. The same shape is offered at all three calls,
+// because a cause the evidence revealed has to be sayable as a hypothesis rather than only inside a
+// conclusion — a reasoner that could not propose one late would state it untethered or abstain on
+// evidence naming the answer, and both are worse than letting it say what would disprove it.
+func hypothesisSchema() map[string]any {
+	return object(
+		properties{
+			// What might explain what was observed.
+			"statement": stringField,
+			// What would disprove it. It is required rather than optional because an explanation
+			// nothing could disprove is a belief, and the whole apparatus under this exists to tell
+			// those two apart.
+			"falsifies": stringField,
+		},
+	)
 }
 
 // ProposalsSchema is what the planner returns when it is choosing further reads.
@@ -80,8 +88,11 @@ func ProposalsSchema() Schema {
 						"arguments":     argumentsSchema(),
 					},
 				)),
-				"weighings": array(weighingSchema()),
-				"settlings": array(settlingSchema()),
+				// Explanations this pass proposes that the brief alone could not have produced.
+				// They are appended to the round and take the ordinals after the ones already held.
+				"hypotheses": array(hypothesisSchema()),
+				"weighings":  array(weighingSchema()),
+				"settlings":  array(settlingSchema()),
 			},
 		),
 	}
@@ -99,6 +110,14 @@ func ConclusionSchema() Schema {
 				// enforced rather than reviewed.
 				"kind":      enumField("supported", "caveated", "abstained"),
 				"statement": stringField,
+				// The one-based position of the hypothesis this explanation IS, among those held
+				// plus any proposed in this same document. Zero on an abstention. Without it a
+				// round can falsify every alternative it proposed and still state a cause nobody
+				// put forward, and the case file looks identical either way.
+				"explains": integerField,
+				// Explanations the evidence produced that nothing earlier proposed. They may be
+				// settled by this same document and may be the one "explains" names.
+				"hypotheses": array(hypothesisSchema()),
 				"claims": array(object(
 					properties{
 						"role":      enumField("supporting", "contradicting", "affected_scope"),

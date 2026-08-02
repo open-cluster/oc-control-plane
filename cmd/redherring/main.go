@@ -44,6 +44,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/reasoning"
 	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
@@ -149,7 +151,8 @@ func investigate(ctx context.Context, reasoner investigation.Reasoner, out *repo
 	brief := redHerringBrief()
 
 	proposed, err := reasoner.Hypotheses(ctx, brief)
-	out.hypotheses = proposed.Hypotheses
+	held := identify(proposed.Hypotheses, 0)
+	out.hypotheses = held
 	if err != nil {
 		out.failed = fmt.Errorf("proposing hypotheses: %w", err)
 		return
@@ -157,7 +160,7 @@ func investigate(ctx context.Context, reasoner investigation.Reasoner, out *repo
 
 	deliberation := investigation.Deliberation{
 		Brief:      brief,
-		Hypotheses: proposed.Hypotheses,
+		Hypotheses: held,
 		Available:  brief.Available,
 		Remaining:  6,
 		Pass:       1,
@@ -171,6 +174,7 @@ func investigate(ctx context.Context, reasoner investigation.Reasoner, out *repo
 		out.failed = fmt.Errorf("proposing reads: %w", err)
 		return
 	}
+	held = append(held, identify(planned.Hypotheses, 1)...)
 
 	// The reads are SERVED rather than dispatched. Every proposal is validated against the case's
 	// scope exactly as the runner would validate it, so the invariant is exercised even though
@@ -179,6 +183,7 @@ func investigate(ctx context.Context, reasoner investigation.Reasoner, out *repo
 	out.served = served
 	out.refusedReads = refused
 
+	deliberation.Hypotheses = held
 	deliberation.Evidence = served
 	deliberation.Gaps = redHerringGaps()
 	deliberation.Remaining = 6 - len(planned.Proposals)
@@ -192,16 +197,53 @@ func investigate(ctx context.Context, reasoner investigation.Reasoner, out *repo
 		out.failed = fmt.Errorf("concluding: %w", err)
 		return
 	}
+	held = append(held, identify(concluded.Hypotheses, 2)...)
+	out.hypotheses = held
 
 	// The output schema runs before anything would be persisted, so a draft carrying an uncited
-	// claim is refused here exactly as it would be in a real round.
-	outcome, admitErr := investigation.AdmitOutcome(
-		concluded.Draft, served, deliberation.Gaps, live(deliberation.Hypotheses, out.settlings))
+	// claim — or an explanation traced to no hypothesis the evidence supported — is refused here
+	// exactly as it would be in a real round.
+	admitted, admitErr := investigation.AdmitOutcome(concluded.Draft, investigation.Shown{
+		Evidence:   served,
+		Gaps:       deliberation.Gaps,
+		Hypotheses: settled(held, out.settlings),
+		Tested:     tested(planned.Proposals, held),
+	})
 	if admitErr != nil {
 		out.admissionFailure = admitErr
 		return
 	}
-	out.outcome = &outcome
+	out.outcome = &admitted.Outcome
+	out.untested = admitted.Untested
+}
+
+// identify stands in for what storage does in a real round: a hypothesis has no identity until it
+// is recorded, and admission resolves the explanation to one. Without it every hypothesis here
+// would share the zero identifier and the traced-explanation check would pass against any of them.
+func identify(proposed []investigation.Hypothesis, pass int) []investigation.Hypothesis {
+	identified := make([]investigation.Hypothesis, 0, len(proposed))
+	for _, hypothesis := range proposed {
+		hypothesis.ID = uuid.New()
+		hypothesis.Pass = pass
+		identified = append(identified, hypothesis)
+	}
+	return identified
+}
+
+// tested is the hypotheses a read pointed at. Nothing is dispatched here, so a served read stands
+// in for a dispatched one — which is the closest this instrument can get and is stated rather than
+// implied, because it means a caveat this program does not report could still appear in a real
+// round.
+func tested(
+	proposals []investigation.Proposal, held []investigation.Hypothesis,
+) map[uuid.UUID]struct{} {
+	put := make(map[uuid.UUID]struct{}, len(proposals))
+	for _, proposal := range proposals {
+		if proposal.Justification >= 1 && proposal.Justification <= len(held) {
+			put[held[proposal.Justification-1].ID] = struct{}{}
+		}
+	}
+	return put
 }
 
 // serve answers the planner's reads from the pre-baked evidence, refusing anything the case's own
@@ -258,25 +300,28 @@ func renumbered(items []investigation.Item) []investigation.Item {
 	return items
 }
 
-func live(
+// settled applies what the reasoner made of its hypotheses, mirroring what the runner's own
+// settling does — including which settlings it skips, so admission here checks the same list a real
+// round would check.
+func settled(
 	hypotheses []investigation.Hypothesis, settlings []investigation.Settling,
 ) []investigation.Hypothesis {
-	states := make([]investigation.HypothesisState, len(hypotheses))
-	for index, hypothesis := range hypotheses {
-		states[index] = hypothesis.State
-	}
+	moved := make([]investigation.Hypothesis, len(hypotheses))
+	copy(moved, hypotheses)
 	for _, settling := range settlings {
-		if settling.Hypothesis >= 1 && settling.Hypothesis <= len(states) && settling.State != 0 {
-			states[settling.Hypothesis-1] = settling.State
+		if settling.Hypothesis < 1 || settling.Hypothesis > len(moved) || settling.State == 0 {
+			continue
+		}
+		if settling.State == investigation.HypothesisSetAside && settling.Reason == "" {
+			continue
+		}
+		moved[settling.Hypothesis-1].State = settling.State
+		moved[settling.Hypothesis-1].SetAsideReason = ""
+		if settling.State == investigation.HypothesisSetAside {
+			moved[settling.Hypothesis-1].SetAsideReason = settling.Reason
 		}
 	}
-	remaining := make([]investigation.Hypothesis, 0, len(hypotheses))
-	for index, state := range states {
-		if state == investigation.HypothesisLive {
-			remaining = append(remaining, hypotheses[index])
-		}
-	}
-	return remaining
+	return moved
 }
 
 // observer collects every record the service publishes, which is where the attribution, the token

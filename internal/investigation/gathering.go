@@ -3,6 +3,7 @@ package investigation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -253,6 +254,22 @@ func (r Runner) recordValidated(
 func (r Runner) record(ctx context.Context, execution *round, validated Validated) error {
 	_, err := r.recordValidated(ctx, execution, validated)
 	return err
+}
+
+// recordGap writes one gap and returns it with the identity storage assigned, so a caller that has
+// to cite it can.
+func (r Runner) recordGap(
+	ctx context.Context, execution *round, gap Gap,
+) (Gap, error) {
+	recorded, err := r.recordValidated(ctx, execution, Validated{Gaps: []Gap{gap}})
+	if err != nil {
+		return Gap{}, err
+	}
+	if len(recorded.Gaps) != 1 {
+		return Gap{}, fmt.Errorf("%w: recording a coverage gap returned %d of them",
+			ErrOutcome, len(recorded.Gaps))
+	}
+	return recorded.Gaps[0], nil
 }
 
 // settle applies what the reasoner made of the evidence: how it stands towards each hypothesis, and

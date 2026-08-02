@@ -142,13 +142,11 @@ func (r Runner) execute(ctx context.Context, execution *round) (RoundOutcome, er
 		return r.modelFailure(ctx, execution, err)
 	}
 	execution.spend(proposed.Usage)
-	if len(proposed.Hypotheses) > 0 {
-		recorded, recordErr := r.Store.RecordHypotheses(
-			ctx, execution.organization, execution.fence, proposed.Hypotheses)
-		if recordErr != nil {
-			return 0, recordErr
-		}
-		execution.hypotheses = append(execution.hypotheses, recorded...)
+	// Pass zero: proposed from the brief alone, before any evidence text existed. That is what
+	// makes the opening comparable between runs, and what tells a later reader which explanations
+	// were predicted rather than discovered.
+	if err = r.propose(ctx, execution, proposed.Hypotheses, 0); err != nil {
+		return 0, err
 	}
 
 	for pass := 1; pass <= execution.controls.MaxAdaptivePasses; pass++ {
@@ -254,6 +252,11 @@ func (r Runner) adapt(ctx context.Context, execution *round, pass int) (bool, er
 		return false, err
 	}
 	execution.spend(proposed.Usage)
+	// Recorded before the settlings and before the reads, so a hypothesis this pass discovered can
+	// be settled by this same answer and can justify one of the reads it is asking for.
+	if err = r.propose(ctx, execution, proposed.Hypotheses, pass); err != nil {
+		return false, err
+	}
 	if err = r.settle(ctx, execution, proposed.Weighings, proposed.Settlings); err != nil {
 		return false, err
 	}

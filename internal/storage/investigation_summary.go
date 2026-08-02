@@ -105,8 +105,7 @@ func readCurrentOutcome(
 	ctx context.Context, on pgx.Tx, organization tenancy.Organization, id uuid.UUID,
 ) ([]investigation.Outcome, error) {
 	rows, err := on.Query(ctx, `
-		SELECT outcome_id, round_id, round_ordinal, kind, statement, independent_sources,
-		       superseded, reached_at
+		SELECT `+outcomeColumns+`
 		  FROM investigation_outcome
 		 WHERE investigation_id = $1 AND organization = $2 AND NOT superseded
 		 ORDER BY round_ordinal DESC LIMIT 1`,
@@ -117,17 +116,11 @@ func readCurrentOutcome(
 
 	var current []investigation.Outcome
 	for rows.Next() {
-		var (
-			outcome investigation.Outcome
-			kind    int16
-		)
-		if err = rows.Scan(&outcome.ID, &outcome.RoundID, &outcome.Round, &kind,
-			&outcome.Statement, &outcome.IndependentSources, &outcome.Superseded,
-			&outcome.ReachedAt); err != nil {
+		outcome, scanErr := scanOutcome(rows)
+		if scanErr != nil {
 			rows.Close()
-			return nil, fmt.Errorf("reading the current outcome: %w", err)
+			return nil, fmt.Errorf("reading the current outcome: %w", scanErr)
 		}
-		outcome.Kind = investigation.OutcomeKind(kind)
 		current = append(current, outcome)
 	}
 	rows.Close()

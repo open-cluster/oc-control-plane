@@ -102,28 +102,79 @@ items, 4 hypotheses, 1 coverage gap it found itself (the cluster keeps events fo
 the window asked for exactly an hour, so the start of the window is unreconstructable). About
 $0.021, 13,118 tokens, 2m36s.
 
-**Where it is only partially right.** The scenario's ground truth says the correct behaviour is to
-name the distractor as considered and SET ASIDE, with the reason — that is what the hypothesis
-record exists to show. It never hypothesised the frontend at all. Avoiding a trap is not the same
-as discriminating against it, and the artifact cannot show a reader that the alternative was
-examined.
+**RESOLVED 2026-08-02. The distractor is now discriminated against rather than avoided.** The
+scenario's ground truth says the correct behaviour is to name the distractor as considered and SET
+ASIDE, with the reason; under prompt version 2 it never hypothesised the change at all, and avoiding
+a trap is not the same as ruling it out. The opening task now asks for the change-as-cause
+explanation whenever the brief reports something changing in the window — proposed whether or not
+the model finds it likely, because an alternative never proposed is one the record cannot show was
+examined. The conclusion task asks for every alternative to end in a state with a reason.
 
-**The falsification machinery is not reliably load-bearing.** Across three live runs the
-explanation traced to a supported hypothesis ONCE. In the other two every hypothesis was falsified
-or set aside and the outcome was still admitted as `supported`, stating a cause nobody had
-proposed. `AdmitOutcome` requires a supporting CLAIM and never requires the explanation to be a
-hypothesis the investigator actually tested, so whether the record shows reasoning or merely a
-conclusion is left to chance. This is a domain question rather than a provider one and is the
-single most valuable thing these runs surfaced.
+On the first live run under prompt version 3 (`cmd/redherring`, GLM-5, pre-baked evidence) the
+distractor WAS hypothesis 1, a read was chosen to discriminate against it, and it was FALSIFIED with
+the reason: the container starts and reaches the database, so the failure would affect any image
+version. That is the behaviour the ground truth asks for. One run is one run.
+
+**RESOLVED 2026-08-02. The falsification machinery is now load-bearing, and it immediately caught
+something.** Written after the runs described below.
+
+The defect was that `AdmitOutcome` required a supporting CLAIM and never required the explanation to
+be a hypothesis the investigator proposed and tested, so across three live runs the explanation
+traced to a supported hypothesis ONCE. It had two halves the first reading missed. The check was
+absent, and — because `Reasoner.Hypotheses` was called once from the brief alone and neither later
+answer could carry a new one — a reasoner that discovered a cause mid-round had no way to say so
+except untethered prose. Adding the check alone would have turned correct answers into abstentions.
+
+What is built is `plans/spec-traced-explanation.md`: a `supported` or `caveated` outcome names
+exactly one hypothesis, that hypothesis is in the `supported` state, and an outcome that cannot make
+the link is refused where an uncited claim is already refused. A reasoner may now propose hypotheses
+at an adaptive pass and at the conclusion, each with its falsification condition, and every
+hypothesis records the pass that proposed it. An explanation resting on a hypothesis **no dispatched
+read pointed at** is admitted as `caveated` rather than `supported` and carries a coverage gap saying
+so — computed from what the control plane actually sent, never asked of the model.
+
+That last rule is what stops the first being satisfiable by ritual, and the first live run proved it
+was needed.
+
+**Two live runs on GLM-5 under prompt and schema version 3, and they came out differently — which is
+the mechanism discriminating rather than firing on everything.**
+
+`cmd/redherring`, pre-baked evidence: the reasoner proposed the distractor, dispatched a read
+justified by the hypothesis it went on to conclude, and the outcome stood as `supported` with no
+caveat. Every claim cited evidence; no retries; the schema was satisfied first try on all three
+calls.
+
+The scenario harness, `red-herring` end to end against real k3s, a real Relay, real Postgres and the
+real control plane: it named the missing Secret correctly, traced it to hypothesis 3, and the round
+was admitted as **caveated** rather than supported, carrying the gap "no read was dispatched to
+disprove the explanation this round settled on, so it survived nothing". The record says why — the
+planner proposed ZERO adaptive reads. Both capability requests were the opening plan's. It concluded
+correctly from the orientation alone and never asked a question, and the reads it did have were
+justified by the two hypotheses it falsified rather than by the one it concluded.
+
+That run is the point of the whole change. The previous build reported exactly this as a clean
+`supported`. 19,622 tokens, about $0.030, 3m29s.
 
 **Cost and latency, measured rather than guessed.** Reasoning was 78% of output tokens on the
 pre-baked run, so effort is the first lever to tune. A single conclusion call took 2m12s, which is
 why the per-call timeout and the round deadline were both raised — the previous defaults would have
 failed rounds that were working.
 
-**What remains unproved.** Anthropic has never been called: that adapter is exercised only against
-a canned transport. Nine of the ten scenarios have never been run live. And three runs on one model
-is a handful of data points, not a measurement.
+**What remains unproved, stated plainly.**
+
+- **Anthropic has still never been called.** That adapter is exercised only against a canned
+  transport. It is blocked on API credits rather than on engineering: a Claude Code subscription is
+  not an API credential, and `POST /v1/messages` bills against Console credits which this account
+  does not currently hold. Until `claude-opus-5` answers a real scenario, "provider-neutral" is an
+  assertion supported by a second adapter's unit tests and nothing live.
+- **No round-level unit test covers the new wiring.** `AdmitOutcome` is tested directly and the
+  identity a dispatched request carries is tested against the identity admission looks up — that
+  pair is the one that could disagree silently and turn every outcome caveated. The runner's own
+  sequencing is proved by the end-to-end run above and by nothing else, because a fake Store would
+  prove the runner calls methods in the order this build chose.
+- **Five live runs on one model is a handful of data points, not a measurement.** The demotion has
+  fired once and not fired once. That is enough to show it discriminates and nowhere near enough to
+  say what fraction of real rounds it will catch.
 
 **The product can be evaluated, and secrets do not leave a cluster.** Written 2026-08-01. The
 scenario harness exists as a program (`test/e2e/cmd/scenario`): ten clusters broken on purpose —
@@ -198,7 +249,8 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Environments and Connections | `spec-environments-and-connections.md` | Go control plane | ✅ Done (revision 3 — Integration separated from Connection) |
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
 | 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ✅ Runnable and RUN 2026-08-02 against a live provider end to end. One of ten scenarios exercised |
-| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. Anthropic itself still uncalled |
+| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. Anthropic itself still uncalled, blocked on API credits |
+| 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: one run stood as supported, one was demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010 |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
 
