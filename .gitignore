@@ -34,3 +34,4 @@ Thumbs.db
 # what is committed is a decision rather than whatever the last run happened to leave behind.
 /artifacts/
 /artifacts-sweep/
+/artifacts-rerun/
