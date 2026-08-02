@@ -35,6 +35,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
+	"github.com/open-cluster/oc-control-plane/internal/reasoning"
+	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
@@ -157,9 +159,12 @@ func run(
 	}
 	logMigrations(logger, applied)
 
-	reasoner, err := modelBoundary(cfg, replace)
+	reasoner, versions, err := modelBoundary(cfg, logger, replace)
 	if err != nil {
 		return err
+	}
+	if service, live := reasoner.(*reasoning.Service); live {
+		logger.Info("model provider configured", slog.String("chain", service.Describe()))
 	}
 
 	claimInterval := investigatorInterval
@@ -175,33 +180,99 @@ func run(
 		telemetry:  telemetry,
 		placements: placements,
 		reasoner:   reasoner,
-		versions:   investigatorVersions(reasoner),
+		versions:   versions,
 		onListen:   replace.onListen,
 	})
 }
 
 // modelBoundary resolves what will answer the reasoning step.
 //
-// A test's own boundary wins, then a recorded transcript the deployment was given, and with
-// neither the boundary is the provider-unavailable one. Failing closed is deliberate: an instance
-// that cannot reason must say so on every round rather than look healthy and abstain for a reason
-// nobody can find.
+// A test's own boundary wins, then a live provider, then a recorded transcript the deployment was
+// given, and with none of them the boundary is the provider-unavailable one. Failing closed is
+// deliberate: an instance that cannot reason must say so on every round rather than look healthy
+// and abstain for a reason nobody can find.
 //
-// A transcript that does not load is a REFUSAL TO START. An operator who pointed at one and got a
-// control plane reasoning about nothing would have no way to tell that from one they never
-// configured, and this is the last moment anyone can be told.
-func modelBoundary(cfg config.Config, replace wiring) (investigation.Reasoner, error) {
+// A live provider outranks a recorded transcript because a deployment that configured one asked for
+// a real model, and replaying a recording at it would answer a different question than the one it
+// was pointed at.
+//
+// A transcript that does not load, or a provider deployment that could not be assembled, is a
+// REFUSAL TO START. An operator who pointed at one and got a control plane reasoning about nothing
+// would have no way to tell that from one they never configured, and this is the last moment anyone
+// can be told.
+func modelBoundary(
+	cfg config.Config, logger *slog.Logger, replace wiring,
+) (investigation.Reasoner, investigation.Versions, error) {
 	if replace.reasoner != nil {
-		return replace.reasoner, nil
+		return replace.reasoner, investigatorVersions(replace.reasoner), nil
+	}
+	if cfg.Model.Configured() {
+		service, err := liveBoundary(cfg, logger)
+		if err != nil {
+			return nil, investigation.Versions{}, err
+		}
+		return service, service.Versions(plannerVersion, version), nil
 	}
 	if len(cfg.ModelTranscript) == 0 {
-		return investigation.Unavailable{}, nil
+		return investigation.Unavailable{}, investigatorVersions(investigation.Unavailable{}), nil
 	}
-	recorded, err := investigation.LoadTranscript(cfg.ModelTranscript, investigatorVersions(nil))
+
+	versions := investigatorVersions(nil)
+	recorded, err := investigation.LoadTranscript(cfg.ModelTranscript, versions)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", config.EnvModelTranscriptFile, err)
+		return nil, investigation.Versions{}, fmt.Errorf(
+			"%s: %w", config.EnvModelTranscriptFile, err)
 	}
-	return recorded, nil
+	return recorded, versions, nil
+}
+
+// liveBoundary assembles the reasoning service from the configured deployments.
+//
+// Everything that could be wrong with the configuration is refused here, at startup, where the
+// person who wrote it is still the person reading the error: an unknown provider, an unpriced
+// model, a provider nobody consented to, an effort level that does not exist.
+func liveBoundary(cfg config.Config, logger *slog.Logger) (*reasoning.Service, error) {
+	primary := deploymentFrom(cfg.Model)
+	primaryProvider, err := providers.Open(primary, providers.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", config.EnvModelProvider, err)
+	}
+
+	options := reasoning.Options{
+		Primary:     primaryProvider,
+		Deployments: []reasoning.Deployment{primary},
+		Tariff:      reasoning.DefaultTariff(),
+		Consent:     reasoning.ConsentTo(cfg.ModelConsented...),
+		Ceiling:     reasoning.NewCeiling(cfg.ModelCostCeilingMicroCents),
+		// Without this the service holds a discard logger, and every completed call — the
+		// attribution, the token counts, the cost — goes nowhere. A telemetry requirement met by a
+		// logger nobody passed is a requirement met on paper.
+		Logger: logger,
+	}
+	if cfg.ModelFallback.Configured() {
+		fallback := deploymentFrom(cfg.ModelFallback)
+		fallbackProvider, fallbackErr := providers.Open(fallback, providers.Options{})
+		if fallbackErr != nil {
+			return nil, fmt.Errorf("%s: %w", config.EnvModelFallbackProvider, fallbackErr)
+		}
+		options.Fallbacks = append(options.Fallbacks, fallbackProvider)
+		options.Deployments = append(options.Deployments, fallback)
+	}
+	return reasoning.New(options)
+}
+
+// deploymentFrom translates configuration into the reasoning package's own shape. The credential
+// becomes a Secret here, which is the last point at which it is an ordinary string.
+func deploymentFrom(configured config.ModelDeployment) reasoning.Deployment {
+	return reasoning.Deployment{
+		Provider:        configured.Provider,
+		Model:           configured.Model,
+		Effort:          reasoning.Effort(configured.Effort),
+		MaxOutputTokens: configured.MaxOutputTokens,
+		MaxPromptTokens: configured.MaxPromptTokens,
+		BaseURL:         configured.BaseURL,
+		Credential:      reasoning.Secret(configured.Credential),
+	}.WithDefaults()
 }
 
 // assembled is the constructed process: the pieces serve needs, which are meaningless
@@ -494,13 +565,19 @@ func investigatorVersions(reasoner investigation.Reasoner) investigation.Version
 		model = modelIdentity(reasoner)
 	}
 	return investigation.Versions{
-		Planner:       "bounded-adaptive-v1",
-		Model:         model,
-		PromptVersion: "1",
-		SchemaVersion: "1",
+		Planner: plannerVersion,
+		Model:   model,
+		// The prompt and schema versions belong to the package that owns the words and the output
+		// contract, so that changing either is a diff in one place that forces the number up. A
+		// recorded transcript is keyed on them exactly as a live round is.
+		PromptVersion: reasoning.PromptVersion,
+		SchemaVersion: reasoning.SchemaVersion,
 		Investigator:  version,
 	}
 }
+
+// plannerVersion names the planning strategy every round this build opens runs under.
+const plannerVersion = "bounded-adaptive-v1"
 
 // modelIdentity names the boundary in use, so a round's pinned versions say what actually answered
 // it rather than what the configuration hoped would.

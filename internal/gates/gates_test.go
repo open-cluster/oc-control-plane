@@ -282,3 +282,76 @@ func TestNoEnvironmentVariableNamesASecret(t *testing.T) {
 		})
 	}
 }
+
+// The investigation capability owns the model boundary and must never learn that a provider
+// exists. It depends on one interface it declares itself; internal/reasoning satisfies that
+// interface, and the dependency runs one way.
+//
+// A vendor type reaching the domain is the failure this gate exists to catch. It would not look
+// like much in review — one import, one field — and it would make every later provider change a
+// domain change, which is the whole reason the boundary is shaped the way it is.
+func TestInvestigationDependsOnNoProvider(t *testing.T) {
+	t.Parallel()
+
+	const surface = "internal/investigation"
+
+	found := false
+	for _, loaded := range loadPackages(t) {
+		if internalPackagePath(loaded.PkgPath) != surface {
+			continue
+		}
+		found = true
+		for imported := range loaded.Imports {
+			if strings.HasPrefix(imported, modulePath+"/internal/reasoning") {
+				t.Errorf("%s must not import %s; the domain declares the boundary and "+
+					"infrastructure satisfies it, never the reverse", surface, imported)
+			}
+			for _, vendor := range vendorModules {
+				if strings.Contains(imported, vendor) {
+					t.Errorf("%s must not import %s; a vendor named in the domain makes every "+
+						"provider change a domain change", surface, imported)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("%s was not found; the gate would pass vacuously", surface)
+	}
+}
+
+// The shared reasoning orchestration must not import an adapter either. It talks to vendors
+// through the contract it declares, and a package that reached for one adapter would be a package
+// the second adapter has to be bolted onto rather than dropped beside.
+func TestReasoningOrchestrationDependsOnNoAdapter(t *testing.T) {
+	t.Parallel()
+
+	const surface = "internal/reasoning"
+
+	found := false
+	for _, loaded := range loadPackages(t) {
+		if internalPackagePath(loaded.PkgPath) != surface {
+			continue
+		}
+		found = true
+		for imported := range loaded.Imports {
+			if strings.HasPrefix(imported, modulePath+"/internal/reasoning/") &&
+				!strings.HasSuffix(imported, "/providers") {
+				t.Errorf("%s must not import the adapter %s; it knows the contract and nothing "+
+					"about who implements it", surface, imported)
+			}
+			for _, vendor := range vendorModules {
+				if strings.Contains(imported, vendor) {
+					t.Errorf("%s must not import %s; a vendor's types stop at its adapter",
+						surface, imported)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("%s was not found; the gate would pass vacuously", surface)
+	}
+}
+
+// vendorModules are the third-party model clients this build may hold. Each one is permitted in
+// exactly one adapter package and nowhere else.
+var vendorModules = []string{"anthropic-sdk-go", "openai", "generative-ai-go", "openrouter"}

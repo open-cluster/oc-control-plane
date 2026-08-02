@@ -78,15 +78,22 @@ represent, and a server-side assembly at a pinned version.
 **Nothing consumes a Signal.** There is still no Incident and no signal-triggered investigation;
 the manual trigger is the only one, which is what ADR-008 sequenced.
 
-**There is no live model provider.** The boundary exists, transcripts replay in CI keyed by model,
-prompt, schema and investigator version, and a deployment given no provider fails rounds honestly
-rather than guessing. It was expected to arrive with the scenario harness slice and did not: the
-harness was built around it instead, so a run drives the boundary from a recorded transcript and
-REFUSES a live-provider run with the reason stated rather than quietly replaying one. **This is
-now the largest single gap in the product**, because the instrument that would tell us whether the
-investigator works cannot yet be pointed at a real model. Building it means a provider client, a
-prompt version, an output schema and cost accounting — none of which any current specification
-describes, so it needs one.
+**The live model provider is built and has not yet answered a live scenario.** Written 2026-08-02.
+`internal/reasoning` implements the investigation-owned boundary against a provider-neutral
+contract; `internal/reasoning/anthropic` and `internal/reasoning/zai` are the two adapters, and a
+gate fails the build if the domain ever imports either. Which vendor and which model answer is
+configuration, priced from a declared four-rate table that refuses an unpriced model at startup.
+Refusal, outage, rejected request, malformed output, timeout and budget exhaustion are distinct
+named outcomes, none of which is an abstention. Cross-provider fallback is an explicit configured
+chain that checks consent per hop and records what actually answered.
+
+**What is NOT yet proved is the only thing that matters about it.** The suite is offline by
+construction and asserts what the adapters send and what they do with what comes back; it cannot
+say whether the prompt elicits usable reasoning or whether the schemas ask for the right things.
+`cmd/redherring` is the instrument for that — one live investigation against a real provider,
+reporting the transcript, attribution, token and cost breakdown, latency, cache effectiveness and
+every refusal, retry and fallback. **It has not been run.** Until it has, nothing here is
+production-ready no matter how green the suite is.
 
 **The product can be evaluated, and secrets do not leave a cluster.** Written 2026-08-01. The
 scenario harness exists as a program (`test/e2e/cmd/scenario`): ten clusters broken on purpose —
@@ -161,6 +168,7 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Environments and Connections | `spec-environments-and-connections.md` | Go control plane | ✅ Done (revision 3 — Integration separated from Connection) |
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
 | 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ⚠️ Built 2026-08-01, **not yet runnable**: no provider and no transcripts |
+| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ⚠️ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters). **No live scenario has been run**, so it is unproven |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
 

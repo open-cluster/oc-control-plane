@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,27 @@ const (
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 
 	EnvModelTranscriptFile = "OC_MODEL_TRANSCRIPT_FILE"
+
+	// The live model deployment. Which vendor and which model answer is configuration rather
+	// than a constant, because a model is a deployment choice that moves with price,
+	// availability and regional obligation — and every one of those would otherwise be a release.
+	EnvModelProvider    = "OC_MODEL_PROVIDER"
+	EnvModelName        = "OC_MODEL_NAME"
+	EnvModelKeyFile     = "OC_MODEL_KEY_FILE"
+	EnvModelEffort      = "OC_MODEL_EFFORT"
+	EnvModelBaseURL     = "OC_MODEL_BASE_URL"
+	EnvModelMaxOutput   = "OC_MODEL_MAX_OUTPUT"
+	EnvModelMaxPrompt   = "OC_MODEL_MAX_PROMPT"
+	EnvModelCostCeiling = "OC_MODEL_COST_CEILING_MICROCENTS"
+	EnvModelConsented   = "OC_MODEL_CONSENTED_PROVIDERS"
+
+	// The one optional fallback hop. It is separate variables rather than a list because a
+	// fallback is an explicit decision about a second vendor, and a syntax that made it easy to
+	// add three would make it easy to add one nobody meant to consent to.
+	EnvModelFallbackProvider = "OC_MODEL_FALLBACK_PROVIDER"
+	EnvModelFallbackName     = "OC_MODEL_FALLBACK_NAME"
+	EnvModelFallbackKeyFile  = "OC_MODEL_FALLBACK_KEY_FILE"
+	EnvModelFallbackBaseURL  = "OC_MODEL_FALLBACK_BASE_URL"
 )
 
 // minOperatorTokenLength is the shortest token the operator surface will accept.
@@ -127,7 +149,48 @@ type Config struct {
 	// It is a FILE for the same reason a placement's DSN is: the content is large and
 	// structured, and an environment value is the wrong place for either.
 	ModelTranscript []byte
+
+	// Model is the live provider deployment, if one is configured. An unset Provider means no
+	// live provider, and the boundary then resolves exactly as it does today — a recorded
+	// transcript if one was named, and the unavailable stub otherwise.
+	Model ModelDeployment
+
+	// ModelFallback is the one optional deployment tried when the primary cannot answer. It is
+	// never inferred: an operator who configured no fallback gets an honest failure instead of a
+	// vendor nobody chose.
+	ModelFallback ModelDeployment
+
+	// ModelConsented is the set of providers this deployment may send evidence to. Nothing
+	// listed permits nothing, which is why a configured provider that is not consented to is a
+	// refusal to start rather than a round that fails later.
+	ModelConsented []string
+
+	// ModelCostCeilingMicroCents bounds total reasoning spend across rounds. Zero means no
+	// ceiling, which is an operator fact and not a currency.
+	ModelCostCeilingMicroCents int64
 }
+
+// ModelDeployment is one configured provider and model.
+//
+// The credential is read from the file the operator named and held here. It never travels as an
+// environment value, for the same reason a placement's DSN does not: an environment value is
+// readable from a process listing and appears in every diagnostic dump of the environment.
+type ModelDeployment struct {
+	Provider string
+	Model    string
+	Effort   string
+	BaseURL  string
+	// Credential is the API key itself. Nothing in this package prints it, and no error here
+	// quotes the file's contents.
+	Credential string
+	// MaxOutputTokens bounds one answer; MaxPromptTokens refuses an oversized deliberation
+	// before it is sent. Zero means the reasoning package's own default.
+	MaxOutputTokens int64
+	MaxPromptTokens int64
+}
+
+// Configured reports whether an operator named a provider here.
+func (m ModelDeployment) Configured() bool { return m.Provider != "" }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
 // value, failing on the first problem and naming the offending variable.
@@ -172,6 +235,32 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.ModelTranscript, err = optionalFile(lookup, EnvModelTranscriptFile); err != nil {
+		return Config{}, err
+	}
+	if cfg.Model, err = modelDeployment(lookup, modelVariables{
+		provider:        EnvModelProvider,
+		name:            EnvModelName,
+		keyFile:         EnvModelKeyFile,
+		effort:          EnvModelEffort,
+		baseURL:         EnvModelBaseURL,
+		maxOutputTokens: EnvModelMaxOutput,
+		maxPromptTokens: EnvModelMaxPrompt,
+	}); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelFallback, err = modelDeployment(lookup, modelVariables{
+		provider: EnvModelFallbackProvider,
+		name:     EnvModelFallbackName,
+		keyFile:  EnvModelFallbackKeyFile,
+		effort:   EnvModelEffort,
+		baseURL:  EnvModelFallbackBaseURL,
+	}); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelConsented, err = consentedProviders(lookup, cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelCostCeilingMicroCents, err = optionalCount(lookup, EnvModelCostCeiling); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
@@ -358,6 +447,116 @@ func optionalFile(lookup func(string) (string, bool), key string) ([]byte, error
 		return nil, fmt.Errorf("%s names %s, which is empty", key, strings.TrimSpace(path))
 	}
 	return raw, nil
+}
+
+// modelVariables names the variables one deployment is read from, so the primary and the fallback
+// are parsed by the same code rather than by two that can drift apart.
+type modelVariables struct {
+	provider        string
+	name            string
+	keyFile         string
+	effort          string
+	baseURL         string
+	maxOutputTokens string
+	maxPromptTokens string
+}
+
+// modelDeployment reads one provider deployment, or nothing when no provider is named.
+//
+// A partially configured deployment is refused rather than half-used. An operator who named a
+// provider and forgot the model has made a mistake that fails at startup, where they are still
+// holding the configuration, instead of on the first round hours later.
+func modelDeployment(
+	lookup func(string) (string, bool), variables modelVariables,
+) (ModelDeployment, error) {
+	provider, _ := lookup(variables.provider)
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return ModelDeployment{}, nil
+	}
+
+	deployment := ModelDeployment{Provider: provider}
+	name, _ := lookup(variables.name)
+	deployment.Model = strings.TrimSpace(name)
+	if deployment.Model == "" {
+		return ModelDeployment{}, fmt.Errorf(
+			"%s is required when %s is set: the model identifier is exact and is never "+
+				"constructed from a family name", variables.name, variables.provider)
+	}
+
+	path, _ := lookup(variables.keyFile)
+	if strings.TrimSpace(path) == "" {
+		return ModelDeployment{}, fmt.Errorf("%s is required when %s is set",
+			variables.keyFile, variables.provider)
+	}
+	credential, err := readSecretFile(strings.TrimSpace(path))
+	if err != nil {
+		return ModelDeployment{}, fmt.Errorf("%s: %w", variables.keyFile, err)
+	}
+	deployment.Credential = credential
+
+	if effort, _ := lookup(variables.effort); strings.TrimSpace(effort) != "" {
+		deployment.Effort = strings.TrimSpace(effort)
+	}
+	if variables.baseURL != "" {
+		if base, _ := lookup(variables.baseURL); strings.TrimSpace(base) != "" {
+			deployment.BaseURL = strings.TrimSpace(base)
+		}
+	}
+	if variables.maxOutputTokens != "" {
+		if deployment.MaxOutputTokens, err = optionalCount(
+			lookup, variables.maxOutputTokens); err != nil {
+			return ModelDeployment{}, err
+		}
+	}
+	if variables.maxPromptTokens != "" {
+		if deployment.MaxPromptTokens, err = optionalCount(
+			lookup, variables.maxPromptTokens); err != nil {
+			return ModelDeployment{}, err
+		}
+	}
+	return deployment, nil
+}
+
+// consentedProviders reads which vendors may be sent this deployment's evidence.
+//
+// Nothing listed permits nothing. Defaulting the other way would make the safe case the one an
+// operator has to remember to configure, and the question a customer actually answered was about a
+// subprocessor rather than about a feature.
+func consentedProviders(lookup func(string) (string, bool), cfg Config) ([]string, error) {
+	raw, _ := lookup(EnvModelConsented)
+	consented := make([]string, 0)
+	for _, entry := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			consented = append(consented, trimmed)
+		}
+	}
+
+	for _, deployment := range []ModelDeployment{cfg.Model, cfg.ModelFallback} {
+		if !deployment.Configured() {
+			continue
+		}
+		if !slices.Contains(consented, deployment.Provider) {
+			return nil, fmt.Errorf(
+				"%s does not list %q, which is configured to receive this deployment's "+
+					"evidence; consent is per provider because the question it answers is about "+
+					"a subprocessor", EnvModelConsented, deployment.Provider)
+		}
+	}
+	return consented, nil
+}
+
+// optionalCount reads a non-negative whole number, or zero when the setting is absent.
+func optionalCount(lookup func(string) (string, bool), key string) (int64, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative whole number", key)
+	}
+	return parsed, nil
 }
 
 func required(lookup func(string) (string, bool), key string) (string, error) {

@@ -99,11 +99,9 @@ func (w Worker) sweep(ctx context.Context, running *sync.WaitGroup) {
 			continue
 		}
 		for _, held := range claimed {
-			running.Add(1)
-			go func() {
-				defer running.Done()
+			running.Go(func() {
 				w.execute(ctx, organization, held)
-			}()
+			})
 		}
 	}
 }
