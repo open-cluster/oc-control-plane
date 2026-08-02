@@ -113,7 +113,25 @@ examined. The conclusion task asks for every alternative to end in a state with 
 On the first live run under prompt version 3 (`cmd/redherring`, GLM-5, pre-baked evidence) the
 distractor WAS hypothesis 1, a read was chosen to discriminate against it, and it was FALSIFIED with
 the reason: the container starts and reaches the database, so the failure would affect any image
-version. That is the behaviour the ground truth asks for. One run is one run.
+version. That is the behaviour the ground truth asks for.
+
+**End to end, on the `red-herring` scenario itself, it is NOT the behaviour observed, and the
+difference is the shape of the distractor.** That round proposed four explanations and settled all
+four with reasons — one set aside, two falsified, one supported — and reached the missing Secret
+correctly. But not one of the four was about the FRONTEND. Hypothesis 1 is a change-as-cause
+explanation about the investigated workload's own creation; the loud innocent neighbour that changed
+twice beside it was never proposed, and so was never set aside with a reason.
+
+The two runs disagree because the two distractors are not the same thing. In `cmd/redherring` the
+distractor is a change to the workload under investigation — an image update on the deployment being
+looked at — and the new wording, "one of your explanations is that the change is the cause", lands
+squarely on it. In the harness the distractor is a DIFFERENT workload whose events share the
+namespace event stream, and the same sentence reads naturally as being about the thing under
+investigation.
+
+So the prompt change fixes one shape of red herring and not the other, and the one it does not fix
+is the one the scenario was built for. Claiming item 2 as done on the `cmd/redherring` evidence
+alone would have been wrong.
 
 **RESOLVED 2026-08-02. The falsification machinery is now load-bearing, and it immediately caught
 something.** Written after the runs described below.
@@ -332,7 +350,7 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
 | 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ✅ Runnable and RUN 2026-08-02 against a live provider end to end. One of ten scenarios exercised |
 | 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. Anthropic itself still uncalled, blocked on API credits |
-| 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: one run stood as supported, one was demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010 |
+| 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: `importer` stood as supported off a read justified by the hypothesis it concluded, others were demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010. The distractor half is **half done** — see section 3 |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
 
