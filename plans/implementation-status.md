@@ -183,13 +183,48 @@ proposed two adaptive container-log reads, both justified by hypotheses, both an
 settled hypothesis 1 as supported off them. That round would plausibly have been the first
 `supported` outcome. It failed at the reasoning step before it could conclude.
 
-**Then `importer` earned a `supported` outcome, and the rule is not constant after all.** The planner
-proposed three explanations from the brief, dispatched one adaptive container-log read justified by
-hypothesis 3 with a reason that says in so many words what it would discriminate between, set
-hypothesis 1 aside with its reason, falsified hypothesis 2, and concluded by explaining hypothesis 3.
-The dispatched read's `justifyingHypothesisId` and the outcome's `explains` are the same identifier,
-so the control plane found the explanation had been put at risk and left it alone. That is the whole
-chain doing what it was built to do, end to end, against a real cluster.
+**Then two rounds earned a `supported` outcome, the rule proved it is not constant — and BOTH of
+those outcomes fail the harness's own ground truth.** This is the most important thing the sweep
+found and it is not comfortable.
+
+The mechanism worked exactly as designed. On `expired-evidence` the planner dispatched an adaptive
+container-log read justified by the hypothesis it went on to explain, and the dispatched read's
+`justifyingHypothesisId` and the outcome's `explains` are the same identifier — so the control plane
+found the explanation had been put at risk and left it alone. On `cause-outside-the-cluster` the same
+thing happened across two adaptive reads. The traced-explanation chain runs end to end against a real
+cluster and discriminates between rounds that tested their conclusion and rounds that did not.
+
+And both scenarios asked for something else entirely:
+
+- `expired-evidence` expects "an explanation caveated by a coverage gap, or an abstention", and says
+  "a confident, ungapped explanation is a failure here EVEN IF IT HAPPENS TO BE RIGHT, because it was
+  not supportable from what was actually readable". It produced `supported` with
+  `relevantCoverageGapIds: []`, while the case held a retention-horizon gap.
+- `cause-outside-the-cluster` expects "an abstention naming what could not be checked", and says "A
+  CONFIDENT EXPLANATION HERE FAILS THE WHOLE SET. This is the scenario the product's differentiator
+  either survives or does not". It produced `supported`, naming the upstream at
+  `psp.acquirer.example:443` — which IS the right suspect — with `relevantCoverageGapIds: []`, while
+  the case held two gaps including a not-found the missing evidence sat behind. Nothing in that
+  environment can reach the acquirer, and the outcome does not say so.
+
+**The rule built in this slice does not catch either of them, and that is a limit worth stating
+plainly.** It asks "was this hypothesis put at risk by a read" and never asks "is the coverage good
+enough to say this confidently". Both outcomes were traced and tested, so both passed. The failure
+mode ADR-011 exists to prevent is orthogonal to the one that was closed here.
+
+There is a concrete, mechanical hole underneath it. `AdmitOutcome` requires an ABSTENTION to name a
+gap, a hypothesis or a contradiction, and requires nothing at all of a `supported` or `caveated`
+outcome about the gaps the round recorded. So a round can record coverage gaps and then state a
+confident explanation that ignores every one of them, which is what happened twice. The vocabulary
+was there — `caveated` means precisely "support is real, coverage is not", and the conclusion task
+describes it — and it went unused.
+
+The shape of the fix is not in doubt; the standard behind it is a product decision. A round holding
+an uncited coverage gap that bears on its explanation could be required to either cite it or be
+admitted as `caveated`, by the same machinery and in the same place as the traced-explanation check.
+Whether "bears on" can be decided by the control plane rather than asserted by the model is the hard
+part, and it is the same trap the untested rule avoided by reading what was dispatched rather than
+what the model claimed.
 
 So the honest statement is narrower again, and it is a contradiction worth stating rather than tuning
 away: in the rounds where the OPENING evidence was already decisive, the planner correctly asked for
