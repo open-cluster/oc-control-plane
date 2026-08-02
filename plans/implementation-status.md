@@ -165,8 +165,16 @@ proposed two adaptive container-log reads, both justified by hypotheses, both an
 settled hypothesis 1 as supported off them. That round would plausibly have been the first
 `supported` outcome. It failed at the reasoning step before it could conclude.
 
-So the honest statement is narrower and still a contradiction worth stating rather than tuning away:
-in every round where the OPENING evidence was already decisive, the planner correctly asked for
+**Then `importer` earned a `supported` outcome, and the rule is not constant after all.** The planner
+proposed three explanations from the brief, dispatched one adaptive container-log read justified by
+hypothesis 3 with a reason that says in so many words what it would discriminate between, set
+hypothesis 1 aside with its reason, falsified hypothesis 2, and concluded by explaining hypothesis 3.
+The dispatched read's `justifyingHypothesisId` and the outcome's `explains` are the same identifier,
+so the control plane found the explanation had been put at risk and left it alone. That is the whole
+chain doing what it was built to do, end to end, against a real cluster.
+
+So the honest statement is narrower again, and it is a contradiction worth stating rather than tuning
+away: in the rounds where the OPENING evidence was already decisive, the planner correctly asked for
 nothing further, and this build demotes it for that.
 
 - The prompt tells the planner that "a round that spends them on confirmation rather than
@@ -180,17 +188,21 @@ nothing further, and this build demotes it for that.
   cannot earn `supported`. `supported` has not yet been observed from the harness. It is reachable —
   `gateway` was on that path — but not by a round whose answer is already in the orientation.
 
-The correction that is not bar-lowering, and the recommendation: keep the gap ALWAYS, because "no
-read was dispatched to disprove this" is true and worth knowing either way. Narrow the DEMOTION to
-the case where the hypothesis could not have been tested — one proposed at the conclusion, after the
-last read the round can make. A hypothesis proposed at the opening that the planner judged needed no
-further read is a different thing from one that arrived too late to test, and this build treats them
-identically.
+The candidate correction, weaker now than it looked at five scenarios: keep the gap ALWAYS, because
+"no read was dispatched to disprove this" is true and worth knowing either way, and narrow the
+DEMOTION to a hypothesis proposed at the conclusion, which could not have been tested at all. A
+hypothesis proposed at the opening that the planner judged needed no further read is a different
+thing from one that arrived too late to test, and this build treats them identically.
 
-That change is NOT made here. ADR-011 says the standard is a product decision rather than a
-measurement, and "setting the bar after the first harness run" is the thing it rejects by name.
-Deciding it on the first sweep would be that mistake. The data is recorded; the decision is the
-founder's.
+**It is much less clear that this change should be made now.** `importer` shows the rule separating a
+round that tested its conclusion from rounds that did not, which is exactly its purpose, and the
+demotions it produced elsewhere are all truthful. Whether "the planner concluded from the orientation
+without asking anything" deserves a caveat or merely a gap is a product judgement about what an
+on-call engineer should be told, not a defect.
+
+No change is made here either way. ADR-011 says the standard is a product decision rather than a
+measurement, and "setting the bar after the first harness run" is the thing it rejects by name. The
+data is recorded; the decision is the founder's.
 
 **Cost and latency, measured rather than guessed.** Reasoning was 78% of output tokens on the
 pre-baked run, so effort is the first lever to tune. A single conclusion call took 2m12s, which is
