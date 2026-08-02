@@ -33,6 +33,34 @@ var ErrModelUnavailable = errors.New("the model provider is unavailable")
 // run that proves the wrong build works.
 var ErrTranscriptKeyMismatch = errors.New("the recorded transcript is for different components")
 
+// NamedFailure is a model-boundary failure that can say WHICH failure it was.
+//
+// Every one of them ends the round the same way, and for a while the case file said so in the same
+// sentence — "the reasoning step could not run" — for an outage, a provider refusal, a persistently
+// malformed answer and a cost ceiling alike. They are distinguishable in logs, but the case file is
+// what an on-call engineer and a blind scorer read, and there they call for completely different
+// things: one is the vendor's problem, one is this build's defect, one is an operator's limit doing
+// its job.
+//
+// The name is a closed vocabulary word and nothing else. It deliberately carries no provider
+// message, because a case file is meant to be safe to share and a vendor's error text is not this
+// system's to vouch for.
+type NamedFailure interface {
+	error
+	FailureName() string
+}
+
+// failureName reports what kind of model-boundary failure this was, or "unnamed" for one that
+// cannot say. It is the domain's own vocabulary check: infrastructure satisfies the interface, and
+// the domain never learns that a provider exists.
+func failureName(cause error) string {
+	var named NamedFailure
+	if errors.As(cause, &named) {
+		return named.FailureName()
+	}
+	return "unnamed"
+}
+
 // Reasoner is the model boundary. It does two things and they are recorded separately: it proposes
 // hypotheses, and it proposes reads. Keeping them apart is what makes evidence selection scorable
 // independently of the conclusion (ADR-009), which is the only way to tell a bad conclusion from

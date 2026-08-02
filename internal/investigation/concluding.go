@@ -185,12 +185,16 @@ func (r Runner) modelFailure(
 		slog.String("round_id", execution.held.Round.ID.String()),
 		slog.String("error", cause.Error()))
 
+	// The gap names WHICH failure it was. Every one of them ends the round identically, so a single
+	// sentence for all of them left a reader unable to tell the vendor's problem from this build's
+	// defect from an operator's limit doing its job — and the case file is the only thing a blind
+	// scorer sees.
 	if err := r.record(ctx, execution, Validated{Gaps: []Gap{{
 		Cause:        GapCapabilityUnavailable,
 		CapabilityID: "reasoning",
-		Subject:      "the model provider",
-		Consequence: "the reasoning step could not run, so no explanation was formed from what " +
-			"was gathered",
+		Subject:      "the model provider (" + failureName(cause) + ")",
+		Consequence: "the reasoning step could not run (" + failureName(cause) + "), so no " +
+			"explanation was formed from what was gathered",
 	}}}); err != nil && !errors.Is(err, ErrLeaseLost) {
 		return 0, err
 	}

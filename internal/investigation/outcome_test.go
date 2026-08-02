@@ -2,6 +2,7 @@ package investigation_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -391,6 +392,29 @@ func TestAdmitOutcome_AnExplanationNoReadTestedIsCaveatedRatherThanSupported(t *
 		t.Error("the caller has to be told, because it is the caller that records the gap")
 	}
 }
+
+// Every model-boundary failure ends the round the same way, so the case file has to say which one
+// it was or a reader cannot tell the vendor's problem from this build's defect. The domain declares
+// the interface; that is what keeps the taxonomy out of it.
+func TestNamedFailure_TheDomainReadsTheFailureNameWithoutKnowingTheTaxonomy(t *testing.T) {
+	t.Parallel()
+
+	var boundary investigation.NamedFailure = namedOutage{}
+	if boundary.FailureName() != "outage" {
+		t.Errorf("FailureName() = %q, want the closed vocabulary word", boundary.FailureName())
+	}
+	// It must survive wrapping, because the round sees the error after the boundary has wrapped it.
+	if !errors.Is(fmt.Errorf("reaching the provider: %w", boundary),
+		investigation.ErrModelUnavailable) {
+		t.Error("a named failure must still read as the model being unavailable")
+	}
+}
+
+type namedOutage struct{}
+
+func (namedOutage) Error() string       { return "the model provider is unreachable" }
+func (namedOutage) FailureName() string { return "outage" }
+func (namedOutage) Unwrap() error       { return investigation.ErrModelUnavailable }
 
 // The two halves of "tested" have to agree on what identifies a hypothesis, and they are written in
 // different files: a request carries the identity Admit resolved from an ordinal, and admission

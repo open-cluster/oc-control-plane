@@ -150,6 +150,14 @@ func (f *Failure) Error() string {
 	return message
 }
 
+// FailureName is the closed vocabulary word for what went wrong, which the domain records in the
+// coverage gap so a case file distinguishes an outage from this build's defect. Deliberately only
+// the outcome: the provider's own message is not this system's to vouch for, and a case file is
+// meant to be safe to share.
+func (f *Failure) FailureName() string {
+	return f.Outcome.String()
+}
+
 // Unwrap returns both the outcome's own sentinel and the domain's model-unavailable error, so
 // errors.Is answers yes to the specific failure and to the general one the round is ended by.
 func (f *Failure) Unwrap() []error {
