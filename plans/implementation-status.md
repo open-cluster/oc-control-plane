@@ -155,6 +155,43 @@ justified by the two hypotheses it falsified rather than by the one it concluded
 That run is the point of the whole change. The previous build reported exactly this as a clean
 `supported`. 19,622 tokens, about $0.030, 3m29s.
 
+**And then the sweep said something the two runs could not: every round that CONCLUDED came out
+`caveated` with the untested gap, and every one of them made exactly two capability requests — the
+opening plan's.**
+
+The generalisation that first suggested itself — that the planner never asks a follow-up — is FALSE,
+and the run that falsifies it is worth more than the ones that fit. In `gateway` the planner
+proposed two adaptive container-log reads, both justified by hypotheses, both answered, and it
+settled hypothesis 1 as supported off them. That round would plausibly have been the first
+`supported` outcome. It failed at the reasoning step before it could conclude.
+
+So the honest statement is narrower and still a contradiction worth stating rather than tuning away:
+in every round where the OPENING evidence was already decisive, the planner correctly asked for
+nothing further, and this build demotes it for that.
+
+- The prompt tells the planner that "a round that spends them on confirmation rather than
+  discrimination learns nothing" and that returning an empty proposals list "is a decision, not a
+  failure". The control plane then demotes exactly that decision. The words and the standard
+  disagree.
+- The opening reads are DETERMINISTIC and precede every hypothesis, so they can never carry a
+  justification. A hypothesis can therefore only be tested by an adaptive read. Where the opening
+  evidence is already decisive — and for most of this set it is, because the namespace events read
+  returns the Failed event naming the missing Secret — a planner that correctly asks for nothing
+  cannot earn `supported`. `supported` has not yet been observed from the harness. It is reachable —
+  `gateway` was on that path — but not by a round whose answer is already in the orientation.
+
+The correction that is not bar-lowering, and the recommendation: keep the gap ALWAYS, because "no
+read was dispatched to disprove this" is true and worth knowing either way. Narrow the DEMOTION to
+the case where the hypothesis could not have been tested — one proposed at the conclusion, after the
+last read the round can make. A hypothesis proposed at the opening that the planner judged needed no
+further read is a different thing from one that arrived too late to test, and this build treats them
+identically.
+
+That change is NOT made here. ADR-011 says the standard is a product decision rather than a
+measurement, and "setting the bar after the first harness run" is the thing it rejects by name.
+Deciding it on the first sweep would be that mistake. The data is recorded; the decision is the
+founder's.
+
 **Cost and latency, measured rather than guessed.** Reasoning was 78% of output tokens on the
 pre-baked run, so effort is the first lever to tune. A single conclusion call took 2m12s, which is
 why the per-call timeout and the round deadline were both raised — the previous defaults would have
@@ -172,6 +209,27 @@ failed rounds that were working.
   pair is the one that could disagree silently and turn every outcome caveated. The runner's own
   sequencing is proved by the end-to-end run above and by nothing else, because a fake Store would
   prove the runner calls methods in the order this build chose.
+- **Three of the sweep's rounds failed at the reasoning step and the record cannot say why.** All of
+  them — `billing`, `search`, `gateway` — recorded the same sentence, because every model-boundary
+  failure unwrapped to one error. `gateway` is the expensive one: it had gathered ten evidence items
+  across four reads and settled a hypothesis before the conclusion call died. Whether that was an
+  outage, a rate limit, a timeout or a defect in this build is not recoverable from the artifact.
+  That is the defect the `NamedFailure` change fixes, and the sweep ran on the build BEFORE it — so
+  the next sweep can answer this question and this one cannot.
+
+  Two candidate causes survive, and they point at different people. A per-call timeout is ruled out
+  (five minutes, and the whole round spent 200 seconds), and so is the round deadline (45 minutes).
+  What remains is a provider-side outage or rate limit from running ten scenarios back to back — the
+  vendor's problem — or a persistently malformed answer, which ALSO unwraps to model-unavailable and
+  would be this change's fault, because schema version 3 is what these rounds were answering. The
+  four rounds that concluded populated `explains` correctly, so nothing is systematically broken;
+  intermittent is all that can be said. **Re-run the three failed scenarios on the current build
+  before trusting either explanation.**
+
+- **A live harness run writes no transcript.** `spec-live-model-provider.md` asks for one per
+  scenario so commit CI can replay what the model actually said; `OC_MODEL_TRANSCRIPT_FILE` is set
+  only in REPLAY mode, so a live run records nothing. It is why the three failures above cannot be
+  read after the fact, and it means the replay corpus that specification describes does not exist.
 - **Five live runs on one model is a handful of data points, not a measurement.** The demotion has
   fired once and not fired once. That is enough to show it discriminates and nowhere near enough to
   say what fraction of real rounds it will catch.
