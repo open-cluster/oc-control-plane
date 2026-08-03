@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/capability"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -49,43 +50,75 @@ func decodeHypotheses(document []byte) ([]investigation.Hypothesis, error) {
 		return nil, malformed("it proposed no hypotheses, and an opening with none is not an " +
 			"investigation")
 	}
-	return decodeProposedHypotheses(answer.Hypotheses, 0)
+	// Nothing is held yet, so a proposal here can only restate another in this same document, and
+	// one that does is dropped exactly as it would be later. The resolver is discarded because no
+	// ordinal in the opening document refers to a hypothesis: there is nothing yet to point at.
+	proposed, _, err := decodeProposedHypotheses(answer.Hypotheses, nil)
+	return proposed, err
 }
 
-// decodeProposedHypotheses reads hypotheses from any of the three documents.
+// decodeProposedHypotheses reads hypotheses from any of the three documents, and returns the ones
+// worth appending together with the map from the ordinals the reasoner USED to the ordinals the
+// round will actually hold.
 //
-// held is how many the reasoner already carried, so the ordinal a proposal will hold once appended
-// is knowable here — which is what lets a conclusion name a hypothesis it proposed in the same
-// document as the one it explains.
+// A reasoner shown a place to put hypotheses fills it with the whole list it is holding rather than
+// only what is new. It did that on a live run and left a case carrying the same explanation twice,
+// in the supported state both times. Refusing the document would be the expensive answer — a refused
+// document costs a retry and then the round — so a restatement is DROPPED and every ordinal pointing
+// at it is redirected to the hypothesis it restates. That is what the reasoner meant by it, and
+// dropping a duplicate rather than refusing it is what this package already does with a claim that
+// cites the same evidence twice.
+//
+// The remapping is here, once, because this is the only place both lists are in view. The ordinals
+// the domain receives are the ordinals of the list the domain holds, and nothing downstream has to
+// know a restatement was ever sent.
 func decodeProposedHypotheses(
-	proposals []hypothesis, held int,
-) ([]investigation.Hypothesis, error) {
+	proposals []hypothesis, shown []investigation.Hypothesis,
+) ([]investigation.Hypothesis, func(int) int, error) {
+	held := len(shown)
 	if len(proposals) == 0 {
-		return nil, nil
+		return nil, identity, nil
 	}
 	if held+len(proposals) > maxHypotheses {
-		return nil, malformed(
+		return nil, nil, malformed(
 			"it would leave %d hypotheses in the round and at most %d are usable",
 			held+len(proposals), maxHypotheses)
 	}
 
+	// Where a statement already sits, by its ordinal. Compared on the statement alone: a reasoner
+	// restating an explanation rarely restates the falsification condition word for word, and
+	// treating those as different hypotheses is the duplicate this exists to prevent.
+	at := make(map[string]int, held+len(proposals))
+	for index, hypothesis := range shown {
+		at[fold(hypothesis.Statement)] = index + 1
+	}
+
+	moved := make(map[int]int, len(proposals))
 	proposed := make([]investigation.Hypothesis, 0, len(proposals))
 	for position, proposal := range proposals {
-		ordinal := held + position + 1
+		used := held + position + 1
 		statement := oneLine(proposal.Statement)
 		falsifies := oneLine(proposal.Falsifies)
 		switch {
 		case statement == "":
-			return nil, malformed("hypothesis %d states nothing", ordinal)
+			return nil, nil, malformed("hypothesis %d states nothing", used)
 		case falsifies == "":
 			// Required rather than optional: an explanation nothing could disprove is a belief,
 			// and telling those apart is what the rest of this system is for.
-			return nil, malformed(
-				"hypothesis %d names nothing that would disprove it", ordinal)
+			return nil, nil, malformed(
+				"hypothesis %d names nothing that would disprove it", used)
 		case len(statement) > maxStatementBytes || len(falsifies) > maxStatementBytes:
-			return nil, malformed("hypothesis %d is longer than %d bytes",
-				ordinal, maxStatementBytes)
+			return nil, nil, malformed("hypothesis %d is longer than %d bytes",
+				used, maxStatementBytes)
 		}
+
+		if existing, restated := at[fold(statement)]; restated {
+			moved[used] = existing
+			continue
+		}
+		ordinal := held + len(proposed) + 1
+		at[fold(statement)] = ordinal
+		moved[used] = ordinal
 		proposed = append(proposed, investigation.Hypothesis{
 			Ordinal:   ordinal,
 			Statement: statement,
@@ -93,7 +126,24 @@ func decodeProposedHypotheses(
 			State:     investigation.HypothesisLive,
 		})
 	}
-	return proposed, nil
+
+	return proposed, func(ordinal int) int {
+		if to, remapped := moved[ordinal]; remapped {
+			return to
+		}
+		return ordinal
+	}, nil
+}
+
+// identity is the resolver for a document that proposed nothing, so a caller never branches on
+// whether remapping happened.
+func identity(ordinal int) int { return ordinal }
+
+// fold is how two statements are compared for being the same explanation. Case and surrounding
+// space are not a difference a reader would call one, and a reasoner restating itself rarely
+// reproduces its own capitalisation.
+func fold(statement string) string {
+	return strings.ToLower(strings.TrimSpace(oneLine(statement)))
 }
 
 // decodeProposals turns the planning document into reads, weighings and settlings.
@@ -137,12 +187,15 @@ func decodeProposals(
 	// bounding the justification by what the reasoner was SHOWN would refuse the whole document for
 	// following the instruction it was given. The runner appends these before it validates the
 	// reads, so the ordinal resolves there too.
-	proposedHypotheses, err := decodeProposedHypotheses(
-		answer.Hypotheses, len(deliberation.Hypotheses))
+	proposedHypotheses, resolve, err := decodeProposedHypotheses(
+		answer.Hypotheses, deliberation.Hypotheses)
 	if err != nil {
 		return investigation.Proposed{}, err
 	}
-	holding := len(deliberation.Hypotheses) + len(proposedHypotheses)
+	// Bounds are checked against the list the reasoner ANSWERED in, which still counts anything it
+	// restated; the resolver then moves each ordinal onto the list the round will hold. Checking
+	// against the shorter list would refuse a document for naming a hypothesis it had just sent.
+	used := len(deliberation.Hypotheses) + len(answer.Hypotheses)
 
 	scope := scopeOf(deliberation.Brief)
 	proposals := make([]investigation.Proposal, 0, len(answer.Proposals))
@@ -153,7 +206,7 @@ func decodeProposals(
 				"read %d names %q, which is not available in this environment",
 				position+1, proposal.Capability)
 		}
-		if proposal.Justification < 1 || proposal.Justification > holding {
+		if proposal.Justification < 1 || proposal.Justification > used {
 			// The containment mechanism, not bookkeeping. A read must point at a typed hypothesis
 			// a human can read; that is the chain evidence text may never bypass.
 			return investigation.Proposed{}, malformed(
@@ -196,16 +249,16 @@ func decodeProposals(
 			CapabilityID:      proposal.Capability,
 			CapabilityVersion: version,
 			Arguments:         arguments,
-			Justification:     proposal.Justification,
+			Justification:     resolve(proposal.Justification),
 			Reason:            reason,
 		})
 	}
 
-	weighings, err := decodeWeighings(answer.Weighings, len(deliberation.Evidence), holding)
+	weighings, err := decodeWeighings(answer.Weighings, len(deliberation.Evidence), used, resolve)
 	if err != nil {
 		return investigation.Proposed{}, err
 	}
-	settlings, err := decodeSettlings(answer.Settlings, holding)
+	settlings, err := decodeSettlings(answer.Settlings, used, resolve)
 	if err != nil {
 		return investigation.Proposed{}, err
 	}
@@ -293,42 +346,46 @@ func decodeConclusion(
 		}
 	}
 
-	proposed, err := decodeProposedHypotheses(answer.Hypotheses, len(deliberation.Hypotheses))
+	proposed, resolve, err := decodeProposedHypotheses(answer.Hypotheses, deliberation.Hypotheses)
 	if err != nil {
 		return investigation.Concluded{}, err
 	}
-	// A hypothesis proposed by this same document is nameable by it. The round appends these
-	// before the outcome is admitted, so the ordinals they will hold are known here — and without
-	// that, a cause the evidence revealed at the last call could be stated but never traced.
-	holding := len(deliberation.Hypotheses) + len(proposed)
+	// A hypothesis proposed by this same document is nameable by it. The round appends these before
+	// the outcome is admitted, so the ordinals they will hold are known here — and without that, a
+	// cause the evidence revealed at the last call could be stated but never traced. Bounds are
+	// checked against what the reasoner answered in, which still counts anything it restated; the
+	// resolver moves each ordinal onto the list the round will actually hold.
+	used := len(deliberation.Hypotheses) + len(answer.Hypotheses)
 
-	weighings, err := decodeWeighings(answer.Weighings, len(deliberation.Evidence), holding)
+	weighings, err := decodeWeighings(answer.Weighings, len(deliberation.Evidence), used, resolve)
 	if err != nil {
 		return investigation.Concluded{}, err
 	}
-	settlings, err := decodeSettlings(answer.Settlings, holding)
+	settlings, err := decodeSettlings(answer.Settlings, used, resolve)
 	if err != nil {
 		return investigation.Concluded{}, err
 	}
-	if answer.Explains < 0 || answer.Explains > holding {
+	if answer.Explains < 0 || answer.Explains > used {
 		return investigation.Concluded{}, malformed(
 			"it explains hypothesis %d, which is neither one it was shown nor one it proposed",
 			answer.Explains)
 	}
+	unresolved := make([]int, 0, len(answer.Unresolved))
 	for _, ordinal := range answer.Unresolved {
-		if ordinal < 1 || ordinal > holding {
+		if ordinal < 1 || ordinal > used {
 			return investigation.Concluded{}, malformed(
 				"it names hypothesis %d as unresolved, which it was never shown", ordinal)
 		}
+		unresolved = append(unresolved, resolve(ordinal))
 	}
 
 	return investigation.Concluded{
 		Draft: investigation.Draft{
 			Kind:         kind,
 			Statement:    statement,
-			Explains:     answer.Explains,
+			Explains:     resolve(answer.Explains),
 			Claims:       claims,
-			Unresolved:   answer.Unresolved,
+			Unresolved:   unresolved,
 			RelevantGaps: answer.RelevantGaps,
 		},
 		Hypotheses: proposed,
@@ -358,7 +415,7 @@ type settling struct {
 // able to record how that evidence stands towards it, and that record is most of what shows the
 // discovery was reasoning rather than assertion.
 func decodeWeighings(
-	weighings []weighing, evidence int, holding int,
+	weighings []weighing, evidence int, used int, resolve func(int) int,
 ) ([]investigation.Weighing, error) {
 	if len(weighings) > maxWeighings {
 		return nil, malformed("it weighs %d pairs and at most %d are usable",
@@ -366,7 +423,7 @@ func decodeWeighings(
 	}
 	decoded := make([]investigation.Weighing, 0, len(weighings))
 	for position, weighed := range weighings {
-		if weighed.Hypothesis < 1 || weighed.Hypothesis > holding {
+		if weighed.Hypothesis < 1 || weighed.Hypothesis > used {
 			return nil, malformed("weighing %d names hypothesis %d, which it was never shown",
 				position+1, weighed.Hypothesis)
 		}
@@ -387,7 +444,7 @@ func decodeWeighings(
 			return nil, malformed("weighing %d gives no reason", position+1)
 		}
 		decoded = append(decoded, investigation.Weighing{
-			Hypothesis: weighed.Hypothesis,
+			Hypothesis: resolve(weighed.Hypothesis),
 			Evidence:   weighed.Evidence,
 			Stance:     stance,
 			Reason:     reason,
@@ -403,7 +460,7 @@ func decodeWeighings(
 // is the whole point of allowing a late proposal, since one that could never be settled could never
 // be the explanation either.
 func decodeSettlings(
-	settlings []settling, holding int,
+	settlings []settling, used int, resolve func(int) int,
 ) ([]investigation.Settling, error) {
 	if len(settlings) > maxSettlings {
 		return nil, malformed("it settles %d hypotheses and at most %d are usable",
@@ -411,7 +468,7 @@ func decodeSettlings(
 	}
 	decoded := make([]investigation.Settling, 0, len(settlings))
 	for position, settled := range settlings {
-		if settled.Hypothesis < 1 || settled.Hypothesis > holding {
+		if settled.Hypothesis < 1 || settled.Hypothesis > used {
 			return nil, malformed("settling %d names hypothesis %d, which it was never shown",
 				position+1, settled.Hypothesis)
 		}
@@ -428,7 +485,7 @@ func decodeSettlings(
 					"aside silently is one a reader cannot check", position+1)
 		}
 		decoded = append(decoded, investigation.Settling{
-			Hypothesis: settled.Hypothesis,
+			Hypothesis: resolve(settled.Hypothesis),
 			State:      state,
 			Reason:     reason,
 		})

@@ -22,7 +22,7 @@ import (
 // PromptVersion is the version of the wording below. It is part of the transcript key, so a change
 // to the prompt refuses every recording made before it rather than replaying against wording that
 // no longer exists.
-const PromptVersion = "3"
+const PromptVersion = "4"
 
 // maxRenderedEvidenceBytes bounds the total evidence text one prompt carries. Individual items are
 // already bounded when they are validated; this bounds their sum, because a round that gathered
@@ -114,10 +114,13 @@ and a round that spends them on confirmation rather than discrimination learns n
 Record how the evidence you have already been shown stands towards each hypothesis, including
 evidence that moved nothing, and settle any hypothesis the evidence has decided.
 
-If the evidence has revealed an explanation none of your hypotheses covers, add it, with the
-observation that would disprove it. It takes the next ordinal after the ones you hold, and you may
-then ask for a read that would test it. A cause noticed but never proposed is one nothing will be
-read to disprove.
+The hypotheses section is for explanations that are NEW. Everything printed above is already on the
+record and keeps the ordinal it has; do not list it again. Send an empty hypotheses list unless the
+evidence has revealed something none of your hypotheses covers.
+
+If it has, add that one, with the observation that would disprove it. It takes the next ordinal
+after the ones you hold, and you may then ask for a read that would test it. A cause noticed but
+never proposed is one nothing will be read to disprove.
 
 If you have nothing further worth asking for, return an empty proposals list. That is a decision,
 not a failure.
@@ -130,10 +133,12 @@ Weigh what you were shown. Cite every claim by evidence ordinal. Name the covera
 mattered to this outcome and the hypotheses still unresolved.
 
 Your explanation must BE one of the hypotheses. Name it by ordinal in "explains", and settle that
-same hypothesis as supported. If the evidence points somewhere none of them reached, add it to
-"hypotheses" with what would disprove it and explain that one — it takes the next ordinal after the
-ones you were shown. This is the last call in the round, so a hypothesis added here will not be
-tested by any read, and the case will say so beside your explanation.
+same hypothesis as supported. The hypotheses printed above are already on the record and keep the
+ordinals they have; the "hypotheses" list here is for new explanations only and is empty unless the
+evidence points somewhere none of them reached. If it does, add that one with what would disprove it
+and explain that one — it takes the next ordinal after the ones you were shown. This is the last
+call in the round, so a hypothesis added here will not be tested by any read, and the case will say
+so beside your explanation.
 
 Settle every alternative you are not explaining, with the reason: falsified where the evidence
 disproved it, set aside where you did not pursue it. An alternative left silent is one a reader

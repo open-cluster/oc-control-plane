@@ -1,4 +1,4 @@
-prompt version: 3
+prompt version: 4
 schema version: 3
 
 ---- system block (cacheable=true) ----
@@ -119,10 +119,13 @@ and a round that spends them on confirmation rather than discrimination learns n
 Record how the evidence you have already been shown stands towards each hypothesis, including
 evidence that moved nothing, and settle any hypothesis the evidence has decided.
 
-If the evidence has revealed an explanation none of your hypotheses covers, add it, with the
-observation that would disprove it. It takes the next ordinal after the ones you hold, and you may
-then ask for a read that would test it. A cause noticed but never proposed is one nothing will be
-read to disprove.
+The hypotheses section is for explanations that are NEW. Everything printed above is already on the
+record and keeps the ordinal it has; do not list it again. Send an empty hypotheses list unless the
+evidence has revealed something none of your hypotheses covers.
+
+If it has, add that one, with the observation that would disprove it. It takes the next ordinal
+after the ones you hold, and you may then ask for a read that would test it. A cause noticed but
+never proposed is one nothing will be read to disprove.
 
 If you have nothing further worth asking for, return an empty proposals list. That is a decision,
 not a failure.

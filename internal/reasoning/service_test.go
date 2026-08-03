@@ -236,6 +236,58 @@ func TestRequests_AReadMayPointAtAHypothesisTheSameAnswerProposed(t *testing.T) 
 	}
 }
 
+// A reasoner shown a `hypotheses` field fills it with the whole list it is holding rather than only
+// what is new. It did exactly that on a live run, leaving a case with seven hypotheses of which
+// three were word-for-word repeats — the same explanation twice in the record, twice in the
+// supported state. Refusing the document would cost a round; a restatement is dropped and every
+// ordinal pointing at it is redirected to the hypothesis it restates, because that is what the
+// reasoner meant.
+func TestRequests_AHypothesisRestatingOneAlreadyHeldIsDroppedNotDuplicated(t *testing.T) {
+	// Hypothesis 1 of the fixture, word for word, plus one genuinely new explanation. The read and
+	// the settling both point at the restatement's ordinal, 3.
+	document := `{
+	  "proposals":[{"capability":"kubernetes.namespace.events","justification":3,
+	                "reason":"the cluster's own account would disprove the restated explanation",
+	                "arguments":{"pod":0,"container":"","previous":false,
+	                             "max_pods":0,"max_events":0,"max_lines":0}}],
+	  "hypotheses":[{"statement":"the new image crashes on startup",
+	                 "falsifies":"a pod running the new image stays ready"},
+	                {"statement":"a referenced Secret is absent",
+	                 "falsifies":"the Secret exists in the namespace"}],
+	  "weighings":[{"hypothesis":3,"evidence":1,"stance":"supports","reason":"it backs the restated one"}],
+	  "settlings":[{"hypothesis":4,"state":"supported","reason":"the event names a missing Secret"}]}`
+	provider := newFakeProvider("primary", answer{document: document})
+	service := serviceUnder(t, provider)
+
+	proposed, err := service.Requests(context.Background(), deliberationFixture())
+	if err != nil {
+		t.Fatalf("proposing: %v", err)
+	}
+	if len(proposed.Hypotheses) != 1 {
+		t.Fatalf("only the genuinely new explanation may be appended, got %d: %+v",
+			len(proposed.Hypotheses), proposed.Hypotheses)
+	}
+	if proposed.Hypotheses[0].Statement != "a referenced Secret is absent" {
+		t.Errorf("the wrong one survived: %q", proposed.Hypotheses[0].Statement)
+	}
+	// Two were shown, one is appended, so the new one is ordinal 3 rather than the 4 the reasoner
+	// used — and everything the reasoner pointed at those ordinals moves with them.
+	if proposed.Hypotheses[0].Ordinal != 3 {
+		t.Errorf("ordinal = %d, want 3", proposed.Hypotheses[0].Ordinal)
+	}
+	if len(proposed.Proposals) != 1 || proposed.Proposals[0].Justification != 1 {
+		t.Errorf("the read pointed at the restatement of hypothesis 1 and must resolve to 1, got %+v",
+			proposed.Proposals)
+	}
+	if len(proposed.Weighings) != 1 || proposed.Weighings[0].Hypothesis != 1 {
+		t.Errorf("the weighing must resolve to 1, got %+v", proposed.Weighings)
+	}
+	if len(proposed.Settlings) != 1 || proposed.Settlings[0].Hypothesis != 3 {
+		t.Errorf("the settling named the new explanation and must resolve to 3, got %+v",
+			proposed.Settlings)
+	}
+}
+
 func TestRequests_AReadPointingPastEverythingShownAndProposedIsRefused(t *testing.T) {
 	document := `{
 	  "proposals":[{"capability":"kubernetes.namespace.events","justification":4,
