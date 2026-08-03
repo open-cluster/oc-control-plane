@@ -306,9 +306,26 @@ failed rounds that were working.
   demonstrably work in the runs that concluded, interleaved with the ones that did not. That is the
   signature of transient provider failure rather than a deterministic schema regression.
 
-  It does not exclude intermittently malformed output, and four failures in seven is a high rate to
-  attribute to a vendor without evidence. **Re-run the failed scenarios on the current build before
-  trusting either explanation** — the named failure will say which it was in one word.
+  **ANSWERED by the re-run: all four conclude, and none of them fails again.** `readiness-probe-
+  failure` and `missing-secret` — the two that died at the planning call — conclude at 42,822 and
+  13,377 tokens where they had died at 2,519 and 3,654. `crash-on-startup` and `bad-configmap-value`,
+  which died at the conclusion call, conclude too. Four for four, zero failures. Evidence:
+  `docs/evidence/live-glm5-rerun-summary.json`.
+
+  The justification-bound defect is the explanation that survives for the two planning-call rounds,
+  and it was this change's fault: the reasoner was invited to propose a hypothesis and ask for a read
+  testing it, decoding refused any justification past what it had been shown, and the round died with
+  no adaptive read dispatched. It was caught in review and fixed in `f2b9a72`, which the sweep did
+  not carry and the re-run does.
+
+  The two conclusion-call rounds have no such explanation and recovered anyway, which leaves
+  transient provider failure as the reading for those. Four failures in ten remains a high rate to
+  hand a vendor on one sweep, and the honest position is that it has not recurred rather than that
+  it has been explained.
+
+  **The `NamedFailure` change produced no output, because nothing failed.** It is committed,
+  unit-tested at the interface, and unexercised against a live failure. The next round that dies is
+  the first real test of it.
 
 - **The model re-proposes hypotheses it already holds, and that is this change's defect.** Found by
   re-running `readiness-probe-failure` on the fixed build: it concluded, and the case now holds seven
@@ -337,8 +354,17 @@ failed rounds that were working.
   The fix landed in `f2b9a72` before either commit was made, having been caught in review rather than
   by the sweep — the sweep was already running against the build without it.
 
-  Not fixed yet: the re-run was in flight when this was found, and `go run` recompiles per scenario,
-  so changing the prompt would have contaminated the experiment it exists to settle.
+  **Fixed in `7686b7f`, and the fix is unverified live.** A restatement is now dropped at decode and
+  every ordinal pointing at it is redirected to the hypothesis it restates, which is what the
+  reasoner meant and what this package already does with a claim citing the same evidence twice.
+  Refusing the document instead would have cost a round, and this slice has already shown what that
+  costs. The prompt says plainly that the printed hypotheses are on the record and keep their
+  ordinals; wording first, structural drop second, in the order the injection defence uses.
+
+  All four re-runs compiled before prompt version 4 landed, so every one of them ran on the wording
+  that produced the duplicates — which makes the re-run a clean test of the justification fix and no
+  test at all of this one. Two of the four duplicated and two did not, so the behaviour is
+  intermittent rather than deterministic, and a single clean run would not settle it either.
 
 - **A live harness run writes no transcript.** `spec-live-model-provider.md` asks for one per
   scenario so commit CI can replay what the model actually said; `OC_MODEL_TRANSCRIPT_FILE` is set
