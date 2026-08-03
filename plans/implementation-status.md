@@ -318,13 +318,24 @@ failed rounds that were working.
   wording added to the proposals task — "If the evidence has revealed an explanation none of your
   hypotheses covers, add it" — is not emphatic enough that the ones it holds are already recorded.
 
-  Three consequences, in increasing severity. The case record is polluted with duplicates, so a
-  reader sees the same explanation twice and, here, twice in the `supported` state. The ordinals a
-  round carries inflate, which is noise in every later citation. And `maxHypotheses` is 8: a round
-  re-proposing what it holds crosses that bound, the proposals document is refused as malformed,
-  the one retry produces the same thing, and the round FAILS at the planning call having dispatched
-  no adaptive read. That is precisely the shape of `readiness-probe-failure` and `missing-secret` in
-  the sweep, and it is why the conclusion that the failures pointed away from this change was wrong.
+  The case record is polluted with duplicates, so a reader sees the same explanation twice and, in
+  `readiness-probe-failure`, twice in the `supported` state. The ordinals a round carries inflate,
+  which is noise in every later citation. `maxHypotheses` is 8, so a round holding five or more and
+  re-proposing them all would also be refused outright — that has not been observed and is a bound
+  worth remembering rather than a diagnosis.
+
+  **What actually killed the two planning-call rounds in the sweep is the OTHER defect this change
+  introduced, and the arithmetic settles it.** The overflow explanation does not survive contact with
+  the numbers: `missing-secret` held four hypotheses and `readiness-probe-failure` three, so
+  re-proposing every one of them reaches eight and six against a bound of eight — neither crosses it.
+  What does fit is the justification bound. The reasoner was told it may propose a hypothesis and
+  then ask for a read that would test it; decoding refused any justification past what it had been
+  SHOWN, so a document that did exactly what the prompt asked was thrown away as malformed, the one
+  retry produced the same document, and the round failed at the planning call having dispatched no
+  adaptive read. That is the shape of both, and both CONCLUDE on the build where it is fixed.
+
+  The fix landed in `f2b9a72` before either commit was made, having been caught in review rather than
+  by the sweep — the sweep was already running against the build without it.
 
   Not fixed yet: the re-run was in flight when this was found, and `go run` recompiles per scenario,
   so changing the prompt would have contaminated the experiment it exists to settle.
