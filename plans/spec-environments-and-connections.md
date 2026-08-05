@@ -1,6 +1,10 @@
 # Spec — Environments and Connections (minimal)
 
-Status: READY FOR IMPLEMENTATION. Part of the first-investigation slice, not a slice of its own.
+Status: IMPLEMENTED 2026-07-31, migration `0008_environment_and_connection.sql`. Extended by
+`spec-integration-registry-and-connection-lifecycle.md`, which gives a Connection its lifecycle,
+validation history and dependents. The line below was stale until 2026-08-05.
+
+Superseded status line: READY FOR IMPLEMENTATION. Part of the first-investigation slice, not a slice of its own.
 Date: 2026-07-31 (revision 3 — the Integration is separated from the Connection, a Connection
 gains a role, and intake stops naming a tenant in its URL; revision 2 was a hard reduction after
 the architecture grilling session, revision 1 scoped this as a standalone slice ahead of

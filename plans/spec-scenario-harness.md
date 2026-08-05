@@ -1,19 +1,26 @@
 # Spec — The scenario harness
 
-Status: BUILT 2026-08-01, and **not yet runnable to a scored result**. The instrument exists: ten
-scenarios provisioned from code and verified against a real cluster, readiness verified or the run
-discarded loudly, a real investigation opened through the real control plane and a real Relay, an
-artifact filed apart from ground truth, blind two-scorer recording, and the kill criterion.
+Status: BUILT 2026-08-01 and **RUN AGAINST A LIVE PROVIDER 2026-08-02**. The instrument exists:
+ten scenarios provisioned from code, all ten verified to reach their declared broken state against
+a real k3s, readiness verified or the run discarded loudly, a real investigation opened through the
+real control plane and a real Relay, an artifact filed apart from ground truth, blind two-scorer
+recording, and the kill criterion. Built in the same slice as `spec-first-investigation.md`, not
+after it.
 
-What is missing is the model. **There is no live provider**, so a run drives the model boundary
-from a recorded transcript and REFUSES a live-provider run rather than quietly replaying one — and
-**no transcripts ship**, because there is nothing to record from. A hand-written transcript would
-be the builder's imagination scored as though it were a model's reasoning, which is the exact
-failure blind scoring exists to prevent. So `scenario run` cannot presently produce an artifact
-for any scenario: it needs either a provider to record from, or recordings supplied from elsewhere.
-This is stated in the harness's tests, `test/e2e/doc.go`, the README and the status tracker rather
-than left to be discovered. Built in the same slice as `spec-first-investigation.md`, not after it.
-Date: 2026-07-31 (built 2026-08-01)
+The paragraph this replaced said no live provider existed and `scenario run` could produce no
+artifact. That was true when written and is not now: `internal/reasoning` landed on 2026-08-02, the
+`red-herring` scenario has been run end to end through the whole product, and five live runs have
+been recorded and analysed in `implementation-status.md`. Findings from those runs have already
+changed the product twice.
+
+**What has not happened yet, stated so it is not read as more than it is.** One scenario of ten has
+been exercised end to end, not the set. **No blind two-scorer scoring has taken place** — the runs
+so far were read by the person building the system, which is exactly the self-assessment blind
+scoring exists to prevent, and the acceptance thresholds in this document are therefore unmeasured.
+`supported` has not yet been observed from any harness run. And a live run still writes no
+transcript, so the failures it surfaces cannot be re-read after the fact; that gap belongs to
+`spec-live-model-provider.md` and is recorded there.
+Date: 2026-07-31 (built 2026-08-01; run live 2026-08-02; status corrected 2026-08-04)
 Repository: the Go control plane, as a program rather than a test
 Decision records: ADR-008 (investigator first — the harness is named as part of that slice),
 ADR-011 (abstention standard and the kill criterion), ADR-009 (choice and conclusion scored

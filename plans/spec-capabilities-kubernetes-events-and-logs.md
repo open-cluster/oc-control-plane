@@ -1,6 +1,11 @@
 # Spec — Kubernetes events and container logs capabilities
 
-Status: READY FOR IMPLEMENTATION. Prerequisite for `spec-first-investigation.md`.
+Status: IMPLEMENTED. `internal/capability/capability.go` declares
+`kubernetes.namespace.events` and `kubernetes.container.logs` beside the workload runtime read, and
+the Relay side is `opencluster-relay/plans/kubernetes-events-and-logs.md`. The line below was stale
+until 2026-08-05 and is kept for the reasoning, not the status.
+
+Superseded status line: READY FOR IMPLEMENTATION. Prerequisite for `spec-first-investigation.md`.
 Date: 2026-07-31 (revision 2 — the language is aligned with ADR-003's second amendment: a job
 reaches an **Evidence Connection**, which is one configured instance of the Kubernetes
 Integration, and the Relay is where that job runs rather than what it reaches)

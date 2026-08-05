@@ -1,7 +1,20 @@
 # Spec — The traced explanation
 
-Status: READY FOR IMPLEMENTATION. Revision 1.
-Date: 2026-08-02
+Status: IMPLEMENTED 2026-08-02 — commit `f2b9a72`, "an explanation has to be a hypothesis somebody
+tested", with migration 0010. Admission refuses an outcome that names no tested hypothesis; a
+hypothesis no dispatched read was justified by demotes the outcome to `caveated` with a coverage
+gap, and the demotion is computed from what the control plane dispatched rather than asked of the
+model.
+
+**The demotion rule is under revision against harness evidence, and this document does not yet
+record the revision.** Two findings from the 2026-08-02 sweep bear on it. The opening reads are
+deterministic and precede every hypothesis, so they carry no justification and only an adaptive
+read can put a hypothesis at risk — which means a round whose answer is already in the orientation
+cannot earn `supported` however well it reasons. `supported` has not been observed from the harness
+at all. The candidate correction recorded in `implementation-status.md` is to keep the gap always
+and narrow the demotion to a hypothesis proposed at the conclusion. Until that is decided here, the
+tracker is the current authority on the rule.
+Date: 2026-08-02 (status corrected 2026-08-04)
 Repository: the Go control plane
 Glossary: `CONTEXT.md`
 

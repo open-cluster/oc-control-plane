@@ -1,5 +1,12 @@
 # Spec — Versioned Integration registry, Connection lifecycle, Relay lifecycle, table query contract
 
+Status: **BUILT 2026-08-05**, commit `127dadf`, migration `0013_connection_lifecycle.sql`. The
+operator surface now serves the organization-scoped catalog with lifecycle state, the
+Organization-wide Connection list, `validate`, `enabled`, `deliveries`, `trigger/test-event`,
+`trigger/rotate-secret`, `dependents`, `validations`, `DELETE`, the Relay fleet summary and
+bootstrap tokens. **Not yet verified against the frontend's declared contract** — that is
+`oc-frontend/tests/e2e/contract-drift.spec.ts`, which still skips when nothing is listening.
+
 Repo: `oc-control-plane`. Depends on `plans/spec-operator-api-identity-and-rbac.md` for the
 principal.
 Audit basis: `oc-frontend/plans/audit-2026-08-04-enterprise-forensic.md` §1 B5, B6 and §2 C1–C3.
