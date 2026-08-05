@@ -252,6 +252,10 @@ type scenarioRun struct {
 
 	connection uuid.UUID
 	client     *http.Client
+	// transcripts is where a live run files what the model said. It is under the results rather
+	// than under the run's working directory, which is removed when the run closes — a recording
+	// that vanished with the run would answer nothing about a scenario that failed.
+	transcripts string
 }
 
 func newScenarioRun(
@@ -261,7 +265,11 @@ func newScenarioRun(
 	if err != nil {
 		return nil, fmt.Errorf("creating the run's working directory: %w", err)
 	}
-	run := &scenarioRun{workDir: workDir, client: &http.Client{Timeout: 30 * time.Second}}
+	run := &scenarioRun{
+		workDir:     workDir,
+		client:      &http.Client{Timeout: 30 * time.Second},
+		transcripts: options.Results.TranscriptDir(),
+	}
 
 	options.say("  starting a database and a cluster")
 	if run.truth, err = startTruth(ctx); err != nil {
@@ -300,6 +308,9 @@ func (r *scenarioRun) startPlane(
 	// A live deployment outranks a recording: a run given one was asked for the real thing.
 	if source.Live() {
 		plane.useModel(source.Provider, source.Model, source.KeyFile, source.Effort)
+		// And it records what it says. A replayed run does not, because re-recording a recording
+		// produces a copy of the file being replayed.
+		plane.recordTranscripts(r.transcripts)
 	} else {
 		plane.replayTranscript(transcript)
 	}

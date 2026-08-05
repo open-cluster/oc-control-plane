@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -28,10 +29,16 @@ const (
 type Signal struct {
 	// SourceKey identifies the ALERT as its source names it, and is stable across episodes.
 	SourceKey string
-	Status    SignalStatus
-	Title     string
-	Summary   string
-	Labels    map[string]string
+	// GroupingKey is the SOURCE's own notion of what belongs together, and is empty when it
+	// supplied none. It is what an IncidentEpisode is keyed on, and it is deliberately never
+	// something this platform inferred from the labels below: deciding from those that two alerts
+	// concern one thing is canonical resource identity, which does not exist here. Empty produces
+	// one episode per alert, which is what "the source grouped nothing" honestly means.
+	GroupingKey string
+	Status      SignalStatus
+	Title       string
+	Summary     string
+	Labels      map[string]string
 	// StartedAt is when the source says this episode began, and together with SourceKey it is
 	// what makes one episode distinguishable from the next.
 	StartedAt time.Time
@@ -64,6 +71,13 @@ type DeliveryOutcome struct {
 	Duplicate bool
 	// Recorded counts the signals this delivery created or updated, and is zero on a duplicate.
 	Recorded int
+	// EpisodesOpened and EpisodesJoined are the GROUPING outcome: how many of the new Signals
+	// started an operational episode and how many landed in one that was already open. They are
+	// reported apart because the ratio is what tells an operator their own alert grouping is doing
+	// something — a source where every alert opens its own episode is one whose group_by is not
+	// what its author believes.
+	EpisodesOpened int
+	EpisodesJoined int
 }
 
 // RecordDelivery accepts one delivery and everything in it, in one transaction.
@@ -99,16 +113,46 @@ func (p *Placements) RecordDelivery(
 	// different orders would otherwise take row locks in opposite orders, and Postgres would
 	// abort one of them as a deadlock — recoverable, since the source retries, but a
 	// self-inflicted failure that costs nothing to avoid.
+	var grouping DeliveryOutcome
 	ordered := slices.SortedFunc(slices.Values(delivery.Signals), compareSignals)
 	for _, signal := range ordered {
-		if err = upsertSignal(ctx, transaction, organization, delivery, signal); err != nil {
+		signalID, inserted, upsertErr := upsertSignal(
+			ctx, transaction, organization, delivery, signal)
+		if upsertErr != nil {
+			return DeliveryOutcome{}, upsertErr
+		}
+		if signalID == uuid.Nil {
+			// The guard in upsertSignal matched nothing: a firing redelivered after its own
+			// resolution. Nothing changed and nothing should be grouped, because grouping it would
+			// reopen an episode this alert has already finished.
+			continue
+		}
+		if inserted {
+			// A new episode of this alert. Everything else is an update to a Signal that already
+			// has its episode, and moving one would be the history changing.
+			opened, groupErr := groupSignal(
+				ctx, transaction, organization, delivery, signal, signalID)
+			if groupErr != nil {
+				return DeliveryOutcome{}, groupErr
+			}
+			if opened {
+				grouping.EpisodesOpened++
+			} else {
+				grouping.EpisodesJoined++
+			}
+			continue
+		}
+		// An update to a Signal already in an episode — most often its resolution, which is what
+		// decides whether the episode as a whole has recovered.
+		if err = regroupUpdatedSignal(ctx, transaction, signalID); err != nil {
 			return DeliveryOutcome{}, err
 		}
 	}
 	if err = transaction.Commit(ctx); err != nil {
 		return DeliveryOutcome{}, fmt.Errorf("committing delivery: %w", err)
 	}
-	return DeliveryOutcome{Recorded: len(delivery.Signals)}, nil
+	grouping.Recorded = len(delivery.Signals)
+	return grouping, nil
 }
 
 // compareSignals orders two signals by the identity they are written under.
@@ -149,13 +193,16 @@ func claimDelivery(
 // the episode is still firing means a late firing cannot resurrect something already resolved,
 // and a repeated resolution is a no-op. The only transition this model has is firing to
 // resolved, so a state guard says that more directly than comparing timestamps would.
+// It reports the Signal's identity and whether the row was newly INSERTED, and a nil identity when
+// the guard matched nothing at all. The three answers call for three different things from
+// grouping, and collapsing them is how a late redelivery reopens an episode that already closed.
 func upsertSignal(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	delivery Delivery, signal Signal,
-) error {
+) (uuid.UUID, bool, error) {
 	labels, err := json.Marshal(signal.Labels)
 	if err != nil {
-		return fmt.Errorf("encoding signal labels: %w", err)
+		return uuid.Nil, false, fmt.Errorf("encoding signal labels: %w", err)
 	}
 
 	var resolvedAt *time.Time
@@ -168,7 +215,15 @@ func upsertSignal(
 	// deliberately NOT in the update list: a Signal keeps the scope it was gathered under even
 	// if the Connection is later moved, because rewriting the scope of past evidence is exactly
 	// what an environment boundary exists to prevent.
-	_, err = transaction.Exec(ctx, `
+	//
+	// xmax is zero on a row this statement INSERTED and non-zero on one it updated. It is how the
+	// same statement answers "was this new" without a second query that a concurrent delivery
+	// could get a different answer from.
+	var (
+		signalID uuid.UUID
+		inserted bool
+	)
+	err = transaction.QueryRow(ctx, `
 		INSERT INTO signal
 			(signal_id, organization, connection_id, environment_id, source_key, status,
 			 title, summary, labels, started_at, resolved_at)
@@ -180,12 +235,41 @@ func upsertSignal(
 		       labels      = EXCLUDED.labels,
 		       resolved_at = EXCLUDED.resolved_at,
 		       updated_at  = now()
-		 WHERE signal.status = 1`,
+		 WHERE signal.status = 1
+		RETURNING signal_id, xmax = 0`,
 		uuid.New(), organization.String(), delivery.Connection, delivery.Environment,
 		signal.SourceKey, int16(signal.Status),
-		signal.Title, signal.Summary, labels, signal.StartedAt, resolvedAt)
-	if err != nil {
-		return fmt.Errorf("recording signal: %w", err)
+		signal.Title, signal.Summary, labels, signal.StartedAt, resolvedAt).
+		Scan(&signalID, &inserted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The guard refused the update: this episode of the alert is already resolved and a
+		// firing has arrived late. Nothing was written, which is the point of the guard.
+		return uuid.Nil, false, nil
 	}
-	return nil
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("recording signal: %w", err)
+	}
+	return signalID, inserted, nil
+}
+
+// regroupUpdatedSignal brings the episode of an already-grouped Signal back in line with it.
+//
+// The Signal itself does not move — an update never changes which episode a Signal belongs to, and
+// one that did would be the history changing. What is recomputed is the episode's own state, most
+// importantly whether every Signal in it has now stopped firing.
+//
+// A Signal recorded before this existed has no episode, and this leaves it alone rather than
+// inventing one: the grouping identity was the source's and that delivery is gone.
+func regroupUpdatedSignal(
+	ctx context.Context, transaction pgx.Tx, signalID uuid.UUID,
+) error {
+	var episodeID *uuid.UUID
+	if err := transaction.QueryRow(ctx,
+		`SELECT episode_id FROM signal WHERE signal_id = $1`, signalID).Scan(&episodeID); err != nil {
+		return fmt.Errorf("reading a signal's episode: %w", err)
+	}
+	if episodeID == nil {
+		return nil
+	}
+	return refreshEpisode(ctx, transaction, *episodeID)
 }

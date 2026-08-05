@@ -899,10 +899,14 @@ func TestOperatorIdentity_ATenantSetsItsOwnSessionLifetime(t *testing.T) {
 	if !strings.Contains(read.body, `"sessionLifetimeSeconds":900`) {
 		t.Errorf("the policy reads back as %s", read.body)
 	}
-	// Stated rather than implied: the retention schedule is recorded and nothing prunes on it.
-	if !strings.Contains(read.body, `"auditRetentionEnforced":false`) {
-		t.Errorf("the surface does not say whether the retention schedule is applied: %s",
-			read.body)
+	// Stated rather than implied. It reported false while the schedule was a column nothing acted
+	// on, and reports true now that the pruner exists — a product stating a retention period it
+	// does not enforce is worse than one stating none, and the flag is what keeps that honest
+	// either way. It is passed from the composition root rather than hard-coded, so a deployment
+	// that stopped running the pruner would report the truth about itself.
+	if !strings.Contains(read.body, `"auditRetentionEnforced":true`) {
+		t.Errorf("the surface does not say the retention schedule is applied, and this process "+
+			"runs the pruner: %s", read.body)
 	}
 
 	// A lifetime beyond what this build serves is refused rather than silently clamped, so an

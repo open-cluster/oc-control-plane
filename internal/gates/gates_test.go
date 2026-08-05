@@ -158,6 +158,12 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// organization because finding out which organizations there are work for IS the question,
 		// and it reads no tenant data — only which tenants have work. Every claim it leads to is
 		// tenant-scoped, and each one takes the organization this read discovered.
+		// The retention pruner asks which tenants declared a schedule for their own record, for
+		// the same reason: finding out which organizations there are IS the question. It reads no
+		// tenant data — only which tenants declared a number — and the delete it leads to takes
+		// the organization this read discovered.
+		"DeclaredRetentions": "discovers which tenants declared an audit retention schedule; " +
+			"reads no tenant data, and every prune it leads to is tenant-scoped",
 		"InvestigationsAwaitingWork": "discovers which tenants have a claimable investigation " +
 			"round; reads no tenant data, and every claim it leads to is tenant-scoped",
 		// The three credential lookups, and they are the same case ConnectionByID is. A session

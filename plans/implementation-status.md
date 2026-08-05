@@ -75,8 +75,13 @@ EvidenceItems it rests on — or in an abstention naming what was missing. The w
 through a summary a client polls by version, paginated sections stamped with the version they
 represent, and a server-side assembly at a pinned version.
 
-**Nothing consumes a Signal.** There is still no Incident and no signal-triggered investigation;
-the manual trigger is the only one, which is what ADR-008 sequenced.
+**CORRECTED 2026-08-05. Signals are consumed, and by a grouping rather than by an investigator.**
+This paragraph read: "Nothing consumes a Signal. There is still no Incident and no signal-triggered
+investigation; the manual trigger is the only one, which is what ADR-008 sequenced." The first half
+is no longer true and the second still is. Signals now group into IncidentEpisodes on the identity
+their own source supplied; an Investigation may be attributed to an episode by an operator who
+still names the scope themselves. Nothing starts an investigation FROM a Signal, and that remains
+blocked on canonical resource identity rather than on sequencing.
 
 **The live model provider is built.** Written 2026-08-02. `internal/reasoning` implements the
 investigation-owned boundary against a provider-neutral contract; `internal/reasoning/anthropic`
@@ -409,11 +414,85 @@ fail on it. Both directives say so and both must be deleted together once the ta
 | 2 — Relay sessions and jobs | `spec-relay-sessions-and-jobs-in-go.md` | ✅ Done |
 | — End-to-end proof | `spec-relay-end-to-end-proof.md` | ✅ Done, running in CI |
 | — Planning record migration | `spec-planning-record-migration.md` | ✅ Done, except the tracker (this file) |
-| 3 — Signal intake | `spec-signal-intake-and-incidents.md` | ⚠️ **Half done** — intake built, incidents not |
+| 3 — Signal intake and incidents | `spec-signal-intake-and-incidents.md` | ✅ Done 2026-08-05, migration 0014. Signals group into IncidentEpisodes on the source's own grouping identity; explainable, revisable by merge, readable through the operator surface. **Signal-triggered investigation is still out**, blocked on canonical resource identity |
 | — Protocol re-sync | `spec-relay-protocol-sync.md` | ⊘ Abandoned, retained for its conclusion |
 | — Master plan | deleted 2026-07-31 | The direction moved; the decision records are the standing definition |
 | — Migration plan | `go-strangler-migration.md` | Standing sequencing plan. **Its slice sequence ends at 3 and is superseded from there by ADR-008.** |
 | — Integration registry and Connection lifecycle | `spec-integration-registry-and-connection-lifecycle.md` | ✅ Done |
+
+### Written 2026-08-05: the three partial specifications are closed, and two of them were partly closed already
+
+Three specifications were carried as partially implemented. Reading them against the code first
+found that **four of the gaps they recorded had already been filled and the documents had not been
+corrected** — intake's rate limit, delivery health, the human-initiated investigation path, and the
+operator surface for configuring a source. Building against those status lines would have produced
+a second implementation of things already shipping. They are corrected in place.
+
+**A live round now files what the model said.** `OC_MODEL_TRANSCRIPT_DIR` names where, one document
+per round, named by the case and the round's ordinal. The recorder had existed since the package
+was written and nothing live ever reached it, which is why the first sweep's four failures could
+not be read afterwards. Recording is per ROUND: a recorder shared across concurrent rounds would
+accumulate them into a transcript that replays as none of them. A round that FAILED files too,
+because the stage it reached is exactly what the sweep could not answer. A replaying deployment
+records nothing and says so at startup, since re-recording a recording produces a corpus of this
+build's own echoes. A directory that cannot be written to refuses the process at startup rather
+than at the end of a paid-for round. The scenario harness files them under `transcripts/` beside
+`artifacts/`, so a blind scorer still reads what the product concluded rather than the model's raw
+turns.
+
+**The audit retention pruner exists, and `auditRetentionEnforced` is now true.** The schedule was a
+column a tenant set and nothing applied, and the surface said so out loud rather than implying
+otherwise. The delete trigger migration 0011 left for it is the only path a row may leave by, and
+the declaration is LOCAL to the pruning transaction — a session-level setting would survive on a
+pooled connection and make an append-only guarantee depend on connection assignment. A tenant
+declaring zero is skipped rather than pruned to now. Deletes are bounded per statement and per
+sweep. The pruner writes no audit event of its own, because a table that grew a row every time it
+was pruned would grow under the mechanism meant to bound it.
+
+**Signals group into IncidentEpisodes, and the grouping is the SOURCE's decision rather than
+this platform's.** Migration 0014. The key is Alertmanager's own group key, computed from the
+grouping the customer's operator configured; nothing is inferred from a Signal's labels, because
+that is canonical resource identity and it still does not exist. A delivery carrying no grouping
+identity produces one episode per alert and records `ungrouped` — a wrong split leaves a redundant
+record, a wrong merge produces an investigation with an incoherent scope.
+
+An episode holds its key only while OPEN, so the same failure next month opens a new episode rather
+than reopening a closed one — the rule the `signal` table already keeps, kept the same way, by a
+partial unique index. Resolution is recomputed from an episode's Signals rather than counted, so
+the field that says whether a failure is still happening cannot drift. Grouping runs inside the
+delivery transaction. A merge revises a grouping and rewrites nothing: both episodes keep their
+identity, their Signals and their record, and the absorbed one gains a pointer and the operator's
+reason, audited in the transaction that makes it.
+
+`Investigation.EpisodeKey` — declared since migration 0009 and always empty — now has its producer.
+One episode has ONE Investigation and a second is refused naming the first. The check is on the
+ENVIRONMENT and not the Connection, because an episode arrives through a trigger Connection and a
+case reads through an evidence one.
+
+**What was deliberately NOT built, so the absences are honest rather than implied.**
+
+- **Signal-triggered investigation.** It needs a Signal's labels resolved to a namespace and a
+  workload. `TriggerSignal` stays declared and unreachable; the severity columns stay unwritten.
+- **Storm shedding of investigations.** Nothing opens an investigation from an episode, so a bound
+  on how many it may open would never run. Grouping is what bounds a storm in this build.
+- **Splitting an episode.** This grouping errs toward splitting, so the correction an operator
+  needs is a merge. A split waits on an observed wrong merge.
+- **Retaining the received payload.** A customer-payload retention surface needs a redaction design
+  this repository does not have.
+- **Break-glass access (story 32 of the operator specification).** Four questions are unanswered:
+  who may invoke it, over what, for how long, and who is told AT THE TIME. The fourth has no answer
+  available, because this product has no notification surface — so what could be built is an
+  escalation route that is audited and silent, which is worse than none.
+- **Recording a performed remediation (story 17).** It decides what an `OutcomeAssessment` is, and
+  that belongs to the investigation-outcome slice. Building it here would fix the shape of a type
+  from the wrong side.
+
+**Two pre-existing test failures were found and fixed, and neither was in production code.** The
+composition-root investigation fixture predated the traced-explanation rule — its draft named no
+hypothesis, so every case in that file abstained — and its transcript key restated the prompt and
+schema numbers as literals, which went stale the moment the prompt moved to version 4. The key is
+now derived from what the build carries; the key CHECK is still asserted where it belongs, on a
+recording made deliberately against components that do not match.
 
 ### Written 2026-08-05: the catalog is a registry, and a Connection has a life
 
@@ -481,11 +560,11 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Environments and Connections | `spec-environments-and-connections.md` | Go control plane | ✅ Done (revision 3 — Integration separated from Connection) |
 | 4 — Events and logs capabilities | `spec-capabilities-kubernetes-events-and-logs.md` | Relay and control plane | ✅ Done, proven end to end |
 | 4 — Scenario harness | `spec-scenario-harness.md` | Go control plane, as a program not a test | ✅ Runnable and RUN 2026-08-02 against a live provider end to end. One of ten scenarios exercised |
-| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. Anthropic itself still uncalled, blocked on API credits |
+| 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. A live round now files its transcript (2026-08-05), so the replay corpus this specification asks for can exist. Anthropic itself still uncalled, blocked on API credits |
 | 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: `importer` stood as supported off a read justified by the hypothesis it concluded, others were demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010. The distractor half is **half done** — see section 3 |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
-| 7 — Operator identity and RBAC | `spec-operator-api-identity-and-rbac.md` | Go control plane | ✅ Built 2026-08-05, migrations 0011 and 0012. OIDC with PKCE and SAML 2.0, server-side sessions, eight roles from a permission table, tenancy enforced with a 404, append-only audit, SCIM provisioning. **Remediation recording, break-glass and the frontend's CI contract test are NOT built** — each recorded as deferred with its reason in the specification |
+| 7 — Operator identity and RBAC | `spec-operator-api-identity-and-rbac.md` | Go control plane | ✅ Built 2026-08-05, migrations 0011 and 0012. OIDC with PKCE and SAML 2.0, server-side sessions, eight roles from a permission table, tenancy enforced with a 404, append-only audit, SCIM provisioning. Retention pruning followed on the same day, so the surface's `auditRetentionEnforced` is now a true statement. **Remediation recording, break-glass and the frontend's CI contract test are NOT built** — each recorded as deferred with its reason in the specification |
 
 **Not specified, deliberately.** Signal-triggered investigation, Incidents and grouping, canonical
 resource identity, and the second alerting adapter. Tenant-scoped operator identity (ADR-006) WAS
@@ -512,8 +591,13 @@ on the execution path rather than a property of whichever query was written corr
 
 **Everything else absent, in rough dependency order:**
 
-- Incidents and grouping; the human-initiated investigation path; storm shedding; intake metrics.
-  Specified in the intake document, none built.
+- **RESOLVED 2026-08-05 except for storm shedding.** This bullet read: "Incidents and grouping; the
+  human-initiated investigation path; storm shedding; intake metrics. Specified in the intake
+  document, none built." Two of the four were already built when it was written and it had not been
+  corrected — the human-initiated path has been the only trigger since the first investigation.
+  Incidents, grouping and intake metrics landed on 2026-08-05. Storm shedding of INVESTIGATIONS is
+  deliberately absent: nothing opens an investigation from an episode, so a bound on how many it
+  may open would never run, and what bounds a storm in this build is the grouping itself.
 
   **RESOLVED 2026-08-05. Delivery health as an operator surface is built.** Every delivery attempt
   that reaches a real Connection is recorded with its outcome and, for a refusal, why — so a

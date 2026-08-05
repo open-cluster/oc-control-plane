@@ -224,3 +224,115 @@ func (p *Placements) AuditEvents(
 	}
 	return audit.List{Events: events, Next: next}, nil
 }
+
+// THE ONE PATH THROUGH WHICH AN AUDIT EVENT MAY LEAVE.
+//
+// Migration 0011 refuses an UPDATE, a DELETE and a TRUNCATE on audit_event outright, except in a
+// transaction that has declared itself the retention pruner. These two functions are that path.
+// Everything else in this program — every handler, every worker, every future refactor — is
+// refused by the database rather than by a reviewer noticing.
+
+// DeclaredRetentions reports every tenant that has declared how long it keeps the record.
+//
+// It names no organization, for the same reason InvestigationsAwaitingWork does not: its job is
+// to discover which tenants there are, so there is no tenant in the question to resolve a
+// placement from. It reads no tenant data — only which tenants declared a number.
+//
+// A tenant whose declared period is zero is NOT reported. Zero is the product's default, which is
+// to keep everything, and treating it as a horizon of "now" would delete an entire record because
+// somebody had never set a policy.
+//
+// A placement that cannot be read fails the whole scan rather than being skipped. Continuing would
+// apply some tenants' schedules and silently not others, which is worse than applying none: an
+// operator reading a successful sweep would believe the schedule was kept everywhere.
+func (p *Placements) DeclaredRetentions(ctx context.Context) ([]audit.Retention, error) {
+	seen := make(map[string]struct{})
+	var declared []audit.Retention
+
+	// A fixed order, so two deployments of the same configuration behave alike.
+	for _, name := range p.names() {
+		rows, err := p.pools[name].Query(ctx, `
+			SELECT organization, audit_retention_days
+			  FROM organization_policy
+			 WHERE audit_retention_days > 0
+			 ORDER BY organization`)
+		if err != nil {
+			return nil, fmt.Errorf("reading retention schedules in placement %q: %w", name, err)
+		}
+		for rows.Next() {
+			var id string
+			var days int
+			if err = rows.Scan(&id, &days); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("reading a retention schedule: %w", err)
+			}
+			if _, already := seen[id]; already {
+				continue
+			}
+			organization, parseErr := tenancy.NewOrganization(id)
+			if parseErr != nil {
+				// Unreachable while every write validates the organization first, and not a
+				// fallback: a policy row whose tenant cannot be named is not one to delete by.
+				continue
+			}
+			seen[id] = struct{}{}
+			declared = append(declared, audit.Retention{Organization: organization, Days: days})
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return nil, fmt.Errorf("reading retention schedules in placement %q: %w", name, err)
+		}
+	}
+	return declared, nil
+}
+
+// PruneEventsBefore removes at most limit of one tenant's events older than the horizon.
+//
+// The declaration is made with set_config's LOCAL flag, so it lives for this transaction and no
+// longer. That is the load-bearing detail: a session-level setting would survive on a pooled
+// connection and turn every later transaction on it into one permitted to delete the record,
+// which would make the append-only guarantee depend on which connection a request happened to get.
+//
+// The delete is bounded by an inner select rather than by the horizon alone, so one statement
+// cannot take a lock proportional to a backlog. The order is oldest first, so a backlog worked
+// through over several sweeps always removes what aged out longest ago.
+func (p *Placements) PruneEventsBefore(
+	ctx context.Context, organization tenancy.Organization, before time.Time, limit int,
+) (int64, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		return 0, nil
+	}
+
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning an audit prune: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	if _, err = transaction.Exec(ctx,
+		`SELECT set_config('opencluster.audit_retention', 'pruning', TRUE)`); err != nil {
+		return 0, fmt.Errorf("declaring the audit prune: %w", err)
+	}
+
+	tag, err := transaction.Exec(ctx, `
+		DELETE FROM audit_event
+		 WHERE event_id IN (
+		       SELECT event_id
+		         FROM audit_event
+		        WHERE organization = $1 AND occurred_at < $2
+		        ORDER BY occurred_at, event_id
+		        LIMIT $3
+		       )`,
+		organization.String(), before, limit)
+	if err != nil {
+		return 0, fmt.Errorf("pruning audit events: %w", err)
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing an audit prune: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

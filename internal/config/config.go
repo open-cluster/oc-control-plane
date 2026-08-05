@@ -72,6 +72,11 @@ const (
 	EnvMinimumRelayVersion = "OC_MINIMUM_RELAY_VERSION"
 
 	EnvModelTranscriptFile = "OC_MODEL_TRANSCRIPT_FILE"
+	// EnvModelTranscriptDir is where a LIVE round files what the model said. It is the other
+	// direction from the variable above: that one replays a recording, this one makes them. A
+	// deployment naming neither records nothing and replays nothing, which is what every
+	// deployment did before this existed.
+	EnvModelTranscriptDir = "OC_MODEL_TRANSCRIPT_DIR"
 
 	// The live model deployment. Which vendor and which model answer is configuration rather
 	// than a constant, because a model is a deployment choice that moves with price,
@@ -223,6 +228,15 @@ type Config struct {
 	// structured, and an environment value is the wrong place for either.
 	ModelTranscript []byte
 
+	// ModelTranscriptDir is where a live round files what the model said, and is empty when a
+	// deployment asked for no recordings.
+	//
+	// It is the reverse of ModelTranscript and the two are independent: one replays what a model
+	// once said, this one records what it says now. A deployment with no live provider sets this
+	// to no effect, because a round replaying a recording would only be re-recording the
+	// recording it is replaying.
+	ModelTranscriptDir string
+
 	// Model is the live provider deployment, if one is configured. An unset Provider means no
 	// live provider, and the boundary then resolves exactly as it does today — a recorded
 	// transcript if one was named, and the unavailable stub otherwise.
@@ -324,6 +338,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.ModelTranscript, err = optionalFile(lookup, EnvModelTranscriptFile); err != nil {
 		return Config{}, err
+	}
+	if directory, named := lookup(EnvModelTranscriptDir); named {
+		cfg.ModelTranscriptDir = strings.TrimSpace(directory)
 	}
 	if cfg.Model, err = modelDeployment(lookup, modelVariables{
 		provider:        EnvModelProvider,

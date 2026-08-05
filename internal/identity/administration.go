@@ -472,8 +472,9 @@ func (h Handlers) readPolicy(writer http.ResponseWriter, request *http.Request) 
 		// asked for a year and is served twelve hours should be told twelve hours.
 		SessionLifetimeSeconds: int(session.ClampLifetime(lifetime).Seconds()),
 		AuditRetentionDays:     retention,
-		// Stated rather than implied. The schedule is recorded and nothing prunes on it yet.
-		AuditRetentionEnforced: false,
+		// Stated rather than implied, and read from what this deployment actually runs rather
+		// than from a constant somebody would have to remember to change.
+		AuditRetentionEnforced: h.RetentionEnforced,
 	})
 }
 
@@ -516,7 +517,7 @@ func (h Handlers) writePolicy(writer http.ResponseWriter, request *http.Request)
 	writeJSON(writer, http.StatusOK, policyView{
 		SessionLifetimeSeconds: int(session.ClampLifetime(lifetime).Seconds()),
 		AuditRetentionDays:     body.AuditRetentionDays,
-		AuditRetentionEnforced: false,
+		AuditRetentionEnforced: h.RetentionEnforced,
 	})
 }
 

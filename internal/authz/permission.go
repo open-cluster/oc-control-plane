@@ -48,6 +48,13 @@ const (
 	// to extend it.
 	RelayBootstrapIssue Permission = "relay.bootstrap-token.issue"
 
+	// Incidents: the operational episode Signals group into, and the correction of a grouping.
+	// Reading one is what everybody looking at the tenant does. MERGING decides what an incident
+	// is about — and so what an Investigation opened for it would be scoped to — which is why it
+	// is a permission of its own rather than part of reading.
+	IncidentRead  Permission = "incident.read"
+	IncidentMerge Permission = "incident.merge"
+
 	// Investigations.
 	InvestigationRead   Permission = "investigation.read"
 	InvestigationOpen   Permission = "investigation.open"
@@ -88,6 +95,7 @@ var allPermissions = []Permission{
 	ConnectionRead, ConnectionCreate, ConnectionUpdate, ConnectionDelete, ConnectionValidate,
 	ConnectionSecretRotate, IntegrationRead,
 	RelayRead, RelayConflictClear, RelayBootstrapIssue,
+	IncidentRead, IncidentMerge,
 	InvestigationRead, InvestigationOpen, InvestigationCancel, InvestigationReopen,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, MemberOwnerManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,

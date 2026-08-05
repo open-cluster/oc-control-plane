@@ -1,9 +1,11 @@
 # Spec — Signal intake and incidents
 
-Status: FIRST INCREMENT IMPLEMENTED 2026-07-29, and REBUILT ON CONNECTIONS 2026-07-31. Intake to
-a durable Signal is built and in CI. The second increment — incidents, grouping and the
-human-initiated path — is no longer blocked, and is deferred by ADR-008 rather than by a missing
-model: it waits on evidence from the first investigation, not on anything intake needs.
+Status: SECOND INCREMENT IMPLEMENTED 2026-08-05. Intake to a durable Signal was built 2026-07-29
+and rebuilt on Connections 2026-07-31; **Signals now group into IncidentEpisodes**, the grouping is
+explainable and revisable, and the episodes are readable and correctable through the operator
+surface. What remains out is signal-TRIGGERED investigation, which is blocked on canonical resource
+identity rather than on anything here. See "What the second increment built" at the foot of this
+document.
 Date: 2026-07-27, first source chosen 2026-07-29
 Repository: the Go control plane
 
@@ -44,13 +46,21 @@ Repository: the Go control plane
 > decision below. Story 19 asks intake be bounded in size AND rate; only size is bounded, so a
 > holder of a valid secret can still deliver as fast as it likes.
 >
-> **Not built.** Story 9 — a source is configured by inserting a row, because there is no API
+> **Not built AS OF 2026-07-31, and corrected beneath this block.** Story 9 — a source is configured by inserting a row, because there is no API
 > yet; that is a gap in the operator surface rather than in intake. Story 22 — the received
 > payload is retained only as a digest, which identifies a redelivery but diagnoses nothing, so
 > a normalisation mistake still cannot be checked against what actually arrived. Incidents and
 > grouping (5, 6, 24, 25), the human-initiated path (3, 4, 30), storm shedding (14, 15),
 > delivery health as an operator surface (13), and intake metrics (27). Story 2 waits on the
 > investigator, which this document puts out of scope.
+>
+> **Corrections to that paragraph, each checked against the code on 2026-08-05.** Four of those
+> were built and this document did not say so, which is worth recording as much as the ones that
+> were not: story 9 (Connections are configured through the operator surface), story 13 (every
+> delivery attempt is recorded with its disposition and, for a refusal, why), stories 3, 4 and 30
+> (an engineer opens a case naming a Connection, a scope and a window over any window inside the
+> seven-day bound, with no episode involved), and story 19's rate limit, which runs before
+> authentication. Stories 5, 6, 24, 25 and 27 were built on 2026-08-05.
 
 ## Problem Statement
 
@@ -307,3 +317,79 @@ resurface. Chat-initiated investigation, topology, and cross-source correlation 
 know that the thing one system calls one name and another system calls another name are the
 same object. That problem has one line of design and is the largest unsolved question in the
 product. Nothing here depends on it, and that is deliberate.
+
+## What the second increment built
+
+Written 2026-08-05, after the work. It corrects this document rather than being appended as a
+second opinion: where the implementation departed from what is written above, the departure is
+here with its reason, and the paragraph it departs from stands as the intent.
+
+**The decision the rest follows from: the grouping identity is the SOURCE's, and nothing this
+platform inferred.** The document above says grouping must be conservative and explainable, and
+does not say what to key it on. Keying it on a Signal's labels — that these two alerts name the
+same namespace, so they are one incident — is canonical resource identity, which this document
+itself calls the largest unsolved question in the product and gives one line of design. So the key
+is Alertmanager's own group key, computed from the grouping the customer's operator configured.
+When two alerts land in one episode here, it is because their own system already decided they
+belong together.
+
+A payload carrying no grouping identity produces one episode per alert, and the record says
+`ungrouped` rather than implying somebody grouped them. That is the conservative failure and it is
+the one this document asks for: a wrong split leaves a redundant record, a wrong merge produces an
+investigation with an incoherent scope.
+
+**An episode is keyed on the connection and the grouping key WHILE IT IS OPEN.** A resolved episode
+releases its key, so the same failure next month opens a new episode rather than reopening the
+resolved record of the last one. It is the same rule the signal table already keeps for an alert's
+own episodes, and it is kept the same way — by a partial unique index, so two concurrent deliveries
+cannot both decide to create one.
+
+**Resolution is RECOMPUTED from an episode's Signals, never counted up and down.** An episode is
+resolved when no Signal in it is still firing. A counter maintained by hand drifts the first time a
+write path forgets it, and the field that would drift is whether the failure is still happening.
+
+**Grouping runs inside the delivery transaction**, so a Signal and its episode are one commit. A
+Signal grouped afterwards would be a history that changed, and one briefly belonging to nothing is
+one a reader could see ungrouped and then grouped.
+
+**Revisability is a MERGE, and it rewrites nothing** (story 25). The absorbed episode keeps its
+identity, its Signals, its grouping key and its own record, and gains a pointer to the one that
+survives it with the operator's stated reason. It is audited in the transaction that makes it.
+
+**Splitting is not built, and the reason is the grouping shape rather than the schedule.** A split
+corrects a wrong merge; this grouping is source-provided and errs toward splitting, so the
+correction an operator actually needs is a merge. A split becomes worth building when a customer's
+own alert grouping is observed to be wrong, which has not happened.
+
+**An Investigation may be attributed to an episode, and one episode has ONE Investigation.** A
+second is refused NAMING the first, because an operator who asked for one wants to be sent to it.
+The check is on the ENVIRONMENT and deliberately not on the Connection: an episode arrives through
+a trigger Connection and a case reads through an evidence one, so requiring the same Connection
+would refuse every real pairing, while the Environment is the boundary evidence may not cross.
+
+**Naming an episode does NOT resolve the scope.** The engineer still names the namespace and the
+workload. Deriving them from an alert's labels is the inference this whole design refuses, and a
+case scoped from one would confidently investigate the wrong thing.
+
+**Intake metrics (story 27).** Delivery dispositions, signals recorded, and grouping outcomes —
+whether a new Signal opened an episode or joined one. No organization label on any of them: tenant
+identity belongs on a span, and at the stated scale a tenant label is a cardinality failure in any
+Prometheus-shaped backend.
+
+### What the second increment did NOT build, each with its reason
+
+- **Signal-triggered investigation (story 2).** It needs a Signal's labels resolved to a namespace
+  and a workload, which is canonical resource identity. `TriggerSignal` stays declared and
+  unreachable, and the investigation severity columns stay columns nothing writes.
+- **Storm shedding of investigations (stories 14 and 15).** Nothing opens an investigation from an
+  episode, so a bound on how many it may open would be code that never runs. What bounds a storm in
+  this build is grouping: twenty alerts the customer already grouped become one episode, and intake
+  keeps accepting throughout.
+- **Retaining the received payload (story 22).** It is a customer-payload retention surface and
+  needs a redaction design that does not exist in this repository. The risk this increment actually
+  creates is covered by something narrower: a surprising grouping is explainable from the recorded
+  basis and the source's own key, without holding the body it arrived in.
+- **Signals recorded before this migration are NOT backfilled into episodes.** The grouping
+  identity was the source's and those deliveries are gone; inventing one from their labels would be
+  exactly the inference this design refuses. The episode column on a signal is nullable and stays
+  nullable.

@@ -1,9 +1,55 @@
 # Spec — The live model provider
 
-Status: READY FOR IMPLEMENTATION. Revision 2 (2026-08-02) makes the slice provider-neutral: the
-direction of revision 1 was approved, but its architecture was Anthropic-shaped throughout, which
-would have made a second vendor a rewrite rather than a package.
-Date: 2026-08-02
+Status: IMPLEMENTED. The outstanding requirement — a live run writing a transcript — was closed on
+2026-08-05, and the paragraph recording it as outstanding is preserved below with the correction
+beneath it rather than deleted, because what it says about the cost of the gap is still the reason
+the mechanism exists.
+Revision 2 made the slice provider-neutral: the direction of revision 1 was approved, but its
+architecture was Anthropic-shaped throughout, which would have made a second vendor a rewrite
+rather than a package.
+
+**Built.** `internal/reasoning` implements the investigation-owned boundary against a
+provider-neutral contract; `internal/reasoning/anthropic` and `internal/reasoning/zai` are the two
+adapters, and a gate fails the build if the domain ever imports either. Vendor and model are
+configuration, priced from a declared four-rate table that refuses an unpriced model at startup.
+Refusal, outage, rejected request, malformed output, timeout and cost-ceiling reached are distinct
+named outcomes and none of them is an abstention. Cross-provider fallback is an explicit configured
+chain checking consent per hop and recording what actually answered, including in the transcript
+key. A model has now been asked to investigate, five times, against a live cluster.
+
+**WAS outstanding: a live run wrote no transcript.** This specification asks for one per scenario so
+that commit CI replays what the model actually said. `OC_MODEL_TRANSCRIPT_FILE` was read only in
+replay mode, so a live run recorded nothing, and the replay corpus described here did not exist.
+The consequence was not theoretical: three failures observed in the 2026-08-02 sweep cannot be read
+after the fact.
+
+**CLOSED 2026-08-05.** `OC_MODEL_TRANSCRIPT_DIR` names where a live round files what the model said,
+one document per round, named by the case and the round's ordinal so a reinvestigated case's rounds
+sort into the order they ran in. The recorder that existed all along is what makes them; what was
+missing was only the wiring, and it is per ROUND rather than per process because a recorder shared
+between two concurrent rounds would accumulate both into a transcript that replays as neither.
+
+Four decisions in it are worth stating, because each has an alternative that looks equivalent:
+
+- **A failed round files too.** Filing only on a conclusion would have missed exactly the rounds
+  somebody goes looking for. What a recording of a failed round shows is the stage it reached —
+  hypotheses and no passes, or passes and no conclusion — which is the question the sweep could not
+  answer.
+- **A replaying deployment records nothing**, and says so at startup rather than skipping silently.
+  Re-recording a recording produces a copy of the file being replayed, and a corpus of this build's
+  own echoes is worse than an empty one because it looks like evidence.
+- **The recording is keyed on the ROUND's pinned versions**, not on what the build carries when it
+  is filed. They are the same today and stop being the same the moment a prompt moves while a round
+  is in flight.
+- **A directory that cannot be written to is a refusal to START.** A round is the expensive thing in
+  this system, and discovering at the end of one that its recording has nowhere to go means the
+  money is spent and the answer is already unrecoverable — which is the failure this closes.
+
+The scenario harness files them under `transcripts/` beside `artifacts/` rather than inside it. A
+blind scorer is handed the artifact directory and reads what the PRODUCT concluded; handing them the
+model's raw turns would be asking them to score the reasoning rather than the result, which is not
+what blind scoring measures.
+Date: 2026-08-02 (status corrected 2026-08-04)
 Repository: the Go control plane
 Glossary: `CONTEXT.md`
 

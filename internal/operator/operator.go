@@ -35,6 +35,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/environment"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
+	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
@@ -137,6 +138,12 @@ func (h Handlers) Routes() authz.Table {
 		Placements:    h.Placements,
 		Logger:        h.Logger,
 		IntakeBaseURL: h.IntakeBaseURL,
+	}.Routes()...)
+	// Incidents come before investigations in the table for the same reason they come first in
+	// the product: an operator arrives at an incident and decides whether to investigate it.
+	routes = append(routes, incident.Handlers{
+		Store:  h.Placements,
+		Logger: h.Logger,
 	}.Routes()...)
 	// The investigation surface takes the read side and the write side separately, because a
 	// handler given the writing interface is one typo away from mutating what it was asked to

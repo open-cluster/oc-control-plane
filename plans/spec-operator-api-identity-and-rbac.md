@@ -2,8 +2,9 @@
 
 Status: BUILT 2026-08-05, with migrations 0011 and 0012. **Stories 1–16, 18–31 and 33 are
 implemented and asserted through the HTTP boundary.** Three are not — 17, 32 and 34 — each for a
-stated reason rather than by omission, and story 21 is half done. See "What was built, and what
-was not" at the foot of this document.
+stated reason rather than by omission. **Story 21 was half done and is now whole: the retention
+pruner was built on 2026-08-05.** See "What was built, and what was not" at the foot of this
+document.
 
 SAML 2.0 (story 12) and SCIM (stories 13 and 14) were deferred in the first pass and built in
 the second, in migration 0012.
@@ -310,11 +311,39 @@ made it. The four path corrections. The permission-table gate.
 - **Contract-drift made non-skippable in CI (story 34).** The test named lives in `oc-frontend`,
   which is a different repository and is out of this repository's reach. What this side owes it
   now exists: a stable, authenticated surface with a session a test can seed.
-- **Retention pruning (half of story 21).** The record is immutable and the schedule is a column a
-  tenant sets, and the surface reports `auditRetentionEnforced: false` rather than implying the
-  schedule is applied. Stating a retention period the product does not enforce is worse than
-  stating none. The mechanism a pruner will use exists — the delete trigger permits a transaction
-  that declares itself the pruner — and the pruner does not.
+- **Retention pruning (half of story 21) — BUILT 2026-08-05, and the paragraph it replaces is kept
+  because its reasoning is why it was built this way.** It read: the record is immutable and the
+  schedule is a column a tenant sets, and the surface reports `auditRetentionEnforced: false`
+  rather than implying the schedule is applied; stating a retention period the product does not
+  enforce is worse than stating none; the mechanism a pruner will use exists and the pruner does
+  not.
+
+  The pruner now exists and the surface reports `true`. Four things about it are decisions rather
+  than details:
+
+  - **The declaration is LOCAL to the pruning transaction.** A session-level setting would survive
+    on a pooled connection and turn every later transaction that happened to get it into one
+    permitted to delete the record, which would make an append-only guarantee depend on connection
+    assignment. A test asserts that an ordinary delete is refused, that a declared one succeeds,
+    and that ordinary deletes on the same pool are refused again afterwards.
+  - **A tenant declaring ZERO is skipped rather than pruned to now.** Zero is the product's default
+    of keeping everything, and treating it as a horizon would delete a whole record because
+    somebody never set a policy.
+  - **Deletes are bounded per statement and per sweep.** A first schedule declared against years of
+    history is applied over several sweeps, because one unbounded delete is a lock held while the
+    writes queuing behind it are audit events.
+  - **The pruner writes no audit event of its own.** An append-only table that gained a row every
+    time it was pruned would grow under the mechanism meant to bound it, and the row would say
+    nothing an operator could act on. What it produces is a log line per tenant it removed
+    anything for.
+
+  The bound worth stating: pruning is against the clock, so a tenant setting thirty days sees rows
+  older than thirty days removed on the next hourly sweep rather than at the instant they cross
+  the horizon. The surface reports the schedule, and the schedule is what is enforced.
+
+  `auditRetentionEnforced` is passed from the composition root rather than hard-coded true, because
+  the statement is made to an auditor and the only way to keep it true is for the component that
+  starts the pruner to be the one that says it did.
 
 **SAML 2.0 and SCIM, built in the second pass.**
 

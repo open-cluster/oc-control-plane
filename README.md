@@ -37,9 +37,15 @@ masking is visible rather than indistinguishable from absence, and a masked fiel
 support a certified absence. The end-to-end proof puts a synthetic credential in a real
 container's log and asserts it appears nowhere in this database.
 
-Not built: signal-triggered investigation, incidents and grouping, and a live model provider —
-the boundary and its replay exist (see below), so the harness runs against recorded transcripts
-and refuses a live-provider run rather than quietly replaying one.
+**Alerts become incidents.** Signals from a customer's own alerting group into IncidentEpisodes on
+the identity that source supplied — never on anything this platform inferred from a Signal's labels
+— and an operator reads them, sees why they were grouped, corrects a grouping with a merge that
+rewrites nothing, and may attribute an Investigation to one.
+
+Not built: signal-TRIGGERED investigation. Starting a case from a Signal means resolving its labels
+to a namespace and a workload, which is canonical resource identity and does not exist yet; a case
+started from that inference would confidently investigate the wrong thing. So an episode is
+investigated by an operator who still names the scope.
 
 What this slice deliberately hard-codes is written down rather than left to be discovered:
 [docs/architecture/hard-coded-in-the-first-investigation.md](docs/architecture/hard-coded-in-the-first-investigation.md).
@@ -90,11 +96,12 @@ go run ./cmd/controlplane
 | `internal/intake` | Inbound SignalUpdates, verification, rate limiting. One sub-package per provider |
 | `internal/connection` | Connections and their secrets: the configured instances of an Integration |
 | `internal/environment` | Environments: the scope that groups Connections and bounds evidence |
+| `internal/incident` | IncidentEpisodes: what Signals group into, on their source's own grouping identity |
 | `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute |
 | `internal/investigation` | The case, its rounds, the brief, evidence, hypotheses, coverage gaps, outcomes, the runner and the read models |
 | `internal/identity` | Who an operator is: OIDC sign-in with PKCE, memberships, service accounts, API tokens |
 | `internal/session` | The opaque server-side session and its cookie. No JWT, so sign-out can end it |
-| `internal/authz` | The principal, the seven roles, the permission table, and the one middleware that reads it |
+| `internal/authz` | The principal, the eight roles, the permission table, and the one middleware that reads it |
 | `internal/audit` | The append-only record: who did what, to which tenant's what, and whether it was allowed |
 | `internal/operator` | The operator listener and the composition of the route table. Owns no route decisions of its own |
 | `internal/gates` | Build-failing architecture checks, including the dependency boundary |
@@ -171,6 +178,7 @@ Fetching from the private repository needs
 | `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. A trigger Connection's delivery endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |
 | `OC_MODEL_TRANSCRIPT_FILE` | no | A recorded transcript of the model boundary. With none, the investigator fails every round honestly saying the reasoning step could not run — an instance that cannot reason must say so rather than look healthy. A transcript recorded against different components refuses to start rather than replaying |
+| `OC_MODEL_TRANSCRIPT_DIR` | no | Where a **live** round files what the model said, one document per round, named by the case and the round's ordinal. This is the other direction from the variable above: that one replays a recording, this one makes them. A deployment that is replaying, or that has no provider at all, records nothing and says so at startup. A directory that cannot be written to is a refusal to start, because discovering it at the end of a round means the round is already paid for |
 
 Each surface has its own listener, and that is what makes a deployment able to publish one
 without publishing the rest. Intake is the only one a customer's own infrastructure reaches
@@ -381,11 +389,29 @@ nullable because a cursor-paginated query cannot always answer it cheaply, and a
 is worse than an absent one. `partial` is the backend saying "I served this field with no data,
 and here is why", so a console renders one honest notice instead of a column of "Not reported".
 
+Incidents are read there too. An **IncidentEpisode** is the operational episode Signals group into,
+and the grouping identity is always the SOURCE's own — Alertmanager's group key, computed from the
+grouping a customer's own operator configured. Nothing is inferred from a Signal's labels, because
+deciding from those that two alerts concern one thing is canonical resource identity, which this
+product does not have. A delivery carrying no grouping identity produces one episode per alert and
+says `ungrouped`, which is the conservative failure: a wrong split leaves a redundant record, a
+wrong merge produces an investigation with an incoherent scope.
+
+| Path | Purpose |
+| --- | --- |
+| `GET /incidents` | The list. Filterable by `environmentId`, `connectionId` and `status`; searchable by title and by the source's own grouping key, because that is what an operator arrives holding |
+| `GET /incidents/{id}` | One episode, with the basis on which it was grouped stated both as a value and in words, so a surprising grouping is explainable rather than arguable |
+| `GET /incidents/{id}/signals` | The Signals grouped into it, OLDEST first. Every other listing here is newest first; an incident is read forwards |
+| `POST /incidents/{id}/merge` | Say two episodes are one incident. The episode in the path gives way, the body names the survivor and the reason. Nothing is rewritten: both keep their identity, their Signals and their record, and the absorbed one gains a pointer. Splitting is deliberately absent — this grouping errs toward splitting, so a merge is the correction it produces |
+
+An episode resolves when no Signal in it is still firing, and it holds its grouping key only while
+open — so the same failure next month is a new episode rather than a reopened closed one.
+
 Investigations are read there too:
 
 | Path | Purpose |
 | --- | --- |
-| `POST /investigations` | Open a case. Names a Connection, a namespace, a workload kind and name, and a window. It cannot name an Environment — that is derived from the Connection, and a field for it would imply a value that is honoured |
+| `POST /investigations` | Open a case. Names a Connection, a namespace, a workload kind and name, and a window. It may also name an `episodeId`, which attributes the case to an IncidentEpisode — one episode has one Investigation, and a second is refused naming the first. It does NOT resolve the scope from the episode, because that would be an inference. It cannot name an Environment — that is derived from the Connection, and a field for it would imply a value that is honoured |
 | `GET /investigations` | The list. Ordered by lifecycle state then recency, with attributed severity as a secondary signal. Carries per-row counts and the case's present tense, so rendering it is one request whatever the row count |
 | `GET /investigations/{id}` | The summary, and the only thing a client polls. Carries identity, brief, state, current round, the outcome with its basis, counts, spend and the case version. Send the version back in `If-None-Match` and an unchanged case answers `304` from one primary-key read |
 | `GET /investigations/{id}/timeline` | Evidence carrying a defensible source time, in source order. Items without one are listed beside it by the evidence read rather than placed on it |

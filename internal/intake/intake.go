@@ -75,6 +75,9 @@ type Handlers struct {
 type surface struct {
 	Handlers
 	deliveries *limiter
+	// counters are this listener's own instruments. They are per surface for the same reason the
+	// limiter is: an instrument rebuilt per request is a new time series per request.
+	counters instruments
 }
 
 // Router returns the intake surface.
@@ -82,7 +85,11 @@ type surface struct {
 // The route names the Connection and nothing else. There is no organization in it, and adding
 // one would be adding a tenant identifier the caller chooses.
 func (h Handlers) Router() http.Handler {
-	running := &surface{Handlers: h, deliveries: newLimiter(time.Now)}
+	running := &surface{
+		Handlers:   h,
+		deliveries: newLimiter(time.Now),
+		counters:   newInstruments(h.Logger),
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /intake/v1/connections/{connection}/signals",
@@ -109,6 +116,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		// Shed rather than refused. The source is told to slow down, not to stop, because the
 		// alerts behind this one are real and it should still send them.
 		h.refuse(ctx, request, "rate limited")
+		h.counters.countDelivery(ctx, dispositionRateLimited)
 		writer.Header().Set("Retry-After", "1")
 		writeStatus(writer, http.StatusTooManyRequests, "slow down")
 		return
@@ -125,6 +133,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 			h.Logger.ErrorContext(ctx, "could not read the connection",
 				slog.String("caller", callerOf(request)),
 				slog.String("error", err.Error()))
+			h.counters.countDelivery(ctx, dispositionUnavailable)
 			writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 			return
 		}
@@ -135,6 +144,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		// writes no rows.
 		h.recordRefusal(ctx, connection, storage.RefusedUnauthenticated)
 		h.refuse(ctx, request, "unauthenticated")
+		h.counters.countDelivery(ctx, dispositionUnauthenticated)
 		// One status and one message however it failed. A missing header, a wrong secret, an
 		// unknown Connection, a disabled one and one that answers no triggers are
 		// indistinguishable, because telling them apart is how a caller learns which half of a
@@ -150,6 +160,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		h.Logger.ErrorContext(ctx, "a connection names an organization that is not a name",
 			slog.String("connection_id", connection.ID.String()),
 			slog.String("error", err.Error()))
+		h.counters.countDelivery(ctx, dispositionUnavailable)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 		return
 	}
@@ -162,6 +173,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 			slog.String("organization", organization.String()),
 			slog.String("connection_id", connection.ID.String()),
 			slog.String("integration", connection.Integration))
+		h.counters.countDelivery(ctx, dispositionUnavailable)
 		writeStatus(writer, http.StatusServiceUnavailable, "integration not served here")
 		return
 	}
@@ -172,6 +184,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		if errors.As(err, &tooLarge) {
 			h.recordRefusal(ctx, connection, storage.RefusedOversized)
 			h.refuse(ctx, request, "oversized")
+			h.counters.countDelivery(ctx, dispositionOversized)
 			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}
@@ -180,6 +193,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		// keeps the log from calling every unread body oversized.
 		h.recordRefusal(ctx, connection, storage.RefusedIncomplete)
 		h.refuse(ctx, request, "incomplete")
+		h.counters.countDelivery(ctx, dispositionIncomplete)
 		writeStatus(writer, http.StatusBadRequest, "payload not received")
 		return
 	}
@@ -190,6 +204,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		// that, so the status has to say permanent or the source will retry a storm of them.
 		h.recordRefusal(ctx, connection, storage.RefusedMalformed)
 		h.refuse(ctx, request, "malformed")
+		h.counters.countDelivery(ctx, dispositionMalformed)
 		writeStatus(writer, http.StatusBadRequest, "payload not understood")
 		return
 	}
@@ -219,12 +234,14 @@ func (h *surface) record(
 			slog.String("organization", organization.String()),
 			slog.String("connection_id", delivery.Connection.String()),
 			slog.String("error", err.Error()))
+		h.counters.countDelivery(ctx, dispositionUnavailable)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 		return
 	}
 
 	if outcome.Duplicate {
 		h.recordAttempt(ctx, organization, delivery.Connection, storage.DeliveryDuplicate, 0)
+		h.counters.countDelivery(ctx, dispositionDuplicate)
 		// This body was already accepted through this Connection. That covers both a source
 		// retrying because it never saw a response — which has done nothing wrong, and whose
 		// answer must let it stop — and a body replayed by someone who captured it, which is
@@ -249,11 +266,15 @@ func (h *surface) record(
 
 	h.recordAttempt(ctx, organization, delivery.Connection, storage.DeliveryAccepted,
 		outcome.Recorded)
+	h.counters.countDelivery(ctx, dispositionAccepted)
+	h.counters.countSignals(ctx, outcome.Recorded, outcome.EpisodesOpened, outcome.EpisodesJoined)
 	h.Logger.InfoContext(ctx, "delivery accepted",
 		slog.String("organization", organization.String()),
 		slog.String("connection_id", delivery.Connection.String()),
 		slog.String("environment_id", delivery.Environment.String()),
-		slog.Int("signals", outcome.Recorded))
+		slog.Int("signals", outcome.Recorded),
+		slog.Int("episodes_opened", outcome.EpisodesOpened),
+		slog.Int("episodes_joined", outcome.EpisodesJoined))
 	writeStatus(writer, http.StatusAccepted, "accepted")
 }
 

@@ -27,6 +27,9 @@ type Runner struct {
 	// Versions is what this build pins into every round it opens, so a recorded transcript made for
 	// different components is detected rather than silently replayed.
 	Versions Versions
+	// Transcripts records what the model said in each round and files it. Nil records nothing,
+	// which is what a deployment that named nowhere to put recordings gets.
+	Transcripts Transcripts
 	// Now is the clock. Injected so a test can bound a round without waiting one out.
 	Now func() time.Time
 }
@@ -39,6 +42,12 @@ type round struct {
 	fence        Fence
 	controls     Controls
 	started      time.Time
+	// reasoner is the boundary THIS round talks to. It is here rather than on the Runner because a
+	// round being recorded gets a recorder of its own: one shared across concurrent rounds would
+	// accumulate all of them into a transcript that replays as none of them.
+	reasoner Reasoner
+	// recording is the same value when this round is being recorded, and nil when it is not.
+	recording Transcribed
 
 	spent      Spend
 	hypotheses []Hypothesis
@@ -75,6 +84,11 @@ func (r Runner) Run(ctx context.Context, organization tenancy.Organization, held
 		fence:        held.Fence(),
 		controls:     controls,
 		started:      r.now(),
+		reasoner:     r.Reasoner,
+	}
+	if r.Transcripts != nil {
+		execution.recording = r.Transcripts.Begin(r.Reasoner)
+		execution.reasoner = execution.recording
 	}
 
 	outcome, err := r.execute(ctx, execution)
@@ -96,6 +110,10 @@ func (r Runner) Run(ctx context.Context, organization tenancy.Organization, held
 			slog.String("error", err.Error()))
 		outcome = RoundFailed
 	}
+	// Filed before the round is finished, not after. A storage failure closing the round is
+	// precisely when somebody will want to read what the model said, and filing afterwards would
+	// lose the recording on the one path where it is worth most.
+	r.fileTranscript(ctx, execution)
 
 	execution.spent.Duration = r.now().Sub(execution.started)
 	// Spend is recorded before the round is finished, because finishing releases the lease and a
@@ -128,6 +146,38 @@ func (r Runner) Run(ctx context.Context, organization tenancy.Organization, held
 	return nil
 }
 
+// fileTranscriptTimeout bounds writing a recording. It is short because nothing waits on it and
+// the round is already over; a filing that hung would hold a worker slot for a file.
+const fileTranscriptTimeout = 10 * time.Second
+
+// fileTranscript writes what the model said in this round, when this deployment records at all.
+//
+// Two decisions are load-bearing. The context is detached from the round's, because a round that
+// reached its deadline is one of the rounds most worth reading and filing under a cancelled
+// context would record nothing exactly then. And a failure to file is logged rather than
+// returned: the case is already durable, and losing an investigation because a directory filled
+// up would be trading the product for its diagnostics.
+func (r Runner) fileTranscript(ctx context.Context, execution *round) {
+	if r.Transcripts == nil || execution.recording == nil {
+		return
+	}
+	// Rendered against the versions the ROUND was pinned with rather than the ones this build
+	// carries now. They are the same today; they stop being the same the moment a prompt changes
+	// while a round is in flight, and a recording keyed on the wrong one replays against wording
+	// that never produced it.
+	transcript := execution.recording.Transcript(execution.held.Round.Versions)
+
+	filing, cancel := context.WithTimeout(context.WithoutCancel(ctx), fileTranscriptTimeout)
+	defer cancel()
+
+	if err := r.Transcripts.File(filing, execution.held, transcript); err != nil {
+		r.Logger.ErrorContext(ctx, "a round's model transcript could not be filed",
+			slog.String("investigation_id", execution.held.Investigation.ID.String()),
+			slog.String("round_id", execution.held.Round.ID.String()),
+			slog.String("error", err.Error()))
+	}
+}
+
 // execute is the round itself: orient, reason, gather, reason again, and end.
 func (r Runner) execute(ctx context.Context, execution *round) (RoundOutcome, error) {
 	if err := r.brief(ctx, execution); err != nil {
@@ -137,7 +187,7 @@ func (r Runner) execute(ctx context.Context, execution *round) (RoundOutcome, er
 		return outcome, nil
 	}
 
-	proposed, err := r.Reasoner.Hypotheses(ctx, execution.held.Round.Brief)
+	proposed, err := execution.reasoner.Hypotheses(ctx, execution.held.Round.Brief)
 	if err != nil {
 		return r.modelFailure(ctx, execution, err)
 	}
@@ -247,7 +297,7 @@ func (r Runner) adapt(ctx context.Context, execution *round, pass int) (bool, er
 		return false, nil
 	}
 
-	proposed, err := r.Reasoner.Requests(ctx, r.deliberation(execution, pass))
+	proposed, err := execution.reasoner.Requests(ctx, r.deliberation(execution, pass))
 	if err != nil {
 		return false, err
 	}

@@ -47,7 +47,7 @@ func (r Runner) conclude(ctx context.Context, execution *round) (RoundOutcome, e
 		// Recomputed per attempt rather than hoisted, so a second attempt is shown what the first
 		// one added. A retry answering against a stale list would place its ordinals against a
 		// shorter one than admission checks them against.
-		concluded, err := r.Reasoner.Conclude(
+		concluded, err := execution.reasoner.Conclude(
 			ctx, r.deliberation(execution, execution.controls.MaxAdaptivePasses))
 		if err != nil {
 			return r.modelFailure(ctx, execution, err)

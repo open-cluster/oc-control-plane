@@ -96,6 +96,12 @@ type Handlers struct {
 	// ConsoleURL is where the browser is sent once signed in.
 	ConsoleURL string
 	Bootstrap  Bootstrap
+	// RetentionEnforced reports whether this deployment actually applies the audit retention
+	// schedule a tenant declares. It is wired from the composition root rather than assumed,
+	// because the policy surface states it to an auditor: a product reporting a retention period
+	// it does not enforce is worse than one reporting none, and the only way to keep that
+	// statement true is for the thing that starts the pruner to be the thing that says so.
+	RetentionEnforced bool
 }
 
 // Resolve turns whatever a request presents into the principal holding it. It is what the

@@ -184,7 +184,22 @@ One durable operational episode, grouping repeated notifications about the same 
 Provisional grouping, not causal truth; may be merged, split, or superseded without
 rewriting history. Keyed conservatively on organization, environment, trigger source,
 source-provided identity and affected target.
+
+As built (2026-08-05) the key is organization, Connection and the **source-provided grouping
+identity**, and the affected target appears only inasmuch as the source put it there —
+Alertmanager's group key embeds the labels a customer grouped by. Deriving the target ourselves is
+deliberately not done: reading it out of a Signal's labels is canonical resource identity, which
+does not exist in this product, and a grouping built on that inference would merge two failures a
+customer's own alerting kept apart. A delivery supplying no grouping identity produces one episode
+per notification, which is a split rather than a merge and is the failure worth having.
 _Avoid_: incident (unqualified), alert group
+
+**Grouping basis**:
+Who decided that the notifications in an IncidentEpisode belong together — the source's own
+grouping, or none at all. Recorded on every episode and shown to an operator, because a grouping
+nobody can explain is one they argue with rather than act on, and because the honest answer to
+"why are these one incident" is sometimes "your alerting said so".
+_Avoid_: grouping rule, correlation, group reason
 
 **SignalUpdate**:
 One firing, updated or resolved notification from an external source. Repeated updates

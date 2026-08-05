@@ -30,6 +30,7 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
@@ -171,22 +172,60 @@ func run(
 		logger.Info("model provider configured", slog.String("chain", service.Describe()))
 	}
 
+	recordings, err := transcriptsFor(cfg, reasoner, logger)
+	if err != nil {
+		return err
+	}
+
 	claimInterval := investigatorInterval
 	if replace.investigatorInterval > 0 {
 		claimInterval = replace.investigatorInterval
 	}
 
 	return serve(ctx, assembled{
-		config:     cfg,
-		controls:   investigation.DefaultControls().Restrict(replace.controls),
-		interval:   claimInterval,
-		logger:     logger,
-		telemetry:  telemetry,
-		placements: placements,
-		reasoner:   reasoner,
-		versions:   versions,
-		onListen:   replace.onListen,
+		config:      cfg,
+		controls:    investigation.DefaultControls().Restrict(replace.controls),
+		interval:    claimInterval,
+		logger:      logger,
+		telemetry:   telemetry,
+		placements:  placements,
+		reasoner:    reasoner,
+		transcripts: recordings,
+		versions:    versions,
+		onListen:    replace.onListen,
 	})
+}
+
+// transcriptsFor resolves where a round files what the model said.
+//
+// Two boundaries are excluded and neither is a silent skip. A REPLAYING deployment would record a
+// copy of the recording it is replaying, and a corpus of this build's own echoes is worse than an
+// empty one because it looks like evidence. A deployment with no provider at all fails every round
+// at the first call, so what it would file is an empty document per failed round.
+//
+// A directory that cannot be written to is a REFUSAL TO START. A round is the expensive thing in
+// this system, and discovering at the end of one that its recording has nowhere to go means the
+// money is spent and the answer is already unrecoverable — which is the exact failure this closes.
+func transcriptsFor(
+	cfg config.Config, reasoner investigation.Reasoner, logger *slog.Logger,
+) (investigation.Transcripts, error) {
+	if cfg.ModelTranscriptDir == "" {
+		return nil, nil
+	}
+	switch reasoner.(type) {
+	case *investigation.Recorded, investigation.Unavailable:
+		logger.Warn("no model transcripts will be recorded: this deployment has no live provider",
+			slog.String("directory", cfg.ModelTranscriptDir))
+		return nil, nil
+	}
+
+	directory, err := reasoning.Transcripts(cfg.ModelTranscriptDir)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", config.EnvModelTranscriptDir, err)
+	}
+	logger.Info("model transcripts will be recorded",
+		slog.String("directory", cfg.ModelTranscriptDir))
+	return directory, nil
 }
 
 // modelBoundary resolves what will answer the reasoning step.
@@ -287,6 +326,9 @@ type assembled struct {
 	telemetry  *observability.Telemetry
 	placements *storage.Placements
 	reasoner   investigation.Reasoner
+	// transcripts is where a round files what the model said, and is nil when this deployment
+	// asked for no recordings.
+	transcripts investigation.Transcripts
 	// controls is what a round opened through this process runs under.
 	controls investigation.Controls
 	// interval is how often the investigator looks for work.
@@ -365,6 +407,12 @@ func serve(ctx context.Context, process assembled) error {
 	// deploy in the middle of an investigation recoverable rather than a lost run.
 	investigators := startInvestigator(process)
 	defer investigators.stop()
+
+	// The retention pruner is the same shape and a much smaller job: it applies the schedule each
+	// tenant declared for its own record. It is stopped with the process and nothing waits for it,
+	// because the work it does is bounded per batch and the next instance simply continues.
+	pruners := startAuditPruner(process)
+	defer pruners.stop()
 
 	select {
 	case serveErr := <-failed:
@@ -542,6 +590,11 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		OIDC:       identity.NewOIDC(),
 		PublicURL:  cfg.OperatorPublicURL,
 		ConsoleURL: cfg.OperatorConsoleURL,
+		// This process starts the pruner unconditionally, so the policy surface may say that a
+		// declared retention schedule is applied. It is passed rather than assumed because the
+		// statement is made to an auditor, and the only way to keep it true is for the component
+		// that starts the pruner to be the one that says it did.
+		RetentionEnforced: true,
 	}
 
 	if len(cfg.IdentityEncryptionKey) > 0 {
@@ -679,10 +732,11 @@ func startInvestigator(process assembled) *investigatorWorker {
 	ctx, stop := context.WithCancel(context.Background())
 	worker := investigation.Worker{
 		Runner: investigation.Runner{
-			Store:    process.placements,
-			Reasoner: process.reasoner,
-			Logger:   process.logger,
-			Versions: process.versions,
+			Store:       process.placements,
+			Reasoner:    process.reasoner,
+			Logger:      process.logger,
+			Versions:    process.versions,
+			Transcripts: process.transcripts,
 		},
 		Store:     process.placements,
 		Pending:   process.placements,
@@ -701,6 +755,35 @@ func startInvestigator(process assembled) *investigatorWorker {
 	process.logger.Info("investigator started",
 		slog.String("session_id", worker.SessionID.String()),
 		slog.String("model", process.versions.Model))
+	return running
+}
+
+// auditPruneInterval is how often each tenant's declared retention schedule is applied.
+//
+// Retention is measured in days, so an hour is close enough to the horizon that the surface can
+// honestly say the schedule is enforced, and far enough from it that nothing is spent looking.
+const auditPruneInterval = time.Hour
+
+// startAuditPruner runs the worker that applies each tenant's audit retention schedule.
+//
+// It is unconditional, and that is what lets the policy surface state that retention is enforced.
+// A deployment that ran the control plane without it would report a schedule it does not keep,
+// which is the thing that surface was written to avoid saying.
+func startAuditPruner(process assembled) *investigatorWorker {
+	ctx, stop := context.WithCancel(context.Background())
+	pruner := audit.Pruner{
+		Retentions: process.placements,
+		Logger:     process.logger,
+		Interval:   auditPruneInterval,
+	}
+
+	running := &investigatorWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		pruner.Run(ctx)
+	}()
+	process.logger.Info("audit retention pruner started",
+		slog.Duration("interval", auditPruneInterval))
 	return running
 }
 

@@ -35,14 +35,14 @@ import (
 // recordedVersions is what the harness pins. It must match what the composition root stamps, or the
 // recording is refused — which is the mechanism working, and is why this is written once here
 // rather than guessed per test.
+//
+// It is DERIVED from what this build carries rather than restated as literals. A fixture holding
+// its own copy of the prompt and schema numbers goes stale the first time either moves, and the
+// symptom is every case in this file abstaining or the process refusing to start — a failure that
+// says nothing about the code and takes an afternoon to read. The key check itself is asserted
+// where it belongs, on a recording made deliberately against components that do not match.
 func recordedVersions() investigation.Versions {
-	return investigation.Versions{
-		Planner:       "bounded-adaptive-v1",
-		Model:         "recorded",
-		PromptVersion: "1",
-		SchemaVersion: "1",
-		Investigator:  version,
-	}
+	return investigatorVersions(nil)
 }
 
 // crashLoopTranscript is a recorded run over the scripted cluster. Its contents are synthetic: no
@@ -54,7 +54,10 @@ func recordedVersions() investigation.Versions {
 func crashLoopTranscript() investigation.Transcript {
 	return investigation.Transcript{
 		Key: investigation.TranscriptKey{
-			Model: "recorded", PromptVersion: "1", SchemaVersion: "1", Investigator: version,
+			Model:         recordedVersions().Model,
+			PromptVersion: recordedVersions().PromptVersion,
+			SchemaVersion: recordedVersions().SchemaVersion,
+			Investigator:  recordedVersions().Investigator,
 		},
 		Hypotheses: []investigation.Hypothesis{
 			{
@@ -94,6 +97,11 @@ func crashLoopTranscript() investigation.Transcript {
 				Kind: investigation.OutcomeSupported,
 				Statement: "the container exits at start-up because the address it is configured " +
 					"to reach refuses the connection",
+				// The hypothesis this outcome IS. A supported explanation naming none is refused,
+				// because a cause corresponding to nothing the investigator proposed is a
+				// conclusion rather than a finding and the record cannot show what it beat. This
+				// fixture predates that rule and was never brought forward with it.
+				Explains: 1,
 				Claims: []investigation.DraftClaim{
 					{
 						Role: investigation.ClaimSupporting,

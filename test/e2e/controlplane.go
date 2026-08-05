@@ -44,6 +44,9 @@ type controlPlane struct {
 	operatorToken     string
 	operatorTokenPath string
 	transcriptPath    string
+	// transcriptDir is where a live run files what the model said. It is the opposite direction
+	// from the path above: that one replays a recording, this one makes them.
+	transcriptDir string
 
 	// The live model deployment, when one was configured. The credential is a PATH rather than
 	// the key: this process's environment is readable from a process listing, so the key travels
@@ -87,6 +90,13 @@ func (c *controlPlane) useModel(provider, model, keyFile, effort string) {
 	c.modelKeyFile = keyFile
 	c.modelEffort = effort
 }
+
+// recordTranscripts files what the model says, one document per round.
+//
+// It applies to a LIVE run and to nothing else. The harness's whole reason for existing is to
+// judge what a real provider concludes, and until this existed a live run left no record of what
+// it had said — which is why the first sweep's four failures could not be read afterwards.
+func (c *controlPlane) recordTranscripts(directory string) { c.transcriptDir = directory }
 
 // newControlPlane reserves the addresses the control plane will serve on, without starting
 // it. The relay address is needed before the process exists, because the TLS terminator that
@@ -142,6 +152,9 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 	}
 	if c.transcriptPath != "" {
 		environment["OC_MODEL_TRANSCRIPT_FILE"] = c.transcriptPath
+	}
+	if c.transcriptDir != "" {
+		environment["OC_MODEL_TRANSCRIPT_DIR"] = c.transcriptDir
 	}
 	if c.modelProvider != "" {
 		environment["OC_MODEL_PROVIDER"] = c.modelProvider

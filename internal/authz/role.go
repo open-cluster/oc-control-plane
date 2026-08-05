@@ -79,6 +79,7 @@ var reads = map[Permission]bool{
 	ConnectionRead:     true,
 	IntegrationRead:    true,
 	RelayRead:          true,
+	IncidentRead:       true,
 	InvestigationRead:  true,
 	IdentityRead:       true,
 	MemberRead:         true,
@@ -93,7 +94,7 @@ func ReadOnly(permission Permission) bool { return reads[permission] }
 
 // everyRead is what a role that may look at the tenant but change nothing holds.
 var everyRead = []Permission{
-	EnvironmentRead, ConnectionRead, IntegrationRead, RelayRead, InvestigationRead,
+	EnvironmentRead, ConnectionRead, IntegrationRead, RelayRead, IncidentRead, InvestigationRead,
 }
 
 // granted is the table. It is the specification of each role, and it is the thing to read when
@@ -115,8 +116,10 @@ var granted = map[Role]map[Permission]bool{
 		ConnectionSecretRotate,
 	)...),
 
+	// Merging is here for the same reason opening a case is: regrouping decides what an incident
+	// is about, which is a judgement about the investigation rather than a change to the estate.
 	Investigator: setOf(append(append([]Permission(nil), everyRead...),
-		InvestigationOpen, InvestigationCancel, InvestigationReopen,
+		IncidentMerge, InvestigationOpen, InvestigationCancel, InvestigationReopen,
 	)...),
 
 	// A responder is an investigator who may also act on the estate during the incident —
@@ -129,8 +132,8 @@ var granted = map[Role]map[Permission]bool{
 	// responder has at three in the morning, and making them wake an administrator to ask it is
 	// the kind of gap that gets worked around with a shared credential.
 	Responder: setOf(append(append([]Permission(nil), everyRead...),
-		InvestigationOpen, InvestigationCancel, InvestigationReopen, ConnectionUpdate,
-		ConnectionValidate,
+		IncidentMerge, InvestigationOpen, InvestigationCancel, InvestigationReopen,
+		ConnectionUpdate, ConnectionValidate,
 	)...),
 
 	Viewer:  setOf(everyRead...),

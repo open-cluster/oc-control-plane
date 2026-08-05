@@ -173,6 +173,15 @@ func (h Handlers) plan(
 			At:          time.Now(),
 		},
 	}
+	if body.EpisodeID != "" {
+		episode, parseErr := uuid.Parse(body.EpisodeID)
+		if parseErr != nil {
+			writeJSON(writer, http.StatusBadRequest,
+				errorView{Error: "episodeId is not an identity"})
+			return New{}, false
+		}
+		wanted.EpisodeKey = episode.String()
+	}
 	if err = wanted.Validate(); err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return New{}, false
@@ -433,6 +442,16 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{
 			Error: "the connection named is not one this organization can investigate through",
 		})
+	case errors.Is(err, ErrEpisodeUnusable):
+		writeJSON(writer, http.StatusNotFound, errorView{
+			Error: "the incident named is not one this organization can investigate, or it is " +
+				"in a different environment from the connection this case would read through",
+		})
+	case errors.Is(err, ErrEpisodeInvestigated):
+		// The existing case is NAMED. An operator who asked for an investigation of an incident
+		// that already has one wants to be sent to it, and a bare refusal would leave them
+		// searching for a case they were just told exists.
+		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
 	case errors.Is(err, ErrAlreadyTerminal):
 		writeJSON(writer, http.StatusConflict,
 			errorView{Error: "this investigation has already finished"})

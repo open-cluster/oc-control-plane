@@ -35,6 +35,15 @@ const (
 // between releases and a customer upgrading theirs must not stop being able to deliver.
 type payload struct {
 	Alerts []alert `json:"alerts"`
+	// GroupKey is Alertmanager's own identity for the set of alerts it is delivering together. It
+	// is computed from the group_by the customer's own operator wrote, which is what makes it
+	// usable as an IncidentEpisode's key: when two alerts land in one episode here it is because
+	// their own system already decided they belong together. Nothing on this platform infers it.
+	//
+	// An empty one is not an error. Alertmanager always sends it, and a payload that omits it
+	// simply produces one episode per alert — a split rather than a merge, which is the failure
+	// worth having.
+	GroupKey string `json:"groupKey"`
 	// TruncatedAlerts is how many Alertmanager left out because the payload hit its configured
 	// maximum. It sends this instead of the alerts, so ignoring it would record a partial
 	// picture of a storm as a complete one — which is the moment a complete picture matters.
@@ -77,9 +86,14 @@ func (Adapter) Normalise(body []byte) ([]storage.Signal, int, error) {
 		return nil, 0, errors.New("payload reports a negative number of omitted alerts")
 	}
 
+	// The group key is bounded here rather than being allowed to fail the write, for the same
+	// reason a title is: an over-long field is a normalisation decision this adapter makes, not a
+	// constraint violation surfacing from the database as a server error.
+	groupKey := truncate(decoded.GroupKey, maxSourceKeyLen)
+
 	signals := make([]storage.Signal, 0, len(decoded.Alerts))
 	for _, one := range decoded.Alerts {
-		signal, err := signalFrom(one)
+		signal, err := signalFrom(one, groupKey)
 		if err != nil {
 			// One unusable alert fails the whole delivery. Accepting the rest would leave the
 			// source told it succeeded while part of what it sent was silently dropped, and it
@@ -91,7 +105,10 @@ func (Adapter) Normalise(body []byte) ([]storage.Signal, int, error) {
 	return signals, decoded.TruncatedAlerts, nil
 }
 
-func signalFrom(one alert) (storage.Signal, error) {
+// signalFrom normalises one alert. The group key is the DELIVERY's, applied to every alert in it,
+// because that is the level Alertmanager decides grouping at. The internal model carries it per
+// Signal so that a source which groups per alert needs no change to anything but its own adapter.
+func signalFrom(one alert, groupKey string) (storage.Signal, error) {
 	if one.Fingerprint == "" {
 		return storage.Signal{}, errors.New("alert carries no fingerprint to identify it by")
 	}
@@ -105,6 +122,7 @@ func signalFrom(one alert) (storage.Signal, error) {
 	}
 
 	signal.SourceKey = one.Fingerprint
+	signal.GroupingKey = groupKey
 	signal.Title = truncate(titleOf(one), maxTitleRunes)
 	signal.Summary = truncate(summaryOf(one), maxSummaryRunes)
 	signal.Labels = one.Labels

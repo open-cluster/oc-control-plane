@@ -26,6 +26,20 @@ var (
 	// ErrAlreadyTerminal reports an act on a case that has finished. Cancelling one that already
 	// concluded, for instance, which is not a failure and not a change.
 	ErrAlreadyTerminal = errors.New("investigation is already terminal")
+	// ErrEpisodeUnusable reports an IncidentEpisode a case cannot be opened for: not this
+	// organization's, or in a different Environment from the Connection the scope names. One
+	// answer for both, for the reason ErrConnectionUnusable gives — which half of a crossed
+	// boundary was wrong is not a fact worth handing back.
+	//
+	// The Environment is the check that matters and the Connection deliberately is not. An episode
+	// arrives through a TRIGGER Connection and a case reads through an EVIDENCE one, so they are
+	// different Connections in every ordinary estate; what may not differ is the Environment,
+	// because that is the boundary evidence may not cross.
+	ErrEpisodeUnusable = errors.New("incident episode cannot carry an investigation")
+	// ErrEpisodeInvestigated reports an episode that already has its case. Repeated notifications
+	// about one failure must not fragment into many Investigations, so a second request is refused
+	// NAMING the first — an operator who asked for one wants to be sent to it, not told no.
+	ErrEpisodeInvestigated = errors.New("this incident episode already has an investigation")
 )
 
 // TriggerKind is what started a case. There is one in this slice — a human naming a Connection,

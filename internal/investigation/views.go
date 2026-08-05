@@ -32,6 +32,15 @@ type openRequest struct {
 	// omission rather than a decision.
 	WindowStart time.Time `json:"windowStart"`
 	WindowEnd   time.Time `json:"windowEnd"`
+	// EpisodeID attributes this case to the IncidentEpisode it is about, and is optional. A case
+	// opened without one is what an engineer investigating a suspicion opens: they have a workload
+	// and a window and no alert, which is the path that exists so the product is not limited to
+	// what a customer's alerting happened to catch.
+	//
+	// It does NOT resolve the scope. The scope is still named, because deriving a namespace and a
+	// workload from an alert's labels is canonical resource identity, and a case scoped from an
+	// inference would confidently investigate the wrong thing.
+	EpisodeID string `json:"episodeId,omitempty"`
 }
 
 type scopeView struct {

@@ -85,6 +85,9 @@ func (p *Placements) OpenInvestigation(
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("opening an investigation: %w", err)
 			}
+			if err = claimEpisode(ctx, transaction, organization, opened); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil, err
+			}
 			// The scope, not the evidence. A case names a namespace and a workload; nothing an
 			// investigation reads from a customer's systems reaches this table.
 			return opened,

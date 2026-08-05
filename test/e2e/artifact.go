@@ -137,6 +137,7 @@ func NewResults(root string) (*Results, error) {
 		filepath.Join(root, "artifacts"),
 		filepath.Join(root, "ground-truth"),
 		filepath.Join(root, "scores"),
+		filepath.Join(root, "transcripts"),
 	} {
 		if err := os.MkdirAll(directory, 0o750); err != nil {
 			return nil, fmt.Errorf("preparing %s: %w", directory, err)
@@ -147,6 +148,16 @@ func NewResults(root string) (*Results, error) {
 
 // ArtifactDir is the directory to hand a scorer. Nothing in it names a scenario or its cause.
 func (r *Results) ArtifactDir() string { return filepath.Join(r.root, "artifacts") }
+
+// TranscriptDir is where a LIVE run records what the model actually said, one document per round.
+//
+// It is beside the artifacts rather than inside them, and the separation is the point twice over.
+// A scorer is handed the artifact directory and reads what the PRODUCT concluded; handing them the
+// model's raw turns as well would be asking them to score the reasoning rather than the result,
+// which is not what blind scoring measures. And what these documents are for is the other
+// direction entirely: they are the corpus commit CI replays, so that a replayed round is something
+// a model once said rather than something somebody imagined it saying.
+func (r *Results) TranscriptDir() string { return filepath.Join(r.root, "transcripts") }
 
 // WriteArtifact files what a scorer reads.
 func (r *Results) WriteArtifact(artifact Artifact) (string, error) {

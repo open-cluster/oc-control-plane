@@ -56,6 +56,12 @@ const (
 	ActionConflictCleared      Action = "relay.conflict.cleared"
 	ActionRelayBootstrapIssued Action = "relay.bootstrap-token.issued"
 
+	// Incidents. Grouping itself is not audited — it is done by a delivery rather than by a
+	// person, hundreds of times a day, and a record that grew a row per alert would bury the acts
+	// somebody actually performed. A MERGE is a person overriding that grouping, and it decides
+	// what an investigation opened for the incident would be about.
+	ActionIncidentMerge Action = "incident.merged"
+
 	// Investigations.
 	ActionInvestigationOpened    Action = "investigation.opened"
 	ActionInvestigationCancelled Action = "investigation.cancelled"

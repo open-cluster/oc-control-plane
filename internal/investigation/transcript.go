@@ -75,6 +75,43 @@ type RecordedConclusion struct {
 	Settlings []Settling `json:"settlings"`
 }
 
+// Transcribed is the model boundary for one round, remembering what it answered.
+//
+// It renders against the round's PINNED versions rather than against whatever the build carries
+// now, because the key is what decides whether a recording may be replayed later and a round
+// stamped with one set of versions must not file a recording claiming another.
+type Transcribed interface {
+	Reasoner
+	Transcript(versions Versions) Transcript
+}
+
+// Transcripts is where a round's recording comes from and where it goes.
+//
+// It is optional. A deployment that configured nowhere to put recordings gets nil and records
+// nothing, which is what every deployment did before this existed. What it closes is that a LIVE
+// round previously recorded nothing at all: the transcript file a deployment could be given was
+// read only when it was replaying, so a run against a real provider left nothing behind and a
+// round that failed could not be read after the fact.
+//
+// The two methods are one interface because they are one decision. Somewhere to put a recording
+// and something that makes one are never configured apart, and splitting them would let a
+// deployment hold half of each.
+type Transcripts interface {
+	// Begin wraps the boundary for ONE round.
+	//
+	// One recorder per round is the whole of the contract. A recorder shared between two rounds
+	// running at once accumulates both into one transcript that replays as neither, and the
+	// damage would not be visible until somebody tried to replay it.
+	Begin(reasoner Reasoner) Transcribed
+	// File writes what a finished round said.
+	//
+	// It is called for every round however it ended, because a round that FAILED is the one most
+	// worth reading — the stage it reached is in what it managed to record — and a corpus that
+	// held only the rounds that concluded would be missing exactly the ones somebody goes looking
+	// for.
+	File(ctx context.Context, of Claimed, transcript Transcript) error
+}
+
 // Recorded replays a transcript.
 //
 // It is stateless: which turn answers a step is decided by the step itself — the brief for

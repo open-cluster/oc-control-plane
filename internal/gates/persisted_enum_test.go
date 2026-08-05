@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
@@ -196,6 +197,10 @@ var (
 		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
 		int(storage.DeliveryRejected),
 	}
+	// An episode's status is the capability's rather than persistence's, because the capability
+	// owns the vocabulary it defines (ADR-017). What is frozen here is the same thing either way:
+	// the integers the SQL writes as bare literals.
+	episodeStatusValues = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
 )
 
 // enumColumns maps a file in internal/storage to the values its SQL may compare each enum
@@ -227,6 +232,10 @@ var enumColumns = map[string]map[string][]int{
 	"trigger_delivery.go":     {"outcome": deliveryOutcomeValues, "role": connectionRoleValues},
 	// The fleet counts leased jobs to report what the relays are holding.
 	"fleet.go": {"status": jobStatusValues},
+	// Grouping compares an EPISODE's status: an open episode is the one a new Signal joins, and a
+	// resolved one has released its grouping key so the same failure next month opens a new
+	// episode rather than reopening a closed record.
+	"incident.go": {"status": episodeStatusValues},
 }
 
 // Every integer an enum column is compared against must be a value some constant holds. This
