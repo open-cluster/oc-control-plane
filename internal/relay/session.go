@@ -85,15 +85,21 @@ type SessionService struct {
 	logger     *slog.Logger
 	live       *liveSessions
 	churn      *churnWatch
+	// inventoryInterval is what this deployment ASKS each relay to synchronize at; the
+	// relay floors it locally, so this can only slow a fleet down.
+	inventoryInterval time.Duration
 }
 
 // NewSessionService returns the service.
-func NewSessionService(placements *storage.Placements, logger *slog.Logger) *SessionService {
+func NewSessionService(
+	placements *storage.Placements, logger *slog.Logger, inventoryInterval time.Duration,
+) *SessionService {
 	return &SessionService{
-		placements: placements,
-		logger:     logger,
-		live:       newLiveSessions(),
-		churn:      newChurnWatch(time.Now),
+		placements:        placements,
+		logger:            logger,
+		live:              newLiveSessions(),
+		churn:             newChurnWatch(time.Now),
+		inventoryInterval: inventoryInterval,
 	}
 }
 
@@ -333,10 +339,11 @@ func (s *SessionService) run(
 
 // handle acts on one message from the relay.
 //
-// Two of these change durable state; the rest are the relay accounting for itself, and are
-// recorded rather than acted on. They are enumerated anyway, because a message that arrives
-// and is silently dropped is indistinguishable from one that was never sent — and one of them
-// is the relay reporting that this side broke the protocol.
+// Three of these change durable state — the hello, a job result, and an inventory delta —
+// and the heartbeat does when it carries inventory freshness stamps; the rest are the relay
+// accounting for itself, and are recorded rather than acted on. They are enumerated anyway,
+// because a message that arrives and is silently dropped is indistinguishable from one that
+// was never sent — and one of them is the relay reporting that this side broke the protocol.
 //
 // An unrecognised variant is not an error. The envelope evolves additively, so a newer relay
 // may legitimately say more than this control plane has learned to use.
@@ -347,6 +354,13 @@ func (s *SessionService) handle(session *sessionState, message *relayv1.RelayToC
 
 	case *relayv1.RelayToControl_JobResult:
 		return s.recordAndAcknowledge(session, body.JobResult)
+
+	case *relayv1.RelayToControl_InventoryDelta:
+		return s.recordInventoryDelta(session, body.InventoryDelta)
+
+	case *relayv1.RelayToControl_Heartbeat:
+		s.recordInventoryFreshness(session, body.Heartbeat)
+		note(session, message)
 
 	default:
 		note(session, message)
@@ -448,6 +462,10 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) erro
 		s.releaseWhatTheRelayIsNotRunning(session)
 	}
 	session.delivering.Do(func() { go s.deliver(session) })
+	// After delivery opens, because a policy is advisory context rather than work: a relay
+	// that never receives one synchronizes nothing and says so through its freshness surface,
+	// while a job held back would be an investigation waiting.
+	session.policies.Do(func() { go s.refreshInventoryPolicies(session) })
 	return nil
 }
 

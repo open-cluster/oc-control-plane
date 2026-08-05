@@ -494,6 +494,55 @@ schema numbers as literals, which went stale the moment the prompt moved to vers
 now derived from what the build carries; the key CHECK is still asserted where it belongs, on a
 recording made deliberately against components that do not match.
 
+### Written 2026-08-05: the change ledger exists, in both halves
+
+The one class of context that decays is now recorded. The Relay lists each watched scope's
+DECLARED INTENT on a local schedule — images, declared replicas, resource requests and limits,
+referenced ConfigMap and Secret names, the generation, the Deployment revision annotation, and a
+digest of the whole pod template so a change outside the itemized fields is still visible — diffs
+it against the previous tick, and pushes deltas over the existing session stream. Nothing on the
+path is leased or fenced: deltas are at-least-once with a dedup key over (Connection, object UID,
+observed revision), resent until acked, collapsed server-side. ConfigMaps and Secrets are read
+through the metadata client and recorded by identity and resource version only, so a Secret's
+value cannot enter Relay memory on this path. No status field is watched, and the reduced intent
+type is what makes that structural rather than reviewed.
+
+The first successful tick per scope is a baseline, excluded from every change query — installing
+a Relay is not everything changing at once, and a restart is not a second creation of the world.
+Continuity is decided by what a re-baseline changes: one that collapses entirely against what the
+ledger already held proves nothing observable moved (declared-intent revisions only advance), so
+the covered-since boundary survives; one that inserts anything moves the boundary to where
+watching demonstrably resumed. Freshness rides the heartbeat as per-scope stamps, because a tick
+that found nothing changed sends no delta and the ledger's currency must still be confirmed
+rather than assumed. Policies are re-sent to live sessions on the synchronization cadence, so a
+Connection created while its Relay is already connected starts being watched now rather than at
+the relay's next reconnect.
+
+The brief asks the ledger one question — what changed in this namespace, through this Connection,
+in this window — and treats the answer as NAVIGATION: ledger changes join `RecentChanges` with a
+source discriminator and no evidence identity, and EvidenceValidation structurally refuses a
+ledger row (no capability, no connection read, no trust class), so no conclusion can cite one. A
+window opening before the covered-since boundary records a ledger-horizon gap; a scope that is
+faulted, truncated, or more than two intervals behind the window's end records a
+ledger-staleness gap. `changeReasons` was NOT removed, against what the hard-coded document
+predicted, and the reasoning is recorded there: the event-derived change is the only citable form
+of one and the live revalidation the ledger's own rule depends on, and the opening hypotheses
+would otherwise be blind wherever the ledger is cold. Retention prunes purely by age, ninety days
+by default, on the audit pruner's shape.
+
+**Proved and unproved, stated plainly.** The Relay suite covers detection, diffing, flooring,
+intersection, baseline semantics, overflow re-baseline and the session integration; the control
+plane's storage suite covers dedup collapse, the serving-relay refusal, baseline continuity both
+ways, freshness guarding and age pruning; the investigation suite covers the evidence refusal and
+the gap wording. The end-to-end assertion — a real image change becomes a durable ledger row
+naming the field that moved with both values, while a deleted pod's churn (ready counts, phases,
+conditions) in the same namespace produces no row beyond the baseline — RAN and PASSED on
+2026-08-05 against a real k3s cluster, a real Relay and the real control plane
+(`test/e2e/changeledger_test.go`, 81s). It is written so that widening the watched field set
+makes the churn half fail. What remains unproved: no live scenario has exercised a brief carrying
+ledger changes, so what the model does with them is unmeasured — that is the next sweep's
+question, not this slice's.
+
 ### Written 2026-08-05: the catalog is a registry, and a Connection has a life
 
 The Integration vocabulary is still a closed set compiled into the binary — that decision was
@@ -563,7 +612,7 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — Live model provider | `spec-live-model-provider.md` | Go control plane | ✅ Built 2026-08-02 (revision 2, provider-neutral; Anthropic and Z.AI adapters) and **proved end to end on a live GLM-5 scenario**. A live round now files its transcript (2026-08-05), so the replay corpus this specification asks for can exist. Anthropic itself still uncalled, blocked on API credits |
 | 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: `importer` stood as supported off a read justified by the hypothesis it concluded, others were demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010. The distractor half is **half done** — see section 3 |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
-| 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
+| 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | ✅ Built 2026-08-05, both repositories, migration 0015, and **proved end to end against a real cluster**: an image change became a ledger row naming the field with both values while pod churn produced nothing. The brief consumes it as navigation with two new gap causes; decisions and recorded deviations in `change-ledger-implementation.md` |
 | 7 — Operator identity and RBAC | `spec-operator-api-identity-and-rbac.md` | Go control plane | ✅ Built 2026-08-05, migrations 0011 and 0012. OIDC with PKCE and SAML 2.0, server-side sessions, eight roles from a permission table, tenancy enforced with a 404, append-only audit, SCIM provisioning. Retention pruning followed on the same day, so the surface's `auditRetentionEnforced` is now a true statement. **Remediation recording, break-glass and the frontend's CI contract test are NOT built** — each recorded as deferred with its reason in the specification |
 
 **Not specified, deliberately.** Signal-triggered investigation, Incidents and grouping, canonical
@@ -646,7 +695,9 @@ on the execution path rather than a property of whichever query was written corr
   access, which has real design questions nobody has answered; the retention pruner, where the
   schedule is a column and the surface says out loud that nothing applies it yet; and the
   frontend's contract-drift test, which lives in another repository.
-- Inventory synchronization (ADR-004). Specified as a concept, unbuilt.
+- RESOLVED 2026-08-05. Inventory synchronization (ADR-004) is built as the change ledger's
+  transport — periodic list-and-diff, at-least-once deltas with a dedup key, never the job path.
+  Only change detection is synchronized; metrics, logs and traces stay on demand.
 - Coverage as capability readiness.
 - The frontend against the Go API.
 

@@ -32,6 +32,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
@@ -414,6 +415,12 @@ func serve(ctx context.Context, process assembled) error {
 	pruners := startAuditPruner(process)
 	defer pruners.stop()
 
+	// The change ledger ages out on its own schedule, independent of the audit record's:
+	// it is derived operational context, and what bounds it is the deployment's retention
+	// rather than a tenant's declaration.
+	ledgerPruners := startChangeLedgerPruner(process)
+	defer ledgerPruners.stop()
+
 	select {
 	case serveErr := <-failed:
 		return serveErr
@@ -496,7 +503,7 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 
 	endpoint := &relayEndpoint{
 		server:   grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler())),
-		sessions: relay.NewSessionService(process.placements, process.logger),
+		sessions: relay.NewSessionService(process.placements, process.logger, cfg.InventoryInterval),
 	}
 	relayv1.RegisterRelayRegistrationServiceServer(endpoint.server,
 		relay.NewRegistrationService(process.placements, cfg.RelaySPKIPins, process.logger))
@@ -784,6 +791,27 @@ func startAuditPruner(process assembled) *investigatorWorker {
 	}()
 	process.logger.Info("audit retention pruner started",
 		slog.Duration("interval", auditPruneInterval))
+	return running
+}
+
+// startChangeLedgerPruner runs the worker that ages the change ledger out on the
+// deployment's schedule.
+func startChangeLedgerPruner(process assembled) *investigatorWorker {
+	ctx, stop := context.WithCancel(context.Background())
+	pruner := changeledger.Pruner{
+		Retention: process.placements,
+		Logger:    process.logger,
+		Days:      process.config.ChangeLedgerRetentionDays,
+		Interval:  auditPruneInterval,
+	}
+
+	running := &investigatorWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		pruner.Run(ctx)
+	}()
+	process.logger.Info("change ledger retention pruner started",
+		slog.Int("retention_days", process.config.ChangeLedgerRetentionDays))
 	return running
 }
 

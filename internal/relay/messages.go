@@ -11,6 +11,7 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/capability"
+	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -88,6 +89,28 @@ func reconnecting(after time.Duration) *relayv1.ControlToRelay {
 func draining(within time.Duration) *relayv1.ControlToRelay {
 	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_DrainInstruction{
 		DrainInstruction: &relayv1.DrainInstruction{Deadline: durationpb.New(within)},
+	}}
+}
+
+// inventoryPolicy asks a relay to watch one Connection's scope. It is a REQUEST by
+// design: the relay floors the interval and intersects the namespaces with its own
+// local configuration, so nothing sent here can increase load on a customer's cluster.
+// No namespaces are named — the relay watches what its operator allows.
+func inventoryPolicy(scope changeledger.Scope) *relayv1.ControlToRelay {
+	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_InventorySynchronizationPolicy{
+		InventorySynchronizationPolicy: &relayv1.InventorySynchronizationPolicy{
+			ConnectionId:      scope.ConnectionID.String(),
+			Revision:          uint64(scope.PolicyRevision),
+			RequestedInterval: durationpb.New(scope.RequestedInterval),
+		},
+	}}
+}
+
+// inventoryDeltaAck is the relay's licence to forget one delta. Sent only after the
+// recording transaction committed, or after a refusal nothing the relay does can cure.
+func inventoryDeltaAck(deltaID string) *relayv1.ControlToRelay {
+	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_InventoryDeltaAck{
+		InventoryDeltaAck: &relayv1.InventoryDeltaAck{DeltaId: deltaID},
 	}}
 }
 

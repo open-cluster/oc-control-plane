@@ -33,6 +33,8 @@ type sessionState struct {
 	// delivering guards the start of delivery. A relay may say hello more than once — the
 	// protocol refreshes attestations that way — and only the first one starts anything.
 	delivering sync.Once
+	// policies guards the start of the inventory policy refresh, for the same reason.
+	policies sync.Once
 	// lastHeard is when the relay was last known to be alive, held as an integer so the
 	// liveness watch can read it without a lock the session loop would have to wait on.
 	lastHeard atomic.Int64

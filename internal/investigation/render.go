@@ -144,9 +144,15 @@ func briefViewOf(brief Brief) briefView {
 		AssembledAt:   brief.AssembledAt,
 	}
 	for _, change := range brief.RecentChanges {
-		view.RecentChanges = append(view.RecentChanges, changeView{
-			At: change.At, Summary: change.Summary, Evidence: change.Evidence.String(),
-		})
+		rendered := changeView{At: change.At, Summary: change.Summary, Source: "observed"}
+		if change.Source == ChangeLedger {
+			rendered.Source = "ledger"
+		} else {
+			// Briefs recorded before the ledger existed carry a zero source; every change
+			// they hold was observed, because observation was the only recorder there was.
+			rendered.Evidence = change.Evidence.String()
+		}
+		view.RecentChanges = append(view.RecentChanges, rendered)
 	}
 	for _, fact := range brief.Topology {
 		view.Topology = append(view.Topology, topologyView{

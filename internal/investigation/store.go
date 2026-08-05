@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -83,6 +84,14 @@ type Store interface {
 	RecordOutcome(ctx context.Context, org tenancy.Organization, fence Fence, outcome Outcome) error
 	// RecordSpend adds what a pass consumed to the round and to the case.
 	RecordSpend(ctx context.Context, org tenancy.Organization, fence Fence, spend Spend) error
+
+	// RecentLedgerChanges answers the brief's navigation question from the change ledger: what
+	// changed in this namespace, through this Connection, inside the window — with the scope's
+	// coverage boundaries, so an empty answer is readable as "nothing changed" only where the
+	// ledger was actually watching. Never evidence: a ledger change carries no item and a
+	// conclusion resting on one revalidates live.
+	RecentLedgerChanges(ctx context.Context, org tenancy.Organization, connectionID uuid.UUID,
+		namespace string, from, to time.Time, limit int) (changeledger.WindowChanges, error)
 
 	// Dispatch enqueues one typed read against the case's Connection and returns the job it
 	// became. The Connection is a precondition of the write rather than a value copied in, so a

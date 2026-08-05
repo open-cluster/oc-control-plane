@@ -51,19 +51,28 @@ everywhere else.
 
 ## "Recent changes"
 
-**Fixed.** A change is a Kubernetes event whose reason is one of: `ScalingReplicaSet`,
-`SuccessfulCreate`, `SuccessfulDelete`, `Created`, `Started`, `Killing`, `Pulled`, `Preempted`,
-`Evicted`.
+**Revised 2026-08-05, and the revision is narrower than the entry predicted.** The change ledger
+is built and the brief consumes it: ledger-recorded changes join `RecentChanges` beside the
+event-derived ones, and a window the ledger cannot vouch for records a `CoverageGap` naming the
+boundary. What this entry promised — that the ledger "replaces this list entirely" — was NOT
+done, deliberately.
 
-**Why.** In this slice recent changes are a LIVE read rather than the persisted change ledger
-(ADR-010), so what is knowable is what the cluster still remembers. Where the cluster's own
-retention cannot reach back to where the engineer asked, the case records a `CoverageGap` saying so
-— and those gaps are the argument the change-ledger slice will be built on.
+**What stays fixed.** A live-read change is still a Kubernetes event whose reason is one of:
+`ScalingReplicaSet`, `SuccessfulCreate`, `SuccessfulDelete`, `Created`, `Started`, `Killing`,
+`Pulled`, `Preempted`, `Evicted`.
 
-**What would change it.** The change ledger. A persisted record of workload revisions and
-configuration changes replaces this list entirely, and this reason vocabulary goes with it.
+**Why the list survives.** Two reasons, both structural. An event-derived change is the only
+CITABLE form of one — the ledger is a navigation index whose changes must be revalidated live
+before a conclusion rests on them, and the events read IS that revalidation, so removing it would
+remove the revalidation path the ledger's own rule depends on. And the opening hypotheses would be
+blind wherever the ledger is cold — a fresh install, a first tick still pending, a Relay outage —
+which are exactly the moments an investigation is most likely to be running.
 
-**Where it is.** `changeReasons` in `internal/investigation/results.go`.
+**What would change it.** Evidence from the harness that the two sources duplicate each other
+enough to confuse the planner; the fix then is deduplication, not deletion.
+
+**Where it is.** `changeReasons` in `internal/investigation/results.go`; the merge in
+`internal/investigation/runner.go`.
 
 ---
 

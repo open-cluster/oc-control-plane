@@ -59,6 +59,15 @@ func newRelay(installation relayInstallation) (*relay, error) {
 		return nil, fmt.Errorf("writing the bootstrap token: %w", err)
 	}
 
+	// The operator's inventory constraints, floored low so a change made by a test is
+	// detected within a test's patience. The floor is the customer's to set, and this
+	// harness is the customer here.
+	inventoryPath := filepath.Join(installation.WorkDir, installation.Name+"-inventory.yaml")
+	if err := os.WriteFile(inventoryPath,
+		[]byte("inventory:\n  version: 1\n  minimum_interval: 1s\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the inventory configuration: %w", err)
+	}
+
 	installed := &relay{
 		output:         &syncBuffer{},
 		name:           installation.Name,
@@ -73,8 +82,9 @@ func newRelay(installation relayInstallation) (*relay, error) {
 			"RELAY_INITIAL_SPKI_PINS":     installation.SPKIPin,
 			// Short enough that a reconnect happens inside a test's patience, long enough that
 			// the control plane is not being load-tested by its own proof.
-			"RELAY_HEARTBEAT_INTERVAL": "2s",
-			"RELAY_RESEND_INTERVAL":    "2s",
+			"RELAY_HEARTBEAT_INTERVAL":    "2s",
+			"RELAY_RESEND_INTERVAL":       "2s",
+			"RELAY_INVENTORY_CONFIG_FILE": inventoryPath,
 		},
 	}
 	for key, value := range installation.Extra {

@@ -1,8 +1,14 @@
 # Spec — The change ledger
 
-Status: READY FOR IMPLEMENTATION, after the first investigation. Not a prerequisite for it: the
-first slice reads changes live and records the gap this ledger closes.
-Date: 2026-07-31
+Status: BUILT 2026-08-05, both halves. Relay detection, diff and delta push under an `inventory:`
+configuration root; the control-plane ledger in migration 0015 with at-least-once dedup,
+baseline-continuity boundaries, per-scope freshness off the heartbeat, retention pruning, and the
+Investigation brief consuming it as navigation with ledger-horizon and ledger-staleness coverage
+gaps. Implementation decisions this document left open, and two recorded deviations (the
+event-derived change list is retained beside the ledger; the controller revision and pod template
+hash are realised as generation, the Deployment revision annotation and a Relay-computed template
+digest), are in `plans/change-ledger-implementation.md`.
+Date: 2026-07-31 (built 2026-08-05)
 Repositories: detection and delta push in the Relay (`oc-relay`); the ledger and its consumers in
 the Go control plane
 Decision records: ADR-010 (persist what decays; sync identity and change, never state), ADR-004

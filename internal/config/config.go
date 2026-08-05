@@ -22,6 +22,12 @@ import (
 const (
 	defaultShutdownTimeout = 15 * time.Second
 	defaultServiceName     = "oc-control-plane"
+	// Five minutes places a change within an investigation window without asking a
+	// customer's cluster to answer lists it would notice.
+	defaultInventoryInterval = 5 * time.Minute
+	// Ninety days of change history covers any window an investigation would be scoped
+	// to, and is deliberately independent of evidence and audit retention.
+	defaultChangeLedgerRetentionDays = 90
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
@@ -66,6 +72,17 @@ const (
 	// configured rather than derived from a request, because the delivery endpoint built from it
 	// is pasted into somebody else's system.
 	EnvIntakePublicURL = "OC_INTAKE_PUBLIC_URL"
+	// EnvInventoryInterval is the tick interval the control plane REQUESTS from every
+	// Relay's inventory synchronization. Requests, not sets: the Relay floors it at its
+	// own local minimum, so this can slow a fleet down and can never speed one up past
+	// what its operators allow.
+	EnvInventoryInterval = "OC_INVENTORY_INTERVAL"
+
+	// EnvChangeLedgerRetention is how many days the change ledger keeps an entry. The
+	// ledger is derived operational context on its own schedule, deliberately independent
+	// of evidence and audit retention.
+	EnvChangeLedgerRetention = "OC_CHANGE_LEDGER_RETENTION_DAYS"
+
 	// EnvMinimumRelayVersion is the relay version floor the fleet summary counts `outdated`
 	// against. Empty means nothing is compared, and the summary says so rather than reporting
 	// zero outdated as though every relay were current.
@@ -209,6 +226,13 @@ type Config struct {
 	// place it has to work.
 	IntakePublicURL string
 
+	// InventoryInterval is the tick interval requested from every Relay's inventory
+	// synchronization; each Relay floors it locally.
+	InventoryInterval time.Duration
+
+	// ChangeLedgerRetentionDays is how long a ledger entry is kept.
+	ChangeLedgerRetentionDays int
+
 	// MinimumRelayVersion is the relay version floor the fleet summary counts `outdated`
 	// against. Empty means this deployment states no floor, in which case nothing is counted
 	// outdated because nothing was compared — a different fact from every relay being current,
@@ -283,8 +307,10 @@ func (m ModelDeployment) Configured() bool { return m.Provider != "" }
 // value, failing on the first problem and naming the offending variable.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	cfg := Config{
-		ShutdownTimeout: defaultShutdownTimeout,
-		ServiceName:     defaultServiceName,
+		ShutdownTimeout:           defaultShutdownTimeout,
+		ServiceName:               defaultServiceName,
+		InventoryInterval:         defaultInventoryInterval,
+		ChangeLedgerRetentionDays: defaultChangeLedgerRetentionDays,
 	}
 
 	var err error
@@ -301,6 +327,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.ShutdownTimeout, err = optionalDuration(lookup, EnvShutdownTimeout, cfg.ShutdownTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.InventoryInterval, err = optionalDuration(
+		lookup, EnvInventoryInterval, cfg.InventoryInterval); err != nil {
+		return Config{}, err
+	}
+	if cfg.ChangeLedgerRetentionDays, err = optionalDays(
+		lookup, EnvChangeLedgerRetention, cfg.ChangeLedgerRetentionDays); err != nil {
 		return Config{}, err
 	}
 	if cfg.ServiceName, err = optionalName(lookup, EnvServiceName, cfg.ServiceName); err != nil {
@@ -621,6 +655,19 @@ func consentedProviders(lookup func(string) (string, bool), cfg Config) ([]strin
 		}
 	}
 	return consented, nil
+}
+
+// optionalDays reads a positive whole number of days, or the fallback when absent.
+func optionalDays(lookup func(string) (string, bool), key string, fallback int) (int, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 1 {
+		return 0, fmt.Errorf("%s must be a positive whole number of days", key)
+	}
+	return parsed, nil
 }
 
 // optionalCount reads a non-negative whole number, or zero when the setting is absent.

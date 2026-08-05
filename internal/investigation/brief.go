@@ -70,15 +70,34 @@ type ResourceIdentity struct {
 	Resolved bool `json:"resolved"`
 }
 
+// ChangeSource is who reports a change on the brief: a live read this round made, or the
+// change ledger. The values are persisted inside the brief's JSON and frozen by a gate in
+// internal/gates. Briefs recorded before the ledger existed decode as zero, which every
+// reader treats as ChangeObserved — the only source that existed when they were written.
+type ChangeSource int16
+
+const (
+	// ChangeObserved means a live read this round made reports the change, and Evidence
+	// cites the item it produced.
+	ChangeObserved ChangeSource = 1
+	// ChangeLedger means the change ledger reports it. A ledger-sourced change carries no
+	// EvidenceItem and never can: the ledger is a navigation index, and a conclusion
+	// resting on one of its changes revalidates live and cites what the revalidation
+	// produced.
+	ChangeLedger ChangeSource = 2
+)
+
 // Change is something that moved around the resource inside the window.
 //
-// Every change carries the EvidenceItem that reports it. A change on the brief with no citation
-// would be the one uncited statement in the case, and it would be the one an engineer acts on
-// first.
+// An OBSERVED change carries the EvidenceItem that reports it — a live-read change on the
+// brief with no citation would be the one uncited statement in the case. A LEDGER change
+// carries none by design; what it carries instead is the obligation to revalidate.
 type Change struct {
-	At       time.Time `json:"at"`
-	Summary  string    `json:"summary"`
-	Evidence uuid.UUID `json:"evidence"`
+	At      time.Time    `json:"at"`
+	Summary string       `json:"summary"`
+	Source  ChangeSource `json:"source,omitempty"`
+	// Evidence is uuid.Nil exactly when Source is ChangeLedger.
+	Evidence uuid.UUID `json:"evidence,omitzero"`
 }
 
 // TopologyFact is one live relationship around the resource: which pod runs where, under which

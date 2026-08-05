@@ -52,6 +52,15 @@ const (
 	// makes, and there is no pass left in which to test it. That is why the consequence names
 	// reinvestigation: a further round can do what this one could not.
 	GapExplanationUntested
+	// GapLedgerHorizon means the window opens before the change ledger's continuous knowledge of
+	// this scope begins, so an absence of recorded change before that boundary is an absence of
+	// recording, never an absence of change. Distinct from GapRetentionHorizon, which is about a
+	// SOURCE's own memory: this one is about when the platform was watching.
+	GapLedgerHorizon
+	// GapLedgerStale means the ledger has not been confirmed current through the end of the
+	// window — the Relay's synchronization is behind, faulted, or seeing a bounded page — so a
+	// change late in the window may simply not have been recorded yet.
+	GapLedgerStale
 )
 
 func (c GapCause) String() string {
@@ -78,6 +87,10 @@ func (c GapCause) String() string {
 		return "target not found"
 	case GapExplanationUntested:
 		return "the explanation was never put at risk"
+	case GapLedgerHorizon:
+		return "the change ledger was not watching for the whole window"
+	case GapLedgerStale:
+		return "the change ledger is not confirmed current"
 	default:
 		return "unrecognised"
 	}
@@ -95,6 +108,51 @@ func UntestedExplanationGap() Gap {
 		Consequence: "no read was dispatched to disprove the explanation this round settled on, " +
 			"so it survived nothing; a further round can test it",
 	}
+}
+
+// LedgerHorizonGap is what a round records when its window opens before the ledger's
+// continuous knowledge of the scope begins. The wording lives here for the same reason
+// UntestedExplanationGap's does: the boundary and its consequence are part of the standard.
+func LedgerHorizonGap(coveredSince time.Time, window Window) Gap {
+	return Gap{
+		Cause: GapLedgerHorizon,
+		Subject: "recorded changes between " + window.Start.UTC().Format(time.RFC3339) +
+			" and " + coveredSince.UTC().Format(time.RFC3339),
+		Consequence: "the change ledger has watched this scope only since " +
+			coveredSince.UTC().Format(time.RFC3339) +
+			"; an absence of recorded change before that is not an absence of change",
+	}
+}
+
+// LedgerUnobservedGap is what a round records when watching has been requested for the
+// scope and no baseline exists yet — the ledger can vouch for none of the window, and an
+// empty change list must not read as a calm one.
+func LedgerUnobservedGap() Gap {
+	return Gap{
+		Cause:   GapLedgerHorizon,
+		Subject: "recorded changes for this scope",
+		Consequence: "the change ledger has been asked to watch this scope and holds no " +
+			"baseline yet, so an absence of recorded change says nothing about the window",
+	}
+}
+
+// LedgerStaleGap is what a round records when the ledger cannot vouch for the window's tail:
+// the last confirmed synchronization is behind the window's end, faulted, or truncated.
+func LedgerStaleGap(confirmed time.Time, faulted, truncated bool) Gap {
+	subject := "recorded changes after " + confirmed.UTC().Format(time.RFC3339)
+	consequence := "the change ledger was last confirmed current at " +
+		confirmed.UTC().Format(time.RFC3339) +
+		", before the window closes; a change after that may not have been recorded yet"
+	switch {
+	case faulted:
+		consequence = "the Relay's most recent synchronization could not read the cluster, " +
+			"so the ledger's account of this window may stop at " +
+			confirmed.UTC().Format(time.RFC3339)
+	case truncated:
+		consequence = "the most recent synchronization saw a bounded page rather than the whole " +
+			"scope, so a change in the unseen remainder is invisible"
+	}
+	return Gap{Cause: GapLedgerStale, Subject: subject, Consequence: consequence}
 }
 
 // Gap is something the investigation could not check, and the consequence of not checking it. A

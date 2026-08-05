@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
@@ -152,6 +153,8 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"GapRequestRefused", int(investigation.GapRequestRefused), 9},
 		{"GapTargetNotFound", int(investigation.GapTargetNotFound), 10},
 		{"GapExplanationUntested", int(investigation.GapExplanationUntested), 11},
+		{"GapLedgerHorizon", int(investigation.GapLedgerHorizon), 12},
+		{"GapLedgerStale", int(investigation.GapLedgerStale), 13},
 
 		{"CoverageChecked", int(investigation.CoverageChecked), 1},
 		{"CoverageCheckedEmpty", int(investigation.CoverageCheckedEmpty), 2},
@@ -166,6 +169,27 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"ClaimSupporting", int(investigation.ClaimSupporting), 1},
 		{"ClaimContradicting", int(investigation.ClaimContradicting), 2},
 		{"ClaimAffectedScope", int(investigation.ClaimAffectedScope), 3},
+
+		// A brief change's source is persisted inside the brief's JSON. Zero is legacy:
+		// briefs written before the ledger existed decode as zero and every reader treats
+		// it as observed.
+		{"ChangeObserved", int(investigation.ChangeObserved), 1},
+		{"ChangeLedger", int(investigation.ChangeLedger), 2},
+
+		// The change ledger's vocabulary, owned by internal/changeledger and constrained by
+		// migration 0015's CHECKs. The baseline exclusion in every change query is written
+		// as `change_kind <> 1`, so ChangeBaseline moving would silently turn every baseline
+		// into a reportable change.
+		{"KindDeployment", int(changeledger.KindDeployment), 1},
+		{"KindStatefulSet", int(changeledger.KindStatefulSet), 2},
+		{"KindDaemonSet", int(changeledger.KindDaemonSet), 3},
+		{"KindConfigMap", int(changeledger.KindConfigMap), 4},
+		{"KindSecret", int(changeledger.KindSecret), 5},
+
+		{"ChangeBaseline", int(changeledger.ChangeBaseline), 1},
+		{"ChangeCreated", int(changeledger.ChangeCreated), 2},
+		{"ChangeModified", int(changeledger.ChangeModified), 3},
+		{"ChangeDeleted", int(changeledger.ChangeDeleted), 4},
 	}
 
 	for _, constant := range frozen {
@@ -236,6 +260,8 @@ var enumColumns = map[string]map[string][]int{
 	// resolved one has released its grouping key so the same failure next month opens a new
 	// episode rather than reopening a closed record.
 	"incident.go": {"status": episodeStatusValues},
+	// The ledger verifies a delta's Connection answers evidence reads before recording under it.
+	"change_ledger.go": {"role": connectionRoleValues},
 }
 
 // Every integer an enum column is compared against must be a value some constant holds. This

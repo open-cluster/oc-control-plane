@@ -182,11 +182,17 @@ type resourceView struct {
 }
 
 // changeView carries the evidence behind it, because a change on the brief is the first thing an
-// engineer acts on and it must not be the one uncited statement in the case.
+// engineer acts on and it must not be the one uncited statement in the case. A ledger-sourced
+// change carries no evidence BY DESIGN — the ledger is a navigation index, revalidated live —
+// and the source field is what tells a reader which kind they are looking at.
 type changeView struct {
-	At       time.Time `json:"at"`
-	Summary  string    `json:"summary"`
-	Evidence string    `json:"evidenceId"`
+	At      time.Time `json:"at"`
+	Summary string    `json:"summary"`
+	// Source is "observed" for a change a live read reported, "ledger" for one the change
+	// ledger recorded.
+	Source string `json:"source"`
+	// Evidence is empty exactly when Source is "ledger".
+	Evidence string `json:"evidenceId,omitempty"`
 }
 
 type topologyView struct {

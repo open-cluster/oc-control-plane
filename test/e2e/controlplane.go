@@ -145,6 +145,9 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 		"OC_RELAY_SPKI_PINS":   spkiPin,
 		"OC_SHUTDOWN_TIMEOUT":  "10s",
 		"OC_SERVICE_NAME":      "oc-control-plane-e2e",
+		// Fast enough that a Connection created mid-run gains its synchronization policy,
+		// and a change lands in the ledger, within a test's patience.
+		"OC_INVENTORY_INTERVAL": "2s",
 	}
 	if c.operatorAddress != "" {
 		environment["OC_OPERATOR_ADDRESS"] = c.operatorAddress

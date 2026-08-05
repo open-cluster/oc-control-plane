@@ -179,6 +179,12 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			"the organization and the role, and no caller-supplied value selects it",
 		"RedeemSignIn": "consumes an authorization state that names no tenant; the flow row " +
 			"found is the authority for the organization the sign-in belongs to",
+		// The change ledger's pruner deletes by AGE across every placement, bounded per
+		// statement. It reads no tenant data and takes no caller-supplied value at all — a
+		// horizon and a batch size are the whole request — so there is no tenant in the
+		// question to resolve a placement from, and nothing selective enough to leak one.
+		"PruneChangeLedgerBefore": "age-bounded delete across every placement; reads no tenant " +
+			"data and takes no caller-supplied identifier",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {

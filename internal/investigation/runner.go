@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -258,6 +261,7 @@ func (r Runner) brief(ctx context.Context, execution *round) error {
 			brief.RecentChanges = append(brief.RecentChanges, Change{
 				At:       change.At,
 				Summary:  change.Summary,
+				Source:   ChangeObserved,
 				Evidence: answer.Items[change.Item].ID,
 			})
 		}
@@ -273,6 +277,9 @@ func (r Runner) brief(ctx context.Context, execution *round) error {
 			execution.knownPods = append(execution.knownPods, fact.Pod)
 		}
 	}
+	if err = r.ledgerChanges(ctx, execution, &brief); err != nil {
+		return err
+	}
 	brief.Coverage = r.coverage(execution)
 
 	if err = r.Store.RecordCoverage(
@@ -283,6 +290,88 @@ func (r Runner) brief(ctx context.Context, execution *round) error {
 		return err
 	}
 	execution.held.Round.Brief = brief
+	return nil
+}
+
+// maxLedgerChanges bounds what the ledger may contribute to one brief. A namespace mid-deploy
+// can hold hundreds of recorded changes; a brief is an orientation, not the ledger itself, and
+// what was cut is stated as a gap rather than implied complete.
+const maxLedgerChanges = 25
+
+// ledgerChanges merges the change ledger's answer into the brief and records the coverage
+// gaps that keep it honest.
+//
+// The event-derived changes stay beside these deliberately, though the ledger was named as
+// this list's replacement: an observed change is the only CITABLE form of one — the ledger is
+// a navigation index whose changes are revalidated live, and the events read IS that
+// revalidation — and a brief that leaned on the ledger alone would be blind wherever it is
+// cold: a fresh install, a first tick still pending, an outage.
+//
+// A Connection with no ledger scope at all contributes nothing and records no gap. That is
+// the pre-ledger world — a deployment where synchronization never opened for this Connection —
+// and its honesty machinery is the retention-horizon gap the live read already carries. A
+// scope that EXISTS and cannot vouch for the window is different: somebody turned watching on,
+// and silence needs a boundary before it may be read as calm.
+func (r Runner) ledgerChanges(ctx context.Context, execution *round, brief *Brief) error {
+	subject := execution.held.Investigation
+	answer, err := r.Store.RecentLedgerChanges(ctx, execution.organization,
+		subject.Scope.Connection, subject.Scope.Namespace,
+		subject.Window.Start, subject.Window.End, maxLedgerChanges)
+	if err != nil {
+		return err
+	}
+	if answer.Scope.ConnectionID == uuid.Nil {
+		return nil
+	}
+	if !answer.Covered {
+		// Watching was turned on and no baseline has landed yet — a scope that cannot
+		// vouch for any of the window, which is the boundary the spec says silence needs.
+		_, err = r.recordGap(ctx, execution, LedgerUnobservedGap())
+		return err
+	}
+
+	for _, entry := range answer.Entries {
+		brief.RecentChanges = append(brief.RecentChanges, Change{
+			At:      entry.ObservedAt,
+			Summary: entry.Summary(),
+			Source:  ChangeLedger,
+		})
+	}
+	// One time-ordered account, whichever recorder contributed each line. Stable, so two
+	// changes at one instant keep the order their sources reported them in.
+	sort.SliceStable(brief.RecentChanges, func(i, j int) bool {
+		return brief.RecentChanges[i].At.Before(brief.RecentChanges[j].At)
+	})
+
+	var gaps []Gap
+	if answer.Scope.CoveredSince != nil && subject.Window.Start.Before(*answer.Scope.CoveredSince) {
+		gaps = append(gaps, LedgerHorizonGap(*answer.Scope.CoveredSince, subject.Window))
+	}
+	// A stamp is always up to one tick old by design, so currency is judged against the
+	// scope's own cadence: within two intervals of the window's end is as current as the
+	// ledger ever promises, and gapping that would mark every live window stale. A faulted
+	// or truncated scope is stale whatever the stamp says.
+	confirmed := answer.Scope.LastConfirmedAt
+	if confirmed != nil {
+		slack := 2 * answer.Scope.RequestedInterval
+		behind := subject.Window.End.Sub(*confirmed) > slack
+		if behind || answer.Scope.Faulted || answer.Scope.Truncated {
+			gaps = append(gaps, LedgerStaleGap(*confirmed, answer.Scope.Faulted, answer.Scope.Truncated))
+		}
+	}
+	if answer.Truncated {
+		gaps = append(gaps, Gap{
+			Cause:   GapResultTruncated,
+			Subject: "the change ledger's account of this window",
+			Consequence: "more changes were recorded than the brief carries; only the earliest " +
+				"are shown",
+		})
+	}
+	for _, gap := range gaps {
+		if _, err = r.recordGap(ctx, execution, gap); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
