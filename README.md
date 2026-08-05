@@ -190,10 +190,16 @@ carries a credential, and no error quotes a DSN file's contents.
 
 ## Identity, roles and the record
 
-An operator signs in through an OIDC Authorization Code flow with PKCE against a provider their
-Organization configures. The control plane exchanges the code, verifies the identity token
-against the issuer's own published keys, applies the tenant's provisioning policy, and issues
-its own opaque server-side session as an `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+An operator signs in through their Organization's configured identity provider, over **OIDC** —
+Authorization Code with PKCE, the identity token verified against the issuer's own published
+keys — or **SAML 2.0**, service-provider initiated, the assertion's signature verified against
+the certificates in the provider's published metadata. Either way the control plane applies the
+tenant's provisioning policy and issues its own opaque server-side session as an `HttpOnly`,
+`Secure`, `SameSite=Lax` cookie.
+
+Everything after a provider has been believed is one code path for both protocols. What differs
+is how a provider is believed; the provisioning policy, the verified-domain check, the group
+mapping and the session issue are the tenant's and are the same.
 
 It is deliberately **not a JWT**. A signed token carrying its own claims cannot be ended before
 it expires, so "sign out ends my session on the server" and "revoke a departing colleague's
@@ -207,7 +213,7 @@ the cookie at all. Unsafe cookie-authenticated requests additionally require an 
 `OC_OPERATOR_ALLOWED_ORIGINS`; bearer tokens are exempt, because a browser never attaches one
 by itself.
 
-### The seven roles
+### The eight roles
 
 Fixed sets, compiled rather than editable. Custom roles are out of scope for this release: an
 editable role is a second authorization model to review. The table in `internal/authz/role.go`
@@ -223,10 +229,11 @@ IS the specification — reading it is how to answer "what can an Investigator d
 | `responder` | An Investigator who may also set a Connection's enabled state during an incident |
 | `viewer` | Read-only across the tenant |
 | `auditor` | Reads the record and nothing else, so that the access does not itself become a risk |
+| `directory_synchroniser` | What a customer's directory holds. Reaches the SCIM endpoints and nothing else |
 
-An owner may not be granted by just-in-time provisioning or by a directory group mapping, and no
-API token may hold it: both would make a directory edit or a leaked CI variable an
-administrative takeover.
+An owner may not be granted by just-in-time provisioning, by an identity provider's group claim,
+by a SCIM group mapping, or by an API token: every one of those would make a directory edit or a
+leaked CI variable an administrative takeover.
 
 ### How a route is authorized
 
@@ -263,6 +270,37 @@ Nothing in it is ever a credential. `audit.Detail` drops any key named like one 
 written, mechanically rather than by convention, because the paths that write these events are
 precisely the paths holding a secret at the time.
 
+## Provisioning
+
+A customer's directory synchronises its people into one tenant over **SCIM 2.0**, at
+`/scim/v2/organizations/{organization}`, with a bearer token holding the
+`directory_synchroniser` role and nothing else.
+
+It is deliberately not under `/operator/v1`: an operator API version is this product's to
+change, and a directory's base URL is configured once in somebody else's system and then
+untouched for years.
+
+| Resource | Operations |
+| --- | --- |
+| `ServiceProviderConfig`, `ResourceTypes`, `Schemas` | What a directory reads before anything else, answered honestly — it says what is *not* supported rather than omitting it |
+| `Users` | list with `userName eq` / `externalId eq`, create, read, replace, patch `active`, delete |
+| `Groups` | list with `displayName eq`, create, read, replace, patch members, delete |
+
+Two properties matter more than the coverage:
+
+**What is not understood is refused, not ignored.** A directory whose deprovisioning silently
+did nothing would leave everybody believing access had been removed. Anything outside the list
+above answers a SCIM error with a `scimType` the directory can act on.
+
+**A directory decides who is in a group; an administrator decides what a group grants.** The
+role mapping lives on the operator surface behind `identity.configure`. If a directory could
+decide what its own groups meant here, a change in the customer's identity vendor would be a
+privilege grant in this product.
+
+Deprovisioning takes effect on the person's **next request**, not at their next sign-in — set a
+person inactive, delete them, or remove them from the last group that granted their role, and
+the sessions resting on it are revoked in the same transaction.
+
 ## Endpoints
 
 | Path | Purpose |
@@ -284,8 +322,9 @@ exist, so none of them can be used to enumerate customers:
 | Path | Purpose |
 | --- | --- |
 | `GET /operator/v1/organizations/{organization}/sign-in/providers` | The identifier and name of each configured provider, so a console can render a chooser |
-| `GET /operator/v1/organizations/{organization}/sign-in/{provider}` | Start a sign-in. Redirects to the provider with a state, a nonce and an S256 PKCE challenge |
-| `GET /operator/v1/sign-in/callback` | Where the provider sends the browser back. Redeems the state exactly once, verifies the identity token, and issues the session cookie |
+| `GET /operator/v1/organizations/{organization}/sign-in/{provider}` | Start a sign-in. Which protocol is the provider's, not the caller's: OIDC redirects with a state, a nonce and an S256 PKCE challenge; SAML redirects with an AuthnRequest and a relay state |
+| `GET /operator/v1/sign-in/callback` | OIDC's. Redeems the state exactly once, verifies the identity token, and issues the session cookie |
+| `POST /operator/v1/organizations/{organization}/sign-in/saml/{provider}/callback` | SAML's assertion consumer service. Redeems the relay state exactly once, then verifies the signature, the audience, the recipient, the conditions and InResponseTo together |
 
 Needing a credential and no permission, because the subject is the caller themselves:
 
@@ -302,6 +341,8 @@ Under `/operator/v1/organizations/{organization}`, each behind the permission it
 | `GET /members`, `PUT\|DELETE /members/{user}` | `member.read`, `member.manage`. Appointing an owner additionally needs `member.owner.manage` |
 | `GET /sessions`, `POST /members/{user}/revoke-sessions` | `member.read`, `session.revoke` |
 | `GET\|PUT /policy` | `identity.read`, `identity.configure`. Session lifetime and the declared audit retention |
+| `GET /identity-providers/{provider}/saml-metadata` | `identity.read`. This deployment's own SAML metadata, to hand to the identity provider |
+| `GET /directory-groups`, `PUT /directory-groups/{group}/role` | `identity.read`, `identity.configure`. What a synchronised group grants here — an administrator's decision, never the directory's |
 | `GET\|POST /service-accounts`, `DELETE /service-accounts/{account}` | `service-account.read`, `service-account.manage` |
 | `GET\|POST /api-tokens`, `POST /api-tokens/{token}/revoke` | `api-token.read`, `api-token.manage`. A token is shown once, bound to one Organization, one role and an expiry |
 | `GET /audit-events` | `audit.read`. The only route the Auditor role reaches |

@@ -1,9 +1,12 @@
 # Spec — Operator API: identity, session, tenancy enforcement, RBAC and audit
 
-Status: BUILT 2026-08-05, with migration 0011. **Stories 1–11, 15–16, 18–31 and 33 are
-implemented and asserted through the HTTP boundary.** Six are not — 12, 13, 14, 17, 32 and 34 —
-each for a stated reason rather than by omission, and story 21 is half done. See "What was
-built, and what was not" at the foot of this document.
+Status: BUILT 2026-08-05, with migrations 0011 and 0012. **Stories 1–16, 18–31 and 33 are
+implemented and asserted through the HTTP boundary.** Three are not — 17, 32 and 34 — each for a
+stated reason rather than by omission, and story 21 is half done. See "What was built, and what
+was not" at the foot of this document.
+
+SAML 2.0 (story 12) and SCIM (stories 13 and 14) were deferred in the first pass and built in
+the second, in migration 0012.
 
 Repo: `oc-control-plane`. Prerequisite for every frontend gate.
 Audit basis: `oc-frontend/plans/audit-2026-08-04-enterprise-forensic.md` §1 B1–B4.
@@ -298,14 +301,6 @@ made it. The four path corrections. The permission-table gate.
   time rather than afterwards) and none of them were answered here. What exists that it would
   build on: the audit trail records at a severity, API tokens already carry an expiry, and the
   role table already separates the two administrative roles.
-- **SAML 2.0 (story 12) and SCIM (stories 13–14).** Deferred, not abandoned. `identity_provider`
-  carries a `protocol` column that already accepts SAML and `organization_membership` carries a
-  `source` column that already accepts `scim`, so adding either is a value and a package rather
-  than a migration that rewrites every row. They were left out because a hand-rolled SAML
-  implementation is XML signature verification and canonicalisation — the part of the standard
-  that has produced a decade of authentication bypasses — and doing it badly in the same slice as
-  everything above would have put the weakest code on the most sensitive path. It is its own
-  slice with its own review.
 - **Recording a performed remediation (story 17).** The Responder role exists and is a real,
   distinct set of permissions, but there is no route through which a human can state that they
   remediated something. Adding one is the investigation-outcome slice's work: it changes what an
@@ -320,6 +315,75 @@ made it. The four path corrections. The permission-table gate.
   schedule is applied. Stating a retention period the product does not enforce is worse than
   stating none. The mechanism a pruner will use exists — the delete trigger permits a transaction
   that declares itself the pruner — and the pruner does not.
+
+**SAML 2.0 and SCIM, built in the second pass.**
+
+The first pass deferred them and said why: a hand-rolled SAML implementation is XML signature
+verification and canonicalisation, the part of that standard which has produced a decade of
+authentication bypasses. That reason is answered rather than overruled — **none of it is
+hand-rolled**. `github.com/crewjam/saml` provides the service provider, composing
+`goxmldsig` for the signature and `mattermost/xml-roundtrip-validator` for the round-trip check
+that refuses the general shape of a signature-wrapping document. Five small modules arrived with
+it and no large ones; a gate keeps all four libraries inside `internal/identity`, because a
+second package holding them would be a second place a signature could be checked differently.
+
+What this repository wrote is everything around that: which provider, what the request said,
+what the assertion means, and what happens next. Specifically —
+
+- **Service-provider initiated only.** IdP-initiated SAML remains out of scope and is now out of
+  scope for a mechanical reason rather than a scheduling one: an unsolicited assertion has no
+  request of ours to be bound to, so the single-use flow row that makes a replay impossible
+  under both protocols would have nothing to consume.
+- **The entity identifier and the assertion consumer service are PER PROVIDER**, not one for the
+  deployment. The audience restriction the library checks is that value, so an assertion minted
+  for one customer's service provider cannot be replayed at another's. A shared entity
+  identifier would make every tenant's assertions interchangeable, and the test for it makes an
+  otherwise-valid assertion for a different audience and asserts it is refused.
+- **AuthnRequests are not signed.** The request carries no secret, the response is bound to it by
+  InResponseTo, and the flow row recording it is single-use — so signing would mean holding a
+  private key per deployment for a property already held by something simpler. A provider that
+  REQUIRES a signed request is not served, and that is a real limit rather than an oversight.
+- **A SAML assertion's email is treated as verified.** SAML has no `email_verified` claim and
+  does not need one: the assertion is signed by the identity provider the tenant configured,
+  asserting an attribute that provider controls. That is a stronger claim than a self-asserted
+  OIDC address, and treating it as unverified would mean no SAML tenant could use a verified
+  domain policy at all.
+- **Everything after a provider is believed is ONE code path for both protocols.** The
+  provisioning policy, the verified-domain check, the group mapping, the user resolution and the
+  session issue are what a security reviewer asks about, and an answer beginning "for OIDC..."
+  would have to be given twice and could drift.
+
+SCIM serves what Okta and Microsoft Entra actually send, and **refuses what it does not
+understand rather than ignoring it** — a directory whose deprovisioning silently did nothing
+would leave everybody believing access had been removed, which is the worst failure this surface
+could have. Three decisions in it are worth stating:
+
+- **A directory decides who is in a group. An ADMINISTRATOR decides what a group grants.** The
+  role mapping is on the operator surface behind `identity.configure`, not in SCIM. If a
+  directory could decide what its own groups meant here, a change in the customer's identity
+  vendor would be a privilege grant in this product, made by whoever can edit a group there. No
+  group may map to the owner role at all, for the same reason the just-in-time role and the
+  token role may not.
+- **An eighth role, `directory_synchroniser`.** The specification proposed seven. A directory's
+  credential lives in a customer's identity vendor, and the alternative was issuing it a
+  Platform administrator token — a far worse thing to leave in an integration's configuration
+  than one narrow role is a departure from a list. It holds `directory.sync` and nothing else,
+  exactly as the Auditor holds `audit.read` and nothing else, and a test asserts it reaches no
+  other route.
+- **`/scim/v2` is not under `/operator/v1`.** An operator API version is this product's to
+  change; a directory's base URL is configured once in somebody else's system and then untouched
+  for years. Pinning the provisioning surface to the standard's own version means an operator
+  API bump is not a change every customer has to make in their identity vendor.
+
+Two things in the second pass were found by its own tests rather than by review, and both are
+worth recording because both were design errors rather than typos. `active` and "holds a role"
+were the same column, so a person a directory had just created as active read back inactive
+until a group was mapped — the directory being told something untrue about its own data; they
+are now separate, and a membership may hold no role. And a provisioned person signing in for the
+first time would have become a SECOND account, because a directory knows a userName and this
+product knows an issuer and a subject; the first sign-in now ADOPTS the placeholder identity,
+matched on the address, bounded so that only a row this product created for a directory can be
+adopted and never one belonging to a real issuer.
 
 **Departures from the text above, with reasons.**
 

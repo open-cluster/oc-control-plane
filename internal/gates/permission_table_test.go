@@ -113,6 +113,11 @@ func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
 			"is what a caller with no credential is trying to do",
 		"GET /operator/v1/sign-in/callback": "the identity provider sends the browser here, and " +
 			"it carries a state rather than a credential",
+		"POST /operator/v1/organizations/{organization}/sign-in/saml/{provider}/callback": "" +
+			"SAML's assertion consumer service. The identity provider POSTs the browser here, " +
+			"so it arrives cross-site by construction and carries no credential of ours; what " +
+			"binds it to a sign-in this product started is the single-use relay state and the " +
+			"request identifier inside the assertion, checked together",
 	}
 
 	found := make(map[string]bool)
@@ -298,16 +303,47 @@ func TestEveryPatternRegistersOnAServeMux(t *testing.T) {
 	}
 }
 
-// Every route on this surface lives under /operator/v1. A route somewhere else would be served
-// by this listener and would not be found by anything reading the version prefix to decide what
-// it is talking to.
-func TestEveryRouteIsUnderTheVersionedPrefix(t *testing.T) {
+// Every route this listener serves lives under one of TWO versioned prefixes, and the second
+// one is a deliberate exception rather than an oversight.
+//
+// /operator/v1 is this product's own surface and its version is this product's to change.
+// /scim/v2 is RFC 7644's, and a customer's directory is configured with that base URL once, in
+// somebody else's system, and then not touched for years. Pinning the provisioning surface to
+// the standard's version means an operator API bump is not a change every customer has to make
+// in their identity vendor.
+//
+// Anything under neither would be served by this listener and found by nothing reading a prefix
+// to decide what it is talking to.
+func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	t.Parallel()
 
-	const prefix = "/operator/v1/"
+	prefixes := map[string]string{
+		"/operator/v1/": "this product's own surface",
+		"/scim/v2/": "RFC 7644's, so a directory's configured base URL survives an operator " +
+			"API version bump",
+	}
+
+	counted := make(map[string]int, len(prefixes))
 	for _, route := range operatorRoutes(t) {
-		if !strings.HasPrefix(route.Pattern(), prefix) {
-			t.Errorf("%s is not under %s", route.Key(), prefix)
+		matched := ""
+		for prefix := range prefixes {
+			if strings.HasPrefix(route.Pattern(), prefix) {
+				matched = prefix
+			}
+		}
+		if matched == "" {
+			t.Errorf("%s is under no versioned prefix; the ones this listener serves are %v",
+				route.Key(), prefixes)
+			continue
+		}
+		counted[matched]++
+	}
+	// Each prefix is asserted to be in use. One recorded here and served by nothing would be a
+	// list that had stopped describing the surface.
+	for prefix, reason := range prefixes {
+		if counted[prefix] == 0 {
+			t.Errorf("%s is recorded as a prefix this listener serves (%s) and nothing is "+
+				"under it", prefix, reason)
 		}
 	}
 }

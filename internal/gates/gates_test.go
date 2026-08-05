@@ -381,3 +381,47 @@ func TestReasoningOrchestrationDependsOnNoAdapter(t *testing.T) {
 // vendorModules are the third-party model clients this build may hold. Each one is permitted in
 // exactly one adapter package and nowhere else.
 var vendorModules = []string{"anthropic-sdk-go", "openai", "generative-ai-go", "openrouter"}
+
+// The SAML libraries are an ADAPTER's, and the adapter is internal/identity.
+//
+// It is the same rule the model vendors are held to and it exists for the same reason: a
+// library named outside the one package that owns it makes every later change to that library
+// a change in several places. It matters more here than usual, because these three are the
+// XML signature machinery — the thing this product deliberately did not write — and a second
+// package reaching for them would be a second place somebody could verify a signature slightly
+// differently.
+func TestOnlyIdentityNamesTheSAMLLibraries(t *testing.T) {
+	t.Parallel()
+
+	libraries := []string{
+		"github.com/crewjam/saml",
+		"github.com/russellhaering/goxmldsig",
+		"github.com/mattermost/xml-roundtrip-validator",
+		"github.com/beevik/etree",
+	}
+	const adapter = "internal/identity"
+
+	found := false
+	for _, loaded := range loadPackages(t) {
+		path := internalPackagePath(loaded.PkgPath)
+		if path == "" {
+			continue
+		}
+		if path == adapter {
+			found = true
+			continue
+		}
+		for imported := range loaded.Imports {
+			for _, library := range libraries {
+				if strings.HasPrefix(imported, library) {
+					t.Errorf("%s imports %s; the XML signature machinery belongs to %s, and a "+
+						"second package holding it is a second place a signature could be "+
+						"checked differently", path, imported, adapter)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("%s was not found; the gate would pass vacuously", adapter)
+	}
+}

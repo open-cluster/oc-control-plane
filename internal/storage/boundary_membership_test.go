@@ -192,6 +192,69 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 				investigation.Opening{InvestigationID: somebody})
 			return err
 		},
+
+		// The provisioning surface. A directory's credential is bound to one organization by
+		// the token that carries it, and these are the layer that refuses if it somehow were
+		// not — which matters more here than anywhere else on this surface, because this
+		// credential lives in a customer's identity vendor.
+		"ProvisionedUsers": func() error {
+			_, err := placements.ProvisionedUsers(
+				ctx, stranger, organization, storage.ProvisionedUserFilter{}, 1, 10)
+			return err
+		},
+		"ProvisionedUser": func() error {
+			_, err := placements.ProvisionedUser(ctx, stranger, organization, somebody)
+			return err
+		},
+		"ProvisionUser": func() error {
+			_, err := placements.ProvisionUser(ctx, stranger, organization,
+				storage.NewProvisionedUser{UserName: "trespass@example.test", Active: true})
+			return err
+		},
+		"ReplaceProvisionedUser": func() error {
+			_, err := placements.ReplaceProvisionedUser(ctx, stranger, organization, somebody,
+				storage.NewProvisionedUser{UserName: "trespass@example.test", Active: true})
+			return err
+		},
+		"SetProvisionedUserActive": func() error {
+			_, err := placements.SetProvisionedUserActive(
+				ctx, stranger, organization, somebody, false)
+			return err
+		},
+		"DeprovisionUser": func() error {
+			return placements.DeprovisionUser(ctx, stranger, organization, somebody)
+		},
+		"DirectoryGroups": func() error {
+			_, err := placements.DirectoryGroups(ctx, stranger, organization, "", 1, 10)
+			return err
+		},
+		"DirectoryGroup": func() error {
+			_, err := placements.DirectoryGroup(ctx, stranger, organization, somebody)
+			return err
+		},
+		"CreateDirectoryGroup": func() error {
+			_, err := placements.CreateDirectoryGroup(
+				ctx, stranger, organization, "trespass", "", nil)
+			return err
+		},
+		"ReplaceDirectoryGroup": func() error {
+			_, err := placements.ReplaceDirectoryGroup(
+				ctx, stranger, organization, somebody, "trespass", "", nil)
+			return err
+		},
+		"ChangeDirectoryGroupMembers": func() error {
+			_, err := placements.ChangeDirectoryGroupMembers(
+				ctx, stranger, organization, somebody, nil, nil)
+			return err
+		},
+		"MapDirectoryGroupToRole": func() error {
+			_, err := placements.MapDirectoryGroupToRole(
+				ctx, stranger, organization, somebody, authz.Viewer)
+			return err
+		},
+		"DeleteDirectoryGroup": func() error {
+			return placements.DeleteDirectoryGroup(ctx, stranger, organization, somebody)
+		},
 	}
 
 	for name, call := range refusals {
@@ -206,7 +269,7 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 
 	// A gate on the gate. A function added to the operator surface and not listed above would
 	// leave this table quietly smaller, and nothing would say so.
-	const covered = 32
+	const covered = 45
 	if len(refusals) != covered {
 		t.Errorf("this table covers %d store functions and expects %d; a function added to the "+
 			"operator surface has to be added here too, or the boundary it crosses is untested",

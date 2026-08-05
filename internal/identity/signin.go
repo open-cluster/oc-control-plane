@@ -88,8 +88,20 @@ func (h Handlers) startSignIn(writer http.ResponseWriter, request *http.Request)
 	defer cancel()
 
 	provider, err := h.Placements.IdentityProviderForSignIn(ctx, organization, providerID)
-	if err != nil || provider.Disabled() || provider.Protocol != storage.ProtocolOIDC {
-		// One answer for every way this can fail to name a live OIDC provider. See noWayIn.
+	if err != nil || provider.Disabled() {
+		// One answer for every way this can fail to name a live provider. See noWayIn.
+		writeJSON(writer, http.StatusNotFound, errorView{Error: noWayIn})
+		return
+	}
+
+	// Which protocol is the provider's, not the caller's. A route per protocol would let a
+	// caller choose how they are authenticated, which is a choice that belongs to the tenant.
+	switch provider.Protocol {
+	case storage.ProtocolSAML:
+		h.startSAMLSignIn(writer, request, organization, provider, returnTo)
+		return
+	case storage.ProtocolOIDC:
+	default:
 		writeJSON(writer, http.StatusNotFound, errorView{Error: noWayIn})
 		return
 	}
@@ -106,34 +118,43 @@ func (h Handlers) startSignIn(writer http.ResponseWriter, request *http.Request)
 	}
 
 	if err := h.Placements.StartSignIn(ctx, organization, storage.SignInFlow{
-		ID:           uuid.New(),
+		ID:           newFlowID(),
 		Organization: organization.String(),
 		ProviderID:   provider.ID,
 		CodeVerifier: authorization.CodeVerifier,
 		Nonce:        authorization.Nonce,
 		ReturnTo:     returnTo,
-		ExpiresAt:    time.Now().Add(flowLifetime),
+		ExpiresAt:    nowPlus(flowLifetime),
 	}, authorization.State); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-
-	// Recorded before the browser leaves, so a sign-in that never completes is still visible.
-	// A run of started-and-never-completed attempts against one tenant is what credential
-	// stuffing against the identity provider looks like from this side.
-	h.record(request, organization, audit.Event{
-		Organization: organization.String(),
-		Actor:        audit.System("sign-in"),
-		Action:       audit.ActionSignInStarted,
-		Target: audit.Target{
-			Kind: audit.TargetIdentityProvider, ID: provider.ID.String(),
-		},
-		Outcome:       audit.OutcomeAllowed,
-		SourceAddress: request.RemoteAddr,
-	})
+	h.recordSignInStarted(request, organization, provider)
 
 	http.Redirect(writer, request, authorization.URL, http.StatusFound)
 }
+
+// recordSignInStarted puts an attempt on the record before the browser leaves, so a sign-in
+// that never completes is still visible. A run of started-and-never-completed attempts against
+// one tenant is what credential stuffing against the identity provider looks like from here.
+func (h Handlers) recordSignInStarted(
+	request *http.Request, organization tenancy.Organization, provider storage.IdentityProvider,
+) {
+	h.record(request, organization, audit.Event{
+		Organization:  organization.String(),
+		Actor:         audit.System("sign-in"),
+		Action:        audit.ActionSignInStarted,
+		Target:        audit.Target{Kind: audit.TargetIdentityProvider, ID: provider.ID.String()},
+		Outcome:       audit.OutcomeAllowed,
+		SourceAddress: request.RemoteAddr,
+		Detail:        audit.Detail{"protocol": provider.Protocol.String()},
+	})
+}
+
+// newFlowID and nowPlus exist so the two protocols mint a flow the same way. They are trivial,
+// and that is the point: two call sites that differed by a line would be two lifetimes.
+func newFlowID() uuid.UUID              { return uuid.New() }
+func nowPlus(d time.Duration) time.Time { return time.Now().Add(d) }
 
 // completeSignIn takes the browser back from the identity provider and issues a session.
 //
@@ -201,6 +222,25 @@ func (h Handlers) completeSignIn(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
+	h.admitAndIssue(writer, request, organization, provider, asserted,
+		asserted.Issuer, asserted.Subject, flow.ReturnTo)
+}
+
+// admitAndIssue is everything after a provider has been believed, and it is ONE path for both
+// protocols.
+//
+// That matters more than the code it saves. The tenant's provisioning policy, the verified
+// domain check, the group mapping, the user resolution and the session issue are the things a
+// security reviewer asks about, and an answer that began "for OIDC..." would have to be given
+// twice and could drift. What differs between the protocols is how a provider is believed;
+// everything after that is the tenant's policy and is the same.
+func (h Handlers) admitAndIssue(
+	writer http.ResponseWriter, request *http.Request, organization tenancy.Organization,
+	provider storage.IdentityProvider, asserted claims, issuer, subject, returnTo string,
+) {
+	ctx, cancel := contextWithTimeout(request, signInTimeout)
+	defer cancel()
+
 	admitted, err := admit(provider, asserted)
 	if err != nil {
 		h.refuseSignIn(writer, request, organization, provider.ID, "the policy does not admit")
@@ -208,8 +248,8 @@ func (h Handlers) completeSignIn(writer http.ResponseWriter, request *http.Reque
 	}
 
 	user, memberships, err := h.Placements.ResolveUser(ctx, organization, storage.Identity{
-		Issuer:        asserted.Issuer,
-		Subject:       asserted.Subject,
+		Issuer:        issuer,
+		Subject:       subject,
 		Email:         asserted.Email,
 		EmailVerified: bool(asserted.EmailVerified),
 		DisplayName:   asserted.displayName(),
@@ -227,8 +267,7 @@ func (h Handlers) completeSignIn(writer http.ResponseWriter, request *http.Reque
 		h.fail(writer, request, err)
 		return
 	}
-
-	http.Redirect(writer, request, h.consoleTarget(flow.ReturnTo), http.StatusFound)
+	http.Redirect(writer, request, h.consoleTarget(returnTo), http.StatusFound)
 }
 
 // issueSession mints the credential and records the sign-in.

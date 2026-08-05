@@ -4,7 +4,11 @@ import "strings"
 
 // Role is a named, fixed set of permissions.
 //
-// Seven exist and they are compiled rather than editable. Custom roles are deliberately out of
+// Eight exist and they are compiled rather than editable. The specification proposed seven; the
+// eighth — DirectorySynchroniser — arrived with SCIM and is recorded there with its reason. In
+// short: a directory's credential lives in a customer's identity vendor, and the alternative
+// was issuing it a Platform administrator token, which is a far worse thing to leave in an
+// integration's configuration than one narrow role is a departure from a list. Custom roles are deliberately out of
 // scope for this release: an editable role is a second authorization model to review, and the
 // first question a design partner asks is what the shipped ones can do. The value is persisted
 // as text in organization_membership.role and arrives from an identity provider's group map,
@@ -34,13 +38,17 @@ const (
 	Viewer Role = "viewer"
 	// Auditor reads the record and nothing else.
 	Auditor Role = "auditor"
+	// DirectorySynchroniser is what a customer's directory holds. It reaches the provisioning
+	// endpoints and nothing else, for the same reason an Auditor reaches the record and nothing
+	// else: the credential lives somewhere this product does not control.
+	DirectorySynchroniser Role = "directory_synchroniser"
 )
 
 // roles is the declared set, in the order the product presents them: most privileged first, so
 // a list rendered from this reads as a ladder.
 var roles = []Role{
 	OrganizationOwner, PlatformAdministrator, IntegrationManager,
-	Investigator, Responder, Viewer, Auditor,
+	Investigator, Responder, Viewer, Auditor, DirectorySynchroniser,
 }
 
 // Roles returns the roles this build declares.
@@ -113,6 +121,11 @@ var granted = map[Role]map[Permission]bool{
 
 	Viewer:  setOf(everyRead...),
 	Auditor: setOf(AuditRead),
+
+	// One permission, like the Auditor's. A directory reports who is in the company; it does
+	// not read this tenant's estate, its investigations or its record, and a token that could
+	// would be a token worth stealing for something other than what it is for.
+	DirectorySynchroniser: setOf(DirectorySync),
 }
 
 // Grants reports whether this role holds a permission. An unrecognised role grants nothing,

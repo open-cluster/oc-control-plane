@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -88,8 +89,16 @@ type Member struct {
 	DisplayName  string
 	Role         authz.Role
 	Source       MembershipSource
-	Disabled     bool
-	CreatedAt    time.Time
+	// ExternalID is the directory's own identifier for this person, and is empty for a
+	// membership an administrator granted by hand.
+	ExternalID string
+	// Active is whether this membership grants anything. A directory sets it false rather than
+	// removing the row, and an administrator reading the list needs to see the difference
+	// before they act on it.
+	Active   bool
+	Disabled bool
+
+	CreatedAt time.Time
 }
 
 // MemberList is a page of an organization's members.
@@ -124,6 +133,13 @@ func (p *Placements) ResolveUser(
 		return User{}, nil, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
+
+	// A person the DIRECTORY provisioned exists already, under a placeholder identity, because
+	// a directory knows a userName and this product knows an issuer and a subject. This is
+	// where those become one row rather than two.
+	if err := adoptProvisionedUser(ctx, transaction, organization, identity); err != nil {
+		return User{}, nil, err
+	}
 
 	// One statement, so two concurrent sign-ins by the same person cannot both insert. The
 	// update is what keeps a renamed or re-verified account current without a second write.
@@ -203,6 +219,54 @@ func (p *Placements) ResolveUser(
 	return user, memberships, nil
 }
 
+// adoptProvisionedUser turns a directory's placeholder identity into the real one, the first
+// time the person it describes actually signs in.
+//
+// Without it a provisioned person signing in would create a SECOND user row: the directory
+// created one keyed on a placeholder issuer and a userName, and the sign-in is keyed on the
+// provider's issuer and subject. They would have two identities, one membership, and an audit
+// trail split between them — and the sign-in would land on the half with no membership and
+// reach nothing, which is a support ticket rather than an error.
+//
+// Two bounds make it safe, and both matter.
+//
+// It adopts ONLY a row this product created for a directory — the placeholder issuer is
+// namespaced to the organization and nothing else can hold it. A row belonging to a real
+// issuer is never touched, so one provider's user cannot be taken over by another's assertion
+// about the same address.
+//
+// And it matches on the ADDRESS, which is the only join available: a directory and an identity
+// provider agree on that and on nothing else. Within one tenant, two accounts at one address
+// are one person by definition — the customer's own directory said so.
+func adoptProvisionedUser(
+	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	identity Identity,
+) error {
+	address := strings.ToLower(strings.TrimSpace(identity.Email))
+	if address == "" {
+		return nil
+	}
+
+	if _, err := transaction.Exec(ctx, `
+		UPDATE app_user
+		   SET issuer = $3, subject = $4, updated_at = now()
+		 WHERE lower(email) = $1
+		   AND issuer LIKE $2
+		   AND EXISTS (SELECT 1 FROM organization_membership
+		                WHERE organization_membership.user_id = app_user.user_id
+		                  AND organization_membership.organization = $5)
+		   -- Nothing to do if a row already holds the real identity, and the unique constraint
+		   -- would refuse the update anyway. Guarding here makes it a no-op rather than an error
+		   -- on every sign-in after the first.
+		   AND NOT EXISTS (SELECT 1 FROM app_user existing
+		                    WHERE existing.issuer = $3 AND existing.subject = $4)`,
+		address, SCIMIssuer+":%", identity.Issuer, identity.Subject,
+		organization.String()); err != nil {
+		return fmt.Errorf("adopting a provisioned user: %w", err)
+	}
+	return nil
+}
+
 // MembershipsOf reports every organization a user holds a role in, as served from one
 // placement. It is placement-wide because a user is: the row is not tenant-scoped, and the
 // memberships it carries are the answer rather than the question.
@@ -223,11 +287,20 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
 }
 
+// membershipsOf resolves what a person may reach RIGHT NOW.
+//
+// Two things must both hold, and they are different facts. The membership must be ACTIVE — the
+// directory's statement that this person is enabled, which it sets false rather than deleting,
+// because SCIM has no "gone". And it must HOLD A ROLE — a directory-provisioned person in no
+// mapped group has none, and being in the company is not being in this product.
+//
+// Filtering here rather than at each call site is what makes both take effect on the person's
+// next request rather than at their next sign-in, for every route at once.
 func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Membership, error) {
 	rows, err := on.Query(ctx, `
 		SELECT organization, role
 		  FROM organization_membership
-		 WHERE user_id = $1
+		 WHERE user_id = $1 AND active AND role IS NOT NULL
 		 ORDER BY organization`, user)
 	if err != nil {
 		return nil, fmt.Errorf("reading memberships: %w", err)
@@ -278,7 +351,8 @@ func (p *Placements) ListMembers(
 	limit := pageLimit(page.Limit)
 	rows, err := pool.Query(ctx, `
 		SELECT membership.membership_id, membership.user_id, person.email, person.display_name,
-		       membership.role, membership.source, person.disabled_at, membership.created_at
+		       membership.role, membership.source, membership.external_id, membership.active,
+		       person.disabled_at, membership.created_at
 		  FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
 		 WHERE membership.organization = $1
@@ -297,20 +371,22 @@ func (p *Placements) ListMembers(
 	for rows.Next() {
 		var (
 			member   Member
-			role     string
+			role     *string
 			source   int16
+			external *string
 			disabled *time.Time
 		)
 		if err := rows.Scan(&member.MembershipID, &member.UserID, &member.Email,
-			&member.DisplayName, &role, &source, &disabled, &member.CreatedAt); err != nil {
+			&member.DisplayName, &role, &source, &external, &member.Active, &disabled,
+			&member.CreatedAt); err != nil {
 			return MemberList{}, fmt.Errorf("scanning a member: %w", err)
 		}
+		member.ExternalID = orEmptyText(external)
 		if len(members) == limit {
 			last := members[limit-1]
 			next = encodeCursor(last.CreatedAt, last.MembershipID)
 			break
 		}
-		member.Role = authz.Role(role)
 		member.Source = MembershipSource(source)
 		member.Disabled = disabled != nil
 		members = append(members, member)
@@ -333,11 +409,12 @@ func (p *Placements) SetMembership(
 	action := audit.ActionMembershipChanged
 	return audited(ctx, p, principal, organization, action,
 		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
-			var previous string
+			var held *string
 			err := transaction.QueryRow(ctx, `
 				SELECT role FROM organization_membership
-				 WHERE organization = $1 AND user_id = $2 FOR UPDATE`,
-				organization.String(), user).Scan(&previous)
+				 WHERE organization = $1 AND user_id = $2 AND active FOR UPDATE`,
+				organization.String(), user).Scan(&held)
+			previous := orEmptyText(held)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
 			}
@@ -356,6 +433,10 @@ func (p *Placements) SetMembership(
 				    SET role       = EXCLUDED.role,
 				        source     = EXCLUDED.source,
 				        granted_by = EXCLUDED.granted_by,
+				        -- An administrator granting a role means the person may reach the
+				        -- tenant, whatever a directory said about them. A change that left the
+				        -- membership inactive would be one that appeared to work and did not.
+				        active     = TRUE,
 				        updated_at = now()
 				RETURNING membership_id, user_id, role, source, created_at`,
 				uuid.New(), organization.String(), user, string(role),
@@ -386,12 +467,13 @@ func (p *Placements) RemoveMembership(
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionMembershipRevoked,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var role string
+			var held *string
 			var membership uuid.UUID
 			err := transaction.QueryRow(ctx, `
 				SELECT membership_id, role FROM organization_membership
 				 WHERE organization = $1 AND user_id = $2 FOR UPDATE`,
-				organization.String(), user).Scan(&membership, &role)
+				organization.String(), user).Scan(&membership, &held)
+			role := orEmptyText(held)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, ErrMembershipUnknown
 			}
@@ -433,7 +515,7 @@ func refuseIfLastOwner(
 	var remaining int
 	if err := transaction.QueryRow(ctx, `
 		SELECT count(*) FROM organization_membership
-		 WHERE organization = $1 AND role = $2 AND user_id <> $3`,
+		 WHERE organization = $1 AND role = $2 AND user_id <> $3 AND active`,
 		organization.String(), string(authz.OrganizationOwner), except).Scan(&remaining); err != nil {
 		return fmt.Errorf("counting owners: %w", err)
 	}

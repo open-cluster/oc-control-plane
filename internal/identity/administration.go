@@ -19,9 +19,19 @@ const (
 
 // providerRequest is what an administrator sends to configure a way in.
 type providerRequest struct {
-	Name     string `json:"name"`
-	Issuer   string `json:"issuer"`
-	ClientID string `json:"clientId"`
+	Name string `json:"name"`
+	// Protocol is "oidc" or "saml". It defaults to OIDC when a caller says nothing, because
+	// that is what every provider configured before SAML existed is, and a default that
+	// silently changed an existing tenant's provider would be the worst kind of upgrade.
+	Protocol string `json:"protocol"`
+	// Issuer is the OIDC issuer URL. A SAML provider's entity identifier is NOT taken from
+	// here — it comes out of the metadata document, because a mismatch between what an
+	// administrator typed and what the provider publishes would be an audience check failing
+	// at somebody's first sign-in for a reason nobody could see.
+	Issuer string `json:"issuer"`
+	// SAMLMetadata is the identity provider's published metadata, pasted whole.
+	SAMLMetadata string `json:"samlMetadata"`
+	ClientID     string `json:"clientId"`
 	// ClientSecret is write-only. It is sealed on the way in and no path reads it back; an
 	// administrator who lost it enters a new one.
 	ClientSecret         string            `json:"clientSecret"`
@@ -155,37 +165,62 @@ func (h Handlers) planProvider(
 		return storage.NewIdentityProvider{}, false
 	}
 
-	issuer := strings.TrimSpace(body.Issuer)
-	if err := usableIssuer(issuer); err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{
-			Error: "issuer must be the https URL the provider publishes its metadata under"})
-		return storage.NewIdentityProvider{}, false
-	}
-	clientID := strings.TrimSpace(body.ClientID)
-	if clientID == "" {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "clientId must not be empty"})
+	protocol, ok := parseProtocol(writer, body.Protocol)
+	if !ok {
 		return storage.NewIdentityProvider{}, false
 	}
 
-	var sealed []byte
-	switch secret := strings.TrimSpace(body.ClientSecret); {
-	case secret != "":
-		if !h.Sealer.Configured() {
-			writeJSON(writer, http.StatusServiceUnavailable, errorView{
-				Error: "this deployment has no identity encryption key and cannot hold a " +
-					"client secret"})
+	var (
+		issuer   string
+		clientID string
+		sealed   []byte
+		metadata string
+	)
+	if protocol == storage.ProtocolSAML {
+		// Everything that identifies a SAML provider comes out of the one document it
+		// publishes. It is parsed HERE, at configuration time, so a document that is not
+		// metadata, publishes no signing certificate, or does not survive a re-serialise is an
+		// answer to the administrator who pasted it rather than a refusal at somebody's first
+		// sign-in.
+		entity, err := parseIdPMetadata(body.SAMLMetadata)
+		if err != nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 			return storage.NewIdentityProvider{}, false
 		}
-		var err error
-		if sealed, err = h.Sealer.Seal(secret); err != nil {
-			writeJSON(writer, http.StatusInternalServerError,
-				errorView{Error: "the client secret could not be stored"})
+		issuer, metadata = entity.EntityID, strings.TrimSpace(body.SAMLMetadata)
+	} else {
+		issuer = strings.TrimSpace(body.Issuer)
+		if err := usableIssuer(issuer); err != nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{
+				Error: "issuer must be the https URL the provider publishes its metadata under"})
 			return storage.NewIdentityProvider{}, false
 		}
-	case secretRequired:
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "clientSecret is required when a provider is configured"})
-		return storage.NewIdentityProvider{}, false
+		clientID = strings.TrimSpace(body.ClientID)
+		if clientID == "" {
+			writeJSON(writer, http.StatusBadRequest,
+				errorView{Error: "clientId must not be empty"})
+			return storage.NewIdentityProvider{}, false
+		}
+
+		switch secret := strings.TrimSpace(body.ClientSecret); {
+		case secret != "":
+			if !h.Sealer.Configured() {
+				writeJSON(writer, http.StatusServiceUnavailable, errorView{
+					Error: "this deployment has no identity encryption key and cannot hold a " +
+						"client secret"})
+				return storage.NewIdentityProvider{}, false
+			}
+			var err error
+			if sealed, err = h.Sealer.Seal(secret); err != nil {
+				writeJSON(writer, http.StatusInternalServerError,
+					errorView{Error: "the client secret could not be stored"})
+				return storage.NewIdentityProvider{}, false
+			}
+		case secretRequired:
+			writeJSON(writer, http.StatusBadRequest,
+				errorView{Error: "clientSecret is required when an OIDC provider is configured"})
+			return storage.NewIdentityProvider{}, false
+		}
 	}
 
 	domains, ok := validDomains(writer, body.VerifiedDomains)
@@ -236,10 +271,11 @@ func (h Handlers) planProvider(
 
 	return storage.NewIdentityProvider{
 		Name:                 name,
-		Protocol:             storage.ProtocolOIDC,
+		Protocol:             protocol,
 		Issuer:               issuer,
 		ClientID:             clientID,
 		ClientSecretSealed:   sealed,
+		SAMLMetadata:         metadata,
 		VerifiedDomains:      domains,
 		JITEnabled:           body.JITEnabled,
 		JITRole:              role,
@@ -488,4 +524,24 @@ func (h Handlers) writePolicy(writer http.ResponseWriter, request *http.Request)
 // can put the number straight back into the request that produced it.
 func secondsIn(value time.Duration) string {
 	return strconv.Itoa(int(value.Seconds()))
+}
+
+// parseProtocol reads which way in a tenant is configuring.
+//
+// Nothing said means OIDC. Every provider configured before SAML existed is one, and a default
+// that changed what an existing tenant's provider was would be an upgrade that broke sign-in
+// for the customers who were already working.
+func parseProtocol(
+	writer http.ResponseWriter, named string,
+) (storage.IdentityProtocol, bool) {
+	switch strings.ToLower(strings.TrimSpace(named)) {
+	case "", "oidc":
+		return storage.ProtocolOIDC, true
+	case "saml":
+		return storage.ProtocolSAML, true
+	default:
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: `protocol must be "oidc" or "saml"`})
+		return 0, false
+	}
 }

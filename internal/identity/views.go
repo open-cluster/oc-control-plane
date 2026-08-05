@@ -108,11 +108,17 @@ type providerChoicesView struct {
 // providerView is what an administrator sees. The sealed client secret has no field here and
 // no path reads it back; an administrator who lost it re-enters one.
 type providerView struct {
-	ID                   string            `json:"id"`
-	Name                 string            `json:"name"`
-	Protocol             string            `json:"protocol"`
-	Issuer               string            `json:"issuer"`
-	ClientID             string            `json:"clientId"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	Issuer   string `json:"issuer"`
+	ClientID string `json:"clientId,omitempty"`
+	// SAMLMetadataHeld says a metadata document is stored without returning it. The document
+	// is not secret, and it is also several kilobytes of XML nobody wants in a list response.
+	SAMLMetadataHeld bool `json:"samlMetadataHeld,omitempty"`
+	// SAMLMetadataURL is where an administrator fetches THIS deployment's metadata to hand to
+	// their provider, which is the next thing they need after configuring one.
+	SAMLMetadataURL      string            `json:"samlMetadataUrl,omitempty"`
 	VerifiedDomains      []string          `json:"verifiedDomains"`
 	JITEnabled           bool              `json:"jitEnabled"`
 	JITRole              string            `json:"jitRole"`
@@ -128,12 +134,13 @@ type providerView struct {
 }
 
 func providerViewOf(provider storage.IdentityProvider) providerView {
-	return providerView{
+	view := providerView{
 		ID:                   provider.ID.String(),
 		Name:                 provider.Name,
 		Protocol:             provider.Protocol.String(),
 		Issuer:               provider.Issuer,
 		ClientID:             provider.ClientID,
+		SAMLMetadataHeld:     provider.SAMLMetadata != "",
 		VerifiedDomains:      orEmpty(provider.VerifiedDomains),
 		JITEnabled:           provider.JITEnabled,
 		JITRole:              string(provider.JITRole),
@@ -146,6 +153,11 @@ func providerViewOf(provider storage.IdentityProvider) providerView {
 		SignInURL: "/operator/v1/organizations/" + provider.Organization +
 			"/sign-in/" + provider.ID.String(),
 	}
+	if provider.Protocol == storage.ProtocolSAML {
+		view.SAMLMetadataURL = "/operator/v1/organizations/" + provider.Organization +
+			"/identity-providers/" + provider.ID.String() + "/saml-metadata"
+	}
+	return view
 }
 
 type providerListView struct {
@@ -322,4 +334,35 @@ func orEmpty(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// directoryGroupView is a synchronised group as an ADMINISTRATOR sees it: what the directory
+// called it, who is in it, and the one thing that is theirs to decide — what it grants.
+type directoryGroupView struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	ExternalID  string `json:"externalId,omitempty"`
+	// Role is empty for a group nobody has mapped, which is the state an administrator most
+	// needs to notice: a directory synchronises every group it is told to, and one that grants
+	// nothing is the default rather than a mistake.
+	Role      string    `json:"role,omitempty"`
+	Members   int       `json:"members"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type directoryGroupListView struct {
+	Groups []directoryGroupView `json:"groups"`
+}
+
+func directoryGroupViewOf(group storage.DirectoryGroup) directoryGroupView {
+	return directoryGroupView{
+		ID:          group.ID.String(),
+		DisplayName: group.DisplayName,
+		ExternalID:  group.ExternalID,
+		Role:        string(group.Role),
+		Members:     len(group.Members),
+		CreatedAt:   group.CreatedAt,
+		UpdatedAt:   group.UpdatedAt,
+	}
 }

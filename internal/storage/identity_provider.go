@@ -57,12 +57,23 @@ type IdentityProvider struct {
 	Organization string
 	Name         string
 	Protocol     IdentityProtocol
-	Issuer       string
-	ClientID     string
+	// Issuer is the OIDC issuer or the SAML entity identifier. One column, because it is the
+	// same fact under both protocols: the name the provider calls itself by, and the name a
+	// token or an assertion must claim to have come from.
+	Issuer string
+	// ClientID and ClientSecretSealed are OIDC's and are empty for SAML. There is no back
+	// channel in a SAML web browser SSO flow, so there is nothing for this product to
+	// authenticate itself with and nothing to store.
+	ClientID string
 	// ClientSecretSealed is the credential as it is stored: encrypted, not digested, because
 	// it has to be PRESENTED to the token endpoint rather than compared against. This package
 	// never holds the key — internal/identity seals and opens it, and storage moves bytes.
 	ClientSecretSealed []byte
+	// SAMLMetadata is the identity provider's published metadata document, stored whole. The
+	// entity identifier, the sign-on URL and the signing certificates all come out of it, they
+	// change together at a key rotation, and the SAML library is handed exactly this rather
+	// than a reassembly of parts.
+	SAMLMetadata string
 	// VerifiedDomains are the email domains just-in-time provisioning may admit. Empty admits
 	// nobody, which is why an unconfigured provider is closed rather than open.
 	VerifiedDomains []string
@@ -93,6 +104,7 @@ type NewIdentityProvider struct {
 	Issuer               string
 	ClientID             string
 	ClientSecretSealed   []byte
+	SAMLMetadata         string
 	VerifiedDomains      []string
 	JITEnabled           bool
 	JITRole              authz.Role
@@ -110,8 +122,12 @@ type SignInFlow struct {
 	ProviderID   uuid.UUID
 	CodeVerifier string
 	Nonce        string
-	ReturnTo     string
-	ExpiresAt    time.Time
+	// RequestID is the identifier of the SAML AuthnRequest this flow sent, and is empty under
+	// OIDC. The response must name it in InResponseTo, and the library is given exactly this
+	// one value to accept rather than "any request we ever sent".
+	RequestID string
+	ReturnTo  string
+	ExpiresAt time.Time
 }
 
 // ConfigureIdentityProvider records a tenant's way in.
@@ -131,15 +147,14 @@ func (p *Placements) ConfigureIdentityProvider(
 
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO identity_provider (provider_id, organization, name, protocol, issuer,
-				                               client_id, client_secret_sealed, verified_domains,
-				                               jit_enabled, jit_role, require_verified_email,
-				                               group_claim, group_role_map)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-				RETURNING provider_id, name, protocol, issuer, client_id, client_secret_sealed,
-				          verified_domains, jit_enabled, jit_role, require_verified_email,
-				          group_claim, group_role_map, disabled_at, created_at, updated_at`,
+				                               client_id, client_secret_sealed, saml_metadata,
+				                               verified_domains, jit_enabled, jit_role,
+				                               require_verified_email, group_claim, group_role_map)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+				RETURNING `+providerColumns,
 				uuid.New(), organization.String(), wanted.Name, int16(wanted.Protocol),
-				wanted.Issuer, wanted.ClientID, wanted.ClientSecretSealed,
+				wanted.Issuer, nullableText(wanted.ClientID),
+				nilIfEmptyBytes(wanted.ClientSecretSealed), nullableText(wanted.SAMLMetadata),
 				orEmptyDomains(wanted.VerifiedDomains), wanted.JITEnabled, string(wanted.JITRole),
 				wanted.RequireVerifiedEmail, wanted.GroupClaim, groups)
 
@@ -194,19 +209,19 @@ func (p *Placements) UpdateIdentityProvider(
 				       issuer                 = $4,
 				       client_id              = $5,
 				       client_secret_sealed   = coalesce($6, client_secret_sealed),
-				       verified_domains       = $7,
-				       jit_enabled            = $8,
-				       jit_role               = $9,
-				       require_verified_email = $10,
-				       group_claim            = $11,
-				       group_role_map         = $12,
+				       saml_metadata          = coalesce($7, saml_metadata),
+				       verified_domains       = $8,
+				       jit_enabled            = $9,
+				       jit_role               = $10,
+				       require_verified_email = $11,
+				       group_claim            = $12,
+				       group_role_map         = $13,
 				       updated_at             = now()
 				 WHERE organization = $1 AND provider_id = $2
-				RETURNING provider_id, name, protocol, issuer, client_id, client_secret_sealed,
-				          verified_domains, jit_enabled, jit_role, require_verified_email,
-				          group_claim, group_role_map, disabled_at, created_at, updated_at`,
-				organization.String(), id, wanted.Name, wanted.Issuer, wanted.ClientID,
-				wanted.ClientSecretSealed, orEmptyDomains(wanted.VerifiedDomains),
+				RETURNING `+providerColumns,
+				organization.String(), id, wanted.Name, wanted.Issuer,
+				nullableText(wanted.ClientID), nilIfEmptyBytes(wanted.ClientSecretSealed),
+				nullableText(wanted.SAMLMetadata), orEmptyDomains(wanted.VerifiedDomains),
 				wanted.JITEnabled, string(wanted.JITRole), wanted.RequireVerifiedEmail,
 				wanted.GroupClaim, groups)
 
@@ -287,10 +302,7 @@ func (p *Placements) SignInProviders(
 func providersIn(
 	ctx context.Context, on querier, organization tenancy.Organization,
 ) ([]IdentityProvider, error) {
-	rows, err := on.Query(ctx, `
-		SELECT provider_id, name, protocol, issuer, client_id, client_secret_sealed,
-		       verified_domains, jit_enabled, jit_role, require_verified_email, group_claim,
-		       group_role_map, disabled_at, created_at, updated_at
+	rows, err := on.Query(ctx, `SELECT `+providerColumns+`
 		  FROM identity_provider
 		 WHERE organization = $1
 		 ORDER BY created_at, provider_id`, organization.String())
@@ -316,10 +328,7 @@ func providersIn(
 func readProvider(
 	ctx context.Context, on querier, organization tenancy.Organization, id uuid.UUID,
 ) (IdentityProvider, error) {
-	row := on.QueryRow(ctx, `
-		SELECT provider_id, name, protocol, issuer, client_id, client_secret_sealed,
-		       verified_domains, jit_enabled, jit_role, require_verified_email, group_claim,
-		       group_role_map, disabled_at, created_at, updated_at
+	row := on.QueryRow(ctx, `SELECT `+providerColumns+`
 		  FROM identity_provider
 		 WHERE organization = $1 AND provider_id = $2`, organization.String(), id)
 
@@ -360,10 +369,11 @@ func (p *Placements) StartSignIn(
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO sign_in_flow (flow_id, organization, provider_id, state_digest,
-		                          code_verifier, nonce, return_to, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		flow.ID, organization.String(), flow.ProviderID, digest[:], flow.CodeVerifier,
-		flow.Nonce, flow.ReturnTo, flow.ExpiresAt); err != nil {
+		                          code_verifier, nonce, request_id, return_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		flow.ID, organization.String(), flow.ProviderID, digest[:],
+		nullableText(flow.CodeVerifier), nullableText(flow.Nonce), nullableText(flow.RequestID),
+		flow.ReturnTo, flow.ExpiresAt); err != nil {
 		return fmt.Errorf("starting a sign-in: %w", err)
 	}
 	return nil
@@ -383,14 +393,19 @@ func (p *Placements) RedeemSignIn(ctx context.Context, state string) (SignInFlow
 	digest := sha256.Sum256([]byte(state))
 
 	for _, name := range p.names() {
-		var flow SignInFlow
+		var (
+			flow     SignInFlow
+			verifier *string
+			nonce    *string
+			request  *string
+		)
 		err := p.pools[name].QueryRow(ctx, `
 			UPDATE sign_in_flow
 			   SET consumed_at = now()
 			 WHERE state_digest = $1 AND consumed_at IS NULL AND expires_at > now()
-			RETURNING flow_id, organization, provider_id, code_verifier, nonce, return_to,
-			          expires_at`, digest[:]).Scan(&flow.ID, &flow.Organization, &flow.ProviderID,
-			&flow.CodeVerifier, &flow.Nonce, &flow.ReturnTo, &flow.ExpiresAt)
+			RETURNING flow_id, organization, provider_id, code_verifier, nonce, request_id,
+			          return_to, expires_at`, digest[:]).Scan(&flow.ID, &flow.Organization,
+			&flow.ProviderID, &verifier, &nonce, &request, &flow.ReturnTo, &flow.ExpiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -400,6 +415,8 @@ func (p *Placements) RedeemSignIn(ctx context.Context, state string) (SignInFlow
 			// operator would answer by trying again forever.
 			return SignInFlow{}, fmt.Errorf("redeeming a sign-in in placement %q: %w", name, err)
 		}
+		flow.CodeVerifier, flow.Nonce, flow.RequestID = orEmptyText(verifier),
+			orEmptyText(nonce), orEmptyText(request)
 		return flow, nil
 	}
 	return SignInFlow{}, ErrFlowUnknown
@@ -423,6 +440,13 @@ func (p *Placements) ExpireSignInFlows(
 	return tag.RowsAffected(), nil
 }
 
+// providerColumns is the column list every read of this table uses. Naming it once means a
+// column added to one query and forgotten in another is a compile error rather than a field
+// that is silently always zero.
+const providerColumns = `provider_id, name, protocol, issuer, client_id, client_secret_sealed,
+	saml_metadata, verified_domains, jit_enabled, jit_role, require_verified_email,
+	group_claim, group_role_map, disabled_at, created_at, updated_at`
+
 func scanProvider(row scanned, organization string) (IdentityProvider, error) {
 	var (
 		provider IdentityProvider
@@ -430,12 +454,20 @@ func scanProvider(row scanned, organization string) (IdentityProvider, error) {
 		role     string
 		groups   []byte
 		disabled *time.Time
+		clientID *string
+		metadata *string
 	)
 	if err := row.Scan(&provider.ID, &provider.Name, &protocol, &provider.Issuer,
-		&provider.ClientID, &provider.ClientSecretSealed, &provider.VerifiedDomains,
+		&clientID, &provider.ClientSecretSealed, &metadata, &provider.VerifiedDomains,
 		&provider.JITEnabled, &role, &provider.RequireVerifiedEmail, &provider.GroupClaim,
 		&groups, &disabled, &provider.CreatedAt, &provider.UpdatedAt); err != nil {
 		return IdentityProvider{}, err
+	}
+	if clientID != nil {
+		provider.ClientID = *clientID
+	}
+	if metadata != nil {
+		provider.SAMLMetadata = *metadata
 	}
 	provider.Organization = organization
 	provider.Protocol = IdentityProtocol(protocol)
@@ -469,6 +501,22 @@ func orEmptyGroups(groups map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return groups
+}
+
+// nilIfEmptyBytes lets an optional BYTEA column be written as NULL. An empty slice would be an
+// empty value where the CHECK says the column is either a credential or absent.
+func nilIfEmptyBytes(value []byte) []byte {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func orEmptyText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func orEmptyDomains(domains []string) []string {

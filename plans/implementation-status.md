@@ -451,7 +451,7 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: `importer` stood as supported off a read justified by the hypothesis it concluded, others were demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010. The distractor half is **half done** — see section 3 |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
-| 7 — Operator identity and RBAC | `spec-operator-api-identity-and-rbac.md` | Go control plane | ✅ Built 2026-08-05, migration 0011. OIDC with PKCE, server-side sessions, seven roles from a permission table, tenancy enforced with a 404, append-only audit. **SAML, SCIM, remediation recording and the frontend's CI contract test are NOT built** — each recorded as deferred with its reason in the specification |
+| 7 — Operator identity and RBAC | `spec-operator-api-identity-and-rbac.md` | Go control plane | ✅ Built 2026-08-05, migrations 0011 and 0012. OIDC with PKCE and SAML 2.0, server-side sessions, eight roles from a permission table, tenancy enforced with a 404, append-only audit, SCIM provisioning. **Remediation recording, break-glass and the frontend's CI contract test are NOT built** — each recorded as deferred with its reason in the specification |
 
 **Not specified, deliberately.** Signal-triggered investigation, Incidents and grouping, canonical
 resource identity, and the second alerting adapter. Tenant-scoped operator identity (ADR-006) WAS
@@ -509,13 +509,19 @@ on the execution path rather than a property of whichever query was written corr
   state change writes an append-only audit row in the transaction that made it. The shared static
   token survives as a bootstrap credential bound to one Organization and one role.
 
-  What remains absent under this heading, and is recorded as such rather than implied: SAML 2.0
-  and SCIM, which the schema leaves room for and which are their own slice because hand-rolled
-  XML signature verification is the part of that standard with a decade of bypasses behind it; a
-  route through which a responder can record a performed remediation, which belongs to the
-  investigation-outcome slice because it decides what an OutcomeAssessment is; the retention
-  pruner, where the schedule is a column and the surface says out loud that nothing applies it
-  yet; and the frontend's contract-drift test, which lives in another repository.
+  **SAML 2.0 and SCIM followed on the same day, in migration 0012.** A tenant may configure
+  either protocol; the signature machinery is `crewjam/saml` over `goxmldsig` rather than
+  anything written here, gated to `internal/identity`, because reimplementing XML canonicalization
+  is where a decade of authentication bypasses live. A customer's directory provisions people and
+  groups, an administrator decides what each group grants, and deprovisioning takes effect on the
+  person's next request.
+
+  What remains absent under this heading, and is recorded as such rather than implied: a route
+  through which a responder can record a performed remediation, which belongs to the
+  investigation-outcome slice because it decides what an OutcomeAssessment is; break-glass
+  access, which has real design questions nobody has answered; the retention pruner, where the
+  schedule is a column and the surface says out loud that nothing applies it yet; and the
+  frontend's contract-drift test, which lives in another repository.
 - Inventory synchronization (ADR-004). Specified as a concept, unbuilt.
 - Coverage as capability readiness.
 - The frontend against the Go API.

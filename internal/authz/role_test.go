@@ -10,14 +10,20 @@ import (
 // can an Investigator do". These tests assert the properties the specification states in
 // prose, so a permission quietly added to a role fails here rather than shipping.
 
-// Seven roles, fixed sets, no custom roles in this release. A role parsed from a string that
+// Eight roles, fixed sets, no custom roles in this release. A role parsed from a string that
 // names none of them must not resolve to something with permissions.
-func TestTheRolesAreTheSevenTheProductDeclares(t *testing.T) {
+//
+// The specification proposed seven. The eighth is DirectorySynchroniser, which arrived with
+// SCIM: a directory's credential lives in a customer's identity vendor, and the alternative was
+// issuing it a Platform administrator token. The count is asserted rather than the list merely
+// being read, so a ninth is a decision somebody writes down.
+func TestTheRolesAreTheEightTheProductDeclares(t *testing.T) {
 	t.Parallel()
 
 	want := []authz.Role{
 		authz.OrganizationOwner, authz.PlatformAdministrator, authz.IntegrationManager,
 		authz.Investigator, authz.Responder, authz.Viewer, authz.Auditor,
+		authz.DirectorySynchroniser,
 	}
 
 	got := authz.Roles()
@@ -175,6 +181,45 @@ func TestOnlyAnAdministratorMayDestroyACredentialTheftFinding(t *testing.T) {
 		if role.Grants(authz.RelayConflictClear) {
 			t.Errorf("%s can clear a session conflict; withdrawing the mark destroys the "+
 				"finding, and nothing else in the product records that it existed", role)
+		}
+	}
+}
+
+// A directory's credential reaches the provisioning endpoints and nothing else. It is the same
+// property the Auditor has and for the same reason: the credential lives somewhere this product
+// does not control, so what it can reach when it leaks is the whole question.
+func TestADirectorySynchroniserProvisionsAndReadsNothingElse(t *testing.T) {
+	t.Parallel()
+
+	for _, permission := range authz.Permissions() {
+		granted := authz.DirectorySynchroniser.Grants(permission)
+		if permission == authz.DirectorySync && !granted {
+			t.Error("a directory synchroniser cannot provision, which is the whole role")
+		}
+		if permission != authz.DirectorySync && granted {
+			t.Errorf("a directory synchroniser holds %s; this credential sits in a customer's "+
+				"identity vendor and what it reaches when it leaks is the whole question",
+				permission)
+		}
+	}
+}
+
+// And nobody who is not an administrator may provision. A directory is a source of truth about
+// who is in the company, so a credential that could write to it could grant itself a tenant.
+func TestOnlyAnAdministratorOrADirectoryMayProvision(t *testing.T) {
+	t.Parallel()
+
+	for _, role := range authz.Roles() {
+		switch role {
+		case authz.OrganizationOwner, authz.PlatformAdministrator, authz.DirectorySynchroniser:
+			if !role.Grants(authz.DirectorySync) {
+				t.Errorf("%s cannot provision", role)
+			}
+		default:
+			if role.Grants(authz.DirectorySync) {
+				t.Errorf("%s can provision; a directory decides who is in a tenant, so writing "+
+					"to it is granting a tenant", role)
+			}
 		}
 	}
 }
