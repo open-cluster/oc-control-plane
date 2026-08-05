@@ -15,8 +15,6 @@
 package connection
 
 import (
-	"sort"
-
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -33,35 +31,37 @@ const (
 	Kubernetes Integration = "kubernetes"
 )
 
-// offered is which roles each Integration can serve, and it is the reason the vocabulary lives
-// in code rather than in a column. Alertmanager pushes and cannot be read from; a Kubernetes
-// cluster is read from and pushes nothing. A Connection declaring a role its Integration does
-// not offer is a configuration that could never work, and it is refused at creation by the
-// product's own knowledge of itself rather than by a customer discovering it later.
-var offered = map[Integration]storage.ConnectionRole{
-	Alertmanager: storage.RoleTrigger,
-	Kubernetes:   storage.RoleEvidence,
-}
+// Which roles each Integration can serve is a property of its DEFINITION, in registry.go, and
+// is read from there rather than kept in a second map here. It used to be a map of its own, and
+// two lists of the same fact is one list that goes stale — the one nobody edits is the one a
+// customer is refused by.
+//
+// The rule it enforces has not changed: Alertmanager pushes and cannot be read from, a
+// Kubernetes cluster is read from and pushes nothing, and a Connection declaring a role its
+// Integration does not offer is a configuration that could never work. It is refused at creation
+// by the product's own knowledge of itself rather than by a customer discovering it later.
 
-// Known reports whether this build has an Integration by that name.
+// Known reports whether this build has an Integration by that name. It says nothing about
+// whether one can be CONFIGURED — a planned provider is known and is not configurable — and
+// callers deciding that ask Configurable instead.
 func Known(integration Integration) bool {
-	_, ok := offered[integration]
+	_, ok := Lookup(integration)
 	return ok
 }
 
 // Offers reports whether an Integration can serve every role asked of it.
 func Offers(integration Integration, role storage.ConnectionRole) bool {
-	available, ok := offered[integration]
-	return ok && available.Includes(role)
+	definition, ok := Lookup(integration)
+	return ok && definition.Offers(role)
 }
 
-// Integrations lists what this build can be configured against, in a stable order, so an
+// Integrations lists what this build names, in the order Definitions renders them, so an
 // operator can be told what is available rather than having to guess a string.
 func Integrations() []Integration {
-	names := make([]Integration, 0, len(offered))
-	for integration := range offered {
-		names = append(names, integration)
+	listed := Definitions()
+	names := make([]Integration, 0, len(listed))
+	for _, definition := range listed {
+		names = append(names, Integration(definition.Slug))
 	}
-	sort.Slice(names, func(i, j int) bool { return names[i] < names[j] })
 	return names
 }

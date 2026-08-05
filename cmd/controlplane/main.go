@@ -485,12 +485,14 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 	// cannot ship"; the compile-time half is that authz.Privileged takes the permission
 	// positionally, and the gate in internal/gates is the third.
 	router, err := operator.Handlers{
-		Placements: process.placements,
-		Logger:     process.logger,
-		Identity:   identities,
-		Origins:    cfg.OperatorAllowedOrigins,
-		Controls:   process.controls,
-		Versions:   process.versions,
+		Placements:          process.placements,
+		Logger:              process.logger,
+		Identity:            identities,
+		Origins:             cfg.OperatorAllowedOrigins,
+		Controls:            process.controls,
+		Versions:            process.versions,
+		IntakeBaseURL:       cfg.IntakePublicURL,
+		MinimumRelayVersion: cfg.MinimumRelayVersion,
 	}.Router()
 	if err != nil {
 		return nil, fmt.Errorf("assembling the operator surface: %w", err)

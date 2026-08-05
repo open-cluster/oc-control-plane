@@ -128,6 +128,12 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 			writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 			return
 		}
+		// Recorded against the Connection when there IS one — which is what makes a source
+		// delivering with a wrong secret visible as a rejection rather than as silence. When
+		// the identifier resolved to nothing there is no tenant to attribute it to and nothing
+		// is written, which is also what bounds this: an attacker with random identifiers
+		// writes no rows.
+		h.recordRefusal(ctx, connection, storage.RefusedUnauthenticated)
 		h.refuse(ctx, request, "unauthenticated")
 		// One status and one message however it failed. A missing header, a wrong secret, an
 		// unknown Connection, a disabled one and one that answers no triggers are
@@ -164,6 +170,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
+			h.recordRefusal(ctx, connection, storage.RefusedOversized)
 			h.refuse(ctx, request, "oversized")
 			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
 			return
@@ -171,6 +178,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		// The body did not arrive whole — a severed connection, a client that gave up. Nothing
 		// was written and there is very likely nobody left to read the answer, but saying so
 		// keeps the log from calling every unread body oversized.
+		h.recordRefusal(ctx, connection, storage.RefusedIncomplete)
 		h.refuse(ctx, request, "incomplete")
 		writeStatus(writer, http.StatusBadRequest, "payload not received")
 		return
@@ -180,6 +188,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		// The payload is not what this Integration's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
+		h.recordRefusal(ctx, connection, storage.RefusedMalformed)
 		h.refuse(ctx, request, "malformed")
 		writeStatus(writer, http.StatusBadRequest, "payload not understood")
 		return
@@ -215,6 +224,7 @@ func (h *surface) record(
 	}
 
 	if outcome.Duplicate {
+		h.recordAttempt(ctx, organization, delivery.Connection, storage.DeliveryDuplicate, 0)
 		// This body was already accepted through this Connection. That covers both a source
 		// retrying because it never saw a response — which has done nothing wrong, and whose
 		// answer must let it stop — and a body replayed by someone who captured it, which is
@@ -237,6 +247,8 @@ func (h *surface) record(
 			slog.Int("omitted", delivery.Truncated))
 	}
 
+	h.recordAttempt(ctx, organization, delivery.Connection, storage.DeliveryAccepted,
+		outcome.Recorded)
 	h.Logger.InfoContext(ctx, "delivery accepted",
 		slog.String("organization", organization.String()),
 		slog.String("connection_id", delivery.Connection.String()),
@@ -261,17 +273,21 @@ var errNotAuthenticated = errors.New("not authenticated")
 func (h *surface) authenticate(
 	ctx context.Context, connectionID uuid.UUID, request *http.Request,
 ) (storage.Connection, error) {
-	presented := request.Header.Get(TokenHeader)
-	if presented == "" || len(presented) > maxPresentedSecret {
-		return storage.Connection{}, fmt.Errorf("%w: no usable credential presented", errNotAuthenticated)
-	}
-
 	connection, err := h.Placements.ConnectionByID(ctx, connectionID)
 	switch {
 	case errors.Is(err, storage.ErrConnectionUnknown):
 		return storage.Connection{}, fmt.Errorf("%w: no such connection", errNotAuthenticated)
 	case err != nil:
 		return storage.Connection{}, err
+	}
+
+	// The row is returned alongside every refusal below, so a rejection can be recorded against
+	// the Connection it was aimed at. That is what makes a source delivering with a stale secret
+	// VISIBLE as a rejection instead of as silence — and it is safe because the row was found by
+	// primary key, not by anything the caller asserted about a tenant.
+	presented := request.Header.Get(TokenHeader)
+	if presented == "" || len(presented) > maxPresentedSecret {
+		return connection, fmt.Errorf("%w: no usable credential presented", errNotAuthenticated)
 	}
 
 	digest := sha256.Sum256([]byte(presented))
@@ -281,15 +297,15 @@ func (h *surface) authenticate(
 
 	switch {
 	case !matches:
-		return storage.Connection{}, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
+		return connection, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
 	case connection.Disabled():
 		// An operator who turned a Connection off wants deliveries refused, not merely recorded.
-		return storage.Connection{}, fmt.Errorf("%w: connection is disabled", errNotAuthenticated)
+		return connection, fmt.Errorf("%w: connection is disabled", errNotAuthenticated)
 	case !connection.Role.Includes(storage.RoleTrigger):
 		// An evidence-only Connection is reached outbound and delivers nothing inbound. It
 		// carries no secret at all, so this is unreachable while the schema holds — and it is
 		// checked anyway, because a check that trusts a constraint it cannot see is not a check.
-		return storage.Connection{}, fmt.Errorf("%w: connection accepts no deliveries", errNotAuthenticated)
+		return connection, fmt.Errorf("%w: connection accepts no deliveries", errNotAuthenticated)
 	}
 	return connection, nil
 }
@@ -341,6 +357,60 @@ func (h *surface) refuse(ctx context.Context, request *http.Request, reason stri
 		slog.String("connection_id", request.PathValue("connection")),
 		slog.String("caller", callerOf(request)),
 		slog.String("reason", reason))
+}
+
+// recordRefusal puts a rejected delivery in the Connection's own history, so an operator can see
+// that a source is delivering and being turned away.
+//
+// Without it, the two states an operator most needs to tell apart are identical from the console:
+// a source that has gone quiet and a source that is delivering every thirty seconds with a stale
+// secret both show no accepted deliveries. One of those is a quiet night and the other is a
+// broken intake, and they call for opposite actions at three in the morning.
+//
+// It is skipped when no Connection was found, which is both correct and what bounds it: there is
+// no tenant to attribute an unknown identifier to, so an attacker guessing identifiers writes no
+// rows at all. A rate-limited delivery is likewise not recorded — the limiter runs before the
+// Connection is resolved, deliberately, because that is the defence that has to hold when
+// everything after it is being abused.
+//
+// A failure to record is logged and does not change the answer. The delivery was already refused
+// and telling the source something different because our own history could not be written would
+// be reporting our problem as theirs.
+func (h *surface) recordRefusal(ctx context.Context, found storage.Connection, reason string) {
+	if found.ID == uuid.Nil || found.Organization == "" {
+		return
+	}
+	organization, err := tenancy.NewOrganization(found.Organization)
+	if err != nil {
+		return
+	}
+	if err := h.Placements.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
+		Connection:  found.ID,
+		Disposition: storage.DeliveryRejected,
+		Reason:      reason,
+	}); err != nil {
+		h.Logger.ErrorContext(ctx, "a refused delivery could not be recorded",
+			slog.String("connection_id", found.ID.String()),
+			slog.String("reason", reason),
+			slog.String("error", err.Error()))
+	}
+}
+
+// recordAttempt puts an accepted or duplicate delivery in the history beside the refusals, so
+// "last received" and "last accepted" are answerable separately.
+func (h *surface) recordAttempt(
+	ctx context.Context, organization tenancy.Organization, connectionID uuid.UUID,
+	disposition storage.DeliveryDisposition, signals int,
+) {
+	if err := h.Placements.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
+		Connection:  connectionID,
+		Disposition: disposition,
+		SignalCount: signals,
+	}); err != nil {
+		h.Logger.ErrorContext(ctx, "an accepted delivery could not be recorded in the history",
+			slog.String("connection_id", connectionID.String()),
+			slog.String("error", err.Error()))
+	}
 }
 
 // statusBody is what every answer this surface gives looks like.

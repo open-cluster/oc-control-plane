@@ -231,8 +231,12 @@ type createdConnectionBody struct {
 	Secret     string         `json:"secret"`
 }
 
+// The Connections listing answers in the SHARED table envelope, the same shape every other
+// listing on this surface uses. It was `{connections, next}`; one contract for a console to
+// build one table against is the reason it moved.
 type connectionListBody struct {
-	Connections []connectionBody `json:"connections"`
+	Connections []connectionBody `json:"items"`
+	Next        *string          `json:"next"`
 }
 
 func TestEnvironmentSurface(t *testing.T) {

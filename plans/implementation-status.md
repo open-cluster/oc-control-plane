@@ -413,6 +413,40 @@ fail on it. Both directives say so and both must be deleted together once the ta
 | — Protocol re-sync | `spec-relay-protocol-sync.md` | ⊘ Abandoned, retained for its conclusion |
 | — Master plan | deleted 2026-07-31 | The direction moved; the decision records are the standing definition |
 | — Migration plan | `go-strangler-migration.md` | Standing sequencing plan. **Its slice sequence ends at 3 and is superseded from there by ADR-008.** |
+| — Integration registry and Connection lifecycle | `spec-integration-registry-and-connection-lifecycle.md` | ✅ Done |
+
+### Written 2026-08-05: the catalog is a registry, and a Connection has a life
+
+The Integration vocabulary is still a closed set compiled into the binary — that decision was
+never reopened — but each entry is now a full `IntegrationDefinition` rather than a name and a
+role bitmask: a rendered JSON Schema for its configuration, a presentation schema with an
+extension slot for the cases a generic form cannot serve, its typed capabilities read from
+`internal/capability` rather than restated, a minimum Relay version, and a **lifecycle state**.
+
+Lifecycle is what makes the catalog honest. Thirteen providers are listed and two have adapters;
+the other eleven are `planned`, appear in the catalog so a customer can plan against them, and
+are refused at creation by one function every caller goes through. A gate asserts that, so making
+the catalog aspirational again means editing a lifecycle field rather than deleting a condition.
+
+A Connection gained: a state (`configured`/`validating`/`active`/`degraded`/`failed`, with
+disabled staying orthogonal), a configuration revision, credential metadata that is never the
+credential, validation with a per-capability result and a history, a delivery history covering
+refused attempts as well as accepted ones, a test-event operation that says what it does not
+prove, and a narrow delete that refuses the moment anything depends on it.
+
+The Relay fleet gained a summary, server-side search, filters, sort and cursor paging, durable
+presence so "connected" is the same answer from every instance, `servesEnvironments` derived from
+its Connections rather than an Environment column the record does not have, a failure history,
+and an operator-issued bootstrap token.
+
+Every list endpoint now speaks one query contract and answers one envelope (`internal/table`),
+including the compiled catalog — a listing that accepted a cursor and ignored it would hand a
+caller page one forever with no way to tell that from the end.
+
+**What this slice did NOT do**, deliberately: adapters for the eleven planned providers, each of
+which is its own work with its own capability contract. Their absence is now honest rather than
+hidden. The `availableVersion` a Relay could be upgraded to is declared absent through the
+envelope's `partial`, because this build has no release channel to ask.
 
 ### Written 2026-07-31; the slice-4 model and capability halves are now built
 
@@ -478,8 +512,14 @@ on the execution path rather than a property of whichever query was written corr
 
 **Everything else absent, in rough dependency order:**
 
-- Incidents and grouping; the human-initiated investigation path; storm shedding; delivery health
-  as an operator surface; intake metrics. All specified in the intake document, none built.
+- Incidents and grouping; the human-initiated investigation path; storm shedding; intake metrics.
+  Specified in the intake document, none built.
+
+  **RESOLVED 2026-08-05. Delivery health as an operator surface is built.** Every delivery attempt
+  that reaches a real Connection is recorded with its outcome and, for a refusal, why — so a
+  source delivering every thirty seconds with a stale secret is no longer indistinguishable from a
+  source that has gone quiet. Last received and last accepted are separate values, deliberately:
+  one field would have reported whichever the implementer picked.
 - **RESOLVED 2026-08-01. Investigation is built**: the durable case, its bounded rounds, the case
   pack, hypothesis handling with stances, the truth chain from Observation through
   EvidenceCandidate and EvidenceValidation to EvidenceItem, completeness certificates, and coverage

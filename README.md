@@ -168,6 +168,8 @@ Fetching from the private repository needs
 | `OC_OPERATOR_ALLOWED_ORIGINS` | with a console | Browser origins a cookie-authenticated unsafe request may come from. Empty permits none |
 | `OC_IDENTITY_ENCRYPTION_KEY_FILE` | with sign-in | 32-byte key, raw or base64, sealing an identity provider's client secret at rest |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
+| `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. A trigger Connection's delivery endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
+| `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |
 | `OC_MODEL_TRANSCRIPT_FILE` | no | A recorded transcript of the model boundary. With none, the investigator fails every round honestly saying the reasoning step could not run — an instance that cannot reason must say so rather than look healthy. A transcript recorded against different components refuses to start rather than replaying |
 
 Each surface has its own listener, and that is what makes a deployment able to publish one
@@ -346,13 +348,38 @@ Under `/operator/v1/organizations/{organization}`, each behind the permission it
 | `GET\|POST /service-accounts`, `DELETE /service-accounts/{account}` | `service-account.read`, `service-account.manage` |
 | `GET\|POST /api-tokens`, `POST /api-tokens/{token}/revoke` | `api-token.read`, `api-token.manage`. A token is shown once, bound to one Organization, one role and an expiry |
 | `GET /audit-events` | `audit.read`. The only route the Auditor role reaches |
-| `GET /relays`, `GET /relays/{id}/session-conflicts` | `relay.read` |
+| `GET /relays`, `GET /relays/{id}/session-conflicts` | `relay.read`. The fleet is searched, filtered, sorted and paged by the database |
+| `GET /relays/summary` | `relay.read`. Total, connected, disconnected, revoked, outdated, degraded and active requests, from one query so the numbers cannot disagree with each other |
+| `GET /relays/{id}/connections` | `relay.read`. What a Relay serves, which is what disabling it costs |
+| `GET /relays/{id}/failures` | `relay.read`. What a Relay recently failed to complete, so an intermittent one is diagnosed from the record. Why each failed is not held — a job records that it failed, not what the relay said — and the envelope's `partial` says so |
 | `POST /relays/{id}/clear-conflict` | `relay.conflict.clear`. Destroys a credential-theft finding, so only the two administrative roles hold it |
-| `GET /integrations` | `integration.read`. Organization-scoped, so configured Connections can be counted per tenant |
-| `GET\|POST /connections` | `connection.read`, `connection.create`. Organization-wide, with `?environmentId=` as a filter |
+| `POST /relays/bootstrap-tokens` | `relay.bootstrap-token.issue`. A single-use enrolment token, shown once, with a stated expiry. Separate from reading the fleet: a role that may look at the estate should not by that fact be able to extend it |
+| `GET /integrations` | `integration.read`. Organization-scoped, so configured Connections can be counted per tenant. Serves the full definition per provider — schemas, capabilities, lifecycle |
+| `GET\|POST /connections` | `connection.read`, `connection.create`. Organization-wide, with `environmentId`, `integration`, `role`, `state` and `disabled` as filters the database applies |
+| `GET\|PATCH\|DELETE /connections/{id}` | `connection.read`, `.update`, `.delete`. The detail carries state, configuration revision and credential metadata; a PATCH increments the revision; a DELETE is refused the moment anything depends on it |
+| `GET /connections/{id}/dependents` | `connection.read`. What points at a Connection, answerable before an operator tries to remove it |
 | `POST /connections/{id}/enabled` | `connection.update`. One idempotent operation with a body, replacing the `enable` and `disable` pair |
+| `POST /connections/{id}/validate`, `GET /connections/{id}/validations` | `connection.validate`, `connection.read`. A per-capability result rather than a boolean, and the history of them |
+| `GET /connections/{id}/deliveries` | `connection.read`. Every delivery attempt, accepted or refused, with why |
+| `POST /connections/{id}/trigger/test-event` | `connection.validate`. Verifies intake without waiting for a real incident, and says what it does not prove |
 | `POST /connections/{id}/trigger/rotate-secret` | `connection.trigger.secret.rotate` |
 | `GET\|POST /environments`, `PATCH\|DELETE /environments/{id}` | `environment.read`, `.create`, `.update`, `.delete` |
+
+Every listing above speaks ONE query contract and answers ONE envelope, so a console has one
+table to build rather than five:
+
+| Parameter | Meaning |
+| --- | --- |
+| `search` | Free text, on the listings that offer it. Refused on the ones that do not, rather than ignored |
+| `sort` | A signed field name — `name`, `-createdAt`. A field the listing does not offer is **refused**: a sort silently dropped returns rows in an order nobody chose, and the caller cannot tell |
+| `cursor` | Opaque and resumed from a previous `next`. A tampered one is refused, because silently starting over shows the first page again and reads as the last |
+| `limit` | **Clamped**, not refused. Somebody asking for more than they can have wants as much as they can have |
+
+The envelope is `{ items, next, total, partial }`. Every field is present including the empty
+ones: `items` is `[]` rather than null, and `next` and `total` are explicitly `null` — `total` is
+nullable because a cursor-paginated query cannot always answer it cheaply, and a fabricated count
+is worse than an absent one. `partial` is the backend saying "I served this field with no data,
+and here is why", so a console renders one honest notice instead of a column of "Not reported".
 
 Investigations are read there too:
 

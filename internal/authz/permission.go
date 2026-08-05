@@ -22,11 +22,19 @@ const (
 	// Connections and the Integration catalog they instantiate.
 	ConnectionRead   Permission = "connection.read"
 	ConnectionCreate Permission = "connection.create"
-	// ConnectionUpdate covers setting a Connection's enabled state, which is the only change
-	// this build offers. There is deliberately no connection.delete: a Connection is disabled
-	// rather than removed, so the record of what a source produced survives, and a permission
-	// for an operation the product does not have would read as though it did.
-	ConnectionUpdate       Permission = "connection.update"
+	// ConnectionUpdate covers setting a Connection's enabled state and revising its
+	// configuration.
+	ConnectionUpdate Permission = "connection.update"
+	// ConnectionDelete is NARROW and stays narrow. A Connection that anything has delivered
+	// through, read through, or that is its Environment's last evidence source, is refused —
+	// the record of what a source produced must survive, which is why disabling exists. What
+	// this covers is the Connection created by mistake five minutes ago, which until now had to
+	// be carried forever because the only alternative was destroying history.
+	ConnectionDelete Permission = "connection.delete"
+	// ConnectionValidate exercises a Connection against the system at the far end. It is a
+	// mutation rather than a read: it writes a result, moves the Connection's state, and is the
+	// difference between a Connection that is configured and one that is known to work.
+	ConnectionValidate     Permission = "connection.validate"
 	ConnectionSecretRotate Permission = "connection.trigger.secret.rotate"
 	IntegrationRead        Permission = "integration.read"
 
@@ -34,6 +42,11 @@ const (
 	// permission of its own rather than part of reading the roster.
 	RelayRead          Permission = "relay.read"
 	RelayConflictClear Permission = "relay.conflict.clear"
+	// RelayBootstrapIssue mints a credential that enrols a new Relay into the tenant. It is
+	// separate from reading the fleet because it is the one relay operation that CREATES the
+	// ability to join it, and a role that may look at the estate should not by that fact be able
+	// to extend it.
+	RelayBootstrapIssue Permission = "relay.bootstrap-token.issue"
 
 	// Investigations.
 	InvestigationRead   Permission = "investigation.read"
@@ -72,8 +85,9 @@ const (
 // route gate validates against and the set an owner holds.
 var allPermissions = []Permission{
 	EnvironmentRead, EnvironmentCreate, EnvironmentUpdate, EnvironmentDelete,
-	ConnectionRead, ConnectionCreate, ConnectionUpdate, ConnectionSecretRotate, IntegrationRead,
-	RelayRead, RelayConflictClear,
+	ConnectionRead, ConnectionCreate, ConnectionUpdate, ConnectionDelete, ConnectionValidate,
+	ConnectionSecretRotate, IntegrationRead,
+	RelayRead, RelayConflictClear, RelayBootstrapIssue,
 	InvestigationRead, InvestigationOpen, InvestigationCancel, InvestigationReopen,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, MemberOwnerManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,

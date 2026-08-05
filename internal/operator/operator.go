@@ -61,6 +61,17 @@ type Handlers struct {
 	// "why did this round stop" survives the configuration that produced it.
 	Controls investigation.Controls
 	Versions investigation.Versions
+	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
+	// configured rather than derived from a request, because a URL built from this listener's
+	// own Host header would be one that works from wherever the console is served and not from
+	// the customer's alerting — which is the one place it has to work. Empty is supported and is
+	// served as an absence rather than as a guess.
+	IntakeBaseURL string
+	// MinimumRelayVersion is the floor the fleet summary counts `outdated` against. Empty means
+	// this build states no floor, in which case nothing is counted outdated because nothing was
+	// compared — which the summary says, rather than reporting zero as though everything were
+	// current.
+	MinimumRelayVersion string
 }
 
 // Router returns the operator surface, or the reason it cannot be built.
@@ -95,9 +106,17 @@ func (h Handlers) Router() (http.Handler, error) {
 func (h Handlers) Routes() authz.Table {
 	const relays = "/operator/v1/organizations/{organization}/relays"
 
-	table := authz.Table{
+	routes := authz.Table{
 		authz.Privileged(http.MethodGet, relays, authz.RelayRead,
 			http.HandlerFunc(h.listRelays)),
+		// The summary comes BEFORE the fleet in the table for the same reason it comes before it
+		// on a page: a hundred relays is a hundred rows, and a hundred rows is not an assessment.
+		authz.Privileged(http.MethodGet, relays+"/summary", authz.RelayRead,
+			http.HandlerFunc(h.fleetSummary)),
+		authz.Privileged(http.MethodGet, relays+"/{registration}/connections", authz.RelayRead,
+			http.HandlerFunc(h.relayConnections)),
+		authz.Privileged(http.MethodGet, relays+"/{registration}/failures", authz.RelayRead,
+			http.HandlerFunc(h.relayFailures)),
 		authz.Privileged(http.MethodGet, relays+"/{registration}/session-conflicts",
 			authz.RelayRead, http.HandlerFunc(h.conflictTrail)),
 		// Withdrawing the mark destroys a credential-theft finding and nothing else in the
@@ -105,24 +124,31 @@ func (h Handlers) Routes() authz.Table {
 		// reading the roster — and only the two administrative roles hold it.
 		authz.Privileged(http.MethodPost, relays+"/{registration}/clear-conflict",
 			authz.RelayConflictClear, http.HandlerFunc(h.clearConflict)),
+		// Minting a credential that enrols a new Relay is not part of reading the fleet, so it
+		// is not covered by the permission that reads it.
+		authz.Privileged(http.MethodPost, relays+"/bootstrap-tokens",
+			authz.RelayBootstrapIssue, http.HandlerFunc(h.issueBootstrapToken)),
 	}
 
-	table = append(table, h.Identity.Routes()...)
-	table = append(table,
+	routes = append(routes, h.Identity.Routes()...)
+	routes = append(routes,
 		environment.Handlers{Placements: h.Placements, Logger: h.Logger}.Routes()...)
-	table = append(table,
-		connection.Handlers{Placements: h.Placements, Logger: h.Logger}.Routes()...)
+	routes = append(routes, connection.Handlers{
+		Placements:    h.Placements,
+		Logger:        h.Logger,
+		IntakeBaseURL: h.IntakeBaseURL,
+	}.Routes()...)
 	// The investigation surface takes the read side and the write side separately, because a
 	// handler given the writing interface is one typo away from mutating what it was asked to
 	// display. Both happen to be the same value here; the types are what keep them apart.
-	table = append(table, investigation.Handlers{
+	routes = append(routes, investigation.Handlers{
 		Reader:   h.Placements,
 		Store:    h.Placements,
 		Logger:   h.Logger,
 		Controls: h.Controls,
 		Versions: h.Versions,
 	}.Routes()...)
-	return table
+	return routes
 }
 
 // correlated mints a request identifier and binds it to the response and the context.
@@ -189,40 +215,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
-}
-
-// listRelays reports an organization's relay identities and what is known about each.
-func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
-	defer cancel()
-
-	roster, err := h.Placements.ListRelays(ctx, principal, organization, storage.Page{
-		Limit: pageSize(request),
-		After: request.URL.Query().Get("after"),
-	})
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-
-	h.Logger.InfoContext(ctx, "operator read a relay roster",
-		slog.String("organization", organization.String()),
-		slog.Int("relays", len(roster.Relays)),
-		slog.String("caller", h.callerName(request)))
-
-	relays := make([]relayView, 0, len(roster.Relays))
-	for _, relay := range roster.Relays {
-		relays = append(relays, viewOf(relay))
-	}
-	writeJSON(writer, http.StatusOK, rosterView{Relays: relays, Next: roster.Next})
 }
 
 // conflictTrail reports what has happened to a relay identity.

@@ -62,6 +62,14 @@ const (
 	EnvIdentityEncryptionKeyFile = "OC_IDENTITY_ENCRYPTION_KEY_FILE"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
+	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
+	// configured rather than derived from a request, because the delivery endpoint built from it
+	// is pasted into somebody else's system.
+	EnvIntakePublicURL = "OC_INTAKE_PUBLIC_URL"
+	// EnvMinimumRelayVersion is the relay version floor the fleet summary counts `outdated`
+	// against. Empty means nothing is compared, and the summary says so rather than reporting
+	// zero outdated as though every relay were current.
+	EnvMinimumRelayVersion = "OC_MINIMUM_RELAY_VERSION"
 
 	EnvModelTranscriptFile = "OC_MODEL_TRANSCRIPT_FILE"
 
@@ -185,6 +193,22 @@ type Config struct {
 	// It carries no credential of its own: each configured source authenticates with its own
 	// secret, so there is nothing here that would be shared across tenants.
 	IntakeAddress string
+
+	// IntakePublicURL is the public origin a customer's own system reaches intake at, for
+	// example https://intake.opencluster.example. It is what a trigger Connection's delivery
+	// endpoint is built from.
+	//
+	// Empty is supported and means the endpoint is served as an absence rather than as a guess:
+	// a URL assembled from the operator surface's own Host header would be one that works from
+	// wherever the console is served and not from the customer's alerting, which is the one
+	// place it has to work.
+	IntakePublicURL string
+
+	// MinimumRelayVersion is the relay version floor the fleet summary counts `outdated`
+	// against. Empty means this deployment states no floor, in which case nothing is counted
+	// outdated because nothing was compared — a different fact from every relay being current,
+	// and one the summary reports rather than hides.
+	MinimumRelayVersion string
 
 	// ModelTranscript is a recorded transcript of the model boundary, read from the file the
 	// operator named. It is what lets a deployment that has no live provider still run
@@ -330,6 +354,11 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
 		return Config{}, err
 	}
+	if cfg.IntakePublicURL, err = optionalIntakeURL(lookup, EnvIntakePublicURL); err != nil {
+		return Config{}, err
+	}
+	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
+	cfg.MinimumRelayVersion = strings.TrimSpace(minimumRelay)
 
 	// A deployment with neither explicit assignments nor a default could resolve no
 	// organization at all, which is a misconfiguration rather than a strict posture.

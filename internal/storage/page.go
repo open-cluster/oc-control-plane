@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -102,4 +103,83 @@ func decodeCursor(cursor string) (*time.Time, *uuid.UUID, error) {
 	}
 	at := time.Unix(0, unixNano)
 	return &at, &id, nil
+}
+
+// ordering is how one listing is sorted, and how a position in that order is rendered back into
+// a cursor.
+//
+// The render function lives beside the column deliberately. It used to be a second switch on the
+// same field names in the same file, and a fifth sortable field meant editing both — which is
+// the shape of change where one edit lands and the other does not, and the symptom is a cursor
+// that resumes from the wrong place rather than an error anybody sees.
+type ordering struct {
+	// column is the SQL expression rows are ordered by. It comes from a closed map keyed on a
+	// field name the handler has already refused if unoffered, never from caller input.
+	column string
+	// cast is the type the cursor's text value is cast back to for the row-wise comparison, so
+	// the resume compares the same way the ORDER BY sorted.
+	cast string
+	// render turns the last row of a page into the text half of its cursor.
+	render func(Connection) string
+}
+
+// encodeSortCursor renders a page position for a listing ordered by a field the caller chose.
+//
+// It is a third codec beside the timestamp and ordinal ones because the ordering it resumes is
+// genuinely different: the key may be a version string, a name or a fingerprint, and rendering
+// those through a timestamp codec would either fail or, worse, round-trip to something that
+// compares differently than it sorted. The value travels as text and the query casts it back to
+// the type of the column it compares against, which is the same expression that produced the
+// order.
+func encodeSortCursor(value string, id uuid.UUID) string {
+	return base64.RawURLEncoding.EncodeToString([]byte("~" + value + id.String()))
+}
+
+// decodeSortCursor reads such a position back. An empty cursor is the start of the listing,
+// which is not an error; anything unreadable is, because silently starting over would show an
+// operator the first page again and let them believe they had seen the last.
+func decodeSortCursor(cursor string) (string, *uuid.UUID, error) {
+	if cursor == "" {
+		return "", nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", nil, ErrBadCursor
+	}
+	body, marked := strings.CutPrefix(string(raw), "~")
+	if !marked {
+		return "", nil, ErrBadCursor
+	}
+	// Split from the RIGHT rather than on a separator. A sort key is a customer's own text — a
+	// Connection name, a cluster fingerprint — so any byte chosen to divide the two halves is a
+	// byte a name could contain. The identifier is a fixed-width UUID, so the boundary is
+	// arithmetic and there is nothing to escape.
+	const identifierLength = 36
+	if len(body) < identifierLength {
+		return "", nil, ErrBadCursor
+	}
+	value := body[:len(body)-identifierLength]
+	identifier := body[len(body)-identifierLength:]
+	id, err := uuid.Parse(identifier)
+	if err != nil {
+		return "", nil, ErrBadCursor
+	}
+	return value, &id, nil
+}
+
+// decodeStringArray reads a JSONB array of strings into a slice, flattening null to empty. A
+// caller asking what a relay serves should get a list they can range over rather than one they
+// have to nil-check.
+func decodeStringArray(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return []string{}, nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, err
+	}
+	if values == nil {
+		return []string{}, nil
+	}
+	return values, nil
 }

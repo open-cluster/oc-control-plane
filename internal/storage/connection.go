@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,13 +98,104 @@ type Connection struct {
 	// read back.
 	SecretDigest []byte
 	Labels       map[string]string
-	DisabledAt   time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// State is where this Connection has got to, as observed rather than as declared. It is
+	// separate from DisabledAt on purpose: collapsing the two would lose whether a Connection
+	// that is turned off was working when it was turned off, which is the fact somebody needs
+	// when they turn it back on during an incident.
+	State ConnectionState
+	// ConfigurationRevision increments on every accepted change, so "it changed" is answerable
+	// and a validation result can name the revision it was a result about.
+	ConfigurationRevision int
+	// Configuration is the provider-specific settings, shaped by the Integration definition's
+	// JSON Schema. It NEVER holds a credential: a write-only field is stripped before this is
+	// written and lives as a digest and the metadata below.
+	Configuration map[string]any
+	// Credential is what a read returns ABOUT the credential, which is never the credential.
+	Credential Credential
+	DisabledAt time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Disabled reports whether this Connection has been turned off.
 func (c Connection) Disabled() bool { return !c.DisabledAt.IsZero() }
+
+// ConnectionState is where a Connection has got to. It is persisted as the integer in the
+// column and the values are frozen by the gate in internal/gates.
+type ConnectionState int16
+
+const (
+	// ConnectionConfigured is the state a Connection is created in: it exists and nothing has
+	// checked it.
+	ConnectionConfigured ConnectionState = iota + 1
+	ConnectionValidating
+	ConnectionActive
+	// ConnectionDegraded is the state that makes partial success visible on the record itself:
+	// the credential worked and some of what this provider offers is unavailable.
+	ConnectionDegraded
+	ConnectionFailed
+)
+
+func (s ConnectionState) String() string {
+	switch s {
+	case ConnectionConfigured:
+		return "configured"
+	case ConnectionValidating:
+		return "validating"
+	case ConnectionActive:
+		return "active"
+	case ConnectionDegraded:
+		return "degraded"
+	case ConnectionFailed:
+		return "failed"
+	default:
+		return "unrecognised"
+	}
+}
+
+// Credential is everything a read may say about the secret in use, and it is deliberately
+// everything EXCEPT the secret.
+//
+// It exists because "which credential is this, and is it the one that expired" is a real
+// question an operator has, and answering it by showing them the credential would put a secret
+// in a browser. Identity is enough to answer it; content is not needed and is not offered.
+type Credential struct {
+	// Method is how the far end is authenticated — `shared_secret`, `bearer_token`. Empty when
+	// this Connection holds no credential at all, which an evidence Connection served by a
+	// Relay's own service account legitimately does not.
+	Method string
+	// Reference is an opaque pointer to where the secret lives. It is not a path a caller can
+	// dereference and is not a URL; it exists so a support conversation can name one credential
+	// rather than describe it.
+	Reference string
+	// Fingerprint is a MINTED identity for this credential, not a hash of it. A truncated hash
+	// would let anyone holding a database dump confirm a guess offline, which is the exact
+	// property digest-only storage exists to deny. What an operator needs is to tell one
+	// credential from the next, and a minted value does that and leaks nothing.
+	Fingerprint string
+	CreatedAt   time.Time
+	// RotatedAt is zero for a credential that has never been rotated, which is distinguishable
+	// from one rotated at creation time.
+	RotatedAt time.Time
+	// ExpiresAt is zero when the credential has no stated expiry. That is a fact about the
+	// credential rather than a missing value: a shared secret this platform minted does not
+	// expire on its own.
+	ExpiresAt time.Time
+}
+
+// Held reports whether this Connection carries a credential at all.
+func (c Credential) Held() bool { return c.Method != "" }
+
+// connectionColumns is every column a Connection is read from, named once.
+//
+// One list rather than five copies, because a column added to one query and forgotten in
+// another is a field that is silently always zero — and a Connection whose state always reads
+// `configured` would look like a Connection nobody has validated rather than like a bug.
+const connectionColumns = `connection_id, environment_id, integration, name, role, locality,
+	       relay_registration_id, secret_digest, labels, disabled_at, created_at, updated_at,
+	       state, configuration_revision, configuration, credential_method, credential_reference,
+	       credential_fingerprint, credential_created_at, credential_rotated_at,
+	       credential_expires_at`
 
 // NewConnection is what an operator asked for. It travels as one value because the fields
 // constrain each other: a relay-local Connection needs a Relay, a trigger Connection needs a
@@ -117,6 +210,12 @@ type NewConnection struct {
 	RelayRegistration uuid.UUID
 	SecretDigest      []byte
 	Labels            map[string]string
+	// Configuration is the provider-specific settings, already checked against the Integration
+	// definition's schema and already stripped of anything write-only.
+	Configuration map[string]any
+	// Credential is the metadata describing the secret, never the secret. The digest above is
+	// what authenticates; this is what an operator reads to tell one credential from the next.
+	Credential Credential
 }
 
 // ConnectionList is a page of an Environment's Connections.
@@ -144,18 +243,36 @@ func (p *Placements) CreateConnection(
 				return Connection{}, audit.Target{}, nil,
 					fmt.Errorf("encoding labels: %w", err)
 			}
+			configuration, err := json.Marshal(orEmptyConfiguration(wanted.Configuration))
+			if err != nil {
+				return Connection{}, audit.Target{}, nil,
+					fmt.Errorf("encoding configuration: %w", err)
+			}
+
+			// The identifier is minted here rather than inside the statement, because the
+			// credential's reference names the Connection it belongs to and there is nothing to
+			// name until it exists. A reference assembled afterwards would be a second write.
+			id := uuid.New()
+			credential := wanted.Credential
+			if credential.Reference != "" {
+				credential.Reference += ":" + id.String()
+			}
 
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO connection (connection_id, organization, environment_id, integration,
 				                        name, role, locality, relay_registration_id,
-				                        secret_digest, labels)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-				RETURNING connection_id, environment_id, integration, name, role, locality,
-				          relay_registration_id, secret_digest, labels, disabled_at, created_at,
-				          updated_at`,
-				uuid.New(), organization.String(), wanted.Environment, wanted.Integration,
+				                        secret_digest, labels, configuration,
+				                        credential_method, credential_reference,
+				                        credential_fingerprint, credential_created_at,
+				                        credential_expires_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+				        CASE WHEN $12::TEXT IS NULL THEN NULL ELSE now() END, $15)
+				RETURNING `+connectionColumns,
+				id, organization.String(), wanted.Environment, wanted.Integration,
 				wanted.Name, int16(wanted.Role), int16(wanted.Locality),
-				nullableUUID(wanted.RelayRegistration), wanted.SecretDigest, labels)
+				nullableUUID(wanted.RelayRegistration), wanted.SecretDigest, labels, configuration,
+				nullableText(credential.Method), nullableText(credential.Reference),
+				nullableText(credential.Fingerprint), nullableTime(credential.ExpiresAt))
 
 			created, err := scanConnection(row, organization.String())
 			switch {
@@ -200,9 +317,7 @@ func (p *Placements) ConnectionByID(ctx context.Context, id uuid.UUID) (Connecti
 	for _, name := range p.names() {
 		var organization string
 		row := p.pools[name].QueryRow(ctx, `
-			SELECT organization, connection_id, environment_id, integration, name, role,
-			       locality, relay_registration_id, secret_digest, labels, disabled_at,
-			       created_at, updated_at
+			SELECT organization, `+connectionColumns+`
 			  FROM connection
 			 WHERE connection_id = $1`, id)
 		found, err := scanConnectionWithOrganization(row, &organization)
@@ -231,8 +346,7 @@ func (p *Placements) ConnectionForOrganization(
 	}
 
 	row := pool.QueryRow(ctx, `
-		SELECT connection_id, environment_id, integration, name, role, locality,
-		       relay_registration_id, secret_digest, labels, disabled_at, created_at, updated_at
+		SELECT `+connectionColumns+`
 		  FROM connection
 		 WHERE connection_id = $1 AND organization = $2`,
 		id, organization.String())
@@ -254,20 +368,28 @@ func (p *Placements) ConnectionForOrganization(
 // rotation and is added when someone asks for it.
 func (p *Placements) RotateConnectionSecret(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	id uuid.UUID, digest []byte,
+	id uuid.UUID, digest []byte, fingerprint string,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionConnectionRotated,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
 			// Guarded on the Connection already carrying one: rotating a secret onto an
 			// evidence-only Connection would create a credential with no user, and the CHECK
 			// would refuse it as a constraint violation rather than as an answer.
+			//
+			// The fingerprint is replaced along with the digest, and the rotation is stamped.
+			// A rotation that kept the old fingerprint would leave an operator unable to tell
+			// whether the rotation they asked for had actually happened, which is the one thing
+			// they are checking for afterwards.
 			tag, err := transaction.Exec(ctx, `
 				UPDATE connection
-				   SET secret_digest = $3, updated_at = now()
+				   SET secret_digest          = $3,
+				       credential_fingerprint = $4,
+				       credential_rotated_at  = now(),
+				       updated_at             = now()
 				 WHERE connection_id = $1
 				   AND organization  = $2
 				   AND secret_digest IS NOT NULL`,
-				id, organization.String(), digest)
+				id, organization.String(), digest, fingerprint)
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("rotating a connection secret: %w", err)
@@ -278,6 +400,10 @@ func (p *Placements) RotateConnectionSecret(
 			return struct{}{},
 				audit.Target{Kind: audit.TargetConnection, ID: id.String()},
 				audit.Detail{
+					// The fingerprint is an identity rather than a secret, so it is on the
+					// record: "which credential is live now" is exactly what somebody reading
+					// this event later needs to match against what they are looking at.
+					"credentialFingerprint": fingerprint,
 					"effect": "the previous trigger verification secret stopped working; " +
 						"there is no overlap window",
 				}, nil
@@ -329,6 +455,64 @@ func (p *Placements) ListConnections(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	environment uuid.UUID, page Page,
 ) (ConnectionList, error) {
+	return p.QueryConnections(ctx, principal, organization,
+		ConnectionQuery{Page: page, Environment: environment})
+}
+
+// ConnectionQuery is what a caller may narrow, order and page an Organization's Connections by.
+// Every field is applied by the DATABASE: a listing filtered after the rows were sent is a page
+// that returns fewer rows than it was asked for and a `next` that means something else.
+type ConnectionQuery struct {
+	Page Page
+	// Relay narrows to the Connections one Relay serves, which is what disabling it would cost.
+	Relay uuid.UUID
+	// Environment is a FILTER rather than a scope. The zero UUID means every Environment in the
+	// organization, which is what lets an operator see the estate rather than one scope at a
+	// time. The Environment a Connection belongs to is still assigned only at creation.
+	Environment uuid.UUID
+	// Search matches the name, because that is what an operator gave the Connection and
+	// therefore the only part of it they will remember during an incident.
+	Search string
+	// Integration narrows to one provider, State to one lifecycle state, Role to what a
+	// Connection is used for. Empty means no narrowing.
+	Integration string
+	State       ConnectionState
+	Role        ConnectionRole
+	// Disabled narrows to Connections an operator has turned off, or to the ones they have not.
+	// It is a pointer because "I did not ask" is a different question from "I asked for the
+	// enabled ones".
+	Disabled *bool
+	// SortField is one of name, createdAt, integration, state. Anything else is a programming
+	// error: the handler refuses an unoffered field before it reaches here.
+	SortField  string
+	Descending bool
+}
+
+// connectionOrderings maps a sort field to the column it orders by and the type its cursor casts
+// to. A closed map rather than interpolation of caller input, which is what keeps a sort
+// parameter from being a way to write SQL.
+var connectionOrderings = map[string]ordering{
+	"createdAt":   {column: "created_at", cast: "timestamptz", render: connectionCreatedAt},
+	"name":        {column: "name", cast: "text", render: connectionName},
+	"integration": {column: "integration", cast: "text", render: connectionIntegration},
+	"state":       {column: "state", cast: "smallint", render: connectionState},
+}
+
+func connectionCreatedAt(c Connection) string   { return c.CreatedAt.Format(time.RFC3339Nano) }
+func connectionName(c Connection) string        { return c.Name }
+func connectionIntegration(c Connection) string { return c.Integration }
+func connectionState(c Connection) string       { return strconv.Itoa(int(c.State)) }
+
+// QueryConnections returns an Organization's Connections, narrowed, ordered and paged by the
+// database.
+//
+// The Environment is part of the WHERE clause together with the organization, so naming one
+// tenant's Environment while authenticated for another returns nothing rather than that
+// Environment's contents.
+func (p *Placements) QueryConnections(
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	query ConnectionQuery,
+) (ConnectionList, error) {
 	if !principal.MemberOf(organization) {
 		return ConnectionList{}, ErrNotAMember
 	}
@@ -336,23 +520,78 @@ func (p *Placements) ListConnections(
 	if err != nil {
 		return ConnectionList{}, err
 	}
-	limit := pageLimit(page.Limit)
-	after, afterID, err := decodeCursor(page.After)
+	order, known := connectionOrderings[query.SortField]
+	if !known {
+		order = connectionOrderings["createdAt"]
+		query.Descending = true
+	}
+	limit := pageLimit(query.Page.Limit)
+	cursorValue, cursorID, err := decodeSortCursor(query.Page.After)
 	if err != nil {
 		return ConnectionList{}, err
 	}
 
-	rows, err := pool.Query(ctx, `
-		SELECT connection_id, environment_id, integration, name, role, locality,
-		       relay_registration_id, secret_digest, labels, disabled_at, created_at, updated_at
+	arguments := []any{organization.String()}
+	where := []string{"organization = $1"}
+	add := func(clause string, value any) {
+		arguments = append(arguments, value)
+		where = append(where, fmt.Sprintf(clause, len(arguments)))
+	}
+
+	if query.Environment != uuid.Nil {
+		add("environment_id = $%d", query.Environment)
+	}
+	if query.Relay != uuid.Nil {
+		add("relay_registration_id = $%d", query.Relay)
+	}
+	if query.Search != "" {
+		add("name ILIKE '%%' || $%d || '%%'", query.Search)
+	}
+	if query.Integration != "" {
+		add("integration = $%d", query.Integration)
+	}
+	if query.State != 0 {
+		add("state = $%d", int16(query.State))
+	}
+	if query.Role != 0 {
+		// A bitwise containment test, so asking for triggers finds the Connections that are
+		// BOTH as well. A role is a set, and equality would answer a different question — it
+		// would hide every Connection that does more than what was asked about.
+		arguments = append(arguments, int16(query.Role))
+		where = append(where,
+			fmt.Sprintf("(role & $%[1]d) = $%[1]d", len(arguments)))
+	}
+	if query.Disabled != nil {
+		if *query.Disabled {
+			where = append(where, "disabled_at IS NOT NULL")
+		} else {
+			where = append(where, "disabled_at IS NULL")
+		}
+	}
+	if cursorID != nil {
+		arguments = append(arguments, cursorValue, *cursorID)
+		comparison := "<"
+		if !query.Descending {
+			comparison = ">"
+		}
+		where = append(where, fmt.Sprintf("(%s, connection_id) %s ($%d::%s, $%d::uuid)",
+			order.column, comparison, len(arguments)-1, order.cast, len(arguments)))
+	}
+
+	direction := "DESC"
+	if !query.Descending {
+		direction = "ASC"
+	}
+	arguments = append(arguments, limit+1)
+
+	rows, err := pool.Query(ctx, fmt.Sprintf(`
+		SELECT %s
 		  FROM connection
-		 WHERE organization = $1
-		   AND ($2::UUID IS NULL OR environment_id = $2::UUID)
-		   AND ($4::timestamptz IS NULL
-		        OR (created_at, connection_id) < ($4::timestamptz, $5::uuid))
-		 ORDER BY created_at DESC, connection_id DESC
-		 LIMIT $3`,
-		organization.String(), nullableUUID(environment), limit+1, after, afterID)
+		 WHERE %s
+		 ORDER BY %s %s, connection_id %s
+		 LIMIT $%d`,
+		connectionColumns, strings.Join(where, "\n   AND "),
+		order.column, direction, direction, len(arguments)), arguments...)
 	if err != nil {
 		return ConnectionList{}, fmt.Errorf("listing connections: %w", err)
 	}
@@ -366,7 +605,7 @@ func (p *Placements) ListConnections(
 		}
 		if len(list.Connections) == limit {
 			last := list.Connections[limit-1]
-			list.Next = encodeCursor(last.CreatedAt, last.ID)
+			list.Next = encodeSortCursor(order.render(last), last.ID)
 			break
 		}
 		list.Connections = append(list.Connections, found)
@@ -384,59 +623,109 @@ type scanned interface {
 	Scan(destination ...any) error
 }
 
+// nullableConnection holds the columns that may be SQL NULL, so one struct is threaded through
+// both scanners rather than eleven pointers being declared twice and getting out of order once.
+type nullableConnection struct {
+	relay                 *uuid.UUID
+	labels                []byte
+	configuration         []byte
+	disabledAt            *time.Time
+	credentialMethod      *string
+	credentialReference   *string
+	credentialFingerprint *string
+	credentialCreatedAt   *time.Time
+	credentialRotatedAt   *time.Time
+	credentialExpiresAt   *time.Time
+}
+
+// destinations is the scan target list, in the order connectionColumns names them. It is a
+// method rather than an inline list so the two scanners cannot drift apart.
+func (n *nullableConnection) destinations(found *Connection) []any {
+	return []any{
+		&found.ID, &found.Environment, &found.Integration, &found.Name, &found.Role,
+		&found.Locality, &n.relay, &found.SecretDigest, &n.labels, &n.disabledAt,
+		&found.CreatedAt, &found.UpdatedAt, &found.State, &found.ConfigurationRevision,
+		&n.configuration, &n.credentialMethod, &n.credentialReference, &n.credentialFingerprint,
+		&n.credentialCreatedAt, &n.credentialRotatedAt, &n.credentialExpiresAt,
+	}
+}
+
 // scanConnection maps one row. The nullable columns are read through pointers and flattened to
 // zero values, because a caller asking whether a Connection is disabled should not have to
 // dereference to find out.
 func scanConnection(row scanned, organization string) (Connection, error) {
 	found := Connection{Organization: organization}
-	var (
-		relay      *uuid.UUID
-		labels     []byte
-		disabledAt *time.Time
-	)
-	if err := row.Scan(&found.ID, &found.Environment, &found.Integration, &found.Name,
-		&found.Role, &found.Locality, &relay, &found.SecretDigest, &labels,
-		&disabledAt, &found.CreatedAt, &found.UpdatedAt); err != nil {
+	var nullable nullableConnection
+	if err := row.Scan(nullable.destinations(&found)...); err != nil {
 		return Connection{}, err
 	}
-	return finish(found, relay, labels, disabledAt)
+	return finish(found, nullable)
 }
 
 // scanConnectionWithOrganization is scanConnection for the one read that discovers the tenant
 // rather than being given it.
 func scanConnectionWithOrganization(row scanned, organization *string) (Connection, error) {
 	var (
-		found      Connection
-		relay      *uuid.UUID
-		labels     []byte
-		disabledAt *time.Time
+		found    Connection
+		nullable nullableConnection
 	)
-	if err := row.Scan(organization, &found.ID, &found.Environment, &found.Integration,
-		&found.Name, &found.Role, &found.Locality, &relay, &found.SecretDigest, &labels,
-		&disabledAt, &found.CreatedAt, &found.UpdatedAt); err != nil {
+	if err := row.Scan(append([]any{organization}, nullable.destinations(&found)...)...); err != nil {
 		return Connection{}, err
 	}
-	return finish(found, relay, labels, disabledAt)
+	return finish(found, nullable)
 }
 
-func finish(
-	found Connection, relay *uuid.UUID, labels []byte, disabledAt *time.Time,
-) (Connection, error) {
-	if relay != nil {
-		found.RelayRegistration = *relay
+func finish(found Connection, nullable nullableConnection) (Connection, error) {
+	if nullable.relay != nil {
+		found.RelayRegistration = *nullable.relay
 	}
-	if disabledAt != nil {
-		found.DisabledAt = *disabledAt
+	if nullable.disabledAt != nil {
+		found.DisabledAt = *nullable.disabledAt
 	}
-	if len(labels) > 0 {
-		if err := json.Unmarshal(labels, &found.Labels); err != nil {
+	if len(nullable.labels) > 0 {
+		if err := json.Unmarshal(nullable.labels, &found.Labels); err != nil {
 			return Connection{}, fmt.Errorf("decoding connection labels: %w", err)
 		}
 	}
 	if found.Labels == nil {
 		found.Labels = map[string]string{}
 	}
+	if len(nullable.configuration) > 0 {
+		if err := json.Unmarshal(nullable.configuration, &found.Configuration); err != nil {
+			return Connection{}, fmt.Errorf("decoding connection configuration: %w", err)
+		}
+	}
+	if found.Configuration == nil {
+		found.Configuration = map[string]any{}
+	}
+	found.Credential = credentialFrom(nullable)
 	return found, nil
+}
+
+// credentialFrom flattens the credential metadata. The schema guarantees the four columns
+// travel together, so a partially-present credential is a database that has been edited by
+// hand rather than a case to handle.
+func credentialFrom(nullable nullableConnection) Credential {
+	if nullable.credentialMethod == nil {
+		return Credential{}
+	}
+	credential := Credential{Method: *nullable.credentialMethod}
+	if nullable.credentialReference != nil {
+		credential.Reference = *nullable.credentialReference
+	}
+	if nullable.credentialFingerprint != nil {
+		credential.Fingerprint = *nullable.credentialFingerprint
+	}
+	if nullable.credentialCreatedAt != nil {
+		credential.CreatedAt = *nullable.credentialCreatedAt
+	}
+	if nullable.credentialRotatedAt != nil {
+		credential.RotatedAt = *nullable.credentialRotatedAt
+	}
+	if nullable.credentialExpiresAt != nil {
+		credential.ExpiresAt = *nullable.credentialExpiresAt
+	}
+	return credential
 }
 
 func orEmptyLabels(labels map[string]string) map[string]string {
@@ -444,6 +733,13 @@ func orEmptyLabels(labels map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return labels
+}
+
+func orEmptyConfiguration(configuration map[string]any) map[string]any {
+	if configuration == nil {
+		return map[string]any{}
+	}
+	return configuration
 }
 
 // nullableUUID renders the zero UUID as SQL NULL, which is what "no Relay serves this" means

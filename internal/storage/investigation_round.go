@@ -318,6 +318,15 @@ type executor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
+// reader is an executor that can also be read from. It exists so a read used both inside a
+// transaction and outside one — counting what depends on a Connection, which the delete does
+// under a row lock and the report does on its own — is written once rather than twice.
+type reader interface {
+	executor
+	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
+}
+
 // advanceLifecycle moves the case a fenced round belongs to. It goes through the round rather than
 // naming the case, so an execution that lost its lease cannot move a case it no longer owns.
 func advanceLifecycle(

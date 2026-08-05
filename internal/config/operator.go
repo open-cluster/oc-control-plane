@@ -96,6 +96,31 @@ const defaultOperatorTokenRole = "organization_owner"
 // optionalBrowserURL reads a URL a browser will be sent to or arrive from. It must be an
 // absolute origin with no path, because everything downstream appends one.
 func optionalBrowserURL(lookup func(string) (string, bool), key string) (string, error) {
+	return optionalOrigin(lookup, key, "a session cookie is Secure and would never reach a "+
+		"plaintext origin")
+}
+
+// optionalIntakeURL reads the public origin a customer's own alerting reaches intake at.
+//
+// It is CONFIGURED rather than derived from a request, because the delivery endpoint this
+// produces is pasted into somebody else's system: a URL assembled from the operator surface's
+// own Host header would be one that works from wherever the console is served and not from the
+// customer's alerting, which is the one place it has to work.
+//
+// Empty is supported and means the delivery endpoint is served as an absence rather than as a
+// guess. That is the honest answer for a deployment that has not been told where it is reachable.
+func optionalIntakeURL(lookup func(string) (string, bool), key string) (string, error) {
+	return optionalOrigin(lookup, key, "a source presents its verification secret to this "+
+		"URL, and a plaintext origin would put that secret on the wire")
+}
+
+// optionalOrigin reads an absolute origin, refusing a plaintext one for the stated reason.
+//
+// One parser for both, because the two differ only in WHY http is refused — and a second copy of
+// the parsing is a second place a path component or a missing scheme could slip through.
+func optionalOrigin(
+	lookup func(string) (string, bool), key, insecureReason string,
+) (string, error) {
 	value, ok := lookup(key)
 	if !ok || strings.TrimSpace(value) == "" {
 		return "", nil
@@ -109,8 +134,7 @@ func optionalBrowserURL(lookup func(string) (string, bool), key string) (string,
 	}
 	if parsed.Scheme != "https" && parsed.Hostname() != "localhost" &&
 		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
-		return "", fmt.Errorf("%s must be https; a session cookie is Secure and would never "+
-			"reach a plaintext origin", key)
+		return "", fmt.Errorf("%s must be https; %s", key, insecureReason)
 	}
 	return trimmed, nil
 }

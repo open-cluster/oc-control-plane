@@ -54,6 +54,31 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"RoleEvidence", int(storage.RoleEvidence), 2},
 		{"RoleBoth", int(storage.RoleBoth), 3},
 
+		// The Connection lifecycle, migration 0013's CHECKs. A value that moved here would
+		// silently re-label every existing row: a Connection stored as failed would start
+		// reading as degraded, which is the difference between paging somebody and not.
+		{"ConnectionConfigured", int(storage.ConnectionConfigured), 1},
+		{"ConnectionValidating", int(storage.ConnectionValidating), 2},
+		{"ConnectionActive", int(storage.ConnectionActive), 3},
+		{"ConnectionDegraded", int(storage.ConnectionDegraded), 4},
+		{"ConnectionFailed", int(storage.ConnectionFailed), 5},
+
+		// Validation results. Readiness is the COVERAGE vocabulary and is stored in
+		// connection_validation_capability.readiness as well as in the authentication column.
+		{"ReadyAvailable", int(storage.ReadyAvailable), 1},
+		{"ReadyUnauthorized", int(storage.ReadyUnauthorized), 2},
+		{"ReadyUnavailable", int(storage.ReadyUnavailable), 3},
+		{"ReadyNotAttempted", int(storage.ReadyNotAttempted), 4},
+
+		{"ValidationPassed", int(storage.ValidationPassed), 1},
+		{"ValidationPartial", int(storage.ValidationPartial), 2},
+		{"ValidationFailed", int(storage.ValidationFailed), 3},
+
+		// Delivery dispositions, and the 1 that trigger_delivery's health query filters on.
+		{"DeliveryAccepted", int(storage.DeliveryAccepted), 1},
+		{"DeliveryDuplicate", int(storage.DeliveryDuplicate), 2},
+		{"DeliveryRejected", int(storage.DeliveryRejected), 3},
+
 		// The investigation vocabulary. These live in internal/investigation rather than in
 		// internal/storage — the capability owns its types and persistence reconstructs them
 		// (ADR-017) — but they are stored in columns and constrained by CHECKs in migration 0009,
@@ -162,6 +187,15 @@ var (
 	connectionRoleValues = []int{
 		int(storage.RoleTrigger), int(storage.RoleEvidence), int(storage.RoleBoth),
 	}
+	connectionStateValues = []int{
+		int(storage.ConnectionConfigured), int(storage.ConnectionValidating),
+		int(storage.ConnectionActive), int(storage.ConnectionDegraded),
+		int(storage.ConnectionFailed),
+	}
+	deliveryOutcomeValues = []int{
+		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
+		int(storage.DeliveryRejected),
+	}
 )
 
 // enumColumns maps a file in internal/storage to the values its SQL may compare each enum
@@ -185,6 +219,14 @@ var enumColumns = map[string]map[string][]int{
 	"cancellation.go":       {"status": jobStatusValues},
 	"signal.go":             {"status": signalStatusValues},
 	"connection.go":         {"role": connectionRoleValues},
+	// The lifecycle files. connection_lifecycle.go compares `role` when it counts what depends
+	// on a Connection and writes `state` when a validation lands; trigger_delivery.go compares
+	// `outcome` in every health query. Each names the enum that governs it rather than relying
+	// on the column name, because `outcome` is also a validation's own column.
+	"connection_lifecycle.go": {"role": connectionRoleValues, "state": connectionStateValues},
+	"trigger_delivery.go":     {"outcome": deliveryOutcomeValues, "role": connectionRoleValues},
+	// The fleet counts leased jobs to report what the relays are holding.
+	"fleet.go": {"status": jobStatusValues},
 }
 
 // Every integer an enum column is compared against must be a value some constant holds. This

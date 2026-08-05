@@ -40,6 +40,16 @@ const (
 	// like the owner of every lease it holds.
 	sessionIdleTimeout = 3 * heartbeatInterval
 
+	// LivenessAllowance is sessionIdleTimeout under an exported name, for the read models that
+	// have to decide whether a relay counts as connected.
+	//
+	// It is exported rather than copied because it was copied — twice, into two packages, with
+	// two different justifications for why it had to be — and a fleet summary whose idea of
+	// "connected" drifts from the session service's is a summary that disagrees with the thing
+	// it is summarising. The dependency runs one way and there is no cycle: internal/relay is
+	// imported by the surfaces, and imports none of them.
+	LivenessAllowance = sessionIdleTimeout
+
 	// The budget an execution is given is deliberately shorter than the lease behind it. The
 	// lease starts when the job is claimed and the relay's budget starts when it receives the
 	// assignment, so a budget equal to the lease would let an execution still be running after
@@ -121,7 +131,11 @@ func (s *SessionService) Connect(stream relayv1.RelaySessionService_ConnectServe
 		return session.ending(err)
 	}
 	session.logger.Info("relay session established")
+	// Presence is recorded before liveness is watched, so a summary read a moment after a relay
+	// connects says it is connected rather than saying nothing until the first refresh.
+	s.recordPresence(session)
 	go watchLiveness(session)
+	go s.watchPresence(session)
 
 	// Delivery deliberately does not start here. It starts on the relay's hello, so work the
 	// relay is still executing is adopted before anything new is claimed — otherwise a claim
@@ -242,6 +256,10 @@ func (s *SessionService) escalate(session *sessionState, verdict churnVerdict) {
 func (s *SessionService) close(session *sessionState) {
 	session.stop()
 	s.live.remove(session)
+	// Recorded as ended, so a clean disconnect is distinguishable from a relay that vanished.
+	// Guarded on the session identifier inside storage, so a session that has already been
+	// displaced cannot clear the presence its successor now holds.
+	s.releasePresence(session)
 }
 
 type relayIdentity struct {

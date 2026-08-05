@@ -67,6 +67,11 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 				ctx, stranger, organization, uuid.Nil, storage.Page{})
 			return err
 		},
+		"QueryConnections": func() error {
+			_, err := placements.QueryConnections(
+				ctx, stranger, organization, storage.ConnectionQuery{})
+			return err
+		},
 		"CreateConnection": func() error {
 			_, err := placements.CreateConnection(ctx, stranger, organization,
 				storage.NewConnection{
@@ -78,14 +83,61 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		},
 		"RotateConnectionSecret": func() error {
 			return placements.RotateConnectionSecret(
-				ctx, stranger, organization, somebody, randomDigest(t))
+				ctx, stranger, organization, somebody, randomDigest(t), "fingerprint")
 		},
 		"SetConnectionDisabled": func() error {
 			return placements.SetConnectionDisabled(ctx, stranger, organization, somebody, true)
 		},
-		"ListRelays": func() error {
-			_, err := placements.ListRelays(ctx, stranger, organization, storage.Page{})
+		"ReviseConnection": func() error {
+			_, err := placements.ReviseConnection(
+				ctx, stranger, organization, somebody, map[string]any{}, nil)
 			return err
+		},
+		"DeleteConnection": func() error {
+			return placements.DeleteConnection(ctx, stranger, organization, somebody)
+		},
+		"ConnectionDependents": func() error {
+			_, err := placements.ConnectionDependents(ctx, stranger, organization, somebody)
+			return err
+		},
+		"RecordValidation": func() error {
+			_, err := placements.RecordValidation(ctx, stranger, organization, somebody,
+				storage.ValidationResult{Authentication: storage.ReadyAvailable})
+			return err
+		},
+		"ConnectionValidations": func() error {
+			_, err := placements.ConnectionValidations(
+				ctx, stranger, organization, somebody, storage.Page{}, true)
+			return err
+		},
+		"TriggerDeliveryHealth": func() error {
+			_, err := placements.TriggerDeliveryHealth(ctx, stranger, organization, somebody)
+			return err
+		},
+		"TriggerDeliveries": func() error {
+			_, err := placements.TriggerDeliveries(
+				ctx, stranger, organization, somebody, storage.DeliveryQuery{})
+			return err
+		},
+		"RecordTestDelivery": func() error {
+			return placements.RecordTestDelivery(ctx, stranger, organization, somebody)
+		},
+		"ListRelays": func() error {
+			_, err := placements.ListRelays(ctx, stranger, organization, storage.RelayQuery{})
+			return err
+		},
+		"FleetSummary": func() error {
+			_, err := placements.FleetSummary(ctx, stranger, organization, time.Minute, "")
+			return err
+		},
+		"RelayConnections": func() error {
+			_, err := placements.RelayConnections(
+				ctx, stranger, organization, somebody, storage.ConnectionQuery{})
+			return err
+		},
+		"IssueOperatorBootstrapToken": func() error {
+			return placements.IssueOperatorBootstrapToken(ctx, stranger, organization,
+				randomDigest(t), time.Now().Add(time.Hour))
 		},
 		"SessionConflictTrail": func() error {
 			_, err := placements.SessionConflictTrail(
@@ -269,7 +321,7 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 
 	// A gate on the gate. A function added to the operator surface and not listed above would
 	// leave this table quietly smaller, and nothing would say so.
-	const covered = 45
+	const covered = 57
 	if len(refusals) != covered {
 		t.Errorf("this table covers %d store functions and expects %d; a function added to the "+
 			"operator surface has to be added here too, or the boundary it crosses is untested",

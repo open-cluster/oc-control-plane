@@ -116,8 +116,8 @@ func TestOperatorSurface(t *testing.T) {
 				"one row hides every finding after the first",
 				len(roster.Relays), len(registered))
 		}
-		if roster.Next != "" {
-			t.Errorf("a complete list offered a next page at %q", roster.Next)
+		if roster.next() != "" {
+			t.Errorf("a complete list offered a next page at %q", roster.next())
 		}
 		for _, registration := range registered {
 			if relayIn(roster, registration) == nil {
@@ -131,12 +131,14 @@ func TestOperatorSurface(t *testing.T) {
 		if len(first.Relays) != 2 {
 			t.Fatalf("asked for two relays, got %d", len(first.Relays))
 		}
-		if first.Next == "" {
+		if first.next() == "" {
 			t.Fatal("a truncated page offered no way forward; an operator would take it for " +
 				"the whole list")
 		}
 
-		second := readRoster(t, base+"/relays?limit=2&after="+first.Next, token)
+		// `cursor` rather than `after`: the shared table contract names the resume parameter
+		// once, so a console that has learned one listing has learned all of them.
+		second := readRoster(t, base+"/relays?limit=2&cursor="+first.next(), token)
 		if len(second.Relays) == 0 {
 			t.Fatal("the next page is empty")
 		}
@@ -148,7 +150,7 @@ func TestOperatorSurface(t *testing.T) {
 	})
 
 	t.Run("a resume point that came from nowhere is refused", func(t *testing.T) {
-		status, _ := operatorRequest(t, http.MethodGet, base+"/relays?after=not-a-cursor", token)
+		status, _ := operatorRequest(t, http.MethodGet, base+"/relays?cursor=not-a-cursor", token)
 		if status != http.StatusBadRequest {
 			t.Errorf("an invented cursor returned %d, want 400 — starting over silently would "+
 				"show the first page again and read as the last", status)
@@ -457,9 +459,27 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 // These mirror what the operator surface sends. They are spelled out rather than decoded into
 // a map so that a renamed field breaks here, where the contract is asserted, instead of in
 // whatever reads this months later and quietly stops seeing a finding.
+// The roster now answers in the SHARED table envelope: `items`, `next`, `total`, `partial`,
+// the same shape every list endpoint on this surface uses. That is a deliberate breaking change
+// — one contract for a console to build one table against — and this type is where a regression
+// back to a bespoke shape would show up.
 type rosterResponse struct {
-	Relays []relayResponse `json:"relays"`
-	Next   string          `json:"next"`
+	Relays  []relayResponse `json:"items"`
+	Next    *string         `json:"next"`
+	Total   *int            `json:"total"`
+	Partial []struct {
+		Field  string `json:"field"`
+		Reason string `json:"reason"`
+	} `json:"partial"`
+}
+
+// next renders the resume position, so assertions read the same as they did when it was a plain
+// string. Absent means this is the last page, which is the fact the pointer carries.
+func (r rosterResponse) next() string {
+	if r.Next == nil {
+		return ""
+	}
+	return *r.Next
 }
 
 type relayResponse struct {

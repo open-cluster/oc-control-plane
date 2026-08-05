@@ -375,6 +375,36 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 			"one idempotent operation replaces the enable and disable pair"},
 		{"POST /operator/v1/organizations/{organization}/connections/{connection}/trigger/rotate-secret",
 			"rotating a trigger verification secret says which secret it rotates"},
+
+		// The operations that turn a Connection from a row somebody created into something with
+		// a history. Each is named here because each is a thing the frontend's contract declares
+		// and the control plane did not serve, and an absence is exactly what nobody notices.
+		{"GET /operator/v1/organizations/{organization}/connections/{connection}",
+			"a Connection has a detail route carrying its state, its credential metadata and its delivery health"},
+		{"PATCH /operator/v1/organizations/{organization}/connections/{connection}",
+			"revising a configuration increments its revision, so \"it changed\" is answerable"},
+		{"DELETE /operator/v1/organizations/{organization}/connections/{connection}",
+			"a Connection nothing depends on can be removed; one with a history is refused with what depends on it"},
+		{"GET /operator/v1/organizations/{organization}/connections/{connection}/dependents",
+			"what depends on a Connection is answerable before an operator tries to remove it"},
+		{"POST /operator/v1/organizations/{organization}/connections/{connection}/validate",
+			"validating is what separates a Connection that is configured from one that works"},
+		{"GET /operator/v1/organizations/{organization}/connections/{connection}/validations",
+			"validation history is what tells an outage from a configuration that never worked"},
+		{"GET /operator/v1/organizations/{organization}/connections/{connection}/deliveries",
+			"delivery history is what correlates a missed investigation with a missed delivery"},
+		{"POST /operator/v1/organizations/{organization}/connections/{connection}/trigger/test-event",
+			"intake can be verified without waiting for a real incident"},
+
+		// The fleet. A hundred relays is a hundred rows, and a hundred rows is not an assessment.
+		{"GET /operator/v1/organizations/{organization}/relays/summary",
+			"a fleet is assessable without reading every row"},
+		{"GET /operator/v1/organizations/{organization}/relays/{registration}/connections",
+			"what a Relay serves is what disabling it costs"},
+		{"POST /operator/v1/organizations/{organization}/relays/bootstrap-tokens",
+			"installing a Relay does not require sharing a permanent secret"},
+		{"GET /operator/v1/organizations/{organization}/relays/{registration}/failures",
+			"an intermittent Relay is diagnosed from the record rather than from who was watching"},
 	} {
 		if !served[wanted.key] {
 			t.Errorf("%s is not served; %s", wanted.key, wanted.reason)

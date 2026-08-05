@@ -102,9 +102,17 @@ var granted = map[Role]map[Permission]bool{
 	OrganizationOwner:     setOf(allPermissions...),
 	PlatformAdministrator: without(setOf(allPermissions...), MemberOwnerManage),
 
+	// The role that actually runs the estate. It gains the Connection lifecycle in full —
+	// validating, revising and the narrow delete — because those are the operations that turn
+	// "configured" into "known to work", and a role that may create a Connection and never check
+	// it is a role that can only leave the estate in a state somebody else has to verify.
+	//
+	// It does NOT gain relay.bootstrap-token.issue. Enrolling a Relay is installing
+	// infrastructure into the tenant, and it stays with the two administrative roles.
 	IntegrationManager: setOf(append(append([]Permission(nil), everyRead...),
 		EnvironmentCreate, EnvironmentUpdate, EnvironmentDelete,
-		ConnectionCreate, ConnectionUpdate, ConnectionSecretRotate,
+		ConnectionCreate, ConnectionUpdate, ConnectionDelete, ConnectionValidate,
+		ConnectionSecretRotate,
 	)...),
 
 	Investigator: setOf(append(append([]Permission(nil), everyRead...),
@@ -115,8 +123,14 @@ var granted = map[Role]map[Permission]bool{
 	// turning a Connection off is the remediation this surface actually offers. Recording a
 	// performed remediation (story 17) has no route yet and therefore no permission; adding
 	// the route is the investigation outcome slice's work, not this one's.
+	//
+	// Validating is here for the incident itself. "Is this Connection actually working, or have
+	// we been reasoning from a source that stopped answering an hour ago" is a question a
+	// responder has at three in the morning, and making them wake an administrator to ask it is
+	// the kind of gap that gets worked around with a shared credential.
 	Responder: setOf(append(append([]Permission(nil), everyRead...),
 		InvestigationOpen, InvestigationCancel, InvestigationReopen, ConnectionUpdate,
+		ConnectionValidate,
 	)...),
 
 	Viewer:  setOf(everyRead...),

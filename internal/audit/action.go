@@ -39,9 +39,22 @@ const (
 	ActionConnectionCreated  Action = "connection.created"
 	ActionConnectionEnabled  Action = "connection.enabled-set"
 	ActionConnectionRotated  Action = "connection.trigger-secret.rotated"
-	ActionRelayRosterRead    Action = "relay.roster.read"
-	ActionConflictTrailRead  Action = "relay.conflict-trail.read"
-	ActionConflictCleared    Action = "relay.conflict.cleared"
+	// A Connection's lifecycle. Revising and validating are separate actions because they are
+	// separate claims: one says the configuration changed, the other says somebody checked what
+	// the configuration reaches. Deleting is here because the product now has a delete — a
+	// narrow one, refused the moment anything depends on the Connection — and an operation that
+	// removes a record has to be as attributable as the one that made it.
+	ActionConnectionRevised   Action = "connection.revised"
+	ActionConnectionValidated Action = "connection.validated"
+	ActionConnectionDeleted   Action = "connection.deleted"
+	// A test event is recorded because it enters the delivery history, and a delivery in the
+	// history that nobody can attribute to an operator would be indistinguishable from one the
+	// customer's own system sent.
+	ActionTriggerTested        Action = "connection.trigger.test-event"
+	ActionRelayRosterRead      Action = "relay.roster.read"
+	ActionConflictTrailRead    Action = "relay.conflict-trail.read"
+	ActionConflictCleared      Action = "relay.conflict.cleared"
+	ActionRelayBootstrapIssued Action = "relay.bootstrap-token.issued"
 
 	// Investigations.
 	ActionInvestigationOpened    Action = "investigation.opened"
