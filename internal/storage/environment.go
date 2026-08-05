@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -62,9 +64,15 @@ type EnvironmentList struct {
 // Two concurrent first calls do not produce two Defaults. The partial unique index decides,
 // and the loser reads the winner's row rather than failing, because both callers asked for the
 // same thing and both should get it.
+// It writes no audit event, and that is deliberate: creating the Default is the product
+// keeping a promise it made to itself, not an act an operator performed. Recording it would
+// make the trail read as though somebody created a scope every time a page was opened.
 func (p *Placements) EnsureDefaultEnvironment(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) (Environment, error) {
+	if !principal.MemberOf(organization) {
+		return Environment{}, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return Environment{}, err
@@ -101,62 +109,86 @@ func (p *Placements) EnsureDefaultEnvironment(
 	return environment, nil
 }
 
-// CreateEnvironment adds a scope with the name the operator chose.
+// CreateEnvironment adds a scope with the name the operator chose, and the record of who did.
 func (p *Placements) CreateEnvironment(
-	ctx context.Context, organization tenancy.Organization, name string,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	name string,
 ) (Environment, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return Environment{}, err
-	}
-
-	var environment Environment
-	err = pool.QueryRow(ctx, `
-		INSERT INTO environment (environment_id, organization, name)
-		VALUES ($1, $2, $3)
-		RETURNING environment_id, name, is_default, created_at, updated_at`,
-		uuid.New(), organization.String(), name).
-		Scan(&environment.ID, &environment.Name, &environment.IsDefault,
-			&environment.CreatedAt, &environment.UpdatedAt)
-	if isUniqueViolation(err, "environment_name_is_unique_per_organization") {
-		return Environment{}, ErrEnvironmentNameTaken
-	}
-	if err != nil {
-		return Environment{}, fmt.Errorf("creating an environment: %w", err)
-	}
-	return environment, nil
+	return audited(ctx, p, principal, organization, audit.ActionEnvironmentCreated,
+		func(ctx context.Context, transaction pgx.Tx) (
+			Environment, audit.Target, audit.Detail, error,
+		) {
+			var environment Environment
+			err := transaction.QueryRow(ctx, `
+				INSERT INTO environment (environment_id, organization, name)
+				VALUES ($1, $2, $3)
+				RETURNING environment_id, name, is_default, created_at, updated_at`,
+				uuid.New(), organization.String(), name).
+				Scan(&environment.ID, &environment.Name, &environment.IsDefault,
+					&environment.CreatedAt, &environment.UpdatedAt)
+			if isUniqueViolation(err, "environment_name_is_unique_per_organization") {
+				return Environment{}, audit.Target{}, nil, ErrEnvironmentNameTaken
+			}
+			if err != nil {
+				return Environment{}, audit.Target{}, nil,
+					fmt.Errorf("creating an environment: %w", err)
+			}
+			return environment,
+				audit.Target{Kind: audit.TargetEnvironment, ID: environment.ID.String()},
+				audit.Detail{"name": environment.Name}, nil
+		})
 }
 
 // RenameEnvironment changes what a scope is called and nothing else. The identity is
 // untouched, so everything referring to it keeps referring to it — which is the whole reason
 // the name is an attribute rather than the key.
 func (p *Placements) RenameEnvironment(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, name string,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID, name string,
 ) (Environment, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return Environment{}, err
-	}
+	return audited(ctx, p, principal, organization, audit.ActionEnvironmentRenamed,
+		func(ctx context.Context, transaction pgx.Tx) (
+			Environment, audit.Target, audit.Detail, error,
+		) {
+			// The previous name is read under FOR UPDATE rather than joined into the UPDATE,
+			// so the value the record reports as "before" is the one this statement replaced
+			// and not one a concurrent rename wrote in between.
+			var before string
+			err := transaction.QueryRow(ctx, `
+				SELECT name FROM environment
+				 WHERE environment_id = $1 AND organization = $2 FOR UPDATE`,
+				id, organization.String()).Scan(&before)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Environment{}, audit.Target{}, nil, ErrEnvironmentUnknown
+			}
+			if err != nil {
+				return Environment{}, audit.Target{}, nil,
+					fmt.Errorf("reading an environment: %w", err)
+			}
 
-	var environment Environment
-	err = pool.QueryRow(ctx, `
-		UPDATE environment
-		   SET name = $3, updated_at = now()
-		 WHERE environment_id = $1 AND organization = $2
-		RETURNING environment_id, name, is_default, created_at, updated_at`,
-		id, organization.String(), name).
-		Scan(&environment.ID, &environment.Name, &environment.IsDefault,
-			&environment.CreatedAt, &environment.UpdatedAt)
-	if isUniqueViolation(err, "environment_name_is_unique_per_organization") {
-		return Environment{}, ErrEnvironmentNameTaken
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Environment{}, ErrEnvironmentUnknown
-	}
-	if err != nil {
-		return Environment{}, fmt.Errorf("renaming an environment: %w", err)
-	}
-	return environment, nil
+			var environment Environment
+			err = transaction.QueryRow(ctx, `
+				UPDATE environment
+				   SET name = $3, updated_at = now()
+				 WHERE environment_id = $1 AND organization = $2
+				RETURNING environment_id, name, is_default, created_at, updated_at`,
+				id, organization.String(), name).
+				Scan(&environment.ID, &environment.Name, &environment.IsDefault,
+					&environment.CreatedAt, &environment.UpdatedAt)
+			if isUniqueViolation(err, "environment_name_is_unique_per_organization") {
+				return Environment{}, audit.Target{}, nil, ErrEnvironmentNameTaken
+			}
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Environment{}, audit.Target{}, nil, ErrEnvironmentUnknown
+			}
+			if err != nil {
+				return Environment{}, audit.Target{}, nil,
+					fmt.Errorf("renaming an environment: %w", err)
+			}
+			return environment,
+				audit.Target{Kind: audit.TargetEnvironment, ID: environment.ID.String()},
+				audit.Detail{"before": before, "after": environment.Name}, nil
+		})
 }
 
 // DeleteEnvironment removes a scope that nothing is inside.
@@ -164,28 +196,31 @@ func (p *Placements) RenameEnvironment(
 // Both refusals are decided in one statement rather than read and then acted on, so a
 // Connection created between the check and the delete cannot lose its Environment.
 func (p *Placements) DeleteEnvironment(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID,
 ) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-
-	tag, err := pool.Exec(ctx, `
-		DELETE FROM environment
-		 WHERE environment_id = $1
-		   AND organization   = $2
-		   AND NOT is_default
-		   AND NOT EXISTS (SELECT 1 FROM connection
-		                    WHERE connection.environment_id = environment.environment_id)`,
-		id, organization.String())
-	if err != nil {
-		return fmt.Errorf("deleting an environment: %w", err)
-	}
-	if tag.RowsAffected() == 1 {
-		return nil
-	}
-	return p.explainRefusedDelete(ctx, organization, id)
+	_, err := audited(ctx, p, principal, organization, audit.ActionEnvironmentDeleted,
+		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
+			tag, err := transaction.Exec(ctx, `
+				DELETE FROM environment
+				 WHERE environment_id = $1
+				   AND organization   = $2
+				   AND NOT is_default
+				   AND NOT EXISTS (SELECT 1 FROM connection
+				                    WHERE connection.environment_id = environment.environment_id)`,
+				id, organization.String())
+			if err != nil {
+				return struct{}{}, audit.Target{}, nil,
+					fmt.Errorf("deleting an environment: %w", err)
+			}
+			if tag.RowsAffected() != 1 {
+				return struct{}{}, audit.Target{}, nil,
+					p.explainRefusedDelete(ctx, organization, id)
+			}
+			return struct{}{},
+				audit.Target{Kind: audit.TargetEnvironment, ID: id.String()}, nil, nil
+		})
+	return err
 }
 
 // explainRefusedDelete reads why the guarded delete matched nothing. The three answers call
@@ -228,8 +263,11 @@ func (p *Placements) explainRefusedDelete(
 
 // ListEnvironments returns an organization's scopes, newest first.
 func (p *Placements) ListEnvironments(
-	ctx context.Context, organization tenancy.Organization, page Page,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization, page Page,
 ) (EnvironmentList, error) {
+	if !principal.MemberOf(organization) {
+		return EnvironmentList{}, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return EnvironmentList{}, err

@@ -568,11 +568,11 @@ func evidenceConnection(
 	t.Helper()
 
 	ctx := context.Background()
-	environment, err := placements.EnsureDefaultEnvironment(ctx, organization)
+	environment, err := placements.EnsureDefaultEnvironment(ctx, ownerOf(t, organization), organization)
 	if err != nil {
 		t.Fatalf("ensuring the default environment: %v", err)
 	}
-	created, err := placements.CreateConnection(ctx, organization, storage.NewConnection{
+	created, err := placements.CreateConnection(ctx, ownerOf(t, organization), organization, storage.NewConnection{
 		Environment:       environment.ID,
 		Integration:       "kubernetes",
 		Name:              "cluster " + uuid.NewString(),

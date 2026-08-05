@@ -470,7 +470,6 @@ func TestInvestigation_CancellingIsTerminalAndDispatchesNothingFurther(t *testin
 
 	opened := plane.openInvestigation(t, time.Hour)
 	plane.awaitRunning(t, opened.Investigation.ID)
-	dispatchedBefore := plane.relayJobCount(t)
 
 	status, body, _ := plane.call(t, http.MethodPost,
 		plane.base()+"/"+opened.Investigation.ID+"/cancel", nil, nil)
@@ -484,12 +483,20 @@ func TestInvestigation_CancellingIsTerminalAndDispatchesNothingFurther(t *testin
 			summary.Investigation.Terminal)
 	}
 
-	// Nothing further is dispatched. The worker discovers on its next fenced write that it no
+	// Nothing FURTHER is dispatched. The worker discovers on its next fenced write that it no
 	// longer owns the round and stops.
+	//
+	// The count is taken AFTER the cancellation has committed rather than before it. A read
+	// taken beforehand races the worker: the opening plan's reads are dispatched by a goroutine
+	// that is running while the cancellation is in flight, so a job dispatched CONCURRENTLY
+	// would be counted as one dispatched AFTER — and the test would fail for a job the
+	// cancellation was never supposed to prevent. What the property actually says is that the
+	// count stops growing once the case is terminal, and that is what this measures.
+	atCancellation := plane.relayJobCount(t)
 	time.Sleep(2 * time.Second)
-	if after := plane.relayJobCount(t); after != dispatchedBefore {
-		t.Errorf("%d relay jobs existed at cancellation and %d after; a cancelled case must "+
-			"dispatch nothing further", dispatchedBefore, after)
+	if after := plane.relayJobCount(t); after != atCancellation {
+		t.Errorf("%d relay jobs existed once the case was terminal and %d two seconds later; "+
+			"a cancelled case must dispatch nothing further", atCancellation, after)
 	}
 	// Cancelling twice is a conflict rather than a second cancellation.
 	if status, _, _ = plane.call(t, http.MethodPost,

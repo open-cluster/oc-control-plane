@@ -15,6 +15,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -499,4 +500,41 @@ func TestPing_ReportsReachabilityOfEveryPlacement(t *testing.T) {
 	if err := unreachable.Ping(ctx); err == nil {
 		t.Error("an unreachable placement must fail Ping so readiness reports unready")
 	}
+}
+
+// ownerOf is the principal these tests act as: an owner of the organization under test.
+//
+// Every operator-facing store function takes one, because the tenancy boundary is checked here
+// as well as in the authorization middleware. That duplication is what the boundary tests below
+// exercise: a call made from a path nobody routed through the middleware is still refused.
+func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
+	t.Helper()
+	return memberOf(t, organization, authz.OrganizationOwner)
+}
+
+// memberOf builds a principal holding one role in one organization.
+func memberOf(
+	t *testing.T, organization tenancy.Organization, role authz.Role,
+) authz.Principal {
+	t.Helper()
+
+	principal, err := authz.NewPrincipal(authz.KindUser, "user-under-test", "Test Operator",
+		[]authz.Membership{{Organization: organization, Role: role}})
+	if err != nil {
+		t.Fatalf("building a principal: %v", err)
+	}
+	return principal
+}
+
+// aStranger is a principal who holds a role somewhere else entirely. It is what the boundary
+// tests present to prove that a store function refuses a caller with no membership, rather than
+// proving only that a caller with one is served.
+func aStranger(t *testing.T) authz.Principal {
+	t.Helper()
+
+	elsewhere, err := tenancy.NewOrganization("org-somebody-else")
+	if err != nil {
+		t.Fatalf("naming another organization: %v", err)
+	}
+	return memberOf(t, elsewhere, authz.OrganizationOwner)
 }

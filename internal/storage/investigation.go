@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -37,49 +39,63 @@ const investigationColumns = `
 // Relay. One refusal covers all four, for the reason a refused job's does: which half of a crossed
 // boundary was wrong is not a fact worth handing back.
 func (p *Placements) OpenInvestigation(
-	ctx context.Context, organization tenancy.Organization, wanted investigation.New,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	wanted investigation.New,
 ) (investigation.Investigation, error) {
 	if err := wanted.Validate(); err != nil {
 		return investigation.Investigation{}, err
 	}
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return investigation.Investigation{}, err
-	}
+	return audited(ctx, p, principal, organization, audit.ActionInvestigationOpened,
+		func(ctx context.Context, transaction pgx.Tx) (
+			investigation.Investigation, audit.Target, audit.Detail, error,
+		) {
+			row := transaction.QueryRow(ctx, `
+				INSERT INTO investigation
+					(investigation_id, organization, environment_id, connection_id, episode_key,
+					 namespace, workload_kind, workload_name, window_start, window_end,
+					 trigger_kind, requested_by, triggered_at, lifecycle)
+				SELECT $1, $2, connection.environment_id, connection.connection_id, $4,
+				       $5, $6, $7, $8, $9, $10, $11, $12, $13
+				  FROM connection
+				 WHERE connection.connection_id = $3
+				   AND connection.organization  = $2
+				   AND connection.disabled_at  IS NULL
+				   -- 2 evidence, 3 both. A trigger-only Connection answers nothing outbound, so
+				   -- there is nothing for a capability read to reach through it.
+				   AND connection.role         IN (2, 3)
+				   -- Every capability this build dispatches runs in the customer's own
+				   -- infrastructure, so a case against a Connection no Relay serves could never
+				   -- make a read. Stated as the binding rather than as the locality, because the
+				   -- binding is the thing that is needed.
+				   AND connection.relay_registration_id IS NOT NULL
+				RETURNING `+investigationColumns,
+				uuid.New(), organization.String(), wanted.Scope.Connection,
+				nullableText(wanted.EpisodeKey), wanted.Scope.Namespace,
+				int16(wanted.Scope.WorkloadKind), wanted.Scope.WorkloadName,
+				wanted.Window.Start, wanted.Window.End,
+				int16(wanted.Trigger.Kind), wanted.Trigger.RequestedBy, wanted.Trigger.At,
+				int16(investigation.LifecyclePending))
 
-	row := pool.QueryRow(ctx, `
-		INSERT INTO investigation
-			(investigation_id, organization, environment_id, connection_id, episode_key,
-			 namespace, workload_kind, workload_name, window_start, window_end,
-			 trigger_kind, requested_by, triggered_at, lifecycle)
-		SELECT $1, $2, connection.environment_id, connection.connection_id, $4,
-		       $5, $6, $7, $8, $9, $10, $11, $12, $13
-		  FROM connection
-		 WHERE connection.connection_id = $3
-		   AND connection.organization  = $2
-		   AND connection.disabled_at  IS NULL
-		   -- 2 evidence, 3 both. A trigger-only Connection answers nothing outbound, so there is
-		   -- nothing for a capability read to reach through it.
-		   AND connection.role         IN (2, 3)
-		   -- Every capability this build dispatches runs in the customer's own infrastructure, so a
-		   -- case against a Connection no Relay serves could never make a read. Stated as the
-		   -- binding rather than as the locality, because the binding is the thing that is needed.
-		   AND connection.relay_registration_id IS NOT NULL
-		RETURNING `+investigationColumns,
-		uuid.New(), organization.String(), wanted.Scope.Connection, nullableText(wanted.EpisodeKey),
-		wanted.Scope.Namespace, int16(wanted.Scope.WorkloadKind), wanted.Scope.WorkloadName,
-		wanted.Window.Start, wanted.Window.End,
-		int16(wanted.Trigger.Kind), wanted.Trigger.RequestedBy, wanted.Trigger.At,
-		int16(investigation.LifecyclePending))
-
-	opened, err := scanInvestigation(row, organization.String())
-	if errors.Is(err, pgx.ErrNoRows) {
-		return investigation.Investigation{}, investigation.ErrConnectionUnusable
-	}
-	if err != nil {
-		return investigation.Investigation{}, fmt.Errorf("opening an investigation: %w", err)
-	}
-	return opened, nil
+			opened, err := scanInvestigation(row, organization.String())
+			if errors.Is(err, pgx.ErrNoRows) {
+				return investigation.Investigation{}, audit.Target{}, nil,
+					investigation.ErrConnectionUnusable
+			}
+			if err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil,
+					fmt.Errorf("opening an investigation: %w", err)
+			}
+			// The scope, not the evidence. A case names a namespace and a workload; nothing an
+			// investigation reads from a customer's systems reaches this table.
+			return opened,
+				audit.Target{Kind: audit.TargetInvestigation, ID: opened.ID.String()},
+				audit.Detail{
+					"connectionId":  opened.Scope.Connection.String(),
+					"environmentId": opened.Environment.String(),
+					"namespace":     opened.Scope.Namespace,
+					"workload":      opened.Scope.WorkloadName,
+				}, nil
+		})
 }
 
 // Investigation reads one case, scoped to the tenant.
@@ -197,8 +213,12 @@ func (p *Placements) InvestigationsAwaitingWork(
 // lease without raising the generation would let that worker keep writing into a case an operator
 // has been told is cancelled.
 func (p *Placements) CancelInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID,
 ) error {
+	if !principal.MemberOf(organization) {
+		return ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return err
@@ -257,6 +277,20 @@ func (p *Placements) CancelInvestigation(
 		                     AND job_id          IS NOT NULL)`,
 		id, organization.String()); err != nil {
 		return fmt.Errorf("cancelling an investigation's dispatched reads: %w", err)
+	}
+
+	// Recorded in the same transaction as the cancellation. A case an operator stopped, with
+	// nothing saying who stopped it, is precisely the question this slice exists to answer.
+	if err = writeEvent(ctx, transaction, audit.Event{
+		Organization:  organization.String(),
+		Actor:         principal.Actor(),
+		Action:        audit.ActionInvestigationCancelled,
+		Target:        audit.Target{Kind: audit.TargetInvestigation, ID: id.String()},
+		Outcome:       audit.OutcomeAllowed,
+		SourceAddress: principal.SourceAddress(),
+		RequestID:     principal.RequestID(),
+	}); err != nil {
+		return err
 	}
 
 	if err = transaction.Commit(ctx); err != nil {

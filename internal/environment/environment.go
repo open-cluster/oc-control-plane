@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -42,18 +43,24 @@ type Handlers struct {
 	Logger     *slog.Logger
 }
 
-// Mount registers the environment routes behind the operator surface's own authorization.
-// This package does not know how a caller is authenticated and must not: one surface owns
-// that decision, and a second copy of it is a second place for it to be wrong.
-func (h Handlers) Mount(mux *http.ServeMux, authorized func(http.Handler) http.Handler) {
-	mux.Handle("GET /operator/v1/organizations/{organization}/environments",
-		authorized(http.HandlerFunc(h.list)))
-	mux.Handle("POST /operator/v1/organizations/{organization}/environments",
-		authorized(http.HandlerFunc(h.create)))
-	mux.Handle("PATCH /operator/v1/organizations/{organization}/environments/{environment}",
-		authorized(http.HandlerFunc(h.rename)))
-	mux.Handle("DELETE /operator/v1/organizations/{organization}/environments/{environment}",
-		authorized(http.HandlerFunc(h.delete)))
+// Routes is this capability's contribution to the operator API's index.
+//
+// This package does not know how a caller is authenticated and must not: one surface owns that
+// decision, and a second copy of it is a second place for it to be wrong. What it does declare
+// is the permission each route needs, because only this package knows what its routes do.
+func (h Handlers) Routes() authz.Table {
+	const base = "/operator/v1/organizations/{organization}/environments"
+
+	return authz.Table{
+		authz.Privileged(http.MethodGet, base, authz.EnvironmentRead,
+			http.HandlerFunc(h.list)),
+		authz.Privileged(http.MethodPost, base, authz.EnvironmentCreate,
+			http.HandlerFunc(h.create)),
+		authz.Privileged(http.MethodPatch, base+"/{environment}", authz.EnvironmentUpdate,
+			http.HandlerFunc(h.rename)),
+		authz.Privileged(http.MethodDelete, base+"/{environment}", authz.EnvironmentDelete,
+			http.HandlerFunc(h.delete)),
+	}
 }
 
 // list reports an organization's scopes.
@@ -64,6 +71,10 @@ func (h Handlers) Mount(mux *http.ServeMux, authorized func(http.Handler) http.H
 // actually kept. Doing it on the read rather than the write means an operator who has never
 // touched this API still finds a scope to put a Connection in.
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, ok := h.organization(writer, request)
 	if !ok {
 		return
@@ -71,12 +82,12 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	if _, err := h.Placements.EnsureDefaultEnvironment(ctx, organization); err != nil {
+	if _, err := h.Placements.EnsureDefaultEnvironment(ctx, principal, organization); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
-	list, err := h.Placements.ListEnvironments(ctx, organization, storage.Page{
+	list, err := h.Placements.ListEnvironments(ctx, principal, organization, storage.Page{
 		Limit: pageSize(request),
 		After: request.URL.Query().Get("after"),
 	})
@@ -89,7 +100,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	h.Logger.InfoContext(ctx, "operator read environments",
 		slog.String("organization", organization.String()),
 		slog.Int("environments", len(list.Environments)),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 
 	views := make([]environmentView, 0, len(list.Environments))
 	for _, environment := range list.Environments {
@@ -99,6 +110,10 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, ok := h.organization(writer, request)
 	if !ok {
 		return
@@ -117,12 +132,12 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 
 	// The Default must exist before anything else does, so that an organization whose first
 	// action is creating a second scope still ends up with one marked Default.
-	if _, err := h.Placements.EnsureDefaultEnvironment(ctx, organization); err != nil {
+	if _, err := h.Placements.EnsureDefaultEnvironment(ctx, principal, organization); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
-	created, err := h.Placements.CreateEnvironment(ctx, organization, name)
+	created, err := h.Placements.CreateEnvironment(ctx, principal, organization, name)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -130,13 +145,17 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 	h.Logger.InfoContext(ctx, "operator created an environment",
 		slog.String("organization", organization.String()),
 		slog.String("environment_id", created.ID.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 	writeJSON(writer, http.StatusCreated, viewOf(created))
 }
 
 // rename changes what a scope is called. The identity survives, which is the property
 // everything pointing at an Environment depends on.
 func (h Handlers) rename(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -153,7 +172,7 @@ func (h Handlers) rename(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	renamed, err := h.Placements.RenameEnvironment(ctx, organization, id, name)
+	renamed, err := h.Placements.RenameEnvironment(ctx, principal, organization, id, name)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -161,11 +180,15 @@ func (h Handlers) rename(writer http.ResponseWriter, request *http.Request) {
 	h.Logger.InfoContext(ctx, "operator renamed an environment",
 		slog.String("organization", organization.String()),
 		slog.String("environment_id", renamed.ID.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 	writeJSON(writer, http.StatusOK, viewOf(renamed))
 }
 
 func (h Handlers) delete(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -173,14 +196,14 @@ func (h Handlers) delete(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	if err := h.Placements.DeleteEnvironment(ctx, organization, id); err != nil {
+	if err := h.Placements.DeleteEnvironment(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	h.Logger.InfoContext(ctx, "operator deleted an environment",
 		slog.String("organization", organization.String()),
 		slog.String("environment_id", id.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 	writer.WriteHeader(http.StatusNoContent)
 }
 
@@ -211,8 +234,10 @@ func validName(writer http.ResponseWriter, name string) (string, bool) {
 // own tenant, so saying which it was costs nothing and saves them guessing.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
-	case errors.Is(err, storage.ErrUnknownOrganization):
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not served here"})
+	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
+		// The same answer the authorization middleware gives, and it must stay the same answer:
+		// a different one here would confirm to a caller that a tenant they may not reach exists.
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, storage.ErrEnvironmentUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "environment not found"})
 	case errors.Is(err, storage.ErrEnvironmentNameTaken):
@@ -227,6 +252,15 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	case errors.Is(err, storage.ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "after is not a page position from a previous response"})
+	case errors.Is(err, storage.ErrAuditFailed):
+		// The change was possible and was rolled back because it could not be recorded. Saying
+		// so is the point: an operator told "it worked" about a change nobody can attribute
+		// would have exactly the gap this design refuses to leave.
+		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
+			slog.String("path", request.URL.Path),
+			slog.String("error", err.Error()))
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "the change was refused because it could not be recorded"})
 	default:
 		h.Logger.ErrorContext(request.Context(), "operator environment request failed",
 			slog.String("path", request.URL.Path),
@@ -263,9 +297,31 @@ func (h Handlers) addressed(
 	return organization, id, true
 }
 
-// callerOf reports where a request came from. It is the only identity this surface has: one
-// shared token cannot say who, only from where.
-func callerOf(request *http.Request) string { return request.RemoteAddr }
+// callerName is who acted, for the log lines. The record itself is written by storage from the
+// principal, in the transaction of the change it describes.
+func (h Handlers) callerName(request *http.Request) string {
+	principal, ok := authz.Of(request)
+	if !ok {
+		return request.RemoteAddr
+	}
+	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
+}
+
+// caller resolves the principal the guard put on this request. Its absence is a route mounted
+// outside the permission table, which is a programming error rather than a runtime condition.
+func (h Handlers) caller(
+	writer http.ResponseWriter, request *http.Request,
+) (authz.Principal, bool) {
+	principal, ok := authz.Of(request)
+	if !ok {
+		h.Logger.ErrorContext(request.Context(),
+			"a handler ran with no principal; the route is mounted outside the permission table",
+			slog.String("path", request.URL.Path))
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
+		return authz.Principal{}, false
+	}
+	return principal, true
+}
 
 // pageSize reads how many were asked for. An unreadable value is not an error: the bound is
 // the point, and storage clamps whatever arrives.

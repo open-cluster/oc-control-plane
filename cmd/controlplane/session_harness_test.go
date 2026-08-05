@@ -14,6 +14,7 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -379,11 +380,12 @@ func evidenceConnection(
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	environment, err := placements.EnsureDefaultEnvironment(ctx, organization)
+	acting := ownerOf(t, organization)
+	environment, err := placements.EnsureDefaultEnvironment(ctx, acting, organization)
 	if err != nil {
 		t.Fatalf("ensuring the default environment: %v", err)
 	}
-	created, err := placements.CreateConnection(ctx, organization, storage.NewConnection{
+	created, err := placements.CreateConnection(ctx, acting, organization, storage.NewConnection{
 		Environment:       environment.ID,
 		Integration:       "kubernetes",
 		Name:              "cluster " + uuid.NewString(),
@@ -405,4 +407,18 @@ func namedOrganization(t *testing.T, organization string) tenancy.Organization {
 		t.Fatalf("naming the organization: %v", err)
 	}
 	return named
+}
+
+// ownerOf is the principal a harness acts as when it arranges state through the store rather
+// than through the surface. Every operator-facing store function takes one, because the tenancy
+// boundary is checked in storage as well as in the authorization middleware.
+func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
+	t.Helper()
+
+	principal, err := authz.NewPrincipal(authz.KindUser, "harness", "Test Harness",
+		[]authz.Membership{{Organization: organization, Role: authz.OrganizationOwner}})
+	if err != nil {
+		t.Fatalf("building a principal: %v", err)
+	}
+	return principal
 }

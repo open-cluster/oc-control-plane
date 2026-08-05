@@ -451,9 +451,11 @@ changed behaviour; see `plans/architecture-hardening.md`.
 | 4 — The traced explanation | `spec-traced-explanation.md` | Go control plane | ✅ Built 2026-08-02 and **proved end to end on GLM-5**: `importer` stood as supported off a read justified by the hypothesis it concluded, others were demoted to caveated with the gap naming why. Prompt and schema at version 3; migration 0010. The distractor half is **half done** — see section 3 |
 | 5 — Relay redaction policy | `spec-relay-redaction-policy.md` | Relay and control plane | ✅ Done 2026-08-01. **The real-data gate is lifted** |
 | 6 — Change ledger | `spec-change-ledger.md` | Relay detection, control-plane ledger | 📝 Specified |
+| 7 — Operator identity and RBAC | `spec-operator-api-identity-and-rbac.md` | Go control plane | ✅ Built 2026-08-05, migration 0011. OIDC with PKCE, server-side sessions, seven roles from a permission table, tenancy enforced with a 404, append-only audit. **SAML, SCIM, remediation recording and the frontend's CI contract test are NOT built** — each recorded as deferred with its reason in the specification |
 
 **Not specified, deliberately.** Signal-triggered investigation, Incidents and grouping, canonical
-resource identity, the second alerting adapter, and tenant-scoped operator identity (ADR-006). The
+resource identity, and the second alerting adapter. Tenant-scoped operator identity (ADR-006) WAS
+specified and built on 2026-08-05 — see slice 7 above and the corrected paragraph in section 5. The
 frontend read model was specified and built on 2026-08-01 — see the row above — which resolves the
 last clause of this paragraph as it was written. The first four wait on evidence from the harness. Operator identity is a known
 gap with no new decision behind it. The frontend has no recorded decision about its future at all —
@@ -499,8 +501,21 @@ on the execution path rather than a property of whichever query was written corr
 - Canonical resource identity. The intake specification calls it "the largest unsolved question
   in the product". Chat-initiated investigation, topology and cross-source correlation all
   depend on it. It has one line of design.
-- Identity and authentication. ADR-006 is a decision; no implementation specification exists. The
-  operator surface today has one shared token and no notion of who acted.
+- **RESOLVED 2026-08-05. Identity and authentication are built.** An operator signs in through
+  OIDC with PKCE against a provider their Organization configures; the control plane issues its
+  own opaque server-side session; seven fixed roles are enforced by one middleware reading a
+  permission table that a gate proves complete; a request naming an Organization the caller is
+  not a member of is byte-identical to one naming an Organization that does not exist; and every
+  state change writes an append-only audit row in the transaction that made it. The shared static
+  token survives as a bootstrap credential bound to one Organization and one role.
+
+  What remains absent under this heading, and is recorded as such rather than implied: SAML 2.0
+  and SCIM, which the schema leaves room for and which are their own slice because hand-rolled
+  XML signature verification is the part of that standard with a decade of bypasses behind it; a
+  route through which a responder can record a performed remediation, which belongs to the
+  investigation-outcome slice because it decides what an OutcomeAssessment is; the retention
+  pruner, where the schedule is a column and the surface says out loud that nothing applies it
+  yet; and the frontend's contract-drift test, which lives in another repository.
 - Inventory synchronization (ADR-004). Specified as a concept, unbuilt.
 - Coverage as capability readiness.
 - The frontend against the Go API.

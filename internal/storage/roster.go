@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -36,9 +37,17 @@ type RelayRoster struct {
 }
 
 // ListRelays returns an organization's relay identities, newest first.
+//
+// It takes the principal for the same reason every operator-facing read does: the
+// authorization middleware has already decided, and this is the layer that cannot be reached
+// around. A principal with no membership is refused here even if it arrived from a path
+// nobody routed through the middleware.
 func (p *Placements) ListRelays(
-	ctx context.Context, organization tenancy.Organization, page Page,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization, page Page,
 ) (RelayRoster, error) {
+	if !principal.MemberOf(organization) {
+		return RelayRoster{}, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return RelayRoster{}, err

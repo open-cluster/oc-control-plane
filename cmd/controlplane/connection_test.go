@@ -60,6 +60,11 @@ func startConnectionPlane(t *testing.T) *connectionPlane {
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
+		// The bootstrap credential is bound to ONE organization, which is the difference
+		// between it and the ambient root token it replaces. A request naming the neighbour
+		// below is now refused by the authorization middleware before it reaches a query — the
+		// cross-tenant assertions in these tests assert that refusal rather than a scoped query.
+		cfg.OperatorTokenOrganization = surfaceOrg
 		// The neighbour shares this placement deliberately. An organization with no placement
 		// fails before any query runs, which would leave the cross-tenant assertions passing
 		// against an implementation with no scoping at all.
@@ -136,6 +141,29 @@ func (p *connectionPlane) defaultEnvironment(t *testing.T, organization string) 
 	}
 	t.Fatalf("no default environment in %s", body)
 	return environmentBody{}
+}
+
+// neighbourEnvironment arranges the neighbour tenant's Default Environment through the STORE
+// rather than the surface.
+//
+// It has to. The bootstrap credential is bound to one organization now, so the surface answers
+// 404 for the neighbour — which is the property under test and cannot also be the setup for it.
+// Reaching past the surface to arrange another tenant's state is exactly what makes the
+// assertion that follows meaningful: the row genuinely exists, and the refusal is the boundary
+// rather than an absence.
+func (p *connectionPlane) neighbourEnvironment(t *testing.T, organization string) string {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	placements := openPlacement(t, p.dsn)
+	named := namedOrganization(t, organization)
+	environment, err := placements.EnsureDefaultEnvironment(ctx, ownerOf(t, named), named)
+	if err != nil {
+		t.Fatalf("arranging the neighbour's default environment: %v", err)
+	}
+	return environment.ID.String()
 }
 
 // deliveries numbers each delivery so every body is distinct. Intake deduplicates on the body
@@ -277,33 +305,40 @@ func TestEnvironmentSurface(t *testing.T) {
 		}
 	})
 
-	t.Run("a duplicate name is refused here and allowed elsewhere", func(t *testing.T) {
-		status, _ := plane.call(t, http.MethodPost,
-			base+"/environments", map[string]string{"name": "Staging"})
-		if status != http.StatusConflict {
-			t.Fatalf("a duplicate name in one organization = %d, want 409", status)
-		}
-		// The same name in another organization is a different scope entirely. Uniqueness is
-		// per tenant, and a global one would let one customer's naming constrain another's.
-		status, body := plane.call(t, http.MethodPost,
-			plane.base(neighbourOrg)+"/environments", map[string]string{"name": "Staging"})
-		if status != http.StatusCreated {
-			t.Fatalf("the same name in another organization = %d, want 201: %s", status, body)
-		}
-	})
+	t.Run("a duplicate name is refused, and the neighbour is not reachable at all",
+		func(t *testing.T) {
+			status, _ := plane.call(t, http.MethodPost,
+				base+"/environments", map[string]string{"name": "Staging"})
+			if status != http.StatusConflict {
+				t.Fatalf("a duplicate name in one organization = %d, want 409", status)
+			}
+
+			// Uniqueness is per tenant, and this credential can no longer demonstrate that from
+			// the outside: it is bound to ONE organization, so naming the neighbour answers 404
+			// exactly as naming an organization nobody has does. That the same name IS allowed
+			// in another tenant is asserted where a test can act as both — see
+			// TestBoundary_OneRelayServesConnectionsInTwoEnvironments and its neighbours in
+			// internal/storage.
+			status, body := plane.call(t, http.MethodPost,
+				plane.base(neighbourOrg)+"/environments", map[string]string{"name": "Staging"})
+			if status != http.StatusNotFound {
+				t.Fatalf("the neighbour answered %d, want 404 — a credential bound to one "+
+					"organization must not reach another: %s", status, body)
+			}
+		})
 
 	t.Run("an environment holding connections cannot be deleted, and can once emptied",
 		func(t *testing.T) {
-			status, body := plane.call(t, http.MethodPost,
-				base+"/environments/"+second.ID+"/connections", map[string]any{
-					"integration": "kubernetes",
-					"name":        "the staging cluster",
-					"role":        "evidence",
-					"locality":    "relay",
-					// A relay registration in the same organization, which is the only kind the
-					// composite foreign key admits.
-					"relayRegistrationId": plane.relay.registration.String(),
-				})
+			status, body := plane.call(t, http.MethodPost, base+"/connections", map[string]any{
+				"environmentId": second.ID,
+				"integration":   "kubernetes",
+				"name":          "the staging cluster",
+				"role":          "evidence",
+				"locality":      "relay",
+				// A relay registration in the same organization, which is the only kind the
+				// composite foreign key admits.
+				"relayRegistrationId": plane.relay.registration.String(),
+			})
 			if status != http.StatusCreated {
 				t.Fatalf("creating a connection = %d: %s", status, body)
 			}
@@ -332,11 +367,12 @@ func TestConnectionSurface(t *testing.T) {
 	plane := startConnectionPlane(t)
 	base := plane.base(surfaceOrg)
 	environment := plane.defaultEnvironment(t, surfaceOrg)
-	connections := base + "/environments/" + environment.ID + "/connections"
+	// Organization-wide, with the Environment as a filter rather than a path segment.
+	connections := base + "/connections"
 
 	t.Run("the integrations this build has are something the product states", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet,
-			"http://"+plane.operator+"/operator/v1/integrations", nil)
+			base+"/integrations", nil)
 		if status != http.StatusOK {
 			t.Fatalf("listing integrations = %d: %s", status, body)
 		}
@@ -350,11 +386,12 @@ func TestConnectionSurface(t *testing.T) {
 	var trigger createdConnectionBody
 	t.Run("a trigger connection is created and its secret is shown once", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost, connections, map[string]any{
-			"integration": "alertmanager",
-			"name":        "Production Alertmanager",
-			"role":        "trigger",
-			"locality":    "control_plane",
-			"labels":      map[string]string{"team": "platform"},
+			"environmentId": environment.ID,
+			"integration":   "alertmanager",
+			"name":          "Production Alertmanager",
+			"role":          "trigger",
+			"locality":      "control_plane",
+			"labels":        map[string]string{"team": "platform"},
 		})
 		if status != http.StatusCreated {
 			t.Fatalf("creating = %d: %s", status, body)
@@ -411,7 +448,7 @@ func TestConnectionSurface(t *testing.T) {
 
 	t.Run("a rotated secret accepts the new value and refuses the old", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost,
-			base+"/connections/"+trigger.Connection.ID+"/rotate-secret", nil)
+			base+"/connections/"+trigger.Connection.ID+"/trigger/rotate-secret", nil)
 		if status != http.StatusOK {
 			t.Fatalf("rotating = %d: %s", status, body)
 		}
@@ -437,11 +474,12 @@ func TestConnectionSurface(t *testing.T) {
 
 	t.Run("a weak secret is refused at creation", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost, connections, map[string]any{
-			"integration": "alertmanager",
-			"name":        "A Weakly Configured Alertmanager",
-			"role":        "trigger",
-			"locality":    "control_plane",
-			"secret":      "short",
+			"environmentId": environment.ID,
+			"integration":   "alertmanager",
+			"name":          "A Weakly Configured Alertmanager",
+			"role":          "trigger",
+			"locality":      "control_plane",
+			"secret":        "short",
 		})
 		if status != http.StatusBadRequest {
 			t.Fatalf("a weak secret = %d, want 400: %s", status, body)
@@ -450,11 +488,12 @@ func TestConnectionSurface(t *testing.T) {
 
 	t.Run("a supplied secret that clears the floor is taken as written", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost, connections, map[string]any{
-			"integration": "alertmanager",
-			"name":        "A Self-Configured Alertmanager",
-			"role":        "trigger",
-			"locality":    "control_plane",
-			"secret":      suppliedSecret,
+			"environmentId": environment.ID,
+			"integration":   "alertmanager",
+			"name":          "A Self-Configured Alertmanager",
+			"role":          "trigger",
+			"locality":      "control_plane",
+			"secret":        suppliedSecret,
 		})
 		if status != http.StatusCreated {
 			t.Fatalf("a strong supplied secret = %d, want 201: %s", status, body)
@@ -468,10 +507,23 @@ func TestConnectionSurface(t *testing.T) {
 	})
 
 	t.Run("a disabled connection refuses deliveries and is still listed", func(t *testing.T) {
-		status, body := plane.call(t, http.MethodPost,
-			base+"/connections/"+trigger.Connection.ID+"/disable", nil)
+		enabled := base + "/connections/" + trigger.Connection.ID + "/enabled"
+
+		status, body := plane.call(t, http.MethodPost, enabled, map[string]any{"enabled": false})
 		if status != http.StatusNoContent {
 			t.Fatalf("disabling = %d: %s", status, body)
+		}
+
+		// Idempotent, which is the whole reason the pair became one operation: setting the state
+		// it already holds is not an error, so a retry during an incident is safe.
+		if again, _ := plane.call(t, http.MethodPost, enabled,
+			map[string]any{"enabled": false}); again != http.StatusNoContent {
+			t.Errorf("setting the state it already holds = %d, want 204", again)
+		}
+		// And a body that names no state is refused rather than guessed at.
+		if empty, _ := plane.call(t, http.MethodPost, enabled,
+			map[string]any{}); empty != http.StatusBadRequest {
+			t.Errorf("a body naming no state = %d, want 400", empty)
 		}
 
 		status, listing := plane.call(t, http.MethodGet, connections, nil)
@@ -494,9 +546,8 @@ func TestConnectionSurface(t *testing.T) {
 		}
 
 		// Re-enabled so the rest of the suite is not affected by the order it ran in.
-		if status, body = plane.call(t, http.MethodPost,
-			base+"/connections/"+trigger.Connection.ID+"/enable", nil); status !=
-			http.StatusNoContent {
+		if status, body = plane.call(t, http.MethodPost, enabled,
+			map[string]any{"enabled": true}); status != http.StatusNoContent {
 			t.Fatalf("enabling = %d: %s", status, body)
 		}
 	})
@@ -526,6 +577,10 @@ func TestConnectionSurface(t *testing.T) {
 				"relayRegistrationId": plane.relay.registration.String(),
 			},
 		} {
+			// Each body names a valid Environment, so what is refused is the combination under
+			// test rather than a field somebody forgot — a 400 for the wrong reason would pass
+			// this table and prove nothing.
+			body["environmentId"] = environment.ID
 			if status, answer := plane.call(t, http.MethodPost, connections, body); status !=
 				http.StatusBadRequest {
 				t.Errorf("%s = %d, want 400: %s", name, status, answer)
@@ -533,15 +588,21 @@ func TestConnectionSurface(t *testing.T) {
 		}
 	})
 
-	// The sharpest tenancy assertion available on this surface: one organization's Environment
-	// combined with another's, with both on the same placement so the scoping is the only thing
-	// standing in the way.
+	// The sharpest tenancy assertion available on this surface, and it is now sharper than it
+	// was. Both organizations sit on the same placement deliberately, so the scoping is the only
+	// thing standing in the way — and there are now TWO things standing in the way rather than
+	// one: the membership check refuses the neighbour before any query runs, and the composite
+	// foreign key refuses a crossed Environment even for a caller who is a member.
 	t.Run("one organization's environment cannot hold another's connection", func(t *testing.T) {
-		neighbour := plane.defaultEnvironment(t, neighbourOrg)
+		neighbour := plane.neighbourEnvironment(t, neighbourOrg)
 
+		// A member of surfaceOrg naming the NEIGHBOUR'S Environment. The membership check passes
+		// — this is their own tenant in the path — so what refuses it is the tenant boundary in
+		// the database, which is the half that would still matter if the middleware were wrong.
 		status, body := plane.call(t, http.MethodPost,
-			plane.base(surfaceOrg)+"/environments/"+neighbour.ID+"/connections", map[string]any{
-				"integration": "kubernetes", "name": "reaching across a tenant boundary",
+			plane.base(surfaceOrg)+"/connections", map[string]any{
+				"environmentId": neighbour,
+				"integration":   "kubernetes", "name": "reaching across a tenant boundary",
 				"role": "evidence", "locality": "relay",
 				"relayRegistrationId": plane.relay.registration.String(),
 			})
@@ -549,17 +610,29 @@ func TestConnectionSurface(t *testing.T) {
 			t.Fatalf("naming another organization's environment = %d, want 404: %s", status, body)
 		}
 
-		// And the mirror: this organization's Environment with the neighbour's relay. The relay
-		// belongs to surfaceOrg, so asking as the neighbour must fail on the relay rather than
-		// on the environment — one answer either way, which is the point.
-		status, body = plane.call(t, http.MethodPost,
-			plane.base(neighbourOrg)+"/environments/"+neighbour.ID+"/connections", map[string]any{
-				"integration": "kubernetes", "name": "borrowing another tenant's relay",
+		// And the same request addressed AS the neighbour, which this credential is not a member
+		// of. It is refused one layer earlier and answers identically, which is the property
+		// story 24 asks for: a caller cannot tell the two refusals apart.
+		status, foreign := plane.call(t, http.MethodPost,
+			plane.base(neighbourOrg)+"/connections", map[string]any{
+				"environmentId": neighbour,
+				"integration":   "kubernetes", "name": "borrowing another tenant's relay",
 				"role": "evidence", "locality": "relay",
 				"relayRegistrationId": plane.relay.registration.String(),
 			})
 		if status != http.StatusNotFound {
-			t.Fatalf("naming another organization's relay = %d, want 404: %s", status, body)
+			t.Fatalf("naming another organization = %d, want 404: %s", status, foreign)
+		}
+		// The two bodies differ, and that is correct rather than a leak. Story 24 is about the
+		// ORGANIZATION: a tenant the caller is not a member of must be indistinguishable from
+		// one that does not exist, which is what the second answer is and what
+		// TestOperatorIdentity_AForeignOrganizationLooksLikeOneThatDoesNotExist asserts. The
+		// first answer goes to a member of THIS tenant who named a resource identifier they
+		// already hold, and it collapses "that environment is not yours" and "that relay is not
+		// yours" into one for the same reason.
+		if !containsString(foreign, "organization not found") {
+			t.Errorf("an unreachable organization says %q; it must say what an organization "+
+				"that does not exist says", foreign)
 		}
 	})
 
@@ -573,12 +646,12 @@ func TestConnectionSurface(t *testing.T) {
 		decodeInto(t, body, &other)
 
 		for _, target := range []string{environment.ID, other.ID} {
-			status, answer := plane.call(t, http.MethodPost,
-				base+"/environments/"+target+"/connections", map[string]any{
-					"integration": "kubernetes", "name": "cluster in " + target,
-					"role": "evidence", "locality": "relay",
-					"relayRegistrationId": plane.relay.registration.String(),
-				})
+			status, answer := plane.call(t, http.MethodPost, base+"/connections", map[string]any{
+				"environmentId": target,
+				"integration":   "kubernetes", "name": "cluster in " + target,
+				"role": "evidence", "locality": "relay",
+				"relayRegistrationId": plane.relay.registration.String(),
+			})
 			if status != http.StatusCreated {
 				t.Fatalf("one relay must serve connections in several environments; %s = %d: %s",
 					target, status, answer)

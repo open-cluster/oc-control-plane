@@ -213,6 +213,11 @@ func startInvestigationPlaneWith(
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		digest := sha256.Sum256([]byte(investigationToken))
 		cfg.OperatorTokenDigest = digest[:]
+		// The bootstrap credential is bound to ONE organization, which is the difference
+		// between it and the ambient root token it replaces. A request naming the neighbour
+		// below is now refused by the authorization middleware before it reaches a query — the
+		// cross-tenant assertions in these tests assert that refusal rather than a scoped query.
+		cfg.OperatorTokenOrganization = investigationOrg
 		// The neighbour shares this placement deliberately. An organization with no placement fails
 		// before any query runs, which would leave the cross-tenant assertions passing against an
 		// implementation with no scoping at all.

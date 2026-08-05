@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -18,6 +19,13 @@ import (
 // Every method takes the organization explicitly. An ambient tenant is how one customer is served
 // another customer's rows, and the property is invisible in review.
 //
+// The three methods an OPERATOR reaches also take the principal. The authorization middleware
+// has already checked the membership by the time they are called; taking it here means the
+// check also covers a call made from a path nobody routed through the middleware, and it is
+// what puts the actor in the audit row the write commits alongside itself. The methods the
+// WORKER reaches do not: a lease sweeper is the control plane acting on its own behalf and has
+// no person to name.
+//
 // Every write inside a round takes a Fence. The fence is what stops a worker whose lease expired
 // from writing to the run that outlived it: the write matches nothing and reports ErrLeaseLost
 // rather than succeeding into a round another execution now owns.
@@ -25,15 +33,18 @@ type Store interface {
 	// OpenInvestigation opens a case. The Environment is DERIVED from the Connection inside the
 	// write, so a caller cannot assert one and a Connection disabled between a check and the
 	// insert cannot leave a case open against it.
-	OpenInvestigation(ctx context.Context, org tenancy.Organization, wanted New) (Investigation, error)
+	OpenInvestigation(ctx context.Context, who authz.Principal, org tenancy.Organization,
+		wanted New) (Investigation, error)
 	// Investigation reads one case, scoped to the tenant.
 	Investigation(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Investigation, error)
 	// CancelInvestigation stops a case and its running round. A cancelled case is terminal and
 	// dispatches nothing further.
-	CancelInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID) error
+	CancelInvestigation(ctx context.Context, who authz.Principal, org tenancy.Organization,
+		id uuid.UUID) error
 
 	// OpenRound adds a bounded execution to a case, pinning what it will run under.
-	OpenRound(ctx context.Context, org tenancy.Organization, opening Opening) (Round, error)
+	OpenRound(ctx context.Context, who authz.Principal, org tenancy.Organization,
+		opening Opening) (Round, error)
 	// ClaimRounds leases work for one worker session. Expired leases are claimable again and every
 	// claim raises the generation, so a write from the execution that lost its lease is refused.
 	ClaimRounds(ctx context.Context, org tenancy.Organization, claim RoundClaim) ([]Claimed, error)
@@ -96,6 +107,12 @@ var ErrRoundUnknown = errors.New("investigation round unknown")
 // Opening is a round about to be added to a case, with everything it will run under pinned.
 type Opening struct {
 	InvestigationID uuid.UUID
+	// Reinvestigation says this round was asked for by an operator against a case that had
+	// already settled, rather than being the first round of a case being opened. It exists
+	// because the two are the same write and different acts: one is recorded as the case being
+	// opened and one as it being reinvestigated, and the record has to be able to tell them
+	// apart when somebody asks why a settled case moved.
+	Reinvestigation bool
 	Controls        Controls
 	Plan            Plan
 	Versions        Versions

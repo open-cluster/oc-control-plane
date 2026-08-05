@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -188,10 +190,13 @@ const (
 // a formality: without the trail, the second occurrence would look like the first.
 func (p *Placements) ClearSessionConflict(
 	ctx context.Context,
+	principal authz.Principal,
 	organization tenancy.Organization,
 	registrationID uuid.UUID,
-	withdrawnFrom string,
 ) (ConflictWithdrawal, error) {
+	if !principal.MemberOf(organization) {
+		return 0, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return 0, err
@@ -219,11 +224,32 @@ func (p *Placements) ClearSessionConflict(
 		return p.explainUnwithdrawn(ctx, organization, registrationID)
 	}
 
+	// The conflict trail records WHAT happened to the relay identity. It now records who: the
+	// principal's name goes in the trail's own withdrawnFrom field rather than an address,
+	// which is the limit this surface used to state out loud and no longer has.
 	if err = appendConflictEvent(ctx, transaction, conflictEvent{
 		organization:   organization,
 		registrationID: registrationID,
 		kind:           ConflictWithdrawn,
-		withdrawnFrom:  withdrawnFrom,
+		withdrawnFrom:  principal.DisplayName() + " (" + principal.SourceAddress() + ")",
+	}); err != nil {
+		return 0, err
+	}
+	// And the audit trail records it at warning level, in the same transaction. Withdrawing the
+	// mark destroys a credential-theft finding — it is one of the highest-privilege operations
+	// in the product — so an unrecordable withdrawal must not happen at all.
+	if err = writeEvent(ctx, transaction, audit.Event{
+		Organization:  organization.String(),
+		Actor:         principal.Actor(),
+		Action:        audit.ActionConflictCleared,
+		Target:        audit.Target{Kind: audit.TargetRelay, ID: registrationID.String()},
+		Outcome:       audit.OutcomeAllowed,
+		SourceAddress: principal.SourceAddress(),
+		RequestID:     principal.RequestID(),
+		Detail: audit.Detail{
+			"severity": "warning",
+			"effect":   "a relay credential-theft finding was destroyed",
+		},
 	}); err != nil {
 		return 0, err
 	}
@@ -276,10 +302,14 @@ type ConflictTrail struct {
 // SessionConflictTrail returns what has happened to a relay identity, newest first.
 func (p *Placements) SessionConflictTrail(
 	ctx context.Context,
+	principal authz.Principal,
 	organization tenancy.Organization,
 	registrationID uuid.UUID,
 	page Page,
 ) (ConflictTrail, error) {
+	if !principal.MemberOf(organization) {
+		return ConflictTrail{}, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return ConflictTrail{}, err

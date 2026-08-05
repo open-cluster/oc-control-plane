@@ -58,10 +58,14 @@ type rotatedView struct {
 }
 
 type createRequest struct {
-	Integration string `json:"integration"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`
-	Locality    string `json:"locality"`
+	// EnvironmentID is the scope this Connection belongs to. It moved out of the path when the
+	// collection became Organization-wide; it is still assigned exactly once, here, and the
+	// composite foreign key still refuses one belonging to another tenant.
+	EnvironmentID string `json:"environmentId"`
+	Integration   string `json:"integration"`
+	Name          string `json:"name"`
+	Role          string `json:"role"`
+	Locality      string `json:"locality"`
 	// RelayRegistrationID names the installation that serves a relay-local connection, and is
 	// refused on a central one rather than ignored.
 	RelayRegistrationID string `json:"relayRegistrationId"`
@@ -84,6 +88,10 @@ type integrationsView struct {
 type integrationView struct {
 	Integration string   `json:"integration"`
 	Roles       []string `json:"roles"`
+	// ConfiguredConnections is how many Connections of this Integration the tenant has. It is
+	// the reason this route is Organization-scoped: a catalog nobody can count against is a
+	// list of what the product supports rather than a view of what the customer runs.
+	ConfiguredConnections int `json:"configuredConnections"`
 }
 
 type errorView struct {
@@ -151,4 +159,13 @@ func writeJSON(writer http.ResponseWriter, status int, body any) {
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(body)
+}
+
+// enabledRequest is the body of the one operation that replaced the enable and disable pair.
+//
+// The field is a POINTER so that "I did not say" is distinguishable from "I said false". A
+// missing body defaulting to one direction would be the API deciding, during an incident, what
+// an operator meant about a Connection an investigation may be reading through.
+type enabledRequest struct {
+	Enabled *bool `json:"enabled"`
 }

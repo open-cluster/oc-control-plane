@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -20,9 +22,9 @@ import (
 // mean and what they return; that surface owns who may reach them, and a second copy of that
 // decision would be a second place for it to be wrong.
 //
-// ADR-006 is undecided, so "a resolved principal" is currently one shared token. That is a real
-// limit and it is worth stating: these reads are tenant-scoped and Environment-scoped by
-// construction, and the thing they cannot yet say is WHO asked.
+// The principal is resolved before any of these run, so a case now records who opened it, who
+// cancelled it and who asked for it to be reinvestigated. That is what ADR-006 was open on and
+// what internal/authz and internal/identity now answer.
 
 const (
 	// readTimeout bounds one read, so a query cannot outlive the attention of whoever made it.
@@ -46,27 +48,35 @@ type Handlers struct {
 	Versions Versions
 }
 
-// Mount registers the investigation routes behind the operator surface's own authorization.
-func (h Handlers) Mount(mux *http.ServeMux, authorized func(http.Handler) http.Handler) {
+// Routes is this capability's contribution to the operator API's index.
+//
+// Reading a case and driving one are separate permissions, which is what makes the Viewer role
+// possible: an engineer looped in during an incident sees everything and moves nothing.
+func (h Handlers) Routes() authz.Table {
 	const base = "/operator/v1/organizations/{organization}/investigations"
 
-	mux.Handle("POST "+base, authorized(http.HandlerFunc(h.open)))
-	mux.Handle("GET "+base, authorized(http.HandlerFunc(h.list)))
-	mux.Handle("GET "+base+"/{investigation}", authorized(http.HandlerFunc(h.summary)))
-	mux.Handle("POST "+base+"/{investigation}/cancel", authorized(http.HandlerFunc(h.cancel)))
-	mux.Handle("POST "+base+"/{investigation}/reinvestigate",
-		authorized(http.HandlerFunc(h.reinvestigate)))
+	read := func(pattern string, handler http.HandlerFunc) authz.Route {
+		return authz.Privileged(http.MethodGet, pattern, authz.InvestigationRead, handler)
+	}
+	return authz.Table{
+		authz.Privileged(http.MethodPost, base, authz.InvestigationOpen,
+			http.HandlerFunc(h.open)),
+		read(base, h.list),
+		read(base+"/{investigation}", h.summary),
+		authz.Privileged(http.MethodPost, base+"/{investigation}/cancel",
+			authz.InvestigationCancel, http.HandlerFunc(h.cancel)),
+		authz.Privileged(http.MethodPost, base+"/{investigation}/reinvestigate",
+			authz.InvestigationReopen, http.HandlerFunc(h.reinvestigate)),
 
-	mux.Handle("GET "+base+"/{investigation}/timeline", authorized(http.HandlerFunc(h.timeline)))
-	mux.Handle("GET "+base+"/{investigation}/evidence", authorized(http.HandlerFunc(h.evidence)))
-	mux.Handle("GET "+base+"/{investigation}/evidence/{evidence}",
-		authorized(http.HandlerFunc(h.evidenceItem)))
-	mux.Handle("GET "+base+"/{investigation}/hypotheses",
-		authorized(http.HandlerFunc(h.hypotheses)))
-	mux.Handle("GET "+base+"/{investigation}/coverage-gaps", authorized(http.HandlerFunc(h.gaps)))
-	mux.Handle("GET "+base+"/{investigation}/coverage", authorized(http.HandlerFunc(h.coverage)))
-	mux.Handle("GET "+base+"/{investigation}/activity", authorized(http.HandlerFunc(h.activity)))
-	mux.Handle("GET "+base+"/{investigation}/case-file", authorized(http.HandlerFunc(h.caseFile)))
+		read(base+"/{investigation}/timeline", h.timeline),
+		read(base+"/{investigation}/evidence", h.evidence),
+		read(base+"/{investigation}/evidence/{evidence}", h.evidenceItem),
+		read(base+"/{investigation}/hypotheses", h.hypotheses),
+		read(base+"/{investigation}/coverage-gaps", h.gaps),
+		read(base+"/{investigation}/coverage", h.coverage),
+		read(base+"/{investigation}/activity", h.activity),
+		read(base+"/{investigation}/case-file", h.caseFile),
+	}
 }
 
 // open starts a case from a Connection, a scope and a window, and opens its first round.
@@ -75,6 +85,10 @@ func (h Handlers) Mount(mux *http.ServeMux, authorized func(http.Handler) http.H
 // case they can poll. The round is opened unclaimed: a worker picks it up, which is what makes a
 // control-plane restart between the two recoverable rather than a lost run.
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, ok := h.organization(writer, request)
 	if !ok {
 		return
@@ -86,17 +100,17 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	if !decode(writer, request, &body) {
 		return
 	}
-	wanted, ok := h.plan(writer, body, request)
+	wanted, ok := h.plan(writer, body, principal)
 	if !ok {
 		return
 	}
 
-	opened, err := h.Store.OpenInvestigation(ctx, organization, wanted)
+	opened, err := h.Store.OpenInvestigation(ctx, principal, organization, wanted)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	if _, err = h.Store.OpenRound(ctx, organization, Opening{
+	if _, err = h.Store.OpenRound(ctx, principal, organization, Opening{
 		InvestigationID: opened.ID,
 		Controls:        h.Controls,
 		Plan: Plan{
@@ -115,7 +129,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		slog.String("investigation_id", opened.ID.String()),
 		slog.String("environment_id", opened.Environment.String()),
 		slog.String("connection_id", opened.Scope.Connection.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 
 	summary, err := h.Reader.InvestigationSummary(ctx, organization, opened.ID)
 	if err != nil {
@@ -129,7 +143,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 // plan turns a request into what storage needs, refusing everything that could not work. It answers
 // the caller itself on a refusal, so the handler either has a valid plan or has already returned.
 func (h Handlers) plan(
-	writer http.ResponseWriter, body openRequest, request *http.Request,
+	writer http.ResponseWriter, body openRequest, principal authz.Principal,
 ) (New, bool) {
 	connection, err := uuid.Parse(body.ConnectionID)
 	if err != nil {
@@ -155,7 +169,7 @@ func (h Handlers) plan(
 		Window: Window{Start: body.WindowStart, End: body.WindowEnd},
 		Trigger: Trigger{
 			Kind:        TriggerManual,
-			RequestedBy: callerOf(request),
+			RequestedBy: requestedBy(principal),
 			At:          time.Now(),
 		},
 	}
@@ -231,7 +245,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	h.Logger.InfoContext(ctx, "operator read investigations",
 		slog.String("organization", organization.String()),
 		slog.Int("investigations", len(list.Rows)),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 
 	rows := make([]rowView, 0, len(list.Rows))
 	for _, row := range list.Rows {
@@ -241,6 +255,10 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -248,14 +266,14 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), openTimeout)
 	defer cancel()
 
-	if err := h.Store.CancelInvestigation(ctx, organization, id); err != nil {
+	if err := h.Store.CancelInvestigation(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	h.Logger.InfoContext(ctx, "investigation cancelled",
 		slog.String("organization", organization.String()),
 		slog.String("investigation_id", id.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 	writer.WriteHeader(http.StatusNoContent)
 }
 
@@ -264,6 +282,10 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 // It is a new ROUND rather than a new case: the identity, the URL and the permalink an engineer
 // shared survive, and what they read the first time still exists with its attribution (ADR-013).
 func (h Handlers) reinvestigate(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -276,8 +298,9 @@ func (h Handlers) reinvestigate(writer http.ResponseWriter, request *http.Reques
 		h.fail(writer, request, err)
 		return
 	}
-	if _, err = h.Store.OpenRound(ctx, organization, Opening{
+	if _, err = h.Store.OpenRound(ctx, principal, organization, Opening{
 		InvestigationID: id,
+		Reinvestigation: true,
 		Controls:        h.Controls,
 		Plan: Plan{
 			Template: "kubernetes-workload-v1",
@@ -291,7 +314,7 @@ func (h Handlers) reinvestigate(writer http.ResponseWriter, request *http.Reques
 	h.Logger.InfoContext(ctx, "investigation reopened",
 		slog.String("organization", organization.String()),
 		slog.String("investigation_id", id.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 
 	summary, err := h.Reader.InvestigationSummary(ctx, organization, id)
 	if err != nil {
@@ -300,160 +323,6 @@ func (h Handlers) reinvestigate(writer http.ResponseWriter, request *http.Reques
 	}
 	h.stamp(writer, summary.Investigation.CaseVersion)
 	writeJSON(writer, http.StatusAccepted, summaryViewOf(summary))
-}
-
-func (h Handlers) timeline(writer http.ResponseWriter, request *http.Request) {
-	h.section(writer, request, func(
-		ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	) (any, int64, error) {
-		section, err := h.Reader.InvestigationTimeline(ctx, organization, id, pageOf(request))
-		if err != nil {
-			return nil, 0, err
-		}
-		return renderSection(section, func(item Item) evidenceView {
-			return evidenceViewOf(item, false)
-		}), section.CaseVersion, nil
-	})
-}
-
-func (h Handlers) evidence(writer http.ResponseWriter, request *http.Request) {
-	filter := EvidenceFilter{CapabilityID: request.URL.Query().Get("capability")}
-	if named := request.URL.Query().Get("source"); named != "" {
-		source, err := uuid.Parse(named)
-		if err != nil {
-			writeJSON(writer, http.StatusBadRequest, errorView{Error: "source is not an identity"})
-			return
-		}
-		filter.Source = source
-	}
-	if named := request.URL.Query().Get("stance"); named != "" {
-		stance, known := ParseStance(named)
-		if !known {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: `stance must be "supports", "contradicts" or "neutral"`})
-			return
-		}
-		filter.Stance = stance
-	}
-
-	h.section(writer, request, func(
-		ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	) (any, int64, error) {
-		section, err := h.Reader.InvestigationEvidence(
-			ctx, organization, id, filter, pageOf(request))
-		if err != nil {
-			return nil, 0, err
-		}
-		return renderSection(section, func(item Item) evidenceView {
-			return evidenceViewOf(item, false)
-		}), section.CaseVersion, nil
-	})
-}
-
-// evidenceItem reads one item with its content. It is a separate route from the listing because the
-// content is bounded but large, and a listing that carried it would be the size of its contents.
-func (h Handlers) evidenceItem(writer http.ResponseWriter, request *http.Request) {
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	evidenceID, err := uuid.Parse(request.PathValue("evidence"))
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "evidence is not an identity"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
-	defer cancel()
-
-	item, version, err := h.Reader.EvidenceItem(ctx, organization, id, evidenceID)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	h.stamp(writer, version)
-	writeJSON(writer, http.StatusOK, sectionView[evidenceView]{
-		Items:       []evidenceView{evidenceViewOf(item, true)},
-		CaseVersion: version,
-	})
-}
-
-func (h Handlers) hypotheses(writer http.ResponseWriter, request *http.Request) {
-	h.section(writer, request, func(
-		ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	) (any, int64, error) {
-		section, err := h.Reader.InvestigationHypotheses(ctx, organization, id, pageOf(request))
-		if err != nil {
-			return nil, 0, err
-		}
-		return renderSection(section, hypothesisViewOf), section.CaseVersion, nil
-	})
-}
-
-func (h Handlers) gaps(writer http.ResponseWriter, request *http.Request) {
-	h.section(writer, request, func(
-		ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	) (any, int64, error) {
-		section, err := h.Reader.InvestigationGaps(ctx, organization, id, pageOf(request))
-		if err != nil {
-			return nil, 0, err
-		}
-		return renderSection(section, gapViewOf), section.CaseVersion, nil
-	})
-}
-
-func (h Handlers) coverage(writer http.ResponseWriter, request *http.Request) {
-	h.section(writer, request, func(
-		ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	) (any, int64, error) {
-		section, err := h.Reader.InvestigationCoverage(ctx, organization, id)
-		if err != nil {
-			return nil, 0, err
-		}
-		return renderSection(section, coverageViewOf), section.CaseVersion, nil
-	})
-}
-
-func (h Handlers) activity(writer http.ResponseWriter, request *http.Request) {
-	h.section(writer, request, func(
-		ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	) (any, int64, error) {
-		section, err := h.Reader.InvestigationActivity(ctx, organization, id, pageOf(request))
-		if err != nil {
-			return nil, 0, err
-		}
-		return renderSection(section, activityViewOf), section.CaseVersion, nil
-	})
-}
-
-// caseFile answers the assembled case at a pinned version. One code path serves the shared route,
-// both export formats and the harness artifact, so a share, an export and a scored artifact cannot
-// diverge.
-func (h Handlers) caseFile(writer http.ResponseWriter, request *http.Request) {
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), openTimeout)
-	defer cancel()
-
-	var pinned int64
-	if named := request.URL.Query().Get("version"); named != "" {
-		version, err := strconv.ParseInt(named, 10, 64)
-		if err != nil || version < 1 {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "version is not a case version"})
-			return
-		}
-		pinned = version
-	}
-
-	file, err := h.Reader.AssembleCaseFile(ctx, organization, id, pinned)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	h.stamp(writer, file.CaseVersion)
-	writeJSON(writer, http.StatusOK, caseFileViewOf(file))
 }
 
 // section is the shape every paginated read shares: resolve the tenant and the case, read, stamp
@@ -548,6 +417,16 @@ func (h Handlers) addressed(
 // exists to refuse.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
+	case errors.Is(err, authz.ErrNotAMember):
+		// The same answer the authorization middleware gives. A different one here would
+		// confirm to a caller that a tenant they may not reach exists.
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
+	case errors.Is(err, audit.ErrWriteFailed):
+		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
+			slog.String("path", request.URL.Path),
+			slog.String("error", err.Error()))
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "the change was refused because it could not be recorded"})
 	case errors.Is(err, ErrUnknown), errors.Is(err, ErrRoundUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "investigation not found"})
 	case errors.Is(err, ErrConnectionUnusable):
@@ -580,10 +459,43 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	}
 }
 
-// callerOf reports where a request came from. It is the only identity this surface has: one shared
-// token can say where, never who. That is a limit of ADR-006 being undecided rather than of this
-// record, and it is worth knowing when reading an attribution back.
-func callerOf(request *http.Request) string { return request.RemoteAddr }
+// callerName is who acted, for the log lines. The record itself is written by storage from the
+// principal, in the transaction of the change it describes; this is the line an on-call
+// engineer greps.
+func (h Handlers) callerName(request *http.Request) string {
+	principal, ok := authz.Of(request)
+	if !ok {
+		return request.RemoteAddr
+	}
+	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
+}
+
+// requestedBy is what a case records as having asked for it. It is the principal's identifier
+// rather than their name: a case read months later must resolve to a person even if they have
+// since been renamed.
+func requestedBy(principal authz.Principal) string {
+	if principal.ID() == "" {
+		return principal.DisplayName()
+	}
+	return principal.ID()
+}
+
+// caller resolves the principal the guard put on this request. A handler behind the guard
+// always has one; its absence is a route mounted outside the permission table, which is a
+// programming error answered with a 500 and a log line rather than a panic.
+func (h Handlers) caller(
+	writer http.ResponseWriter, request *http.Request,
+) (authz.Principal, bool) {
+	principal, ok := authz.Of(request)
+	if !ok {
+		h.Logger.ErrorContext(request.Context(),
+			"a handler ran with no principal; the route is mounted outside the permission table",
+			slog.String("path", request.URL.Path))
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
+		return authz.Principal{}, false
+	}
+	return principal, true
+}
 
 func pageOf(request *http.Request) Page {
 	page := Page{After: request.URL.Query().Get("after")}

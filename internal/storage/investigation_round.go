@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -48,9 +50,16 @@ const fencedRound = `
 // The ordinal is computed inside the insert. Reading the highest and adding one outside it would
 // let two rounds opened at once take the same number, and the ordinal is what an export names when
 // it says which rounds it includes.
+// A reinvestigation records itself here, in the transaction that opens the round. The first
+// round of a case does not: it is part of the case being opened, and OpenInvestigation already
+// recorded that. Two events for one operator act would make the trail read as two acts.
 func (p *Placements) OpenRound(
-	ctx context.Context, organization tenancy.Organization, opening investigation.Opening,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	opening investigation.Opening,
 ) (investigation.Round, error) {
+	if !principal.MemberOf(organization) {
+		return investigation.Round{}, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return investigation.Round{}, err
@@ -112,6 +121,21 @@ func (p *Placements) OpenRound(
 		opening.InvestigationID, organization.String(), opened.Ordinal,
 		int16(investigation.LifecyclePending)); err != nil {
 		return investigation.Round{}, fmt.Errorf("opening a round: %w", err)
+	}
+
+	if opening.Reinvestigation {
+		if err = writeEvent(ctx, transaction, audit.Event{
+			Organization:  organization.String(),
+			Actor:         principal.Actor(),
+			Action:        audit.ActionReinvestigated,
+			Target:        audit.Target{Kind: audit.TargetInvestigation, ID: opening.InvestigationID.String()},
+			Outcome:       audit.OutcomeAllowed,
+			SourceAddress: principal.SourceAddress(),
+			RequestID:     principal.RequestID(),
+			Detail:        audit.Detail{"round": opened.Ordinal},
+		}); err != nil {
+			return investigation.Round{}, err
+		}
 	}
 
 	if err = transaction.Commit(ctx); err != nil {

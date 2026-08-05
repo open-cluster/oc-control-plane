@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -29,8 +30,10 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
+	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
@@ -39,6 +42,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // version is stamped at release build time via -ldflags; "dev" otherwise.
@@ -471,19 +475,34 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		return nil, nil
 	}
 
+	identities, err := operatorIdentity(process)
+	if err != nil {
+		return nil, err
+	}
+	// The route table becomes a mux HERE, before the listener opens, so a route that cannot be
+	// authorized correctly is a process that refuses to start rather than a route that is
+	// served open. That is the runtime half of "a new route without a declared permission
+	// cannot ship"; the compile-time half is that authz.Privileged takes the permission
+	// positionally, and the gate in internal/gates is the third.
+	router, err := operator.Handlers{
+		Placements: process.placements,
+		Logger:     process.logger,
+		Identity:   identities,
+		Origins:    cfg.OperatorAllowedOrigins,
+		Controls:   process.controls,
+		Versions:   process.versions,
+	}.Router()
+	if err != nil {
+		return nil, fmt.Errorf("assembling the operator surface: %w", err)
+	}
+
 	listener, err := net.Listen("tcp", cfg.OperatorAddress)
 	if err != nil {
 		return nil, fmt.Errorf("listening for operators on %s: %w", cfg.OperatorAddress, err)
 	}
 
 	endpoint := &operatorEndpoint{server: &http.Server{
-		Handler: operator.Handlers{
-			Placements:  process.placements,
-			Logger:      process.logger,
-			TokenDigest: cfg.OperatorTokenDigest,
-			Controls:    process.controls,
-			Versions:    process.versions,
-		}.Router(),
+		Handler: router,
 		// Bounded at every stage, not just the headers. This port answers across tenants and
 		// its connections are unauthenticated until a request has been read, so a client that
 		// opens one and then goes quiet must not be able to hold it.
@@ -503,6 +522,69 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		}
 	}()
 	return endpoint, nil
+}
+
+// operatorIdentity assembles who may reach the operator surface.
+//
+// Everything that could be wrong with the identity configuration is refused HERE, at startup,
+// where the person who wrote it is still the person reading the error: a bootstrap role that
+// names no role this build has, a key of the wrong length, a console on a plaintext origin. A
+// deployment that started with an unusable identity configuration would look healthy and
+// authenticate nobody, and this is the last moment anyone can be told.
+func operatorIdentity(process assembled) (identity.Handlers, error) {
+	cfg := process.config
+
+	handlers := identity.Handlers{
+		Placements: process.placements,
+		Logger:     process.logger,
+		OIDC:       identity.NewOIDC(),
+		PublicURL:  cfg.OperatorPublicURL,
+		ConsoleURL: cfg.OperatorConsoleURL,
+	}
+
+	if len(cfg.IdentityEncryptionKey) > 0 {
+		sealer, err := identity.NewSealer(cfg.IdentityEncryptionKey)
+		if err != nil {
+			return identity.Handlers{}, fmt.Errorf("%s: %w",
+				config.EnvIdentityEncryptionKeyFile, err)
+		}
+		handlers.Sealer = sealer
+	}
+
+	if len(cfg.OperatorTokenDigest) == 0 {
+		return handlers, nil
+	}
+	organization, err := tenancy.NewOrganization(cfg.OperatorTokenOrganization)
+	if err != nil {
+		return identity.Handlers{}, fmt.Errorf("%s: %w",
+			config.EnvOperatorTokenOrganization, err)
+	}
+	// The default is applied here as well as in config.Load, because a Config may be
+	// constructed directly — every harness in this package does — and a composition root that
+	// only worked for configuration that came through the parser would fail in exactly the
+	// place nobody exercises it.
+	named := cfg.OperatorTokenRole
+	if strings.TrimSpace(named) == "" {
+		named = string(authz.OrganizationOwner)
+	}
+	role, known := authz.ParseRole(named)
+	if !known {
+		return identity.Handlers{}, fmt.Errorf(
+			"%s names %q, which is not a role this build has",
+			config.EnvOperatorTokenRole, cfg.OperatorTokenRole)
+	}
+	handlers.Bootstrap = identity.Bootstrap{
+		Digest:       cfg.OperatorTokenDigest,
+		Organization: organization,
+		Role:         role,
+		// Named so an event produced by the bootstrap credential is distinguishable in the
+		// record from one produced by a service account somebody created.
+		Name: "bootstrap credential",
+	}
+	process.logger.Info("bootstrap operator credential configured",
+		slog.String("organization", organization.String()),
+		slog.String("role", string(role)))
+	return handlers, nil
 }
 
 // startIntakeEndpoint listens for alert deliveries when one is configured. A deployment with

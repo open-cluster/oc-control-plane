@@ -160,6 +160,19 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// tenant-scoped, and each one takes the organization this read discovered.
 		"InvestigationsAwaitingWork": "discovers which tenants have a claimable investigation " +
 			"round; reads no tenant data, and every claim it leads to is tenant-scoped",
+		// The three credential lookups, and they are the same case ConnectionByID is. A session
+		// cookie, an API token and an OAuth state parameter name no tenant — a caller who could
+		// name one could try every one — so there is nothing in the request to resolve a
+		// placement from. Each placement is asked for the DIGEST in a fixed order and the row
+		// that is found is itself the authority for the organization. Nothing the caller sent
+		// contributes to the tenant the answer belongs to, which is why they are safe and why
+		// they have to exist.
+		"SessionByToken": "resolves a tenant FROM an opaque session digest; the row found is " +
+			"the authority, and no caller-supplied value selects it",
+		"BearerPrincipal": "resolves a tenant FROM an API token digest; the row found carries " +
+			"the organization and the role, and no caller-supplied value selects it",
+		"RedeemSignIn": "consumes an authorization state that names no tenant; the flow row " +
+			"found is the authority for the organization the sign-in belongs to",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {
@@ -261,6 +274,16 @@ func TestNoEnvironmentVariableNamesASecret(t *testing.T) {
 
 	forbidden := []string{"PASSWORD", "SECRET", "TOKEN", "APIKEY", "API_KEY", "CREDENTIAL"}
 
+	// Variables that name a credential's SCOPE rather than carrying one. Each is listed with
+	// the reason it is safe, so adding to this list is a decision rather than a way around the
+	// gate — and the value each holds is one an operator would put in a deployment manifest
+	// without thinking twice, which is the test.
+	namesTheScope := map[string]string{
+		"OC_OPERATOR_TOKEN_ORGANIZATION": "the one tenant the bootstrap credential reaches; " +
+			"an organization identifier, not a secret",
+		"OC_OPERATOR_TOKEN_ROLE": "the one role it holds there; a role name this build compiles",
+	}
+
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "config")) {
 		ast.Inspect(file, func(node ast.Node) bool {
 			literal, ok := node.(*ast.BasicLit)
@@ -269,6 +292,9 @@ func TestNoEnvironmentVariableNamesASecret(t *testing.T) {
 			}
 			value, err := strconv.Unquote(literal.Value)
 			if err != nil || !strings.HasPrefix(value, "OC_") {
+				return true
+			}
+			if _, scoped := namesTheScope[value]; scoped {
 				return true
 			}
 			for _, word := range forbidden {

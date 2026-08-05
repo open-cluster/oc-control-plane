@@ -60,11 +60,11 @@ func TestBoundary_AJobAgainstATriggerConnectionIsRefused(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	relay := enrolledRelay(t, placements, organization)
 
-	environment, err := placements.EnsureDefaultEnvironment(context.Background(), organization)
+	environment, err := placements.EnsureDefaultEnvironment(context.Background(), ownerOf(t, organization), organization)
 	if err != nil {
 		t.Fatalf("ensuring the default environment: %v", err)
 	}
-	trigger, err := placements.CreateConnection(context.Background(), organization,
+	trigger, err := placements.CreateConnection(context.Background(), ownerOf(t, organization), organization,
 		storage.NewConnection{
 			Environment:  environment.ID,
 			Integration:  "alertmanager",
@@ -104,7 +104,7 @@ func TestBoundary_AJobAgainstADisabledConnectionIsRefused(t *testing.T) {
 	connection := evidenceConnection(t, placements, organization, relay)
 
 	if err := placements.SetConnectionDisabled(
-		context.Background(), organization, connection, true); err != nil {
+		context.Background(), ownerOf(t, organization), organization, connection, true); err != nil {
 		t.Fatalf("disabling the connection: %v", err)
 	}
 
@@ -177,17 +177,17 @@ func TestBoundary_OneRelayServesConnectionsInTwoEnvironments(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	relay := enrolledRelay(t, placements, organization)
 
-	staging, err := placements.CreateEnvironment(context.Background(), organization, "Staging")
+	staging, err := placements.CreateEnvironment(context.Background(), ownerOf(t, organization), organization, "Staging")
 	if err != nil {
 		t.Fatalf("creating an environment: %v", err)
 	}
-	production, err := placements.EnsureDefaultEnvironment(context.Background(), organization)
+	production, err := placements.EnsureDefaultEnvironment(context.Background(), ownerOf(t, organization), organization)
 	if err != nil {
 		t.Fatalf("ensuring the default environment: %v", err)
 	}
 
 	for _, environment := range []uuid.UUID{production.ID, staging.ID} {
-		created, createErr := placements.CreateConnection(context.Background(), organization,
+		created, createErr := placements.CreateConnection(context.Background(), ownerOf(t, organization), organization,
 			storage.NewConnection{
 				Environment:       environment,
 				Integration:       "kubernetes",

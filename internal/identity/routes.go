@@ -1,0 +1,94 @@
+package identity
+
+import (
+	"net/http"
+
+	"github.com/open-cluster/oc-control-plane/internal/authz"
+)
+
+// Base is where every route in this package hangs. Named once so a path correction is a
+// one-line change rather than a search.
+const Base = "/operator/v1"
+
+// organizationBase is the tenant-scoped prefix. Every privileged route on this surface names
+// an organization, which is what lets the guard check a membership uniformly.
+const organizationBase = Base + "/organizations/{organization}"
+
+// Routes is this capability's contribution to the operator API's index.
+//
+// Every entry states how it is reached by which constructor built it. Privileged takes the
+// permission positionally, so a route added without one does not compile — that is the
+// mechanism behind "a new route without a declared permission cannot ship", and the gate in
+// internal/gates is the second half of it.
+//
+// The three public routes are the whole unauthenticated surface of this product, and each is
+// public because a caller who is not signed in is precisely who needs it. The gate holds them
+// to a named list, so a fourth fails the build until somebody records why it exists.
+func (h Handlers) Routes() authz.Table {
+	return authz.Table{
+		// Signing in. Nothing here is behind a credential, because obtaining one is what it is
+		// for. A tenant with no provider configured answers exactly as a tenant that does not
+		// exist does, so this is not a way to enumerate customers.
+		authz.Public(http.MethodGet, organizationBase+"/sign-in/providers",
+			http.HandlerFunc(h.signInProviders)),
+		authz.Public(http.MethodGet, organizationBase+"/sign-in/{provider}",
+			http.HandlerFunc(h.startSignIn)),
+		authz.Public(http.MethodGet, Base+"/sign-in/callback",
+			http.HandlerFunc(h.completeSignIn)),
+
+		// The caller describing themselves. Authenticated rather than privileged: requiring a
+		// permission would mean an Auditor could not sign out, and a person with no membership
+		// yet could not be told that they have none.
+		authz.Authenticated(http.MethodGet, Base+"/session", http.HandlerFunc(h.session)),
+		authz.Authenticated(http.MethodPost, Base+"/session/sign-out",
+			http.HandlerFunc(h.signOut)),
+
+		// How a tenant's people arrive.
+		authz.Privileged(http.MethodGet, organizationBase+"/identity-providers",
+			authz.IdentityRead, http.HandlerFunc(h.listProviders)),
+		authz.Privileged(http.MethodPost, organizationBase+"/identity-providers",
+			authz.IdentityConfigure, http.HandlerFunc(h.createProvider)),
+		authz.Privileged(http.MethodPatch, organizationBase+"/identity-providers/{provider}",
+			authz.IdentityConfigure, http.HandlerFunc(h.updateProvider)),
+		authz.Privileged(http.MethodDelete, organizationBase+"/identity-providers/{provider}",
+			authz.IdentityConfigure, http.HandlerFunc(h.deleteProvider)),
+
+		// Who they are once inside.
+		authz.Privileged(http.MethodGet, organizationBase+"/members",
+			authz.MemberRead, http.HandlerFunc(h.listMembers)),
+		authz.Privileged(http.MethodPut, organizationBase+"/members/{user}",
+			authz.MemberManage, http.HandlerFunc(h.setMember)),
+		authz.Privileged(http.MethodDelete, organizationBase+"/members/{user}",
+			authz.MemberManage, http.HandlerFunc(h.removeMember)),
+
+		// Live sessions and their revocation.
+		authz.Privileged(http.MethodGet, organizationBase+"/sessions",
+			authz.MemberRead, http.HandlerFunc(h.listSessions)),
+		authz.Privileged(http.MethodPost, organizationBase+"/members/{user}/revoke-sessions",
+			authz.SessionRevoke, http.HandlerFunc(h.revokeSessions)),
+
+		// The tenant's own policy.
+		authz.Privileged(http.MethodGet, organizationBase+"/policy",
+			authz.IdentityRead, http.HandlerFunc(h.readPolicy)),
+		authz.Privileged(http.MethodPut, organizationBase+"/policy",
+			authz.IdentityConfigure, http.HandlerFunc(h.writePolicy)),
+
+		// Automation.
+		authz.Privileged(http.MethodGet, organizationBase+"/service-accounts",
+			authz.ServiceAccountRead, http.HandlerFunc(h.listServiceAccounts)),
+		authz.Privileged(http.MethodPost, organizationBase+"/service-accounts",
+			authz.ServiceAccountManage, http.HandlerFunc(h.createServiceAccount)),
+		authz.Privileged(http.MethodDelete, organizationBase+"/service-accounts/{account}",
+			authz.ServiceAccountManage, http.HandlerFunc(h.removeServiceAccount)),
+		authz.Privileged(http.MethodGet, organizationBase+"/api-tokens",
+			authz.TokenRead, http.HandlerFunc(h.listTokens)),
+		authz.Privileged(http.MethodPost, organizationBase+"/api-tokens",
+			authz.TokenManage, http.HandlerFunc(h.issueToken)),
+		authz.Privileged(http.MethodPost, organizationBase+"/api-tokens/{token}/revoke",
+			authz.TokenManage, http.HandlerFunc(h.revokeToken)),
+
+		// The record.
+		authz.Privileged(http.MethodGet, organizationBase+"/audit-events",
+			authz.AuditRead, http.HandlerFunc(h.auditEvents)),
+	}
+}

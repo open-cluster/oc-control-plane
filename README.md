@@ -92,7 +92,11 @@ go run ./cmd/controlplane
 | `internal/environment` | Environments: the scope that groups Connections and bounds evidence |
 | `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute |
 | `internal/investigation` | The case, its rounds, the brief, evidence, hypotheses, coverage gaps, outcomes, the runner and the read models |
-| `internal/operator` | The cross-tenant read surface, behind its own token and its own listener |
+| `internal/identity` | Who an operator is: OIDC sign-in with PKCE, memberships, service accounts, API tokens |
+| `internal/session` | The opaque server-side session and its cookie. No JWT, so sign-out can end it |
+| `internal/authz` | The principal, the seven roles, the permission table, and the one middleware that reads it |
+| `internal/audit` | The append-only record: who did what, to which tenant's what, and whether it was allowed |
+| `internal/operator` | The operator listener and the composition of the route table. Owns no route decisions of its own |
 | `internal/gates` | Build-failing architecture checks, including the dependency boundary |
 
 A package is named after a business capability and never after a layer, and a provider adapter
@@ -156,7 +160,13 @@ Fetching from the private repository needs
 | `OC_RELAY_ADDRESS` | no | Listen address for the Relay endpoint. Empty serves no relays |
 | `OC_RELAY_SPKI_PINS` | with relays | This endpoint's own public key digests, handed to a Relay at enrolment. Comma separated; more than one so a rotation can overlap |
 | `OC_OPERATOR_ADDRESS` | no | Listen address for the operator surface. Empty exposes it nowhere |
-| `OC_OPERATOR_TOKEN_FILE` | with operators | File holding the operator token. At least 32 characters |
+| `OC_OPERATOR_TOKEN_FILE` | with operators | File holding the bootstrap credential. At least 32 characters |
+| `OC_OPERATOR_TOKEN_ORGANIZATION` | with a token | The one Organization that credential reaches. Required, never inferred |
+| `OC_OPERATOR_TOKEN_ROLE` | no | The one role it holds there. Default `organization_owner`, because a deployment with no members yet needs a credential that can create the first one |
+| `OC_OPERATOR_PUBLIC_URL` | with sign-in | Where this surface is reachable from a browser. The OIDC redirect URI is built from it, never from a request's Host header |
+| `OC_OPERATOR_CONSOLE_URL` | with sign-in | Where a browser is sent once signed in. Must share a registrable domain with the above |
+| `OC_OPERATOR_ALLOWED_ORIGINS` | with a console | Browser origins a cookie-authenticated unsafe request may come from. Empty permits none |
+| `OC_IDENTITY_ENCRYPTION_KEY_FILE` | with sign-in | 32-byte key, raw or base64, sealing an identity provider's client secret at rest |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
 | `OC_MODEL_TRANSCRIPT_FILE` | no | A recorded transcript of the model boundary. With none, the investigator fails every round honestly saying the reasoning step could not run — an instance that cannot reason must say so rather than look healthy. A transcript recorded against different components refuses to start rather than replaying |
 
@@ -178,6 +188,81 @@ no default configured, an unassigned organization is a hard error rather than a 
 A placement's DSN carries a password, so it is read from a file. No environment value ever
 carries a credential, and no error quotes a DSN file's contents.
 
+## Identity, roles and the record
+
+An operator signs in through an OIDC Authorization Code flow with PKCE against a provider their
+Organization configures. The control plane exchanges the code, verifies the identity token
+against the issuer's own published keys, applies the tenant's provisioning policy, and issues
+its own opaque server-side session as an `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+
+It is deliberately **not a JWT**. A signed token carrying its own claims cannot be ended before
+it expires, so "sign out ends my session on the server" and "revoke a departing colleague's
+access immediately" would both need a revocation list — which is a session table with extra
+steps and a second thing to keep consistent with the first. Only the digest of the session
+identifier is stored, so a disclosure of that table yields no usable credential.
+
+Because the cookie is `SameSite=Lax` and there is no separate CSRF token, **the console must be
+served from the same registrable domain as this surface**. A cross-site console would never send
+the cookie at all. Unsafe cookie-authenticated requests additionally require an `Origin` from
+`OC_OPERATOR_ALLOWED_ORIGINS`; bearer tokens are exempt, because a browser never attaches one
+by itself.
+
+### The seven roles
+
+Fixed sets, compiled rather than editable. Custom roles are out of scope for this release: an
+editable role is a second authorization model to review. The table in `internal/authz/role.go`
+IS the specification — reading it is how to answer "what can an Investigator do", and
+`go test ./internal/gates/ -run TestTheRoleTableIsLegible -v` prints it.
+
+| Role | What it is for |
+| --- | --- |
+| `organization_owner` | Everything, including who else may administer the tenant |
+| `platform_administrator` | Runs the tenant. Cannot appoint an owner — that one permission is the difference between the two |
+| `integration_manager` | Configures Environments and Connections, and deliberately cannot change who may sign in |
+| `investigator` | Opens, cancels and reads Investigations. Cannot damage the estate |
+| `responder` | An Investigator who may also set a Connection's enabled state during an incident |
+| `viewer` | Read-only across the tenant |
+| `auditor` | Reads the record and nothing else, so that the access does not itself become a risk |
+
+An owner may not be granted by just-in-time provisioning or by a directory group mapping, and no
+API token may hold it: both would make a directory edit or a leaked CI variable an
+administrative takeover.
+
+### How a route is authorized
+
+Every route registers as `(method, pattern, permission)` and `Router()` builds the mux from that
+table. Three mechanisms keep it honest, and each covers what the others cannot:
+
+1. **The compiler**, for the privileged case. `authz.Privileged` takes the permission
+   positionally, so a route that needs one and does not name one does not compile.
+   `authz.Public` and `authz.Authenticated` compile by design — the sign-in routes have to
+   exist — which is why the two mechanisms below are what actually close it.
+2. **Startup.** The table is validated before it becomes a mux, so an undeclared permission, a
+   privileged route naming no Organization, or a duplicate is a process that refuses to start
+   rather than a route served open.
+3. **Gates.** `internal/gates` refuses a `mux.Handle` anywhere under `internal/` outside the
+   four packages recorded as having a listener of their own — it reads every package rather than
+   a list of the ones with routes today, so a new surface package cannot be silently unscanned.
+   It holds the public and authenticated-only routes to named lists with a reason each, and
+   fails if a declared permission is reachable by no route.
+
+A request naming an Organization the principal is not a member of answers **404, not 403** — a
+403 would confirm the tenant exists, which would turn a path segment into a list of this
+deployment's customers. A member who lacks the permission gets 403 naming what they lack.
+
+### The record
+
+Every state change writes an `audit_event` row **inside the same transaction as the change it
+records**, so an operation nobody could attribute never happens. Failed authorizations by a
+caller holding a credential are recorded too, because credential probing is only visible if the
+attempts that failed are. The table is append-only and the database enforces it: statement-level
+triggers refuse `UPDATE`, `DELETE` and `TRUNCATE`, and the one path that may prune has to declare
+itself in its transaction.
+
+Nothing in it is ever a credential. `audit.Detail` drops any key named like one before the row is
+written, mechanically rather than by convention, because the paths that write these events are
+precisely the paths holding a secret at the time.
+
 ## Endpoints
 
 | Path | Purpose |
@@ -192,8 +277,43 @@ On the intake listener:
 | --- | --- |
 | `POST /intake/v1/organizations/{organization}/sources/{source}` | One webhook delivery from a configured alerting source. Authenticated by that source's shared secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
 
-On the operator listener, under `/operator/v1/organizations/{organization}`, behind the operator
-token. Relays, environments and connections are configured there; investigations are read there:
+On the operator listener, unauthenticated — this is the whole public surface of the product, and
+each route answers a tenant that has configured no way in exactly as it answers one that does not
+exist, so none of them can be used to enumerate customers:
+
+| Path | Purpose |
+| --- | --- |
+| `GET /operator/v1/organizations/{organization}/sign-in/providers` | The identifier and name of each configured provider, so a console can render a chooser |
+| `GET /operator/v1/organizations/{organization}/sign-in/{provider}` | Start a sign-in. Redirects to the provider with a state, a nonce and an S256 PKCE challenge |
+| `GET /operator/v1/sign-in/callback` | Where the provider sends the browser back. Redeems the state exactly once, verifies the identity token, and issues the session cookie |
+
+Needing a credential and no permission, because the subject is the caller themselves:
+
+| Path | Purpose |
+| --- | --- |
+| `GET /operator/v1/session` | Who is signed in, which Organizations they may read, and the flattened permissions their roles carry |
+| `POST /operator/v1/session/sign-out` | Deletes the session row and clears the cookie in the same response, so the credential is dead before the response is written |
+
+Under `/operator/v1/organizations/{organization}`, each behind the permission it declares:
+
+| Path | Permission |
+| --- | --- |
+| `GET\|POST\|PATCH\|DELETE /identity-providers` | `identity.read`, `identity.configure` |
+| `GET /members`, `PUT\|DELETE /members/{user}` | `member.read`, `member.manage`. Appointing an owner additionally needs `member.owner.manage` |
+| `GET /sessions`, `POST /members/{user}/revoke-sessions` | `member.read`, `session.revoke` |
+| `GET\|PUT /policy` | `identity.read`, `identity.configure`. Session lifetime and the declared audit retention |
+| `GET\|POST /service-accounts`, `DELETE /service-accounts/{account}` | `service-account.read`, `service-account.manage` |
+| `GET\|POST /api-tokens`, `POST /api-tokens/{token}/revoke` | `api-token.read`, `api-token.manage`. A token is shown once, bound to one Organization, one role and an expiry |
+| `GET /audit-events` | `audit.read`. The only route the Auditor role reaches |
+| `GET /relays`, `GET /relays/{id}/session-conflicts` | `relay.read` |
+| `POST /relays/{id}/clear-conflict` | `relay.conflict.clear`. Destroys a credential-theft finding, so only the two administrative roles hold it |
+| `GET /integrations` | `integration.read`. Organization-scoped, so configured Connections can be counted per tenant |
+| `GET\|POST /connections` | `connection.read`, `connection.create`. Organization-wide, with `?environmentId=` as a filter |
+| `POST /connections/{id}/enabled` | `connection.update`. One idempotent operation with a body, replacing the `enable` and `disable` pair |
+| `POST /connections/{id}/trigger/rotate-secret` | `connection.trigger.secret.rotate` |
+| `GET\|POST /environments`, `PATCH\|DELETE /environments/{id}` | `environment.read`, `.create`, `.update`, `.delete` |
+
+Investigations are read there too:
 
 | Path | Purpose |
 | --- | --- |

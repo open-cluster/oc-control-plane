@@ -1,35 +1,40 @@
 // Package operator serves the surface an operator uses to see and act on what the control
-// plane knows about its relays.
+// plane knows about their tenant.
 //
-// It exists because a detection nobody can query is not a detection. The control plane can
-// tell that a relay identity is being taken over by two parties — the signature of a stolen
-// credential — and until now that finding sat in a column with nothing to read it. The party
-// who has to act on it is looking days later at a system that has since gone quiet.
+// It owns the listener and the composition of the route table, and nothing else. Who a caller
+// is comes from internal/identity; what they may do comes from internal/authz; what each route
+// means comes from the capability that declares it. One surface deciding who may reach it is
+// the point — a second copy of that decision is a second place for it to be wrong.
 //
-// It is deliberately its own surface, on its own listener, for the same reason the relay
-// endpoint is: it speaks to a different kind of caller and carries different data. Health and
-// metrics are exposed to whatever scrapes them; this is not, and separating the ports is what
-// lets a deployment bind it somewhere reachable only from inside.
+// It is deliberately its own listener, for the same reason the relay endpoint is: it speaks to
+// a different kind of caller and carries different data. Health and metrics are exposed to
+// whatever scrapes them; this is not, and separating the ports is what lets a deployment bind
+// it somewhere reachable only from inside.
 //
-// It is cross-tenant by design — an operator names the organization — and that is exactly why
-// it is behind a credential of its own rather than the surface everything else uses.
+// It is NO LONGER cross-tenant by design. It was, and whoever held the one shared token could
+// read and mutate any Organization by editing a path segment. Every route below is scoped to
+// an Organization the principal holds a membership in, and a request naming one they do not is
+// answered exactly as a request naming an Organization that does not exist.
 package operator
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/connection"
 	"github.com/open-cluster/oc-control-plane/internal/environment"
+	"github.com/open-cluster/oc-control-plane/internal/health"
+	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
@@ -39,17 +44,17 @@ import (
 // attention of whoever made it.
 const readTimeout = 15 * time.Second
 
-// maxLoggedPath bounds what a refused request can write into the log. It runs before anything
-// is authenticated, so the string is attacker-chosen and the repetition is unlimited.
-const maxLoggedPath = 256
-
 // Handlers is the operator surface's dependencies.
 type Handlers struct {
 	Placements *storage.Placements
 	Logger     *slog.Logger
-	// TokenDigest is the SHA-256 of the token a caller must present. Only the digest is held:
-	// the process never keeps the token itself, so there is nothing here to log by accident.
-	TokenDigest []byte
+	// Identity resolves credentials, serves the sign-in flow, and owns the identity,
+	// membership, automation and audit routes.
+	Identity identity.Handlers
+	// Origins are the browser origins a cookie-authenticated unsafe request may come from.
+	// Empty means no browser may make one, which is the correct posture for a deployment that
+	// has not said where its console is served from.
+	Origins []string
 	// Controls and Versions are what an investigation opened through this surface runs under and
 	// is stamped with. They are the composition root's to decide, not this package's: the
 	// investigator's version is the binary's, and a control snapshot is pinned per round so that
@@ -58,90 +63,140 @@ type Handlers struct {
 	Versions investigation.Versions
 }
 
-// Router returns the operator surface.
+// Router returns the operator surface, or the reason it cannot be built.
 //
-// This package owns the listener and the credential; each business capability owns its own
-// routes and the shape of what they return, and mounts them behind the authorization decided
-// here. One surface deciding who may reach it is the point — a second copy of that decision
-// is a second place for it to be wrong.
-func (h Handlers) Router() http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("GET /operator/v1/organizations/{organization}/relays",
-		h.authorized(http.HandlerFunc(h.listRelays)))
-	mux.Handle("GET /operator/v1/organizations/{organization}/relays/{registration}/session-conflicts",
-		h.authorized(http.HandlerFunc(h.conflictTrail)))
-	mux.Handle("POST /operator/v1/organizations/{organization}/relays/{registration}/clear-conflict",
-		h.authorized(http.HandlerFunc(h.clearConflict)))
+// It is the route TABLE that is the API's index, and this function is where the table becomes a
+// mux. A route that cannot be authorized correctly — an undeclared permission, a privileged
+// route naming no organization, a duplicate — fails here, at startup, rather than being served
+// open. The gate in internal/gates asserts the other half: that no capability registers a route
+// outside this table.
+func (h Handlers) Router() (http.Handler, error) {
+	guard := authz.Guard{
+		Resolve: h.Identity.Resolve,
+		Record:  h.recordRefusal,
+		Origins: h.Origins,
+		Logger:  h.Logger,
+	}
 
-	environment.Handlers{Placements: h.Placements, Logger: h.Logger}.Mount(mux, h.authorized)
-	connection.Handlers{Placements: h.Placements, Logger: h.Logger}.Mount(mux, h.authorized)
+	router, err := authz.Router(h.Routes(), guard)
+	if err != nil {
+		return nil, err
+	}
+	// Correlation wraps the whole surface, so the identifier exists before the credential is
+	// resolved and every audit event a request produces can name the log lines it produced.
+	return h.correlated(router), nil
+}
+
+// Routes is the whole operator API, assembled from what each capability declares.
+//
+// This package contributes the relay routes and nothing else. Every other entry comes from the
+// capability that knows what its routes mean, which is what keeps the permission a route needs
+// next to the code that implements it rather than in a list somebody has to remember to edit.
+func (h Handlers) Routes() authz.Table {
+	const relays = "/operator/v1/organizations/{organization}/relays"
+
+	table := authz.Table{
+		authz.Privileged(http.MethodGet, relays, authz.RelayRead,
+			http.HandlerFunc(h.listRelays)),
+		authz.Privileged(http.MethodGet, relays+"/{registration}/session-conflicts",
+			authz.RelayRead, http.HandlerFunc(h.conflictTrail)),
+		// Withdrawing the mark destroys a credential-theft finding and nothing else in the
+		// product records that it existed, so it is a permission of its own rather than part of
+		// reading the roster — and only the two administrative roles hold it.
+		authz.Privileged(http.MethodPost, relays+"/{registration}/clear-conflict",
+			authz.RelayConflictClear, http.HandlerFunc(h.clearConflict)),
+	}
+
+	table = append(table, h.Identity.Routes()...)
+	table = append(table,
+		environment.Handlers{Placements: h.Placements, Logger: h.Logger}.Routes()...)
+	table = append(table,
+		connection.Handlers{Placements: h.Placements, Logger: h.Logger}.Routes()...)
 	// The investigation surface takes the read side and the write side separately, because a
 	// handler given the writing interface is one typo away from mutating what it was asked to
 	// display. Both happen to be the same value here; the types are what keep them apart.
-	investigation.Handlers{
+	table = append(table, investigation.Handlers{
 		Reader:   h.Placements,
 		Store:    h.Placements,
 		Logger:   h.Logger,
 		Controls: h.Controls,
 		Versions: h.Versions,
-	}.Mount(mux, h.authorized)
-	return mux
+	}.Routes()...)
+	return table
 }
 
-// authorized refuses anything that does not present the operator token.
+// correlated mints a request identifier and binds it to the response and the context.
 //
-// One status and one message for every failure. A missing header, a malformed one and a wrong
-// token are indistinguishable, for the same reason a relay's enrolment refusals are: telling
-// them apart is how a caller learns which half of a guess was right. The comparison is
-// constant-time over digests, so the answer leaks nothing through how long it took either.
-func (h Handlers) authorized(next http.Handler) http.Handler {
+// It runs before the credential is resolved, so an audit event written for a refusal can name
+// the same identifier the log line for that refusal carries. A client-supplied value is not
+// trusted: it would let a caller collide two unrelated requests in the record.
+func (h Handlers) correlated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		presented, ok := bearerToken(request.Header.Get("Authorization"))
-		if !ok {
-			h.refuse(writer, request)
-			return
-		}
-		digest := sha256.Sum256([]byte(presented))
-		if subtle.ConstantTimeCompare(digest[:], h.TokenDigest) != 1 {
-			h.refuse(writer, request)
-			return
-		}
-		next.ServeHTTP(writer, request)
+		id := newRequestID()
+		writer.Header().Set(health.RequestIDHeader, id)
+		next.ServeHTTP(writer, request.WithContext(
+			authz.WithRequestID(request.Context(), id)))
 	})
 }
 
-func (h Handlers) refuse(writer http.ResponseWriter, request *http.Request) {
-	// Nothing the caller sent in a header is recorded: a refused request's headers are the one
-	// place guaranteed to hold a guess at the credential. The path is, because it says what was
-	// being reached for — but truncated, because this runs before anything is authenticated and
-	// an unbounded attacker-chosen string repeated without limit is a log amplifier.
-	h.Logger.WarnContext(request.Context(), "operator request refused",
-		slog.String("path", truncate(request.URL.Path, maxLoggedPath)),
-		slog.String("caller", callerOf(request)))
-
-	writer.Header().Set("WWW-Authenticate", "Bearer")
-	writeJSON(writer, http.StatusUnauthorized, errorView{Error: "unauthorized"})
+// newRequestID mints a correlation identifier. crypto/rand cannot fail in practice, and a
+// request that could not be correlated is not a request worth refusing, so the fallback is a
+// value that is obviously a fallback rather than an error path nobody exercises.
+func newRequestID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "uncorrelated"
+	}
+	return hex.EncodeToString(raw)
 }
 
-func truncate(value string, limit int) string {
-	if len(value) <= limit {
-		return value
+// recordRefusal writes an authorization denial to the tenant's record.
+//
+// It is best-effort, and the guard's own documentation says why: a denial has no operation to
+// roll back, so failing the response because the record could not be written would turn an
+// unreachable database into a surface that answers 500 to callers it was correctly refusing.
+// The failure is logged loudly, because a refusal nobody recorded is exactly what story 22 asks
+// to be visible.
+func (h Handlers) recordRefusal(
+	ctx context.Context, organization tenancy.Organization, event audit.Event,
+) {
+	if err := h.Placements.RecordEvent(ctx, organization, event); err != nil {
+		h.Logger.ErrorContext(ctx, "an authorization refusal could not be recorded",
+			slog.String("organization", organization.String()),
+			slog.String("error", err.Error()))
 	}
-	return value[:limit] + "…"
 }
 
-// bearerToken pulls the credential out of an Authorization header.
-func bearerToken(header string) (string, bool) {
-	const prefix = "Bearer "
-	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
-		return "", false
+// fail answers an error, naming the ones a caller can act on.
+func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
+	switch {
+	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
+		// The same answer the authorization middleware gives, byte for byte. A different one
+		// here would confirm to a caller that a tenant they may not reach exists.
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
+	case errors.Is(err, storage.ErrBadCursor):
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: "after is not a page position from a previous response"})
+	case errors.Is(err, storage.ErrAuditFailed):
+		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
+			slog.String("path", request.URL.Path),
+			slog.String("error", err.Error()))
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "the change was refused because it could not be recorded"})
+	default:
+		h.Logger.ErrorContext(request.Context(), "operator request failed",
+			slog.String("path", request.URL.Path),
+			slog.String("error", err.Error()))
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
-	token := strings.TrimSpace(header[len(prefix):])
-	return token, token != ""
 }
 
 // listRelays reports an organization's relay identities and what is known about each.
 func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, ok := h.organization(writer, request)
 	if !ok {
 		return
@@ -149,7 +204,7 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	roster, err := h.Placements.ListRelays(ctx, organization, storage.Page{
+	roster, err := h.Placements.ListRelays(ctx, principal, organization, storage.Page{
 		Limit: pageSize(request),
 		After: request.URL.Query().Get("after"),
 	})
@@ -158,13 +213,10 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 
-	// Every read of this surface crosses a tenant boundary, so every read is recorded. A token
-	// holder who could enumerate an organization's relays and leave no trace would be the one
-	// thing this surface must not make possible.
 	h.Logger.InfoContext(ctx, "operator read a relay roster",
 		slog.String("organization", organization.String()),
 		slog.Int("relays", len(roster.Relays)),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 
 	relays := make([]relayView, 0, len(roster.Relays))
 	for _, relay := range roster.Relays {
@@ -178,6 +230,10 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 // It is the answer to the question the current state cannot answer: withdrawing a finding
 // destroys it, so without this the second occurrence would look exactly like the first.
 func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, registration, ok := h.relay(writer, request)
 	if !ok {
 		return
@@ -185,7 +241,7 @@ func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	trail, err := h.Placements.SessionConflictTrail(ctx, organization, registration,
+	trail, err := h.Placements.SessionConflictTrail(ctx, principal, organization, registration,
 		storage.Page{Limit: pageSize(request), After: request.URL.Query().Get("after")})
 	if err != nil {
 		h.fail(writer, request, err)
@@ -194,7 +250,7 @@ func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Reques
 	h.Logger.InfoContext(ctx, "operator read a session conflict trail",
 		slog.String("organization", organization.String()),
 		slog.String("registration_id", registration.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("caller", h.callerName(request)))
 
 	events := make([]conflictEventView, 0, len(trail.Events))
 	for _, event := range trail.Events {
@@ -205,6 +261,10 @@ func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Reques
 
 // clearConflict withdraws the mark on a contested relay identity.
 func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
 	organization, registration, ok := h.relay(writer, request)
 	if !ok {
 		return
@@ -213,7 +273,7 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 	defer cancel()
 
 	withdrawal, err := h.Placements.ClearSessionConflict(
-		ctx, organization, registration, callerOf(request))
+		ctx, principal, organization, registration)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -229,23 +289,43 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	// Withdrawing the mark is a claim that a credential-theft finding has been dealt with, and
-	// it destroys the finding, so it is recorded as loudly as the finding was.
+	// it destroys the finding, so it is recorded as loudly as the finding was — in the log here
+	// and, in the same transaction as the withdrawal itself, in the audit trail.
 	//
-	// The caller's address is as far as attribution goes. The credential is one shared token, so
-	// this line can say where the claim came from and never who made it — which is a limit of
-	// having one token rather than of this record, and is worth knowing when reading it back.
+	// This line used to say the surface could report where the claim came from and never who
+	// made it. It can now say both, which is what the whole slice was for.
 	h.Logger.WarnContext(ctx, "session conflict cleared by an operator",
 		slog.String("organization", organization.String()),
 		slog.String("registration_id", registration.String()),
-		slog.String("caller", callerOf(request)))
+		slog.String("actor", principal.ID()),
+		slog.String("caller", h.callerName(request)))
 
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-// callerOf reports where a request came from. It is the only identity this surface has: one
-// shared token cannot say who, only from where.
-func callerOf(request *http.Request) string {
-	return request.RemoteAddr
+// caller resolves the principal the guard put on this request. Its absence is a route mounted
+// outside the permission table, which is a programming error rather than a runtime condition.
+func (h Handlers) caller(
+	writer http.ResponseWriter, request *http.Request,
+) (authz.Principal, bool) {
+	principal, ok := authz.Of(request)
+	if !ok {
+		h.Logger.ErrorContext(request.Context(),
+			"a handler ran with no principal; the route is mounted outside the permission table",
+			slog.String("path", request.URL.Path))
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
+		return authz.Principal{}, false
+	}
+	return principal, true
+}
+
+// callerName is who acted, for the log lines.
+func (h Handlers) callerName(request *http.Request) string {
+	principal, ok := authz.Of(request)
+	if !ok {
+		return request.RemoteAddr
+	}
+	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
 }
 
 // organization resolves the tenant named in the path.
@@ -274,29 +354,6 @@ func (h Handlers) relay(
 		return tenancy.Organization{}, uuid.UUID{}, false
 	}
 	return organization, registration, true
-}
-
-// fail answers an error, naming the ones a caller can act on. The caller is an operator, so
-// saying which it was costs nothing and saves them guessing.
-//
-// An organization this instance has no placement for is reported as not served. Note that a
-// deployment with a default placement serves every name, so there this answer never appears and
-// an unknown organization is an empty list — which is the placement model showing through
-// rather than this surface being evasive.
-func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
-	if errors.Is(err, storage.ErrUnknownOrganization) {
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not served here"})
-		return
-	}
-	if errors.Is(err, storage.ErrBadCursor) {
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "after is not a page position from a previous response"})
-		return
-	}
-	h.Logger.ErrorContext(request.Context(), "operator request failed",
-		slog.String("path", request.URL.Path),
-		slog.String("error", err.Error()))
-	writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 }
 
 // pageSize reads how many relays were asked for. An unreadable value is not an error: the

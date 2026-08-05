@@ -78,7 +78,7 @@ func holdCase(
 	t.Helper()
 	ctx := context.Background()
 
-	opened, err := placements.OpenInvestigation(ctx, organization, investigation.New{
+	opened, err := placements.OpenInvestigation(ctx, ownerOf(t, organization), organization, investigation.New{
 		Scope: investigation.Scope{
 			Connection:   connection,
 			Namespace:    "payments",
@@ -99,7 +99,7 @@ func holdCase(
 		t.Fatalf("opening an investigation: %v", err)
 	}
 
-	if _, err = placements.OpenRound(ctx, organization, investigation.Opening{
+	if _, err = placements.OpenRound(ctx, ownerOf(t, organization), organization, investigation.Opening{
 		InvestigationID: opened.ID,
 		Controls:        investigation.DefaultControls(),
 		Plan:            investigation.Plan{Template: "kubernetes-workload-v1"},
@@ -333,12 +333,12 @@ func TestInvestigation_ARefusedConnectionOpensNothing(t *testing.T) {
 	registration := enrolledRelay(t, placements, organization)
 	ctx := context.Background()
 
-	environment, err := placements.EnsureDefaultEnvironment(ctx, organization)
+	environment, err := placements.EnsureDefaultEnvironment(ctx, ownerOf(t, organization), organization)
 	if err != nil {
 		t.Fatalf("ensuring the default environment: %v", err)
 	}
 	// Trigger-only: it delivers Signals inbound and answers nothing outbound.
-	triggerOnly, err := placements.CreateConnection(ctx, organization, storage.NewConnection{
+	triggerOnly, err := placements.CreateConnection(ctx, ownerOf(t, organization), organization, storage.NewConnection{
 		Environment:  environment.ID,
 		Integration:  "alertmanager",
 		Name:         "production alertmanager",
@@ -358,7 +358,7 @@ func TestInvestigation_ARefusedConnectionOpensNothing(t *testing.T) {
 		{"a connection this organization does not have", uuid.New()},
 	} {
 		t.Run(refused.name, func(t *testing.T) {
-			_, err := placements.OpenInvestigation(ctx, organization, investigation.New{
+			_, err := placements.OpenInvestigation(ctx, ownerOf(t, organization), organization, investigation.New{
 				Scope: investigation.Scope{
 					Connection:   refused.connection,
 					Namespace:    "payments",
@@ -853,7 +853,7 @@ func TestInvestigation_CancellingIsTerminalAndStopsTheWorker(t *testing.T) {
 	ctx := context.Background()
 
 	if err := held.placements.CancelInvestigation(
-		ctx, held.organization, held.subject.ID); err != nil {
+		ctx, ownerOf(t, held.organization), held.organization, held.subject.ID); err != nil {
 		t.Fatalf("cancelling: %v", err)
 	}
 
@@ -876,7 +876,7 @@ func TestInvestigation_CancellingIsTerminalAndStopsTheWorker(t *testing.T) {
 	}
 
 	if err = held.placements.CancelInvestigation(
-		ctx, held.organization, held.subject.ID); !errors.Is(
+		ctx, ownerOf(t, held.organization), held.organization, held.subject.ID); !errors.Is(
 		err, investigation.ErrAlreadyTerminal) {
 		t.Errorf("cancelling twice returned %v, want ErrAlreadyTerminal", err)
 	}
@@ -992,7 +992,7 @@ func reopen(t *testing.T, held heldCase) heldCase {
 	t.Helper()
 	ctx := context.Background()
 
-	if _, err := held.placements.OpenRound(ctx, held.organization, investigation.Opening{
+	if _, err := held.placements.OpenRound(ctx, ownerOf(t, held.organization), held.organization, investigation.Opening{
 		InvestigationID: held.subject.ID,
 		Controls:        investigation.DefaultControls(),
 		Plan:            investigation.Plan{Template: "kubernetes-workload-v1"},

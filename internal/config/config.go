@@ -38,6 +38,28 @@ const (
 
 	EnvOperatorAddress   = "OC_OPERATOR_ADDRESS"
 	EnvOperatorTokenFile = "OC_OPERATOR_TOKEN_FILE"
+	// The bootstrap credential is no longer ambient root. It names ONE organization and ONE
+	// role, so a deployment that hands it to CI has handed out something with a stated blast
+	// radius rather than the whole estate.
+	EnvOperatorTokenOrganization = "OC_OPERATOR_TOKEN_ORGANIZATION"
+	EnvOperatorTokenRole         = "OC_OPERATOR_TOKEN_ROLE"
+
+	// Where this surface and its console are reachable from a browser. Both are configuration
+	// rather than values read from a request: a caller-controlled host in a redirect URI is how
+	// an authorization code is delivered somewhere else.
+	EnvOperatorPublicURL  = "OC_OPERATOR_PUBLIC_URL"
+	EnvOperatorConsoleURL = "OC_OPERATOR_CONSOLE_URL"
+	// The browser origins a cookie-authenticated unsafe request may come from. SameSite=Lax plus
+	// this check is the CSRF defence; there is no separate token. Empty permits no browser to
+	// make an unsafe request, which is the right posture for a deployment that has not said
+	// where its console is.
+	EnvOperatorAllowedOrigins = "OC_OPERATOR_ALLOWED_ORIGINS"
+
+	// The key an identity provider's client secret is sealed under. That credential is the one
+	// this product must be able to READ BACK — it is presented to a token endpoint rather than
+	// compared against — so it is encrypted rather than digested, and this names the file the
+	// key is read from.
+	EnvIdentityEncryptionKeyFile = "OC_IDENTITY_ENCRYPTION_KEY_FILE"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 
@@ -64,13 +86,6 @@ const (
 	EnvModelFallbackKeyFile  = "OC_MODEL_FALLBACK_KEY_FILE"
 	EnvModelFallbackBaseURL  = "OC_MODEL_FALLBACK_BASE_URL"
 )
-
-// minOperatorTokenLength is the shortest token the operator surface will accept.
-//
-// The surface it guards reads across every tenant this instance serves, so a token short
-// enough to be guessed is the same as no token at all. Refusing a weak one at startup makes
-// that a deployment that fails to start rather than one that runs and looks fine.
-const minOperatorTokenLength = 32
 
 // Config is the validated process configuration.
 type Config struct {
@@ -123,10 +138,44 @@ type Config struct {
 	// private to put it.
 	OperatorAddress string
 
-	// OperatorTokenDigest is the SHA-256 of the token an operator must present. The token is
-	// read from the file the operator named, reduced to this, and discarded: the process holds
-	// no copy of it, so there is nothing here to log or echo by accident.
+	// OperatorTokenDigest is the SHA-256 of the bootstrap token. The token is read from the file
+	// the operator named, reduced to this, and discarded: the process holds no copy of it, so
+	// there is nothing here to log or echo by accident.
+	//
+	// It is what the old shared operator token became. The difference is the whole point: it is
+	// bound to the organization and role below rather than reaching every tenant. Its limits are
+	// worth stating rather than implying — it has no expiry and no revocation row, because it
+	// exists to bootstrap a deployment that has no members yet, and revoking it means changing
+	// the file and restarting. Every token issued after that comes from the api_token table,
+	// where both exist.
 	OperatorTokenDigest []byte
+
+	// OperatorTokenOrganization is the one tenant the bootstrap credential reaches.
+	OperatorTokenOrganization string
+
+	// OperatorTokenRole is the one role it holds there. It defaults to the owner, because a
+	// deployment with no members yet needs a credential that can create the first one.
+	OperatorTokenRole string
+
+	// OperatorPublicURL is where this surface is reachable from a browser, and what the redirect
+	// URI registered with an identity provider is built from.
+	OperatorPublicURL string
+
+	// OperatorConsoleURL is where a browser is sent once it has signed in.
+	//
+	// It must share a registrable domain with OperatorPublicURL. That follows from the session
+	// cookie being SameSite=Lax with no separate CSRF token: a cross-SITE console would never
+	// send the cookie at all, so the deployment would authenticate nobody.
+	OperatorConsoleURL string
+
+	// OperatorAllowedOrigins are the browser origins a cookie-authenticated unsafe request may
+	// come from.
+	OperatorAllowedOrigins []string
+
+	// IdentityEncryptionKey seals an identity provider's client secret at rest. Empty means this
+	// deployment cannot hold one, and configuring a provider is refused with that reason rather
+	// than storing a secret in the clear.
+	IdentityEncryptionKey []byte
 
 	// IntakeAddress is the listen address for alert intake. It is separate from every other
 	// surface because it is the only one a customer's own infrastructure connects to inbound,
@@ -232,6 +281,21 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.OperatorAddress); err != nil {
+		return Config{}, err
+	}
+	if err = operatorCredentialScope(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.OperatorPublicURL, err = optionalBrowserURL(lookup, EnvOperatorPublicURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.OperatorConsoleURL, err = optionalBrowserURL(lookup, EnvOperatorConsoleURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.OperatorAllowedOrigins, err = allowedOrigins(lookup); err != nil {
+		return Config{}, err
+	}
+	if cfg.IdentityEncryptionKey, err = identityEncryptionKey(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.ModelTranscript, err = optionalFile(lookup, EnvModelTranscriptFile); err != nil {
@@ -371,39 +435,6 @@ func defaultPlacement(lookup func(string) (string, bool), known map[string]strin
 		return "", fmt.Errorf("%s names unknown placement %q", EnvDefaultPlacement, name)
 	}
 	return name, nil
-}
-
-// operatorTokenDigest reads the operator credential from its file and returns only the digest.
-//
-// The variable names a path, never the token, for the same reason placements name a DSN file:
-// an environment value is visible to anything that can read the process's environment, ends up
-// in orchestrator manifests, and is printed by half the tooling that touches a container. No
-// error here quotes the file's contents.
-func operatorTokenDigest(
-	lookup func(string) (string, bool), operatorAddress string,
-) ([]byte, error) {
-	path, _ := lookup(EnvOperatorTokenFile)
-	path = strings.TrimSpace(path)
-
-	if operatorAddress == "" {
-		return nil, nil
-	}
-	if path == "" {
-		return nil, fmt.Errorf("%s is required when %s is set",
-			EnvOperatorTokenFile, EnvOperatorAddress)
-	}
-
-	token, err := readSecretFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", EnvOperatorTokenFile, err)
-	}
-	if len(token) < minOperatorTokenLength {
-		return nil, fmt.Errorf("%s: the token must be at least %d characters; the surface it "+
-			"guards reads across every tenant this instance serves",
-			EnvOperatorTokenFile, minOperatorTokenLength)
-	}
-	digest := sha256.Sum256([]byte(token))
-	return digest[:], nil
 }
 
 // readSecretFile reads a credential from disk. Every error is classified rather than wrapped,

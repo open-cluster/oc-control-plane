@@ -45,6 +45,10 @@ func TestOperatorSurface(t *testing.T) {
 		cfg.OperatorAddress = operatorAddress
 		digest := sha256.Sum256([]byte(token))
 		cfg.OperatorTokenDigest = digest[:]
+		// The credential names the one tenant it reaches. That binding is the whole difference
+		// between it and the shared token it replaces, and the last case in this test asserts
+		// that a second organization is not reachable with it.
+		cfg.OperatorTokenOrganization = organization
 		for _, dsn := range cfg.Placements {
 			placementDSN = dsn
 		}
@@ -343,13 +347,33 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		}
 	})
 
+	// The credential is bound to ONE organization, and that binding is required rather than
+	// defaulted. A deployment whose scope was inferred would get the ambient root credential
+	// this slice exists to replace, and the deployment that would get it is the one that did
+	// not think about it.
+	t.Run("a token that names no organization is refused", func(t *testing.T) {
+		t.Parallel()
+		_, err := config.Load(environment(t, map[string]string{
+			config.EnvOperatorAddress:   address,
+			config.EnvOperatorTokenFile: secretFile(t, "token", "a-token-long-enough-to-be-worth-something"),
+		}))
+		if err == nil {
+			t.Fatal("a credential with no organization was accepted; it would reach every tenant")
+		}
+		if !strings.Contains(err.Error(), config.EnvOperatorTokenOrganization) {
+			t.Errorf("the failure does not name %s: %v",
+				config.EnvOperatorTokenOrganization, err)
+		}
+	})
+
 	t.Run("the process keeps the digest and not the token", func(t *testing.T) {
 		t.Parallel()
 		const token = "a-token-long-enough-to-be-worth-something"
 
 		cfg, err := config.Load(environment(t, map[string]string{
-			config.EnvOperatorAddress:   address,
-			config.EnvOperatorTokenFile: secretFile(t, "token", token),
+			config.EnvOperatorAddress:           address,
+			config.EnvOperatorTokenFile:         secretFile(t, "token", token),
+			config.EnvOperatorTokenOrganization: "org-a",
 		}))
 		if err != nil {
 			t.Fatalf("loading: %v", err)
@@ -357,6 +381,14 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		digest := sha256.Sum256([]byte(token))
 		if string(cfg.OperatorTokenDigest) != string(digest[:]) {
 			t.Error("the configured digest does not match the token in the file")
+		}
+		if cfg.OperatorTokenOrganization != "org-a" {
+			t.Errorf("the credential is bound to %q, want org-a", cfg.OperatorTokenOrganization)
+		}
+		// Defaulted rather than required. A deployment with no members yet needs a credential
+		// that can create the first one; narrowing it is a one-line change once they have.
+		if cfg.OperatorTokenRole != "organization_owner" {
+			t.Errorf("the credential holds %q, want the owner by default", cfg.OperatorTokenRole)
 		}
 	})
 }

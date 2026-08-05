@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -130,41 +132,53 @@ type ConnectionList struct {
 // a request combining one tenant's Environment with another's Relay is refused by the
 // database rather than by a check that has to be remembered at every call site.
 func (p *Placements) CreateConnection(
-	ctx context.Context, organization tenancy.Organization, wanted NewConnection,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	wanted NewConnection,
 ) (Connection, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return Connection{}, err
-	}
+	return audited(ctx, p, principal, organization, audit.ActionConnectionCreated,
+		func(ctx context.Context, transaction pgx.Tx) (
+			Connection, audit.Target, audit.Detail, error,
+		) {
+			labels, err := json.Marshal(orEmptyLabels(wanted.Labels))
+			if err != nil {
+				return Connection{}, audit.Target{}, nil,
+					fmt.Errorf("encoding labels: %w", err)
+			}
 
-	labels, err := json.Marshal(orEmptyLabels(wanted.Labels))
-	if err != nil {
-		return Connection{}, fmt.Errorf("encoding connection labels: %w", err)
-	}
+			row := transaction.QueryRow(ctx, `
+				INSERT INTO connection (connection_id, organization, environment_id, integration,
+				                        name, role, locality, relay_registration_id,
+				                        secret_digest, labels)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				RETURNING connection_id, environment_id, integration, name, role, locality,
+				          relay_registration_id, secret_digest, labels, disabled_at, created_at,
+				          updated_at`,
+				uuid.New(), organization.String(), wanted.Environment, wanted.Integration,
+				wanted.Name, int16(wanted.Role), int16(wanted.Locality),
+				nullableUUID(wanted.RelayRegistration), wanted.SecretDigest, labels)
 
-	row := pool.QueryRow(ctx, `
-		INSERT INTO connection
-			(connection_id, organization, environment_id, integration, name,
-			 role, locality, relay_registration_id, secret_digest, labels)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING connection_id, environment_id, integration, name, role, locality,
-		          relay_registration_id, secret_digest, labels, disabled_at,
-		          created_at, updated_at`,
-		uuid.New(), organization.String(), wanted.Environment, wanted.Integration, wanted.Name,
-		int16(wanted.Role), int16(wanted.Locality), nullableUUID(wanted.RelayRegistration),
-		wanted.SecretDigest, labels)
-	created, err := scanConnection(row, organization.String())
-	switch {
-	case isUniqueViolation(err, "connection_name_is_unique_per_environment"):
-		return Connection{}, ErrConnectionNameTaken
-	case isForeignKeyViolation(err):
-		// The Environment or the Relay is not this organization's. One answer for both: which
-		// half of a crossed tenant boundary was wrong is not something to hand back.
-		return Connection{}, ErrConnectionScope
-	case err != nil:
-		return Connection{}, fmt.Errorf("creating a connection: %w", err)
-	}
-	return created, nil
+			created, err := scanConnection(row, organization.String())
+			switch {
+			case isUniqueViolation(err, "connection_name_is_unique_per_environment"):
+				return Connection{}, audit.Target{}, nil, ErrConnectionNameTaken
+			case isForeignKeyViolation(err):
+				return Connection{}, audit.Target{}, nil, ErrConnectionScope
+			case err != nil:
+				return Connection{}, audit.Target{}, nil,
+					fmt.Errorf("creating a connection: %w", err)
+			}
+			// The secret this Connection was created with is nowhere in the detail and could not
+			// be: audit.Detail drops anything named like a credential on the way in.
+			return created,
+				audit.Target{Kind: audit.TargetConnection, ID: created.ID.String()},
+				audit.Detail{
+					"name":          created.Name,
+					"integration":   created.Integration,
+					"role":          created.Role.String(),
+					"locality":      created.Locality.String(),
+					"environmentId": created.Environment.String(),
+				}, nil
+		})
 }
 
 // ConnectionByID resolves a Connection from an opaque identifier alone, across every placement
@@ -239,63 +253,67 @@ func (p *Placements) ConnectionForOrganization(
 // brief outage the operator schedules. Carrying two is the same shape as the Relay's SPKI pin
 // rotation and is added when someone asks for it.
 func (p *Placements) RotateConnectionSecret(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, digest []byte,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID, digest []byte,
 ) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-
-	tag, err := pool.Exec(ctx, `
-		UPDATE connection
-		   SET secret_digest = $3, updated_at = now()
-		 WHERE connection_id = $1
-		   AND organization  = $2
-		   -- Only a trigger Connection has a secret to rotate. An evidence-only one is reached
-		   -- outbound and presents nothing, and giving it a digest would break the constraint
-		   -- that says so.
-		   AND role IN (1, 3)`,
-		id, organization.String(), digest)
-	if err != nil {
-		return fmt.Errorf("rotating a connection secret: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return ErrConnectionUnknown
-	}
-	return nil
+	_, err := audited(ctx, p, principal, organization, audit.ActionConnectionRotated,
+		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
+			// Guarded on the Connection already carrying one: rotating a secret onto an
+			// evidence-only Connection would create a credential with no user, and the CHECK
+			// would refuse it as a constraint violation rather than as an answer.
+			tag, err := transaction.Exec(ctx, `
+				UPDATE connection
+				   SET secret_digest = $3, updated_at = now()
+				 WHERE connection_id = $1
+				   AND organization  = $2
+				   AND secret_digest IS NOT NULL`,
+				id, organization.String(), digest)
+			if err != nil {
+				return struct{}{}, audit.Target{}, nil,
+					fmt.Errorf("rotating a connection secret: %w", err)
+			}
+			if tag.RowsAffected() == 0 {
+				return struct{}{}, audit.Target{}, nil, ErrConnectionUnknown
+			}
+			return struct{}{},
+				audit.Target{Kind: audit.TargetConnection, ID: id.String()},
+				audit.Detail{
+					"effect": "the previous trigger verification secret stopped working; " +
+						"there is no overlap window",
+				}, nil
+		})
+	return err
 }
 
 // SetConnectionDisabled turns a Connection off or back on without deleting it, so an operator
 // can stop using a source without losing the record of what it produced.
 func (p *Placements) SetConnectionDisabled(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, disabled bool,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID, disabled bool,
 ) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-
-	var disabledAt *time.Time
-	if disabled {
-		now := time.Now()
-		disabledAt = &now
-	}
-	tag, err := pool.Exec(ctx, `
-		UPDATE connection
-		   -- Coalesced when disabling, so asking twice does not move the moment it was first
-		   -- turned off.
-		   SET disabled_at = CASE WHEN $3::timestamptz IS NULL
-		                          THEN NULL ELSE COALESCE(disabled_at, $3::timestamptz) END,
-		       updated_at  = now()
-		 WHERE connection_id = $1 AND organization = $2`,
-		id, organization.String(), disabledAt)
-	if err != nil {
-		return fmt.Errorf("setting a connection's disabled state: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return ErrConnectionUnknown
-	}
-	return nil
+	_, err := audited(ctx, p, principal, organization, audit.ActionConnectionEnabled,
+		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
+			var wasDisabled *time.Time
+			err := transaction.QueryRow(ctx, `
+				UPDATE connection
+				   SET disabled_at = CASE WHEN $3 THEN coalesce(disabled_at, now()) END,
+				       updated_at  = now()
+				 WHERE connection_id = $1 AND organization = $2
+				RETURNING (SELECT disabled_at FROM connection previous
+				            WHERE previous.connection_id = connection.connection_id)`,
+				id, organization.String(), disabled).Scan(&wasDisabled)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return struct{}{}, audit.Target{}, nil, ErrConnectionUnknown
+			}
+			if err != nil {
+				return struct{}{}, audit.Target{}, nil,
+					fmt.Errorf("changing a connection's disabled state: %w", err)
+			}
+			return struct{}{},
+				audit.Target{Kind: audit.TargetConnection, ID: id.String()},
+				audit.Detail{"before": wasDisabled == nil, "after": !disabled}, nil
+		})
+	return err
 }
 
 // ListConnections returns the Connections in one Environment, newest first.
@@ -303,9 +321,17 @@ func (p *Placements) SetConnectionDisabled(
 // The Environment is part of the WHERE clause together with the organization, so naming one
 // tenant's Environment while authenticated for another returns nothing rather than that
 // Environment's contents.
+// The Environment is a FILTER rather than a scope here: the zero UUID means every Environment
+// in the organization, which is what lets an operator count a tenant's Connections without
+// walking its scopes. The Environment a Connection belongs to is still assigned only at
+// creation and is still the authority for everything arriving through it.
 func (p *Placements) ListConnections(
-	ctx context.Context, organization tenancy.Organization, environment uuid.UUID, page Page,
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	environment uuid.UUID, page Page,
 ) (ConnectionList, error) {
+	if !principal.MemberOf(organization) {
+		return ConnectionList{}, ErrNotAMember
+	}
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return ConnectionList{}, err
@@ -320,13 +346,13 @@ func (p *Placements) ListConnections(
 		SELECT connection_id, environment_id, integration, name, role, locality,
 		       relay_registration_id, secret_digest, labels, disabled_at, created_at, updated_at
 		  FROM connection
-		 WHERE organization   = $1
-		   AND environment_id = $2
+		 WHERE organization = $1
+		   AND ($2::UUID IS NULL OR environment_id = $2::UUID)
 		   AND ($4::timestamptz IS NULL
 		        OR (created_at, connection_id) < ($4::timestamptz, $5::uuid))
 		 ORDER BY created_at DESC, connection_id DESC
 		 LIMIT $3`,
-		organization.String(), environment, limit+1, after, afterID)
+		organization.String(), nullableUUID(environment), limit+1, after, afterID)
 	if err != nil {
 		return ConnectionList{}, fmt.Errorf("listing connections: %w", err)
 	}

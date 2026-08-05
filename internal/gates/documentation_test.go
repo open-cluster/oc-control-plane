@@ -22,8 +22,25 @@ var unmaintainedDirectories = map[string]bool{
 // two are indistinguishable, which is the confusion this gate exists to prevent.
 const frozenRecordMarker = "in the frozen .NET reference repository"
 
+// The sibling repositories this product is built from. A citation whose first segment names one
+// is a cross-repository reference: those documents exist, they are maintained, and they are not
+// in this checkout — so requiring them to resolve here would mean either deleting a correct
+// reference or checking out four repositories to run a test.
+//
+// It is a NAMED list rather than "anything with a slash that does not resolve", which would
+// exempt every broken reference and turn the gate off. A new sibling has to be added here, and
+// adding one is a decision.
+var siblingRepositories = map[string]bool{
+	"oc-frontend": true, "oc-relay": true, "oc-control-plane": true,
+	"opencluster-web": true, "opencluster-relay": true,
+}
+
 // Any path-like token naming a Markdown document, in prose, in backticks, or as a link
 // target, so the gate does not depend on which citation syntax an author reached for.
+//
+// A leading "./" is stripped before the path is resolved. Without that, a self-reference
+// written the way a Markdown link is ordinarily written reads as a directory named "." and
+// fails, which is the gate being wrong rather than the citation.
 //
 // A directory component is required. A bare filename is as likely to be a naming convention
 // as a citation — a decision record describing `ADR-NNN-slug.md` names a pattern, not a
@@ -86,8 +103,12 @@ func unmarkedReferences(line string) []string {
 // was written in. os.Stat alone is case-insensitive on Windows and case-sensitive on Linux,
 // where CI runs, so a mis-cased reference would otherwise pass locally and fail there.
 func documentExists(reference string) bool {
+	segments := strings.Split(strings.TrimPrefix(reference, "./"), "/")
+	if siblingRepositories[segments[0]] {
+		return true
+	}
+
 	directory := moduleRoot
-	segments := strings.Split(reference, "/")
 	for index, segment := range segments {
 		entries, err := os.ReadDir(directory)
 		if err != nil {
