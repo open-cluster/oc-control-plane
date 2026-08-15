@@ -35,3 +35,14 @@ Thumbs.db
 /artifacts/
 /artifacts-sweep/
 /artifacts-rerun/
+
+# AI-assisted development working state (local-only)
+# See github.com/open-cluster/engineering: ai/repository-boundaries.md
+/.agents/
+/.claude/
+/skills-lock.json
+/plans/
+/learning-records/
+/lessons/
+/reference/
+/assets/
