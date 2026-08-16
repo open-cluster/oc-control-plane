@@ -308,7 +308,10 @@ func alertmanagerBody(
 // The sentence: a correctly authenticated delivery becomes a durable, normalised Signal.
 func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
 	plane := startIntake(t)
-	observed := time.Now().UTC().Truncate(time.Second)
+	// The alert started well before this delivery on purpose: it is what lets the clock
+	// assertion below distinguish the receiver's own clock from the source's, without
+	// comparing two machines' clocks at sub-second precision.
+	observed := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 
 	status := plane.deliver(t, intakeSecret, firing("fp-node-not-ready", observed))
 	if status != http.StatusAccepted {
@@ -345,9 +348,11 @@ func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
 		t.Errorf("a firing signal carries a resolution time %s", signal.ResolvedAt)
 	}
 	// Both clocks are kept. Collapsing them would make a delayed delivery indistinguishable
-	// from a delayed failure, and an investigator reasons about ordering.
-	if signal.ReceivedAt.Before(signal.StartedAt) {
-		t.Errorf("received at %s, before the source says it started (%s); the two clocks were "+
+	// from a delayed failure, and an investigator reasons about ordering. The alert started
+	// ten minutes ago, so a received time copied from the source's clock would sit ten
+	// minutes early — far outside any honest skew between this process and the database.
+	if signal.ReceivedAt.Sub(signal.StartedAt) < 5*time.Minute {
+		t.Errorf("received at %s, near the source's own start time (%s); the two clocks were "+
 			"collapsed", signal.ReceivedAt, signal.StartedAt)
 	}
 }

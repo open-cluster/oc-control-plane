@@ -8,10 +8,12 @@ module github.com/open-cluster/oc-control-plane/test/e2e
 
 go 1.26.0
 
+toolchain go1.26.6
+
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/open-cluster/oc-relay/gen/go v0.3.0
+	github.com/open-cluster/oc-relay/gen/go v0.4.0
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/k3s v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
@@ -108,8 +110,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.3 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// TEMPORARY, for the same reason and with the same expiry as the directive in the shipping
-// module's go.mod: the redaction report is a contract change and `gen/go/v0.3.0` is not
-// tagged yet. Delete both together once it is.
-replace github.com/open-cluster/oc-relay/gen/go => ../../../opencluster-relay/gen/go

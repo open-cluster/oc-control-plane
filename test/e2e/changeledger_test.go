@@ -57,7 +57,9 @@ func (h *harness) awaitLedgerBaseline(t *testing.T) {
 			SELECT baseline_at IS NOT NULL FROM change_ledger_scope
 			 WHERE integration_id = $1`, h.integration).Scan(&baselined)
 		if err != nil {
-			return false, nil // the scope row itself may not exist yet
+			// The scope row itself may not exist yet; the poll continues and the timeout
+			// message names this error if it never does.
+			return false, err
 		}
 		return baselined, nil
 	})
@@ -74,7 +76,7 @@ func (h *harness) awaitConfirmations(t *testing.T, after time.Time, ticks int) {
 			SELECT coalesce(last_confirmed_at, to_timestamp(0)) FROM change_ledger_scope
 			 WHERE integration_id = $1`, h.integration).Scan(&confirmed)
 		if err != nil {
-			return false, nil
+			return false, err
 		}
 		return confirmed.After(after.Add(time.Duration(ticks) * 2 * time.Second)), nil
 	})
