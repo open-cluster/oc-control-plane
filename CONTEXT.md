@@ -80,9 +80,12 @@ The central private service owning reasoning, truth, correlation, and tenancy. A
 execution locality: work that runs against native data or public SaaS APIs.
 
 **Relay**:
-The customer-installed execution runtime that performs typed, bounded, read-only capability
-jobs against customer-private sources over one outbound stream. Also an execution locality.
-Organization-scoped: it carries no Environment and may serve Connections in several. Not an
+The customer-side execution runtime that performs typed, bounded, read-only capability jobs —
+approved under the customer's own Investigation controls — against customer-private sources over
+one outbound stream. Also an execution locality.
+Organization-scoped: it carries no Environment and may serve Connections in several. An interface
+that offers to filter a Relay fleet by Environment is offering a filter over a property the record
+does not have; what a Relay can be said to serve is derived from the Connections bound to it. Not an
 agent, not a runtime, not a collector — it hosts no reasoning and accepts no commands. It is
 not a Connection and never stands in for one: a Relay is where work runs, a Connection is
 what the work reaches.
@@ -145,18 +148,27 @@ credential or tenant boundary, and never a substitute for an Environment.
 _Avoid_: tag (as a boundary), scope
 
 **Integration**:
-A kind of external system OpenCluster knows how to speak to — Alertmanager, PagerDuty,
-Zabbix, Kubernetes, Prometheus, Nomad, Proxmox. A closed vocabulary compiled into the
-product, never a customer record: it names what an adapter exists for. Many Connections may
-share one Integration, and adding a second installation of a system a customer already runs
-adds a Connection and no code.
-_Avoid_: connector, provider, plugin, datasource type, integration instance
+A provider/type OpenCluster knows how to communicate with — Kubernetes, Prometheus, Loki,
+Alertmanager, PagerDuty, Grafana, Zabbix, Nomad, Proxmox, AWS, a generic webhook. A closed
+vocabulary compiled into the product, never a customer record: it names what an adapter exists
+for. Many Connections may share one Integration, and adding a second installation of a system a
+customer already runs adds a Connection and no code.
+
+Integration is a **type-level** noun and is correct at that level: "the Integration catalog",
+"an Integration definition", "which Integrations OpenCluster supports". It is wrong for the
+configured instance, which is a Connection — "the integration is unreachable", "integration
+health", "three integrations in production" all name Connections and are all forbidden.
+*Provider* is permitted attributively where it reads more naturally to an operator — provider
+name, provider logo, provider-specific configuration — and never as the record noun.
+_Avoid_: connector, plugin, datasource type, integration instance, integration (for a Connection)
 
 **Connection**:
-One configured instance of an Integration — "Production Alertmanager", "EU Zabbix",
-"Staging Prometheus", "Production Proxmox". The member of an Environment, and the sole
-authority for the Environment of everything that arrives through it. Carries its role, its
-execution locality and, where relevant, its Relay binding.
+One configured instance of an Integration in an Organization and an Environment — "Production
+Alertmanager", "EU Zabbix", "Staging Prometheus", "Production Proxmox". The member of an
+Environment, and the sole authority for the Environment of everything that arrives through it.
+Carries its role, its execution locality and, where relevant, its Relay binding. An Organization
+may hold many Connections of one Integration — three Prometheus Connections and two Alertmanager
+Connections is an ordinary estate, not an edge case.
 _Avoid_: integration (the instance), datasource, alert source, connector.
 "Source" is not banned outright — it is the ordinary word for the customer's own system at
 the far end of a Connection, and intake talks about a source retrying or being told to slow
@@ -171,6 +183,13 @@ outbound and owns its execution locality and Relay binding. One Connection may b
 Alertmanager Connection is usually trigger-only and needs no Relay, and a Kubernetes
 Connection is usually evidence-only and names one.
 _Avoid_: direction, mode, connection type, kind
+
+**Investigation trigger**:
+A configured source that may automatically create or update an Investigation. Not a fifth entity:
+it is the operator-facing name for a Connection whose role includes `trigger`, and it exists
+because "Trigger Connection" describes the record while "investigation trigger" describes the
+consequence — which is what an operator is deciding about when they configure one.
+_Avoid_: alert intake, alert source, alerting integration, alert rule
 
 **Placement**:
 Where an organization's data physically lives — database, object storage, region, model

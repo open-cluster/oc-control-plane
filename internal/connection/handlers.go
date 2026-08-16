@@ -717,24 +717,6 @@ func (h Handlers) organization(
 	return organization, true
 }
 
-// environmentFilter reads the optional Environment a listing is narrowed to. Absent means every
-// Environment in the tenant, which is the Organization-wide read the corrected path exists for.
-func (h Handlers) environmentFilter(
-	writer http.ResponseWriter, request *http.Request,
-) (uuid.UUID, bool) {
-	named := strings.TrimSpace(request.URL.Query().Get("environmentId"))
-	if named == "" {
-		return uuid.Nil, true
-	}
-	environment, err := uuid.Parse(named)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "environmentId is not an identity"})
-		return uuid.Nil, false
-	}
-	return environment, true
-}
-
 // namedEnvironment reads the Environment a new Connection is being created in.
 func (h Handlers) namedEnvironment(
 	writer http.ResponseWriter, named string,
@@ -787,14 +769,6 @@ func (h Handlers) caller(
 		return authz.Principal{}, false
 	}
 	return principal, true
-}
-
-func pageSize(request *http.Request) int {
-	size, err := strconv.Atoi(request.URL.Query().Get("limit"))
-	if err != nil {
-		return 0
-	}
-	return size
 }
 
 // query parses a listing's query string against what that listing serves, answering the caller

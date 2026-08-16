@@ -47,21 +47,21 @@ to a namespace and a workload, which is canonical resource identity and does not
 started from that inference would confidently investigate the wrong thing. So an episode is
 investigated by an operator who still names the scope.
 
-What this slice deliberately hard-codes is written down rather than left to be discovered:
-[docs/architecture/hard-coded-in-the-first-investigation.md](docs/architecture/hard-coded-in-the-first-investigation.md).
+What this slice deliberately hard-codes is written down in version control history; the
+foundational simplification that replaces it is specified on the issue tracker.
 
 ## Documents
 
 | Location | Holds |
 | --- | --- |
-| `CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
-| `docs/architecture/decisions/` | Decision records, numbered sequentially |
-| `docs/architecture/` | The architecture each decision record summarises |
-| `plans/` | Migration plan and per-slice specifications, with their real status |
+| `./CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
 
-These moved here from the frozen .NET implementation on 2026-07-27, because they govern work
-that happens in Go. A gate fails the build if a document cites another that does not exist,
-so a rename cannot silently leave a dangling reference behind.
+A gate fails the build if a document cites another that does not exist, so a rename cannot
+silently leave a dangling reference behind.
+
+Slice plans, specifications, and retired decision records are working state, kept out of the
+repository. Version control is the archive; specifications for unbuilt work live on the issue
+tracker.
 
 ## Quick start
 
@@ -323,7 +323,13 @@ On the intake listener:
 
 | Path | Purpose |
 | --- | --- |
-| `POST /intake/v1/organizations/{organization}/sources/{source}` | One webhook delivery from a configured alerting source. Authenticated by that source's shared secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
+| `POST /intake/v1/connections/{connection}/signals` | One webhook delivery on a Connection's opaque intake route. Authenticated by that Connection's shared secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
+
+The intake listener serves plain HTTP and must be deployed behind a TLS-terminating edge.
+Alerting sources cannot sign, so the shared-secret header is a bearer credential that attests
+nothing about the body — anyone who captures one request can replay it. A deployment that
+publishes this listener without TLS in front of it is handing that credential out in
+cleartext.
 
 On the operator listener, unauthenticated — this is the whole public surface of the product, and
 each route answers a tenant that has configured no way in exactly as it answers one that does not
@@ -473,9 +479,11 @@ It needs a container runtime and the Relay's working tree beside this repository
 `OC_E2E_RELAY_SOURCE`). A run stands up a database and a single-node Kubernetes per scenario, so
 the whole set takes tens of minutes.
 
-**It cannot yet be run to a scored result.** `-transcripts` must name a directory holding one
-recording per scenario, and none ship — there is no live provider to record from, and a
-hand-written transcript would be the builder's imagination scored as though a model had reasoned
-it, which is what blind scoring exists to prevent. A run without `-transcripts` refuses and says
-so. Everything else — provisioning, readiness verification, the artifact, scoring, the kill
-criterion — is built and tested.
+**Scored live runs are real.** The first ran against a live provider on 2026-08-02; run
+summaries are working state, kept out of the repository. `-transcripts` must name a
+directory holding one recording per scenario; recordings come from live runs, never by hand —
+a hand-written transcript would be the builder's imagination scored as though a model had
+reasoned it, which is what blind scoring exists to prevent. A run without `-transcripts`
+refuses and says so. The scenario set is ten deliberately broken clusters chosen from
+failures the founder has seen — a flagged assumption of representativeness, to be revised
+after the first real customer incident.

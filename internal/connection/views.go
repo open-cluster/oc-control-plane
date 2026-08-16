@@ -16,11 +16,6 @@ import (
 
 const maxRequestBytes = 16 << 10
 
-type listView struct {
-	Connections []connectionView `json:"connections"`
-	Next        string           `json:"next,omitempty"`
-}
-
 // connectionView is what a Connection looks like to an operator. It carries no secret and no
 // digest: the digest is not a credential but publishing it would let anyone holding a database
 // dump confirm a guess offline, which is exactly the property digest-only storage exists for.
@@ -209,11 +204,7 @@ func catalogViewOf(definition Definition, configured int) integrationView {
 	}
 	sections := make([]sectionView, 0, len(definition.Presentation.Sections))
 	for _, section := range definition.Presentation.Sections {
-		sections = append(sections, sectionView{
-			Title:       section.Title,
-			Description: section.Description,
-			Fields:      section.Fields,
-		})
+		sections = append(sections, sectionView(section))
 	}
 	capabilities := definition.Capabilities
 	if capabilities == nil {
