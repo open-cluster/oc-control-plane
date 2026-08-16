@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/table"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -35,6 +36,12 @@ type Handlers struct {
 	Store   Store
 	Catalog Catalog
 	Logger  *slog.Logger
+	// Sealer closes over outbound credentials at rest. Unconfigured means this deployment
+	// cannot hold one, and submitting a secret field is refused with that reason — never
+	// stored in the clear and never silently dropped. The composition root refuses
+	// startup outright when the catalog holds a credential-bearing type and this is
+	// unconfigured, so the refusal here is the belt to that brace.
+	Sealer seal.Sealer
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// CONFIGURED rather than derived from the request, because a URL assembled from the
 	// operator surface's own Host header would work from wherever the console is served
@@ -172,7 +179,7 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 			errorView{Error: "type does not name an integration type this build serves"})
 		return
 	}
-	wanted, secret, refusal := h.plan(definition, asked, principal)
+	wanted, secret, credential, refusal := h.plan(definition, asked, principal)
 	if refusal != "" {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
 		return
@@ -180,6 +187,14 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
+
+	// An outbound type is verified against the real provider BEFORE anything is stored:
+	// a typo fails here, at setup, not during the next incident. The probe's judgement
+	// travels into the create, so the Integration is born verified in the same
+	// transaction that records it.
+	if definition.Probe != nil && !h.probeAndSeal(ctx, writer, definition, &wanted, credential) {
+		return
+	}
 
 	created, err := h.Store.CreateIntegration(ctx, principal, organization, wanted)
 	if err != nil {
@@ -200,22 +215,23 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusCreated, view)
 }
 
-// plan turns a request into what the store is asked to write, or a refusal in the
-// operator's language. The webhook secret is minted here and returned beside the record,
-// because after this moment it exists only as a digest.
+// plan turns a request into what the store is asked to write, plus the two values that
+// exist only in this moment: the minted webhook secret, which after this exists only as a
+// digest, and the pasted credential, which after the probe exists only sealed. A refusal
+// is in the operator's language.
 func (h Handlers) plan(
 	definition Definition, asked createRequest, principal authz.Principal,
-) (NewIntegration, string, string) {
+) (NewIntegration, string, string, string) {
 	name := strings.TrimSpace(asked.Name)
 	if name == "" || len(name) > maxNameLength {
-		return NewIntegration{}, "", "name must be between 1 and 128 characters"
+		return NewIntegration{}, "", "", "name must be between 1 and 128 characters"
 	}
 	if refusal := checkLabels(asked.Labels); refusal != "" {
-		return NewIntegration{}, "", refusal
+		return NewIntegration{}, "", "", refusal
 	}
-	configuration, refusal := checkConfiguration(definition, asked.Configuration)
+	configuration, credential, refusal := checkConfiguration(definition, asked.Configuration, true)
 	if refusal != "" {
-		return NewIntegration{}, "", refusal
+		return NewIntegration{}, "", "", refusal
 	}
 
 	wanted := NewIntegration{
@@ -229,31 +245,70 @@ func (h Handlers) plan(
 	relay := strings.TrimSpace(asked.RelayID)
 	switch {
 	case definition.RequiresRelay && relay == "":
-		return NewIntegration{}, "", definition.Name + " is served through a relay; relayId is required"
+		return NewIntegration{}, "", "", definition.Name + " is served through a relay; relayId is required"
 	case !definition.RequiresRelay && relay != "":
-		return NewIntegration{}, "", definition.Name + " is not served through a relay; relayId must be absent"
+		return NewIntegration{}, "", "", definition.Name + " is not served through a relay; relayId must be absent"
 	case relay != "":
 		id, err := uuid.Parse(relay)
 		if err != nil {
-			return NewIntegration{}, "", "relayId is not an identity"
+			return NewIntegration{}, "", "", "relayId is not an identity"
 		}
 		wanted.RelayID = id
 	}
 
 	if !definition.ReceivesWebhooks {
-		return wanted, "", ""
+		return wanted, "", credential, ""
 	}
 	secret, err := GenerateSecret()
 	if err != nil {
-		return NewIntegration{}, "", "a webhook secret could not be generated; try again"
+		return NewIntegration{}, "", "", "a webhook secret could not be generated; try again"
 	}
 	fingerprint, err := MintFingerprint()
 	if err != nil {
-		return NewIntegration{}, "", "a webhook secret could not be generated; try again"
+		return NewIntegration{}, "", "", "a webhook secret could not be generated; try again"
 	}
 	wanted.WebhookSecretDigest = Digest(secret)
 	wanted.WebhookSecretFingerprint = fingerprint
-	return wanted, secret, ""
+	return wanted, secret, credential, ""
+}
+
+// probeAndSeal verifies outbound reality before anything is stored: the definition's
+// probe is given the installation as it is about to exist, a failed judgement refuses the
+// create with the note as the reason, and only then is the credential sealed. The probe
+// runs before the seal so a credential the provider refused is never stored at all.
+func (h Handlers) probeAndSeal(
+	ctx context.Context, writer http.ResponseWriter, definition Definition,
+	wanted *NewIntegration, credential string,
+) bool {
+	if credential != "" && !h.holdsCredentials(writer) {
+		return false
+	}
+
+	verification := definition.Probe(ctx, ProbeInput{
+		Integration: Integration{
+			Type:          wanted.Type,
+			Name:          wanted.Name,
+			Configuration: wanted.Configuration,
+			Labels:        wanted.Labels,
+		},
+		Credential: credential,
+	})
+	if verification.Status == StatusFailed {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: verification.Note})
+		return false
+	}
+	wanted.Verification = &verification
+
+	if credential == "" {
+		return true
+	}
+	sealed, fingerprint, ok := h.sealCredential(writer, credential)
+	if !ok {
+		return false
+	}
+	wanted.CredentialSealed = sealed
+	wanted.CredentialFingerprint = fingerprint
+	return true
 }
 
 // read reports one Integration.
@@ -318,6 +373,8 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
+	credential := ""
+	var definition Definition
 	if asked.Configuration != nil {
 		// The configuration is checked against the type's schema, which needs the type.
 		current, err := h.Store.Integration(ctx, organization, id)
@@ -325,18 +382,54 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 			h.fail(writer, request, err)
 			return
 		}
-		definition, known := h.Catalog.ByID(current.Type)
+		known := false
+		definition, known = h.Catalog.ByID(current.Type)
 		if !known {
 			h.fail(writer, request, fmt.Errorf(
 				"integration %s has type %d this build does not serve", id, current.Type))
 			return
 		}
-		checked, refusal := checkConfiguration(definition, asked.Configuration)
+		// A secret field may be absent here, unlike at creation: absence means "keep the
+		// credential I already gave you", which is what write-only after entry implies.
+		checked, submitted, refusal := checkConfiguration(definition, asked.Configuration, false)
 		if refusal != "" {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
 			return
 		}
 		asked.Configuration = checked
+		credential = submitted
+
+		if credential != "" {
+			// The replacement is probed and sealed BEFORE anything is applied, and the
+			// store applies revision and credential in one transaction — so a pasted-wrong
+			// token, a missing sealing key or a name conflict each change nothing at all.
+			if !h.holdsCredentials(writer) {
+				return
+			}
+			preview := current
+			preview.Configuration = checked
+			verification := definition.Probe(ctx, ProbeInput{
+				Integration: preview, Credential: credential,
+			})
+			if verification.Status == StatusFailed {
+				writeJSON(writer, http.StatusBadRequest, errorView{Error: verification.Note})
+				return
+			}
+			sealed, fingerprint, ok := h.sealCredential(writer, credential)
+			if !ok {
+				return
+			}
+
+			revised, err := h.Store.ReplaceIntegrationCredential(
+				ctx, principal, organization, id, Revision(asked), sealed, fingerprint,
+				verification)
+			if err != nil {
+				h.fail(writer, request, err)
+				return
+			}
+			writeJSON(writer, http.StatusOK, h.viewOf(revised))
+			return
+		}
 	}
 
 	revised, err := h.Store.ReviseIntegration(ctx, principal, organization, id, Revision(asked))
@@ -345,6 +438,35 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, h.viewOf(revised))
+}
+
+// holdsCredentials answers whether this deployment can store a pasted credential at all,
+// refusing in the operator's language when it cannot. Checked before the provider is
+// probed, so a deployment that could not store the answer never spends the vendor call.
+func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
+	if h.Sealer.Configured() {
+		return true
+	}
+	writeJSON(writer, http.StatusServiceUnavailable, errorView{
+		Error: "this deployment has no sealing key and cannot hold a credential"})
+	return false
+}
+
+// sealCredential closes over a pasted credential and mints its identity, answering the
+// operator when either fails. Both paths that accept a credential refuse through here,
+// so they cannot drift into refusing differently.
+func (h Handlers) sealCredential(
+	writer http.ResponseWriter, credential string,
+) ([]byte, string, bool) {
+	sealed, err := h.Sealer.Seal(credential)
+	if err == nil {
+		if fingerprint, mintErr := MintFingerprint(); mintErr == nil {
+			return sealed, fingerprint, true
+		}
+	}
+	writeJSON(writer, http.StatusServiceUnavailable,
+		errorView{Error: "the credential could not be stored; nothing was saved"})
+	return nil, "", false
 }
 
 // remove deletes an Integration nothing depends on. One with history is refused with the
@@ -429,6 +551,19 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	// An outbound type is verified by asking the provider itself; nothing gathered here
+	// could say whether the credential still works.
+	if definition.Probe != nil {
+		verified, probeErr := h.Store.RecordIntegrationVerification(
+			ctx, principal, organization, id, h.probeExisting(ctx, definition, found))
+		if probeErr != nil {
+			h.fail(writer, request, probeErr)
+			return
+		}
+		writeJSON(writer, http.StatusOK, h.viewOf(verified))
+		return
+	}
+
 	input := VerifyInput{Integration: found}
 	if found.RelayID != uuid.Nil {
 		status, statusErr := h.Store.IntegrationRelayStatus(ctx, organization, found.RelayID)
@@ -454,6 +589,28 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, h.viewOf(verified))
+}
+
+// probeExisting asks the provider about an Integration as recorded, unsealing its
+// credential for the one call that presents it. A credential that cannot be opened —
+// a rotated key, a tampered column — is judged failed with what the operator can do
+// about it, because "this integration cannot authenticate" is its operational truth.
+func (h Handlers) probeExisting(
+	ctx context.Context, definition Definition, found Integration,
+) Verification {
+	input := ProbeInput{Integration: found}
+	if len(found.CredentialSealed) > 0 {
+		credential, err := h.Sealer.Open(found.CredentialSealed)
+		if err != nil {
+			return Verification{
+				Status: StatusFailed,
+				Note: "the stored credential could not be opened by this deployment; " +
+					"paste the credential again to replace it",
+			}
+		}
+		input.Credential = credential
+	}
+	return definition.Probe(ctx, input)
 }
 
 // rotateSecret replaces the webhook secret, returning the new value exactly once.
@@ -507,37 +664,55 @@ func checkLabels(labels map[string]string) string {
 	return ""
 }
 
-// checkConfiguration validates submitted configuration against the type's declared fields.
-// An undeclared field is refused rather than dropped, and a secret-marked field is refused
-// outright: configuration never stores a credential, and accepting one silently is how a
-// configuration comes to look complete and do nothing.
+// checkConfiguration reads submitted configuration against the type's declared fields.
+// An undeclared field is refused rather than dropped, and a declared secret field is
+// EXTRACTED rather than kept: the returned configuration never holds a credential, and
+// the credential is returned beside it for the sealer. requireSecret distinguishes
+// creation, where a required credential must arrive, from revision, where its absence
+// means "keep the one I already gave you".
 func checkConfiguration(
-	definition Definition, submitted map[string]any,
-) (map[string]any, string) {
+	definition Definition, submitted map[string]any, requireSecret bool,
+) (map[string]any, string, string) {
+	credential := ""
 	checked := make(map[string]any, len(submitted))
 	for name, value := range submitted {
 		field, declared := definition.Field(name)
 		if !declared {
-			return nil, "configuration field " + strconv.Quote(name) +
+			return nil, "", "configuration field " + strconv.Quote(name) +
 				" is not one " + definition.Name + " declares"
 		}
 		if field.Secret {
-			return nil, "configuration field " + strconv.Quote(name) +
-				" carries a credential and is not accepted here"
+			pasted, isText := value.(string)
+			if !isText {
+				return nil, "", "configuration field " + strconv.Quote(name) + " must be text"
+			}
+			pasted = strings.TrimSpace(pasted)
+			if err := CheckCredentialShape(pasted); err != nil {
+				return nil, "", "configuration field " + strconv.Quote(name) + ": " + err.Error()
+			}
+			credential = pasted
+			continue
 		}
 		if refusal := checkFieldValue(field, value); refusal != "" {
-			return nil, refusal
+			return nil, "", refusal
 		}
 		checked[name] = value
 	}
 	for _, field := range definition.Config {
-		if field.Required {
-			if _, present := checked[field.Name]; !present {
-				return nil, "configuration field " + strconv.Quote(field.Name) + " is required"
+		if !field.Required {
+			continue
+		}
+		if field.Secret {
+			if requireSecret && credential == "" {
+				return nil, "", "configuration field " + strconv.Quote(field.Name) + " is required"
 			}
+			continue
+		}
+		if _, present := checked[field.Name]; !present {
+			return nil, "", "configuration field " + strconv.Quote(field.Name) + " is required"
 		}
 	}
-	return checked, ""
+	return checked, credential, ""
 }
 
 func checkFieldValue(field Field, value any) string {
@@ -692,6 +867,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusConflict, errorView{Error: ErrInUse.Error()})
 	case errors.Is(err, ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrBadCursor.Error()})
+	case errors.Is(err, seal.ErrNoKey):
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "this deployment has no sealing key and cannot hold a credential"})
 	case errors.Is(err, audit.ErrWriteFailed):
 		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
 			slog.String("path", request.URL.Path),

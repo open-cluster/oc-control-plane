@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -60,11 +61,16 @@ const (
 	// where its console is.
 	EnvOperatorAllowedOrigins = "OC_OPERATOR_ALLOWED_ORIGINS"
 
-	// The key an identity provider's client secret is sealed under. That credential is the one
-	// this product must be able to READ BACK — it is presented to a token endpoint rather than
-	// compared against — so it is encrypted rather than digested, and this names the file the
-	// key is read from.
-	EnvIdentityEncryptionKeyFile = "OC_IDENTITY_ENCRYPTION_KEY_FILE"
+	// The key every presentable credential is sealed under: an identity provider's client
+	// secret, an integration's bot token. Those are the credentials this product must be
+	// able to READ BACK — they are presented to the far end rather than compared against —
+	// so they are encrypted rather than digested, and this names the file the key is read
+	// from.
+	EnvSealingKeyFile = "OC_SEALING_KEY_FILE"
+
+	// EnvSlackAPIURL overrides where the Slack provider reaches its vendor. It exists for
+	// tests and for API-compatible proxies; empty means Slack's own origin.
+	EnvSlackAPIURL = "OC_SLACK_API_URL"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
@@ -173,10 +179,14 @@ type Config struct {
 	// come from.
 	OperatorAllowedOrigins []string
 
-	// IdentityEncryptionKey seals an identity provider's client secret at rest. Empty means this
-	// deployment cannot hold one, and configuring a provider is refused with that reason rather
-	// than storing a secret in the clear.
-	IdentityEncryptionKey []byte
+	// SealingKey seals presentable credentials at rest: an identity provider's client
+	// secret, an integration's outbound token. Empty means this deployment cannot hold
+	// one, and submitting one is refused with that reason rather than stored in the clear.
+	SealingKey []byte
+
+	// SlackAPIURL is where the Slack provider reaches its vendor; empty means Slack's own
+	// origin. It exists so a test can stand a fake where slack.com would be.
+	SlackAPIURL string
 
 	// IntakeAddress is the listen address for alert intake. It is separate from every other
 	// surface because it is the only one a customer's own infrastructure connects to inbound,
@@ -275,13 +285,16 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.OperatorAllowedOrigins, err = allowedOrigins(lookup); err != nil {
 		return Config{}, err
 	}
-	if cfg.IdentityEncryptionKey, err = identityEncryptionKey(lookup); err != nil {
+	if cfg.SealingKey, err = sealingKey(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakePublicURL, err = optionalIntakeURL(lookup, EnvIntakePublicURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.SlackAPIURL, err = optionalVendorURL(lookup, EnvSlackAPIURL); err != nil {
 		return Config{}, err
 	}
 	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
@@ -477,6 +490,26 @@ func validateHostPort(address string) error {
 		return fmt.Errorf("invalid port %q", port)
 	}
 	return nil
+}
+
+// optionalVendorURL reads a base URL a provider reaches its vendor at. Unlike an origin,
+// a path is allowed — vendor APIs live under one — and https is required except on
+// loopback, because a credential is presented to whatever answers here.
+func optionalVendorURL(lookup func(string) (string, bool), key string) (string, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	trimmed := strings.TrimSuffix(strings.TrimSpace(value), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return "", fmt.Errorf("%s must be an absolute URL such as https://vendor.example.com/api", key)
+	}
+	if parsed.Scheme != "https" && parsed.Hostname() != "localhost" &&
+		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
+		return "", fmt.Errorf("%s must be https; a credential is presented to this URL", key)
+	}
+	return trimmed, nil
 }
 
 func optionalDuration(

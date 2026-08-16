@@ -206,7 +206,7 @@ func (h Handlers) planProvider(
 		case secret != "":
 			if !h.Sealer.Configured() {
 				writeJSON(writer, http.StatusServiceUnavailable, errorView{
-					Error: "this deployment has no identity encryption key and cannot hold a " +
+					Error: "this deployment has no sealing key and cannot hold a " +
 						"client secret"})
 				return storage.NewIdentityProvider{}, false
 			}

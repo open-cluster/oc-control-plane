@@ -43,10 +43,13 @@ const (
 	ActionIntegrationVerified      Action = "integration.verified"
 	ActionIntegrationDeleted       Action = "integration.deleted"
 	ActionIntegrationSecretRotated Action = "integration.webhook-secret.rotated"
-	ActionRelayRosterRead          Action = "relay.roster.read"
-	ActionConflictTrailRead        Action = "relay.conflict-trail.read"
-	ActionConflictCleared          Action = "relay.conflict.cleared"
-	ActionRelayBootstrapIssued     Action = "relay.bootstrap-token.issued"
+	// Replacing the outbound credential is its own act, apart from revising: it is the
+	// answer to "who rotated the token, and did the new one work".
+	ActionIntegrationCredentialReplaced Action = "integration.credential.replaced"
+	ActionRelayRosterRead               Action = "relay.roster.read"
+	ActionConflictTrailRead             Action = "relay.conflict-trail.read"
+	ActionConflictCleared               Action = "relay.conflict.cleared"
+	ActionRelayBootstrapIssued          Action = "relay.bootstrap-token.issued"
 
 	// Incidents. Grouping itself is not audited — it is done by a delivery rather than by a
 	// person, hundreds of times a day, and a record that grew a row per alert would bury the acts

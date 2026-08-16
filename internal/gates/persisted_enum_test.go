@@ -52,6 +52,7 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		// compiled here as constants; the id is the join key everything else stores.
 		{"TypeAlertmanager", int(integrations.TypeAlertmanager), 1},
 		{"TypeKubernetes", int(integrations.TypeKubernetes), 2},
+		{"TypeSlack", int(integrations.TypeSlack), 3},
 
 		// An Integration's observed status. A value that moved here would silently
 		// re-label every existing row: an Integration stored as failed would start reading
@@ -113,6 +114,7 @@ var (
 	episodeStatusValues   = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
 	integrationTypeValues = []int{
 		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
+		int(integrations.TypeSlack),
 	}
 	changeKindValues = []int{
 		int(changeledger.ChangeBaseline), int(changeledger.ChangeCreated),

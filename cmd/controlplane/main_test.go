@@ -306,6 +306,10 @@ func startControlPlaneRunning(
 		Assignments:     map[string]string{"org-a": "shared"},
 		ShutdownTimeout: 10 * time.Second,
 		ServiceName:     "oc-control-plane-test",
+		// A default sealing key, because the catalog serves a credential-bearing type and
+		// an operator surface without a key refuses to start. A test proving that refusal
+		// clears this deliberately.
+		SealingKey: bytes.Repeat([]byte{7}, 32),
 	}
 	if adjust != nil {
 		adjust(&cfg)

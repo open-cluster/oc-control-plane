@@ -39,6 +39,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
@@ -156,9 +157,19 @@ func run(
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
+		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)
+	}
+
+	// One sealer for the process: identity client secrets and integration credentials are
+	// sealed under the same deployment key.
+	var sealer seal.Sealer
+	if len(cfg.SealingKey) > 0 {
+		if sealer, err = seal.New(cfg.SealingKey); err != nil {
+			return fmt.Errorf("%s: %w", config.EnvSealingKeyFile, err)
+		}
 	}
 
 	return serve(ctx, assembled{
@@ -167,6 +178,7 @@ func run(
 		telemetry:  telemetry,
 		placements: placements,
 		catalog:    catalog,
+		sealer:     sealer,
 		onListen:   replace.onListen,
 	})
 }
@@ -179,6 +191,7 @@ type assembled struct {
 	telemetry  *observability.Telemetry
 	placements *storage.Placements
 	catalog    integrations.Catalog
+	sealer     seal.Sealer
 	onListen   func(net.Addr)
 }
 
@@ -201,9 +214,6 @@ func serve(ctx context.Context, process assembled) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", cfg.HTTPAddress, err)
 	}
-	if process.onListen != nil {
-		process.onListen(listener.Addr())
-	}
 	logger.Info("listening", slog.String("address", listener.Addr().String()))
 
 	// One slot per surface that can report a failure. Too few would leave the last goroutines
@@ -217,6 +227,10 @@ func serve(ctx context.Context, process assembled) error {
 		}
 		failed <- nil
 	}()
+	// The backstop for the paths that return before the drain at the bottom — an endpoint
+	// that refused to start must not leave this goroutine serving forever. On the ordinary
+	// path the drain has already shut the server down and this is a no-op.
+	defer func() { _ = server.Close() }()
 
 	// The Relay endpoint is a second listener on purpose. It speaks a different protocol to
 	// a different kind of caller, and putting it on the HTTP port would place it behind that
@@ -243,6 +257,14 @@ func serve(ctx context.Context, process assembled) error {
 		return err
 	}
 	defer intake.stop(cfg.ShutdownTimeout, logger)
+
+	// The callback fires only once EVERY configured surface is bound, because its promise
+	// is "a test can address a port without racing the listener" — and a caller told about
+	// one listener while three others are still binding would race exactly the way the
+	// promise forbids.
+	if process.onListen != nil {
+		process.onListen(listener.Addr())
+	}
 
 	// The retention pruner is not a listener: it applies the schedule each tenant declared
 	// for its own record. It is stopped with the process and nothing waits for it, because
@@ -365,6 +387,17 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		return nil, nil
 	}
 
+	// The operator surface is where credentials enter and are used, so a deployment
+	// serving a credential-bearing catalog without a sealing key is refused HERE, at
+	// startup: the alternative is a setup flow that accepts a token it can only store in
+	// the clear or drop.
+	if bearing := process.catalog.CredentialBearing(); len(bearing) > 0 &&
+		!process.sealer.Configured() {
+		return nil, fmt.Errorf("%s is required: the catalog serves %s, which take a "+
+			"credential, and this deployment has no key to seal one under",
+			config.EnvSealingKeyFile, strings.Join(bearing, ", "))
+	}
+
 	identities, err := operatorIdentity(process)
 	if err != nil {
 		return nil, err
@@ -380,6 +413,7 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		Identity:            identities,
 		Origins:             cfg.OperatorAllowedOrigins,
 		Catalog:             process.catalog,
+		Sealer:              process.sealer,
 		IntakeBaseURL:       cfg.IntakePublicURL,
 		MinimumRelayVersion: cfg.MinimumRelayVersion,
 	}.Router()
@@ -438,14 +472,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		RetentionEnforced: true,
 	}
 
-	if len(cfg.IdentityEncryptionKey) > 0 {
-		sealer, err := seal.New(cfg.IdentityEncryptionKey)
-		if err != nil {
-			return identity.Handlers{}, fmt.Errorf("%s: %w",
-				config.EnvIdentityEncryptionKeyFile, err)
-		}
-		handlers.Sealer = sealer
-	}
+	handlers.Sealer = process.sealer
 
 	if len(cfg.OperatorTokenDigest) == 0 {
 		return handlers, nil

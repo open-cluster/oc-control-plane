@@ -140,7 +140,8 @@ Fetching from the private repository needs
 | `OC_OPERATOR_PUBLIC_URL` | with sign-in | Where this surface is reachable from a browser. The OIDC redirect URI is built from it, never from a request's Host header |
 | `OC_OPERATOR_CONSOLE_URL` | with sign-in | Where a browser is sent once signed in. Must share a registrable domain with the above |
 | `OC_OPERATOR_ALLOWED_ORIGINS` | with a console | Browser origins a cookie-authenticated unsafe request may come from. Empty permits none |
-| `OC_IDENTITY_ENCRYPTION_KEY_FILE` | with sign-in | 32-byte key, raw or base64, sealing an identity provider's client secret at rest |
+| `OC_SEALING_KEY_FILE` | with sign-in or credential-bearing integrations | 32-byte key, raw or base64, sealing presentable credentials at rest: identity client secrets and integration tokens |
+| `OC_SLACK_API_URL` | no | Where the Slack provider reaches its vendor. Empty means Slack's own origin; it exists for tests and API-compatible proxies |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
 | `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. An Integration's webhook endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |

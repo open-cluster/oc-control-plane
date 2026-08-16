@@ -30,8 +30,31 @@ type typeView struct {
 	// ConfigurationSchema is JSON Schema for the type's settings, rendered from the
 	// definition so it cannot drift from what the create operation accepts.
 	ConfigurationSchema json.RawMessage `json:"configurationSchema"`
+	// Tools is what connecting this type lets an investigation read, with the routing
+	// guidance each tool declares. Rendered so a setup flow can say what connecting DOES.
+	Tools []toolView `json:"tools,omitempty"`
 	// Configured is how many Integrations of this type the tenant has.
 	Configured int `json:"configured"`
+}
+
+// toolView is one declared tool as the catalog renders it.
+type toolView struct {
+	Name         string             `json:"name"`
+	Capability   string             `json:"capability"`
+	Description  string             `json:"description"`
+	WhenToUse    string             `json:"whenToUse"`
+	WhenNotToUse string             `json:"whenNotToUse"`
+	Arguments    []toolArgumentView `json:"arguments,omitempty"`
+	Permissions  string             `json:"permissions"`
+	RateLimit    string             `json:"rateLimit"`
+	Output       string             `json:"output"`
+}
+
+type toolArgumentView struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required,omitempty"`
 }
 
 type typeListView struct {
@@ -45,6 +68,29 @@ func typeViewOf(definition Definition, configured int) typeView {
 		// fact worth rendering, and a client should not have to handle two spellings of it.
 		capabilities = []string{}
 	}
+	tools := make([]toolView, 0, len(definition.Tools))
+	for _, tool := range definition.Tools {
+		arguments := make([]toolArgumentView, 0, len(tool.Arguments))
+		for _, argument := range tool.Arguments {
+			arguments = append(arguments, toolArgumentView{
+				Name:        argument.Name,
+				Description: argument.Description,
+				Type:        string(argument.Type),
+				Required:    argument.Required,
+			})
+		}
+		tools = append(tools, toolView{
+			Name:         tool.Name,
+			Capability:   tool.Capability,
+			Description:  tool.Description,
+			WhenToUse:    tool.WhenToUse,
+			WhenNotToUse: tool.WhenNotToUse,
+			Arguments:    arguments,
+			Permissions:  tool.Permissions,
+			RateLimit:    tool.RateLimit,
+			Output:       tool.Output,
+		})
+	}
 	return typeView{
 		Key:                 definition.Key,
 		Name:                definition.Name,
@@ -56,6 +102,7 @@ func typeViewOf(definition Definition, configured int) typeView {
 		RequiresRelay:       definition.RequiresRelay,
 		ReceivesWebhooks:    definition.ReceivesWebhooks,
 		ConfigurationSchema: definition.ConfigurationSchema(),
+		Tools:               tools,
 		Configured:          configured,
 	}
 }
@@ -69,6 +116,14 @@ type webhookView struct {
 	Fingerprint string `json:"secretFingerprint"`
 	CreatedAt   string `json:"secretCreatedAt"`
 	RotatedAt   string `json:"secretRotatedAt,omitempty"`
+}
+
+// credentialView is what a read says about the outbound credential: its minted identity
+// and its lifecycle — never the credential and never the sealed bytes.
+type credentialView struct {
+	Fingerprint string `json:"fingerprint"`
+	CreatedAt   string `json:"createdAt"`
+	RotatedAt   string `json:"rotatedAt,omitempty"`
 }
 
 // integrationView is what an Integration looks like to an operator. It carries no secret
@@ -85,6 +140,7 @@ type integrationView struct {
 	Labels         map[string]string `json:"labels,omitempty"`
 	RelayID        string            `json:"relayId,omitempty"`
 	Webhook        *webhookView      `json:"webhook,omitempty"`
+	Credential     *credentialView   `json:"credential,omitempty"`
 	LastVerifiedAt string            `json:"lastVerifiedAt,omitempty"`
 	VerifyNote     string            `json:"verifyNote,omitempty"`
 	CreatedBy      string            `json:"createdBy,omitempty"`
@@ -139,6 +195,16 @@ func (h Handlers) viewOf(found Integration) integrationView {
 			webhook.RotatedAt = stamp(found.WebhookSecret.RotatedAt)
 		}
 		view.Webhook = &webhook
+	}
+	if found.Credential.Held() {
+		credential := credentialView{
+			Fingerprint: found.Credential.Fingerprint,
+			CreatedAt:   stamp(found.Credential.CreatedAt),
+		}
+		if !found.Credential.RotatedAt.IsZero() {
+			credential.RotatedAt = stamp(found.Credential.RotatedAt)
+		}
+		view.Credential = &credential
 	}
 	return view
 }

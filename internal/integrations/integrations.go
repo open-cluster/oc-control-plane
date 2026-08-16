@@ -14,6 +14,7 @@
 package integrations
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -28,6 +29,7 @@ type TypeID int16
 const (
 	TypeAlertmanager TypeID = 1
 	TypeKubernetes   TypeID = 2
+	TypeSlack        TypeID = 3
 )
 
 // Category groups the catalog. A controlled vocabulary owned here; deliberately not a table.
@@ -67,8 +69,10 @@ type Field struct {
 	// is the whole constraint.
 	Format   string
 	Required bool
-	// Secret marks a value that is written once and never read back. No provider in this
-	// build declares one; the field exists so the schema can say writeOnly when one does.
+	// Secret marks a value that is written once and never read back: it is routed to the
+	// sealer, never to configuration, and the rendered schema says writeOnly. A definition
+	// declaring one must declare a Probe, because the only honest check of a credential is
+	// presenting it to the provider.
 	Secret bool
 	// Enum closes a field to a named set.
 	Enum []string
@@ -104,6 +108,15 @@ type RelayStatus struct {
 	Capabilities []string
 }
 
+// ProbeInput is what a live outbound verification is given: the integration as recorded —
+// or as it is about to be recorded, at creation — and the plaintext credential, unsealed
+// for this one call and never stored by anything downstream of it. Empty for a type whose
+// probe authenticates with deployment-level credentials instead.
+type ProbeInput struct {
+	Integration Integration
+	Credential  string
+}
+
 // Definition is everything one provider package exports about its Integration Type.
 // Metadata mirrors the seeded integration_type row; behavior is the provider's own.
 type Definition struct {
@@ -130,8 +143,16 @@ type Definition struct {
 	// no Relay serves.
 	MinimumRelayVersion string
 	// Verify judges an integration against the facts in VerifyInput. It is pure: the
-	// handler gathers, the definition judges, the store records.
+	// handler gathers, the definition judges, the store records. A definition declares
+	// exactly one of Verify and Probe.
 	Verify func(VerifyInput) Verification
+	// Probe verifies live against the provider: the far end is asked, and the judgement
+	// comes back with what it answered. It is the verification for every outbound type,
+	// because a credential's only honest check is presenting it.
+	Probe func(ctx context.Context, input ProbeInput) Verification
+	// Tools are the bounded reads connecting this type makes available, one per declared
+	// read capability, rendered in the catalog with the routing guidance each declares.
+	Tools []Tool
 }
 
 // ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
@@ -203,6 +224,16 @@ func (d Definition) Declares(name string) bool {
 	return declared
 }
 
+// SecretField resolves this definition's one credential field, when it declares one.
+func (d Definition) SecretField() (Field, bool) {
+	for _, field := range d.Config {
+		if field.Secret {
+			return field, true
+		}
+	}
+	return Field{}, false
+}
+
 // Catalog is the assembled set of Definitions this deployment serves. It is built once at
 // the composition root and read everywhere else.
 type Catalog struct {
@@ -212,8 +243,10 @@ type Catalog struct {
 }
 
 // NewCatalog assembles and validates the definitions. A duplicate key or id, a definition
-// with no Verify, or one with neither an inbound nor an outbound shape is a programming
-// error and refuses assembly — at startup, where the person who caused it is reading.
+// with no verification or two kinds of it, a second secret field, a credential without a
+// probe to check it, or a tool naming a capability nothing declared — each is a
+// programming error and refuses assembly, at startup, where the person who caused it is
+// reading.
 func NewCatalog(definitions ...Definition) (Catalog, error) {
 	catalog := Catalog{
 		ordered: make([]Definition, 0, len(definitions)),
@@ -221,11 +254,11 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 		byID:    make(map[TypeID]Definition, len(definitions)),
 	}
 	for _, definition := range definitions {
-		switch {
-		case definition.Key == "" || definition.ID == 0:
+		if definition.Key == "" || definition.ID == 0 {
 			return Catalog{}, fmt.Errorf("integration definition %q has no identity", definition.Key)
-		case definition.Verify == nil:
-			return Catalog{}, fmt.Errorf("integration type %q declares no verification", definition.Key)
+		}
+		if err := checkDefinition(definition); err != nil {
+			return Catalog{}, err
 		}
 		if _, taken := catalog.byKey[definition.Key]; taken {
 			return Catalog{}, fmt.Errorf("integration type key %q is declared twice", definition.Key)
@@ -243,6 +276,57 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 	return catalog, nil
 }
 
+// checkDefinition refuses a definition whose declarations cannot all be true at once.
+func checkDefinition(definition Definition) error {
+	if (definition.Verify == nil) == (definition.Probe == nil) {
+		return fmt.Errorf("integration type %q must declare exactly one of Verify and Probe",
+			definition.Key)
+	}
+
+	secrets := 0
+	for _, field := range definition.Config {
+		if field.Secret {
+			secrets++
+		}
+	}
+	if secrets > 1 {
+		return fmt.Errorf("integration type %q declares %d secret fields; one credential "+
+			"is the model, and a second one is a second thing to seal, replace and audit",
+			definition.Key, secrets)
+	}
+	if secrets == 1 && definition.Probe == nil {
+		return fmt.Errorf("integration type %q takes a credential and declares no probe; "+
+			"an uncheckable credential would make \"verified\" a form having validated",
+			definition.Key)
+	}
+
+	declared := make(map[string]bool, len(definition.Capabilities))
+	for _, capability := range definition.Capabilities {
+		declared[capability] = true
+	}
+	names := make(map[string]bool, len(definition.Tools))
+	for _, tool := range definition.Tools {
+		switch {
+		case tool.Name == "" || tool.Run == nil:
+			return fmt.Errorf("integration type %q declares a tool without a name or a run",
+				definition.Key)
+		case names[tool.Name]:
+			return fmt.Errorf("integration type %q declares tool %q twice",
+				definition.Key, tool.Name)
+		case !declared[tool.Capability]:
+			return fmt.Errorf("integration type %q tool %q exercises capability %q, which "+
+				"the type does not declare", definition.Key, tool.Name, tool.Capability)
+		case tool.Description == "" || tool.WhenToUse == "" || tool.WhenNotToUse == "" ||
+			tool.Permissions == "" || tool.RateLimit == "" || tool.Output == "":
+			return fmt.Errorf("integration type %q tool %q is missing part of its "+
+				"contract; the router chooses by this metadata, and an empty field is a "+
+				"tool that gets used wrongly", definition.Key, tool.Name)
+		}
+		names[tool.Name] = true
+	}
+	return nil
+}
+
 // All returns every definition, ordered by key so a rendered catalog is stable.
 func (c Catalog) All() []Definition { return append([]Definition(nil), c.ordered...) }
 
@@ -256,4 +340,18 @@ func (c Catalog) Lookup(key string) (Definition, bool) {
 func (c Catalog) ByID(id TypeID) (Definition, bool) {
 	definition, ok := c.byID[id]
 	return definition, ok
+}
+
+// CredentialBearing reports the keys of the types that take a pasted credential, in
+// order. The composition root refuses to serve the operator surface for a non-empty
+// answer with no sealing key configured: the setup flow would accept a secret it could
+// only store in the clear or drop.
+func (c Catalog) CredentialBearing() []string {
+	var keys []string
+	for _, definition := range c.ordered {
+		if _, holds := definition.SecretField(); holds {
+			keys = append(keys, definition.Key)
+		}
+	}
+	return keys
 }

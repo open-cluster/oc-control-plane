@@ -133,7 +133,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "api token not found"})
 	case errors.Is(err, seal.ErrNoKey):
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
-			Error: "this deployment has no identity encryption key and cannot hold a client secret"})
+			Error: "this deployment has no sealing key and cannot hold a client secret"})
 	case errors.Is(err, ErrProviderUnreachable):
 		writeJSON(writer, http.StatusBadGateway,
 			errorView{Error: "the identity provider could not be reached"})

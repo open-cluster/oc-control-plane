@@ -35,6 +35,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -57,6 +58,9 @@ type Handlers struct {
 	// Catalog is the assembled Integration Type definitions, supplied by the composition
 	// root — the only place that knows every provider.
 	Catalog integrations.Catalog
+	// Sealer closes over presentable credentials at rest: identity client secrets and
+	// integration credentials, under the deployment's one key.
+	Sealer seal.Sealer
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// configured rather than derived from a request, because a URL built from this listener's
 	// own Host header would be one that works from wherever the console is served and not from
@@ -131,6 +135,7 @@ func (h Handlers) Routes() authz.Table {
 		Store:         h.Placements,
 		Catalog:       h.Catalog,
 		Logger:        h.Logger,
+		Sealer:        h.Sealer,
 		IntakeBaseURL: h.IntakeBaseURL,
 	}.Routes()...)
 	routes = append(routes, incident.Handlers{

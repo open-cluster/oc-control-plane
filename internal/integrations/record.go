@@ -71,6 +71,19 @@ type WebhookSecret struct {
 // Held reports whether this Integration carries a webhook secret at all.
 func (w WebhookSecret) Held() bool { return w.Fingerprint != "" }
 
+// Credential is what a read may say about the outbound credential, which is never the
+// credential: a minted identity so an operator can tell one pasted token from the next
+// after a replacement.
+type Credential struct {
+	Fingerprint string
+	CreatedAt   time.Time
+	// RotatedAt is zero for a credential that has never been replaced.
+	RotatedAt time.Time
+}
+
+// Held reports whether this Integration carries an outbound credential at all.
+func (c Credential) Held() bool { return c.Fingerprint != "" }
+
 // Integration is one configured installation belonging to an organization.
 type Integration struct {
 	ID    uuid.UUID
@@ -89,13 +102,18 @@ type Integration struct {
 	// creation and rotation and is never read back.
 	WebhookSecretDigest []byte
 	WebhookSecret       WebhookSecret
-	Status              Status
-	LastVerifiedAt      time.Time
-	VerifyNote          string
-	DisabledAt          time.Time
-	CreatedBy           string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// CredentialSealed is the outbound credential, sealed under the deployment's key.
+	// Nil for a type that presents none. It is opened only to be presented to the
+	// provider — verification and tool calls — and no view renders it.
+	CredentialSealed []byte
+	Credential       Credential
+	Status           Status
+	LastVerifiedAt   time.Time
+	VerifyNote       string
+	DisabledAt       time.Time
+	CreatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // Disabled reports whether this Integration has been turned off.
@@ -115,7 +133,15 @@ type NewIntegration struct {
 	// type; the secret itself is returned to the operator once and never stored.
 	WebhookSecretDigest      []byte
 	WebhookSecretFingerprint string
-	CreatedBy                string
+	// CredentialSealed and its fingerprint are set by the handler for a credential-bearing
+	// type, after the probe accepted the plaintext and the sealer closed over it.
+	CredentialSealed      []byte
+	CredentialFingerprint string
+	// Verification, when non-nil, is what the pre-creation probe established: the
+	// Integration is born verified, in the same transaction that records it. Nil means it
+	// is born configured, with nothing having checked it.
+	Verification *Verification
+	CreatedBy    string
 }
 
 // Revision is what a PATCH may change. Nil means "leave it alone", which is different from

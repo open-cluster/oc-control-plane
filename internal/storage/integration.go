@@ -26,8 +26,9 @@ var _ integrations.Store = (*Placements)(nil)
 // a field that is silently always zero.
 const integrationColumns = `integration_id, integration_type_id, name, configuration,
 	       webhook_secret_digest, webhook_secret_fingerprint, webhook_secret_created_at,
-	       webhook_secret_rotated_at, labels, relay_id, status, last_verified_at,
-	       verify_note, disabled_at, created_by, created_at, updated_at`
+	       webhook_secret_rotated_at, credential_sealed, credential_fingerprint,
+	       credential_created_at, credential_rotated_at, labels, relay_id, status,
+	       last_verified_at, verify_note, disabled_at, created_by, created_at, updated_at`
 
 // CreateIntegration records one configured installation.
 //
@@ -54,18 +55,40 @@ func (p *Placements) CreateIntegration(
 					fmt.Errorf("encoding configuration: %w", err)
 			}
 
+			// A pre-creation probe's judgement lands with the row itself, so a
+			// credential-bearing Integration is born verified in one transaction: there
+			// is no moment where it exists with a checked credential and an unchecked
+			// status.
+			var (
+				status   = int16(integrations.StatusConfigured)
+				verified = false
+				note     string
+			)
+			if wanted.Verification != nil {
+				status = int16(wanted.Verification.Status)
+				verified = true
+				note = wanted.Verification.Note
+			}
+
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO integration (integration_id, org_id, integration_type_id, name,
 				                         configuration, labels, relay_id,
 				                         webhook_secret_digest, webhook_secret_fingerprint,
-				                         webhook_secret_created_at, created_by)
+				                         webhook_secret_created_at,
+				                         credential_sealed, credential_fingerprint,
+				                         credential_created_at,
+				                         status, last_verified_at, verify_note, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-				        CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE now() END, $10)
+				        CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE now() END,
+				        $10, $11,
+				        CASE WHEN $10::BYTEA IS NULL THEN NULL ELSE now() END,
+				        $12, CASE WHEN $13 THEN now() END, $14, $15)
 				RETURNING `+integrationColumns,
 				uuid.New(), organization.String(), int16(wanted.Type), wanted.Name,
 				configuration, labels, nullableUUID(wanted.RelayID),
 				wanted.WebhookSecretDigest, nullableText(wanted.WebhookSecretFingerprint),
-				wanted.CreatedBy)
+				wanted.CredentialSealed, nullableText(wanted.CredentialFingerprint),
+				status, verified, note, wanted.CreatedBy)
 
 			created, err := scanIntegration(row, organization.String())
 			switch {
@@ -445,13 +468,86 @@ func (p *Placements) RotateIntegrationWebhookSecret(
 				audit.Detail{
 					// The fingerprint is an identity rather than a secret, so it is on
 					// the record: "which secret is live now" is exactly what somebody
-					// reading this event later needs.
-					"secretFingerprint": fingerprint,
+					// reading this event later needs. The key carries no credential word,
+					// because Detail.Safe drops those on the way in.
+					"fingerprint": fingerprint,
 					"effect": "the previous webhook secret stopped working; " +
 						"there is no overlap window",
 				}, nil
 		})
 	return err
+}
+
+// ReplaceIntegrationCredential swaps the sealed outbound credential, applies the revision
+// it travelled with, and records what the probe of the new one established — one
+// transaction, so there is no moment where the revision holds without the credential, or
+// the new credential sits beside the old one's verification.
+//
+// Guarded on the Integration already holding one: a credential can be replaced, never
+// acquired, because a type that takes one requires it at creation.
+func (p *Placements) ReplaceIntegrationCredential(
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID, revision integrations.Revision, sealed []byte, fingerprint string,
+	verification integrations.Verification,
+) (integrations.Integration, error) {
+	return audited(ctx, p, principal, organization, audit.ActionIntegrationCredentialReplaced,
+		func(ctx context.Context, transaction pgx.Tx) (
+			integrations.Integration, audit.Target, audit.Detail, error,
+		) {
+			var (
+				configuration []byte
+				labels        []byte
+				err           error
+			)
+			if revision.Configuration != nil {
+				if configuration, err = json.Marshal(revision.Configuration); err != nil {
+					return integrations.Integration{}, audit.Target{}, nil,
+						fmt.Errorf("encoding configuration: %w", err)
+				}
+			}
+			if revision.Labels != nil {
+				if labels, err = json.Marshal(revision.Labels); err != nil {
+					return integrations.Integration{}, audit.Target{}, nil,
+						fmt.Errorf("encoding labels: %w", err)
+				}
+			}
+
+			row := transaction.QueryRow(ctx, `
+				UPDATE integration
+				   SET name                   = coalesce($3, name),
+				       configuration          = coalesce($4, configuration),
+				       labels                 = coalesce($5, labels),
+				       credential_sealed      = $6,
+				       credential_fingerprint = $7,
+				       credential_rotated_at  = now(),
+				       status                 = $8,
+				       last_verified_at       = now(),
+				       verify_note            = $9,
+				       updated_at             = now()
+				 WHERE integration_id = $1
+				   AND org_id = $2
+				   AND credential_sealed IS NOT NULL
+				RETURNING `+integrationColumns,
+				id, organization.String(), revision.Name, configuration, labels,
+				sealed, fingerprint, int16(verification.Status), verification.Note)
+
+			replaced, err := scanIntegration(row, organization.String())
+			switch {
+			case errors.Is(err, pgx.ErrNoRows):
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrUnknown
+			case isUniqueViolation(err, "integration_name_is_unique_per_org"):
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrNameTaken
+			case err != nil:
+				return integrations.Integration{}, audit.Target{}, nil,
+					fmt.Errorf("replacing a credential: %w", err)
+			}
+			return replaced,
+				audit.Target{Kind: audit.TargetIntegration, ID: id.String()},
+				audit.Detail{
+					"fingerprint": fingerprint,
+					"status":      replaced.Status.String(),
+				}, nil
+		})
 }
 
 // RecordIntegrationVerification writes what a verify run established onto the record.
@@ -589,14 +685,17 @@ func (p *Placements) LastAcceptedDelivery(
 // through both scanners rather than pointers being declared twice and getting out of order
 // once.
 type nullableIntegration struct {
-	configuration      []byte
-	webhookFingerprint *string
-	webhookCreatedAt   *time.Time
-	webhookRotatedAt   *time.Time
-	labels             []byte
-	relay              *uuid.UUID
-	lastVerifiedAt     *time.Time
-	disabledAt         *time.Time
+	configuration         []byte
+	webhookFingerprint    *string
+	webhookCreatedAt      *time.Time
+	webhookRotatedAt      *time.Time
+	credentialFingerprint *string
+	credentialCreatedAt   *time.Time
+	credentialRotatedAt   *time.Time
+	labels                []byte
+	relay                 *uuid.UUID
+	lastVerifiedAt        *time.Time
+	disabledAt            *time.Time
 }
 
 // destinations is the scan target list, in the order integrationColumns names them. A
@@ -605,7 +704,9 @@ func (n *nullableIntegration) destinations(found *integrations.Integration) []an
 	return []any{
 		&found.ID, &found.Type, &found.Name, &n.configuration,
 		&found.WebhookSecretDigest, &n.webhookFingerprint, &n.webhookCreatedAt,
-		&n.webhookRotatedAt, &n.labels, &n.relay, &found.Status, &n.lastVerifiedAt,
+		&n.webhookRotatedAt, &found.CredentialSealed, &n.credentialFingerprint,
+		&n.credentialCreatedAt, &n.credentialRotatedAt, &n.labels, &n.relay,
+		&found.Status, &n.lastVerifiedAt,
 		&found.VerifyNote, &n.disabledAt, &found.CreatedBy, &found.CreatedAt, &found.UpdatedAt,
 	}
 }
@@ -652,6 +753,15 @@ func finishIntegration(
 	}
 	if nullable.webhookRotatedAt != nil {
 		found.WebhookSecret.RotatedAt = *nullable.webhookRotatedAt
+	}
+	if nullable.credentialFingerprint != nil {
+		found.Credential.Fingerprint = *nullable.credentialFingerprint
+	}
+	if nullable.credentialCreatedAt != nil {
+		found.Credential.CreatedAt = *nullable.credentialCreatedAt
+	}
+	if nullable.credentialRotatedAt != nil {
+		found.Credential.RotatedAt = *nullable.credentialRotatedAt
 	}
 	if len(nullable.labels) > 0 {
 		if err := json.Unmarshal(nullable.labels, &found.Labels); err != nil {

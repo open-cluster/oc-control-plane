@@ -57,6 +57,29 @@ func MintFingerprint() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
+// MaxCredentialLength bounds a pasted outbound credential. No vendor token approaches
+// this; a value past it is a paste of the wrong thing.
+const MaxCredentialLength = 512
+
+// CheckCredentialShape refuses a pasted credential that cannot be one: empty, oversized,
+// or carrying characters that would not survive an HTTP header. Nothing cleverer is
+// checked here, because the live probe against the provider is the real check.
+func CheckCredentialShape(credential string) error {
+	if credential == "" {
+		return fmt.Errorf("%w: it must not be empty", ErrWeakSecret)
+	}
+	if len(credential) > MaxCredentialLength {
+		return fmt.Errorf("%w: it must be at most %d characters", ErrWeakSecret, MaxCredentialLength)
+	}
+	for _, character := range credential {
+		if unicode.IsControl(character) || unicode.IsSpace(character) {
+			return fmt.Errorf(
+				"%w: it must not contain whitespace or control characters", ErrWeakSecret)
+		}
+	}
+	return nil
+}
+
 // CheckSecretStrength refuses a secret that could not survive being guessed at. Only
 // length and character range are checked: anything cleverer is theatre on a value no human
 // types.
