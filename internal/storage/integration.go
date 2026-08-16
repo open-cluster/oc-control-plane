@@ -72,7 +72,7 @@ func (p *Placements) CreateIntegration(
 			case isUniqueViolation(err, "integration_name_is_unique_per_org"):
 				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrNameTaken
 			case isForeignKeyViolation(err):
-				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrScope
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrCrossTenant
 			case err != nil:
 				return integrations.Integration{}, audit.Target{}, nil,
 					fmt.Errorf("creating an integration: %w", err)

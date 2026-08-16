@@ -48,10 +48,10 @@ var (
 	ErrNameTaken = errors.New("integration name is already used in this organization")
 	// ErrUnknown reports an Integration this organization does not have.
 	ErrUnknown = errors.New("integration unknown")
-	// ErrScope reports an Integration whose Relay does not belong to the organization the
-	// request named. A single error on purpose: which half of a crossed boundary was wrong
-	// is not a fact worth returning to whoever tried it.
-	ErrScope = errors.New("integration does not fit the scope it was given")
+	// ErrCrossTenant reports an Integration whose Relay does not belong to the
+	// organization the request named. A single error on purpose: which half of a crossed
+	// boundary was wrong is not a fact worth returning to whoever tried it.
+	ErrCrossTenant = errors.New("integration names something outside its organization")
 	// ErrInUse refuses a delete while durable records depend on the Integration. The
 	// record of what a source produced must survive, which is why disabling exists.
 	ErrInUse = errors.New("integration has records depending on it; disable it instead")

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -130,7 +131,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			errorView{Error: "another service account already has that name"})
 	case errors.Is(err, storage.ErrTokenUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "api token not found"})
-	case errors.Is(err, ErrNoSealKey):
+	case errors.Is(err, seal.ErrNoKey):
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no identity encryption key and cannot hold a client secret"})
 	case errors.Is(err, ErrProviderUnreachable):

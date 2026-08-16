@@ -516,14 +516,7 @@ func checkConfiguration(
 ) (map[string]any, string) {
 	checked := make(map[string]any, len(submitted))
 	for name, value := range submitted {
-		var field Field
-		declared := false
-		for _, candidate := range definition.Config {
-			if candidate.Name == name {
-				field, declared = candidate, true
-				break
-			}
-		}
+		field, declared := definition.Field(name)
 		if !declared {
 			return nil, "configuration field " + strconv.Quote(name) +
 				" is not one " + definition.Name + " declares"
@@ -693,8 +686,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "integration not found"})
 	case errors.Is(err, ErrNameTaken):
 		writeJSON(writer, http.StatusConflict, errorView{Error: ErrNameTaken.Error()})
-	case errors.Is(err, ErrScope):
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrScope.Error()})
+	case errors.Is(err, ErrCrossTenant):
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrCrossTenant.Error()})
 	case errors.Is(err, ErrInUse):
 		writeJSON(writer, http.StatusConflict, errorView{Error: ErrInUse.Error()})
 	case errors.Is(err, ErrBadCursor):

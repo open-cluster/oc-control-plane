@@ -186,14 +186,21 @@ func (d Definition) ConfigurationSchema() json.RawMessage {
 	return encoded
 }
 
-// Declares reports whether this definition has a configuration field by that name.
-func (d Definition) Declares(name string) bool {
+// Field resolves one configuration field by name. It is the single lookup: Declares reads
+// it, and so does the check that decides whether a submitted value may be stored.
+func (d Definition) Field(name string) (Field, bool) {
 	for _, field := range d.Config {
 		if field.Name == name {
-			return true
+			return field, true
 		}
 	}
-	return false
+	return Field{}, false
+}
+
+// Declares reports whether this definition has a configuration field by that name.
+func (d Definition) Declares(name string) bool {
+	_, declared := d.Field(name)
+	return declared
 }
 
 // Catalog is the assembled set of Definitions this deployment serves. It is built once at

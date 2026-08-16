@@ -1,4 +1,9 @@
-package identity
+// Package seal holds the one mechanism for a credential that must be PRESENTED rather
+// than compared: AES-256-GCM under a key the deployment names as a file. Every other
+// credential in this product is digested, because it is only ever compared against; a
+// secret that has to be read back — an identity provider's client secret today, a
+// provider API token when outbound integrations arrive — is sealed with this instead.
+package seal
 
 import (
 	"crypto/aes"
@@ -8,14 +13,14 @@ import (
 	"fmt"
 )
 
-// SealKeyLength is the key size this build uses. AES-256 rather than AES-128 because the key
+// KeyLength is the key size this build uses. AES-256 rather than AES-128 because the key
 // is configuration read from a file, so the larger one costs nothing anybody notices.
-const SealKeyLength = 32
+const KeyLength = 32
 
-// ErrNoSealKey reports a deployment asked to hold a provider's client secret with no key
-// configured to seal it under. It is a refusal to start rather than a fallback to storing the
-// secret in the clear.
-var ErrNoSealKey = errors.New("no identity encryption key is configured")
+// ErrNoKey reports a deployment asked to hold a presentable secret with no key configured
+// to seal it under. It is a refusal rather than a fallback to storing the secret in the
+// clear.
+var ErrNoKey = errors.New("no sealing key is configured")
 
 // Sealer holds the key a provider's client secret is stored under.
 //
@@ -31,10 +36,10 @@ type Sealer struct {
 }
 
 // NewSealer builds a sealer from the configured key.
-func NewSealer(key []byte) (Sealer, error) {
-	if len(key) != SealKeyLength {
+func New(key []byte) (Sealer, error) {
+	if len(key) != KeyLength {
 		return Sealer{}, fmt.Errorf("%w: the key must be exactly %d bytes",
-			ErrNoSealKey, SealKeyLength)
+			ErrNoKey, KeyLength)
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -55,7 +60,7 @@ func (s Sealer) Configured() bool { return s.block != nil }
 // comparison.
 func (s Sealer) Seal(plaintext string) ([]byte, error) {
 	if !s.Configured() {
-		return nil, ErrNoSealKey
+		return nil, ErrNoKey
 	}
 	nonce := make([]byte, s.block.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -70,7 +75,7 @@ func (s Sealer) Seal(plaintext string) ([]byte, error) {
 // provider.
 func (s Sealer) Open(sealed []byte) (string, error) {
 	if !s.Configured() {
-		return "", ErrNoSealKey
+		return "", ErrNoKey
 	}
 	size := s.block.NonceSize()
 	if len(sealed) < size {

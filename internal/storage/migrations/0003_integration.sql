@@ -158,8 +158,9 @@ CREATE TABLE IF NOT EXISTS integration_delivery
     -- IS EVER STORED HERE beyond this digest.
     body_digest    BYTEA CHECK (body_digest IS NULL OR length(body_digest) = 32),
 
-    -- Why, for a rejection: 'unauthenticated', 'disabled', 'malformed', 'oversized',
-    -- 'rate_limited', 'incomplete'. Empty otherwise.
+    -- Why, for a rejection: 'unauthenticated', 'malformed', 'oversized', 'incomplete'.
+    -- Empty otherwise. A disabled integration refuses as 'unauthenticated' on purpose, and
+    -- a rate-limited attempt is never recorded — the limiter runs before the row exists.
     reason         TEXT        NOT NULL DEFAULT '' CHECK (length(reason) <= 64),
 
     signal_count   INTEGER     NOT NULL DEFAULT 0 CHECK (signal_count >= 0),

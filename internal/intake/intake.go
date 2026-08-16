@@ -46,11 +46,11 @@ import (
 // written down rather than left implicit — this authenticates the sender and attests nothing
 // about the body — and verification is per-adapter precisely so a type that can sign gets a
 // signature instead.
-const TokenHeader = "X-OpenCluster-Token" //nolint:gosec // a header name, not a credential.
+const TokenHeader = "X-OpenCluster-Token"
 
 // maxBodyBytes bounds a delivery. It is enforced as the body is read rather than after, so an
 // oversized payload is refused without ever being held whole — intake is reachable by anything
-// that can guess a Connection identifier, and a size bound applied after buffering is not a
+// that can guess an Integration identifier, and a size bound applied after buffering is not a
 // bound.
 const maxBodyBytes = 1 << 20
 
@@ -364,7 +364,7 @@ func readBody(writer http.ResponseWriter, request *http.Request) ([]byte, error)
 //
 // No organization is named, because at this point none is known: a refused delivery never
 // authenticated, so there is no tenant to attribute it to. Recording the identifier it aimed at
-// is what makes a campaign against one Connection visible.
+// is what makes a campaign against one Integration visible.
 //
 // Nothing the caller sent in a header is recorded. A refused delivery's headers are the one
 // place guaranteed to hold a guess at the credential.
@@ -441,7 +441,7 @@ type statusBody struct {
 // already written — so it is dropped here and would surface as a truncated body, which is
 // visibly wrong rather than quietly wrong.
 //
-// Nothing this surface returns may be cached: an answer concerns a named tenant's Connection,
+// Nothing this surface returns may be cached: an answer concerns a named tenant's Integration,
 // and an intermediary holding one response is a cross-tenant disclosure waiting for the next
 // request.
 func writeStatus(writer http.ResponseWriter, code int, status string) {

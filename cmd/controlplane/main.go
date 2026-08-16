@@ -42,6 +42,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -438,7 +439,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	}
 
 	if len(cfg.IdentityEncryptionKey) > 0 {
-		sealer, err := identity.NewSealer(cfg.IdentityEncryptionKey)
+		sealer, err := seal.New(cfg.IdentityEncryptionKey)
 		if err != nil {
 			return identity.Handlers{}, fmt.Errorf("%s: %w",
 				config.EnvIdentityEncryptionKeyFile, err)

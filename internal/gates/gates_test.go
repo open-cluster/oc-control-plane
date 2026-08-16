@@ -346,6 +346,36 @@ func TestIntegrationsCoreImportsNoProvider(t *testing.T) {
 	}
 }
 
+// The composition root is the ONLY place that knows every provider. A second package
+// assembling two of them would be a second catalog — the central-hub shape this tree was
+// built to avoid — and it would not look like much in review: two imports in a file that
+// already has twenty.
+func TestOnlyTheCompositionRootAssemblesProviders(t *testing.T) {
+	t.Parallel()
+
+	assembled := false
+	for _, loaded := range loadPackages(t) {
+		providers := 0
+		for imported := range loaded.Imports {
+			if strings.HasPrefix(imported, modulePath+"/internal/integrations/") {
+				providers++
+			}
+		}
+		if providers < 2 {
+			continue
+		}
+		if loaded.PkgPath == modulePath+"/cmd/controlplane" {
+			assembled = true
+			continue
+		}
+		t.Errorf("%s imports %d provider packages; only the composition root assembles the "+
+			"catalog, and a second assembly point is a second catalog", loaded.PkgPath, providers)
+	}
+	if !assembled {
+		t.Fatal("no package assembles the providers; the gate would pass vacuously")
+	}
+}
+
 // The shared reasoning orchestration must not import an adapter either. It talks to vendors
 // through the contract it declares, and a package that reached for one adapter would be a package
 // the second adapter has to be bolted onto rather than dropped beside.
