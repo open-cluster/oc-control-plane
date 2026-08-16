@@ -133,17 +133,15 @@ func (d Deployment) String() string {
 
 // Consent is which providers may be sent this deployment's evidence.
 //
-// It is checked when a deployment is selected and AGAIN at every fallback hop, because consenting
-// to one vendor is not consenting to the next — a fallback that inherited the head of the chain's
-// consent would be an undisclosed subprocessor change performed automatically.
+// It is checked when the deployment is bound to its decider, because consenting to one
+// vendor is not consenting to another.
 //
-// This slice resolves consent per deployment rather than per organization. The model boundary
-// carries no organization: this repository refuses ambient tenancy, so a tenant identifier is
-// passed explicitly or not at all, and the boundary's three methods pass evidence rather than
-// tenants. Per-tenant consent therefore needs a wider domain interface, which this slice may not
-// change. A single-tenant deployment is fully covered; a shared one serving organizations with
-// different subprocessor agreements is NOT, and the gap is stated here rather than left for
-// someone to infer from an empty set.
+// Consent is per deployment rather than per organization. The model boundary carries no
+// organization: this repository refuses ambient tenancy, so a tenant identifier is passed
+// explicitly or not at all, and the boundary's brief carries subject material rather than
+// tenants. A single-tenant deployment is fully covered; a shared one serving organizations
+// with different subprocessor agreements is NOT, and the gap is stated here rather than
+// left for someone to infer from an empty set.
 type Consent struct {
 	providers map[string]struct{}
 }

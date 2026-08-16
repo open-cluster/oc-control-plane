@@ -57,6 +57,10 @@ const (
 	// what an investigation opened for the incident would be about.
 	ActionIncidentMerge Action = "incident.merged"
 
+	// Opening an investigation is the one operator act on it; everything the runner does
+	// afterwards is the investigation's own provenance, a record of its own.
+	ActionInvestigationOpened Action = "investigation.opened"
+
 	// Authorization itself. A refusal is on the record because credential probing is only
 	// visible if the attempts that failed are visible too.
 	ActionAuthorizationRefused Action = "authorization.refused"

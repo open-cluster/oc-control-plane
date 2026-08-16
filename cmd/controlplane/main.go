@@ -41,8 +41,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
+	"github.com/open-cluster/oc-control-plane/internal/reasoning"
+	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
@@ -97,11 +100,13 @@ func start() error {
 	return run(ctx, cfg, os.Stderr, wiring{})
 }
 
-// wiring is what a test may put in place of the real thing. The address callback lets a
-// test address an ephemeral port without racing the listener. Production supplies nothing
-// here.
+// wiring is what a test may put in place of the real thing: the address callback, so an
+// ephemeral port can be addressed without racing the listener, and the model boundary,
+// so investigations run against a scripted reasoner instead of a paid provider.
+// Production supplies nothing here.
 type wiring struct {
 	onListen func(net.Addr)
+	reasoner investigation.Reasoner
 }
 
 // run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -187,27 +192,80 @@ func run(
 		}
 	}
 
+	// The model boundary: a test's scripted reasoner outranks configuration, and a
+	// deployment that configured neither cannot investigate — the surface says so per
+	// request rather than the process refusing to serve everything else it can do.
+	reasoner := replace.reasoner
+	if reasoner == nil && cfg.ModelProvider != "" {
+		if reasoner, err = modelBoundary(cfg, logger); err != nil {
+			return err
+		}
+	}
+
+	investigations := &investigation.Runner{
+		Store:    placements,
+		Catalog:  catalog,
+		Sealer:   sealer,
+		Reasoner: reasoner,
+		Logger:   logger,
+	}
+	// Drained on the way out: an investigation mid-flight is failed with the reason
+	// recorded rather than orphaned into a record that says running forever.
+	defer investigations.Drain()
+
 	return serve(ctx, assembled{
-		config:     cfg,
-		logger:     logger,
-		telemetry:  telemetry,
-		placements: placements,
-		catalog:    catalog,
-		sealer:     sealer,
-		onListen:   replace.onListen,
+		config:         cfg,
+		logger:         logger,
+		telemetry:      telemetry,
+		placements:     placements,
+		catalog:        catalog,
+		sealer:         sealer,
+		investigations: investigations,
+		onListen:       replace.onListen,
 	})
+}
+
+// modelBoundary builds the configured deployment's reasoner. Everything that could be
+// wrong with the model configuration is refused HERE, at startup: an unimplemented
+// provider, an unpriced model, an effort level nothing recognises, a provider nobody
+// consented to.
+func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reasoner, error) {
+	deployment := reasoning.Deployment{
+		Provider:   cfg.ModelProvider,
+		Model:      cfg.ModelName,
+		Effort:     reasoning.Effort(cfg.ModelEffort),
+		BaseURL:    cfg.ModelBaseURL,
+		Credential: reasoning.Secret(cfg.ModelKey),
+	}.WithDefaults()
+	if err := deployment.Validate(); err != nil {
+		return nil, err
+	}
+	provider, err := providers.Open(deployment, providers.Options{})
+	if err != nil {
+		return nil, err
+	}
+	decider, err := reasoning.NewDecider(deployment, provider,
+		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelConsented...))
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("model boundary configured",
+		slog.String("deployment", deployment.String()),
+		slog.String("support", provider.Support().Describe()))
+	return decider, nil
 }
 
 // assembled is the constructed process: the pieces serve needs, which are meaningless
 // apart and always travel together.
 type assembled struct {
-	config     config.Config
-	logger     *slog.Logger
-	telemetry  *observability.Telemetry
-	placements *storage.Placements
-	catalog    integrations.Catalog
-	sealer     seal.Sealer
-	onListen   func(net.Addr)
+	config         config.Config
+	logger         *slog.Logger
+	telemetry      *observability.Telemetry
+	placements     *storage.Placements
+	catalog        integrations.Catalog
+	sealer         seal.Sealer
+	investigations *investigation.Runner
+	onListen       func(net.Addr)
 }
 
 // serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
@@ -429,6 +487,7 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		Origins:             cfg.OperatorAllowedOrigins,
 		Catalog:             process.catalog,
 		Sealer:              process.sealer,
+		Investigations:      process.investigations,
 		IntakeBaseURL:       cfg.IntakePublicURL,
 		MinimumRelayVersion: cfg.MinimumRelayVersion,
 	}.Router()

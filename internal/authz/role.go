@@ -61,6 +61,7 @@ var reads = map[Permission]bool{
 	IntegrationRead:    true,
 	RelayRead:          true,
 	IncidentRead:       true,
+	InvestigationRead:  true,
 	IdentityRead:       true,
 	MemberRead:         true,
 	ServiceAccountRead: true,
@@ -74,9 +75,11 @@ var reads = map[Permission]bool{
 func ReadOnly(permission Permission) bool { return reads[permission] }
 
 // estateReads is what a role that may look at the tenant's operational record holds: the
-// integrations, the fleet, the incidents, and what happened. Identity and automation reads
-// are deliberately not here — who may sign in is the Admin's to see.
-var estateReads = []Permission{IntegrationRead, RelayRead, IncidentRead, AuditRead}
+// integrations, the fleet, the incidents, the investigations, and what happened. Identity
+// and automation reads are deliberately not here — who may sign in is the Admin's to see.
+var estateReads = []Permission{
+	IntegrationRead, RelayRead, IncidentRead, InvestigationRead, AuditRead,
+}
 
 // granted is the table. It is the specification of each role, and it is the thing to read
 // when answering "what can an Editor do" — not the handlers.
@@ -88,10 +91,11 @@ var granted = map[Role]map[Permission]bool{
 	// answering an hour ago" is a question an Editor has at three in the morning, and
 	// making them wake an Admin to ask it is the kind of gap that gets worked around with
 	// a shared credential. Updating is here for the same incident: turning an integration
-	// off is the remediation this surface actually offers. Creating, deleting and secret
-	// rotation stay with the Admin — those change what the estate IS.
+	// off is the remediation this surface actually offers. Opening an investigation is
+	// here because incidents are when investigations happen. Creating, deleting and
+	// secret rotation stay with the Admin — those change what the estate IS.
 	Editor: setOf(append(append([]Permission(nil), estateReads...),
-		IntegrationVerify, IntegrationUpdate, IncidentMerge,
+		IntegrationVerify, IntegrationUpdate, IncidentMerge, InvestigationOpen,
 	)...),
 
 	Viewer: setOf(estateReads...),

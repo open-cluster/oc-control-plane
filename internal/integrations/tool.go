@@ -1,6 +1,9 @@
 package integrations
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Tool is one bounded read a provider offers an investigation, declared beside the
 // capability it exercises.
@@ -51,6 +54,12 @@ type ToolRequest struct {
 	Integration Integration
 	Credential  string
 	Arguments   map[string]any
+	// WindowFrom and WindowUntil are the investigation's own time bounds. A tool whose
+	// arguments carry a window clamps them inside this one, so a read cannot leave the
+	// investigation's scope however its arguments were phrased. Zero means unbounded —
+	// a direct call outside any investigation.
+	WindowFrom  time.Time
+	WindowUntil time.Time
 }
 
 // ToolResult is one answer.
@@ -61,4 +70,9 @@ type ToolResult struct {
 	// Truncated reports that the source held more than the bound, so a reader cannot
 	// mistake a page for the whole.
 	Truncated bool
+	// Summary is the tool's own one-line account of what came back, for the provenance
+	// record; Sources are the identifiers of what was read — channel ids, repository
+	// ids — so a finding built on this run can be followed to its origin.
+	Summary string
+	Sources []string
 }

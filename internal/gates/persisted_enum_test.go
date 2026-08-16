@@ -14,6 +14,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -76,6 +77,14 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"BasisSourceGrouping", int(incident.BasisSourceGrouping), 1},
 		{"BasisUngrouped", int(incident.BasisUngrouped), 2},
 
+		// An investigation's lifecycle and its runs' outcomes. The still-running guard in
+		// the ending update is written as `status = 1`.
+		{"InvestigationRunning", int(investigation.StatusRunning), 1},
+		{"InvestigationConcluded", int(investigation.StatusConcluded), 2},
+		{"InvestigationFailed", int(investigation.StatusFailed), 3},
+		{"RunSucceeded", int(investigation.RunSucceeded), 1},
+		{"RunFailed", int(investigation.RunFailed), 2},
+
 		// The change ledger's vocabulary. The baseline exclusion in every change query is
 		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
 		// every baseline into a reportable change.
@@ -112,7 +121,11 @@ var (
 		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
 		int(storage.DeliveryRejected),
 	}
-	episodeStatusValues   = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	episodeStatusValues       = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	investigationStatusValues = []int{
+		int(investigation.StatusRunning), int(investigation.StatusConcluded),
+		int(investigation.StatusFailed),
+	}
 	integrationTypeValues = []int{
 		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
 		int(integrations.TypeSlack), int(integrations.TypeGitHub),
@@ -145,6 +158,10 @@ var enumColumns = map[string]map[string][]int{
 		signalStatusValues...)},
 	// The last-accepted-delivery health read filters on the accepted outcome.
 	"integration.go": {"outcome": deliveryOutcomeValues},
+	// The ending update is guarded on the investigation still running, and the
+	// open-episode listing filters on an EPISODE's status; the two enums share the file.
+	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),
+		episodeStatusValues...)},
 	// The ledger opens scopes only for kubernetes Integrations and excludes baselines from
 	// every change query.
 	"change_ledger.go": {

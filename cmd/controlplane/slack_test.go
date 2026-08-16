@@ -31,6 +31,8 @@ type vendorFake struct {
 	accepts string
 	// scopes is what an accepted token is granted.
 	scopes string
+	// channels, when set, is what conversations.list answers, for the tests that read.
+	channels string
 	// authCalls counts auth.test calls, so a test can prove the probe happened.
 	authCalls int
 }
@@ -40,27 +42,37 @@ func newVendorFake(t *testing.T, accepts string) *vendorFake {
 	fake := &vendorFake{accepts: accepts, scopes: "channels:read,channels:history,search:read"}
 	fake.Server = httptest.NewServer(http.HandlerFunc(
 		func(writer http.ResponseWriter, request *http.Request) {
-			if request.URL.Path != "/auth.test" {
-				t.Errorf("the fake vendor was asked for %q", request.URL.Path)
-				writer.WriteHeader(http.StatusNotFound)
-				return
-			}
 			fake.mu.Lock()
-			fake.authCalls++
 			accepted := request.Header.Get("Authorization") == "Bearer "+fake.accepts
-			scopes := fake.scopes
+			scopes, channels := fake.scopes, fake.channels
+			if request.URL.Path == "/auth.test" {
+				fake.authCalls++
+			}
 			fake.mu.Unlock()
 
 			writer.Header().Set("Content-Type", "application/json")
-			if !accepted {
+			switch {
+			case !accepted:
 				_, _ = writer.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
-				return
+			case request.URL.Path == "/auth.test":
+				writer.Header().Set("X-OAuth-Scopes", scopes)
+				_, _ = writer.Write([]byte(`{"ok":true,"team":"Acme","user":"opencluster-bot"}`))
+			case request.URL.Path == "/conversations.list" && channels != "":
+				_, _ = writer.Write([]byte(channels))
+			default:
+				t.Errorf("the fake vendor was asked for %q", request.URL.Path)
+				writer.WriteHeader(http.StatusNotFound)
 			}
-			writer.Header().Set("X-OAuth-Scopes", scopes)
-			_, _ = writer.Write([]byte(`{"ok":true,"team":"Acme","user":"opencluster-bot"}`))
 		}))
 	t.Cleanup(fake.Close)
 	return fake
+}
+
+// serveChannels teaches the fake a conversations.list answer.
+func (f *vendorFake) serveChannels(body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.channels = body
 }
 
 func (f *vendorFake) accept(token string) {

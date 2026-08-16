@@ -388,6 +388,15 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 			"installing a Relay does not require sharing a permanent secret"},
 		{"GET /operator/v1/organizations/{organization}/relays/{registration}/failures",
 			"an intermittent Relay is diagnosed from the record rather than from who was watching"},
+
+		// The investigation surface, on the provenance model: what it persists is what was
+		// triggered, queried, run and found — never a chain of thought.
+		{"GET /operator/v1/organizations/{organization}/investigations",
+			"investigations list as operational records, newest first"},
+		{"POST /operator/v1/organizations/{organization}/investigations",
+			"an investigation opens from an episode or a plain-language question"},
+		{"GET /operator/v1/organizations/{organization}/investigations/{investigation}",
+			"one investigation carries its whole provenance: sources, runs, findings, spend"},
 	} {
 		if !served[wanted.key] {
 			t.Errorf("%s is not served; %s", wanted.key, wanted.reason)
@@ -395,14 +404,12 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 	}
 
 	for _, gone := range []string{
-		// The retired domain: Connections, Environments and the investigation surface are
-		// gone, and a route reappearing here would be the old model growing back.
+		// The retired domain: Connections and Environments are gone, and a route
+		// reappearing here would be the old model growing back.
 		"GET /operator/v1/organizations/{organization}/connections",
 		"POST /operator/v1/organizations/{organization}/connections",
 		"GET /operator/v1/organizations/{organization}/environments",
 		"POST /operator/v1/organizations/{organization}/environments",
-		"GET /operator/v1/organizations/{organization}/investigations",
-		"POST /operator/v1/organizations/{organization}/investigations",
 	} {
 		if served[gone] {
 			t.Errorf("%s is served again; it was corrected deliberately, and a regression here "+

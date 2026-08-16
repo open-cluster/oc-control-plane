@@ -3,6 +3,8 @@ package reasoning
 import (
 	"errors"
 	"fmt"
+
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // THE FAILURE OUTCOMES, AND WHY THEY ARE TOLD APART.
@@ -16,9 +18,10 @@ import (
 // path with one.
 
 // ErrModelUnavailable is the general failure every named outcome also reads as: the
-// reasoning step could not run. It is this package's own sentinel until the provenance
-// rewrite gives the domain one to wrap instead.
-var ErrModelUnavailable = errors.New("the model boundary is unavailable")
+// reasoning step could not run. It IS the domain's own sentinel — the boundary and its
+// meaning belong to the investigation capability, and this package answers in its
+// vocabulary.
+var ErrModelUnavailable = investigation.ErrReasonerUnavailable
 
 var (
 	// ErrRefused is the provider's own safeguards declining. It arrives as a successful response
@@ -125,10 +128,10 @@ func (o Outcome) Recoverable() bool {
 
 // Failure is one named failure with the deployment it happened on.
 //
-// It wraps the domain's model-unavailable error as well as its own sentinel. That is deliberate:
-// the runner turns model-unavailable into a FAILED round with the reasoning step recorded as a
-// coverage gap, which is the honest ending for every outcome here — and the specific sentinel
-// stays available to telemetry, audit records and tests that need to tell them apart.
+// It wraps the domain's reasoner-unavailable error as well as its own sentinel. That is
+// deliberate: the runner turns reasoner-unavailable into a FAILED investigation with the
+// reason recorded, which is the honest ending for every outcome here — and the specific
+// sentinel stays available to telemetry and tests that need to tell them apart.
 type Failure struct {
 	Outcome  Outcome
 	Provider string
@@ -151,14 +154,6 @@ func (f *Failure) Error() string {
 		message += ": " + f.Detail
 	}
 	return message
-}
-
-// FailureName is the closed vocabulary word for what went wrong, which the domain records in the
-// coverage gap so a case file distinguishes an outage from this build's defect. Deliberately only
-// the outcome: the provider's own message is not this system's to vouch for, and a case file is
-// meant to be safe to share.
-func (f *Failure) FailureName() string {
-	return f.Outcome.String()
 }
 
 // Unwrap returns both the outcome's own sentinel and the domain's model-unavailable error, so

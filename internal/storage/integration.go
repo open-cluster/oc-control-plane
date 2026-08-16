@@ -393,23 +393,29 @@ func (p *Placements) DeleteIntegration(
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationDeleted,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var signals, jobs, ledger int
+			var signals, jobs, ledger, investigations int
 			err := transaction.QueryRow(ctx, `
 				SELECT (SELECT count(*) FROM signal
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM relay_job
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM change_ledger
-				         WHERE org_id = $2 AND integration_id = $1)`,
-				id, organization.String()).Scan(&signals, &jobs, &ledger)
+				         WHERE org_id = $2 AND integration_id = $1),
+				       (SELECT count(*) FROM investigation
+				         WHERE org_id = $2 AND integration_id = $1)
+				       + (SELECT count(*) FROM investigation_source
+				           WHERE org_id = $2 AND integration_id = $1)
+				       + (SELECT count(*) FROM investigation_tool_run
+				           WHERE org_id = $2 AND integration_id = $1)`,
+				id, organization.String()).Scan(&signals, &jobs, &ledger, &investigations)
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("counting an integration's dependents: %w", err)
 			}
-			if signals+jobs+ledger > 0 {
+			if signals+jobs+ledger+investigations > 0 {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf(
-					"%w: %d signals, %d jobs, %d change-ledger entries",
-					integrations.ErrInUse, signals, jobs, ledger)
+					"%w: %d signals, %d jobs, %d change-ledger entries, %d investigation records",
+					integrations.ErrInUse, signals, jobs, ledger, investigations)
 			}
 
 			tag, err := transaction.Exec(ctx, `

@@ -35,6 +35,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
@@ -61,6 +62,9 @@ type Handlers struct {
 	// Sealer closes over presentable credentials at rest: identity client secrets and
 	// integration credentials, under the deployment's one key.
 	Sealer seal.Sealer
+	// Investigations runs them in the background; the investigation handlers start and
+	// read through it.
+	Investigations *investigation.Runner
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// configured rather than derived from a request, because a URL built from this listener's
 	// own Host header would be one that works from wherever the console is served and not from
@@ -140,6 +144,11 @@ func (h Handlers) Routes() authz.Table {
 	}.Routes()...)
 	routes = append(routes, incident.Handlers{
 		Store:  h.Placements,
+		Logger: h.Logger,
+	}.Routes()...)
+	routes = append(routes, investigation.Handlers{
+		Store:  h.Placements,
+		Runner: h.Investigations,
 		Logger: h.Logger,
 	}.Routes()...)
 	return routes

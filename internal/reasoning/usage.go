@@ -78,8 +78,8 @@ type Record struct {
 	// same number, which is the one property a cost figure has to have.
 	MicroCents int64
 	Latency    time.Duration
-	// Method names which of the boundary's three calls this was, so evidence selection stays
-	// separable from the conclusion when the records are read back.
+	// Method names which boundary call this was, so a deciding round stays separable from
+	// a concluding one when the records are read back.
 	Method        string
 	PromptVersion string
 	SchemaVersion string

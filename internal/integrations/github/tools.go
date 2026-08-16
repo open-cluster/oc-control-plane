@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,10 +113,17 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 			content := make([]repositoryContent, 0, len(listed.Repositories))
+			sources := make([]string, 0, len(listed.Repositories))
 			for _, one := range listed.Repositories {
 				content = append(content, repositoryContentOf(one))
+				sources = append(sources, strconv.FormatInt(one.ID, 10))
 			}
-			return integrations.ToolResult{Content: content, Truncated: listed.Truncated}, nil
+			return integrations.ToolResult{
+				Content:   content,
+				Truncated: listed.Truncated,
+				Summary:   fmt.Sprintf("%d repositories granted", len(content)),
+				Sources:   sources,
+			}, nil
 		},
 	}
 }
@@ -161,7 +169,11 @@ func readRepositoryTool(app *App, client *Client) integrations.Tool {
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			return integrations.ToolResult{Content: repositoryContentOf(found)}, nil
+			return integrations.ToolResult{
+				Content: repositoryContentOf(found),
+				Summary: found.FullName,
+				Sources: []string{strconv.FormatInt(found.ID, 10)},
+			}, nil
 		},
 	}
 }
@@ -231,6 +243,7 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
+			since, until = clampWindow(since, until, request)
 			token, err := installationTokenFor(ctx, app, request.Integration)
 			if err != nil {
 				return integrations.ToolResult{}, err
@@ -246,7 +259,12 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			for _, one := range read.Commits {
 				content = append(content, commitContent(one))
 			}
-			return integrations.ToolResult{Content: content, Truncated: read.Truncated}, nil
+			return integrations.ToolResult{
+				Content:   content,
+				Truncated: read.Truncated,
+				Summary:   fmt.Sprintf("%d commits in the window", len(content)),
+				Sources:   []string{strconv.FormatInt(repository, 10)},
+			}, nil
 		},
 	}
 }
@@ -310,9 +328,27 @@ func readPullRequestsTool(app *App, client *Client) integrations.Tool {
 			for _, one := range read.PullRequests {
 				content = append(content, pullRequestContent(one))
 			}
-			return integrations.ToolResult{Content: content, Truncated: read.Truncated}, nil
+			return integrations.ToolResult{
+				Content:   content,
+				Truncated: read.Truncated,
+				Summary:   fmt.Sprintf("%d pull requests, newest first", len(content)),
+				Sources:   []string{strconv.FormatInt(repository, 10)},
+			}, nil
 		},
 	}
+}
+
+// clampWindow narrows an argument window into the request's own. A read phrased with a
+// wider window still runs inside the investigation's: the bound is structural, not
+// something a prompt asked for.
+func clampWindow(since, until time.Time, request integrations.ToolRequest) (time.Time, time.Time) {
+	if !request.WindowFrom.IsZero() && (since.IsZero() || since.Before(request.WindowFrom)) {
+		since = request.WindowFrom
+	}
+	if !request.WindowUntil.IsZero() && (until.IsZero() || until.After(request.WindowUntil)) {
+		until = request.WindowUntil
+	}
+	return since, until
 }
 
 // installationTokenFor resolves the integration's installation and mints or reuses its

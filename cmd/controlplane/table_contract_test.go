@@ -32,9 +32,10 @@ func TestEveryListEndpointSpeaksOneTableContract(t *testing.T) {
 	plane.createAlertmanager(t, "Contract Alertmanager")
 
 	listings := map[string]string{
-		"integrations": base + "/integrations",
-		"relays":       base + "/relays",
-		"incidents":    base + "/incidents",
+		"integrations":   base + "/integrations",
+		"relays":         base + "/relays",
+		"incidents":      base + "/incidents",
+		"investigations": base + "/investigations",
 		"relay integrations": base + "/relays/" + plane.relay.registration.String() +
 			"/integrations",
 	}

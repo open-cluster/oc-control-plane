@@ -45,6 +45,11 @@ const (
 	IncidentRead  Permission = "incident.read"
 	IncidentMerge Permission = "incident.merge"
 
+	// Investigations. Opening one spends model budget and reads connected systems, which
+	// is why it is not part of reading the record it produces.
+	InvestigationRead Permission = "investigation.read"
+	InvestigationOpen Permission = "investigation.open"
+
 	// Identity: who may sign in, as what, and under what policy.
 	IdentityRead      Permission = "identity.read"
 	IdentityConfigure Permission = "identity.configure"
@@ -74,6 +79,7 @@ var allPermissions = []Permission{
 	IntegrationVerify, IntegrationSecretRotate,
 	RelayRead, RelayConflictClear, RelayBootstrapIssue,
 	IncidentRead, IncidentMerge,
+	InvestigationRead, InvestigationOpen,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,
 	DirectorySync,

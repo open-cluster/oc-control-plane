@@ -112,13 +112,20 @@ func listChannelsTool(client *Client) integrations.Tool {
 			}
 
 			selected := make([]channelContent, 0, len(listed.Channels))
+			sources := make([]string, 0, len(listed.Channels))
 			for _, channel := range listed.Channels {
 				if !matchesChannel(channel, needle) {
 					continue
 				}
 				selected = append(selected, channelContent(channel))
+				sources = append(sources, channel.ID)
 			}
-			return integrations.ToolResult{Content: selected, Truncated: listed.Truncated}, nil
+			return integrations.ToolResult{
+				Content:   selected,
+				Truncated: listed.Truncated,
+				Summary:   fmt.Sprintf("%d channels matched", len(selected)),
+				Sources:   sources,
+			}, nil
 		},
 	}
 }
@@ -186,6 +193,7 @@ func channelHistoryTool(client *Client) integrations.Tool {
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
+			oldest, latest = clampWindow(oldest, latest, request)
 
 			read, err := client.History(ctx, request.Credential, HistoryQuery{
 				Channel: channel, Oldest: oldest, Latest: latest, Limit: limit,
@@ -196,6 +204,8 @@ func channelHistoryTool(client *Client) integrations.Tool {
 			return integrations.ToolResult{
 				Content:   messagesContent(read.Messages),
 				Truncated: read.Truncated,
+				Summary:   fmt.Sprintf("%d messages in %s", len(read.Messages), channel),
+				Sources:   []string{channel},
 			}, nil
 		},
 	}
@@ -271,7 +281,11 @@ func threadRepliesTool(client *Client) integrations.Tool {
 						"slack.get_channel_history instead of quoting part of a discussion",
 					limit)
 			}
-			return integrations.ToolResult{Content: messagesContent(read.Messages)}, nil
+			return integrations.ToolResult{
+				Content: messagesContent(read.Messages),
+				Summary: fmt.Sprintf("%d thread messages", len(read.Messages)),
+				Sources: []string{channel + "/" + thread},
+			}, nil
 		},
 	}
 }
@@ -330,9 +344,38 @@ func searchMessagesTool(client *Client) integrations.Tool {
 			return integrations.ToolResult{
 				Content:   messagesContent(found.Matches),
 				Truncated: found.Truncated,
+				Summary:   fmt.Sprintf("%d matches", len(found.Matches)),
+				Sources:   matchChannels(found.Matches),
 			}, nil
 		},
 	}
+}
+
+// matchChannels reports the distinct channels the matches were said in.
+func matchChannels(matches []Message) []string {
+	seen := map[string]bool{}
+	var channels []string
+	for _, match := range matches {
+		if match.Channel == "" || seen[match.Channel] {
+			continue
+		}
+		seen[match.Channel] = true
+		channels = append(channels, match.Channel)
+	}
+	return channels
+}
+
+// clampWindow narrows an argument window into the request's own. A read phrased with a
+// wider window still runs inside the investigation's: the bound is structural, not
+// something a prompt asked for.
+func clampWindow(oldest, latest time.Time, request integrations.ToolRequest) (time.Time, time.Time) {
+	if !request.WindowFrom.IsZero() && (oldest.IsZero() || oldest.Before(request.WindowFrom)) {
+		oldest = request.WindowFrom
+	}
+	if !request.WindowUntil.IsZero() && (latest.IsZero() || latest.After(request.WindowUntil)) {
+		latest = request.WindowUntil
+	}
+	return oldest, latest
 }
 
 // matchesChannel reports whether a channel's name, topic or purpose carries the needle.

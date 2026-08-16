@@ -79,6 +79,16 @@ const (
 	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 	EnvGitHubAPIURL     = "OC_GITHUB_API_URL"
 
+	// The model deployment investigations reason with: DEPLOYMENT-level settings, never a
+	// per-tenant concern. The key names a file; consent lists the providers evidence may
+	// be sent to, and nothing listed permits nothing.
+	EnvModelProvider  = "OC_MODEL_PROVIDER"
+	EnvModelName      = "OC_MODEL_NAME"
+	EnvModelKeyFile   = "OC_MODEL_KEY_FILE"
+	EnvModelEffort    = "OC_MODEL_EFFORT"
+	EnvModelConsented = "OC_MODEL_CONSENTED_PROVIDERS"
+	EnvModelBaseURL   = "OC_MODEL_BASE_URL"
+
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
 	// configured rather than derived from a request, because the delivery endpoint built from it
@@ -203,6 +213,16 @@ type Config struct {
 	GitHubAppKey []byte
 	GitHubAPIURL string
 
+	// The model deployment. ModelProvider empty means this deployment cannot investigate,
+	// and opening one is refused with that reason. The credential travels as a file's
+	// contents, never as an environment value.
+	ModelProvider  string
+	ModelName      string
+	ModelKey       string
+	ModelEffort    string
+	ModelConsented []string
+	ModelBaseURL   string
+
 	// IntakeAddress is the listen address for alert intake. It is separate from every other
 	// surface because it is the only one a customer's own infrastructure connects to inbound,
 	// so a deployment can expose it and expose nothing else. Empty disables it, which is
@@ -213,7 +233,7 @@ type Config struct {
 	IntakeAddress string
 
 	// IntakePublicURL is the public origin a customer's own system reaches intake at, for
-	// example https://intake.opencluster.example. It is what a trigger Connection's delivery
+	// example https://intake.opencluster.example. It is what an Integration's webhook
 	// endpoint is built from.
 	//
 	// Empty is supported and means the endpoint is served as an absence rather than as a guess:
@@ -316,6 +336,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.GitHubAPIURL, err = optionalVendorURL(lookup, EnvGitHubAPIURL); err != nil {
+		return Config{}, err
+	}
+	if err = modelDeployment(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
@@ -510,6 +533,55 @@ func validateHostPort(address string) error {
 	if err != nil || number < 1 || number > 65_535 {
 		return fmt.Errorf("invalid port %q", port)
 	}
+	return nil
+}
+
+// modelDeployment reads the model settings. A provider set demands a model name and a
+// key: half a deployment would serve an investigations surface that fails on first use,
+// and whoever set one variable is still reading when this refuses. What the values MEAN —
+// a provider this build implements, an effort level it recognises — is judged at the
+// composition root, which owns that vocabulary.
+func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
+	provider, _ := lookup(EnvModelProvider)
+	cfg.ModelProvider = strings.TrimSpace(provider)
+	name, _ := lookup(EnvModelName)
+	cfg.ModelName = strings.TrimSpace(name)
+	effort, _ := lookup(EnvModelEffort)
+	cfg.ModelEffort = strings.TrimSpace(effort)
+
+	consented, _ := lookup(EnvModelConsented)
+	for _, entry := range strings.Split(consented, ",") {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			cfg.ModelConsented = append(cfg.ModelConsented, trimmed)
+		}
+	}
+
+	baseURL, err := optionalVendorURL(lookup, EnvModelBaseURL)
+	if err != nil {
+		return err
+	}
+	cfg.ModelBaseURL = baseURL
+
+	path, _ := lookup(EnvModelKeyFile)
+	path = strings.TrimSpace(path)
+	if cfg.ModelProvider == "" {
+		if path != "" || cfg.ModelName != "" {
+			return fmt.Errorf("%s is required when a model is configured", EnvModelProvider)
+		}
+		return nil
+	}
+	if cfg.ModelName == "" {
+		return fmt.Errorf("%s is required when %s is set: a constructed model identifier "+
+			"is a 404 at best", EnvModelName, EnvModelProvider)
+	}
+	if path == "" {
+		return fmt.Errorf("%s is required when %s is set", EnvModelKeyFile, EnvModelProvider)
+	}
+	key, err := readSecretFile(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvModelKeyFile, err)
+	}
+	cfg.ModelKey = key
 	return nil
 }
 
