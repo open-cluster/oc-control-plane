@@ -7,35 +7,43 @@ Proprietary. See [LICENSE](./LICENSE).
 
 ## Status
 
-The control plane is mid-way through its foundational simplification, specified on the issue
-tracker. The domain model is: an **Organization** is the tenant boundary; an **Integration
-Type** is a kind of tool this build supports; an **Integration** is one configured
-installation belonging to an organization. There are no Environments, no Connection roles and
-no execution-locality settings — org_id is the only boundary, and where work runs is derived
-from whether a Relay serves the integration.
+The foundational simplification is complete through its backend phases. The domain model
+is: an **Organization** is the tenant boundary; an **Integration Type** is a kind of tool
+this build supports; an **Integration** is one configured installation belonging to an
+organization. There are no Environments, no Connection roles and no execution-locality
+settings — org_id is the only boundary, and where work runs is derived from whether a
+Relay serves the integration.
 
-**Alertmanager is connected end-to-end.** Creating the integration mints a webhook secret
-shown exactly once beside its delivery address; firing and resolved alerts arrive
-authenticated, deduplicated and bounded; Signals group into IncidentEpisodes on the identity
-the source itself supplied — never on anything this platform inferred from a Signal's labels —
-and an operator reads them, sees why they were grouped, and corrects a grouping with a merge
-that rewrites nothing.
+**Four integration types are connected end-to-end.** Alertmanager delivers inbound:
+webhook secret shown once, deliveries authenticated, deduplicated and bounded, Signals
+grouped into IncidentEpisodes on the source's own identity. Kubernetes reads through the
+Relay: sessions, fenced capability jobs, inventory into the change ledger. Slack and
+GitHub read outbound: a pasted bot token or an App installation, verified live against
+the vendor before anything is stored, credentials sealed at rest, and bounded read-only
+tools — channels, history, threads, search; repositories, commits, pull requests by
+stable ids — each declaring when to use it and when not to.
 
-**Kubernetes is connected through the Relay.** Relay registration and sessions, typed bounded
-capability jobs under a fenced lease, inventory synchronization into the change ledger, and
-relay-side redaction are all in place. Verifying a kubernetes Integration judges the bound
-Relay's live session and advertised capabilities, so "verified" means the far end answered.
-
-Not built yet, deliberately: the investigation surface. The previous evidence-chain
-architecture was removed with the old domain model; its replacement — operational provenance
-and a deterministic context router — is the next phase on the issue tracker, and the
-model-provider adapters it will use are kept intact under `internal/reasoning`.
+**Investigations persist operational provenance.** One opens from an incident or a
+plain-language question; a deterministic router selects a few relevant sources with
+recorded reasons; the model chooses among their declared tools inside bounded rounds;
+every run lands in the record with its scope, outcome and truncation; findings cite the
+runs that support them, with spend in tokens and integer micro-cents. No chain of
+thought is stored. The model deployment is configuration, never a per-tenant concern.
 
 ## Documents
 
 | Location | Holds |
 | --- | --- |
 | `./CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
+| `./AGENTS.md` | Working in this repository: boundaries, gates, and what "done" requires |
+| `docs/architecture.md` | The shape, and the decisions that still hold |
+| `docs/integrations.md` | The types this build serves, the shared lifecycle, credentials, tools |
+| `docs/api.md` | The contract rules a client builds against, and the investigation surface |
+| `docs/configuration.md` | Variables grouped by what they enable, and the rules worth knowing |
+| `docs/deployment.md` | Listeners, lifecycle, tiers, upgrades |
+| `docs/security.md` | Isolation, credentials, untrusted input, authorization, the record |
+| `docs/operations.md` | What runs on its own, incidents, investigations, what to alert on |
+| `docs/troubleshooting.md` | Symptoms and what each actually means |
 
 A gate fails the build if a document cites another that does not exist, so a rename cannot
 silently leave a dangling reference behind.
@@ -74,12 +82,14 @@ go run ./cmd/controlplane
 | `internal/observability` | slog, OpenTelemetry traces, metrics exported for Prometheus |
 | `internal/health` | Liveness, readiness, metrics. Depends on behaviour, not on storage |
 | `internal/relay` | Relay registration, sessions, and job delivery over the protocol |
-| `internal/intake` | Inbound SignalUpdates, verification, rate limiting. Payload adapters live in their provider packages |
-| `internal/integrations` | The Integration domain: the type catalog and the configured installations. Providers live below it: `alertmanager/`, `kubernetes/` |
+| `internal/intake` | Inbound webhook deliveries: authentication, rate limiting, deduplication. Payload adapters live in their provider packages |
+| `internal/integrations` | The Integration domain: the type catalog, the configured installations, the tool vocabulary. Providers live below it: `alertmanager/`, `kubernetes/`, `slack/`, `github/` |
 | `internal/incident` | IncidentEpisodes: what Signals group into, on their source's own grouping identity |
+| `internal/investigation` | Investigations and their provenance: the deterministic router, the bounded runner, and the model boundary the domain owns |
 | `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute |
 | `internal/changeledger` | The change ledger vocabulary: what changed, remembered after the cluster forgets |
-| `internal/reasoning` | The model-provider boundary and its adapters (`anthropic/`, `zai/`), kept for the provenance rewrite |
+| `internal/reasoning` | The investigation boundary implemented over model providers: brief rendering, output schemas, pricing, and the vendor adapters (`anthropic/`, `zai/`) |
+| `internal/seal` | AES-256-GCM for the credentials that must be presented rather than compared |
 | `internal/identity` | Who an operator is: OIDC sign-in with PKCE, memberships, service accounts, API tokens |
 | `internal/session` | The opaque server-side session and its cookie. No JWT, so sign-out can end it |
 | `internal/authz` | The principal, the three roles, the permission table, and the one middleware that reads it |
@@ -142,9 +152,20 @@ Fetching from the private repository needs
 | `OC_OPERATOR_ALLOWED_ORIGINS` | with a console | Browser origins a cookie-authenticated unsafe request may come from. Empty permits none |
 | `OC_SEALING_KEY_FILE` | with sign-in or credential-bearing integrations | 32-byte key, raw or base64, sealing presentable credentials at rest: identity client secrets and integration tokens |
 | `OC_SLACK_API_URL` | no | Where the Slack provider reaches its vendor. Empty means Slack's own origin; it exists for tests and API-compatible proxies |
+| `OC_GITHUB_APP_ID` | with GitHub | The deployment's GitHub App id. Both App variables or neither |
+| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | with GitHub | File holding the App's private key, PKCS#1 or PKCS#8 PEM |
+| `OC_GITHUB_API_URL` | no | Where the GitHub provider reaches its vendor. Empty means api.github.com; set it for GitHub Enterprise hosts |
+| `OC_MODEL_PROVIDER` | with investigations | The model provider this build serves (`anthropic`, `zai`). Empty means investigations refuse to open, with the reason |
+| `OC_MODEL_NAME` | with a provider | The exact model identifier, never constructed |
+| `OC_MODEL_KEY_FILE` | with a provider | File holding the provider API key |
+| `OC_MODEL_EFFORT` | no | How hard the model thinks: `low`…`max`. Default `high` |
+| `OC_MODEL_CONSENTED_PROVIDERS` | with a provider | The providers investigation material may be sent to. Nothing listed permits nothing, including the configured one |
+| `OC_MODEL_BASE_URL` | no | Overrides where the provider is reached; https except loopback |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
 | `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. An Integration's webhook endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |
+| `OC_INVENTORY_INTERVAL` | no | The tick interval requested from every Relay's inventory synchronization. Default `5m`; each Relay floors it locally, so this can slow a fleet and never speed one up |
+| `OC_CHANGE_LEDGER_RETENTION_DAYS` | no | How many days the change ledger keeps an entry. Default `90` |
 
 Each surface has its own listener, and that is what makes a deployment able to publish one
 without publishing the rest. Intake is the only one a customer's own infrastructure reaches
@@ -286,7 +307,7 @@ On the intake listener:
 
 | Path | Purpose |
 | --- | --- |
-| `POST /intake/v1/integrations/{integration}/signals` | One webhook delivery on an Integration's opaque intake route. Authenticated by that Integration's webhook secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
+| `POST /intake/v1/integrations/{integration}/signals` | One webhook delivery on an Integration's opaque intake route. Authenticated by that Integration's webhook secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `429` slow down (with `Retry-After`), `503` not recorded — `401`, `400` and `413` are permanent so a source stops retrying; `429` and `503` mean try again |
 
 The intake listener serves plain HTTP and must be deployed behind a TLS-terminating edge.
 Alerting sources cannot sign, so the shared-secret header is a bearer credential that attests
@@ -371,6 +392,14 @@ wrong merge produces an investigation with an incoherent scope.
 
 An episode resolves when no Signal in it is still firing, and it holds its grouping key only while
 open — so the same failure next month is a new episode rather than a reopened closed one.
+
+Investigations live beside them:
+
+| Path | Permission |
+| --- | --- |
+| `GET /investigations` | `investigation.read`. Newest first |
+| `POST /investigations` | `investigation.open`. Body `{episodeId}` or `{question}`; answers `202` running, or `200` with one plain-language clarification when a question ties to no single open incident, or `503` when no model provider is configured, or `429` at the deployment's concurrency limit |
+| `GET /investigations/{id}` | `investigation.read`. The record with its whole provenance: routed sources with reasons, every tool run with scope, outcome, truncation and source references, findings citing the runs that support them, and spend |
 
 ## Development
 

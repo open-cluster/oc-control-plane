@@ -419,7 +419,7 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 }
 
 // A role's permissions are a product statement, and the whole point of the table is that
-// reading it answers "what can an Investigator do". This renders that answer into the test
+// reading it answers "what can an Editor do". This renders that answer into the test
 // output, so a reviewer gets it from a test run rather than from the source.
 func TestTheRoleTableIsLegible(t *testing.T) {
 	t.Parallel()

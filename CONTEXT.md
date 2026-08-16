@@ -22,8 +22,8 @@ authorization, a credential, a tenant boundary, or a scope.
 
 ## Integrations
 
-**Integration Type** — a kind of tool OpenCluster supports: Alertmanager, Kubernetes, later
-Slack and GitHub. Product-owned reference data: a row in `integration_type` seeded by
+**Integration Type** — a kind of tool OpenCluster supports: Alertmanager, Kubernetes,
+Slack, GitHub. Product-owned reference data: a row in `integration_type` seeded by
 migration, carrying minimal catalog metadata (stable key, name, description, logo,
 category), with everything behavioral — configuration schema, capabilities, client,
 verification, tools — in the type's provider package under `internal/integrations/`. The
@@ -53,6 +53,20 @@ _Avoid:_ validation (the retired form-checking sense).
 shown to the operator exactly once, stored only as a SHA-256 digest, compared in constant
 time, rotated rather than recovered. Its fingerprint is minted, never derived from the
 secret.
+
+**Credential** (of an Integration) — the outbound secret a provider is reached with: a
+Slack bot token. Probed live against the vendor before anything is stored, sealed with
+AES-256-GCM under the deployment's sealing key, write-only after entry; reads render a
+minted fingerprint only. A submitted credential is stored sealed or refused loudly, never
+dropped.
+_Avoid:_ token (as the record noun), API key (for this concept).
+
+**Tool** — one bounded, read-only operation an Integration Type offers an investigation:
+`slack.get_channel_history`, `github.read_commits`. Declared beside its capability with
+its purpose, when to use it, when NOT to, arguments, permissions, rate cost and output —
+all enforced at catalog assembly. Every read is bounded by named limits, flags truncation
+from the vendor's own answer, and clamps any window argument inside the investigation's
+window.
 
 ## Signals and incidents
 
@@ -87,11 +101,47 @@ reaches and the Relay it runs on.
 because they decay at the source. Declared intent and identity only, never observed state
 and never content. A navigation index, never evidence.
 
+## Investigations
+
+**Investigation** — one bounded answer to "what happened": opened from an episode or an
+operator's question, routed to a few relevant sources, run through their tools, ended
+concluded with findings or failed with the reason. The slim record: trigger, subject,
+window, lifecycle, findings, spend.
+_Avoid:_ case, case file, round (as a persisted record).
+
+**Provenance** — what an investigation persists: the sources the router selected with the
+reasons, every tool run with its scope, window, outcome, truncation, summary and source
+references, and findings citing runs. Operational fact an operator can audit — never a
+model's chain of thought.
+_Avoid:_ evidence (as a record noun), evidence chain.
+
+**Source** (of an investigation) — one Integration the router selected, with its rank and
+the reason it was chosen. Selection is deterministic and explainable; one expansion may
+follow, only when everything read so far produced nothing, with its reason recorded.
+
+**Run** — one tool execution inside an investigation, succeeded or failed alike. Its
+ordinal is what a finding cites.
+
+**Finding** — one thing an investigation established, citing the ordinals of the runs
+that support it. A statement citing no run cannot be stored; enforced at decode and again
+before persistence.
+_Avoid:_ conclusion (as the record noun), claim.
+
+**Reasoner** — the model boundary, declared by the investigation domain and implemented
+by `internal/reasoning` over vendor adapters. The domain never learns a vendor exists;
+per decision it returns further tool calls or findings. A failed reasoning step fails the
+investigation — it is never presented as a conclusion.
+
+**Spend** — what the reasoning consumed: tokens and integer micro-cents, summed over
+every call including refused and truncated ones.
+
 ## Retired vocabulary
 
 These terms named the previous architecture and must not reappear: Connection, Connection
-role, Environment, Scope, Execution locality, EvidenceCandidate, EvidenceItem,
+role, Environment, Evidence Scope (a change-ledger scope and a tool run's scope are
+different, current concepts), Execution locality, EvidenceCandidate, EvidenceItem,
 EvidenceValidation, Evidence plan, CoverageGap (as a persisted record), Completeness
 certificate, CasePack, InvestigationRound, Hypothesis (as a persisted record), Abstention
-(as a lifecycle state). The investigation surface returns as operational provenance in a
-later phase; its vocabulary will be defined here when it does.
+(as a lifecycle state). The investigation surface stands on operational provenance — the
+Investigations section above is its vocabulary — and none of the retired machinery may
+return under a new spelling.
