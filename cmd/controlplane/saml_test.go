@@ -44,7 +44,7 @@ func TestOperatorSAML_APersonSignsInWithASignedAssertion(t *testing.T) {
 
 	provider := configureSAMLProvider(t, plane, idp, map[string]any{
 		"jitEnabled":      true,
-		"jitRole":         "platform_administrator",
+		"jitRole":         "editor",
 		"verifiedDomains": []string{"example.test"},
 	})
 
@@ -66,7 +66,7 @@ func TestOperatorSAML_APersonSignsInWithASignedAssertion(t *testing.T) {
 			who.Principal.DisplayName)
 	}
 	if len(who.Organizations) != 1 ||
-		who.Organizations[0].Role != string(authz.PlatformAdministrator) {
+		who.Organizations[0].Role != string(authz.Editor) {
 		t.Fatalf("the session reports %+v, want the provisioned role", who.Organizations)
 	}
 
@@ -278,7 +278,7 @@ func TestOperatorSAML_ThePolicyStillDecidesWhoGetsIn(t *testing.T) {
 		"jitRole":         "viewer",
 		"verifiedDomains": []string{"example.test"},
 		"groupClaim":      "http://schemas.xmlsoap.org/claims/Group",
-		"groupRoleMap":    map[string]string{"sre": "investigator"},
+		"groupRoleMap":    map[string]string{"sre": "editor"},
 	})
 
 	t.Run("an unrelated domain is refused even with a valid signature", func(t *testing.T) {
@@ -310,7 +310,7 @@ func TestOperatorSAML_ThePolicyStillDecidesWhoGetsIn(t *testing.T) {
 		}
 		who := readSession(t, plane, sessionCookie(t, completed))
 		if len(who.Organizations) != 1 ||
-			who.Organizations[0].Role != string(authz.Investigator) {
+			who.Organizations[0].Role != string(authz.Editor) {
 			t.Errorf("the group attribute produced %+v, want the mapped role",
 				who.Organizations)
 		}

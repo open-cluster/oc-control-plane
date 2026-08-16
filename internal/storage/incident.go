@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -92,13 +90,13 @@ func openEpisode(
 	// occurrence, and attaching to it would resurrect a record that has already been closed.
 	err := transaction.QueryRow(ctx, `
 		INSERT INTO incident_episode
-			(episode_id, organization, connection_id, environment_id, grouping_key,
+			(episode_id, org_id, integration_id, grouping_key,
 			 grouping_basis, title, status, first_seen_at, last_seen_at, signal_count)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $8, 0)
-		ON CONFLICT (connection_id, grouping_key) WHERE status = 1
+		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $7, 0)
+		ON CONFLICT (integration_id, grouping_key) WHERE status = 1
 		DO UPDATE SET updated_at = now()
 		RETURNING episode_id, xmax = 0`,
-		uuid.New(), organization.String(), delivery.Connection, delivery.Environment,
+		uuid.New(), organization.String(), delivery.Integration,
 		key, int16(basis), signal.Title, started).Scan(&episodeID, &opened)
 	if err != nil {
 		return uuid.UUID{}, false, fmt.Errorf("opening an incident episode: %w", err)
@@ -161,16 +159,13 @@ func (p *Placements) QueryEpisodes(
 	}
 
 	arguments := []any{organization.String()}
-	where := []string{"organization = $1"}
+	where := []string{"org_id = $1"}
 	add := func(clause string, value any) {
 		arguments = append(arguments, value)
 		where = append(where, fmt.Sprintf(clause, len(arguments)))
 	}
-	if query.Environment != nil {
-		add("environment_id = $%d", *query.Environment)
-	}
-	if query.Connection != nil {
-		add("connection_id = $%d", *query.Connection)
+	if query.Integration != nil {
+		add("integration_id = $%d", *query.Integration)
 	}
 	if query.Status != 0 {
 		add("status = $%d", int16(query.Status))
@@ -200,8 +195,8 @@ func (p *Placements) QueryEpisodes(
 	// One row past the limit is fetched so the cursor is issued only when there genuinely is a
 	// next page. A listing that always offered one would let a caller page forever.
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
-		SELECT episode_id, environment_id, connection_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count, investigation_id,
+		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
+		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
 		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
 		  FROM incident_episode
 		 WHERE %s
@@ -265,11 +260,11 @@ func (p *Placements) Episode(
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT episode_id, environment_id, connection_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count, investigation_id,
+		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
+		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
 		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
 		  FROM incident_episode
-		 WHERE episode_id = $1 AND organization = $2`, id, organization.String())
+		 WHERE episode_id = $1 AND org_id = $2`, id, organization.String())
 	if err != nil {
 		return incident.Episode{}, fmt.Errorf("reading an incident episode: %w", err)
 	}
@@ -312,7 +307,7 @@ func (p *Placements) EpisodeSignals(
 	rows, err := pool.Query(ctx, `
 		SELECT signal_id, title, summary, labels, status, started_at, resolved_at, received_at
 		  FROM signal
-		 WHERE episode_id = $1 AND organization = $2
+		 WHERE episode_id = $1 AND org_id = $2
 		   AND ($3::timestamptz IS NULL OR (started_at, signal_id) > ($3::timestamptz, $4::uuid))
 		 ORDER BY started_at, signal_id
 		 LIMIT $5`,
@@ -390,7 +385,7 @@ func (p *Placements) MergeEpisodes(
 				UPDATE incident_episode
 				   SET superseded_by = $1, superseded_at = now(), supersede_reason = $2,
 				       updated_at = now()
-				 WHERE episode_id = $3 AND organization = $4`,
+				 WHERE episode_id = $3 AND org_id = $4`,
 				surviving.ID, merge.Reason, absorbed.ID, organization.String()); err != nil {
 				return incident.Episode{}, audit.Target{}, nil,
 					fmt.Errorf("merging incident episodes: %w", err)
@@ -425,12 +420,6 @@ func mergeable(absorbed, surviving incident.Episode) error {
 		// depending on where it started, and a cycle would be a read that never ends.
 		return fmt.Errorf("%w: %s has itself been merged into %s; merge into that one instead",
 			incident.ErrMerge, surviving.ID, surviving.SupersededBy)
-	case absorbed.Environment != surviving.Environment:
-		// The Environment is the boundary evidence may never cross. Merging across it would
-		// produce one incident whose Signals came from two scopes, and an investigation opened for
-		// it would be gathering staging evidence for a production failure.
-		return fmt.Errorf("%w: they are in different environments, which evidence may not cross",
-			incident.ErrMerge)
 	default:
 		return nil
 	}
@@ -442,11 +431,11 @@ func lockEpisode(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, id uuid.UUID,
 ) (incident.Episode, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT episode_id, environment_id, connection_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count, investigation_id,
+		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
+		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
 		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
 		  FROM incident_episode
-		 WHERE episode_id = $1 AND organization = $2
+		 WHERE episode_id = $1 AND org_id = $2
 		   FOR UPDATE`, id, organization.String())
 	if err != nil {
 		return incident.Episode{}, fmt.Errorf("reading an incident episode: %w", err)
@@ -466,11 +455,11 @@ func readEpisode(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, id uuid.UUID,
 ) (incident.Episode, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT episode_id, environment_id, connection_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count, investigation_id,
+		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
+		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
 		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
 		  FROM incident_episode
-		 WHERE episode_id = $1 AND organization = $2`, id, organization.String())
+		 WHERE episode_id = $1 AND org_id = $2`, id, organization.String())
 	if err != nil {
 		return incident.Episode{}, fmt.Errorf("reading an incident episode: %w", err)
 	}
@@ -490,9 +479,9 @@ func scanEpisode(rows pgx.Rows, organization tenancy.Organization) (incident.Epi
 		resolvedAt   *time.Time
 		supersededAt *time.Time
 	)
-	if err := rows.Scan(&episode.ID, &episode.Environment, &episode.Connection,
+	if err := rows.Scan(&episode.ID, &episode.Integration,
 		&episode.GroupingKey, &basis, &episode.Title, &status, &episode.FirstSeenAt,
-		&episode.LastSeenAt, &resolvedAt, &episode.SignalCount, &episode.Investigation,
+		&episode.LastSeenAt, &resolvedAt, &episode.SignalCount,
 		&episode.SupersededBy, &supersededAt, &episode.SupersedeReason,
 		&episode.CreatedAt, &episode.UpdatedAt); err != nil {
 		return incident.Episode{}, fmt.Errorf("scanning an incident episode: %w", err)
@@ -507,58 +496,4 @@ func scanEpisode(rows pgx.Rows, organization tenancy.Organization) (incident.Epi
 		episode.SupersededAt = *supersededAt
 	}
 	return episode, nil
-}
-
-// claimEpisode records a newly opened case as its episode's one Investigation.
-//
-// It runs in the transaction that opened the case, so an episode with a case and a case with an
-// episode are the same commit. Doing it afterwards would leave a window in which two operators
-// both saw an unclaimed episode and both opened one — which is the fragmentation the model exists
-// to prevent, and the reason the column is unique rather than merely conventional.
-//
-// A case opened with no episode does nothing here. That is the ordinary path: an engineer with a
-// workload, a window and no alert.
-func claimEpisode(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	opened investigation.Investigation,
-) error {
-	if opened.EpisodeKey == "" {
-		return nil
-	}
-	episodeID, err := uuid.Parse(opened.EpisodeKey)
-	if err != nil {
-		return investigation.ErrEpisodeUnusable
-	}
-
-	// The ENVIRONMENT must match and the Connection deliberately need not. An episode arrives
-	// through a trigger Connection and a case reads through an evidence one, so requiring the same
-	// Connection would refuse every real pairing. What may not differ is the Environment, because
-	// that is the boundary evidence may not cross — an episode from staging must not become a
-	// production case's subject.
-	var existing *uuid.UUID
-	err = transaction.QueryRow(ctx, `
-		SELECT investigation_id FROM incident_episode
-		 WHERE episode_id = $1 AND organization = $2 AND environment_id = $3
-		   FOR UPDATE`,
-		episodeID, organization.String(), opened.Environment).Scan(&existing)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// One answer for "no such episode", "another tenant's" and "another Environment's", for
-		// the reason a refused Connection gives: which half of a crossed boundary was wrong is not
-		// a fact worth handing back.
-		return investigation.ErrEpisodeUnusable
-	}
-	if err != nil {
-		return fmt.Errorf("reading the incident episode a case names: %w", err)
-	}
-	if existing != nil {
-		return fmt.Errorf("%w: it is %s", investigation.ErrEpisodeInvestigated, *existing)
-	}
-
-	if _, err = transaction.Exec(ctx, `
-		UPDATE incident_episode SET investigation_id = $1, updated_at = now()
-		 WHERE episode_id = $2 AND organization = $3`,
-		opened.ID, episodeID, organization.String()); err != nil {
-		return fmt.Errorf("attaching an investigation to its incident episode: %w", err)
-	}
-	return nil
 }

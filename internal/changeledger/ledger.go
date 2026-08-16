@@ -8,7 +8,7 @@
 // changed around a resource in a window; a conclusion resting on a change revalidates
 // the current state live and cites the Observation that revalidation produced. A ledger
 // entry is structurally refused as an EvidenceItem — it carries no capability read, no
-// connection read and no trust class — so the rule holds by construction rather than by
+// integration read and no trust class — so the rule holds by construction rather than by
 // review.
 //
 // Persistence depends on this package and reconstructs its types; it declares none of
@@ -89,7 +89,7 @@ type FieldChange struct {
 }
 
 // Change is one observed difference as a Relay reported it — the write model, before
-// the ledger assigns identity and inherits the Environment.
+// the ledger assigns identity.
 type Change struct {
 	Namespace        string
 	Kind             ObjectKind
@@ -101,11 +101,11 @@ type Change struct {
 }
 
 // Delta is one at-least-once message from a Relay, reduced to domain terms. Its dedup
-// key is derived from the Connection, each object's identity including UID, and the
+// key is derived from the Integration, each object's identity including UID, and the
 // observed revision — never from the delta identifier, which only lets the Relay stop
 // resending.
 type Delta struct {
-	ConnectionID   uuid.UUID
+	IntegrationID  uuid.UUID
 	PolicyRevision int64
 	Baseline       bool
 	// ObservedAt is when the Relay read the cluster, on the Relay's clock. Paired with
@@ -115,13 +115,10 @@ type Delta struct {
 	Changes    []Change
 }
 
-// Entry is one durable ledger row. Environment is inherited from the Connection the
-// delta arrived through and persisted, never joined, so a Connection that later moves
-// does not rewrite the scope of history already recorded under it.
+// Entry is one durable ledger row.
 type Entry struct {
 	ID               int64
-	ConnectionID     uuid.UUID
-	EnvironmentID    uuid.UUID
+	IntegrationID    uuid.UUID
 	Namespace        string
 	Kind             ObjectKind
 	Name             string
@@ -177,12 +174,11 @@ func summarizeFields(fields []FieldChange) string {
 	return rendered
 }
 
-// Scope is one Connection's synchronization state: what was requested, and the coverage
+// Scope is one Integration's synchronization state: what was requested, and the coverage
 // boundaries an honest brief needs — where continuous knowledge starts, and when it was
 // last confirmed current.
 type Scope struct {
-	ConnectionID      uuid.UUID
-	EnvironmentID     uuid.UUID
+	IntegrationID     uuid.UUID
 	PolicyRevision    int64
 	RequestedInterval time.Duration
 	// CoveredSince is where the ledger's CONTINUOUS knowledge of this scope begins. It
@@ -206,7 +202,7 @@ type Scope struct {
 // Freshness is a heartbeat's per-scope stamp: the Relay confirming a tick completed
 // (or failed) without a delta having to travel.
 type Freshness struct {
-	ConnectionID   uuid.UUID
+	IntegrationID  uuid.UUID
 	PolicyRevision int64
 	CompletedAt    *time.Time
 	Faulted        bool
@@ -218,7 +214,7 @@ type Recorded struct {
 	// Inserted is how many entries were new; the rest collapsed against rows the ledger
 	// already held, which is how an at-least-once redelivery records nothing twice.
 	Inserted int
-	// Refused reports a delta naming a Connection this Relay does not serve — recorded
+	// Refused reports a delta naming a Integration this Relay does not serve — recorded
 	// nowhere, acknowledged anyway so the Relay stops resending what will never land.
 	Refused bool
 }

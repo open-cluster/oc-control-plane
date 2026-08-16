@@ -134,7 +134,7 @@ func (t *truth) issueBootstrapToken(ctx context.Context, organization string) (s
 	digest := sha256.Sum256([]byte(token))
 
 	_, err := t.pool.Exec(ctx, `
-		INSERT INTO relay_bootstrap_token (token_digest, organization, expires_at)
+		INSERT INTO relay_bootstrap_token (token_digest, org_id, expires_at)
 		VALUES ($1, $2, $3)`,
 		digest[:], organization, time.Now().Add(time.Hour))
 	if err != nil {
@@ -150,7 +150,7 @@ func (t *truth) registration(ctx context.Context, organization string) (uuid.UUI
 	err := t.pool.QueryRow(ctx, `
 		SELECT registration_id
 		  FROM relay_registration
-		 WHERE organization = $1
+		 WHERE org_id = $1
 		 ORDER BY created_at DESC
 		 LIMIT 1`, organization).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -167,7 +167,7 @@ func (t *truth) registration(ctx context.Context, organization string) (uuid.UUI
 func (t *truth) countRegistrations(ctx context.Context, organization string) (int, error) {
 	var count int
 	err := t.pool.QueryRow(ctx,
-		`SELECT count(*) FROM relay_registration WHERE organization = $1`,
+		`SELECT count(*) FROM relay_registration WHERE org_id = $1`,
 		organization).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("counting relay registrations: %w", err)
@@ -175,61 +175,46 @@ func (t *truth) countRegistrations(ctx context.Context, organization string) (in
 	return count, nil
 }
 
-// evidenceConnection records the Kubernetes Connection every job reaches, in the
-// organization's Default Environment and served by the enrolled relay.
+// kubernetesIntegration records the Kubernetes Integration every job reaches, served by
+// the enrolled relay.
 //
-// The Connection is what a job reaches; the relay is where it runs. Both rows are written here
-// in SQL for the same reason everything else in this harness is: the schema is the contract an
-// implementation is being held to, and going through the implementation's own helpers would
-// make the harness agree with it by construction.
-func (t *truth) evidenceConnection(
+// The Integration is what a job reaches; the relay is where it runs. The row is written
+// here in SQL for the same reason everything else in this harness is: the schema is the
+// contract an implementation is being held to, and going through the implementation's own
+// helpers would make the harness agree with it by construction.
+func (t *truth) kubernetesIntegration(
 	ctx context.Context, organization string, registration uuid.UUID,
 ) (uuid.UUID, error) {
-	environment := uuid.New()
+	integration := uuid.New()
 	if _, err := t.pool.Exec(ctx, `
-		INSERT INTO environment (environment_id, organization, name, is_default)
-		VALUES ($1, $2, 'Default', TRUE)
-		ON CONFLICT (organization) WHERE is_default DO NOTHING`,
-		environment, organization); err != nil {
-		return uuid.Nil, fmt.Errorf("creating the default environment: %w", err)
-	}
-	if err := t.pool.QueryRow(ctx,
-		`SELECT environment_id FROM environment WHERE organization = $1 AND is_default`,
-		organization).Scan(&environment); err != nil {
-		return uuid.Nil, fmt.Errorf("reading the default environment: %w", err)
-	}
-
-	connection := uuid.New()
-	if _, err := t.pool.Exec(ctx, `
-		INSERT INTO connection
-			(connection_id, organization, environment_id, integration, name,
-			 role, locality, relay_registration_id)
-		VALUES ($1, $2, $3, 'kubernetes', $4, 2, 2, $5)`,
-		connection, organization, environment, "the cluster "+connection.String(),
+		INSERT INTO integration
+			(integration_id, org_id, integration_type_id, name, relay_id)
+		VALUES ($1, $2, 2, $3, $4)`,
+		integration, organization, "the cluster "+integration.String(),
 		registration); err != nil {
-		return uuid.Nil, fmt.Errorf("creating the evidence connection: %w", err)
+		return uuid.Nil, fmt.Errorf("creating the kubernetes integration: %w", err)
 	}
-	return connection, nil
+	return integration, nil
 }
 
 // enqueueJob records work to be done, pending and unleased — which is what an investigation
 // planner will do once one exists. Nothing is delivered until a session claims it, so a job
 // enqueued while every relay is offline waits rather than being lost.
 //
-// The Connection is named rather than left out, because the schema will not accept a job
-// without one: the environment boundary is a checked precondition on the execution path, and a
+// The Integration is named rather than left out, because the schema will not accept a job
+// without one: the tenant boundary is a checked precondition on the execution path, and a
 // job with nothing to compare against could not be one.
 func (t *truth) enqueueJob(
-	ctx context.Context, organization string, registration, connection uuid.UUID,
+	ctx context.Context, organization string, registration, integration uuid.UUID,
 	capability string, version uint32, arguments []byte,
 ) (uuid.UUID, error) {
 	id := uuid.New()
 	_, err := t.pool.Exec(ctx, `
 		INSERT INTO relay_job
-			(job_id, organization, connection_id, registration_id,
+			(job_id, org_id, integration_id, registration_id,
 			 capability_id, capability_version, arguments)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		id, organization, connection, registration, capability, version, arguments)
+		id, organization, integration, registration, capability, version, arguments)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("enqueueing a job: %w", err)
 	}
@@ -248,7 +233,7 @@ func (t *truth) job(ctx context.Context, organization string, id uuid.UUID) (job
 	err := t.pool.QueryRow(ctx, `
 		SELECT status, result, lease_epoch
 		  FROM relay_job
-		 WHERE job_id = $1 AND organization = $2`, id, organization).
+		 WHERE job_id = $1 AND org_id = $2`, id, organization).
 		Scan(&record.Status, &record.Result, &record.LeaseEpoch)
 	if err != nil {
 		return jobRecord{}, fmt.Errorf("reading job %s: %w", id, err)

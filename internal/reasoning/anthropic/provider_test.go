@@ -148,21 +148,21 @@ func promptFixture() reasoning.Prompt {
 		Model:           "claude-opus-5",
 		System:          []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
 		Content:         []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema:          reasoning.HypothesesSchema(),
+		Schema:          reasoning.ConclusionSchema(),
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
 	}
 }
 
 func TestComplete_ReturnsTheDocumentAndNormalizesUsage(t *testing.T) {
-	provider, _ := providerUnder(t, streamed(`{"hypotheses":[]}`, fullUsage, "end_turn", ""))
+	provider, _ := providerUnder(t, streamed(`{"findings":[]}`, fullUsage, "end_turn", ""))
 
 	completion, err := provider.Complete(context.Background(), promptFixture())
 	if err != nil {
 		t.Fatalf("completing: %v", err)
 	}
 
-	if string(completion.Document) != `{"hypotheses":[]}` {
+	if string(completion.Document) != `{"findings":[]}` {
 		t.Errorf("the document is %q", completion.Document)
 	}
 	// The model that ANSWERED, read from the response rather than echoed from the request.
@@ -214,7 +214,7 @@ func TestComplete_AReasoningFigureTheProviderDidNotReportIsAbsentRatherThanZero(
 func TestComplete_ARefusalIsANamedFailureAndNeverADocument(t *testing.T) {
 	details := `{"type":"refusal","category":"cyber","explanation":"declined"}`
 	provider, _ := providerUnder(t,
-		streamed(`{"hypotheses":[]}`, fullUsage, "refusal", details))
+		streamed(`{"findings":[]}`, fullUsage, "refusal", details))
 
 	completion, err := provider.Complete(context.Background(), promptFixture())
 
@@ -278,13 +278,13 @@ func TestComplete_TellsARejectedRequestApartFromAnOutage(t *testing.T) {
 func TestComplete_RateLimitingFollowedBySuccessReturnsTheAnswer(t *testing.T) {
 	provider, round := providerUnder(t,
 		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
-		streamed(`{"hypotheses":[]}`, fullUsage, "end_turn", ""))
+		streamed(`{"findings":[]}`, fullUsage, "end_turn", ""))
 
 	completion, err := provider.Complete(context.Background(), promptFixture())
 	if err != nil {
 		t.Fatalf("a retried rate limit did not recover: %v", err)
 	}
-	if string(completion.Document) != `{"hypotheses":[]}` {
+	if string(completion.Document) != `{"findings":[]}` {
 		t.Errorf("the document is %q", completion.Document)
 	}
 	if round.callCount() < 2 {

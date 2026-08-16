@@ -85,7 +85,7 @@ func (p *Placements) RecordResult(
 		       lease_expires_at = NULL,
 		       lease_session    = NULL
 		 WHERE job_id        = $1
-		   AND organization  = $2
+		   AND org_id  = $2
 		   AND status        = 1
 		   AND lease_session = $3
 		   AND lease_epoch   = $6`,
@@ -119,7 +119,7 @@ func (p *Placements) explainRefusedResult(
 		epoch  int64
 	)
 	err = pool.QueryRow(ctx, `
-		SELECT status, lease_epoch FROM relay_job WHERE job_id = $1 AND organization = $2`,
+		SELECT status, lease_epoch FROM relay_job WHERE job_id = $1 AND org_id = $2`,
 		fence.JobID, organization.String()).Scan(&status, &epoch)
 	switch {
 	case err != nil && errors.Is(err, pgx.ErrNoRows):

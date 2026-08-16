@@ -83,8 +83,8 @@ type Block struct {
 type Schema struct {
 	// Name identifies the schema to a provider that wants one.
 	Name string
-	// Version is bumped when the shape changes, which invalidates every recording made against
-	// the old one through the transcript key that already exists.
+	// Version is bumped when the shape changes, so anything keyed on the schema — a test
+	// fixture, a recorded answer — cannot silently replay against a different shape.
 	Version string
 	// Document is the JSON Schema itself.
 	Document map[string]any
@@ -93,8 +93,8 @@ type Schema struct {
 // Completion is what one provider returned.
 type Completion struct {
 	// Model is the model that ANSWERED, read from the response rather than echoed from the
-	// request. It is what gets recorded, because a transcript keyed on the requested model would
-	// replay against a recording a different model produced.
+	// request: a provider may re-serve a request on another model, and the record must
+	// name what actually spoke.
 	Model string
 	// RequestID is the provider's own identifier for this call, which is what a vendor support
 	// conversation is conducted in.

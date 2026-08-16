@@ -23,7 +23,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // TestMain establishes goroutine-leak detection for the whole package, so the discipline
@@ -274,16 +273,7 @@ func freshDatabase(t *testing.T) string {
 
 func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane {
 	t.Helper()
-	return startControlPlaneWith(t, adjust, nil)
-}
-
-// startControlPlaneWith is startControlPlane with the model boundary replaced. It is the only
-// component any test here fakes, and the deviation is recorded at the seam itself.
-func startControlPlaneWith(
-	t *testing.T, adjust func(*config.Config), reasoner investigation.Reasoner,
-) *controlPlane {
-	t.Helper()
-	return startControlPlaneRunning(t, adjust, wiring{reasoner: reasoner})
+	return startControlPlaneRunning(t, adjust, wiring{})
 }
 
 // startControlPlaneRunning is the whole harness: the assembled process, a real database, a real
@@ -316,6 +306,10 @@ func startControlPlaneRunning(
 		Assignments:     map[string]string{"org-a": "shared"},
 		ShutdownTimeout: 10 * time.Second,
 		ServiceName:     "oc-control-plane-test",
+		// A default sealing key, because the catalog serves a credential-bearing type and
+		// an operator surface without a key refuses to start. A test proving that refusal
+		// clears this deliberately.
+		SealingKey: bytes.Repeat([]byte{7}, 32),
 	}
 	if adjust != nil {
 		adjust(&cfg)

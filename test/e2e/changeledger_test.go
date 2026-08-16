@@ -32,8 +32,8 @@ func (h *harness) ledgerChanges(ctx context.Context, t *testing.T) []ledgerRow {
 	rows, err := h.truth.pool.Query(ctx, `
 		SELECT change_kind, object_name, fields::text
 		  FROM change_ledger
-		 WHERE connection_id = $1 AND namespace = $2 AND change_kind <> 1
-		 ORDER BY entry_id`, h.connection, fixtureNamespace)
+		 WHERE integration_id = $1 AND namespace = $2 AND change_kind <> 1
+		 ORDER BY entry_id`, h.integration, fixtureNamespace)
 	if err != nil {
 		t.Fatalf("reading the ledger: %v", err)
 	}
@@ -55,9 +55,11 @@ func (h *harness) awaitLedgerBaseline(t *testing.T) {
 		var baselined bool
 		err := h.truth.pool.QueryRow(ctx, `
 			SELECT baseline_at IS NOT NULL FROM change_ledger_scope
-			 WHERE connection_id = $1`, h.connection).Scan(&baselined)
+			 WHERE integration_id = $1`, h.integration).Scan(&baselined)
 		if err != nil {
-			return false, nil // the scope row itself may not exist yet
+			// The scope row itself may not exist yet; the poll continues and the timeout
+			// message names this error if it never does.
+			return false, err
 		}
 		return baselined, nil
 	})
@@ -72,9 +74,9 @@ func (h *harness) awaitConfirmations(t *testing.T, after time.Time, ticks int) {
 		var confirmed time.Time
 		err := h.truth.pool.QueryRow(ctx, `
 			SELECT coalesce(last_confirmed_at, to_timestamp(0)) FROM change_ledger_scope
-			 WHERE connection_id = $1`, h.connection).Scan(&confirmed)
+			 WHERE integration_id = $1`, h.integration).Scan(&confirmed)
 		if err != nil {
-			return false, nil
+			return false, err
 		}
 		return confirmed.After(after.Add(time.Duration(ticks) * 2 * time.Second)), nil
 	})

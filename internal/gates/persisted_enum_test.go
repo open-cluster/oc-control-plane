@@ -13,6 +13,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
@@ -22,10 +23,6 @@ import (
 // language connects the two: reordering a constant block shifts every value after it while every
 // literal keeps its old meaning, and the rows already stored keep the old numbering. The compiler
 // cannot see it, the linter cannot see it, and it is invisible in review.
-//
-// The investigation vocabulary lives in internal/investigation rather than in internal/storage,
-// because the capability owns its types and persistence reconstructs them (ADR-017). Where it lives
-// does not change what it is: a value in a column, constrained by a CHECK in migration 0009.
 //
 // Two gates cover it. The first freezes the values. The second checks that no SQL literal names
 // a value no constant holds.
@@ -52,134 +49,45 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"SignalFiring", int(storage.SignalFiring), 1},
 		{"SignalResolved", int(storage.SignalResolved), 2},
 
-		{"RoleTrigger", int(storage.RoleTrigger), 1},
-		{"RoleEvidence", int(storage.RoleEvidence), 2},
-		{"RoleBoth", int(storage.RoleBoth), 3},
+		// The Integration Type ids are seeded into integration_type by migration and
+		// compiled here as constants; the id is the join key everything else stores.
+		{"TypeAlertmanager", int(integrations.TypeAlertmanager), 1},
+		{"TypeKubernetes", int(integrations.TypeKubernetes), 2},
+		{"TypeSlack", int(integrations.TypeSlack), 3},
+		{"TypeGitHub", int(integrations.TypeGitHub), 4},
 
-		// The Connection lifecycle, migration 0013's CHECKs. A value that moved here would
-		// silently re-label every existing row: a Connection stored as failed would start
-		// reading as degraded, which is the difference between paging somebody and not.
-		{"ConnectionConfigured", int(storage.ConnectionConfigured), 1},
-		{"ConnectionValidating", int(storage.ConnectionValidating), 2},
-		{"ConnectionActive", int(storage.ConnectionActive), 3},
-		{"ConnectionDegraded", int(storage.ConnectionDegraded), 4},
-		{"ConnectionFailed", int(storage.ConnectionFailed), 5},
+		// An Integration's observed status. A value that moved here would silently
+		// re-label every existing row: an Integration stored as failed would start reading
+		// as degraded, which is the difference between paging somebody and not.
+		{"StatusConfigured", int(integrations.StatusConfigured), 1},
+		{"StatusActive", int(integrations.StatusActive), 2},
+		{"StatusDegraded", int(integrations.StatusDegraded), 3},
+		{"StatusFailed", int(integrations.StatusFailed), 4},
 
-		// Validation results. Readiness is the COVERAGE vocabulary and is stored in
-		// connection_validation_capability.readiness as well as in the authentication column.
-		{"ReadyAvailable", int(storage.ReadyAvailable), 1},
-		{"ReadyUnauthorized", int(storage.ReadyUnauthorized), 2},
-		{"ReadyUnavailable", int(storage.ReadyUnavailable), 3},
-		{"ReadyNotAttempted", int(storage.ReadyNotAttempted), 4},
-
-		{"ValidationPassed", int(storage.ValidationPassed), 1},
-		{"ValidationPartial", int(storage.ValidationPartial), 2},
-		{"ValidationFailed", int(storage.ValidationFailed), 3},
-
-		// Delivery dispositions, and the 1 that trigger_delivery's health query filters on.
+		// Delivery dispositions, and the 1 the delivery health queries filter on.
 		{"DeliveryAccepted", int(storage.DeliveryAccepted), 1},
 		{"DeliveryDuplicate", int(storage.DeliveryDuplicate), 2},
 		{"DeliveryRejected", int(storage.DeliveryRejected), 3},
 
-		// The investigation vocabulary. These live in internal/investigation rather than in
-		// internal/storage — the capability owns its types and persistence reconstructs them
-		// (ADR-017) — but they are stored in columns and constrained by CHECKs in migration 0009,
-		// so they are a storage contract exactly as the values above are.
-		{"LifecyclePending", int(investigation.LifecyclePending), 1},
-		{"LifecycleBriefing", int(investigation.LifecycleBriefing), 2},
-		{"LifecycleReasoning", int(investigation.LifecycleReasoning), 3},
-		{"LifecycleGathering", int(investigation.LifecycleGathering), 4},
-		{"LifecycleConcluded", int(investigation.LifecycleConcluded), 5},
-		{"LifecycleAbstained", int(investigation.LifecycleAbstained), 6},
-		{"LifecycleCancelled", int(investigation.LifecycleCancelled), 7},
-		{"LifecycleFailed", int(investigation.LifecycleFailed), 8},
+		// An episode's vocabulary is the capability's rather than persistence's, because
+		// the capability owns what it defines. What is frozen is the same thing either
+		// way: the integers the SQL writes as bare literals.
+		{"StatusOpen", int(incident.StatusOpen), 1},
+		{"StatusResolved", int(incident.StatusResolved), 2},
+		{"BasisSourceGrouping", int(incident.BasisSourceGrouping), 1},
+		{"BasisUngrouped", int(incident.BasisUngrouped), 2},
 
-		{"TriggerManual", int(investigation.TriggerManual), 1},
-		{"TriggerSignal", int(investigation.TriggerSignal), 2},
+		// An investigation's lifecycle and its runs' outcomes. The still-running guard in
+		// the ending update is written as `status = 1`.
+		{"InvestigationRunning", int(investigation.StatusRunning), 1},
+		{"InvestigationConcluded", int(investigation.StatusConcluded), 2},
+		{"InvestigationFailed", int(investigation.StatusFailed), 3},
+		{"RunSucceeded", int(investigation.RunSucceeded), 1},
+		{"RunFailed", int(investigation.RunFailed), 2},
 
-		// These match the protocol's WorkloadKind. A value that moved here would ask a relay for a
-		// different kind of object than the case says it is scoped to.
-		{"WorkloadDeployment", int(investigation.WorkloadDeployment), 1},
-		{"WorkloadStatefulSet", int(investigation.WorkloadStatefulSet), 2},
-		{"WorkloadDaemonSet", int(investigation.WorkloadDaemonSet), 3},
-
-		{"RoundConcluded", int(investigation.RoundConcluded), 1},
-		{"RoundAbstained", int(investigation.RoundAbstained), 2},
-		{"RoundCancelled", int(investigation.RoundCancelled), 3},
-		{"RoundFailed", int(investigation.RoundFailed), 4},
-
-		{"LimitRequests", int(investigation.LimitRequests), 1},
-		{"LimitResultBytes", int(investigation.LimitResultBytes), 2},
-		{"LimitDeadline", int(investigation.LimitDeadline), 3},
-		{"LimitCost", int(investigation.LimitCost), 4},
-		{"LimitAdaptivePasses", int(investigation.LimitAdaptivePasses), 5},
-
-		{"HypothesisLive", int(investigation.HypothesisLive), 1},
-		{"HypothesisSupported", int(investigation.HypothesisSupported), 2},
-		{"HypothesisFalsified", int(investigation.HypothesisFalsified), 3},
-		{"HypothesisSetAside", int(investigation.HypothesisSetAside), 4},
-
-		{"StanceSupports", int(investigation.StanceSupports), 1},
-		{"StanceContradicts", int(investigation.StanceContradicts), 2},
-		{"StanceNeutral", int(investigation.StanceNeutral), 3},
-
-		{"RequestProposed", int(investigation.RequestProposed), 1},
-		{"RequestRefused", int(investigation.RequestRefused), 2},
-		{"RequestDispatched", int(investigation.RequestDispatched), 3},
-		{"RequestAnswered", int(investigation.RequestAnswered), 4},
-		{"RequestUnproductive", int(investigation.RequestUnproductive), 5},
-		{"RequestFailed", int(investigation.RequestFailed), 6},
-
-		{"RefusedUnknownCapability", int(investigation.RefusedUnknownCapability), 1},
-		{"RefusedNotPermitted", int(investigation.RefusedNotPermitted), 2},
-		{"RefusedOutOfScope", int(investigation.RefusedOutOfScope), 3},
-		{"RefusedOutOfWindow", int(investigation.RefusedOutOfWindow), 4},
-		{"RefusedArguments", int(investigation.RefusedArguments), 5},
-		{"RefusedLimitReached", int(investigation.RefusedLimitReached), 6},
-		{"RefusedUnjustified", int(investigation.RefusedUnjustified), 7},
-		{"RefusedConnection", int(investigation.RefusedConnection), 8},
-
-		{"TrustCentrallyVerified", int(investigation.TrustCentrallyVerified), 1},
-		{"TrustRelayAttested", int(investigation.TrustRelayAttested), 2},
-
-		{"GapCapabilityUnavailable", int(investigation.GapCapabilityUnavailable), 1},
-		{"GapCapabilityNotPermitted", int(investigation.GapCapabilityNotPermitted), 2},
-		{"GapSourceUnreachable", int(investigation.GapSourceUnreachable), 3},
-		{"GapAuthorizationDenied", int(investigation.GapAuthorizationDenied), 4},
-		{"GapLimitReached", int(investigation.GapLimitReached), 5},
-		{"GapRedactionMasked", int(investigation.GapRedactionMasked), 6},
-		{"GapRetentionHorizon", int(investigation.GapRetentionHorizon), 7},
-		{"GapResultTruncated", int(investigation.GapResultTruncated), 8},
-		{"GapRequestRefused", int(investigation.GapRequestRefused), 9},
-		{"GapTargetNotFound", int(investigation.GapTargetNotFound), 10},
-		{"GapExplanationUntested", int(investigation.GapExplanationUntested), 11},
-		{"GapLedgerHorizon", int(investigation.GapLedgerHorizon), 12},
-		{"GapLedgerStale", int(investigation.GapLedgerStale), 13},
-
-		{"CoverageChecked", int(investigation.CoverageChecked), 1},
-		{"CoverageCheckedEmpty", int(investigation.CoverageCheckedEmpty), 2},
-		{"CoverageIncomplete", int(investigation.CoverageIncomplete), 3},
-		{"CoverageUnavailable", int(investigation.CoverageUnavailable), 4},
-		{"CoverageNotApplicable", int(investigation.CoverageNotApplicable), 5},
-
-		{"OutcomeSupported", int(investigation.OutcomeSupported), 1},
-		{"OutcomeCaveated", int(investigation.OutcomeCaveated), 2},
-		{"OutcomeAbstained", int(investigation.OutcomeAbstained), 3},
-
-		{"ClaimSupporting", int(investigation.ClaimSupporting), 1},
-		{"ClaimContradicting", int(investigation.ClaimContradicting), 2},
-		{"ClaimAffectedScope", int(investigation.ClaimAffectedScope), 3},
-
-		// A brief change's source is persisted inside the brief's JSON. Zero is legacy:
-		// briefs written before the ledger existed decode as zero and every reader treats
-		// it as observed.
-		{"ChangeObserved", int(investigation.ChangeObserved), 1},
-		{"ChangeLedger", int(investigation.ChangeLedger), 2},
-
-		// The change ledger's vocabulary, owned by internal/changeledger and constrained by
-		// migration 0015's CHECKs. The baseline exclusion in every change query is written
-		// as `change_kind <> 1`, so ChangeBaseline moving would silently turn every baseline
-		// into a reportable change.
+		// The change ledger's vocabulary. The baseline exclusion in every change query is
+		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
+		// every baseline into a reportable change.
 		{"KindDeployment", int(changeledger.KindDeployment), 1},
 		{"KindStatefulSet", int(changeledger.KindStatefulSet), 2},
 		{"KindDaemonSet", int(changeledger.KindDaemonSet), 3},
@@ -208,77 +116,74 @@ var (
 		int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
 		int(storage.JobFailed), int(storage.JobCancelled),
 	}
-	signalStatusValues   = []int{int(storage.SignalFiring), int(storage.SignalResolved)}
-	connectionRoleValues = []int{
-		int(storage.RoleTrigger), int(storage.RoleEvidence), int(storage.RoleBoth),
-	}
-	connectionStateValues = []int{
-		int(storage.ConnectionConfigured), int(storage.ConnectionValidating),
-		int(storage.ConnectionActive), int(storage.ConnectionDegraded),
-		int(storage.ConnectionFailed),
-	}
+	signalStatusValues    = []int{int(storage.SignalFiring), int(storage.SignalResolved)}
 	deliveryOutcomeValues = []int{
 		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
 		int(storage.DeliveryRejected),
 	}
-	// An episode's status is the capability's rather than persistence's, because the capability
-	// owns the vocabulary it defines (ADR-017). What is frozen here is the same thing either way:
-	// the integers the SQL writes as bare literals.
-	episodeStatusValues = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	episodeStatusValues       = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	investigationStatusValues = []int{
+		int(investigation.StatusRunning), int(investigation.StatusConcluded),
+		int(investigation.StatusFailed),
+	}
+	integrationTypeValues = []int{
+		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
+		int(integrations.TypeSlack), int(integrations.TypeGitHub),
+	}
+	changeKindValues = []int{
+		int(changeledger.ChangeBaseline), int(changeledger.ChangeCreated),
+		int(changeledger.ChangeModified), int(changeledger.ChangeDeleted),
+	}
 )
 
 // enumColumns maps a file in internal/storage to the values its SQL may compare each enum
-// column against. Two different enums are both stored in a column called status — a job's and a
-// signal's — so the legal set is decided per file rather than per column name. A gate that
-// pooled them would assert a property that is not true.
+// column against. Two different enums are both stored in a column called status — a job's, a
+// signal's and an episode's — so the legal set is decided per file rather than per column name.
 //
-// A file is listed here when its SQL names one of these columns. Adding SQL that does so to any
-// other file fails the gate below, which is the point: the new file has to say which enum
-// governs it. That is not hypothetical — splitting the job queries into these files is what
-// first fired it.
+// A file is listed here when its SQL compares one of the scanned columns to a literal. Adding
+// SQL that does so to any other file fails the gate below, which is the point: the new file has
+// to say which enum governs it.
 var enumColumns = map[string]map[string][]int{
-	"job.go": {"role": connectionRoleValues},
-	// The investigator reaches a customer's cluster through a Connection, so the same role check
-	// guards opening a case and dispatching one of its reads. Cancelling a case also touches
-	// relay_job's status, which is why that file names two enums.
-	"investigation.go":      {"role": connectionRoleValues, "status": jobStatusValues},
-	"investigation_pack.go": {"role": connectionRoleValues},
-	"lease.go":              {"status": jobStatusValues},
-	"result.go":             {"status": jobStatusValues},
-	"cancellation.go":       {"status": jobStatusValues},
-	"signal.go":             {"status": signalStatusValues},
-	"connection.go":         {"role": connectionRoleValues},
-	// The lifecycle files. connection_lifecycle.go compares `role` when it counts what depends
-	// on a Connection and writes `state` when a validation lands; trigger_delivery.go compares
-	// `outcome` in every health query. Each names the enum that governs it rather than relying
-	// on the column name, because `outcome` is also a validation's own column.
-	"connection_lifecycle.go": {"role": connectionRoleValues, "state": connectionStateValues},
-	"trigger_delivery.go":     {"outcome": deliveryOutcomeValues, "role": connectionRoleValues},
+	"lease.go":        {"status": jobStatusValues},
+	"result.go":       {"status": jobStatusValues},
+	"cancellation.go": {"status": jobStatusValues},
 	// The fleet counts leased jobs to report what the relays are holding.
 	"fleet.go": {"status": jobStatusValues},
-	// Grouping compares an EPISODE's status: an open episode is the one a new Signal joins, and a
-	// resolved one has released its grouping key so the same failure next month opens a new
-	// episode rather than reopening a closed record.
-	"incident.go": {"status": episodeStatusValues},
-	// The ledger verifies a delta's Connection answers evidence reads before recording under it.
-	"change_ledger.go": {"role": connectionRoleValues},
+	// The delivery path: the upsert guard compares a SIGNAL's status, and the idempotence
+	// key's partial-index predicate compares a delivery's outcome.
+	"signal.go": {"status": signalStatusValues, "outcome": deliveryOutcomeValues},
+	// Grouping compares an EPISODE's status — an open episode is the one a new Signal joins —
+	// and recomputing one counts the signals still firing, which shares the value 1.
+	"incident.go": {"status": append(append([]int(nil), episodeStatusValues...),
+		signalStatusValues...)},
+	// The last-accepted-delivery health read filters on the accepted outcome.
+	"integration.go": {"outcome": deliveryOutcomeValues},
+	// The ending update is guarded on the investigation still running, and the
+	// open-episode listing filters on an EPISODE's status; the two enums share the file.
+	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),
+		episodeStatusValues...)},
+	// The ledger opens scopes only for kubernetes Integrations and excludes baselines from
+	// every change query.
+	"change_ledger.go": {
+		"integration_type_id": integrationTypeValues,
+		"change_kind":         changeKindValues,
+	},
 }
+
+// scannedColumns is every column name the gate reads comparisons against. A column absent from
+// this list is invisible to the gate, so extending the persisted vocabulary starts here.
+var scannedColumns = []string{"status", "outcome", "integration_type_id", "change_kind"}
 
 // Every integer an enum column is compared against must be a value some constant holds. This
 // catches the literal gate one cannot see: a typed 5 where 4 was meant, or a value invented for
 // a state that was never declared.
-//
-// What it does not see, stated rather than implied: a value that appears somewhere other than a
-// comparison against the column — the 4 in "CASE WHEN status = 0 THEN 4" is assigned, not
-// compared, and is not read here. Gate one is what covers that one, by making 4 mean what it has
-// always meant.
 func TestSQLComparesEnumColumnsOnlyToDeclaredValues(t *testing.T) {
 	t.Parallel()
 
 	inspected := 0
 	for name, file := range storageProductionFiles(t) {
 		for _, sql := range sqlLiterals(file) {
-			for _, column := range []string{"status", "role"} {
+			for _, column := range scannedColumns {
 				literals := enumLiteralsFor(sql, column)
 				if len(literals) == 0 {
 					continue
@@ -293,10 +198,6 @@ func TestSQLComparesEnumColumnsOnlyToDeclaredValues(t *testing.T) {
 				inspected += len(literals)
 				for _, literal := range literals {
 					if !containsValue(legal, literal) {
-						// The wording matters when the value is new rather than wrong. A
-						// constant that was genuinely added is declared in Go and still fails
-						// here until it is recorded, and the message has to say so or it reads
-						// as the gate being broken.
 						t.Errorf("%s compares %s to %d; the values recorded for that column are "+
 							"%v. If a constant was added, record it above — these values are a "+
 							"storage contract, and extending them is a decision",
@@ -342,11 +243,12 @@ func TestEnumLiteralScannerReadsTheFormsInUse(t *testing.T) {
 	}{
 		{"qualified equality", `AND held.status = 1`, "status", []int{1}},
 		{"disjunction", `AND (status = 0 OR (status = 1 AND at <= now()))`, "status", []int{0, 1}},
-		{"in list", `AND connection.role          IN (2, 3)`, "role", []int{2, 3}},
-		{"bare in list", `AND role IN (1, 3)`, "role", []int{1, 3}},
+		{"in list", `AND integration.integration_type_id IN (2, 3)`,
+			"integration_type_id", []int{2, 3}},
+		{"bare in list", `AND outcome IN (1, 3)`, "outcome", []int{1, 3}},
 		{"bound parameter is not a literal", `SET status = $4`, "status", nil},
 		{"assignment from another column", `SET status = EXCLUDED.status`, "status", nil},
-		{"another column entirely", `WHERE signal.status = 1`, "role", nil},
+		{"another column entirely", `WHERE signal.status = 1`, "outcome", nil},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()

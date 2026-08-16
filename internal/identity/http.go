@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -120,9 +121,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "user not found"})
 	case errors.Is(err, storage.ErrMembershipUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "membership not found"})
-	case errors.Is(err, storage.ErrLastOwner):
+	case errors.Is(err, storage.ErrLastAdmin):
 		writeJSON(writer, http.StatusConflict, errorView{
-			Error: "an organization must keep at least one owner; appoint another first"})
+			Error: "an organization must keep at least one admin; appoint another first"})
 	case errors.Is(err, storage.ErrServiceAccountUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "service account not found"})
 	case errors.Is(err, storage.ErrServiceAccountNameTaken):
@@ -130,9 +131,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			errorView{Error: "another service account already has that name"})
 	case errors.Is(err, storage.ErrTokenUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "api token not found"})
-	case errors.Is(err, ErrNoSealKey):
+	case errors.Is(err, seal.ErrNoKey):
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
-			Error: "this deployment has no identity encryption key and cannot hold a client secret"})
+			Error: "this deployment has no sealing key and cannot hold a client secret"})
 	case errors.Is(err, ErrProviderUnreachable):
 		writeJSON(writer, http.StatusBadGateway,
 			errorView{Error: "the identity provider could not be reached"})

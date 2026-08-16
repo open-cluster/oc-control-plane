@@ -38,14 +38,6 @@ type RelaySummary struct {
 	SessionPeer string
 	// Capabilities is what it advertised at enrolment, by capability id.
 	Capabilities []string
-	// ServesEnvironments is derived from the Connections bound to this Relay, and it is the
-	// answer to the question an Environment COLUMN would have answered wrongly.
-	//
-	// A Relay is Organization-scoped and carries no Environment — CONTEXT.md is explicit that
-	// filtering a fleet by one is a filter over a property the record does not have. What it can
-	// be said to serve is whatever its Connections reach, which is exactly this, and which
-	// changes when a Connection is bound or unbound rather than needing to be maintained.
-	ServesEnvironments []string
 }
 
 // RelayRoster is a page of an organization's relay identities.
@@ -75,11 +67,6 @@ type RelayQuery struct {
 	Version string
 	// Capability narrows to relays advertising a capability id.
 	Capability string
-	// ServesEnvironment narrows over the JOIN to the Connections bound to each Relay, by
-	// Environment name. It is deliberately NOT a column on the relay: it is a filter over what
-	// a Relay's Connections reach, which is the operator's real question, answered without
-	// inventing a field the record does not have.
-	ServesEnvironment string
 	// SortField is one of registeredAt, lastSeenAt, version, fingerprint. Anything else is a
 	// programming error: the handler refuses an unoffered field before it reaches here.
 	SortField  string
@@ -136,7 +123,7 @@ func (p *Placements) ListRelays(
 	// silently shift every placeholder after it — which is the mistake this shape exists to
 	// make impossible rather than to catch in review.
 	arguments := []any{organization.String(), query.LivenessWindow}
-	where := []string{"registration.organization = $1"}
+	where := []string{"registration.org_id = $1"}
 	add := func(clause string, value any) {
 		arguments = append(arguments, value)
 		where = append(where, fmt.Sprintf(clause, len(arguments)))
@@ -155,16 +142,6 @@ func (p *Placements) ListRelays(
 		// column can serve it rather than every row being parsed.
 		add(`registration.capabilities @> jsonb_build_array(jsonb_build_object('id', $%d::text))`,
 			query.Capability)
-	}
-	if query.ServesEnvironment != "" {
-		add(`EXISTS (SELECT 1
-		               FROM connection bound
-		               JOIN environment scope
-		                 ON scope.organization = bound.organization
-		                AND scope.environment_id = bound.environment_id
-		              WHERE bound.organization = registration.organization
-		                AND bound.relay_registration_id = registration.registration_id
-		                AND scope.name = $%d)`, query.ServesEnvironment)
 	}
 	if clause := relayStateClause(query.State); clause != "" {
 		where = append(where, clause)
@@ -201,16 +178,7 @@ func (p *Placements) ListRelays(
 		       COALESCE(
 		           (SELECT jsonb_agg(DISTINCT entry->>'id')
 		              FROM jsonb_array_elements(registration.capabilities) AS entry),
-		           '[]'::jsonb) AS advertised,
-		       COALESCE(
-		           (SELECT jsonb_agg(DISTINCT scope.name)
-		              FROM connection bound
-		              JOIN environment scope
-		                ON scope.organization = bound.organization
-		               AND scope.environment_id = bound.environment_id
-		             WHERE bound.organization = registration.organization
-		               AND bound.relay_registration_id = registration.registration_id),
-		           '[]'::jsonb) AS serves
+		           '[]'::jsonb) AS advertised
 		  FROM relay_registration registration
 		 WHERE %s
 		 ORDER BY %s %s NULLS LAST, registration.registration_id %s
@@ -300,11 +268,10 @@ func scanRelaySummary(rows pgx.Rows) (RelaySummary, error) {
 		lastSeen   *time.Time
 		peer       *string
 		advertised []byte
-		serves     []byte
 	)
 	if err := rows.Scan(&summary.RegistrationID, &summary.ClusterFingerprint,
 		&summary.RelayVersion, &summary.RegisteredAt, &revokedAt, &conflictAt, &hosts,
-		&lastSeen, &peer, &summary.Connected, &advertised, &serves); err != nil {
+		&lastSeen, &peer, &summary.Connected, &advertised); err != nil {
 		return RelaySummary{}, fmt.Errorf("reading a relay: %w", err)
 	}
 	if revokedAt != nil {
@@ -324,10 +291,5 @@ func scanRelaySummary(rows pgx.Rows) (RelaySummary, error) {
 		return RelaySummary{}, fmt.Errorf("reading a relay's advertised capabilities: %w", err)
 	}
 	summary.Capabilities = capabilities
-	environments, err := decodeStringArray(serves)
-	if err != nil {
-		return RelaySummary{}, fmt.Errorf("reading what a relay serves: %w", err)
-	}
-	summary.ServesEnvironments = environments
 	return summary, nil
 }

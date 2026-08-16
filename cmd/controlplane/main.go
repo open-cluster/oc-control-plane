@@ -24,7 +24,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
@@ -37,12 +36,18 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/reasoning"
 	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -95,26 +100,13 @@ func start() error {
 	return run(ctx, cfg, os.Stderr, wiring{})
 }
 
-// wiring is what a test may put in place of the real thing. There is exactly one entry, and it is
-// the model boundary — the only component in this program that is faked in CI, for the reasons
-// recorded at the seam itself in internal/investigation/reasoner.go.
-//
-// Production supplies nothing here. With no reasoner configured the investigator is wired to the
-// provider-unavailable boundary, so a deployment that has not been given one produces honest failed
-// rounds saying the reasoning step could not run — rather than starting, looking ready, and
-// abstaining on every case for a reason nobody can find.
+// wiring is what a test may put in place of the real thing: the address callback, so an
+// ephemeral port can be addressed without racing the listener, and the model boundary,
+// so investigations run against a scripted reasoner instead of a paid provider.
+// Production supplies nothing here.
 type wiring struct {
 	onListen func(net.Addr)
 	reasoner investigation.Reasoner
-	// investigatorInterval overrides how often the worker looks for work. Production polls at a
-	// rate suited to work that arrives a few times an hour; a test that waited that out would spend
-	// most of its wall clock asleep.
-	investigatorInterval time.Duration
-	// controls tightens what a round runs under. A test that had to wait out the product's real
-	// bounds would either be slow or would assert against bounds nobody ships; this lets it assert
-	// the exhaustion path in seconds against the same code the real bounds run through. Zero fields
-	// mean the product's own defaults, which is what production uses.
-	controls investigation.Controls
 }
 
 // run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -165,179 +157,115 @@ func run(
 	}
 	logMigrations(logger, applied)
 
-	reasoner, versions, err := modelBoundary(cfg, logger, replace)
-	if err != nil {
-		return err
-	}
-	if service, live := reasoner.(*reasoning.Service); live {
-		logger.Info("model provider configured", slog.String("chain", service.Describe()))
+	// The GitHub App is deployment configuration; a deployment without one still serves
+	// github in the catalog — the compiled provider set and the seeded reference rows
+	// must agree exactly — and connecting it fails live, with the reason. A key that
+	// cannot sign refuses startup, where whoever supplied it is still reading.
+	gitHubClient := github.NewClient(cfg.GitHubAPIURL)
+	var gitHubApp *github.App
+	if len(cfg.GitHubAppKey) > 0 {
+		gitHubApp, err = github.NewApp(cfg.GitHubAppID, cfg.GitHubAppKey, gitHubClient)
+		if err != nil {
+			return fmt.Errorf("%s: %w", config.EnvGitHubAppKeyFile, err)
+		}
 	}
 
-	recordings, err := transcriptsFor(cfg, reasoner, logger)
+	// The catalog is assembled HERE, and this is the only place that knows every provider.
+	// A duplicate key or a definition missing its verification refuses startup, where the
+	// person who caused it is still the person reading the error.
+	catalog, err := integrations.NewCatalog(
+		alertmanager.Definition(),
+		kubernetes.Definition(),
+		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
+		github.Definition(gitHubApp, gitHubClient),
+	)
 	if err != nil {
-		return err
+		return fmt.Errorf("assembling the integration catalog: %w", err)
 	}
 
-	claimInterval := investigatorInterval
-	if replace.investigatorInterval > 0 {
-		claimInterval = replace.investigatorInterval
+	// One sealer for the process: identity client secrets and integration credentials are
+	// sealed under the same deployment key.
+	var sealer seal.Sealer
+	if len(cfg.SealingKey) > 0 {
+		if sealer, err = seal.New(cfg.SealingKey); err != nil {
+			return fmt.Errorf("%s: %w", config.EnvSealingKeyFile, err)
+		}
 	}
+
+	// The model boundary: a test's scripted reasoner outranks configuration, and a
+	// deployment that configured neither cannot investigate — the surface says so per
+	// request rather than the process refusing to serve everything else it can do.
+	reasoner := replace.reasoner
+	if reasoner == nil && cfg.ModelProvider != "" {
+		if reasoner, err = modelBoundary(cfg, logger); err != nil {
+			return err
+		}
+	}
+
+	investigations := &investigation.Runner{
+		Store:    placements,
+		Catalog:  catalog,
+		Sealer:   sealer,
+		Reasoner: reasoner,
+		Logger:   logger,
+	}
+	// Drained on the way out: an investigation mid-flight is failed with the reason
+	// recorded rather than orphaned into a record that says running forever.
+	defer investigations.Drain()
 
 	return serve(ctx, assembled{
-		config:      cfg,
-		controls:    investigation.DefaultControls().Restrict(replace.controls),
-		interval:    claimInterval,
-		logger:      logger,
-		telemetry:   telemetry,
-		placements:  placements,
-		reasoner:    reasoner,
-		transcripts: recordings,
-		versions:    versions,
-		onListen:    replace.onListen,
+		config:         cfg,
+		logger:         logger,
+		telemetry:      telemetry,
+		placements:     placements,
+		catalog:        catalog,
+		sealer:         sealer,
+		investigations: investigations,
+		onListen:       replace.onListen,
 	})
 }
 
-// transcriptsFor resolves where a round files what the model said.
-//
-// Two boundaries are excluded and neither is a silent skip. A REPLAYING deployment would record a
-// copy of the recording it is replaying, and a corpus of this build's own echoes is worse than an
-// empty one because it looks like evidence. A deployment with no provider at all fails every round
-// at the first call, so what it would file is an empty document per failed round.
-//
-// A directory that cannot be written to is a REFUSAL TO START. A round is the expensive thing in
-// this system, and discovering at the end of one that its recording has nowhere to go means the
-// money is spent and the answer is already unrecoverable — which is the exact failure this closes.
-func transcriptsFor(
-	cfg config.Config, reasoner investigation.Reasoner, logger *slog.Logger,
-) (investigation.Transcripts, error) {
-	if cfg.ModelTranscriptDir == "" {
-		return nil, nil
-	}
-	switch reasoner.(type) {
-	case *investigation.Recorded, investigation.Unavailable:
-		logger.Warn("no model transcripts will be recorded: this deployment has no live provider",
-			slog.String("directory", cfg.ModelTranscriptDir))
-		return nil, nil
-	}
-
-	directory, err := reasoning.Transcripts(cfg.ModelTranscriptDir)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", config.EnvModelTranscriptDir, err)
-	}
-	logger.Info("model transcripts will be recorded",
-		slog.String("directory", cfg.ModelTranscriptDir))
-	return directory, nil
-}
-
-// modelBoundary resolves what will answer the reasoning step.
-//
-// A test's own boundary wins, then a live provider, then a recorded transcript the deployment was
-// given, and with none of them the boundary is the provider-unavailable one. Failing closed is
-// deliberate: an instance that cannot reason must say so on every round rather than look healthy
-// and abstain for a reason nobody can find.
-//
-// A live provider outranks a recorded transcript because a deployment that configured one asked for
-// a real model, and replaying a recording at it would answer a different question than the one it
-// was pointed at.
-//
-// A transcript that does not load, or a provider deployment that could not be assembled, is a
-// REFUSAL TO START. An operator who pointed at one and got a control plane reasoning about nothing
-// would have no way to tell that from one they never configured, and this is the last moment anyone
-// can be told.
-func modelBoundary(
-	cfg config.Config, logger *slog.Logger, replace wiring,
-) (investigation.Reasoner, investigation.Versions, error) {
-	if replace.reasoner != nil {
-		return replace.reasoner, investigatorVersions(replace.reasoner), nil
-	}
-	if cfg.Model.Configured() {
-		service, err := liveBoundary(cfg, logger)
-		if err != nil {
-			return nil, investigation.Versions{}, err
-		}
-		return service, service.Versions(plannerVersion, version), nil
-	}
-	if len(cfg.ModelTranscript) == 0 {
-		return investigation.Unavailable{}, investigatorVersions(investigation.Unavailable{}), nil
-	}
-
-	versions := investigatorVersions(nil)
-	recorded, err := investigation.LoadTranscript(cfg.ModelTranscript, versions)
-	if err != nil {
-		return nil, investigation.Versions{}, fmt.Errorf(
-			"%s: %w", config.EnvModelTranscriptFile, err)
-	}
-	return recorded, versions, nil
-}
-
-// liveBoundary assembles the reasoning service from the configured deployments.
-//
-// Everything that could be wrong with the configuration is refused here, at startup, where the
-// person who wrote it is still the person reading the error: an unknown provider, an unpriced
-// model, a provider nobody consented to, an effort level that does not exist.
-func liveBoundary(cfg config.Config, logger *slog.Logger) (*reasoning.Service, error) {
-	primary := deploymentFrom(cfg.Model)
-	primaryProvider, err := providers.Open(primary, providers.Options{})
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", config.EnvModelProvider, err)
-	}
-
-	options := reasoning.Options{
-		Primary:     primaryProvider,
-		Deployments: []reasoning.Deployment{primary},
-		Tariff:      reasoning.DefaultTariff(),
-		Consent:     reasoning.ConsentTo(cfg.ModelConsented...),
-		Ceiling:     reasoning.NewCeiling(cfg.ModelCostCeilingMicroCents),
-		// Without this the service holds a discard logger, and every completed call — the
-		// attribution, the token counts, the cost — goes nowhere. A telemetry requirement met by a
-		// logger nobody passed is a requirement met on paper.
-		Logger: logger,
-	}
-	if cfg.ModelFallback.Configured() {
-		fallback := deploymentFrom(cfg.ModelFallback)
-		fallbackProvider, fallbackErr := providers.Open(fallback, providers.Options{})
-		if fallbackErr != nil {
-			return nil, fmt.Errorf("%s: %w", config.EnvModelFallbackProvider, fallbackErr)
-		}
-		options.Fallbacks = append(options.Fallbacks, fallbackProvider)
-		options.Deployments = append(options.Deployments, fallback)
-	}
-	return reasoning.New(options)
-}
-
-// deploymentFrom translates configuration into the reasoning package's own shape. The credential
-// becomes a Secret here, which is the last point at which it is an ordinary string.
-func deploymentFrom(configured config.ModelDeployment) reasoning.Deployment {
-	return reasoning.Deployment{
-		Provider:        configured.Provider,
-		Model:           configured.Model,
-		Effort:          reasoning.Effort(configured.Effort),
-		MaxOutputTokens: configured.MaxOutputTokens,
-		MaxPromptTokens: configured.MaxPromptTokens,
-		BaseURL:         configured.BaseURL,
-		Credential:      reasoning.Secret(configured.Credential),
+// modelBoundary builds the configured deployment's reasoner. Everything that could be
+// wrong with the model configuration is refused HERE, at startup: an unimplemented
+// provider, an unpriced model, an effort level nothing recognises, a provider nobody
+// consented to.
+func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reasoner, error) {
+	deployment := reasoning.Deployment{
+		Provider:   cfg.ModelProvider,
+		Model:      cfg.ModelName,
+		Effort:     reasoning.Effort(cfg.ModelEffort),
+		BaseURL:    cfg.ModelBaseURL,
+		Credential: reasoning.Secret(cfg.ModelKey),
 	}.WithDefaults()
+	if err := deployment.Validate(); err != nil {
+		return nil, err
+	}
+	provider, err := providers.Open(deployment, providers.Options{})
+	if err != nil {
+		return nil, err
+	}
+	decider, err := reasoning.NewDecider(deployment, provider,
+		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelConsented...))
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("model boundary configured",
+		slog.String("deployment", deployment.String()),
+		slog.String("support", provider.Support().Describe()))
+	return decider, nil
 }
 
 // assembled is the constructed process: the pieces serve needs, which are meaningless
 // apart and always travel together.
 type assembled struct {
-	config     config.Config
-	logger     *slog.Logger
-	telemetry  *observability.Telemetry
-	placements *storage.Placements
-	reasoner   investigation.Reasoner
-	// transcripts is where a round files what the model said, and is nil when this deployment
-	// asked for no recordings.
-	transcripts investigation.Transcripts
-	// controls is what a round opened through this process runs under.
-	controls investigation.Controls
-	// interval is how often the investigator looks for work.
-	interval time.Duration
-	// versions is what every round this build opens is stamped with, so a recorded transcript made
-	// for different components is detected rather than silently replayed.
-	versions investigation.Versions
-	onListen func(net.Addr)
+	config         config.Config
+	logger         *slog.Logger
+	telemetry      *observability.Telemetry
+	placements     *storage.Placements
+	catalog        integrations.Catalog
+	sealer         seal.Sealer
+	investigations *investigation.Runner
+	onListen       func(net.Addr)
 }
 
 // serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
@@ -359,9 +287,6 @@ func serve(ctx context.Context, process assembled) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", cfg.HTTPAddress, err)
 	}
-	if process.onListen != nil {
-		process.onListen(listener.Addr())
-	}
 	logger.Info("listening", slog.String("address", listener.Addr().String()))
 
 	// One slot per surface that can report a failure. Too few would leave the last goroutines
@@ -375,6 +300,10 @@ func serve(ctx context.Context, process assembled) error {
 		}
 		failed <- nil
 	}()
+	// The backstop for the paths that return before the drain at the bottom — an endpoint
+	// that refused to start must not leave this goroutine serving forever. On the ordinary
+	// path the drain has already shut the server down and this is a no-op.
+	defer func() { _ = server.Close() }()
 
 	// The Relay endpoint is a second listener on purpose. It speaks a different protocol to
 	// a different kind of caller, and putting it on the HTTP port would place it behind that
@@ -402,16 +331,17 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	defer intake.stop(cfg.ShutdownTimeout, logger)
 
-	// The investigator is not a listener: it claims durable work rather than answering a caller.
-	// It stops with the process context and finishes what it holds, and anything it cannot finish
-	// stays leased until the lease runs out and another instance takes it — which is what makes a
-	// deploy in the middle of an investigation recoverable rather than a lost run.
-	investigators := startInvestigator(process)
-	defer investigators.stop()
+	// The callback fires only once EVERY configured surface is bound, because its promise
+	// is "a test can address a port without racing the listener" — and a caller told about
+	// one listener while three others are still binding would race exactly the way the
+	// promise forbids.
+	if process.onListen != nil {
+		process.onListen(listener.Addr())
+	}
 
-	// The retention pruner is the same shape and a much smaller job: it applies the schedule each
-	// tenant declared for its own record. It is stopped with the process and nothing waits for it,
-	// because the work it does is bounded per batch and the next instance simply continues.
+	// The retention pruner is not a listener: it applies the schedule each tenant declared
+	// for its own record. It is stopped with the process and nothing waits for it, because
+	// the work it does is bounded per batch and the next instance simply continues.
 	pruners := startAuditPruner(process)
 	defer pruners.stop()
 
@@ -530,6 +460,17 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		return nil, nil
 	}
 
+	// The operator surface is where credentials enter and are used, so a deployment
+	// serving a credential-bearing catalog without a sealing key is refused HERE, at
+	// startup: the alternative is a setup flow that accepts a token it can only store in
+	// the clear or drop.
+	if bearing := process.catalog.CredentialBearing(); len(bearing) > 0 &&
+		!process.sealer.Configured() {
+		return nil, fmt.Errorf("%s is required: the catalog serves %s, which take a "+
+			"credential, and this deployment has no key to seal one under",
+			config.EnvSealingKeyFile, strings.Join(bearing, ", "))
+	}
+
 	identities, err := operatorIdentity(process)
 	if err != nil {
 		return nil, err
@@ -544,8 +485,9 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		Logger:              process.logger,
 		Identity:            identities,
 		Origins:             cfg.OperatorAllowedOrigins,
-		Controls:            process.controls,
-		Versions:            process.versions,
+		Catalog:             process.catalog,
+		Sealer:              process.sealer,
+		Investigations:      process.investigations,
 		IntakeBaseURL:       cfg.IntakePublicURL,
 		MinimumRelayVersion: cfg.MinimumRelayVersion,
 	}.Router()
@@ -604,14 +546,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		RetentionEnforced: true,
 	}
 
-	if len(cfg.IdentityEncryptionKey) > 0 {
-		sealer, err := identity.NewSealer(cfg.IdentityEncryptionKey)
-		if err != nil {
-			return identity.Handlers{}, fmt.Errorf("%s: %w",
-				config.EnvIdentityEncryptionKeyFile, err)
-		}
-		handlers.Sealer = sealer
-	}
+	handlers.Sealer = process.sealer
 
 	if len(cfg.OperatorTokenDigest) == 0 {
 		return handlers, nil
@@ -627,7 +562,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	// place nobody exercises it.
 	named := cfg.OperatorTokenRole
 	if strings.TrimSpace(named) == "" {
-		named = string(authz.OrganizationOwner)
+		named = string(authz.Admin)
 	}
 	role, known := authz.ParseRole(named)
 	if !known {
@@ -666,6 +601,11 @@ func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoin
 		Handler: intake.Handlers{
 			Placements: process.placements,
 			Logger:     process.logger,
+			// The adapter table is assembled beside the catalog: the composition root is
+			// the one place that knows every provider.
+			Adapters: intake.Adapters{
+				integrations.TypeAlertmanager: alertmanager.Adapter{},
+			},
 		}.Router(),
 		// Bounded at every stage. This is the one surface a customer's infrastructure reaches
 		// inbound, and its connections are unauthenticated until a request has been read, so a
@@ -688,83 +628,6 @@ func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoin
 	return endpoint, nil
 }
 
-// Bounds on the investigator. They are conservative on purpose: a worker that claims more than it
-// can run holds leases nothing is executing, and a poll interval short enough to feel instant is a
-// query per instance per second forever for work that arrives a few times an hour.
-const (
-	investigatorInterval = 2 * time.Second
-	investigatorLease    = 2 * time.Minute
-	investigatorCapacity = 4
-)
-
-// investigatorVersions is what every round this build opens is pinned with. The investigator's
-// version is the binary's, so a case read months later names the build that produced it.
-//
-// A nil reasoner asks for the versions a RECORDING must have been made against, which is what a
-// transcript is checked against before it is accepted. The check has to happen before the boundary
-// exists, so it cannot ask the boundary what it is.
-func investigatorVersions(reasoner investigation.Reasoner) investigation.Versions {
-	model := "recorded"
-	if reasoner != nil {
-		model = modelIdentity(reasoner)
-	}
-	return investigation.Versions{
-		Planner: plannerVersion,
-		Model:   model,
-		// The prompt and schema versions belong to the package that owns the words and the output
-		// contract, so that changing either is a diff in one place that forces the number up. A
-		// recorded transcript is keyed on them exactly as a live round is.
-		PromptVersion: reasoning.PromptVersion,
-		SchemaVersion: reasoning.SchemaVersion,
-		Investigator:  version,
-	}
-}
-
-// plannerVersion names the planning strategy every round this build opens runs under.
-const plannerVersion = "bounded-adaptive-v1"
-
-// modelIdentity names the boundary in use, so a round's pinned versions say what actually answered
-// it rather than what the configuration hoped would.
-func modelIdentity(reasoner investigation.Reasoner) string {
-	if _, unavailable := reasoner.(investigation.Unavailable); unavailable {
-		return "unavailable"
-	}
-	// Everything else is a recording, in this build. A live provider names itself here when there
-	// is one, and the round's pinned versions then say which model actually answered it.
-	return "recorded"
-}
-
-// startInvestigator runs the worker that claims investigation rounds and executes them.
-func startInvestigator(process assembled) *investigatorWorker {
-	ctx, stop := context.WithCancel(context.Background())
-	worker := investigation.Worker{
-		Runner: investigation.Runner{
-			Store:       process.placements,
-			Reasoner:    process.reasoner,
-			Logger:      process.logger,
-			Versions:    process.versions,
-			Transcripts: process.transcripts,
-		},
-		Store:     process.placements,
-		Pending:   process.placements,
-		Logger:    process.logger,
-		Interval:  process.interval,
-		LeaseFor:  investigatorLease,
-		Capacity:  investigatorCapacity,
-		SessionID: uuid.New(),
-	}
-
-	running := &investigatorWorker{stopping: stop, done: make(chan struct{})}
-	go func() {
-		defer close(running.done)
-		worker.Run(ctx)
-	}()
-	process.logger.Info("investigator started",
-		slog.String("session_id", worker.SessionID.String()),
-		slog.String("model", process.versions.Model))
-	return running
-}
-
 // auditPruneInterval is how often each tenant's declared retention schedule is applied.
 //
 // Retention is measured in days, so an hour is close enough to the horizon that the surface can
@@ -776,7 +639,7 @@ const auditPruneInterval = time.Hour
 // It is unconditional, and that is what lets the policy surface state that retention is enforced.
 // A deployment that ran the control plane without it would report a schedule it does not keep,
 // which is the thing that surface was written to avoid saying.
-func startAuditPruner(process assembled) *investigatorWorker {
+func startAuditPruner(process assembled) *backgroundWorker {
 	ctx, stop := context.WithCancel(context.Background())
 	pruner := audit.Pruner{
 		Retentions: process.placements,
@@ -784,7 +647,7 @@ func startAuditPruner(process assembled) *investigatorWorker {
 		Interval:   auditPruneInterval,
 	}
 
-	running := &investigatorWorker{stopping: stop, done: make(chan struct{})}
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
 	go func() {
 		defer close(running.done)
 		pruner.Run(ctx)
@@ -796,7 +659,7 @@ func startAuditPruner(process assembled) *investigatorWorker {
 
 // startChangeLedgerPruner runs the worker that ages the change ledger out on the
 // deployment's schedule.
-func startChangeLedgerPruner(process assembled) *investigatorWorker {
+func startChangeLedgerPruner(process assembled) *backgroundWorker {
 	ctx, stop := context.WithCancel(context.Background())
 	pruner := changeledger.Pruner{
 		Retention: process.placements,
@@ -805,7 +668,7 @@ func startChangeLedgerPruner(process assembled) *investigatorWorker {
 		Interval:  auditPruneInterval,
 	}
 
-	running := &investigatorWorker{stopping: stop, done: make(chan struct{})}
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
 	go func() {
 		defer close(running.done)
 		pruner.Run(ctx)
@@ -815,17 +678,15 @@ func startChangeLedgerPruner(process assembled) *investigatorWorker {
 	return running
 }
 
-// investigatorWorker is the running worker and the handle that stops it.
-type investigatorWorker struct {
+// backgroundWorker is a running background job and the handle that stops it.
+type backgroundWorker struct {
 	stopping context.CancelFunc
 	done     chan struct{}
 	once     sync.Once
 }
 
-// stop asks the worker to finish and waits for it. It is deliberately unbudgeted: what it is
-// waiting for is rounds recording the outcome they reached, and cutting that short would leave a
-// case reading as running with nothing working on it until its lease expired.
-func (w *investigatorWorker) stop() {
+// stop asks the worker to finish and waits for it.
+func (w *backgroundWorker) stop() {
 	if w == nil {
 		return
 	}

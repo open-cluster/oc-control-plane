@@ -37,7 +37,6 @@ type fleetBody struct {
 		Connected          bool       `json:"connected"`
 		LastSeenAt         *time.Time `json:"lastSeenAt"`
 		Capabilities       []string   `json:"capabilities"`
-		ServesEnvironments []string   `json:"servesEnvironments"`
 	} `json:"items"`
 	Next    *string `json:"next"`
 	Total   *int    `json:"total"`
@@ -48,10 +47,9 @@ type fleetBody struct {
 }
 
 func TestRelayFleet(t *testing.T) {
-	plane := startConnectionPlane(t)
+	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
 	relays := base + "/relays"
-	environment := plane.defaultEnvironment(t, surfaceOrg)
 
 	t.Run("the fleet is assessable without reading every row", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, relays+"/summary", nil)
@@ -126,62 +124,30 @@ func TestRelayFleet(t *testing.T) {
 		}
 	})
 
-	t.Run("what a relay serves is derived from its connections, not from a column", func(t *testing.T) {
-		status, body := plane.call(t, http.MethodPost, base+"/connections", map[string]any{
-			"environmentId":       environment.ID,
-			"integration":         "kubernetes",
-			"name":                "Fleet Cluster",
-			"role":                "evidence",
-			"locality":            "relay",
-			"relayRegistrationId": plane.relay.registration.String(),
+	t.Run("a relay's integrations are what disabling it would cost", func(t *testing.T) {
+		status, body := plane.call(t, http.MethodPost, base+"/integrations", map[string]any{
+			"type":    "kubernetes",
+			"name":    "Fleet Cluster",
+			"relayId": plane.relay.registration.String(),
 		})
 		if status != http.StatusCreated {
-			t.Fatalf("binding a connection to the relay = %d: %s", status, body)
+			t.Fatalf("binding an integration to the relay = %d: %s", status, body)
 		}
 
-		var listed fleetBody
-		status, body = plane.call(t, http.MethodGet, relays, nil)
+		status, body = plane.call(t, http.MethodGet,
+			relays+"/"+plane.relay.registration.String()+"/integrations", nil)
 		if status != http.StatusOK {
-			t.Fatalf("listing relays = %d: %s", status, body)
-		}
-		decodeInto(t, body, &listed)
-
-		found := false
-		for _, relay := range listed.Items {
-			if relay.RegistrationID != plane.relay.registration.String() {
-				continue
-			}
-			found = true
-			if len(relay.ServesEnvironments) == 0 {
-				t.Error("the relay serves a Connection and reports no environments (story 37)")
-			}
-			for _, served := range relay.ServesEnvironments {
-				if served != environment.Name {
-					t.Errorf("serves %q, want the environment the connection is in (%q)",
-						served, environment.Name)
-				}
-			}
-		}
-		if !found {
-			t.Fatal("the enrolled relay is not in the fleet listing")
-		}
-	})
-
-	t.Run("a relay's connections are what disabling it would cost", func(t *testing.T) {
-		status, body := plane.call(t, http.MethodGet,
-			relays+"/"+plane.relay.registration.String()+"/connections", nil)
-		if status != http.StatusOK {
-			t.Fatalf("reading a relay's connections = %d: %s", status, body)
+			t.Fatalf("reading a relay's integrations = %d: %s", status, body)
 		}
 		var served struct {
 			Items []struct {
 				Name string `json:"name"`
-				Role string `json:"role"`
+				Type string `json:"type"`
 			} `json:"items"`
 		}
 		decodeInto(t, body, &served)
 		if len(served.Items) == 0 {
-			t.Error("the relay serves a Connection and reports none (story 42)")
+			t.Error("the relay serves an Integration and reports none")
 		}
 	})
 
@@ -206,32 +172,12 @@ func TestRelayFleet(t *testing.T) {
 				}
 			}
 		}
-
-		// The filter that answers the Environment question without inventing an Environment
-		// column on a record that has none.
-		status, body := plane.call(t, http.MethodGet,
-			relays+"?servesEnvironment="+environment.Name, nil)
-		if status != http.StatusOK {
-			t.Fatalf("filtering by served environment = %d: %s", status, body)
-		}
-		var serving fleetBody
-		decodeInto(t, body, &serving)
-		if len(serving.Items) == 0 {
-			t.Error("filtering by an environment the relay serves returned nothing (story 37)")
-		}
-
-		status, _ = plane.call(t, http.MethodGet, relays+"?servesEnvironment=nowhere", nil)
-		if status != http.StatusOK {
-			t.Fatalf("filtering by an environment nothing serves = %d", status)
-		}
 	})
 
-	t.Run("an environment filter is refused, because a relay has no environment", func(t *testing.T) {
+	t.Run("a filter over a property the record does not have is refused", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, relays+"?environmentId=whatever", nil)
 		if status != http.StatusBadRequest {
-			t.Errorf("filtering a fleet by environment = %d, want 400: a Relay is "+
-				"Organization-scoped and carries no Environment, so this is a filter over a "+
-				"property the record does not have: %s", status, body)
+			t.Errorf("filtering a fleet by an unoffered property = %d, want 400: %s", status, body)
 		}
 	})
 
@@ -330,7 +276,7 @@ func TestRelayFleet(t *testing.T) {
 func TestRelayFleetAtScale(t *testing.T) {
 	for _, size := range []int{1, 20, 100, 1000} {
 		t.Run(fmt.Sprintf("%d relays", size), func(t *testing.T) {
-			plane := startConnectionPlane(t)
+			plane := startIntegrationPlane(t)
 			relays := plane.base(surfaceOrg) + "/relays"
 			// The harness enrols one relay of its own, so one fewer is seeded to hit the number.
 			plane.seedRelays(t, size-1)
@@ -404,7 +350,7 @@ func TestRelayFleetAtScale(t *testing.T) {
 
 // seedRelays inserts relay registrations directly, because enrolling a hundred through the
 // protocol would be testing the enrolment path a hundred times rather than the listing once.
-func (p *connectionPlane) seedRelays(t *testing.T, count int) {
+func (p *integrationPlane) seedRelays(t *testing.T, count int) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -419,7 +365,7 @@ func (p *connectionPlane) seedRelays(t *testing.T, count int) {
 	for index := 0; index < count; index++ {
 		if _, err := database.Exec(ctx, `
 			INSERT INTO relay_registration
-				(registration_id, organization, credential_digest, cluster_fingerprint,
+				(registration_id, org_id, credential_digest, cluster_fingerprint,
 				 relay_version, capabilities, created_at)
 			VALUES (gen_random_uuid(), $1, sha256($2::bytea), $3, $4, $5::jsonb,
 			        now() - make_interval(secs => $6))`,

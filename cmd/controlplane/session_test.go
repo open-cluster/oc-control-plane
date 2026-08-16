@@ -86,7 +86,7 @@ func TestRelaySession(t *testing.T) {
 	t.Run("an assignment carries everything needed to execute it", func(t *testing.T) {
 		assignment := assignments[waiting.String()]
 		if assignment == nil {
-			t.Skip("the assignment never arrived")
+			t.Fatal("the assignment never arrived; the delivery guarantee under test did not hold")
 		}
 		if assignment.GetOrgId() != organization {
 			t.Errorf("assigned to organization %q, want %q", assignment.GetOrgId(), organization)
@@ -127,7 +127,7 @@ func TestRelaySession(t *testing.T) {
 	t.Run("a result is acknowledged as recorded", func(t *testing.T) {
 		assignment := assignments[waiting.String()]
 		if assignment == nil {
-			t.Skip("the assignment never arrived")
+			t.Fatal("the assignment never arrived; the delivery guarantee under test did not hold")
 		}
 		sendResult(t, stream, assignment.GetJobId(), assignment.GetLeaseEpoch())
 
@@ -143,7 +143,7 @@ func TestRelaySession(t *testing.T) {
 	t.Run("a resent result is answered definitively rather than recorded twice", func(t *testing.T) {
 		assignment := assignments[waiting.String()]
 		if assignment == nil {
-			t.Skip("the assignment never arrived")
+			t.Fatal("the assignment never arrived; the delivery guarantee under test did not hold")
 		}
 		// A relay that never saw the first acknowledgement resends. Being told the outcome
 		// already exists is the only answer that drains its buffer, and it can only come
@@ -160,7 +160,7 @@ func TestRelaySession(t *testing.T) {
 	t.Run("a result under a lease that no longer owns the job is refused", func(t *testing.T) {
 		assignment := assignments[fenced.String()]
 		if assignment == nil {
-			t.Skip("the assignment never arrived")
+			t.Fatal("the assignment never arrived; the delivery guarantee under test did not hold")
 		}
 		// The generation before the one that was assigned belongs to no execution that ever
 		// held this job. A relay resending across a lease change produces exactly this.

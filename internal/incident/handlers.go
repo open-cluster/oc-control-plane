@@ -64,7 +64,7 @@ var episodesSpec = table.Spec{
 	Searchable:  true,
 	Sortable:    []string{"lastSeenAt", "firstSeenAt", "title", "signalCount"},
 	DefaultSort: table.Sort{Field: "lastSeenAt", Descending: true},
-	Filters:     []string{"environmentId", "connectionId", "status"},
+	Filters:     []string{"integrationId", "status"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -201,23 +201,14 @@ func (h Handlers) narrowing(writer http.ResponseWriter, query table.Query) (Quer
 		Limit:      query.Limit,
 	}
 
-	if named := query.Filter("environmentId"); named != "" {
-		environment, err := uuid.Parse(named)
+	if named := query.Filter("integrationId"); named != "" {
+		integration, err := uuid.Parse(named)
 		if err != nil {
 			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "environmentId is not an identity"})
+				errorView{Error: "integrationId is not an identity"})
 			return Query{}, false
 		}
-		narrowed.Environment = &environment
-	}
-	if named := query.Filter("connectionId"); named != "" {
-		connection, err := uuid.Parse(named)
-		if err != nil {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "connectionId is not an identity"})
-			return Query{}, false
-		}
-		narrowed.Connection = &connection
+		narrowed.Integration = &integration
 	}
 	if named := query.Filter("status"); named != "" {
 		status, known := ParseStatus(named)

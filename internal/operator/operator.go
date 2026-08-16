@@ -31,12 +31,12 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/connection"
-	"github.com/open-cluster/oc-control-plane/internal/environment"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -56,12 +56,15 @@ type Handlers struct {
 	// Empty means no browser may make one, which is the correct posture for a deployment that
 	// has not said where its console is served from.
 	Origins []string
-	// Controls and Versions are what an investigation opened through this surface runs under and
-	// is stamped with. They are the composition root's to decide, not this package's: the
-	// investigator's version is the binary's, and a control snapshot is pinned per round so that
-	// "why did this round stop" survives the configuration that produced it.
-	Controls investigation.Controls
-	Versions investigation.Versions
+	// Catalog is the assembled Integration Type definitions, supplied by the composition
+	// root — the only place that knows every provider.
+	Catalog integrations.Catalog
+	// Sealer closes over presentable credentials at rest: identity client secrets and
+	// integration credentials, under the deployment's one key.
+	Sealer seal.Sealer
+	// Investigations runs them in the background; the investigation handlers start and
+	// read through it.
+	Investigations *investigation.Runner
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// configured rather than derived from a request, because a URL built from this listener's
 	// own Host header would be one that works from wherever the console is served and not from
@@ -114,15 +117,15 @@ func (h Handlers) Routes() authz.Table {
 		// on a page: a hundred relays is a hundred rows, and a hundred rows is not an assessment.
 		authz.Privileged(http.MethodGet, relays+"/summary", authz.RelayRead,
 			http.HandlerFunc(h.fleetSummary)),
-		authz.Privileged(http.MethodGet, relays+"/{registration}/connections", authz.RelayRead,
-			http.HandlerFunc(h.relayConnections)),
+		authz.Privileged(http.MethodGet, relays+"/{registration}/integrations", authz.RelayRead,
+			http.HandlerFunc(h.relayIntegrations)),
 		authz.Privileged(http.MethodGet, relays+"/{registration}/failures", authz.RelayRead,
 			http.HandlerFunc(h.relayFailures)),
 		authz.Privileged(http.MethodGet, relays+"/{registration}/session-conflicts",
 			authz.RelayRead, http.HandlerFunc(h.conflictTrail)),
 		// Withdrawing the mark destroys a credential-theft finding and nothing else in the
 		// product records that it existed, so it is a permission of its own rather than part of
-		// reading the roster — and only the two administrative roles hold it.
+		// reading the roster — and only the Admin holds it.
 		authz.Privileged(http.MethodPost, relays+"/{registration}/clear-conflict",
 			authz.RelayConflictClear, http.HandlerFunc(h.clearConflict)),
 		// Minting a credential that enrols a new Relay is not part of reading the fleet, so it
@@ -132,28 +135,21 @@ func (h Handlers) Routes() authz.Table {
 	}
 
 	routes = append(routes, h.Identity.Routes()...)
-	routes = append(routes,
-		environment.Handlers{Placements: h.Placements, Logger: h.Logger}.Routes()...)
-	routes = append(routes, connection.Handlers{
-		Placements:    h.Placements,
+	routes = append(routes, integrations.Handlers{
+		Store:         h.Placements,
+		Catalog:       h.Catalog,
 		Logger:        h.Logger,
+		Sealer:        h.Sealer,
 		IntakeBaseURL: h.IntakeBaseURL,
 	}.Routes()...)
-	// Incidents come before investigations in the table for the same reason they come first in
-	// the product: an operator arrives at an incident and decides whether to investigate it.
 	routes = append(routes, incident.Handlers{
 		Store:  h.Placements,
 		Logger: h.Logger,
 	}.Routes()...)
-	// The investigation surface takes the read side and the write side separately, because a
-	// handler given the writing interface is one typo away from mutating what it was asked to
-	// display. Both happen to be the same value here; the types are what keep them apart.
 	routes = append(routes, investigation.Handlers{
-		Reader:   h.Placements,
-		Store:    h.Placements,
-		Logger:   h.Logger,
-		Controls: h.Controls,
-		Versions: h.Versions,
+		Store:  h.Placements,
+		Runner: h.Investigations,
+		Logger: h.Logger,
 	}.Routes()...)
 	return routes
 }
@@ -207,7 +203,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		// The same answer the authorization middleware gives, byte for byte. A different one
 		// here would confirm to a caller that a tenant they may not reach exists.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
-	case errors.Is(err, storage.ErrBadCursor):
+	case errors.Is(err, storage.ErrBadCursor), errors.Is(err, integrations.ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "after is not a page position from a previous response"})
 	case errors.Is(err, storage.ErrAuditFailed):

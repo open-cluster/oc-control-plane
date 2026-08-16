@@ -247,6 +247,28 @@ func (c *cluster) podFor(ctx context.Context, workload string) (string, error) {
 	return pods.Items[0].Name, nil
 }
 
+// runningPodFor reports a workload's pod once its container has actually started. The
+// tests that read a container's own words wait on this rather than on existence: a read
+// dispatched between pod creation and container start is answered with a typed failure,
+// which is correct behavior and not what those tests are about.
+func (c *cluster) runningPodFor(ctx context.Context, workload string) (string, error) {
+	pods, err := c.client.CoreV1().Pods(fixtureNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=" + workload,
+		Limit:         5,
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing pods for %s: %w", workload, err)
+	}
+	for _, pod := range pods.Items {
+		for _, status := range pod.Status.ContainerStatuses {
+			if status.State.Running != nil {
+				return pod.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no running pod for %s yet", workload)
+}
+
 // awaitRestarted waits until a workload's pod has died and been restarted at least once, which
 // is what makes a previous-container read possible at all.
 func (c *cluster) awaitRestarted(ctx context.Context, workload string) (string, error) {

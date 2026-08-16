@@ -10,7 +10,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -33,94 +33,46 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 	stranger := aStranger(t)
 	ctx := context.Background()
 
-	// Something real to name, so a refusal cannot be the row simply not existing.
-	environment, err := placements.EnsureDefaultEnvironment(
-		ctx, ownerOf(t, organization), organization)
-	if err != nil {
-		t.Fatalf("arranging the default environment: %v", err)
-	}
 	somebody := uuid.New()
 
 	refusals := map[string]func() error{
-		"EnsureDefaultEnvironment": func() error {
-			_, err := placements.EnsureDefaultEnvironment(ctx, stranger, organization)
+		"QueryIntegrations": func() error {
+			_, err := placements.QueryIntegrations(
+				ctx, stranger, organization, integrations.Query{})
 			return err
 		},
-		"ListEnvironments": func() error {
-			_, err := placements.ListEnvironments(ctx, stranger, organization, storage.Page{})
+		"CountIntegrationsByType": func() error {
+			_, err := placements.CountIntegrationsByType(ctx, stranger, organization)
 			return err
 		},
-		"CreateEnvironment": func() error {
-			_, err := placements.CreateEnvironment(ctx, stranger, organization, "Trespass")
-			return err
-		},
-		"RenameEnvironment": func() error {
-			_, err := placements.RenameEnvironment(
-				ctx, stranger, organization, environment.ID, "Trespass")
-			return err
-		},
-		"DeleteEnvironment": func() error {
-			return placements.DeleteEnvironment(ctx, stranger, organization, environment.ID)
-		},
-		"ListConnections": func() error {
-			_, err := placements.ListConnections(
-				ctx, stranger, organization, uuid.Nil, storage.Page{})
-			return err
-		},
-		"QueryConnections": func() error {
-			_, err := placements.QueryConnections(
-				ctx, stranger, organization, storage.ConnectionQuery{})
-			return err
-		},
-		"CreateConnection": func() error {
-			_, err := placements.CreateConnection(ctx, stranger, organization,
-				storage.NewConnection{
-					Environment: environment.ID, Integration: "alertmanager",
-					Name: "trespass", Role: storage.RoleTrigger,
-					Locality: storage.LocalityControlPlane, SecretDigest: randomDigest(t),
+		"CreateIntegration": func() error {
+			_, err := placements.CreateIntegration(ctx, stranger, organization,
+				integrations.NewIntegration{
+					Type: integrations.TypeAlertmanager, Name: "trespass",
+					WebhookSecretDigest:      randomDigest(t),
+					WebhookSecretFingerprint: "fingerprint",
 				})
 			return err
 		},
-		"RotateConnectionSecret": func() error {
-			return placements.RotateConnectionSecret(
+		"ReviseIntegration": func() error {
+			_, err := placements.ReviseIntegration(
+				ctx, stranger, organization, somebody, integrations.Revision{})
+			return err
+		},
+		"SetIntegrationDisabled": func() error {
+			return placements.SetIntegrationDisabled(ctx, stranger, organization, somebody, true)
+		},
+		"DeleteIntegration": func() error {
+			return placements.DeleteIntegration(ctx, stranger, organization, somebody)
+		},
+		"RotateIntegrationWebhookSecret": func() error {
+			return placements.RotateIntegrationWebhookSecret(
 				ctx, stranger, organization, somebody, randomDigest(t), "fingerprint")
 		},
-		"SetConnectionDisabled": func() error {
-			return placements.SetConnectionDisabled(ctx, stranger, organization, somebody, true)
-		},
-		"ReviseConnection": func() error {
-			_, err := placements.ReviseConnection(
-				ctx, stranger, organization, somebody, map[string]any{}, nil)
+		"RecordIntegrationVerification": func() error {
+			_, err := placements.RecordIntegrationVerification(ctx, stranger, organization,
+				somebody, integrations.Verification{Status: integrations.StatusActive})
 			return err
-		},
-		"DeleteConnection": func() error {
-			return placements.DeleteConnection(ctx, stranger, organization, somebody)
-		},
-		"ConnectionDependents": func() error {
-			_, err := placements.ConnectionDependents(ctx, stranger, organization, somebody)
-			return err
-		},
-		"RecordValidation": func() error {
-			_, err := placements.RecordValidation(ctx, stranger, organization, somebody,
-				storage.ValidationResult{Authentication: storage.ReadyAvailable})
-			return err
-		},
-		"ConnectionValidations": func() error {
-			_, err := placements.ConnectionValidations(
-				ctx, stranger, organization, somebody, storage.Page{}, true)
-			return err
-		},
-		"TriggerDeliveryHealth": func() error {
-			_, err := placements.TriggerDeliveryHealth(ctx, stranger, organization, somebody)
-			return err
-		},
-		"TriggerDeliveries": func() error {
-			_, err := placements.TriggerDeliveries(
-				ctx, stranger, organization, somebody, storage.DeliveryQuery{})
-			return err
-		},
-		"RecordTestDelivery": func() error {
-			return placements.RecordTestDelivery(ctx, stranger, organization, somebody)
 		},
 		"ListRelays": func() error {
 			_, err := placements.ListRelays(ctx, stranger, organization, storage.RelayQuery{})
@@ -128,11 +80,6 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		},
 		"FleetSummary": func() error {
 			_, err := placements.FleetSummary(ctx, stranger, organization, time.Minute, "")
-			return err
-		},
-		"RelayConnections": func() error {
-			_, err := placements.RelayConnections(
-				ctx, stranger, organization, somebody, storage.ConnectionQuery{})
 			return err
 		},
 		"IssueOperatorBootstrapToken": func() error {
@@ -221,30 +168,6 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			_, err := placements.AuditEvents(ctx, stranger, organization, audit.Page{})
 			return err
 		},
-		"OpenInvestigation": func() error {
-			_, err := placements.OpenInvestigation(ctx, stranger, organization, investigation.New{
-				Scope: investigation.Scope{
-					Connection: somebody, Namespace: "default",
-					WorkloadKind: investigation.WorkloadDeployment, WorkloadName: "trespass",
-				},
-				Window: investigation.Window{
-					Start: time.Now().Add(-time.Hour), End: time.Now(),
-				},
-				Trigger: investigation.Trigger{
-					Kind: investigation.TriggerManual, RequestedBy: "stranger", At: time.Now(),
-				},
-			})
-			return err
-		},
-		"CancelInvestigation": func() error {
-			return placements.CancelInvestigation(ctx, stranger, organization, somebody)
-		},
-		"OpenRound": func() error {
-			_, err := placements.OpenRound(ctx, stranger, organization,
-				investigation.Opening{InvestigationID: somebody})
-			return err
-		},
-
 		// The provisioning surface. A directory's credential is bound to one organization by
 		// the token that carries it, and these are the layer that refuses if it somehow were
 		// not — which matters more here than anywhere else on this surface, because this
@@ -321,7 +244,7 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 
 	// A gate on the gate. A function added to the operator surface and not listed above would
 	// leave this table quietly smaller, and nothing would say so.
-	const covered = 57
+	const covered = 43
 	if len(refusals) != covered {
 		t.Errorf("this table covers %d store functions and expects %d; a function added to the "+
 			"operator surface has to be added here too, or the boundary it crosses is untested",

@@ -34,69 +34,7 @@ type controlPlane struct {
 	spkiPin      string
 	dsnPath      string
 	workDir      string
-
-	// The operator surface and the model boundary, both empty for the protocol proof and both
-	// required by the scenario harness. The harness drives the product the way an engineer does —
-	// through the operator API — rather than by writing rows, so the surface has to be bound; and
-	// the control plane runs here as a child process, so its model boundary can only arrive by
-	// configuration.
-	operatorAddress   string
-	operatorToken     string
-	operatorTokenPath string
-	transcriptPath    string
-	// transcriptDir is where a live run files what the model said. It is the opposite direction
-	// from the path above: that one replays a recording, this one makes them.
-	transcriptDir string
-
-	// The live model deployment, when one was configured. The credential is a PATH rather than
-	// the key: this process's environment is readable from a process listing, so the key travels
-	// on disk and the variable names where.
-	modelProvider string
-	modelName     string
-	modelKeyFile  string
-	modelEffort   string
 }
-
-// serveOperator binds the operator surface behind a token of this run's own. The token is written
-// to a file because that is the only way the control plane accepts one — it keeps a digest and
-// never the token itself, so there is nothing in the process to log by accident.
-func (c *controlPlane) serveOperator(token string) error {
-	port, err := reservePort()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(c.workDir, "operator.token")
-	if err = os.WriteFile(path, []byte(token), 0o600); err != nil {
-		return fmt.Errorf("writing the operator token: %w", err)
-	}
-	c.operatorAddress = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	c.operatorToken = token
-	c.operatorTokenPath = path
-	return nil
-}
-
-// replayTranscript points the model boundary at a recording.
-//
-// It is a file rather than a provider because there is no live provider in this build. The
-// harness's own documentation says so as a named gap rather than leaving a reader to infer it
-// from the absence of a flag.
-func (c *controlPlane) replayTranscript(path string) { c.transcriptPath = path }
-
-// useModel points the model boundary at a real provider. It outranks a recording: a deployment
-// given one was asked for the real thing.
-func (c *controlPlane) useModel(provider, model, keyFile, effort string) {
-	c.modelProvider = provider
-	c.modelName = model
-	c.modelKeyFile = keyFile
-	c.modelEffort = effort
-}
-
-// recordTranscripts files what the model says, one document per round.
-//
-// It applies to a LIVE run and to nothing else. The harness's whole reason for existing is to
-// judge what a real provider concludes, and until this existed a live run left no record of what
-// it had said — which is why the first sweep's four failures could not be read afterwards.
-func (c *controlPlane) recordTranscripts(directory string) { c.transcriptDir = directory }
 
 // newControlPlane reserves the addresses the control plane will serve on, without starting
 // it. The relay address is needed before the process exists, because the TLS terminator that
@@ -145,30 +83,9 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 		"OC_RELAY_SPKI_PINS":   spkiPin,
 		"OC_SHUTDOWN_TIMEOUT":  "10s",
 		"OC_SERVICE_NAME":      "oc-control-plane-e2e",
-		// Fast enough that a Connection created mid-run gains its synchronization policy,
+		// Fast enough that an Integration created mid-run gains its synchronization policy,
 		// and a change lands in the ledger, within a test's patience.
 		"OC_INVENTORY_INTERVAL": "2s",
-	}
-	if c.operatorAddress != "" {
-		environment["OC_OPERATOR_ADDRESS"] = c.operatorAddress
-		environment["OC_OPERATOR_TOKEN_FILE"] = c.operatorTokenPath
-	}
-	if c.transcriptPath != "" {
-		environment["OC_MODEL_TRANSCRIPT_FILE"] = c.transcriptPath
-	}
-	if c.transcriptDir != "" {
-		environment["OC_MODEL_TRANSCRIPT_DIR"] = c.transcriptDir
-	}
-	if c.modelProvider != "" {
-		environment["OC_MODEL_PROVIDER"] = c.modelProvider
-		environment["OC_MODEL_NAME"] = c.modelName
-		environment["OC_MODEL_KEY_FILE"] = c.modelKeyFile
-		// Consent is per provider and nothing listed permits nothing, so the provider this run was
-		// told to use is named here explicitly rather than implied by having configured it.
-		environment["OC_MODEL_CONSENTED_PROVIDERS"] = c.modelProvider
-		if c.modelEffort != "" {
-			environment["OC_MODEL_EFFORT"] = c.modelEffort
-		}
 	}
 
 	running, err := startProgram("control plane", binary, environment, c.output)

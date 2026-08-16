@@ -192,17 +192,17 @@ func writeProvisionedMembership(
 	// directory's own columns, so connecting a directory does not revoke every deliberate grant
 	// in the tenant.
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO organization_membership (membership_id, organization, user_id, role, source,
+		INSERT INTO organization_membership (membership_id, org_id, user_id, role, source,
 		                                     granted_by, external_id, active)
 		VALUES ($1, $2, $3, NULL, $4, $5, $6, $7)
-		ON CONFLICT (organization, user_id) DO UPDATE
+		ON CONFLICT (org_id, user_id) DO UPDATE
 		    SET granted_by  = EXCLUDED.granted_by,
 		        external_id = EXCLUDED.external_id,
 		        active      = EXCLUDED.active,
 		        updated_at  = now()`,
 		uuid.New(), organization.String(), user.ID, int16(SourceSCIM),
 		by, nullableText(wanted.ExternalID), wanted.Active); err != nil {
-		if isUniqueViolation(err, "organization_membership_external_id_is_unique_per_organization") {
+		if isUniqueViolation(err, "organization_membership_external_id_is_unique_per_org") {
 			return ProvisionedUser{}, ErrProvisionedUserExists
 		}
 		return ProvisionedUser{}, fmt.Errorf("writing a provisioned membership: %w", err)
@@ -305,7 +305,7 @@ func setProvisionedActive(
 	if _, err := transaction.Exec(ctx, `
 		UPDATE organization_membership
 		   SET active = $3, updated_at = now()
-		 WHERE organization = $1 AND user_id = $2`,
+		 WHERE org_id = $1 AND user_id = $2`,
 		organization.String(), user, active); err != nil {
 		return fmt.Errorf("setting a membership active: %w", err)
 	}
@@ -315,7 +315,7 @@ func setProvisionedActive(
 	if _, err := transaction.Exec(ctx, `
 		UPDATE operator_session
 		   SET revoked_at = now(), revoked_by = $3
-		 WHERE user_id = $1 AND organization = $2 AND revoked_at IS NULL`,
+		 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
 		user, organization.String(), by); err != nil {
 		return fmt.Errorf("revoking sessions: %w", err)
 	}
@@ -340,13 +340,13 @@ func (p *Placements) DeprovisionUser(
 			}
 			if _, err := transaction.Exec(ctx, `
 				DELETE FROM organization_membership
-				 WHERE organization = $1 AND user_id = $2`,
+				 WHERE org_id = $1 AND user_id = $2`,
 				organization.String(), id); err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("deprovisioning a user: %w", err)
 			}
 			if _, err := transaction.Exec(ctx, `
-				DELETE FROM scim_group_member WHERE organization = $1 AND user_id = $2`,
+				DELETE FROM scim_group_member WHERE org_id = $1 AND user_id = $2`,
 				organization.String(), id); err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("removing group memberships: %w", err)
@@ -354,7 +354,7 @@ func (p *Placements) DeprovisionUser(
 			if _, err := transaction.Exec(ctx, `
 				UPDATE operator_session
 				   SET revoked_at = now(), revoked_by = $3
-				 WHERE user_id = $1 AND organization = $2 AND revoked_at IS NULL`,
+				 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
 				id, organization.String(), principal.ID()); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
 			}
@@ -387,7 +387,7 @@ func (p *Placements) ProvisionedUsers(
 		SELECT count(*)
 		  FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
-		 WHERE membership.organization = $1
+		 WHERE membership.org_id = $1
 		   AND ($2::TEXT IS NULL OR lower(person.email) = lower($2::TEXT))
 		   AND ($3::TEXT IS NULL OR membership.external_id = $3::TEXT)`,
 		organization.String(), nullableText(filter.UserName),
@@ -398,7 +398,7 @@ func (p *Placements) ProvisionedUsers(
 	rows, err := pool.Query(ctx, `SELECT `+provisionedColumns+`
 		  FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
-		 WHERE membership.organization = $1
+		 WHERE membership.org_id = $1
 		   AND ($2::TEXT IS NULL OR lower(person.email) = lower($2::TEXT))
 		   AND ($3::TEXT IS NULL OR membership.external_id = $3::TEXT)
 		 ORDER BY membership.created_at, membership.user_id
@@ -451,7 +451,7 @@ func readProvisionedUser(
 	row := on.QueryRow(ctx, `SELECT `+provisionedColumns+`
 		  FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
-		 WHERE membership.organization = $1 AND membership.user_id = $2`,
+		 WHERE membership.org_id = $1 AND membership.user_id = $2`,
 		organization.String(), id)
 
 	provisioned, err := scanProvisionedUser(row)
@@ -491,7 +491,7 @@ func userNameIsTaken(
 		    SELECT 1
 		      FROM organization_membership membership
 		      JOIN app_user person ON person.user_id = membership.user_id
-		     WHERE membership.organization = $1
+		     WHERE membership.org_id = $1
 		       AND membership.user_id <> $2
 		       AND (lower(person.email) = lower($3)
 		            OR ($4::TEXT IS NOT NULL AND membership.external_id = $4::TEXT)))`,

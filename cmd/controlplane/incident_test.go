@@ -36,8 +36,7 @@ type incidentPlane struct {
 	*controlPlane
 	intake      string
 	operator    string
-	connection  uuid.UUID
-	environment uuid.UUID
+	integration uuid.UUID
 	dsn         string
 }
 
@@ -56,11 +55,10 @@ func startIncidents(t *testing.T) *incidentPlane {
 	})
 
 	address := listeningAddress(t, plane, "listening for alert intake")
-	connection, environment := configureConnection(
-		t, dsn, intakeOrganization, alertmanagerIntegration)
+	integration := configureIntegration(t, dsn, intakeOrganization, intakeSecret)
 	return &incidentPlane{
 		controlPlane: plane, intake: address, operator: operatorAddress,
-		connection: connection, environment: environment, dsn: dsn,
+		integration: integration, dsn: dsn,
 	}
 }
 
@@ -70,7 +68,7 @@ func (p *incidentPlane) deliver(t *testing.T, body string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	url := fmt.Sprintf("http://%s/intake/v1/connections/%s/signals", p.intake, p.connection)
+	url := fmt.Sprintf("http://%s/intake/v1/integrations/%s/signals", p.intake, p.integration)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatalf("building the delivery: %v", err)

@@ -17,8 +17,7 @@ const maxRequestBytes = 8 << 10
 
 type episodeView struct {
 	ID            string `json:"id"`
-	EnvironmentID string `json:"environmentId"`
-	ConnectionID  string `json:"connectionId"`
+	IntegrationID string `json:"integrationId"`
 	Title         string `json:"title"`
 	Status        string `json:"status"`
 
@@ -32,11 +31,6 @@ type episodeView struct {
 	// ResolvedAt is absent while any Signal in this episode is still firing.
 	ResolvedAt  *time.Time `json:"resolvedAt"`
 	SignalCount int        `json:"signalCount"`
-
-	// InvestigationID is the one case this episode is the subject of, and is null when none has
-	// been opened. It is null rather than absent because "no investigation yet" is a fact an
-	// operator acts on.
-	InvestigationID *string `json:"investigationId"`
 
 	// Supersession is present only on an episode an operator merged into another. Its absence is
 	// the ordinary case and carries no information, which is why it is omitted rather than nulled.
@@ -97,8 +91,7 @@ type errorView struct {
 func viewOf(episode Episode) episodeView {
 	view := episodeView{
 		ID:            episode.ID.String(),
-		EnvironmentID: episode.Environment.String(),
-		ConnectionID:  episode.Connection.String(),
+		IntegrationID: episode.Integration.String(),
 		Title:         episode.Title,
 		Status:        episode.Status.String(),
 		Grouping: groupingView{
@@ -115,10 +108,6 @@ func viewOf(episode Episode) episodeView {
 	if !episode.ResolvedAt.IsZero() {
 		resolved := episode.ResolvedAt
 		view.ResolvedAt = &resolved
-	}
-	if episode.Investigation != nil {
-		investigation := episode.Investigation.String()
-		view.InvestigationID = &investigation
 	}
 	if episode.SupersededBy != nil {
 		view.Supersession = &supersessionView{

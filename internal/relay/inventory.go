@@ -53,7 +53,7 @@ func (s *SessionService) sendInventoryPolicies(session *sessionState) {
 	for _, scope := range scopes {
 		if err := send(session, inventoryPolicy(scope)); err != nil {
 			session.logger.WarnContext(session.ctx, "an inventory policy could not be sent",
-				slog.String("connection_id", scope.ConnectionID.String()),
+				slog.String("integration_id", scope.IntegrationID.String()),
 				slog.String("error", err.Error()))
 			return
 		}
@@ -69,7 +69,7 @@ func (s *SessionService) recordInventoryDelta(
 	session *sessionState, delta *relayv1.InventoryDelta,
 ) error {
 	ctx := session.ctx
-	connectionID, err := uuid.Parse(delta.GetConnectionId())
+	integrationID, err := uuid.Parse(delta.GetConnectionId())
 	if err != nil {
 		// Refused AND acknowledged, like a delta for an unserved Connection: nothing the
 		// relay does can make this recordable, and an unacked refusal would be resent
@@ -79,7 +79,7 @@ func (s *SessionService) recordInventoryDelta(
 		return send(session, inventoryDeltaAck(delta.GetDeltaId()))
 	}
 
-	reduced, skipped := reduceDelta(delta, connectionID)
+	reduced, skipped := reduceDelta(delta, integrationID)
 	if skipped > 0 {
 		// A change this build cannot read — an unknown kind from a newer relay, or an
 		// identity outside the schema's bounds — is dropped rather than allowed to refuse
@@ -101,7 +101,7 @@ func (s *SessionService) recordInventoryDelta(
 	}
 	if recorded.Refused {
 		session.logger.WarnContext(ctx, "inventory delta refused: connection not served by this relay",
-			slog.String("connection_id", connectionID.String()))
+			slog.String("integration_id", integrationID.String()))
 	}
 	return send(session, inventoryDeltaAck(delta.GetDeltaId()))
 }
@@ -117,12 +117,12 @@ func (s *SessionService) recordInventoryFreshness(
 	}
 	stamps := make([]changeledger.Freshness, 0, len(scopes))
 	for _, scope := range scopes {
-		connectionID, err := uuid.Parse(scope.GetConnectionId())
+		integrationID, err := uuid.Parse(scope.GetConnectionId())
 		if err != nil {
 			continue
 		}
 		stamp := changeledger.Freshness{
-			ConnectionID:   connectionID,
+			IntegrationID:  integrationID,
 			PolicyRevision: int64(scope.GetPolicyRevision()),
 			Faulted:        scope.GetFaulted(),
 			Truncated:      scope.GetTruncated(),
@@ -143,10 +143,10 @@ func (s *SessionService) recordInventoryFreshness(
 // reduceDelta converts a wire delta to domain terms, dropping what this build cannot
 // record and counting the drops.
 func reduceDelta(
-	delta *relayv1.InventoryDelta, connectionID uuid.UUID,
+	delta *relayv1.InventoryDelta, integrationID uuid.UUID,
 ) (changeledger.Delta, int) {
 	reduced := changeledger.Delta{
-		ConnectionID:   connectionID,
+		IntegrationID:  integrationID,
 		PolicyRevision: int64(delta.GetPolicyRevision()),
 		Baseline:       delta.GetBaseline(),
 		ObservedAt:     delta.GetObservedAt().AsTime(),

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/table"
@@ -26,19 +27,13 @@ import (
 // finds it.
 const bootstrapTokenLifetime = time.Hour
 
-// fleetSpec is what the relay listing accepts.
-//
-// There is deliberately NO Environment filter, and its absence is a decision rather than an
-// omission. A Relay is Organization-scoped and carries no Environment; CONTEXT.md is explicit
-// that offering to filter a fleet by one is offering a filter over a property the record does
-// not have. What is offered instead is `servesEnvironment`, which filters over the JOIN to the
-// Connections bound to each Relay — the operator's real question, answered without inventing a
-// field.
+// fleetSpec is what the relay listing accepts. A Relay is organization-scoped, so the
+// filters are over what a Relay is and does — never over a scope the record does not have.
 var fleetSpec = table.Spec{
 	Searchable:  true,
 	Sortable:    []string{"registeredAt", "lastSeenAt", "version", "fingerprint"},
 	DefaultSort: table.Sort{Field: "registeredAt", Descending: true},
-	Filters:     []string{"state", "version", "capability", "servesEnvironment"},
+	Filters:     []string{"state", "version", "capability"},
 }
 
 // listRelays reports an organization's relay identities and what is known about each.
@@ -59,15 +54,14 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	defer cancel()
 
 	roster, err := h.Placements.ListRelays(ctx, principal, organization, storage.RelayQuery{
-		Page:              storage.Page{Limit: query.Limit, After: query.Cursor},
-		Search:            query.Search,
-		State:             query.Filter("state"),
-		Version:           query.Filter("version"),
-		Capability:        query.Filter("capability"),
-		ServesEnvironment: query.Filter("servesEnvironment"),
-		SortField:         query.Sort.Field,
-		Descending:        query.Sort.Descending,
-		LivenessWindow:    relay.LivenessAllowance,
+		Page:           storage.Page{Limit: query.Limit, After: query.Cursor},
+		Search:         query.Search,
+		State:          query.Filter("state"),
+		Version:        query.Filter("version"),
+		Capability:     query.Filter("capability"),
+		SortField:      query.Sort.Field,
+		Descending:     query.Sort.Descending,
+		LivenessWindow: relay.LivenessAllowance,
 	})
 	if err != nil {
 		h.fail(writer, request, err)
@@ -149,9 +143,9 @@ func (h Handlers) fleetSummary(writer http.ResponseWriter, request *http.Request
 	})
 }
 
-// relayConnections lists what a Relay serves, so an operator knows what disabling it costs
-// before they disable it.
-func (h Handlers) relayConnections(writer http.ResponseWriter, request *http.Request) {
+// relayIntegrations lists what a Relay serves, so an operator knows what disabling it
+// costs before they disable it.
+func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -160,34 +154,34 @@ func (h Handlers) relayConnections(writer http.ResponseWriter, request *http.Req
 	if !ok {
 		return
 	}
-	query, ok := h.query(writer, request, relayConnectionsSpec)
+	query, ok := h.query(writer, request, relayIntegrationsSpec)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.RelayConnections(ctx, principal, organization, registration,
-		storage.ConnectionQuery{
-			Page:       storage.Page{Limit: query.Limit, After: query.Cursor},
-			SortField:  query.Sort.Field,
-			Descending: query.Sort.Descending,
+	list, err := h.Placements.QueryIntegrations(ctx, principal, organization,
+		integrations.Query{
+			Page:  integrations.Page{Limit: query.Limit, After: query.Cursor},
+			Relay: registration,
 		})
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	served := make([]servedConnectionView, 0, len(list.Connections))
-	for _, found := range list.Connections {
-		served = append(served, servedConnectionView{
-			ID:            found.ID.String(),
-			EnvironmentID: found.Environment.String(),
-			Integration:   found.Integration,
-			Name:          found.Name,
-			Role:          found.Role.String(),
-			State:         found.State.String(),
-			Disabled:      found.Disabled(),
-		})
+	served := make([]servedIntegrationView, 0, len(list.Integrations))
+	for _, found := range list.Integrations {
+		view := servedIntegrationView{
+			ID:       found.ID.String(),
+			Name:     found.Name,
+			Status:   found.Status.String(),
+			Disabled: found.Disabled(),
+		}
+		if definition, known := h.Catalog.ByID(found.Type); known {
+			view.Type = definition.Key
+		}
+		served = append(served, view)
 	}
 	writeJSON(writer, http.StatusOK, table.Answer(served, list.Next, nil))
 }
@@ -227,7 +221,7 @@ func (h Handlers) relayFailures(writer http.ResponseWriter, request *http.Reques
 			JobID:             failure.JobID.String(),
 			CapabilityID:      failure.CapabilityID,
 			CapabilityVersion: failure.CapabilityVersion,
-			ConnectionID:      failure.Connection.String(),
+			IntegrationID:     failure.Integration.String(),
 			Outcome:           outcomeOf(failure.Cancelled),
 			At:                failure.At,
 		})
@@ -253,7 +247,7 @@ var relayFailuresSpec = table.Spec{
 	DefaultSort: table.Sort{Field: "at", Descending: true},
 }
 
-var relayConnectionsSpec = table.Spec{
+var relayIntegrationsSpec = table.Spec{
 	Sortable:    []string{"createdAt"},
 	DefaultSort: table.Sort{Field: "createdAt", Descending: true},
 }

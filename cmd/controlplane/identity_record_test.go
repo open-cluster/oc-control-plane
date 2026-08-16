@@ -25,13 +25,13 @@ func TestOperatorIdentity_AnUnrecordableChangeDoesNotHappen(t *testing.T) {
 		t.Fatalf("reaching the placement: %v", err)
 	}
 
-	// A trigger that refuses exactly the event an environment creation writes, and nothing
+	// A trigger that refuses exactly the event an integration creation writes, and nothing
 	// else. Refusing every insert would also break the sign-in path and the refusal recording,
 	// and the test would then prove that a broken database breaks things.
 	if _, err := connection.Exec(t.Context(), `
 		CREATE OR REPLACE FUNCTION refuse_one_action() RETURNS trigger AS $$
 		BEGIN
-		    IF NEW.action = 'environment.created' THEN
+		    IF NEW.action = 'integration.created' THEN
 		        RAISE EXCEPTION 'the record refused this event';
 		    END IF;
 		    RETURN NEW;
@@ -45,9 +45,9 @@ func TestOperatorIdentity_AnUnrecordableChangeDoesNotHappen(t *testing.T) {
 		t.Fatalf("arranging the forced failure: %v", err)
 	}
 
-	const name = "A Scope Nobody Could Record"
-	answered := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": name}, asBootstrap)
+	const name = "An Alertmanager Nobody Could Record"
+	answered := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": name}, asBootstrap)
 
 	if answered.status == http.StatusCreated {
 		t.Fatalf("an unrecordable change was accepted: %s", answered.body)
@@ -58,16 +58,16 @@ func TestOperatorIdentity_AnUnrecordableChangeDoesNotHappen(t *testing.T) {
 		t.Errorf("an unrecordable change answered %d, want 503: %s", answered.status, answered.body)
 	}
 
-	// And the Environment is not there. This is the assertion that matters: a response that
+	// And the Integration is not there. This is the assertion that matters: a response that
 	// said no while the row committed would be worse than one that said yes.
 	var rows int
 	if err := connection.QueryRow(t.Context(),
-		`SELECT count(*) FROM environment WHERE organization = $1 AND name = $2`,
+		`SELECT count(*) FROM integration WHERE org_id = $1 AND name = $2`,
 		identityOrg, name).Scan(&rows); err != nil {
-		t.Fatalf("counting environments: %v", err)
+		t.Fatalf("counting integrations: %v", err)
 	}
 	if rows != 0 {
-		t.Errorf("%d environments were created despite the record refusing the event; the "+
+		t.Errorf("%d integrations were created despite the record refusing the event; the "+
 			"change and the event have to commit together or not at all", rows)
 	}
 
@@ -78,8 +78,8 @@ func TestOperatorIdentity_AnUnrecordableChangeDoesNotHappen(t *testing.T) {
 
 	// With the record working again, the same request succeeds — so what failed above was the
 	// audit write and not the operation.
-	retried := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": name}, asBootstrap)
+	retried := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": name}, asBootstrap)
 	if retried.status != http.StatusCreated {
 		t.Errorf("the same request with the record working = %d: %s",
 			retried.status, retried.body)

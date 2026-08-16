@@ -107,7 +107,7 @@ func promptFixture() reasoning.Prompt {
 		Model:           "glm-4.7",
 		System:          []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
 		Content:         []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema:          reasoning.HypothesesSchema(),
+		Schema:          reasoning.ConclusionSchema(),
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
 	}
@@ -247,7 +247,7 @@ func TestComplete_TellsARejectedRequestApartFromAnOutage(t *testing.T) {
 
 func TestComplete_RendersTheSchemaIntoThePromptBecauseThisVendorCannotEnforceIt(t *testing.T) {
 	provider, round := providerUnder(t,
-		answered(200, completion(`{"hypotheses":[]}`, "stop", cachedUsage)))
+		answered(200, completion(`{"findings":[]}`, "stop", cachedUsage)))
 
 	if _, err := provider.Complete(context.Background(), promptFixture()); err != nil {
 		t.Fatalf("completing: %v", err)
@@ -255,8 +255,9 @@ func TestComplete_RendersTheSchemaIntoThePromptBecauseThisVendorCannotEnforceIt(
 	body := round.lastBody(t)
 
 	// The workaround for a missing capability belongs to the provider that is missing it, so a
-	// vendor that enforces schemas natively is not charged for one that does not.
-	if !strings.Contains(body, "falsifies") {
+	// vendor that enforces schemas natively is not charged for one that does not. The marker is
+	// a property only the declared schema carries.
+	if !strings.Contains(body, `\"statement\"`) && !strings.Contains(body, `"statement"`) {
 		t.Error("the schema was not rendered into the prompt, so this vendor has nothing to " +
 			"match the answer against")
 	}

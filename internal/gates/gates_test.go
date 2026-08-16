@@ -144,28 +144,21 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"Ping":           "reachability of every placement; reads no data",
 		"Close":          "releases pools",
 		"MigrationCount": "reports how many migrations the binary carries",
-		// The one read that DISCOVERS a tenant instead of being given one, and the reason it
-		// has to is recorded in ADR-003's second amendment. An inbound delivery names its
-		// Connection and nothing else, because a path is chosen by the caller and a caller who
-		// could name a tenant could try every tenant — so there is no organization in the
-		// request to resolve a placement from. Each placement is asked for the identifier and
-		// the row that is found is itself the authority for the organization and the
-		// environment. It is safe for the same reason it exists: nothing the caller sent
-		// contributes to the tenant the answer belongs to.
-		"ConnectionByID": "resolves a tenant FROM an opaque connection identifier; " +
+		// The one read that DISCOVERS a tenant instead of being given one. An inbound
+		// delivery names its Integration and nothing else, because a path is chosen by the
+		// caller and a caller who could name a tenant could try every tenant — so there is
+		// no organization in the request to resolve a placement from. Each placement is
+		// asked for the identifier and the row that is found is itself the authority for
+		// the organization. It is safe for the same reason it exists: nothing the caller
+		// sent contributes to the tenant the answer belongs to.
+		"IntegrationByID": "resolves a tenant FROM an opaque integration identifier; " +
 			"the row found is the authority, and no caller-supplied value selects it",
-		// The investigator's worker asks which tenants have a claimable round. It cannot take an
-		// organization because finding out which organizations there are work for IS the question,
-		// and it reads no tenant data — only which tenants have work. Every claim it leads to is
-		// tenant-scoped, and each one takes the organization this read discovered.
-		// The retention pruner asks which tenants declared a schedule for their own record, for
-		// the same reason: finding out which organizations there are IS the question. It reads no
-		// tenant data — only which tenants declared a number — and the delete it leads to takes
-		// the organization this read discovered.
+		// The retention pruner asks which tenants declared a schedule for their own record.
+		// It cannot take an organization because finding out which organizations there are
+		// IS the question. It reads no tenant data — only which tenants declared a number —
+		// and the delete it leads to takes the organization this read discovered.
 		"DeclaredRetentions": "discovers which tenants declared an audit retention schedule; " +
 			"reads no tenant data, and every prune it leads to is tenant-scoped",
-		"InvestigationsAwaitingWork": "discovers which tenants have a claimable investigation " +
-			"round; reads no tenant data, and every claim it leads to is tenant-scoped",
 		// The three credential lookups, and they are the same case ConnectionByID is. A session
 		// cookie, an API token and an OAuth state parameter name no tenant — a caller who could
 		// name one could try every one — so there is nothing in the request to resolve a
@@ -321,17 +314,15 @@ func TestNoEnvironmentVariableNamesASecret(t *testing.T) {
 	}
 }
 
-// The investigation capability owns the model boundary and must never learn that a provider
-// exists. It depends on one interface it declares itself; internal/reasoning satisfies that
-// interface, and the dependency runs one way.
-//
-// A vendor type reaching the domain is the failure this gate exists to catch. It would not look
-// like much in review — one import, one field — and it would make every later provider change a
-// domain change, which is the whole reason the boundary is shaped the way it is.
-func TestInvestigationDependsOnNoProvider(t *testing.T) {
+// The integrations core is the thin shared domain, and the composition root is the only
+// place that knows every provider. The core importing one of its own provider packages
+// would not look like much in review — one import, one field — and it would make every
+// later provider change a domain change, which is the whole reason the tree is shaped the
+// way it is.
+func TestIntegrationsCoreImportsNoProvider(t *testing.T) {
 	t.Parallel()
 
-	const surface = "internal/investigation"
+	const surface = "internal/integrations"
 
 	found := false
 	for _, loaded := range loadPackages(t) {
@@ -340,20 +331,48 @@ func TestInvestigationDependsOnNoProvider(t *testing.T) {
 		}
 		found = true
 		for imported := range loaded.Imports {
-			if strings.HasPrefix(imported, modulePath+"/internal/reasoning") {
-				t.Errorf("%s must not import %s; the domain declares the boundary and "+
-					"infrastructure satisfies it, never the reverse", surface, imported)
+			if strings.HasPrefix(imported, modulePath+"/internal/integrations/") {
+				t.Errorf("%s must not import the provider %s; providers import the core, and "+
+					"only the composition root assembles them", surface, imported)
 			}
-			for _, vendor := range vendorModules {
-				if strings.Contains(imported, vendor) {
-					t.Errorf("%s must not import %s; a vendor named in the domain makes every "+
-						"provider change a domain change", surface, imported)
-				}
+			if imported == modulePath+"/internal/storage" {
+				t.Errorf("%s must not import persistence; the capability owns its vocabulary "+
+					"and persistence depends on it", surface)
 			}
 		}
 	}
 	if !found {
 		t.Fatalf("%s was not found; the gate would pass vacuously", surface)
+	}
+}
+
+// The composition root is the ONLY place that knows every provider. A second package
+// assembling two of them would be a second catalog — the central-hub shape this tree was
+// built to avoid — and it would not look like much in review: two imports in a file that
+// already has twenty.
+func TestOnlyTheCompositionRootAssemblesProviders(t *testing.T) {
+	t.Parallel()
+
+	assembled := false
+	for _, loaded := range loadPackages(t) {
+		providers := 0
+		for imported := range loaded.Imports {
+			if strings.HasPrefix(imported, modulePath+"/internal/integrations/") {
+				providers++
+			}
+		}
+		if providers < 2 {
+			continue
+		}
+		if loaded.PkgPath == modulePath+"/cmd/controlplane" {
+			assembled = true
+			continue
+		}
+		t.Errorf("%s imports %d provider packages; only the composition root assembles the "+
+			"catalog, and a second assembly point is a second catalog", loaded.PkgPath, providers)
+	}
+	if !assembled {
+		t.Fatal("no package assembles the providers; the gate would pass vacuously")
 	}
 }
 

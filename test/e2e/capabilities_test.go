@@ -324,13 +324,15 @@ func TestProof_AVersionNoRelayHasIsRefusedForBothNewCapabilities(t *testing.T) {
 	}
 }
 
-// awaitPod waits for a fixture workload's pod to exist and returns its name.
+// awaitPod waits for a fixture workload's pod to be running and returns its name.
+// Running rather than existing: a log read racing container start is answered with a
+// typed failure, and the tests waiting here are about what a started container said.
 func (h *harness) awaitPod(t *testing.T, ctx context.Context, workload string) string {
 	t.Helper()
 
 	var name string
-	h.await(t, "a pod for "+workload, fixtureTimeout, func(context.Context) (bool, error) {
-		found, err := h.cluster.podFor(ctx, workload)
+	h.await(t, "a running pod for "+workload, fixtureTimeout, func(context.Context) (bool, error) {
+		found, err := h.cluster.runningPodFor(ctx, workload)
 		if err != nil {
 			return false, err
 		}

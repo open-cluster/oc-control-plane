@@ -206,7 +206,7 @@ func (h Handlers) planProvider(
 		case secret != "":
 			if !h.Sealer.Configured() {
 				writeJSON(writer, http.StatusServiceUnavailable, errorView{
-					Error: "this deployment has no identity encryption key and cannot hold a " +
+					Error: "this deployment has no sealing key and cannot hold a " +
 						"client secret"})
 				return storage.NewIdentityProvider{}, false
 			}
@@ -245,12 +245,12 @@ func (h Handlers) planProvider(
 				errorView{Error: "jitRole is not a role this build has"})
 			return storage.NewIdentityProvider{}, false
 		}
-		// An owner arriving by just-in-time provisioning would mean anyone at a verified domain
-		// could administer the tenant on their first sign-in. It is refused rather than
-		// documented.
-		if parsed == authz.OrganizationOwner {
+		// An admin arriving by just-in-time provisioning would mean anyone at a verified
+		// domain could administer the tenant on their first sign-in. It is refused rather
+		// than documented.
+		if parsed == authz.Admin {
 			writeJSON(writer, http.StatusBadRequest, errorView{
-				Error: "an owner may not be granted by just-in-time provisioning; grant it " +
+				Error: "admin may not be granted by just-in-time provisioning; grant it " +
 					"to a person deliberately"})
 			return storage.NewIdentityProvider{}, false
 		}
@@ -326,11 +326,11 @@ func validGroupMap(
 					", which is not a role this build has"})
 			return nil, false
 		}
-		// An owner arriving from a directory group is the same escalation the just-in-time role
-		// is refused for, one directory edit away.
-		if parsed == authz.OrganizationOwner {
+		// An admin arriving from a directory group is the same escalation the just-in-time
+		// role is refused for, one directory edit away.
+		if parsed == authz.Admin {
 			writeJSON(writer, http.StatusBadRequest, errorView{
-				Error: "an owner may not be granted by a group mapping; grant it to a person " +
+				Error: "admin may not be granted by a group mapping; grant it to a person " +
 					"deliberately"})
 			return nil, false
 		}
@@ -402,12 +402,6 @@ func (h Handlers) setMember(writer http.ResponseWriter, request *http.Request) {
 			errorView{Error: "role is not one this build has"})
 		return
 	}
-	if role == authz.OrganizationOwner && !principal.Can(organization, authz.MemberOwnerManage) {
-		writeJSON(writer, http.StatusForbidden, errorView{
-			Error: "appointing an owner requires " + string(authz.MemberOwnerManage)})
-		return
-	}
-
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 

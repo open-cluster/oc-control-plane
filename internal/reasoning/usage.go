@@ -2,8 +2,6 @@ package reasoning
 
 import (
 	"time"
-
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // What one call consumed, and what is recorded about it.
@@ -80,18 +78,9 @@ type Record struct {
 	// same number, which is the one property a cost figure has to have.
 	MicroCents int64
 	Latency    time.Duration
-	// Method names which of the boundary's three calls this was, so evidence selection stays
-	// separable from the conclusion when the records are read back.
+	// Method names which boundary call this was, so a deciding round stays separable from
+	// a concluding one when the records are read back.
 	Method        string
 	PromptVersion string
 	SchemaVersion string
-}
-
-// Spend renders this call in the domain's own terms, so a round accumulates it exactly as it
-// accumulates a replayed transcript's figures.
-func (r Record) Spend() investigation.Usage {
-	return investigation.Usage{
-		Tokens:     r.Usage.Billable(),
-		MicroCents: r.MicroCents,
-	}
 }

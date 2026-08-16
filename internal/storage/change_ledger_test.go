@@ -19,10 +19,10 @@ import (
 
 func ledgerScope(
 	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
-) (registration, connection uuid.UUID) {
+) (registration, integration uuid.UUID) {
 	t.Helper()
 	registration = enrolledRelay(t, placements, organization)
-	connection = evidenceConnection(t, placements, organization, registration)
+	integration = kubernetesIntegration(t, placements, organization, registration)
 	scopes, err := placements.OpenInventoryScopes(
 		context.Background(), organization, registration, 5*time.Minute)
 	if err != nil {
@@ -30,14 +30,14 @@ func ledgerScope(
 	}
 	found := false
 	for _, scope := range scopes {
-		if scope.ConnectionID == connection {
+		if scope.IntegrationID == integration {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("the kubernetes evidence connection %s must gain a scope", connection)
+		t.Fatalf("the kubernetes integration %s must gain a scope", integration)
 	}
-	return registration, connection
+	return registration, integration
 }
 
 func imageChange(uid, revision, before, after string) changeledger.Change {
@@ -53,12 +53,12 @@ func imageChange(uid, revision, before, after string) changeledger.Change {
 func TestChangeLedger_ARedeliveredDeltaRecordsNothingTwice(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	defer placements.Close()
-	registration, connection := ledgerScope(t, placements, organization)
+	registration, integration := ledgerScope(t, placements, organization)
 
 	delta := changeledger.Delta{
-		ConnectionID: connection,
-		ObservedAt:   time.Now().UTC(),
-		Changes:      []changeledger.Change{imageChange("uid-1", "g4.aaa", "app:v1", "app:v2")},
+		IntegrationID: integration,
+		ObservedAt:    time.Now().UTC(),
+		Changes:       []changeledger.Change{imageChange("uid-1", "g4.aaa", "app:v1", "app:v2")},
 	}
 	first, err := placements.RecordInventoryDelta(
 		context.Background(), organization, registration, delta)
@@ -75,20 +75,20 @@ func TestChangeLedger_ARedeliveredDeltaRecordsNothingTwice(t *testing.T) {
 func TestChangeLedger_ADeltaNamingAConnectionAnotherRelayServesIsRefused(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	defer placements.Close()
-	_, connection := ledgerScope(t, placements, organization)
+	_, integration := ledgerScope(t, placements, organization)
 	stranger := enrolledRelay(t, placements, organization)
 
 	recorded, err := placements.RecordInventoryDelta(
 		context.Background(), organization, stranger, changeledger.Delta{
-			ConnectionID: connection,
-			ObservedAt:   time.Now().UTC(),
-			Changes:      []changeledger.Change{imageChange("uid-1", "g4.aaa", "a", "b")},
+			IntegrationID: integration,
+			ObservedAt:    time.Now().UTC(),
+			Changes:       []changeledger.Change{imageChange("uid-1", "g4.aaa", "a", "b")},
 		})
 	if err != nil {
 		t.Fatalf("a refusal is an answer, not an error: %v", err)
 	}
 	if !recorded.Refused || recorded.Inserted != 0 {
-		t.Fatalf("a relay must not write history through a connection it does not serve, got %+v",
+		t.Fatalf("a relay must not write history through an integration it does not serve, got %+v",
 			recorded)
 	}
 }
@@ -96,14 +96,14 @@ func TestChangeLedger_ADeltaNamingAConnectionAnotherRelayServesIsRefused(t *test
 func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	defer placements.Close()
-	registration, connection := ledgerScope(t, placements, organization)
+	registration, integration := ledgerScope(t, placements, organization)
 	ctx := context.Background()
 
 	// Postgres keeps microseconds; a nanosecond-precise instant would fail an equality it
 	// deserves to pass.
 	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 	baseline := changeledger.Delta{
-		ConnectionID: connection, Baseline: true, ObservedAt: start,
+		IntegrationID: integration, Baseline: true, ObservedAt: start,
 		Changes: []changeledger.Change{{
 			Namespace: "shop", Kind: changeledger.KindDeployment, Name: "api", UID: "uid-1",
 			ObservedRevision: "g3.aaa", Change: changeledger.ChangeCreated,
@@ -116,7 +116,7 @@ func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 		t.Fatalf("recording the baseline: %v", err)
 	}
 	change := changeledger.Delta{
-		ConnectionID: connection, ObservedAt: start.Add(30 * time.Minute),
+		IntegrationID: integration, ObservedAt: start.Add(30 * time.Minute),
 		Changes: []changeledger.Change{
 			imageChange("uid-1", "g4.bbb", "app:v1", "app:v2"),
 			{
@@ -129,7 +129,7 @@ func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 		t.Fatalf("recording the change: %v", err)
 	}
 
-	answer, err := placements.RecentLedgerChanges(ctx, organization, connection, "shop",
+	answer, err := placements.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start.Add(-time.Minute), time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("reading the window: %v", err)
@@ -158,7 +158,7 @@ func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	defer placements.Close()
-	registration, connection := ledgerScope(t, placements, organization)
+	registration, integration := ledgerScope(t, placements, organization)
 	ctx := context.Background()
 
 	start := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
@@ -167,7 +167,7 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 		ObservedRevision: "g3.aaa", Change: changeledger.ChangeCreated,
 	}
 	first := changeledger.Delta{
-		ConnectionID: connection, Baseline: true, ObservedAt: start,
+		IntegrationID: integration, Baseline: true, ObservedAt: start,
 		Changes: []changeledger.Change{object},
 	}
 	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, first); err != nil {
@@ -179,13 +179,13 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 	// no watched field moved, and the short gap bounds what a collapse cannot prove — the
 	// boundary survives.
 	quiet := changeledger.Delta{
-		ConnectionID: connection, Baseline: true, ObservedAt: start.Add(8 * time.Minute),
+		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(8 * time.Minute),
 		Changes: []changeledger.Change{object},
 	}
 	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, quiet); err != nil {
 		t.Fatalf("recording the quiet re-baseline: %v", err)
 	}
-	answer, err := placements.RecentLedgerChanges(ctx, organization, connection, "shop",
+	answer, err := placements.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start, time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("reading the scope: %v", err)
@@ -199,13 +199,13 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 	// no watched field moved, and cannot prove an object was not deleted and mourned by
 	// nobody while the Relay was away.
 	longGap := changeledger.Delta{
-		ConnectionID: connection, Baseline: true, ObservedAt: start.Add(time.Hour),
+		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(time.Hour),
 		Changes: []changeledger.Change{object},
 	}
 	if _, err = placements.RecordInventoryDelta(ctx, organization, registration, longGap); err != nil {
 		t.Fatalf("recording the long-gap re-baseline: %v", err)
 	}
-	answer, err = placements.RecentLedgerChanges(ctx, organization, connection, "shop",
+	answer, err = placements.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start, time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("re-reading the scope: %v", err)
@@ -218,7 +218,7 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 	// A re-baseline that finds anything new proves the gap held a change, and the boundary
 	// moves regardless of how short the gap was.
 	moved := changeledger.Delta{
-		ConnectionID: connection, Baseline: true, ObservedAt: start.Add(65 * time.Minute),
+		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(65 * time.Minute),
 		Changes: []changeledger.Change{{
 			Namespace: "shop", Kind: changeledger.KindDeployment, Name: "api", UID: "uid-1",
 			ObservedRevision: "g4.bbb", Change: changeledger.ChangeCreated,
@@ -227,7 +227,7 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 	if _, err = placements.RecordInventoryDelta(ctx, organization, registration, moved); err != nil {
 		t.Fatalf("recording the discontinuous re-baseline: %v", err)
 	}
-	answer, err = placements.RecentLedgerChanges(ctx, organization, connection, "shop",
+	answer, err = placements.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start, time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("re-reading the scope: %v", err)
@@ -241,18 +241,18 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 func TestChangeLedger_FreshnessStampsAdvanceTheScope(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	defer placements.Close()
-	registration, connection := ledgerScope(t, placements, organization)
+	registration, integration := ledgerScope(t, placements, organization)
 	ctx := context.Background()
 
 	confirmed := time.Now().UTC().Truncate(time.Second)
 	err := placements.RecordInventoryFreshness(ctx, organization, registration,
 		[]changeledger.Freshness{{
-			ConnectionID: connection, CompletedAt: &confirmed, Faulted: false, Truncated: true,
+			IntegrationID: integration, CompletedAt: &confirmed, Faulted: false, Truncated: true,
 		}})
 	if err != nil {
 		t.Fatalf("recording freshness: %v", err)
 	}
-	answer, err := placements.RecentLedgerChanges(ctx, organization, connection, "shop",
+	answer, err := placements.RecentLedgerChanges(ctx, organization, integration, "shop",
 		confirmed.Add(-time.Hour), confirmed, 10)
 	if err != nil {
 		t.Fatalf("reading the scope: %v", err)
@@ -264,22 +264,22 @@ func TestChangeLedger_FreshnessStampsAdvanceTheScope(t *testing.T) {
 		t.Fatal("a truncated tick must be visible on the scope")
 	}
 
-	// A stranger's stamp for this connection changes nothing: the guard is the same one
+	// A stranger's stamp for this integration changes nothing: the guard is the same one
 	// deltas pass through.
 	stranger := enrolledRelay(t, placements, organization)
 	later := confirmed.Add(time.Hour)
 	err = placements.RecordInventoryFreshness(ctx, organization, stranger,
-		[]changeledger.Freshness{{ConnectionID: connection, CompletedAt: &later}})
+		[]changeledger.Freshness{{IntegrationID: integration, CompletedAt: &later}})
 	if err != nil {
 		t.Fatalf("recording a stranger's freshness: %v", err)
 	}
-	answer, err = placements.RecentLedgerChanges(ctx, organization, connection, "shop",
+	answer, err = placements.RecentLedgerChanges(ctx, organization, integration, "shop",
 		confirmed.Add(-time.Hour), confirmed, 10)
 	if err != nil {
 		t.Fatalf("re-reading the scope: %v", err)
 	}
 	if !answer.Scope.LastConfirmedAt.Equal(confirmed) {
-		t.Fatalf("a relay that does not serve the connection must not confirm it, got %v",
+		t.Fatalf("a relay that does not serve the integration must not confirm it, got %v",
 			answer.Scope.LastConfirmedAt)
 	}
 }
@@ -287,11 +287,11 @@ func TestChangeLedger_FreshnessStampsAdvanceTheScope(t *testing.T) {
 func TestChangeLedger_RetentionPrunesByAgeAndOnlyByAge(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	defer placements.Close()
-	registration, connection := ledgerScope(t, placements, organization)
+	registration, integration := ledgerScope(t, placements, organization)
 	ctx := context.Background()
 
 	old := changeledger.Delta{
-		ConnectionID: connection, ObservedAt: time.Now().UTC().Add(-time.Hour),
+		IntegrationID: integration, ObservedAt: time.Now().UTC().Add(-time.Hour),
 		Changes: []changeledger.Change{imageChange("uid-1", "g4.aaa", "a", "b")},
 	}
 	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, old); err != nil {

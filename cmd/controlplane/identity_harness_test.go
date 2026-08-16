@@ -243,9 +243,9 @@ func startIdentityPlane(t *testing.T) *identityPlane {
 		cfg.OperatorAllowedOrigins = []string{identityConsole}
 		// A key, so a provider's client secret can be held at all. Without one, configuring a
 		// provider is refused rather than stored in the clear — which is itself asserted below.
-		cfg.IdentityEncryptionKey = make([]byte, 32)
-		for index := range cfg.IdentityEncryptionKey {
-			cfg.IdentityEncryptionKey[index] = byte(index + 1)
+		cfg.SealingKey = make([]byte, 32)
+		for index := range cfg.SealingKey {
+			cfg.SealingKey[index] = byte(index + 1)
 		}
 		// The neighbour shares this placement deliberately. An organization with no placement
 		// fails before any query runs, which would leave the cross-tenant assertions passing

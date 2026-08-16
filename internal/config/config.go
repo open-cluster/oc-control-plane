@@ -11,8 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -61,11 +61,33 @@ const (
 	// where its console is.
 	EnvOperatorAllowedOrigins = "OC_OPERATOR_ALLOWED_ORIGINS"
 
-	// The key an identity provider's client secret is sealed under. That credential is the one
-	// this product must be able to READ BACK — it is presented to a token endpoint rather than
-	// compared against — so it is encrypted rather than digested, and this names the file the
-	// key is read from.
-	EnvIdentityEncryptionKeyFile = "OC_IDENTITY_ENCRYPTION_KEY_FILE"
+	// The key every presentable credential is sealed under: an identity provider's client
+	// secret, an integration's bot token. Those are the credentials this product must be
+	// able to READ BACK — they are presented to the far end rather than compared against —
+	// so they are encrypted rather than digested, and this names the file the key is read
+	// from.
+	EnvSealingKeyFile = "OC_SEALING_KEY_FILE"
+
+	// EnvSlackAPIURL overrides where the Slack provider reaches its vendor. It exists for
+	// tests and for API-compatible proxies; empty means Slack's own origin.
+	EnvSlackAPIURL = "OC_SLACK_API_URL"
+
+	// The GitHub App credential is DEPLOYMENT-level configuration: one app, installed by
+	// customers onto their own accounts. The id is public; the private key names a file,
+	// like every credential here.
+	EnvGitHubAppID      = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
+	EnvGitHubAPIURL     = "OC_GITHUB_API_URL"
+
+	// The model deployment investigations reason with: DEPLOYMENT-level settings, never a
+	// per-tenant concern. The key names a file; consent lists the providers evidence may
+	// be sent to, and nothing listed permits nothing.
+	EnvModelProvider  = "OC_MODEL_PROVIDER"
+	EnvModelName      = "OC_MODEL_NAME"
+	EnvModelKeyFile   = "OC_MODEL_KEY_FILE"
+	EnvModelEffort    = "OC_MODEL_EFFORT"
+	EnvModelConsented = "OC_MODEL_CONSENTED_PROVIDERS"
+	EnvModelBaseURL   = "OC_MODEL_BASE_URL"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
@@ -87,34 +109,6 @@ const (
 	// against. Empty means nothing is compared, and the summary says so rather than reporting
 	// zero outdated as though every relay were current.
 	EnvMinimumRelayVersion = "OC_MINIMUM_RELAY_VERSION"
-
-	EnvModelTranscriptFile = "OC_MODEL_TRANSCRIPT_FILE"
-	// EnvModelTranscriptDir is where a LIVE round files what the model said. It is the other
-	// direction from the variable above: that one replays a recording, this one makes them. A
-	// deployment naming neither records nothing and replays nothing, which is what every
-	// deployment did before this existed.
-	EnvModelTranscriptDir = "OC_MODEL_TRANSCRIPT_DIR"
-
-	// The live model deployment. Which vendor and which model answer is configuration rather
-	// than a constant, because a model is a deployment choice that moves with price,
-	// availability and regional obligation — and every one of those would otherwise be a release.
-	EnvModelProvider    = "OC_MODEL_PROVIDER"
-	EnvModelName        = "OC_MODEL_NAME"
-	EnvModelKeyFile     = "OC_MODEL_KEY_FILE"
-	EnvModelEffort      = "OC_MODEL_EFFORT"
-	EnvModelBaseURL     = "OC_MODEL_BASE_URL"
-	EnvModelMaxOutput   = "OC_MODEL_MAX_OUTPUT"
-	EnvModelMaxPrompt   = "OC_MODEL_MAX_PROMPT"
-	EnvModelCostCeiling = "OC_MODEL_COST_CEILING_MICROCENTS"
-	EnvModelConsented   = "OC_MODEL_CONSENTED_PROVIDERS"
-
-	// The one optional fallback hop. It is separate variables rather than a list because a
-	// fallback is an explicit decision about a second vendor, and a syntax that made it easy to
-	// add three would make it easy to add one nobody meant to consent to.
-	EnvModelFallbackProvider = "OC_MODEL_FALLBACK_PROVIDER"
-	EnvModelFallbackName     = "OC_MODEL_FALLBACK_NAME"
-	EnvModelFallbackKeyFile  = "OC_MODEL_FALLBACK_KEY_FILE"
-	EnvModelFallbackBaseURL  = "OC_MODEL_FALLBACK_BASE_URL"
 )
 
 // Config is the validated process configuration.
@@ -183,7 +177,7 @@ type Config struct {
 	// OperatorTokenOrganization is the one tenant the bootstrap credential reaches.
 	OperatorTokenOrganization string
 
-	// OperatorTokenRole is the one role it holds there. It defaults to the owner, because a
+	// OperatorTokenRole is the one role it holds there. It defaults to admin, because a
 	// deployment with no members yet needs a credential that can create the first one.
 	OperatorTokenRole string
 
@@ -202,10 +196,32 @@ type Config struct {
 	// come from.
 	OperatorAllowedOrigins []string
 
-	// IdentityEncryptionKey seals an identity provider's client secret at rest. Empty means this
-	// deployment cannot hold one, and configuring a provider is refused with that reason rather
-	// than storing a secret in the clear.
-	IdentityEncryptionKey []byte
+	// SealingKey seals presentable credentials at rest: an identity provider's client
+	// secret, an integration's outbound token. Empty means this deployment cannot hold
+	// one, and submitting one is refused with that reason rather than stored in the clear.
+	SealingKey []byte
+
+	// SlackAPIURL is where the Slack provider reaches its vendor; empty means Slack's own
+	// origin. It exists so a test can stand a fake where slack.com would be.
+	SlackAPIURL string
+
+	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
+	// means this deployment cannot reach GitHub, and connecting it is refused live with
+	// that reason. GitHubAPIURL overrides the vendor origin, for tests and GitHub
+	// Enterprise hosts.
+	GitHubAppID  string
+	GitHubAppKey []byte
+	GitHubAPIURL string
+
+	// The model deployment. ModelProvider empty means this deployment cannot investigate,
+	// and opening one is refused with that reason. The credential travels as a file's
+	// contents, never as an environment value.
+	ModelProvider  string
+	ModelName      string
+	ModelKey       string
+	ModelEffort    string
+	ModelConsented []string
+	ModelBaseURL   string
 
 	// IntakeAddress is the listen address for alert intake. It is separate from every other
 	// surface because it is the only one a customer's own infrastructure connects to inbound,
@@ -217,7 +233,7 @@ type Config struct {
 	IntakeAddress string
 
 	// IntakePublicURL is the public origin a customer's own system reaches intake at, for
-	// example https://intake.opencluster.example. It is what a trigger Connection's delivery
+	// example https://intake.opencluster.example. It is what an Integration's webhook
 	// endpoint is built from.
 	//
 	// Empty is supported and means the endpoint is served as an absence rather than as a guess:
@@ -238,70 +254,7 @@ type Config struct {
 	// outdated because nothing was compared — a different fact from every relay being current,
 	// and one the summary reports rather than hides.
 	MinimumRelayVersion string
-
-	// ModelTranscript is a recorded transcript of the model boundary, read from the file the
-	// operator named. It is what lets a deployment that has no live provider still run
-	// investigations — a scenario harness replaying a scenario, or an end-to-end proof.
-	//
-	// Empty means no boundary is configured, and the investigator then fails rounds honestly
-	// saying the reasoning step could not run. That is the fail-closed default on purpose: an
-	// instance with no way to reason must say so rather than abstain on every case for a reason
-	// nobody can find.
-	//
-	// It is a FILE for the same reason a placement's DSN is: the content is large and
-	// structured, and an environment value is the wrong place for either.
-	ModelTranscript []byte
-
-	// ModelTranscriptDir is where a live round files what the model said, and is empty when a
-	// deployment asked for no recordings.
-	//
-	// It is the reverse of ModelTranscript and the two are independent: one replays what a model
-	// once said, this one records what it says now. A deployment with no live provider sets this
-	// to no effect, because a round replaying a recording would only be re-recording the
-	// recording it is replaying.
-	ModelTranscriptDir string
-
-	// Model is the live provider deployment, if one is configured. An unset Provider means no
-	// live provider, and the boundary then resolves exactly as it does today — a recorded
-	// transcript if one was named, and the unavailable stub otherwise.
-	Model ModelDeployment
-
-	// ModelFallback is the one optional deployment tried when the primary cannot answer. It is
-	// never inferred: an operator who configured no fallback gets an honest failure instead of a
-	// vendor nobody chose.
-	ModelFallback ModelDeployment
-
-	// ModelConsented is the set of providers this deployment may send evidence to. Nothing
-	// listed permits nothing, which is why a configured provider that is not consented to is a
-	// refusal to start rather than a round that fails later.
-	ModelConsented []string
-
-	// ModelCostCeilingMicroCents bounds total reasoning spend across rounds. Zero means no
-	// ceiling, which is an operator fact and not a currency.
-	ModelCostCeilingMicroCents int64
 }
-
-// ModelDeployment is one configured provider and model.
-//
-// The credential is read from the file the operator named and held here. It never travels as an
-// environment value, for the same reason a placement's DSN does not: an environment value is
-// readable from a process listing and appears in every diagnostic dump of the environment.
-type ModelDeployment struct {
-	Provider string
-	Model    string
-	Effort   string
-	BaseURL  string
-	// Credential is the API key itself. Nothing in this package prints it, and no error here
-	// quotes the file's contents.
-	Credential string
-	// MaxOutputTokens bounds one answer; MaxPromptTokens refuses an oversized deliberation
-	// before it is sent. Zero means the reasoning package's own default.
-	MaxOutputTokens int64
-	MaxPromptTokens int64
-}
-
-// Configured reports whether an operator named a provider here.
-func (m ModelDeployment) Configured() bool { return m.Provider != "" }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
 // value, failing on the first problem and naming the offending variable.
@@ -367,45 +320,25 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.OperatorAllowedOrigins, err = allowedOrigins(lookup); err != nil {
 		return Config{}, err
 	}
-	if cfg.IdentityEncryptionKey, err = identityEncryptionKey(lookup); err != nil {
-		return Config{}, err
-	}
-	if cfg.ModelTranscript, err = optionalFile(lookup, EnvModelTranscriptFile); err != nil {
-		return Config{}, err
-	}
-	if directory, named := lookup(EnvModelTranscriptDir); named {
-		cfg.ModelTranscriptDir = strings.TrimSpace(directory)
-	}
-	if cfg.Model, err = modelDeployment(lookup, modelVariables{
-		provider:        EnvModelProvider,
-		name:            EnvModelName,
-		keyFile:         EnvModelKeyFile,
-		effort:          EnvModelEffort,
-		baseURL:         EnvModelBaseURL,
-		maxOutputTokens: EnvModelMaxOutput,
-		maxPromptTokens: EnvModelMaxPrompt,
-	}); err != nil {
-		return Config{}, err
-	}
-	if cfg.ModelFallback, err = modelDeployment(lookup, modelVariables{
-		provider: EnvModelFallbackProvider,
-		name:     EnvModelFallbackName,
-		keyFile:  EnvModelFallbackKeyFile,
-		effort:   EnvModelEffort,
-		baseURL:  EnvModelFallbackBaseURL,
-	}); err != nil {
-		return Config{}, err
-	}
-	if cfg.ModelConsented, err = consentedProviders(lookup, cfg); err != nil {
-		return Config{}, err
-	}
-	if cfg.ModelCostCeilingMicroCents, err = optionalCount(lookup, EnvModelCostCeiling); err != nil {
+	if cfg.SealingKey, err = sealingKey(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakePublicURL, err = optionalIntakeURL(lookup, EnvIntakePublicURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.SlackAPIURL, err = optionalVendorURL(lookup, EnvSlackAPIURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.GitHubAppID, cfg.GitHubAppKey, err = gitHubApp(lookup); err != nil {
+		return Config{}, err
+	}
+	if cfg.GitHubAPIURL, err = optionalVendorURL(lookup, EnvGitHubAPIURL); err != nil {
+		return Config{}, err
+	}
+	if err = modelDeployment(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
@@ -538,125 +471,6 @@ func readSecretFile(path string) (string, error) {
 	return value, nil
 }
 
-// optionalFile reads a file a setting names, or nothing when the setting is absent. A named file
-// that cannot be read is an error rather than a silent nothing: an operator who pointed at a
-// transcript and got a control plane that reasons about nothing would have no way to tell that
-// from one they never configured.
-//
-// Unlike readSecretFile the error names the path, because this file holds no credential and
-// finding it is the whole difficulty when a deployment is wrong.
-func optionalFile(lookup func(string) (string, bool), key string) ([]byte, error) {
-	path, ok := lookup(key)
-	if !ok || strings.TrimSpace(path) == "" {
-		return nil, nil
-	}
-	raw, err := os.ReadFile(strings.TrimSpace(path))
-	if err != nil {
-		return nil, fmt.Errorf("%s names %s, which could not be read", key, strings.TrimSpace(path))
-	}
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("%s names %s, which is empty", key, strings.TrimSpace(path))
-	}
-	return raw, nil
-}
-
-// modelVariables names the variables one deployment is read from, so the primary and the fallback
-// are parsed by the same code rather than by two that can drift apart.
-type modelVariables struct {
-	provider        string
-	name            string
-	keyFile         string
-	effort          string
-	baseURL         string
-	maxOutputTokens string
-	maxPromptTokens string
-}
-
-// modelDeployment reads one provider deployment, or nothing when no provider is named.
-//
-// A partially configured deployment is refused rather than half-used. An operator who named a
-// provider and forgot the model has made a mistake that fails at startup, where they are still
-// holding the configuration, instead of on the first round hours later.
-func modelDeployment(
-	lookup func(string) (string, bool), variables modelVariables,
-) (ModelDeployment, error) {
-	provider, _ := lookup(variables.provider)
-	provider = strings.TrimSpace(provider)
-	if provider == "" {
-		return ModelDeployment{}, nil
-	}
-
-	deployment := ModelDeployment{Provider: provider}
-	name, _ := lookup(variables.name)
-	deployment.Model = strings.TrimSpace(name)
-	if deployment.Model == "" {
-		return ModelDeployment{}, fmt.Errorf(
-			"%s is required when %s is set: the model identifier is exact and is never "+
-				"constructed from a family name", variables.name, variables.provider)
-	}
-
-	path, _ := lookup(variables.keyFile)
-	if strings.TrimSpace(path) == "" {
-		return ModelDeployment{}, fmt.Errorf("%s is required when %s is set",
-			variables.keyFile, variables.provider)
-	}
-	credential, err := readSecretFile(strings.TrimSpace(path))
-	if err != nil {
-		return ModelDeployment{}, fmt.Errorf("%s: %w", variables.keyFile, err)
-	}
-	deployment.Credential = credential
-
-	if effort, _ := lookup(variables.effort); strings.TrimSpace(effort) != "" {
-		deployment.Effort = strings.TrimSpace(effort)
-	}
-	if variables.baseURL != "" {
-		if base, _ := lookup(variables.baseURL); strings.TrimSpace(base) != "" {
-			deployment.BaseURL = strings.TrimSpace(base)
-		}
-	}
-	if variables.maxOutputTokens != "" {
-		if deployment.MaxOutputTokens, err = optionalCount(
-			lookup, variables.maxOutputTokens); err != nil {
-			return ModelDeployment{}, err
-		}
-	}
-	if variables.maxPromptTokens != "" {
-		if deployment.MaxPromptTokens, err = optionalCount(
-			lookup, variables.maxPromptTokens); err != nil {
-			return ModelDeployment{}, err
-		}
-	}
-	return deployment, nil
-}
-
-// consentedProviders reads which vendors may be sent this deployment's evidence.
-//
-// Nothing listed permits nothing. Defaulting the other way would make the safe case the one an
-// operator has to remember to configure, and the question a customer actually answered was about a
-// subprocessor rather than about a feature.
-func consentedProviders(lookup func(string) (string, bool), cfg Config) ([]string, error) {
-	raw, _ := lookup(EnvModelConsented)
-	consented := make([]string, 0)
-	for _, entry := range strings.Split(raw, ",") {
-		if trimmed := strings.TrimSpace(entry); trimmed != "" {
-			consented = append(consented, trimmed)
-		}
-	}
-
-	for _, deployment := range []ModelDeployment{cfg.Model, cfg.ModelFallback} {
-		if !deployment.Configured() {
-			continue
-		}
-		if !slices.Contains(consented, deployment.Provider) {
-			return nil, fmt.Errorf(
-				"%s does not list %q, which is configured to receive this deployment's "+
-					"evidence; consent is per provider because the question it answers is about "+
-					"a subprocessor", EnvModelConsented, deployment.Provider)
-		}
-	}
-	return consented, nil
-}
-
 // optionalDays reads a positive whole number of days, or the fallback when absent.
 func optionalDays(lookup func(string) (string, bool), key string, fallback int) (int, error) {
 	value, ok := lookup(key)
@@ -666,19 +480,6 @@ func optionalDays(lookup func(string) (string, bool), key string, fallback int) 
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || parsed < 1 {
 		return 0, fmt.Errorf("%s must be a positive whole number of days", key)
-	}
-	return parsed, nil
-}
-
-// optionalCount reads a non-negative whole number, or zero when the setting is absent.
-func optionalCount(lookup func(string) (string, bool), key string) (int64, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return 0, nil
-	}
-	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-	if err != nil || parsed < 0 {
-		return 0, fmt.Errorf("%s must be a non-negative whole number", key)
 	}
 	return parsed, nil
 }
@@ -733,6 +534,105 @@ func validateHostPort(address string) error {
 		return fmt.Errorf("invalid port %q", port)
 	}
 	return nil
+}
+
+// modelDeployment reads the model settings. A provider set demands a model name and a
+// key: half a deployment would serve an investigations surface that fails on first use,
+// and whoever set one variable is still reading when this refuses. What the values MEAN —
+// a provider this build implements, an effort level it recognises — is judged at the
+// composition root, which owns that vocabulary.
+func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
+	provider, _ := lookup(EnvModelProvider)
+	cfg.ModelProvider = strings.TrimSpace(provider)
+	name, _ := lookup(EnvModelName)
+	cfg.ModelName = strings.TrimSpace(name)
+	effort, _ := lookup(EnvModelEffort)
+	cfg.ModelEffort = strings.TrimSpace(effort)
+
+	consented, _ := lookup(EnvModelConsented)
+	for _, entry := range strings.Split(consented, ",") {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			cfg.ModelConsented = append(cfg.ModelConsented, trimmed)
+		}
+	}
+
+	baseURL, err := optionalVendorURL(lookup, EnvModelBaseURL)
+	if err != nil {
+		return err
+	}
+	cfg.ModelBaseURL = baseURL
+
+	path, _ := lookup(EnvModelKeyFile)
+	path = strings.TrimSpace(path)
+	if cfg.ModelProvider == "" {
+		if path != "" || cfg.ModelName != "" {
+			return fmt.Errorf("%s is required when a model is configured", EnvModelProvider)
+		}
+		return nil
+	}
+	if cfg.ModelName == "" {
+		return fmt.Errorf("%s is required when %s is set: a constructed model identifier "+
+			"is a 404 at best", EnvModelName, EnvModelProvider)
+	}
+	if path == "" {
+		return fmt.Errorf("%s is required when %s is set", EnvModelKeyFile, EnvModelProvider)
+	}
+	key, err := readSecretFile(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvModelKeyFile, err)
+	}
+	cfg.ModelKey = key
+	return nil
+}
+
+// gitHubApp reads the deployment's GitHub App credential: both halves or neither. Half a
+// credential would serve a catalog whose GitHub entry can never work, and the person who
+// set one variable is still reading when this refuses. The key file's contents never
+// appear in an error.
+func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
+	id, _ := lookup(EnvGitHubAppID)
+	id = strings.TrimSpace(id)
+	path, _ := lookup(EnvGitHubAppKeyFile)
+	path = strings.TrimSpace(path)
+
+	switch {
+	case id == "" && path == "":
+		return "", nil, nil
+	case id == "":
+		return "", nil, fmt.Errorf("%s is required when %s is set",
+			EnvGitHubAppID, EnvGitHubAppKeyFile)
+	case path == "":
+		return "", nil, fmt.Errorf("%s is required when %s is set",
+			EnvGitHubAppKeyFile, EnvGitHubAppID)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s: the key file could not be read", EnvGitHubAppKeyFile)
+	}
+	if len(raw) == 0 {
+		return "", nil, fmt.Errorf("%s: the key file is empty", EnvGitHubAppKeyFile)
+	}
+	return id, raw, nil
+}
+
+// optionalVendorURL reads a base URL a provider reaches its vendor at. Unlike an origin,
+// a path is allowed — vendor APIs live under one — and https is required except on
+// loopback, because a credential is presented to whatever answers here.
+func optionalVendorURL(lookup func(string) (string, bool), key string) (string, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	trimmed := strings.TrimSuffix(strings.TrimSpace(value), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return "", fmt.Errorf("%s must be an absolute URL such as https://vendor.example.com/api", key)
+	}
+	if parsed.Scheme != "https" && parsed.Hostname() != "localhost" &&
+		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
+		return "", fmt.Errorf("%s must be https; a credential is presented to this URL", key)
+	}
+	return trimmed, nil
 }
 
 func optionalDuration(

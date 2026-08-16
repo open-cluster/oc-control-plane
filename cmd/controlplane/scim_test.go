@@ -232,7 +232,7 @@ func TestOperatorSCIM_ADirectoryProvisionsPeopleAndGroups(t *testing.T) {
 	// The administrator's decision, on the OPERATOR surface and behind identity.configure.
 	mapped := plane.call(t, http.MethodPut,
 		plane.base(identityOrg)+"/directory-groups/"+provisionedGroup.ID+"/role",
-		map[string]string{"role": "investigator"}, asBootstrap)
+		map[string]string{"role": "editor"}, asBootstrap)
 	if mapped.status != http.StatusOK {
 		t.Fatalf("mapping the group = %d: %s", mapped.status, mapped.body)
 	}
@@ -240,7 +240,7 @@ func TestOperatorSCIM_ADirectoryProvisionsPeopleAndGroups(t *testing.T) {
 	// And now the person holds it — without signing in, and without the directory doing
 	// anything further.
 	afterMapping := readSCIMUser(t, directory, person.ID)
-	if len(afterMapping.Roles) != 1 || afterMapping.Roles[0] != string(authz.Investigator) {
+	if len(afterMapping.Roles) != 1 || afterMapping.Roles[0] != string(authz.Editor) {
 		t.Errorf("mapping the group produced %v, want the investigator role", afterMapping.Roles)
 	}
 
@@ -248,7 +248,7 @@ func TestOperatorSCIM_ADirectoryProvisionsPeopleAndGroups(t *testing.T) {
 	listed := plane.call(t, http.MethodGet, plane.base(identityOrg)+"/directory-groups",
 		nil, asBootstrap)
 	if !strings.Contains(listed.body, "OpenCluster Investigators") ||
-		!strings.Contains(listed.body, "investigator") {
+		!strings.Contains(listed.body, "editor") {
 		t.Errorf("the administrator's view does not show the group and what it grants: %s",
 			listed.body)
 	}
@@ -411,13 +411,13 @@ func TestOperatorSCIM_TheDirectoryCredentialReachesNothingElse(t *testing.T) {
 
 	for name, path := range map[string]string{
 		"the relay roster":   "/relays",
-		"connections":        "/connections",
-		"investigations":     "/investigations",
 		"the audit trail":    "/audit-events",
 		"identity providers": "/identity-providers",
 		"members":            "/members",
 		"api tokens":         "/api-tokens",
-		"environments":       "/environments",
+		"integrations":       "/integrations",
+		"the type catalog":   "/integration-types",
+		"incidents":          "/incidents",
 	} {
 		t.Run(name, func(t *testing.T) {
 			refused := plane.call(t, http.MethodGet, plane.base(identityOrg)+path, nil,
@@ -438,7 +438,7 @@ func TestOperatorSCIM_TheDirectoryCredentialReachesNothingElse(t *testing.T) {
 
 	refused := plane.call(t, http.MethodPut,
 		plane.base(identityOrg)+"/directory-groups/"+provisioned.ID+"/role",
-		map[string]string{"role": "organization_owner"}, asToken(directory.secret))
+		map[string]string{"role": "admin"}, asToken(directory.secret))
 	if refused.status != http.StatusForbidden {
 		t.Errorf("a directory mapped its own group to a role: %d %s",
 			refused.status, refused.body)
@@ -449,7 +449,7 @@ func TestOperatorSCIM_TheDirectoryCredentialReachesNothingElse(t *testing.T) {
 	// administrative takeover one directory edit wide.
 	byOwner := plane.call(t, http.MethodPut,
 		plane.base(identityOrg)+"/directory-groups/"+provisioned.ID+"/role",
-		map[string]string{"role": "organization_owner"}, asBootstrap)
+		map[string]string{"role": "admin"}, asBootstrap)
 	if byOwner.status != http.StatusBadRequest {
 		t.Errorf("a group was mapped to the owner role: %d %s", byOwner.status, byOwner.body)
 	}

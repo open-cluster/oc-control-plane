@@ -58,7 +58,7 @@ func (p *Placements) IssueSession(
 	}()
 
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO operator_session (session_id, token_digest, user_id, organization,
+		INSERT INTO operator_session (session_id, token_digest, user_id, org_id,
 		                              issued_at, expires_at, last_seen_at, user_agent, address)
 		VALUES ($1, $2, $3, $4, $5, $6, $5, $7, $8)`,
 		issued.ID, digest, issued.UserID, organization.String(), issued.IssuedAt,
@@ -126,7 +126,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		   SET last_seen_at = CASE WHEN last_seen_at < now() - $2::INTERVAL
 		                           THEN now() ELSE last_seen_at END
 		 WHERE token_digest = $1
-		RETURNING session_id, user_id, organization, issued_at, expires_at, last_seen_at,
+		RETURNING session_id, user_id, org_id, issued_at, expires_at, last_seen_at,
 		          revoked_at, user_agent, address,
 		          (SELECT email FROM app_user WHERE app_user.user_id = operator_session.user_id),
 		          (SELECT display_name FROM app_user WHERE app_user.user_id = operator_session.user_id),
@@ -229,7 +229,7 @@ func (p *Placements) RevokeSessionsOf(
 			tag, err := transaction.Exec(ctx, `
 				UPDATE operator_session
 				   SET revoked_at = now(), revoked_by = $3
-				 WHERE user_id = $1 AND organization = $2 AND revoked_at IS NULL`,
+				 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
 				user, organization.String(), principal.ID())
 			if err != nil {
 				return 0, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
@@ -257,7 +257,7 @@ func (p *Placements) ListSessions(
 		SELECT session_id, user_id, issued_at, expires_at, last_seen_at, revoked_at,
 		       user_agent, address
 		  FROM operator_session
-		 WHERE organization = $1 AND revoked_at IS NULL AND expires_at > now()
+		 WHERE org_id = $1 AND revoked_at IS NULL AND expires_at > now()
 		 ORDER BY last_seen_at DESC
 		 LIMIT $2`, organization.String(), maxPageSize)
 	if err != nil {
@@ -321,7 +321,7 @@ func (p *Placements) SessionPolicy(
 	var seconds, retention int
 	err = pool.QueryRow(ctx, `
 		SELECT session_lifetime_seconds, audit_retention_days
-		  FROM organization_policy WHERE organization = $1`,
+		  FROM organization_policy WHERE org_id = $1`,
 		organization.String()).Scan(&seconds, &retention)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A tenant that has configured nothing takes the product's defaults rather than
@@ -345,17 +345,17 @@ func (p *Placements) SetSessionPolicy(
 			var beforeSeconds, beforeRetention int
 			err := transaction.QueryRow(ctx, `
 				SELECT session_lifetime_seconds, audit_retention_days
-				  FROM organization_policy WHERE organization = $1 FOR UPDATE`,
+				  FROM organization_policy WHERE org_id = $1 FOR UPDATE`,
 				organization.String()).Scan(&beforeSeconds, &beforeRetention)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("reading the policy: %w", err)
 			}
 
 			if _, err := transaction.Exec(ctx, `
-				INSERT INTO organization_policy (organization, session_lifetime_seconds,
+				INSERT INTO organization_policy (org_id, session_lifetime_seconds,
 				                                 audit_retention_days, updated_by)
 				VALUES ($1, $2, $3, $4)
-				ON CONFLICT (organization) DO UPDATE
+				ON CONFLICT (org_id) DO UPDATE
 				    SET session_lifetime_seconds = EXCLUDED.session_lifetime_seconds,
 				        audit_retention_days     = EXCLUDED.audit_retention_days,
 				        updated_at               = now(),

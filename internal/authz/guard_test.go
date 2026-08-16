@@ -98,7 +98,7 @@ func call(t *testing.T, router http.Handler, method, path string, headers ...str
 func TestAForeignOrganizationIsIndistinguishableFromOneThatDoesNotExist(t *testing.T) {
 	t.Parallel()
 
-	router := guardOver(t, memberOf(t, "org-a", authz.OrganizationOwner), nil)
+	router := guardOver(t, memberOf(t, "org-a", authz.Admin), nil)
 
 	existsElsewhere, foreignBody := call(t, router, http.MethodGet,
 		"/operator/v1/organizations/org-b/relays")
@@ -190,7 +190,7 @@ func TestAnUnauthenticatedRequestIsRefusedAndNotRecorded(t *testing.T) {
 func TestACookieBorneUnsafeRequestNeedsAnAllowedOrigin(t *testing.T) {
 	t.Parallel()
 
-	router := guardOver(t, memberOf(t, "org-a", authz.OrganizationOwner), nil)
+	router := guardOver(t, memberOf(t, "org-a", authz.Admin), nil)
 	const path = "/operator/v1/organizations/org-a/relays/r1/clear-conflict"
 
 	for _, testCase := range []struct {
@@ -229,7 +229,7 @@ func TestAServiceAccountNeedsNoOrigin(t *testing.T) {
 
 	principal, err := authz.NewPrincipal(authz.KindServiceAccount, "svc-1", "ci",
 		[]authz.Membership{{
-			Organization: organizationNamed(t, "org-a"), Role: authz.PlatformAdministrator,
+			Organization: organizationNamed(t, "org-a"), Role: authz.Admin,
 		}})
 	if err != nil {
 		t.Fatalf("building a service principal: %v", err)

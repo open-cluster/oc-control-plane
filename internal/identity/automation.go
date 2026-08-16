@@ -173,11 +173,11 @@ func (h Handlers) issueToken(writer http.ResponseWriter, request *http.Request) 
 			errorView{Error: "role is not one this build has"})
 		return
 	}
-	// An owner token would be a credential that can appoint owners, sitting in a CI
+	// An admin token would be a credential that can appoint admins, sitting in a CI
 	// environment variable. A person may hold that role; a token may not.
-	if role == authz.OrganizationOwner {
+	if role == authz.Admin {
 		writeJSON(writer, http.StatusBadRequest, errorView{
-			Error: "a token may not hold the owner role; automation runs as something with a " +
+			Error: "a token may not hold the admin role; automation runs as something with a " +
 				"stated job"})
 		return
 	}

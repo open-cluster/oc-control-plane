@@ -10,8 +10,8 @@ import (
 )
 
 // The operator surface's own settings: the bootstrap credential and its scope, where the
-// surface and its console are reachable from a browser, and the key an identity provider's
-// client secret is sealed under.
+// surface and its console are reachable from a browser, and the key presentable
+// credentials are sealed under.
 //
 // They are here rather than in config.go because they are one subject and because config.go
 // was past the length this repository wants a file to be. Nothing about the parsing differs;
@@ -91,7 +91,7 @@ func operatorCredentialScope(lookup func(string) (string, bool), cfg *Config) er
 // nothing. It is named here rather than imported from internal/authz because configuration
 // must not depend on the authorization model to parse; the composition root refuses an
 // unrecognised value when it builds the principal.
-const defaultOperatorTokenRole = "organization_owner"
+const defaultOperatorTokenRole = "admin"
 
 // optionalBrowserURL reads a URL a browser will be sent to or arrive from. It must be an
 // absolute origin with no path, because everything downstream appends one.
@@ -158,33 +158,33 @@ func allowedOrigins(lookup func(string) (string, bool)) ([]string, error) {
 	return origins, nil
 }
 
-// identityEncryptionKey reads the key an identity provider's client secret is sealed under.
+// sealingKey reads the key presentable credentials are sealed under.
 //
 // The file holds the key as base64 or as raw bytes; both are accepted because a key generated
 // with openssl and one generated with head -c 32 are both what an operator will reach for. No
 // error here quotes the file's contents.
-func identityEncryptionKey(lookup func(string) (string, bool)) ([]byte, error) {
-	path, _ := lookup(EnvIdentityEncryptionKeyFile)
+func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
+	path, _ := lookup(EnvSealingKeyFile)
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
 	raw, err := os.ReadFile(strings.TrimSpace(path))
 	if err != nil {
-		return nil, fmt.Errorf("%s: the key file could not be read", EnvIdentityEncryptionKeyFile)
+		return nil, fmt.Errorf("%s: the key file could not be read", EnvSealingKeyFile)
 	}
 
 	trimmed := strings.TrimSpace(string(raw))
 	if decoded, decodeErr := base64.StdEncoding.DecodeString(trimmed); decodeErr == nil &&
-		len(decoded) == identityKeyLength {
+		len(decoded) == sealingKeyLength {
 		return decoded, nil
 	}
-	if len(raw) == identityKeyLength {
+	if len(raw) == sealingKeyLength {
 		return raw, nil
 	}
 	return nil, fmt.Errorf("%s: the key must be %d bytes, raw or base64-encoded",
-		EnvIdentityEncryptionKeyFile, identityKeyLength)
+		EnvSealingKeyFile, sealingKeyLength)
 }
 
-// identityKeyLength is AES-256's key size. It is stated here rather than imported so that
+// sealingKeyLength is AES-256's key size. It is stated here rather than imported so that
 // configuration parses without depending on the package that uses the key.
-const identityKeyLength = 32
+const sealingKeyLength = 32

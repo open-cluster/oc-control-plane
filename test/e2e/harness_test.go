@@ -60,10 +60,10 @@ type harness struct {
 	plane        *controlPlane
 	relay        *relay
 	registration uuid.UUID
-	// connection is what every job in this harness reaches: a Kubernetes Connection in the
+	// integration is what every job in this harness reaches: a Kubernetes Integration
 	// organization's Default Environment, served by the enrolled relay.
-	connection uuid.UUID
-	workDir    string
+	integration uuid.UUID
+	workDir     string
 	// token is the bootstrap token the first Relay consumed. It is kept so a second Relay can
 	// present it and be refused, which is the only way single-use consumption is observable
 	// from outside this process.
@@ -225,11 +225,11 @@ func (h *harness) startRelay(ctx context.Context, t *testing.T) {
 	}
 	h.registration = h.awaitRegistration(t)
 
-	connection, err := h.truth.evidenceConnection(ctx, organization, h.registration)
+	integration, err := h.truth.kubernetesIntegration(ctx, organization, h.registration)
 	if err != nil {
-		t.Fatalf("creating the evidence connection: %v", err)
+		t.Fatalf("creating the kubernetes integration: %v", err)
 	}
-	h.connection = connection
+	h.integration = integration
 }
 
 // installation describes a Relay pointed at this harness's control plane and cluster. Every
@@ -308,7 +308,7 @@ func (h *harness) enqueueCapability(
 	t.Helper()
 
 	id, err := h.truth.enqueueJob(context.Background(), organization,
-		h.registration, h.connection, capability, version, arguments)
+		h.registration, h.integration, capability, version, arguments)
 	if err != nil {
 		t.Fatalf("enqueueing the job: %v", err)
 	}

@@ -4,413 +4,452 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// One bounded execution, from the deterministic opening to a conclusion or an abstention.
-//
-// Nothing in this file logs evidence content. Identifiers, counts, outcomes and reasons do;
-// the text a customer's systems produced does not, because investigating must not become a
-// disclosure channel.
+// The bounds an investigation runs under. Every one is named because every one is a
+// product decision: they are what "fast, cheap, and not hammering every connected
+// system" means in numbers.
+const (
+	// maxRounds is how many decisions the reasoner gets; the last one must conclude.
+	maxRounds = 4
+	// maxCallsPerRound bounds one decision's reads.
+	maxCallsPerRound = 4
+	// maxRuns bounds the whole investigation's reads.
+	maxRuns = 12
+	// runTimeout bounds one tool execution.
+	runTimeout = 30 * time.Second
+	// decideTimeout bounds one reasoner decision; models that think take minutes.
+	decideTimeout = 6 * time.Minute
+	// investigationTimeout bounds the whole run.
+	investigationTimeout = 30 * time.Minute
+	// maxConcurrent bounds how many investigations one process runs at once. Each spends
+	// model budget and reads connected systems; the per-investigation bounds do not add
+	// up to a process-wide one by themselves.
+	maxConcurrent = 4
+)
 
-// pollInterval is how often a dispatched read is checked for. It is short because a round holds a
-// lease while it waits and a long interval spends that lease on sleeping.
-const pollInterval = 250 * time.Millisecond
+// Persisted-text bounds, mirroring the schema's own CHECK constraints (which count
+// characters, as these do): a record that says why something failed must never itself
+// fail to be recorded for saying it at too much length.
+const (
+	maxRunErrorLength = 1024
+	maxSummaryLength  = 512
+	maxReasonLength   = 512
+)
 
-// Runner executes one round of one investigation.
+// bounded cuts text at a rune boundary inside the limit.
+func bounded(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
+}
+
+// Runner executes investigations in the background: routes, reads, records, and asks
+// the reasoner to decide. One per process, so shutdown can drain what is running.
 type Runner struct {
 	Store    Store
+	Catalog  integrations.Catalog
+	Sealer   seal.Sealer
 	Reasoner Reasoner
 	Logger   *slog.Logger
-	// Versions is what this build pins into every round it opens, so a recorded transcript made for
-	// different components is detected rather than silently replayed.
-	Versions Versions
-	// Transcripts records what the model said in each round and files it. Nil records nothing,
-	// which is what a deployment that named nowhere to put recordings gets.
-	Transcripts Transcripts
-	// Now is the clock. Injected so a test can bound a round without waiting one out.
-	Now func() time.Time
+
+	running sync.WaitGroup
+	mu      sync.Mutex
+	active  int
+	// base is the process-lifetime context every investigation runs under; cancelling it
+	// fails what is still running rather than orphaning it.
+	base   context.Context
+	cancel context.CancelFunc
+	once   sync.Once
 }
 
-// round is the state one execution carries. It exists so the phases below read as phases rather
-// than as a function threading nine values through itself.
-type round struct {
-	organization tenancy.Organization
-	held         Claimed
-	fence        Fence
-	controls     Controls
-	started      time.Time
-	// reasoner is the boundary THIS round talks to. It is here rather than on the Runner because a
-	// round being recorded gets a recorder of its own: one shared across concurrent rounds would
-	// accumulate all of them into a transcript that replays as none of them.
-	reasoner Reasoner
-	// recording is the same value when this round is being recorded, and nil when it is not.
-	recording Transcribed
-
-	spent      Spend
-	hypotheses []Hypothesis
-	evidence   []Item
-	gaps       []Gap
-	// sent is every read this round dispatched, in the order it dispatched them.
-	sent []Request
-	// knownPods is what the brief resolved. A log read may name one of these and nothing else.
-	knownPods []string
-	// exhausted names the execution limit this round reached, when it reached one.
-	exhausted Limit
-	// produced reports whether this round got anything at all. A limit reached before it did is a
-	// platform failure rather than an abstention.
-	produced bool
+// AtCapacity reports whether starting another investigation now would exceed the
+// process's concurrency bound. The handler consults it BEFORE creating the record, so a
+// refusal leaves nothing behind; the small race two concurrent opens can win is bounded
+// by every investigation's own budgets.
+func (r *Runner) AtCapacity() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.active >= maxConcurrent
 }
 
-// Run executes one claimed round to a terminal outcome.
-//
-// It returns an error only when the round could not be ENDED — a storage failure, or a lease lost
-// to another execution. Everything else, including the model provider being unavailable and every
-// execution limit being reached, is an outcome rather than an error, because those are things the
-// case has to record rather than things the process should retry.
-func (r Runner) Run(ctx context.Context, organization tenancy.Organization, held Claimed) error {
-	controls := held.Round.Controls
-	if controls.Deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, controls.Deadline)
-		defer cancel()
-	}
-
-	execution := &round{
-		organization: organization,
-		held:         held,
-		fence:        held.Fence(),
-		controls:     controls,
-		started:      r.now(),
-		reasoner:     r.Reasoner,
-	}
-	if r.Transcripts != nil {
-		execution.recording = r.Transcripts.Begin(r.Reasoner)
-		execution.reasoner = execution.recording
-	}
-
-	outcome, err := r.execute(ctx, execution)
-	if err != nil {
-		if errors.Is(err, ErrLeaseLost) {
-			// Another execution owns this round now, or it was cancelled. Stopping is the correct
-			// answer: retrying would be the duplicate execution the fence exists to prevent.
-			r.Logger.InfoContext(ctx, "investigation round released to another execution",
-				slog.String("investigation_id", held.Investigation.ID.String()),
-				slog.String("round_id", held.Round.ID.String()))
-			return nil
-		}
-		// The round could not be carried out for a reason the case cannot record from inside
-		// itself. It is failed rather than left running, because a round nothing is working on that
-		// still reads as running is what a stalled case looks like.
-		r.Logger.ErrorContext(ctx, "investigation round failed",
-			slog.String("investigation_id", held.Investigation.ID.String()),
-			slog.String("round_id", held.Round.ID.String()),
-			slog.String("error", err.Error()))
-		outcome = RoundFailed
-	}
-	// Filed before the round is finished, not after. A storage failure closing the round is
-	// precisely when somebody will want to read what the model said, and filing afterwards would
-	// lose the recording on the one path where it is worth most.
-	r.fileTranscript(ctx, execution)
-
-	execution.spent.Duration = r.now().Sub(execution.started)
-	// Spend is recorded before the round is finished, because finishing releases the lease and a
-	// fenced write after that would be refused — which would lose the figure an operator prices the
-	// feature with.
-	if spendErr := r.Store.RecordSpend(
-		ctx, organization, execution.fence, execution.spent); spendErr != nil &&
-		!errors.Is(spendErr, ErrLeaseLost) {
-		return spendErr
-	}
-
-	finishErr := r.Store.FinishRound(ctx, organization, execution.fence, Finish{
-		Outcome:   outcome,
-		Exhausted: execution.exhausted,
+// Start launches one investigation in the background. The record already exists and is
+// running; this fills its provenance and ends it.
+func (r *Runner) Start(organization tenancy.Organization, opened Investigation) {
+	r.once.Do(func() {
+		r.base, r.cancel = context.WithCancel(context.Background())
 	})
-	if errors.Is(finishErr, ErrLeaseLost) {
-		return nil
-	}
-	if finishErr != nil {
-		return finishErr
-	}
-
-	r.Logger.InfoContext(ctx, "investigation round finished",
-		slog.String("investigation_id", held.Investigation.ID.String()),
-		slog.String("round_id", held.Round.ID.String()),
-		slog.String("outcome", outcome.String()),
-		slog.Int("evidence", len(execution.evidence)),
-		slog.Int("coverage_gaps", len(execution.gaps)),
-		slog.Int("requests", execution.spent.Requests))
-	return nil
+	r.mu.Lock()
+	r.active++
+	r.mu.Unlock()
+	r.running.Add(1)
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.active--
+			r.mu.Unlock()
+			r.running.Done()
+		}()
+		ctx, done := context.WithTimeout(r.base, investigationTimeout)
+		defer done()
+		r.run(ctx, organization, opened)
+	}()
 }
 
-// fileTranscriptTimeout bounds writing a recording. It is short because nothing waits on it and
-// the round is already over; a filing that hung would hold a worker slot for a file.
-const fileTranscriptTimeout = 10 * time.Second
+// Drain stops taking the process down with investigations mid-flight: what is running is
+// cancelled — each fails with the reason recorded — and waited for.
+func (r *Runner) Drain() {
+	r.once.Do(func() {
+		r.base, r.cancel = context.WithCancel(context.Background())
+	})
+	r.cancel()
+	r.running.Wait()
+}
 
-// fileTranscript writes what the model said in this round, when this deployment records at all.
-//
-// Two decisions are load-bearing. The context is detached from the round's, because a round that
-// reached its deadline is one of the rounds most worth reading and filing under a cancelled
-// context would record nothing exactly then. And a failure to file is logged rather than
-// returned: the case is already durable, and losing an investigation because a directory filled
-// up would be trading the product for its diagnostics.
-func (r Runner) fileTranscript(ctx context.Context, execution *round) {
-	if r.Transcripts == nil || execution.recording == nil {
+// run is one whole investigation: route, then a bounded loop of reasoner decisions and
+// tool executions, then the conclusion or the failure — every step recorded as it
+// happens, so an investigation that dies mid-flight still shows how far it got.
+func (r *Runner) run(
+	ctx context.Context, organization tenancy.Organization, opened Investigation,
+) {
+	spend := Spend{}
+
+	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
+	if err != nil {
+		r.fail(ctx, organization, opened.ID, "the connected sources could not be read", spend)
 		return
 	}
-	// Rendered against the versions the ROUND was pinned with rather than the ones this build
-	// carries now. They are the same today; they stop being the same the moment a prompt changes
-	// while a round is in flight, and a recording keyed on the wrong one replays against wording
-	// that never produced it.
-	transcript := execution.recording.Transcript(execution.held.Round.Versions)
+	selected, remainder := route(r.Catalog, candidates, r.routingTerms(ctx, organization, opened))
+	for rank, source := range selected {
+		if err := r.recordSource(ctx, organization, opened.ID, source, rank+1); err != nil {
+			r.fail(ctx, organization, opened.ID, "the routing could not be recorded", spend)
+			return
+		}
+	}
 
-	filing, cancel := context.WithTimeout(context.WithoutCancel(ctx), fileTranscriptTimeout)
-	defer cancel()
+	credentials := newCredentialCache(r.Sealer)
+	var runs []ToolRun
+	expanded := false
 
-	if err := r.Transcripts.File(filing, execution.held, transcript); err != nil {
-		r.Logger.ErrorContext(ctx, "a round's model transcript could not be filed",
-			slog.String("investigation_id", execution.held.Investigation.ID.String()),
-			slog.String("round_id", execution.held.Round.ID.String()),
+	for round := 1; ; round++ {
+		mustConclude := round >= maxRounds || len(runs) >= maxRuns || len(selected) == 0
+
+		decision, decideErr := r.decide(ctx, opened, selected, runs, mustConclude)
+		spend = spend.Add(decision.Spend)
+		if decideErr != nil {
+			r.fail(ctx, organization, opened.ID, reasonerFailure(decideErr), spend)
+			return
+		}
+
+		if mustConclude || len(decision.Calls) == 0 {
+			if citation := checkCitations(decision.Findings, len(runs)); citation != "" {
+				r.fail(ctx, organization, opened.ID, citation, spend)
+				return
+			}
+			writeCtx, done := writeWindow(ctx)
+			defer done()
+			if err := r.Store.ConcludeInvestigation(
+				writeCtx, organization, opened.ID, decision.Findings, spend); err != nil {
+				r.Logger.Error("an investigation's conclusion could not be recorded",
+					slog.String("investigation_id", opened.ID.String()),
+					slog.String("error", err.Error()))
+			}
+			return
+		}
+
+		calls := decision.Calls
+		if len(calls) > maxCallsPerRound {
+			calls = calls[:maxCallsPerRound]
+		}
+		for _, call := range calls {
+			if len(runs) >= maxRuns {
+				break
+			}
+			run := r.execute(ctx, opened, selected, credentials, call, len(runs)+1)
+			runs = append(runs, run)
+			if err := r.Store.RecordToolRun(ctx, organization, opened.ID, run); err != nil {
+				r.fail(ctx, organization, opened.ID, "a tool run could not be recorded", spend)
+				return
+			}
+		}
+
+		// The one expansion, and only when the whole first selection produced nothing:
+		// widening a search that is finding things is how every connected system gets
+		// hammered, which this router exists to prevent.
+		if !expanded && nothingFound(runs) && len(remainder) > 0 {
+			expanded = true
+			more := remainder
+			if len(more) > expansionSources {
+				more = more[:expansionSources]
+			}
+			for offset, source := range more {
+				source.reason = "expanded after the first selection returned nothing: " +
+					source.reason
+				if err := r.recordSource(ctx, organization, opened.ID, source,
+					len(selected)+offset+1); err != nil {
+					r.fail(ctx, organization, opened.ID, "the routing could not be recorded", spend)
+					return
+				}
+				selected = append(selected, source)
+			}
+			remainder = remainder[len(more):]
+		}
+	}
+}
+
+// routingTerms is what the router matches candidates against: the subject, the
+// operator's question, and the triggering alert's own labels — a namespace or service
+// label is exactly the term that picks the right channel and repository.
+func (r *Runner) routingTerms(
+	ctx context.Context, organization tenancy.Organization, opened Investigation,
+) []string {
+	parts := []string{opened.Subject, opened.Question}
+	if opened.EpisodeID != uuid.Nil {
+		// Best-effort: an unreadable trigger narrows the terms, never fails the run.
+		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {
+			for key, value := range trigger.Labels {
+				parts = append(parts, key, value)
+			}
+		}
+	}
+	return subjectTerms(parts...)
+}
+
+// decide asks the reasoner for the next move, under its own deadline.
+func (r *Runner) decide(
+	ctx context.Context, opened Investigation, selected []selection, runs []ToolRun,
+	mustConclude bool,
+) (Decision, error) {
+	sources := make([]BriefSource, 0, len(selected))
+	for _, source := range selected {
+		sources = append(sources, BriefSource{
+			Integration: source.integration,
+			Tools:       source.tools,
+		})
+	}
+	brief := Brief{
+		Subject:      opened.Subject,
+		Question:     opened.Question,
+		WindowFrom:   opened.WindowFrom,
+		WindowUntil:  opened.WindowUntil,
+		Sources:      sources,
+		Runs:         runs,
+		MustConclude: mustConclude,
+	}
+
+	decideCtx, done := context.WithTimeout(ctx, decideTimeout)
+	defer done()
+	return r.Reasoner.Decide(decideCtx, brief)
+}
+
+// execute performs one proposed read and reports it as a run, success or failure alike:
+// a read that failed is provenance too, and often the provenance that matters.
+func (r *Runner) execute(
+	ctx context.Context, opened Investigation, selected []selection,
+	credentials *credentialCache, call ToolCall, ordinal int,
+) ToolRun {
+	run := ToolRun{
+		ID:          uuid.New(),
+		Ordinal:     ordinal,
+		Tool:        call.Tool,
+		Arguments:   call.Arguments,
+		WindowFrom:  opened.WindowFrom,
+		WindowUntil: opened.WindowUntil,
+		StartedAt:   time.Now().UTC(),
+	}
+
+	source, tool, offered := toolNamed(selected, call.Tool)
+	if !offered {
+		run.Outcome = RunFailed
+		run.Error = "not one of the tools the selected sources offer"
+		run.FinishedAt = time.Now().UTC()
+		return run
+	}
+	run.IntegrationID = source.integration.ID
+	run.Capability = tool.Capability
+
+	credential, err := credentials.open(source.integration)
+	if err != nil {
+		run.Outcome = RunFailed
+		run.Error = "the integration's credential could not be opened"
+		run.FinishedAt = time.Now().UTC()
+		return run
+	}
+
+	runCtx, done := context.WithTimeout(ctx, runTimeout)
+	defer done()
+	result, err := tool.Run(runCtx, integrations.ToolRequest{
+		Integration: source.integration,
+		Credential:  credential,
+		Arguments:   call.Arguments,
+		WindowFrom:  opened.WindowFrom,
+		WindowUntil: opened.WindowUntil,
+	})
+	run.FinishedAt = time.Now().UTC()
+	if err != nil {
+		run.Outcome = RunFailed
+		run.Error = bounded(err.Error(), maxRunErrorLength)
+		return run
+	}
+	run.Outcome = RunSucceeded
+	run.Truncated = result.Truncated
+	run.Summary = bounded(result.Summary, maxSummaryLength)
+	run.Sources = result.Sources
+	run.Content = result.Content
+	return run
+}
+
+func (r *Runner) recordSource(
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	source selection, rank int,
+) error {
+	return r.Store.RecordSource(ctx, organization, id, Source{
+		IntegrationID: source.integration.ID,
+		Rank:          rank,
+		Reason:        bounded(source.reason, maxReasonLength),
+		SelectedAt:    time.Now().UTC(),
+	})
+}
+
+// fail ends the investigation with the reason, writing inside a detached window so a
+// cancelled run can still say why it stopped.
+func (r *Runner) fail(
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	reason string, spend Spend,
+) {
+	writeCtx, done := writeWindow(ctx)
+	defer done()
+	reason = bounded(reason, maxRunErrorLength)
+	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, spend); err != nil {
+		r.Logger.Error("a failed investigation could not be recorded as failed",
+			slog.String("investigation_id", id.String()),
 			slog.String("error", err.Error()))
 	}
 }
 
-// execute is the round itself: orient, reason, gather, reason again, and end.
-func (r Runner) execute(ctx context.Context, execution *round) (RoundOutcome, error) {
-	if err := r.brief(ctx, execution); err != nil {
-		return 0, err
-	}
-	if outcome, done := execution.failedBeforeLooking(); done {
-		return outcome, nil
-	}
+// writeWindow keeps a final write possible after the run's own context ended, bounded so
+// shutdown cannot hang on it.
+func writeWindow(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+}
 
-	proposed, err := execution.reasoner.Hypotheses(ctx, execution.held.Round.Brief)
-	if err != nil {
-		return r.modelFailure(ctx, execution, err)
+// reasonerFailure says why the reasoning step could not run, in words safe for the
+// record: the named outcome, never the provider's own prose.
+func reasonerFailure(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "the investigation was stopped before the reasoner answered"
 	}
-	execution.spend(proposed.Usage)
-	// Pass zero: proposed from the brief alone, before any evidence text existed. That is what
-	// makes the opening comparable between runs, and what tells a later reader which explanations
-	// were predicted rather than discovered.
-	if err = r.propose(ctx, execution, proposed.Hypotheses, 0); err != nil {
-		return 0, err
-	}
+	return "the reasoning step could not run: " + firstLine(err.Error())
+}
 
-	for pass := 1; pass <= execution.controls.MaxAdaptivePasses; pass++ {
-		more, passErr := r.adapt(ctx, execution, pass)
-		if passErr != nil {
-			if errors.Is(passErr, ErrModelUnavailable) {
-				return r.modelFailure(ctx, execution, passErr)
+func firstLine(text string) string {
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		return text[:index]
+	}
+	return text
+}
+
+// checkCitations refuses findings citing runs that never happened. The reasoning
+// infrastructure already validates this at decode; checking again here means a test
+// double cannot accidentally store an untraceable finding either.
+func checkCitations(findings []Finding, runs int) string {
+	for _, finding := range findings {
+		if len(finding.Sources) == 0 {
+			return "the reasoner stated a finding citing no read at all"
+		}
+		cited := append([]int(nil), finding.Sources...)
+		sort.Ints(cited)
+		if cited[0] < 1 || cited[len(cited)-1] > runs {
+			return "the reasoner cited a read that never ran"
+		}
+	}
+	return ""
+}
+
+// toolNamed resolves a proposed tool among the selected sources. Names are globally
+// unique — every provider prefixes its own — so the first match is the match.
+func toolNamed(selected []selection, name string) (selection, integrations.Tool, bool) {
+	for _, source := range selected {
+		for _, tool := range source.tools {
+			if tool.Name == name {
+				return source, tool, true
 			}
-			return 0, passErr
-		}
-		if !more {
-			break
 		}
 	}
-	// Checked again after the passes, not only after the brief. A limit reached during an adaptive
-	// pass leaves the round in exactly the same position — it stopped looking before it had
-	// anything — and a check that only ran once would let that end in an abstention, which would
-	// say the investigation looked and found nothing sufficient when it never got that far.
-	if outcome, done := execution.failedBeforeLooking(); done {
-		return outcome, nil
-	}
-
-	return r.conclude(ctx, execution)
+	return selection{}, integrations.Tool{}, false
 }
 
-// brief assembles the deterministic orientation from the opening reads and pins it.
-//
-// It is written before any hypothesis exists, and it is not expected to contain the answer. A round
-// that terminated at the end of it has abstained rather than investigated.
-func (r Runner) brief(ctx context.Context, execution *round) error {
-	if err := r.Store.AdvanceLifecycle(
-		ctx, execution.organization, execution.fence, LifecycleBriefing); err != nil {
-		return err
-	}
-
-	scope := execution.held.Investigation.Scope
-	window := execution.held.Investigation.Window
-	answered, err := r.gather(ctx, execution, openingProposals(scope, window), 0)
-	if err != nil {
-		return err
-	}
-
-	brief := Brief{
-		Trigger:     execution.held.Investigation.Trigger,
-		Window:      window,
-		Available:   availableCapabilities(execution.controls),
-		AssembledAt: r.now(),
-		Resource: ResourceIdentity{
-			Kind:      scope.WorkloadKind.String(),
-			Name:      scope.WorkloadName,
-			Namespace: scope.Namespace,
-		},
-	}
-	for _, answer := range answered {
-		if answer.Resource != nil {
-			brief.Resource = *answer.Resource
-		}
-		for _, change := range answer.Changes {
-			brief.RecentChanges = append(brief.RecentChanges, Change{
-				At:       change.At,
-				Summary:  change.Summary,
-				Source:   ChangeObserved,
-				Evidence: answer.Items[change.Item].ID,
-			})
-		}
-		for _, fact := range answer.Topology {
-			brief.Topology = append(brief.Topology, TopologyFact{
-				Pod:      fact.Pod,
-				Node:     fact.Node,
-				Owner:    fact.Owner,
-				Phase:    fact.Phase,
-				Ready:    fact.Ready,
-				Evidence: answer.Items[fact.Item].ID,
-			})
-			execution.knownPods = append(execution.knownPods, fact.Pod)
+// nothingFound reports whether every run so far failed or came back empty, which is what
+// justifies the one expansion.
+func nothingFound(runs []ToolRun) bool {
+	for _, run := range runs {
+		if run.Outcome == RunSucceeded && !emptyContent(run.Content) {
+			return false
 		}
 	}
-	if err = r.ledgerChanges(ctx, execution, &brief); err != nil {
-		return err
-	}
-	brief.Coverage = r.coverage(execution)
-
-	if err = r.Store.RecordCoverage(
-		ctx, execution.organization, execution.fence, brief.Coverage); err != nil {
-		return err
-	}
-	if err = r.Store.RecordBrief(ctx, execution.organization, execution.fence, brief); err != nil {
-		return err
-	}
-	execution.held.Round.Brief = brief
-	return nil
+	return true
 }
 
-// maxLedgerChanges bounds what the ledger may contribute to one brief. A namespace mid-deploy
-// can hold hundreds of recorded changes; a brief is an orientation, not the ledger itself, and
-// what was cut is stated as a gap rather than implied complete.
-const maxLedgerChanges = 25
-
-// ledgerChanges merges the change ledger's answer into the brief and records the coverage
-// gaps that keep it honest.
-//
-// The event-derived changes stay beside these deliberately, though the ledger was named as
-// this list's replacement: an observed change is the only CITABLE form of one — the ledger is
-// a navigation index whose changes are revalidated live, and the events read IS that
-// revalidation — and a brief that leaned on the ledger alone would be blind wherever it is
-// cold: a fresh install, a first tick still pending, an outage.
-//
-// A Connection with no ledger scope at all contributes nothing and records no gap. That is
-// the pre-ledger world — a deployment where synchronization never opened for this Connection —
-// and its honesty machinery is the retention-horizon gap the live read already carries. A
-// scope that EXISTS and cannot vouch for the window is different: somebody turned watching on,
-// and silence needs a boundary before it may be read as calm.
-func (r Runner) ledgerChanges(ctx context.Context, execution *round, brief *Brief) error {
-	subject := execution.held.Investigation
-	answer, err := r.Store.RecentLedgerChanges(ctx, execution.organization,
-		subject.Scope.Connection, subject.Scope.Namespace,
-		subject.Window.Start, subject.Window.End, maxLedgerChanges)
-	if err != nil {
-		return err
+// emptyContent reports whether a run's answer holds nothing. Tool contents are slices of
+// items or single records; reflection here keeps the judgement out of every provider.
+func emptyContent(content any) bool {
+	if content == nil {
+		return true
 	}
-	if answer.Scope.ConnectionID == uuid.Nil {
-		return nil
+	value := reflect.ValueOf(content)
+	switch value.Kind() {
+	case reflect.Slice, reflect.Map:
+		return value.Len() == 0
+	default:
+		return false
 	}
-	if !answer.Covered {
-		// Watching was turned on and no baseline has landed yet — a scope that cannot
-		// vouch for any of the window, which is the boundary the spec says silence needs.
-		_, err = r.recordGap(ctx, execution, LedgerUnobservedGap())
-		return err
-	}
-
-	for _, entry := range answer.Entries {
-		brief.RecentChanges = append(brief.RecentChanges, Change{
-			At:      entry.ObservedAt,
-			Summary: entry.Summary(),
-			Source:  ChangeLedger,
-		})
-	}
-	// One time-ordered account, whichever recorder contributed each line. Stable, so two
-	// changes at one instant keep the order their sources reported them in.
-	sort.SliceStable(brief.RecentChanges, func(i, j int) bool {
-		return brief.RecentChanges[i].At.Before(brief.RecentChanges[j].At)
-	})
-
-	var gaps []Gap
-	if answer.Scope.CoveredSince != nil && subject.Window.Start.Before(*answer.Scope.CoveredSince) {
-		gaps = append(gaps, LedgerHorizonGap(*answer.Scope.CoveredSince, subject.Window))
-	}
-	// A stamp is always up to one tick old by design, so currency is judged against the
-	// scope's own cadence: within two intervals of the window's end is as current as the
-	// ledger ever promises, and gapping that would mark every live window stale. A faulted
-	// or truncated scope is stale whatever the stamp says.
-	confirmed := answer.Scope.LastConfirmedAt
-	if confirmed != nil {
-		slack := 2 * answer.Scope.RequestedInterval
-		behind := subject.Window.End.Sub(*confirmed) > slack
-		if behind || answer.Scope.Faulted || answer.Scope.Truncated {
-			gaps = append(gaps, LedgerStaleGap(*confirmed, answer.Scope.Faulted, answer.Scope.Truncated))
-		}
-	}
-	if answer.Truncated {
-		gaps = append(gaps, Gap{
-			Cause:   GapResultTruncated,
-			Subject: "the change ledger's account of this window",
-			Consequence: "more changes were recorded than the brief carries; only the earliest " +
-				"are shown",
-		})
-	}
-	for _, gap := range gaps {
-		if _, err = r.recordGap(ctx, execution, gap); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
-// adapt runs one adaptive pass and reports whether another is worth running.
-func (r Runner) adapt(ctx context.Context, execution *round, pass int) (bool, error) {
-	if err := r.Store.AdvanceLifecycle(
-		ctx, execution.organization, execution.fence, LifecycleReasoning); err != nil {
-		return false, err
-	}
-	if execution.outOfLimits() {
-		r.recordLimitReached(ctx, execution)
-		return false, nil
-	}
+// credentialCache opens each integration's credential once per investigation, not once
+// per call. Not safe for concurrent use; one investigation runs its calls in sequence.
+type credentialCache struct {
+	sealer seal.Sealer
+	opened map[uuid.UUID]string
+	fail   map[uuid.UUID]error
+}
 
-	proposed, err := execution.reasoner.Requests(ctx, r.deliberation(execution, pass))
+func newCredentialCache(sealer seal.Sealer) *credentialCache {
+	return &credentialCache{
+		sealer: sealer,
+		opened: map[uuid.UUID]string{},
+		fail:   map[uuid.UUID]error{},
+	}
+}
+
+func (c *credentialCache) open(integration integrations.Integration) (string, error) {
+	if credential, held := c.opened[integration.ID]; held {
+		return credential, nil
+	}
+	if err, failed := c.fail[integration.ID]; failed {
+		return "", err
+	}
+	if len(integration.CredentialSealed) == 0 {
+		c.opened[integration.ID] = ""
+		return "", nil
+	}
+	credential, err := c.sealer.Open(integration.CredentialSealed)
 	if err != nil {
-		return false, err
+		c.fail[integration.ID] = err
+		return "", err
 	}
-	execution.spend(proposed.Usage)
-	// Recorded before the settlings and before the reads, so a hypothesis this pass discovered can
-	// be settled by this same answer and can justify one of the reads it is asking for.
-	if err = r.propose(ctx, execution, proposed.Hypotheses, pass); err != nil {
-		return false, err
-	}
-	if err = r.settle(ctx, execution, proposed.Weighings, proposed.Settlings); err != nil {
-		return false, err
-	}
-	if len(proposed.Proposals) == 0 {
-		// The planner has nothing further to ask. That is a decision rather than an exhaustion, and
-		// it is what a round that has what it needs looks like.
-		return false, nil
-	}
-
-	if _, err = r.gather(ctx, execution, proposed.Proposals, pass); err != nil {
-		return false, err
-	}
-	if execution.exhausted != 0 {
-		r.recordLimitReached(ctx, execution)
-		return false, nil
-	}
-	return true, nil
+	c.opened[integration.ID] = credential
+	return credential, nil
 }

@@ -23,10 +23,10 @@ var (
 	ErrUserDisabled = errors.New("user disabled")
 	// ErrMembershipUnknown reports a membership this organization does not have.
 	ErrMembershipUnknown = errors.New("membership unknown")
-	// ErrLastOwner reports the change that would leave an organization with no owner. It is
+	// ErrLastAdmin reports the change that would leave an organization with no admin. It is
 	// refused, because a tenant nobody can administer needs a support ticket to recover and
 	// the mistake is one keystroke away from an ordinary role change.
-	ErrLastOwner = errors.New("an organization must keep at least one owner")
+	ErrLastAdmin = errors.New("an organization must keep at least one admin")
 )
 
 // MembershipSource is how a membership came to exist. It is persisted as an integer and
@@ -174,10 +174,10 @@ func (p *Placements) ResolveUser(
 		// keeps it. Re-granting on every sign-in would silently undo an administrator's
 		// deliberate change the next time the person signed in.
 		tag, err := transaction.Exec(ctx, `
-			INSERT INTO organization_membership (membership_id, organization, user_id, role,
+			INSERT INTO organization_membership (membership_id, org_id, user_id, role,
 			                                     source, granted_by)
 			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (organization, user_id) DO NOTHING`,
+			ON CONFLICT (org_id, user_id) DO NOTHING`,
 			uuid.New(), organization.String(), user.ID, string(grant),
 			int16(SourceJIT), "just-in-time provisioning")
 		if err != nil {
@@ -254,7 +254,7 @@ func adoptProvisionedUser(
 		   AND issuer LIKE $2
 		   AND EXISTS (SELECT 1 FROM organization_membership
 		                WHERE organization_membership.user_id = app_user.user_id
-		                  AND organization_membership.organization = $5)
+		                  AND organization_membership.org_id = $5)
 		   -- Nothing to do if a row already holds the real identity, and the unique constraint
 		   -- would refuse the update anyway. Guarding here makes it a no-op rather than an error
 		   -- on every sign-in after the first.
@@ -298,10 +298,10 @@ type querier interface {
 // next request rather than at their next sign-in, for every route at once.
 func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Membership, error) {
 	rows, err := on.Query(ctx, `
-		SELECT organization, role
+		SELECT org_id, role
 		  FROM organization_membership
 		 WHERE user_id = $1 AND active AND role IS NOT NULL
-		 ORDER BY organization`, user)
+		 ORDER BY org_id`, user)
 	if err != nil {
 		return nil, fmt.Errorf("reading memberships: %w", err)
 	}
@@ -355,7 +355,7 @@ func (p *Placements) ListMembers(
 		       person.disabled_at, membership.created_at
 		  FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
-		 WHERE membership.organization = $1
+		 WHERE membership.org_id = $1
 		   AND ($2::TIMESTAMPTZ IS NULL
 		        OR (membership.created_at, membership.membership_id) > ($2::TIMESTAMPTZ, $3::UUID))
 		 ORDER BY membership.created_at, membership.membership_id
@@ -412,24 +412,24 @@ func (p *Placements) SetMembership(
 			var held *string
 			err := transaction.QueryRow(ctx, `
 				SELECT role FROM organization_membership
-				 WHERE organization = $1 AND user_id = $2 AND active FOR UPDATE`,
+				 WHERE org_id = $1 AND user_id = $2 AND active FOR UPDATE`,
 				organization.String(), user).Scan(&held)
 			previous := orEmptyText(held)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
 			}
-			if previous == string(authz.OrganizationOwner) && role != authz.OrganizationOwner {
-				if err := refuseIfLastOwner(ctx, transaction, organization, user); err != nil {
+			if previous == string(authz.Admin) && role != authz.Admin {
+				if err := refuseIfLastAdmin(ctx, transaction, organization, user); err != nil {
 					return Member{}, audit.Target{}, nil, err
 				}
 			}
 
 			var member Member
 			if err := transaction.QueryRow(ctx, `
-				INSERT INTO organization_membership (membership_id, organization, user_id, role,
+				INSERT INTO organization_membership (membership_id, org_id, user_id, role,
 				                                     source, granted_by)
 				VALUES ($1, $2, $3, $4, $5, $6)
-				ON CONFLICT (organization, user_id) DO UPDATE
+				ON CONFLICT (org_id, user_id) DO UPDATE
 				    SET role       = EXCLUDED.role,
 				        source     = EXCLUDED.source,
 				        granted_by = EXCLUDED.granted_by,
@@ -471,7 +471,7 @@ func (p *Placements) RemoveMembership(
 			var membership uuid.UUID
 			err := transaction.QueryRow(ctx, `
 				SELECT membership_id, role FROM organization_membership
-				 WHERE organization = $1 AND user_id = $2 FOR UPDATE`,
+				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
 				organization.String(), user).Scan(&membership, &held)
 			role := orEmptyText(held)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -480,8 +480,8 @@ func (p *Placements) RemoveMembership(
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
 			}
-			if role == string(authz.OrganizationOwner) {
-				if err := refuseIfLastOwner(ctx, transaction, organization, user); err != nil {
+			if role == string(authz.Admin) {
+				if err := refuseIfLastAdmin(ctx, transaction, organization, user); err != nil {
 					return struct{}{}, audit.Target{}, nil, err
 				}
 			}
@@ -497,7 +497,7 @@ func (p *Placements) RemoveMembership(
 			if _, err := transaction.Exec(ctx, `
 				UPDATE operator_session
 				   SET revoked_at = now(), revoked_by = $3
-				 WHERE user_id = $1 AND organization = $2 AND revoked_at IS NULL`,
+				 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
 				user, organization.String(), principal.ID()); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
 			}
@@ -508,19 +508,20 @@ func (p *Placements) RemoveMembership(
 	return err
 }
 
-// refuseIfLastOwner refuses a change that would leave the organization with no owner.
-func refuseIfLastOwner(
+// refuseIfLastAdmin refuses a change that would leave the organization with no admin —
+// a tenant nobody can administer is a lockout, not a configuration.
+func refuseIfLastAdmin(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, except uuid.UUID,
 ) error {
 	var remaining int
 	if err := transaction.QueryRow(ctx, `
 		SELECT count(*) FROM organization_membership
-		 WHERE organization = $1 AND role = $2 AND user_id <> $3 AND active`,
-		organization.String(), string(authz.OrganizationOwner), except).Scan(&remaining); err != nil {
-		return fmt.Errorf("counting owners: %w", err)
+		 WHERE org_id = $1 AND role = $2 AND user_id <> $3 AND active`,
+		organization.String(), string(authz.Admin), except).Scan(&remaining); err != nil {
+		return fmt.Errorf("counting admins: %w", err)
 	}
 	if remaining == 0 {
-		return ErrLastOwner
+		return ErrLastAdmin
 	}
 	return nil
 }
