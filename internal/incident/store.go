@@ -42,9 +42,9 @@ type Query struct {
 	// Search narrows by title and by the source's grouping key. The key is searchable because it
 	// is what an operator has in front of them when they arrive from their own alerting.
 	Search string
-	// Environment narrows to one scope, and is nil when the caller named none.
-	Environment *uuid.UUID
-	Connection  *uuid.UUID
+	// Integration narrows to what arrived through one installation, and is nil when the
+	// caller named none.
+	Integration *uuid.UUID
 	// Status narrows to open or resolved episodes, and is zero when the caller named neither.
 	Status Status
 	// Sort is the field to order by, already checked against what this listing serves.

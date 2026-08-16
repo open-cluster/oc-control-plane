@@ -15,6 +15,7 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -355,7 +356,7 @@ func enqueueJob(
 
 	job := storage.Job{
 		ID:                uuid.New(),
-		ConnectionID:      evidenceConnection(t, placements, organization, registration),
+		IntegrationID:     kubernetesIntegration(t, placements, organization, registration),
 		RegistrationID:    registration,
 		CapabilityID:      capabilityUnderTest,
 		CapabilityVersion: capabilityVersionUnderTest,
@@ -368,10 +369,9 @@ func enqueueJob(
 	return job.ID
 }
 
-// evidenceConnection creates a Kubernetes Connection in the organization's Default
-// Environment, served by this relay. Every job names one: the Connection is what the job
-// reaches, and the relay is where it runs.
-func evidenceConnection(
+// kubernetesIntegration creates a Kubernetes Integration served by this relay. Every job
+// names one: the Integration is what the job reaches, and the relay is where it runs.
+func kubernetesIntegration(
 	t *testing.T, placements *storage.Placements,
 	organization tenancy.Organization, registration uuid.UUID,
 ) uuid.UUID {
@@ -381,20 +381,13 @@ func evidenceConnection(
 	defer cancel()
 
 	acting := ownerOf(t, organization)
-	environment, err := placements.EnsureDefaultEnvironment(ctx, acting, organization)
-	if err != nil {
-		t.Fatalf("ensuring the default environment: %v", err)
-	}
-	created, err := placements.CreateConnection(ctx, acting, organization, storage.NewConnection{
-		Environment:       environment.ID,
-		Integration:       "kubernetes",
-		Name:              "cluster " + uuid.NewString(),
-		Role:              storage.RoleEvidence,
-		Locality:          storage.LocalityRelay,
-		RelayRegistration: registration,
+	created, err := placements.CreateIntegration(ctx, acting, organization, integrations.NewIntegration{
+		Type:    integrations.TypeKubernetes,
+		Name:    "cluster " + uuid.NewString(),
+		RelayID: registration,
 	})
 	if err != nil {
-		t.Fatalf("creating an evidence connection: %v", err)
+		t.Fatalf("creating a kubernetes integration: %v", err)
 	}
 	return created.ID
 }
@@ -416,7 +409,7 @@ func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
 	t.Helper()
 
 	principal, err := authz.NewPrincipal(authz.KindUser, "harness", "Test Harness",
-		[]authz.Membership{{Organization: organization, Role: authz.OrganizationOwner}})
+		[]authz.Membership{{Organization: organization, Role: authz.Admin}})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)
 	}

@@ -99,7 +99,7 @@ func draining(within time.Duration) *relayv1.ControlToRelay {
 func inventoryPolicy(scope changeledger.Scope) *relayv1.ControlToRelay {
 	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_InventorySynchronizationPolicy{
 		InventorySynchronizationPolicy: &relayv1.InventorySynchronizationPolicy{
-			ConnectionId:      scope.ConnectionID.String(),
+			ConnectionId:      scope.IntegrationID.String(),
 			Revision:          uint64(scope.PolicyRevision),
 			RequestedInterval: durationpb.New(scope.RequestedInterval),
 		},

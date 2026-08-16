@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -28,11 +29,11 @@ const (
 // Job is a unit of work as the control plane holds it.
 type Job struct {
 	ID uuid.UUID
-	// ConnectionID is what this job reaches: one configured instance of an Integration, inside
-	// one Environment. The registration below is where it RUNS. Keeping both is what lets a
-	// customer with two clusters behind one Relay have a result attributed to the cluster it
-	// was read from rather than to the installation that read it.
-	ConnectionID   uuid.UUID
+	// IntegrationID is what this job reaches: one configured installation. The
+	// registration below is where it RUNS. Keeping both is what lets a customer with two
+	// clusters behind one Relay have a result attributed to the cluster it was read from
+	// rather than to the installation that read it.
+	IntegrationID  uuid.UUID
 	RegistrationID uuid.UUID
 	CapabilityID   string
 	// Widened to the protocol's type rather than a plain int, so the version a relay is asked
@@ -52,38 +53,32 @@ type JobFence struct {
 	LeaseEpoch   int64
 }
 
-// ErrJobRefused reports work that was not enqueued because its Connection could not carry it.
-// Nothing was written.
+// ErrJobRefused reports work that was not enqueued because its Integration could not carry
+// it. Nothing was written.
 var ErrJobRefused = errors.New("job refused")
 
-// JobRefusal is why work was not enqueued. Each is a different mistake by whoever planned the
-// job, and telling them apart is what makes the boundary diagnosable rather than mysterious.
+// JobRefusal is why work was not enqueued. Each is a different mistake by whoever planned
+// the job, and telling them apart is what makes the boundary diagnosable rather than
+// mysterious.
 type JobRefusal int
 
 const (
-	// JobConnectionUnknown means no such Connection exists in this organization, or it has
-	// been disabled. Both are one answer: an operator who turned a Connection off wants work
-	// against it refused, not merely recorded.
-	JobConnectionUnknown JobRefusal = iota + 1
-	// JobConnectionIsNotEvidence means the Connection exists but is trigger-only. It delivers
-	// Signals inbound and answers nothing outbound, so there is nothing for a capability to
-	// read through it.
-	JobConnectionIsNotEvidence
-	// JobRelayIsNotTheConnections means the job names a Relay that is not the one bound to its
-	// Connection — including a Connection whose locality is control_plane and which no Relay
-	// serves. Dispatching anyway would send a read for one customer's cluster to an
-	// installation sitting in another.
-	JobRelayIsNotTheConnections
+	// JobIntegrationUnknown means no such Integration exists in this organization, or it
+	// has been disabled. Both are one answer: an operator who turned an Integration off
+	// wants work against it refused, not merely recorded.
+	JobIntegrationUnknown JobRefusal = iota + 1
+	// JobRelayIsNotTheIntegrations means the job names a Relay that is not the one bound
+	// to its Integration — including an Integration no Relay serves. Dispatching anyway
+	// would send a read for one customer's cluster to an installation sitting in another.
+	JobRelayIsNotTheIntegrations
 )
 
 func (r JobRefusal) String() string {
 	switch r {
-	case JobConnectionUnknown:
-		return "connection unknown or disabled"
-	case JobConnectionIsNotEvidence:
-		return "connection does not answer evidence reads"
-	case JobRelayIsNotTheConnections:
-		return "relay is not the one bound to this connection"
+	case JobIntegrationUnknown:
+		return "integration unknown or disabled"
+	case JobRelayIsNotTheIntegrations:
+		return "relay is not the one bound to this integration"
 	default:
 		return "unrecognised"
 	}
@@ -93,12 +88,12 @@ func (r JobRefusal) String() string {
 // a session claims it, so a job that is enqueued while every relay is offline waits rather
 // than being lost.
 //
-// The Connection is a PRECONDITION rather than a column copied in. The insert only produces a
-// row when a live evidence Connection exists in this organization AND the Relay it is bound to
-// is the one the job names, so the environment boundary is checked on the execution path
-// rather than left to whichever query happened to scope itself correctly. Deciding it inside
-// the insert also means a Connection disabled between a check and a write cannot leave work
-// queued against it.
+// The Integration is a PRECONDITION rather than a column copied in. The insert only
+// produces a row when a live Integration exists in this organization AND the Relay it is
+// bound to is the one the job names, so the tenant boundary is checked on the execution
+// path rather than left to whichever query happened to scope itself correctly. Deciding it
+// inside the insert also means an Integration disabled between a check and a write cannot
+// leave work queued against it.
 func (p *Placements) EnqueueJob(
 	ctx context.Context, organization tenancy.Organization, job Job,
 ) (JobRefusal, error) {
@@ -108,20 +103,18 @@ func (p *Placements) EnqueueJob(
 	}
 	tag, err := pool.Exec(ctx, `
 		INSERT INTO relay_job
-			(job_id, organization, connection_id, registration_id,
+			(job_id, org_id, integration_id, registration_id,
 			 capability_id, capability_version, arguments)
-		SELECT $1, $2, connection.connection_id, connection.relay_registration_id, $5, $6, $7
-		  FROM connection
-		 WHERE connection.connection_id  = $3
-		   AND connection.organization   = $2
-		   AND connection.disabled_at   IS NULL
-		   -- 2 evidence, 3 both. A trigger-only Connection answers nothing outbound.
-		   AND connection.role          IN (2, 3)
-		   -- The registration is taken FROM the Connection and compared to the one the job
-		   -- names, rather than trusted from the job. A caller that got it wrong is refused
-		   -- instead of silently redirected.
-		   AND connection.relay_registration_id = $4`,
-		job.ID, organization.String(), job.ConnectionID, job.RegistrationID,
+		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7
+		  FROM integration
+		 WHERE integration.integration_id = $3
+		   AND integration.org_id         = $2
+		   AND integration.disabled_at   IS NULL
+		   -- The registration is taken FROM the Integration and compared to the one the
+		   -- job names, rather than trusted from the job. A caller that got it wrong is
+		   -- refused instead of silently redirected.
+		   AND integration.relay_id       = $4`,
+		job.ID, organization.String(), job.IntegrationID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments)
 	if err != nil {
 		return 0, fmt.Errorf("enqueueing job: %w", err)
@@ -141,17 +134,15 @@ func (p *Placements) EnqueueJob(
 func (p *Placements) explainRefusedJob(
 	ctx context.Context, organization tenancy.Organization, job Job,
 ) (JobRefusal, error) {
-	connection, err := p.ConnectionForOrganization(ctx, organization, job.ConnectionID)
+	integration, err := p.Integration(ctx, organization, job.IntegrationID)
 	switch {
-	case errors.Is(err, ErrConnectionUnknown):
-		return JobConnectionUnknown, ErrJobRefused
+	case errors.Is(err, integrations.ErrUnknown):
+		return JobIntegrationUnknown, ErrJobRefused
 	case err != nil:
 		return 0, fmt.Errorf("auditing a refused job: %w", err)
-	case connection.Disabled():
-		return JobConnectionUnknown, ErrJobRefused
-	case !connection.Role.Includes(RoleEvidence):
-		return JobConnectionIsNotEvidence, ErrJobRefused
+	case integration.Disabled():
+		return JobIntegrationUnknown, ErrJobRefused
 	default:
-		return JobRelayIsNotTheConnections, ErrJobRefused
+		return JobRelayIsNotTheIntegrations, ErrJobRefused
 	}
 }

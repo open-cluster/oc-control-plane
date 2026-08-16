@@ -60,7 +60,7 @@ func writeEvent(ctx context.Context, on executor, event audit.Event) error {
 	}
 
 	if _, err := on.Exec(ctx, `
-		INSERT INTO audit_event (event_id, organization, actor_kind, actor_id,
+		INSERT INTO audit_event (event_id, org_id, actor_kind, actor_id,
 		                         actor_display_name, action, target_kind, target_id, outcome,
 		                         source_address, request_id, detail, occurred_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
@@ -169,7 +169,7 @@ func (p *Placements) AuditEvents(
 		SELECT event_id, actor_kind, actor_id, actor_display_name, action, target_kind,
 		       target_id, outcome, source_address, request_id, detail, occurred_at
 		  FROM audit_event
-		 WHERE organization = $1
+		 WHERE org_id = $1
 		   AND ($2::TIMESTAMPTZ IS NULL
 		        OR (occurred_at, event_id) < ($2::TIMESTAMPTZ, $3::UUID))
 		 ORDER BY occurred_at DESC, event_id DESC
@@ -252,10 +252,10 @@ func (p *Placements) DeclaredRetentions(ctx context.Context) ([]audit.Retention,
 	// A fixed order, so two deployments of the same configuration behave alike.
 	for _, name := range p.names() {
 		rows, err := p.pools[name].Query(ctx, `
-			SELECT organization, audit_retention_days
+			SELECT org_id, audit_retention_days
 			  FROM organization_policy
 			 WHERE audit_retention_days > 0
-			 ORDER BY organization`)
+			 ORDER BY org_id`)
 		if err != nil {
 			return nil, fmt.Errorf("reading retention schedules in placement %q: %w", name, err)
 		}
@@ -323,7 +323,7 @@ func (p *Placements) PruneEventsBefore(
 		 WHERE event_id IN (
 		       SELECT event_id
 		         FROM audit_event
-		        WHERE organization = $1 AND occurred_at < $2
+		        WHERE org_id = $1 AND occurred_at < $2
 		        ORDER BY occurred_at, event_id
 		        LIMIT $3
 		       )`,

@@ -146,7 +146,7 @@ func (p *Placements) ConfigureIdentityProvider(
 			}
 
 			row := transaction.QueryRow(ctx, `
-				INSERT INTO identity_provider (provider_id, organization, name, protocol, issuer,
+				INSERT INTO identity_provider (provider_id, org_id, name, protocol, issuer,
 				                               client_id, client_secret_sealed, saml_metadata,
 				                               verified_domains, jit_enabled, jit_role,
 				                               require_verified_email, group_claim, group_role_map)
@@ -217,7 +217,7 @@ func (p *Placements) UpdateIdentityProvider(
 				       group_claim            = $12,
 				       group_role_map         = $13,
 				       updated_at             = now()
-				 WHERE organization = $1 AND provider_id = $2
+				 WHERE org_id = $1 AND provider_id = $2
 				RETURNING `+providerColumns,
 				organization.String(), id, wanted.Name, wanted.Issuer,
 				nullableText(wanted.ClientID), nilIfEmptyBytes(wanted.ClientSecretSealed),
@@ -257,7 +257,7 @@ func (p *Placements) RemoveIdentityProvider(
 				return struct{}{}, audit.Target{}, nil, err
 			}
 			if _, err := transaction.Exec(ctx, `
-				DELETE FROM identity_provider WHERE organization = $1 AND provider_id = $2`,
+				DELETE FROM identity_provider WHERE org_id = $1 AND provider_id = $2`,
 				organization.String(), id); err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("removing an identity provider: %w", err)
@@ -304,7 +304,7 @@ func providersIn(
 ) ([]IdentityProvider, error) {
 	rows, err := on.Query(ctx, `SELECT `+providerColumns+`
 		  FROM identity_provider
-		 WHERE organization = $1
+		 WHERE org_id = $1
 		 ORDER BY created_at, provider_id`, organization.String())
 	if err != nil {
 		return nil, fmt.Errorf("reading identity providers: %w", err)
@@ -330,7 +330,7 @@ func readProvider(
 ) (IdentityProvider, error) {
 	row := on.QueryRow(ctx, `SELECT `+providerColumns+`
 		  FROM identity_provider
-		 WHERE organization = $1 AND provider_id = $2`, organization.String(), id)
+		 WHERE org_id = $1 AND provider_id = $2`, organization.String(), id)
 
 	provider, err := scanProvider(row, organization.String())
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -368,7 +368,7 @@ func (p *Placements) StartSignIn(
 	digest := sha256.Sum256([]byte(state))
 
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sign_in_flow (flow_id, organization, provider_id, state_digest,
+		INSERT INTO sign_in_flow (flow_id, org_id, provider_id, state_digest,
 		                          code_verifier, nonce, request_id, return_to, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		flow.ID, organization.String(), flow.ProviderID, digest[:],
@@ -403,7 +403,7 @@ func (p *Placements) RedeemSignIn(ctx context.Context, state string) (SignInFlow
 			UPDATE sign_in_flow
 			   SET consumed_at = now()
 			 WHERE state_digest = $1 AND consumed_at IS NULL AND expires_at > now()
-			RETURNING flow_id, organization, provider_id, code_verifier, nonce, request_id,
+			RETURNING flow_id, org_id, provider_id, code_verifier, nonce, request_id,
 			          return_to, expires_at`, digest[:]).Scan(&flow.ID, &flow.Organization,
 			&flow.ProviderID, &verifier, &nonce, &request, &flow.ReturnTo, &flow.ExpiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -530,6 +530,6 @@ func orEmptyDomains(domains []string) []string {
 // name, and by naming the same client at the same issuer. Both answer the operator the same
 // way, because both mean "you already have this one".
 func providerNameIsTaken(err error) bool {
-	return isUniqueViolation(err, "identity_provider_name_is_unique_per_organization") ||
+	return isUniqueViolation(err, "identity_provider_name_is_unique_per_org") ||
 		isUniqueViolation(err, "identity_provider_client_is_unique_per_issuer")
 }

@@ -32,40 +32,27 @@ const (
 	ActionTokenIssued           Action = "api-token.issued"
 	ActionTokenRevoked          Action = "api-token.revoked"
 
-	// The estate.
-	ActionEnvironmentCreated Action = "environment.created"
-	ActionEnvironmentRenamed Action = "environment.renamed"
-	ActionEnvironmentDeleted Action = "environment.deleted"
-	ActionConnectionCreated  Action = "connection.created"
-	ActionConnectionEnabled  Action = "connection.enabled-set"
-	ActionConnectionRotated  Action = "connection.trigger-secret.rotated"
-	// A Connection's lifecycle. Revising and validating are separate actions because they are
-	// separate claims: one says the configuration changed, the other says somebody checked what
-	// the configuration reaches. Deleting is here because the product now has a delete — a
-	// narrow one, refused the moment anything depends on the Connection — and an operation that
-	// removes a record has to be as attributable as the one that made it.
-	ActionConnectionRevised   Action = "connection.revised"
-	ActionConnectionValidated Action = "connection.validated"
-	ActionConnectionDeleted   Action = "connection.deleted"
-	// A test event is recorded because it enters the delivery history, and a delivery in the
-	// history that nobody can attribute to an operator would be indistinguishable from one the
-	// customer's own system sent.
-	ActionTriggerTested        Action = "connection.trigger.test-event"
-	ActionRelayRosterRead      Action = "relay.roster.read"
-	ActionConflictTrailRead    Action = "relay.conflict-trail.read"
-	ActionConflictCleared      Action = "relay.conflict.cleared"
-	ActionRelayBootstrapIssued Action = "relay.bootstrap-token.issued"
+	// The estate. Revising and verifying are separate actions because they are separate
+	// claims: one says the configuration changed, the other says somebody checked what the
+	// configuration reaches. Deleting is narrow — refused the moment anything depends on
+	// the Integration — and an operation that removes a record has to be as attributable
+	// as the one that made it.
+	ActionIntegrationCreated       Action = "integration.created"
+	ActionIntegrationRevised       Action = "integration.revised"
+	ActionIntegrationEnabled       Action = "integration.enabled-set"
+	ActionIntegrationVerified      Action = "integration.verified"
+	ActionIntegrationDeleted       Action = "integration.deleted"
+	ActionIntegrationSecretRotated Action = "integration.webhook-secret.rotated"
+	ActionRelayRosterRead          Action = "relay.roster.read"
+	ActionConflictTrailRead        Action = "relay.conflict-trail.read"
+	ActionConflictCleared          Action = "relay.conflict.cleared"
+	ActionRelayBootstrapIssued     Action = "relay.bootstrap-token.issued"
 
 	// Incidents. Grouping itself is not audited — it is done by a delivery rather than by a
 	// person, hundreds of times a day, and a record that grew a row per alert would bury the acts
 	// somebody actually performed. A MERGE is a person overriding that grouping, and it decides
 	// what an investigation opened for the incident would be about.
 	ActionIncidentMerge Action = "incident.merged"
-
-	// Investigations.
-	ActionInvestigationOpened    Action = "investigation.opened"
-	ActionInvestigationCancelled Action = "investigation.cancelled"
-	ActionReinvestigated         Action = "investigation.reinvestigated"
 
 	// Authorization itself. A refusal is on the record because credential probing is only
 	// visible if the attempts that failed are visible too.

@@ -24,33 +24,19 @@ import (
 //  4. The envelope is the same shape every time, including its empty spellings: `items` is `[]`
 //     and never null, `next` and `total` are explicitly null rather than absent.
 func TestEveryListEndpointSpeaksOneTableContract(t *testing.T) {
-	plane := startConnectionPlane(t)
+	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
-	environment := plane.defaultEnvironment(t, surfaceOrg)
 
 	// Something to list, so a listing that is empty for the wrong reason is not mistaken for a
 	// contract that holds.
-	status, body := plane.call(t, http.MethodPost, base+"/connections", map[string]any{
-		"environmentId": environment.ID,
-		"integration":   "alertmanager",
-		"name":          "Contract Alertmanager",
-		"role":          "trigger",
-		"locality":      "control_plane",
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("arranging a connection = %d: %s", status, body)
-	}
-	var created createdConnectionBody
-	decodeInto(t, body, &created)
+	plane.createAlertmanager(t, "Contract Alertmanager")
 
 	listings := map[string]string{
-		"connections":  base + "/connections",
 		"integrations": base + "/integrations",
 		"relays":       base + "/relays",
-		"validations":  base + "/connections/" + created.Connection.ID + "/validations",
-		"deliveries":   base + "/connections/" + created.Connection.ID + "/deliveries",
-		"relay connections": base + "/relays/" + plane.relay.registration.String() +
-			"/connections",
+		"incidents":    base + "/incidents",
+		"relay integrations": base + "/relays/" + plane.relay.registration.String() +
+			"/integrations",
 	}
 
 	for name, url := range listings {

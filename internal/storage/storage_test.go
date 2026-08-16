@@ -163,17 +163,19 @@ func TestMigrate_SchemaIsUsableAfterwards(t *testing.T) {
 
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO organization (id, placement) VALUES ($1, $2)`, "org-a", "shared"); err != nil {
-		t.Fatalf("the migrated schema must accept an organization row: %v", err)
+		`INSERT INTO organization_policy (org_id, audit_retention_days) VALUES ($1, $2)`,
+		"org-a", 30); err != nil {
+		t.Fatalf("the migrated schema must accept a tenant row: %v", err)
 	}
 
-	var placement string
+	var days int
 	if err := pool.QueryRow(ctx,
-		`SELECT placement FROM organization WHERE id = $1`, "org-a").Scan(&placement); err != nil {
+		`SELECT audit_retention_days FROM organization_policy WHERE org_id = $1`,
+		"org-a").Scan(&days); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if placement != "shared" {
-		t.Errorf("placement = %q", placement)
+	if days != 30 {
+		t.Errorf("audit_retention_days = %d, want the 30 that was written", days)
 	}
 }
 
@@ -273,14 +275,16 @@ func TestPool_DifferentPlacementsReachDifferentDatabases(t *testing.T) {
 	}
 
 	if _, err := sharedPool.Exec(ctx,
-		`INSERT INTO organization (id, placement) VALUES ($1, $2)`, "org-shared", "shared"); err != nil {
+		`INSERT INTO organization_policy (org_id, audit_retention_days) VALUES ($1, $2)`,
+		"org-shared", 30); err != nil {
 		t.Fatalf("write to shared: %v", err)
 	}
 
 	// The row written to the shared placement must not be visible from the dedicated one.
 	var visible int
 	if err := acmePool.QueryRow(ctx,
-		`SELECT count(*) FROM organization WHERE id = $1`, "org-shared").Scan(&visible); err != nil {
+		`SELECT count(*) FROM organization_policy WHERE org_id = $1`,
+		"org-shared").Scan(&visible); err != nil {
 		t.Fatalf("read from dedicated: %v", err)
 	}
 	if visible != 0 {
@@ -509,7 +513,7 @@ func TestPing_ReportsReachabilityOfEveryPlacement(t *testing.T) {
 // exercise: a call made from a path nobody routed through the middleware is still refused.
 func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
 	t.Helper()
-	return memberOf(t, organization, authz.OrganizationOwner)
+	return memberOf(t, organization, authz.Admin)
 }
 
 // memberOf builds a principal holding one role in one organization.
@@ -536,5 +540,5 @@ func aStranger(t *testing.T) authz.Principal {
 	if err != nil {
 		t.Fatalf("naming another organization: %v", err)
 	}
-	return memberOf(t, elsewhere, authz.OrganizationOwner)
+	return memberOf(t, elsewhere, authz.Admin)
 }

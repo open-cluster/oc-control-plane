@@ -117,10 +117,8 @@ func System(what string) Actor {
 type TargetKind string
 
 const (
-	TargetConnection       TargetKind = "connection"
-	TargetEnvironment      TargetKind = "environment"
+	TargetIntegration      TargetKind = "integration"
 	TargetIncidentEpisode  TargetKind = "incident_episode"
-	TargetInvestigation    TargetKind = "investigation"
 	TargetRelay            TargetKind = "relay"
 	TargetIdentityProvider TargetKind = "identity_provider"
 	TargetMembership       TargetKind = "membership"

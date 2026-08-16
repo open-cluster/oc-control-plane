@@ -117,7 +117,7 @@ func TestOperatorIdentity_AnOperatorSignsInAndTheSessionAuthenticates(t *testing
 
 	provider := configureProvider(t, plane, issuer, map[string]any{
 		"jitEnabled":      true,
-		"jitRole":         "platform_administrator",
+		"jitRole":         "editor",
 		"verifiedDomains": []string{"example.test"},
 	})
 
@@ -150,7 +150,7 @@ func TestOperatorIdentity_AnOperatorSignsInAndTheSessionAuthenticates(t *testing
 		t.Fatalf("the session reports %+v, want one membership in %s",
 			who.Organizations, identityOrg)
 	}
-	if who.Organizations[0].Role != string(authz.PlatformAdministrator) {
+	if who.Organizations[0].Role != string(authz.Editor) {
 		t.Errorf("just-in-time provisioning granted %q, want the configured role",
 			who.Organizations[0].Role)
 	}
@@ -348,8 +348,8 @@ func TestOperatorIdentity_ProvisioningPolicyDecidesWhoGetsIn(t *testing.T) {
 			"verifiedDomains": []string{"example.test"},
 			"groupClaim":      "groups",
 			"groupRoleMap": map[string]string{
-				"sre":     "investigator",
-				"on-call": "responder",
+				"sre":     "editor",
+				"on-call": "editor",
 			},
 		})
 		issuer.assert(t, "sub", "mapped-1")
@@ -364,7 +364,7 @@ func TestOperatorIdentity_ProvisioningPolicyDecidesWhoGetsIn(t *testing.T) {
 
 		// The STRONGEST role the person's groups map to, not the first the provider listed:
 		// access must not depend on a directory's ordering.
-		if len(who.Organizations) != 1 || who.Organizations[0].Role != string(authz.Investigator) {
+		if len(who.Organizations) != 1 || who.Organizations[0].Role != string(authz.Editor) {
 			t.Errorf("the group map produced %+v, want the strongest role held",
 				who.Organizations)
 		}
@@ -375,13 +375,13 @@ func TestOperatorIdentity_ProvisioningPolicyDecidesWhoGetsIn(t *testing.T) {
 	t.Run("an owner cannot be granted by provisioning or by a group", func(t *testing.T) {
 		for name, settings := range map[string]map[string]any{
 			"as the provisioning role": {
-				"name": "Owner By Default", "jitEnabled": true, "jitRole": "organization_owner",
+				"name": "Owner By Default", "jitEnabled": true, "jitRole": "admin",
 				"verifiedDomains": []string{"example.test"},
 			},
 			"as a group mapping": {
 				"name": "Owner By Group", "jitEnabled": true,
 				"verifiedDomains": []string{"example.test"},
-				"groupRoleMap":    map[string]string{"admins": "organization_owner"},
+				"groupRoleMap":    map[string]string{"admins": "admin"},
 			},
 		} {
 			body := map[string]any{
@@ -435,11 +435,12 @@ func TestOperatorIdentity_AForeignOrganizationLooksLikeOneThatDoesNotExist(t *te
 
 	// And the same for a MUTATION, which is where a 403 would be most tempting.
 	foreignWrite := plane.call(t, http.MethodPost,
-		plane.base(identityNeighbour)+"/environments", map[string]string{"name": "Staging"},
+		plane.base(identityNeighbour)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": "Staging Alertmanager"},
 		asBootstrap)
 	inventedWrite := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/operator/v1/organizations/org-nobody-has/environments",
-		map[string]string{"name": "Staging"}, asBootstrap)
+		"http://"+plane.operator+"/operator/v1/organizations/org-nobody-has/integrations",
+		map[string]string{"type": "alertmanager", "name": "Staging Alertmanager"}, asBootstrap)
 
 	if foreignWrite.body != inventedWrite.body ||
 		foreignWrite.status != http.StatusNotFound {
@@ -471,14 +472,13 @@ func TestOperatorIdentity_EachRoleReachesExactlyWhatItsPermissionsSay(t *testing
 		{"clear a conflict", http.MethodPost,
 			"/relays/1ef7e1cf-0000-4000-8000-000000000000/clear-conflict", nil,
 			authz.RelayConflictClear},
-		{"read environments", http.MethodGet, "/environments", nil, authz.EnvironmentRead},
-		{"create an environment", http.MethodPost, "/environments",
-			map[string]string{"name": "Scope"}, authz.EnvironmentCreate},
-		{"read connections", http.MethodGet, "/connections", nil, authz.ConnectionRead},
-		{"read the integration catalog", http.MethodGet, "/integrations", nil,
+		{"read the integration catalog", http.MethodGet, "/integration-types", nil,
 			authz.IntegrationRead},
-		{"read investigations", http.MethodGet, "/investigations", nil,
-			authz.InvestigationRead},
+		{"read integrations", http.MethodGet, "/integrations", nil, authz.IntegrationRead},
+		{"create an integration", http.MethodPost, "/integrations",
+			map[string]string{"type": "alertmanager", "name": "Role Table Alertmanager"},
+			authz.IntegrationCreate},
+		{"read incidents", http.MethodGet, "/incidents", nil, authz.IncidentRead},
 		{"read identity providers", http.MethodGet, "/identity-providers", nil,
 			authz.IdentityRead},
 		{"read members", http.MethodGet, "/members", nil, authz.MemberRead},
@@ -489,7 +489,7 @@ func TestOperatorIdentity_EachRoleReachesExactlyWhatItsPermissionsSay(t *testing
 	}
 
 	for index, role := range authz.Roles() {
-		if role == authz.OrganizationOwner {
+		if role == authz.Admin {
 			// An owner cannot be provisioned — deliberately, and asserted above — so the
 			// bootstrap credential is what exercises that role, and it does so throughout this
 			// file.
@@ -642,10 +642,10 @@ func TestOperatorIdentity_AServiceAccountTokenIsScopedShownOnceAndRevocable(t *t
 		nil, asToken(minted.Secret)); reached.status != http.StatusOK {
 		t.Errorf("a viewer token could not read the roster: %d %s", reached.status, reached.body)
 	}
-	if beyond := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": "Scope"}, asToken(minted.Secret)); beyond.status !=
-		http.StatusForbidden {
-		t.Errorf("a viewer token created an environment: %d %s", beyond.status, beyond.body)
+	if beyond := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": "Viewer Alertmanager"},
+		asToken(minted.Secret)); beyond.status != http.StatusForbidden {
+		t.Errorf("a viewer token created an integration: %d %s", beyond.status, beyond.body)
 	}
 	if elsewhere := plane.call(t, http.MethodGet, plane.base(identityNeighbour)+"/relays",
 		nil, asToken(minted.Secret)); elsewhere.status != http.StatusNotFound {
@@ -672,7 +672,7 @@ func TestOperatorIdentity_AServiceAccountTokenIsScopedShownOnceAndRevocable(t *t
 	}
 	// An owner role in a CI environment variable would be a credential that can appoint owners.
 	if owner := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/api-tokens",
-		map[string]any{"serviceAccountId": account.ID, "role": "organization_owner"},
+		map[string]any{"serviceAccountId": account.ID, "role": "admin"},
 		asBootstrap); owner.status != http.StatusBadRequest {
 		t.Errorf("an owner token was issued: %d %s", owner.status, owner.body)
 	}
@@ -709,10 +709,10 @@ func TestOperatorIdentity_EveryMutationIsOnTheRecordWithItsActor(t *testing.T) {
 		t.Fatalf("weakening the policy = %d: %s", weakened.status, weakened.body)
 	}
 
-	created := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": "Audited Scope"}, asBootstrap)
+	created := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": "Audited Alertmanager"}, asBootstrap)
 	if created.status != http.StatusCreated {
-		t.Fatalf("creating an environment = %d: %s", created.status, created.body)
+		t.Fatalf("creating an integration = %d: %s", created.status, created.body)
 	}
 
 	// A refusal by somebody holding a credential, which story 22 asks to be visible.
@@ -743,7 +743,7 @@ func TestOperatorIdentity_EveryMutationIsOnTheRecordWithItsActor(t *testing.T) {
 	for _, wanted := range []string{
 		"identity-provider.configured",
 		"identity-provider.changed",
-		"environment.created",
+		"integration.created",
 	} {
 		if byAction[wanted] == 0 {
 			t.Errorf("no %s event; a change nobody can attribute is what this slice removes",
@@ -788,10 +788,10 @@ func TestOperatorIdentity_EveryMutationIsOnTheRecordWithItsActor(t *testing.T) {
 func TestOperatorIdentity_TheRecordRefusesAnUpdateAndADelete(t *testing.T) {
 	plane := startIdentityPlane(t)
 
-	created := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": "Immutable"}, asBootstrap)
+	created := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": "Immutable"}, asBootstrap)
 	if created.status != http.StatusCreated {
-		t.Fatalf("creating an environment = %d: %s", created.status, created.body)
+		t.Fatalf("creating an integration = %d: %s", created.status, created.body)
 	}
 
 	pool := openPlacement(t, plane.dsn)
@@ -824,7 +824,7 @@ func TestOperatorIdentity_ACrossSiteWriteIsRefused(t *testing.T) {
 	issuer := newMockIssuer(t)
 	provider := configureProvider(t, plane, issuer, map[string]any{
 		"jitEnabled":      true,
-		"jitRole":         "platform_administrator",
+		"jitRole":         "editor",
 		"verifiedDomains": []string{"example.test"},
 	})
 	issuer.assert(t, "sub", "csrf-1")
@@ -832,24 +832,36 @@ func TestOperatorIdentity_ACrossSiteWriteIsRefused(t *testing.T) {
 
 	cookie := sessionCookie(t, signIn(t, plane, provider))
 
+	// Something the Editor's cookie may write to: verifying an integration the bootstrap
+	// credential arranged.
+	arranged := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/integrations",
+		map[string]string{"type": "alertmanager", "name": "CSRF Alertmanager"}, asBootstrap)
+	if arranged.status != http.StatusCreated {
+		t.Fatalf("arranging an integration = %d: %s", arranged.status, arranged.body)
+	}
+	var integration struct {
+		Integration struct {
+			ID string `json:"id"`
+		} `json:"integration"`
+	}
+	decodeInto(t, arranged.body, &integration)
+	verify := plane.base(identityOrg) + "/integrations/" + integration.Integration.ID + "/verify"
+
 	// From the console: served.
-	fromConsole := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": "From The Console"}, asSession(cookie))
-	if fromConsole.status != http.StatusCreated {
+	fromConsole := plane.call(t, http.MethodPost, verify, nil, asSession(cookie))
+	if fromConsole.status != http.StatusOK {
 		t.Fatalf("a write from the console = %d: %s", fromConsole.status, fromConsole.body)
 	}
 
 	// With no Origin at all: not a browser, and a cookie-authenticated request that did not
 	// come from one is not a case this surface serves.
-	bare := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": "From Nowhere"}, asSession(cookie), withoutOrigin)
+	bare := plane.call(t, http.MethodPost, verify, nil, asSession(cookie), withoutOrigin)
 	if bare.status != http.StatusForbidden {
 		t.Errorf("a cookie-borne write with no Origin = %d, want 403", bare.status)
 	}
 
 	// From somewhere else entirely: refused.
-	elsewhere := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/environments",
-		map[string]string{"name": "From Elsewhere"}, asSession(cookie),
+	elsewhere := plane.call(t, http.MethodPost, verify, nil, asSession(cookie),
 		func(request *http.Request) { request.Header.Set("Origin", "https://evil.example.test") })
 	if elsewhere.status != http.StatusForbidden {
 		t.Errorf("a cross-site write = %d, want 403", elsewhere.status)
@@ -857,7 +869,7 @@ func TestOperatorIdentity_ACrossSiteWriteIsRefused(t *testing.T) {
 
 	// A READ is unaffected, because a browser will not attach the cookie to a cross-site read
 	// under Lax and refusing one would break every ordinary page load.
-	read := plane.call(t, http.MethodGet, plane.base(identityOrg)+"/environments",
+	read := plane.call(t, http.MethodGet, plane.base(identityOrg)+"/integrations",
 		nil, asSession(cookie))
 	if read.status != http.StatusOK {
 		t.Errorf("a read = %d, want it served", read.status)
@@ -979,7 +991,7 @@ func TestOperatorIdentity_MembershipsAreListedAndChangeable(t *testing.T) {
 
 	changed := plane.call(t, http.MethodPut,
 		plane.base(identityOrg)+"/members/"+who.Principal.ID,
-		map[string]string{"role": "investigator"}, asBootstrap)
+		map[string]string{"role": "editor"}, asBootstrap)
 	if changed.status != http.StatusOK {
 		t.Fatalf("changing a role = %d: %s", changed.status, changed.body)
 	}
@@ -988,7 +1000,7 @@ func TestOperatorIdentity_MembershipsAreListedAndChangeable(t *testing.T) {
 	// what resolving memberships per request buys.
 	after := readSession(t, plane, cookie)
 	if len(after.Organizations) != 1 ||
-		after.Organizations[0].Role != string(authz.Investigator) {
+		after.Organizations[0].Role != string(authz.Editor) {
 		t.Errorf("the role change did not reach the live session: %+v", after.Organizations)
 	}
 }

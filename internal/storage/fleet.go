@@ -78,9 +78,9 @@ func (p *Placements) FleetSummary(
 		                          AND registration.relay_version < $3::text),
 		       count(*) FILTER (WHERE registration.session_conflict_at IS NOT NULL),
 		       (SELECT count(*) FROM relay_job
-		         WHERE organization = $1 AND status = 1)
+		         WHERE org_id = $1 AND status = 1)
 		  FROM relay_registration registration
-		 WHERE registration.organization = $1`,
+		 WHERE registration.org_id = $1`,
 		organization.String(), liveness, minimumVersion).
 		Scan(&fleet.Total, &fleet.Connected, &fleet.Disconnected, &fleet.Revoked,
 			&fleet.Outdated, &fleet.Degraded, &fleet.ActiveRequests)
@@ -88,21 +88,6 @@ func (p *Placements) FleetSummary(
 		return Fleet{}, fmt.Errorf("summarising a relay fleet: %w", err)
 	}
 	return fleet, nil
-}
-
-// RelayConnections lists the Connections a Relay serves, so an operator knows what disabling it
-// costs before they disable it.
-//
-// It goes through the same query every other Connection listing does, rather than carrying a
-// second one of its own: a Relay's Connections are an Organization's Connections narrowed by the
-// Relay bound to them, and a second query would be a second place the columns, the paging and
-// the ordering could drift.
-func (p *Placements) RelayConnections(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	registration uuid.UUID, query ConnectionQuery,
-) (ConnectionList, error) {
-	query.Relay = registration
-	return p.QueryConnections(ctx, principal, organization, query)
 }
 
 // IssueOperatorBootstrapToken records a single-use enrolment token an operator asked for, and
@@ -123,7 +108,7 @@ func (p *Placements) IssueOperatorBootstrapToken(
 	_, err := audited(ctx, p, principal, organization, audit.ActionRelayBootstrapIssued,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
 			if _, err := transaction.Exec(ctx, `
-				INSERT INTO relay_bootstrap_token (token_digest, organization, expires_at)
+				INSERT INTO relay_bootstrap_token (token_digest, org_id, expires_at)
 				VALUES ($1, $2, $3)`,
 				tokenDigest, organization.String(), expiresAt); err != nil {
 				return struct{}{}, audit.Target{}, nil,
@@ -169,7 +154,7 @@ func (p *Placements) RelaySessionOpened(
 		       session_ended_at   = NULL,
 		       last_seen_at       = now(),
 		       session_peer       = $4
-		 WHERE organization = $1 AND registration_id = $2`,
+		 WHERE org_id = $1 AND registration_id = $2`,
 		organization.String(), registration, session, boundedPeer(peer)); err != nil {
 		return fmt.Errorf("recording a relay session: %w", err)
 	}
@@ -191,7 +176,7 @@ func (p *Placements) RelaySessionHeard(
 	if _, err = pool.Exec(ctx, `
 		UPDATE relay_registration
 		   SET last_seen_at = now()
-		 WHERE organization = $1 AND registration_id = $2 AND session_id = $3`,
+		 WHERE org_id = $1 AND registration_id = $2 AND session_id = $3`,
 		organization.String(), registration, session); err != nil {
 		return fmt.Errorf("recording that a relay was heard: %w", err)
 	}
@@ -214,7 +199,7 @@ func (p *Placements) RelaySessionClosed(
 	if _, err = pool.Exec(ctx, `
 		UPDATE relay_registration
 		   SET session_ended_at = now()
-		 WHERE organization = $1 AND registration_id = $2 AND session_id = $3
+		 WHERE org_id = $1 AND registration_id = $2 AND session_id = $3
 		   AND session_ended_at IS NULL`,
 		organization.String(), registration, session); err != nil {
 		return fmt.Errorf("recording the end of a relay session: %w", err)
@@ -236,14 +221,14 @@ func boundedPeer(peer string) string {
 //
 // It carries no failure MESSAGE, because relay_job records none: a job is succeeded, failed or
 // cancelled, and the reason a relay gave is not a column. What this can say is which capability
-// failed, against which Connection, and when — which is what separates "this relay is unwell"
+// failed, against which Integration, and when — which is what separates "this relay is unwell"
 // from "this one capability is unwell on this relay", and that is the distinction somebody
 // diagnosing an intermittent Relay is actually trying to make.
 type RelayFailure struct {
 	JobID             uuid.UUID
 	CapabilityID      string
 	CapabilityVersion int
-	Connection        uuid.UUID
+	Integration       uuid.UUID
 	// Cancelled separates work that was called off from work that failed. Both are executions
 	// that produced nothing, and only one of them is the Relay's fault.
 	Cancelled bool
@@ -276,9 +261,9 @@ func (p *Placements) RelayFailures(
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT job_id, capability_id, capability_version, connection_id, status, terminal_at
+		SELECT job_id, capability_id, capability_version, integration_id, status, terminal_at
 		  FROM relay_job
-		 WHERE organization = $1 AND registration_id = $2 AND status IN (3, 4)
+		 WHERE org_id = $1 AND registration_id = $2 AND status IN (3, 4)
 		   AND ($4::timestamptz IS NULL
 		        OR (terminal_at, job_id) < ($4::timestamptz, $5::uuid))
 		 ORDER BY terminal_at DESC, job_id DESC
@@ -296,7 +281,7 @@ func (p *Placements) RelayFailures(
 			status  int16
 		)
 		if err = rows.Scan(&failure.JobID, &failure.CapabilityID, &failure.CapabilityVersion,
-			&failure.Connection, &status, &failure.At); err != nil {
+			&failure.Integration, &status, &failure.At); err != nil {
 			return RelayFailureList{}, fmt.Errorf("reading a relay failure: %w", err)
 		}
 		if len(list.Failures) == limit {

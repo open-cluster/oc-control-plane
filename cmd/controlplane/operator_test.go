@@ -389,8 +389,8 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		}
 		// Defaulted rather than required. A deployment with no members yet needs a credential
 		// that can create the first one; narrowing it is a one-line change once they have.
-		if cfg.OperatorTokenRole != "organization_owner" {
-			t.Errorf("the credential holds %q, want the owner by default", cfg.OperatorTokenRole)
+		if cfg.OperatorTokenRole != "admin" {
+			t.Errorf("the credential holds %q, want admin by default", cfg.OperatorTokenRole)
 		}
 	})
 }

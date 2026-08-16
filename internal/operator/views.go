@@ -30,11 +30,6 @@ type relayView struct {
 	// Capabilities is what it advertised at enrolment. It is an attestation rather than an
 	// authorization: what a relay may be ASKED to run is decided centrally.
 	Capabilities []string `json:"capabilities"`
-	// ServesEnvironments is derived from the Connections bound to this Relay, and it is here
-	// INSTEAD of an Environment column. A Relay is Organization-scoped and carries no
-	// Environment; what it can be said to serve is whatever its Connections reach, which changes
-	// when one is bound rather than needing to be maintained.
-	ServesEnvironments []string `json:"servesEnvironments"`
 	// SessionConflict is absent when nothing has been seen, so its presence is the finding
 	// rather than a field an operator has to compare against a zero value.
 	SessionConflict *conflictView `json:"sessionConflict,omitempty"`
@@ -60,16 +55,14 @@ type fleetView struct {
 	OutdatedCounted bool   `json:"outdatedCounted"`
 }
 
-// servedConnectionView is one Connection a Relay serves, which is what disabling that Relay
-// would cost.
-type servedConnectionView struct {
-	ID            string `json:"id"`
-	EnvironmentID string `json:"environmentId"`
-	Integration   string `json:"integration"`
-	Name          string `json:"name"`
-	Role          string `json:"role"`
-	State         string `json:"state"`
-	Disabled      bool   `json:"disabled"`
+// servedIntegrationView is one Integration a Relay serves, which is what disabling that
+// Relay would cost.
+type servedIntegrationView struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Disabled bool   `json:"disabled"`
 }
 
 // relayFailureView is one execution a Relay did not complete. It carries no reason, and the
@@ -78,7 +71,7 @@ type relayFailureView struct {
 	JobID             string `json:"jobId"`
 	CapabilityID      string `json:"capabilityId"`
 	CapabilityVersion int    `json:"capabilityVersion"`
-	ConnectionID      string `json:"connectionId"`
+	IntegrationID     string `json:"integrationId"`
 	// Outcome is `failed` or `cancelled`. Both produced nothing; only one is the Relay's fault.
 	Outcome string    `json:"outcome"`
 	At      time.Time `json:"at"`
@@ -145,15 +138,9 @@ func viewOf(relay storage.RelaySummary) relayView {
 		RegisteredAt:       relay.RegisteredAt,
 		Connected:          relay.Connected,
 		Capabilities:       relay.Capabilities,
-		ServesEnvironments: relay.ServesEnvironments,
 	}
 	if view.Capabilities == nil {
 		view.Capabilities = []string{}
-	}
-	if view.ServesEnvironments == nil {
-		// An empty list rather than null. "This relay serves no Connections yet" is a fact worth
-		// rendering, and a client should not have to handle two spellings of it.
-		view.ServesEnvironments = []string{}
 	}
 	if !relay.LastSeenAt.IsZero() {
 		seen := relay.LastSeenAt

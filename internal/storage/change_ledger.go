@@ -19,10 +19,8 @@ import (
 // file reconstructs it from rows and writes it into them, and decides nothing about
 // what a change means.
 
-// OpenInventoryScopes upserts one synchronization scope per Kubernetes evidence
-// Connection served by this registration and reports them, so the session can send one
-// policy each. The Environment is inherited from the Connection here, at the moment the
-// scope is opened, and persisted — the same rule every derived record follows.
+// OpenInventoryScopes upserts one synchronization scope per Kubernetes Integration
+// served by this registration and reports them, so the session can send one policy each.
 func (p *Placements) OpenInventoryScopes(
 	ctx context.Context, organization tenancy.Organization,
 	registrationID uuid.UUID, requestedInterval time.Duration,
@@ -38,18 +36,18 @@ func (p *Placements) OpenInventoryScopes(
 
 	rows, err := pool.Query(ctx, `
 		WITH served AS (
-			SELECT connection_id, environment_id
-			  FROM connection
-			 WHERE organization = $1
-			   AND relay_registration_id = $2
-			   AND integration = 'kubernetes'
-			   AND (role & 2) <> 0
+			SELECT integration_id
+			  FROM integration
+			 WHERE org_id = $1
+			   AND relay_id = $2
+			   -- 2 is the kubernetes integration type, the one kind a Relay watches.
+			   AND integration_type_id = 2
 			   AND disabled_at IS NULL
 		)
 		INSERT INTO change_ledger_scope
-			(connection_id, organization, environment_id, requested_interval_seconds)
-		SELECT connection_id, $1, environment_id, $3 FROM served
-		ON CONFLICT (connection_id) DO UPDATE
+			(integration_id, org_id, requested_interval_seconds)
+		SELECT integration_id, $1, $3 FROM served
+		ON CONFLICT (integration_id) DO UPDATE
 			SET requested_interval_seconds = EXCLUDED.requested_interval_seconds,
 			    -- The revision moves exactly when the request changed, so a delta or a
 			    -- freshness stamp can say which request it answered and "monotonic" stays
@@ -58,7 +56,7 @@ func (p *Placements) OpenInventoryScopes(
 			        + CASE WHEN change_ledger_scope.requested_interval_seconds
 			                    <> EXCLUDED.requested_interval_seconds THEN 1 ELSE 0 END,
 			    updated_at = now()
-		RETURNING connection_id, environment_id, policy_revision, requested_interval_seconds`,
+		RETURNING integration_id, policy_revision, requested_interval_seconds`,
 		organization.String(), registrationID, seconds)
 	if err != nil {
 		return nil, fmt.Errorf("opening inventory scopes: %w", err)
@@ -69,7 +67,7 @@ func (p *Placements) OpenInventoryScopes(
 	for rows.Next() {
 		var scope changeledger.Scope
 		var intervalSeconds int64
-		if err = rows.Scan(&scope.ConnectionID, &scope.EnvironmentID,
+		if err = rows.Scan(&scope.IntegrationID,
 			&scope.PolicyRevision, &intervalSeconds); err != nil {
 			return nil, fmt.Errorf("reading an inventory scope: %w", err)
 		}
@@ -84,10 +82,10 @@ func (p *Placements) OpenInventoryScopes(
 
 // RecordInventoryDelta records one at-least-once delta, deduplicated by observation.
 //
-// The Connection check and the writes share one transaction, and the check is the same
-// shape EnqueueJob uses in reverse: the delta is recorded only if the Connection it
-// names belongs to this organization, is served by this registration, answers evidence
-// reads and is not disabled. A delta failing that is REFUSED but still acknowledged —
+// The Integration check and the writes share one transaction, and the check is the
+// same shape EnqueueJob uses in reverse: the delta is recorded only if the Integration
+// it names belongs to this organization, is served by this registration and is not
+// disabled. A delta failing that is REFUSED but still acknowledged —
 // the Relay can do nothing about it, and resending forever helps nobody; the refusal is
 // the log's to report.
 //
@@ -108,21 +106,20 @@ func (p *Placements) RecordInventoryDelta(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	var environment uuid.UUID
+	var served bool
 	err = transaction.QueryRow(ctx, `
-		SELECT environment_id
-		  FROM connection
-		 WHERE connection_id = $1
-		   AND organization = $2
-		   AND relay_registration_id = $3
-		   AND (role & 2) <> 0
+		SELECT TRUE
+		  FROM integration
+		 WHERE integration_id = $1
+		   AND org_id = $2
+		   AND relay_id = $3
 		   AND disabled_at IS NULL`,
-		delta.ConnectionID, organization.String(), registrationID).Scan(&environment)
+		delta.IntegrationID, organization.String(), registrationID).Scan(&served)
 	if err == pgx.ErrNoRows {
 		return changeledger.Recorded{Refused: true}, nil
 	}
 	if err != nil {
-		return changeledger.Recorded{}, fmt.Errorf("resolving a delta's connection: %w", err)
+		return changeledger.Recorded{}, fmt.Errorf("resolving a delta's integration: %w", err)
 	}
 
 	// A fixed write order, for the same reason signals are sorted: two chunks carrying
@@ -140,11 +137,11 @@ func (p *Placements) RecordInventoryDelta(
 		}
 		tag, execErr := transaction.Exec(ctx, `
 			INSERT INTO change_ledger
-				(organization, connection_id, environment_id, namespace, object_kind,
+				(org_id, integration_id, namespace, object_kind,
 				 object_name, object_uid, observed_revision, change_kind, observed_at, fields)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			ON CONFLICT (connection_id, object_uid, observed_revision) DO NOTHING`,
-			organization.String(), delta.ConnectionID, environment, change.Namespace,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (integration_id, object_uid, observed_revision) DO NOTHING`,
+			organization.String(), delta.IntegrationID, change.Namespace,
 			int16(change.Kind), change.Name, change.UID, change.ObservedRevision, kind,
 			delta.ObservedAt, fields)
 		if execErr != nil {
@@ -176,15 +173,15 @@ func (p *Placements) RecordInventoryDelta(
 			       last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), $2),
 			       policy_revision = GREATEST(policy_revision, $4),
 			       updated_at = now()
-			 WHERE connection_id = $1`,
-			delta.ConnectionID, delta.ObservedAt, inserted, delta.PolicyRevision)
+			 WHERE integration_id = $1`,
+			delta.IntegrationID, delta.ObservedAt, inserted, delta.PolicyRevision)
 	} else {
 		_, err = transaction.Exec(ctx, `
 			UPDATE change_ledger_scope
 			   SET last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), $2),
 			       updated_at = now()
-			 WHERE connection_id = $1`,
-			delta.ConnectionID, delta.ObservedAt)
+			 WHERE integration_id = $1`,
+			delta.IntegrationID, delta.ObservedAt)
 	}
 	if err != nil {
 		return changeledger.Recorded{}, fmt.Errorf("advancing the scope's coverage: %w", err)
@@ -197,8 +194,8 @@ func (p *Placements) RecordInventoryDelta(
 }
 
 // RecordInventoryFreshness applies a heartbeat's per-scope stamps. The guard subquery
-// is the tenancy and serving check: a stamp naming a Connection this registration does
-// not serve updates nothing.
+// is the tenancy and serving check: a stamp naming an Integration this registration
+// does not serve updates nothing.
 func (p *Placements) RecordInventoryFreshness(
 	ctx context.Context, organization tenancy.Organization,
 	registrationID uuid.UUID, stamps []changeledger.Freshness,
@@ -221,12 +218,12 @@ func (p *Placements) RecordInventoryFreshness(
 			       faulted = $3,
 			       truncated = $4,
 			       updated_at = now()
-			 WHERE connection_id = $1
-			   AND organization = $5
-			   AND connection_id IN (
-			       SELECT connection_id FROM connection
-			        WHERE organization = $5 AND relay_registration_id = $6)`,
-			stamp.ConnectionID, confirmed, stamp.Faulted, stamp.Truncated,
+			 WHERE integration_id = $1
+			   AND org_id = $5
+			   AND integration_id IN (
+			       SELECT integration_id FROM integration
+			        WHERE org_id = $5 AND relay_id = $6)`,
+			stamp.IntegrationID, confirmed, stamp.Faulted, stamp.Truncated,
 			organization.String(), registrationID); err != nil {
 			return fmt.Errorf("recording inventory freshness: %w", err)
 		}
@@ -234,14 +231,14 @@ func (p *Placements) RecordInventoryFreshness(
 	return nil
 }
 
-// RecentLedgerChanges answers the brief's question: what changed in this namespace,
-// through this Connection, in this window. Baselines are excluded — they record where
+// RecentLedgerChanges answers the question: what changed in this namespace, through
+// this Integration, in this window. Baselines are excluded — they record where
 // watching began, not something changing — and the scope's boundaries travel with the
 // answer so an empty list is readable as "nothing changed" only where that is actually
 // knowable.
 func (p *Placements) RecentLedgerChanges(
 	ctx context.Context, organization tenancy.Organization,
-	connectionID uuid.UUID, namespace string, from, to time.Time, limit int,
+	integrationID uuid.UUID, namespace string, from, to time.Time, limit int,
 ) (changeledger.WindowChanges, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -253,12 +250,12 @@ func (p *Placements) RecentLedgerChanges(
 
 	answer := changeledger.WindowChanges{}
 	err = pool.QueryRow(ctx, `
-		SELECT connection_id, environment_id, policy_revision, requested_interval_seconds,
+		SELECT integration_id, policy_revision, requested_interval_seconds,
 		       covered_since, baseline_at, last_confirmed_at, faulted, truncated
 		  FROM change_ledger_scope
-		 WHERE connection_id = $1 AND organization = $2`,
-		connectionID, organization.String()).Scan(
-		&answer.Scope.ConnectionID, &answer.Scope.EnvironmentID, &answer.Scope.PolicyRevision,
+		 WHERE integration_id = $1 AND org_id = $2`,
+		integrationID, organization.String()).Scan(
+		&answer.Scope.IntegrationID, &answer.Scope.PolicyRevision,
 		&scanSeconds{&answer.Scope.RequestedInterval}, &answer.Scope.CoveredSince,
 		&answer.Scope.BaselineAt, &answer.Scope.LastConfirmedAt,
 		&answer.Scope.Faulted, &answer.Scope.Truncated)
@@ -271,18 +268,18 @@ func (p *Placements) RecentLedgerChanges(
 	answer.Covered = answer.Scope.CoveredSince != nil
 
 	rows, err := pool.Query(ctx, `
-		SELECT entry_id, connection_id, environment_id, namespace, object_kind, object_name,
+		SELECT entry_id, integration_id, namespace, object_kind, object_name,
 		       object_uid, observed_revision, change_kind, observed_at, received_at, fields
 		  FROM change_ledger
-		 WHERE connection_id = $1
-		   AND organization = $2
+		 WHERE integration_id = $1
+		   AND org_id = $2
 		   AND namespace = $3
 		   AND change_kind <> 1
 		   AND observed_at >= $4
 		   AND observed_at < $5
 		 ORDER BY observed_at, entry_id
 		 LIMIT $6`,
-		connectionID, organization.String(), namespace, from, to, limit+1)
+		integrationID, organization.String(), namespace, from, to, limit+1)
 	if err != nil {
 		return changeledger.WindowChanges{}, fmt.Errorf("reading the ledger window: %w", err)
 	}
@@ -292,7 +289,7 @@ func (p *Placements) RecentLedgerChanges(
 		var entry changeledger.Entry
 		var kind, change int16
 		var fields []byte
-		if err = rows.Scan(&entry.ID, &entry.ConnectionID, &entry.EnvironmentID,
+		if err = rows.Scan(&entry.ID, &entry.IntegrationID,
 			&entry.Namespace, &kind, &entry.Name, &entry.UID, &entry.ObservedRevision,
 			&change, &entry.ObservedAt, &entry.RecordedAt, &fields); err != nil {
 			return changeledger.WindowChanges{}, fmt.Errorf("reading a ledger entry: %w", err)

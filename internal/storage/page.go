@@ -50,34 +50,6 @@ func encodeCursor(at time.Time, id uuid.UUID) string {
 		[]byte(strconv.FormatInt(at.UnixNano(), 10) + ":" + id.String()))
 }
 
-// encodeOrdinalCursor renders a page position in a listing ordered by a stable per-case ordinal.
-// It is a second codec rather than a reuse of the timestamp one because the ordering it resumes is
-// genuinely different: an ordinal is assigned once and never moves, which is what lets a section
-// stay in one order while the case it belongs to is still growing.
-func encodeOrdinalCursor(ordinal int) string {
-	return base64.RawURLEncoding.EncodeToString([]byte("#" + strconv.Itoa(ordinal)))
-}
-
-// decodeOrdinalCursor reads such a position back. Zero is the start of the listing.
-func decodeOrdinalCursor(cursor string) (int, error) {
-	if cursor == "" {
-		return 0, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(cursor)
-	if err != nil {
-		return 0, ErrBadCursor
-	}
-	digits, found := strings.CutPrefix(string(raw), "#")
-	if !found {
-		return 0, ErrBadCursor
-	}
-	ordinal, err := strconv.Atoi(digits)
-	if err != nil || ordinal < 0 {
-		return 0, ErrBadCursor
-	}
-	return ordinal, nil
-}
-
 // decodeCursor reads a page position back. An empty cursor is the start of the list, which is
 // not an error; anything unreadable is, because silently starting over would show an operator
 // the first page again and let them believe they had seen the last.
@@ -103,24 +75,6 @@ func decodeCursor(cursor string) (*time.Time, *uuid.UUID, error) {
 	}
 	at := time.Unix(0, unixNano)
 	return &at, &id, nil
-}
-
-// ordering is how one listing is sorted, and how a position in that order is rendered back into
-// a cursor.
-//
-// The render function lives beside the column deliberately. It used to be a second switch on the
-// same field names in the same file, and a fifth sortable field meant editing both — which is
-// the shape of change where one edit lands and the other does not, and the symptom is a cursor
-// that resumes from the wrong place rather than an error anybody sees.
-type ordering struct {
-	// column is the SQL expression rows are ordered by. It comes from a closed map keyed on a
-	// field name the handler has already refused if unoffered, never from caller input.
-	column string
-	// cast is the type the cursor's text value is cast back to for the row-wise comparison, so
-	// the resume compares the same way the ORDER BY sorted.
-	cast string
-	// render turns the last row of a page into the text half of its cursor.
-	render func(Connection) string
 }
 
 // encodeSortCursor renders a page position for a listing ordered by a field the caller chose.

@@ -6,15 +6,14 @@
 // before a human arrives, and reaching that means accepting their alerts rather than replacing
 // them.
 //
-// A delivery names its Connection and NOTHING else. The organization and the environment are
-// read from the authenticated Connection row, because a path is chosen by the caller and a
-// caller who could name a tenant could try every tenant. ADR-003's second amendment records
-// that decision and the placement-resolution consequence it forces.
+// A delivery names its Integration and NOTHING else. The organization is read from the
+// authenticated Integration row, because a path is chosen by the caller and a caller who
+// could name a tenant could try every tenant.
 //
-// Accepting alerts is not a thin adapter. Each Integration has its own payload, its own idea
-// of authentication, its own retry behaviour and its own notion of what counts as the same
-// alert firing twice. Every one of those differences is confined to an adapter package below
-// this one; past normalisation nothing can tell which system delivered a Signal.
+// Accepting alerts is not a thin adapter. Each Integration Type has its own payload, its
+// own idea of authentication, its own retry behaviour and its own notion of what counts as
+// the same alert firing twice. Every one of those differences is confined to the type's
+// provider package; past normalisation nothing can tell which system delivered a Signal.
 //
 // The surface is deliberately its own listener. It is the only part of the control plane a
 // customer's infrastructure connects to inbound, so a deployment can expose it and nothing
@@ -35,17 +34,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// TokenHeader carries the Connection's shared secret.
+// TokenHeader carries the Integration's webhook secret.
 //
-// It is a header rather than a signature because the first Integration cannot sign:
+// It is a header rather than a signature because the first inbound type cannot sign:
 // Alertmanager attaches static headers to a webhook and nothing more. The consequence is
 // written down rather than left implicit — this authenticates the sender and attests nothing
-// about the body — and verification is per-adapter precisely so an Integration that can sign
-// gets a signature instead.
+// about the body — and verification is per-adapter precisely so a type that can sign gets a
+// signature instead.
 const TokenHeader = "X-OpenCluster-Token" //nolint:gosec // a header name, not a credential.
 
 // maxBodyBytes bounds a delivery. It is enforced as the body is read rather than after, so an
@@ -66,6 +66,9 @@ const readTimeout = 15 * time.Second
 type Handlers struct {
 	Placements *storage.Placements
 	Logger     *slog.Logger
+	// Adapters routes a payload to its type's parser. Supplied by the composition root,
+	// which is the only place that knows every provider.
+	Adapters Adapters
 }
 
 // surface is one running intake listener: its dependencies plus the state that belongs to a
@@ -82,8 +85,8 @@ type surface struct {
 
 // Router returns the intake surface.
 //
-// The route names the Connection and nothing else. There is no organization in it, and adding
-// one would be adding a tenant identifier the caller chooses.
+// The route names the Integration and nothing else. There is no organization in it, and
+// adding one would be adding a tenant identifier the caller chooses.
 func (h Handlers) Router() http.Handler {
 	running := &surface{
 		Handlers:   h,
@@ -92,7 +95,7 @@ func (h Handlers) Router() http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /intake/v1/connections/{connection}/signals",
+	mux.Handle("POST /intake/v1/integrations/{integration}/signals",
 		http.HandlerFunc(running.deliver))
 	return mux
 }
@@ -108,11 +111,11 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	connectionID, ok := h.addressed(writer, request)
+	integrationID, ok := h.addressed(writer, request)
 	if !ok {
 		return
 	}
-	if !h.deliveries.allow(connectionID) {
+	if !h.deliveries.allow(integrationID) {
 		// Shed rather than refused. The source is told to slow down, not to stop, because the
 		// alerts behind this one are real and it should still send them.
 		h.refuse(ctx, request, "rate limited")
@@ -122,57 +125,57 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	connection, err := h.authenticate(ctx, connectionID, request)
+	integration, err := h.authenticate(ctx, integrationID, request)
 	if err != nil {
-		// A failure to READ the Connection is not a failure to authenticate, and answering it
-		// as one would be the worst mistake available here: 401 is permanent, so a database
-		// outage would tell every source to give up, and the alerts they would otherwise have
-		// retried are gone for good. Only a Connection that was read and did not match is
-		// refused.
+		// A failure to READ the Integration is not a failure to authenticate, and answering
+		// it as one would be the worst mistake available here: 401 is permanent, so a
+		// database outage would tell every source to give up, and the alerts they would
+		// otherwise have retried are gone for good. Only an Integration that was read and
+		// did not match is refused.
 		if !errors.Is(err, errNotAuthenticated) {
-			h.Logger.ErrorContext(ctx, "could not read the connection",
+			h.Logger.ErrorContext(ctx, "could not read the integration",
 				slog.String("caller", callerOf(request)),
 				slog.String("error", err.Error()))
 			h.counters.countDelivery(ctx, dispositionUnavailable)
 			writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 			return
 		}
-		// Recorded against the Connection when there IS one — which is what makes a source
+		// Recorded against the Integration when there IS one — which is what makes a source
 		// delivering with a wrong secret visible as a rejection rather than as silence. When
-		// the identifier resolved to nothing there is no tenant to attribute it to and nothing
-		// is written, which is also what bounds this: an attacker with random identifiers
-		// writes no rows.
-		h.recordRefusal(ctx, connection, storage.RefusedUnauthenticated)
+		// the identifier resolved to nothing there is no tenant to attribute it to and
+		// nothing is written, which is also what bounds this: an attacker with random
+		// identifiers writes no rows.
+		h.recordRefusal(ctx, integration, storage.RefusedUnauthenticated)
 		h.refuse(ctx, request, "unauthenticated")
 		h.counters.countDelivery(ctx, dispositionUnauthenticated)
-		// One status and one message however it failed. A missing header, a wrong secret, an
-		// unknown Connection, a disabled one and one that answers no triggers are
-		// indistinguishable, because telling them apart is how a caller learns which half of a
-		// guess was right.
+		// One status and one message however it failed. A missing header, a wrong secret,
+		// an unknown Integration, a disabled one and one that receives no webhooks are
+		// indistinguishable, because telling them apart is how a caller learns which half
+		// of a guess was right.
 		writeStatus(writer, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	// The tenant is now known, and it was DISCOVERED rather than claimed: it comes from the row
-	// whose secret just matched. Nothing the caller sent contributed to it.
-	organization, err := tenancy.NewOrganization(connection.Organization)
+	// The tenant is now known, and it was DISCOVERED rather than claimed: it comes from the
+	// row whose secret just matched. Nothing the caller sent contributed to it.
+	organization, err := tenancy.NewOrganization(integration.OrgID)
 	if err != nil {
-		h.Logger.ErrorContext(ctx, "a connection names an organization that is not a name",
-			slog.String("connection_id", connection.ID.String()),
+		h.Logger.ErrorContext(ctx, "an integration names an organization that is not a name",
+			slog.String("integration_id", integration.ID.String()),
 			slog.String("error", err.Error()))
 		h.counters.countDelivery(ctx, dispositionUnavailable)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 		return
 	}
 
-	adapter, ok := adapterFor(connection.Integration)
+	adapter, ok := h.Adapters[integration.Type]
 	if !ok {
-		// The Connection names an Integration this build does not have, which is a deployment
+		// The Integration names a type this build cannot parse, which is a deployment
 		// configured by a newer version. It is ours, not the caller's, so it is retryable.
-		h.Logger.ErrorContext(ctx, "connection names an integration this build cannot parse",
-			slog.String("organization", organization.String()),
-			slog.String("connection_id", connection.ID.String()),
-			slog.String("integration", connection.Integration))
+		h.Logger.ErrorContext(ctx, "integration names a type this build cannot parse",
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", integration.ID.String()),
+			slog.Int("type", int(integration.Type)))
 		h.counters.countDelivery(ctx, dispositionUnavailable)
 		writeStatus(writer, http.StatusServiceUnavailable, "integration not served here")
 		return
@@ -182,16 +185,16 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			h.recordRefusal(ctx, connection, storage.RefusedOversized)
+			h.recordRefusal(ctx, integration, storage.RefusedOversized)
 			h.refuse(ctx, request, "oversized")
 			h.counters.countDelivery(ctx, dispositionOversized)
 			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}
-		// The body did not arrive whole — a severed connection, a client that gave up. Nothing
-		// was written and there is very likely nobody left to read the answer, but saying so
-		// keeps the log from calling every unread body oversized.
-		h.recordRefusal(ctx, connection, storage.RefusedIncomplete)
+		// The body did not arrive whole — a severed connection, a client that gave up.
+		// Nothing was written and there is very likely nobody left to read the answer, but
+		// saying so keeps the log from calling every unread body oversized.
+		h.recordRefusal(ctx, integration, storage.RefusedIncomplete)
 		h.refuse(ctx, request, "incomplete")
 		h.counters.countDelivery(ctx, dispositionIncomplete)
 		writeStatus(writer, http.StatusBadRequest, "payload not received")
@@ -200,9 +203,9 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 
 	signals, truncated, err := adapter.Normalise(body)
 	if err != nil {
-		// The payload is not what this Integration's adapter accepts. Retrying will not change
+		// The payload is not what this type's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
-		h.recordRefusal(ctx, connection, storage.RefusedMalformed)
+		h.recordRefusal(ctx, integration, storage.RefusedMalformed)
 		h.refuse(ctx, request, "malformed")
 		h.counters.countDelivery(ctx, dispositionMalformed)
 		writeStatus(writer, http.StatusBadRequest, "payload not understood")
@@ -211,10 +214,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 
 	digest := sha256.Sum256(body)
 	h.record(ctx, writer, organization, storage.Delivery{
-		Connection: connection.ID,
-		// Inherited, never declared. This is ADR-003's rule made concrete: what arrives through
-		// a Connection carries that Connection's Environment, and no caller can influence it.
-		Environment: connection.Environment,
+		Integration: integration.ID,
 		BodyDigest:  digest[:],
 		Truncated:   truncated,
 		Signals:     signals,
@@ -231,8 +231,8 @@ func (h *surface) record(
 		// Nothing was written, and the source should try again — this is the one failure that
 		// is genuinely ours and genuinely transient.
 		h.Logger.ErrorContext(ctx, "recording a delivery failed",
-			slog.String("organization", organization.String()),
-			slog.String("connection_id", delivery.Connection.String()),
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", delivery.Integration.String()),
 			slog.String("error", err.Error()))
 		h.counters.countDelivery(ctx, dispositionUnavailable)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
@@ -240,15 +240,15 @@ func (h *surface) record(
 	}
 
 	if outcome.Duplicate {
-		h.recordAttempt(ctx, organization, delivery.Connection, storage.DeliveryDuplicate, 0)
+		h.recordAttempt(ctx, organization, delivery.Integration, storage.DeliveryDuplicate)
 		h.counters.countDelivery(ctx, dispositionDuplicate)
-		// This body was already accepted through this Connection. That covers both a source
+		// This body was already accepted through this Integration. That covers both a source
 		// retrying because it never saw a response — which has done nothing wrong, and whose
 		// answer must let it stop — and a body replayed by someone who captured it, which is
 		// applied to nothing for the same reason.
 		h.Logger.InfoContext(ctx, "delivery already accepted",
-			slog.String("organization", organization.String()),
-			slog.String("connection_id", delivery.Connection.String()))
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", delivery.Integration.String()))
 		writeStatus(writer, http.StatusOK, "already accepted")
 		return
 	}
@@ -259,76 +259,71 @@ func (h *surface) record(
 	// that must be visible rather than inferred from a count that looks fine.
 	if delivery.Truncated > 0 {
 		h.Logger.WarnContext(ctx, "the source truncated this delivery",
-			slog.String("organization", organization.String()),
-			slog.String("connection_id", delivery.Connection.String()),
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", delivery.Integration.String()),
 			slog.Int("omitted", delivery.Truncated))
 	}
 
-	h.recordAttempt(ctx, organization, delivery.Connection, storage.DeliveryAccepted,
-		outcome.Recorded)
 	h.counters.countDelivery(ctx, dispositionAccepted)
 	h.counters.countSignals(ctx, outcome.Recorded, outcome.EpisodesOpened, outcome.EpisodesJoined)
 	h.Logger.InfoContext(ctx, "delivery accepted",
-		slog.String("organization", organization.String()),
-		slog.String("connection_id", delivery.Connection.String()),
-		slog.String("environment_id", delivery.Environment.String()),
+		slog.String("org_id", organization.String()),
+		slog.String("integration_id", delivery.Integration.String()),
 		slog.Int("signals", outcome.Recorded),
 		slog.Int("episodes_opened", outcome.EpisodesOpened),
 		slog.Int("episodes_joined", outcome.EpisodesJoined))
 	writeStatus(writer, http.StatusAccepted, "accepted")
 }
 
-// errNotAuthenticated marks the failures that are the caller's: no credential, a wrong one, a
-// Connection that does not exist, one that has been turned off, and one that answers no
-// triggers. Everything else reaching the caller of authenticate is ours, and must not be
-// answered as a refusal.
+// errNotAuthenticated marks the failures that are the caller's: no credential, a wrong
+// one, an Integration that does not exist, one that has been turned off, and one that
+// receives no webhooks. Everything else reaching the caller of authenticate is ours, and
+// must not be answered as a refusal.
 var errNotAuthenticated = errors.New("not authenticated")
 
-// authenticate resolves the Connection from its opaque identifier and checks the secret it was
-// configured with.
+// authenticate resolves the Integration from its opaque identifier and checks the secret
+// it was configured with.
 //
-// The identifier is looked up across the placements this deployment serves, and the row that
-// is found is the authority for the organization and the environment. The comparison is
-// constant-time and happens whether or not a row was found, so the answer says nothing about
-// which identifiers exist.
+// The identifier is looked up across the placements this deployment serves, and the row
+// that is found is the authority for the organization. The comparison is constant-time and
+// happens whether or not a secret is held, so the answer says nothing about which
+// identifiers exist.
 func (h *surface) authenticate(
-	ctx context.Context, connectionID uuid.UUID, request *http.Request,
-) (storage.Connection, error) {
-	connection, err := h.Placements.ConnectionByID(ctx, connectionID)
+	ctx context.Context, integrationID uuid.UUID, request *http.Request,
+) (integrations.Integration, error) {
+	integration, err := h.Placements.IntegrationByID(ctx, integrationID)
 	switch {
-	case errors.Is(err, storage.ErrConnectionUnknown):
-		return storage.Connection{}, fmt.Errorf("%w: no such connection", errNotAuthenticated)
+	case errors.Is(err, integrations.ErrUnknown):
+		return integrations.Integration{}, fmt.Errorf("%w: no such integration", errNotAuthenticated)
 	case err != nil:
-		return storage.Connection{}, err
+		return integrations.Integration{}, err
 	}
 
-	// The row is returned alongside every refusal below, so a rejection can be recorded against
-	// the Connection it was aimed at. That is what makes a source delivering with a stale secret
-	// VISIBLE as a rejection instead of as silence — and it is safe because the row was found by
-	// primary key, not by anything the caller asserted about a tenant.
+	// The row is returned alongside every refusal below, so a rejection can be recorded
+	// against the Integration it was aimed at. That is what makes a source delivering with
+	// a stale secret VISIBLE as a rejection instead of as silence — and it is safe because
+	// the row was found by primary key, not by anything the caller asserted about a tenant.
 	presented := request.Header.Get(TokenHeader)
 	if presented == "" || len(presented) > maxPresentedSecret {
-		return connection, fmt.Errorf("%w: no usable credential presented", errNotAuthenticated)
+		return integration, fmt.Errorf("%w: no usable credential presented", errNotAuthenticated)
 	}
 
 	digest := sha256.Sum256([]byte(presented))
-	// Compared before the state checks below, so a disabled or evidence-only Connection takes
-	// the same work as a live trigger one and the timing says nothing either.
-	matches := subtle.ConstantTimeCompare(digest[:], connection.SecretDigest) == 1
+	// Compared before the state checks below, so a disabled Integration or one that
+	// receives no webhooks takes the same work as a live one and the timing says nothing
+	// either. An Integration with no secret compares against an empty digest and cannot
+	// match.
+	matches := subtle.ConstantTimeCompare(digest[:], integration.WebhookSecretDigest) == 1
 
 	switch {
 	case !matches:
-		return connection, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
-	case connection.Disabled():
-		// An operator who turned a Connection off wants deliveries refused, not merely recorded.
-		return connection, fmt.Errorf("%w: connection is disabled", errNotAuthenticated)
-	case !connection.Role.Includes(storage.RoleTrigger):
-		// An evidence-only Connection is reached outbound and delivers nothing inbound. It
-		// carries no secret at all, so this is unreachable while the schema holds — and it is
-		// checked anyway, because a check that trusts a constraint it cannot see is not a check.
-		return connection, fmt.Errorf("%w: connection accepts no deliveries", errNotAuthenticated)
+		return integration, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
+	case integration.Disabled():
+		// An operator who turned an Integration off wants deliveries refused, not merely
+		// recorded.
+		return integration, fmt.Errorf("%w: integration is disabled", errNotAuthenticated)
 	}
-	return connection, nil
+	return integration, nil
 }
 
 // callerOf reports where a delivery came from. It is what makes a campaign of credential
@@ -338,20 +333,20 @@ func callerOf(request *http.Request) string {
 	return request.RemoteAddr
 }
 
-// addressed resolves the Connection named in the path.
+// addressed resolves the Integration named in the path.
 //
 // A path that does not parse is answered exactly as a wrong secret is: same status, same body.
 // Anything else lets a caller separate "this is not the shape of an identifier" from "this is
-// not a connection", and probing the first is how you learn to probe the second.
+// not an integration", and probing the first is how you learn to probe the second.
 func (h *surface) addressed(
 	writer http.ResponseWriter, request *http.Request,
 ) (uuid.UUID, bool) {
-	connectionID, err := uuid.Parse(request.PathValue("connection"))
+	integrationID, err := uuid.Parse(request.PathValue("integration"))
 	if err != nil {
 		writeStatus(writer, http.StatusUnauthorized, "unauthorized")
 		return uuid.UUID{}, false
 	}
-	return connectionID, true
+	return integrationID, true
 }
 
 // readBody reads the delivery under its bound. MaxBytesReader stops at the limit rather than
@@ -361,7 +356,7 @@ func readBody(writer http.ResponseWriter, request *http.Request) ([]byte, error)
 	return io.ReadAll(limited)
 }
 
-// refuse records a rejected delivery: its reason, its Connection and where it came from, and
+// refuse records a rejected delivery: its reason, its Integration and where it came from, and
 // never its payload. The body is untrusted text from a customer's systems, and a log that
 // quoted it would turn diagnosis into a disclosure channel. The caller's address is recorded
 // for the opposite reason — without it a campaign of credential guesses leaves nothing to
@@ -375,61 +370,64 @@ func readBody(writer http.ResponseWriter, request *http.Request) ([]byte, error)
 // place guaranteed to hold a guess at the credential.
 func (h *surface) refuse(ctx context.Context, request *http.Request, reason string) {
 	h.Logger.WarnContext(ctx, "delivery refused",
-		slog.String("connection_id", request.PathValue("connection")),
+		slog.String("integration_id", request.PathValue("integration")),
 		slog.String("caller", callerOf(request)),
 		slog.String("reason", reason))
 }
 
-// recordRefusal puts a rejected delivery in the Connection's own history, so an operator can see
-// that a source is delivering and being turned away.
+// recordRefusal puts a rejected delivery in the Integration's own history, so an operator
+// can see that a source is delivering and being turned away.
 //
-// Without it, the two states an operator most needs to tell apart are identical from the console:
-// a source that has gone quiet and a source that is delivering every thirty seconds with a stale
-// secret both show no accepted deliveries. One of those is a quiet night and the other is a
-// broken intake, and they call for opposite actions at three in the morning.
+// Without it, the two states an operator most needs to tell apart are identical from the
+// console: a source that has gone quiet and a source that is delivering every thirty
+// seconds with a stale secret both show no accepted deliveries. One of those is a quiet
+// night and the other is a broken intake, and they call for opposite actions at three in
+// the morning.
 //
-// It is skipped when no Connection was found, which is both correct and what bounds it: there is
-// no tenant to attribute an unknown identifier to, so an attacker guessing identifiers writes no
-// rows at all. A rate-limited delivery is likewise not recorded — the limiter runs before the
-// Connection is resolved, deliberately, because that is the defence that has to hold when
-// everything after it is being abused.
+// It is skipped when no Integration was found, which is both correct and what bounds it:
+// there is no tenant to attribute an unknown identifier to, so an attacker guessing
+// identifiers writes no rows at all. A rate-limited delivery is likewise not recorded —
+// the limiter runs before the Integration is resolved, deliberately, because that is the
+// defence that has to hold when everything after it is being abused.
 //
-// A failure to record is logged and does not change the answer. The delivery was already refused
-// and telling the source something different because our own history could not be written would
-// be reporting our problem as theirs.
-func (h *surface) recordRefusal(ctx context.Context, found storage.Connection, reason string) {
-	if found.ID == uuid.Nil || found.Organization == "" {
+// A failure to record is logged and does not change the answer. The delivery was already
+// refused and telling the source something different because our own history could not be
+// written would be reporting our problem as theirs.
+func (h *surface) recordRefusal(
+	ctx context.Context, found integrations.Integration, reason string,
+) {
+	if found.ID == uuid.Nil || found.OrgID == "" {
 		return
 	}
-	organization, err := tenancy.NewOrganization(found.Organization)
+	organization, err := tenancy.NewOrganization(found.OrgID)
 	if err != nil {
 		return
 	}
 	if err := h.Placements.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
-		Connection:  found.ID,
+		Integration: found.ID,
 		Disposition: storage.DeliveryRejected,
 		Reason:      reason,
 	}); err != nil {
 		h.Logger.ErrorContext(ctx, "a refused delivery could not be recorded",
-			slog.String("connection_id", found.ID.String()),
+			slog.String("integration_id", found.ID.String()),
 			slog.String("reason", reason),
 			slog.String("error", err.Error()))
 	}
 }
 
-// recordAttempt puts an accepted or duplicate delivery in the history beside the refusals, so
-// "last received" and "last accepted" are answerable separately.
+// recordAttempt puts a duplicate delivery in the history beside the refusals, so "last
+// received" and "last accepted" are answerable separately. An accepted delivery needs no
+// call here: the accepting transaction wrote its own row.
 func (h *surface) recordAttempt(
-	ctx context.Context, organization tenancy.Organization, connectionID uuid.UUID,
-	disposition storage.DeliveryDisposition, signals int,
+	ctx context.Context, organization tenancy.Organization, integrationID uuid.UUID,
+	disposition storage.DeliveryDisposition,
 ) {
 	if err := h.Placements.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
-		Connection:  connectionID,
+		Integration: integrationID,
 		Disposition: disposition,
-		SignalCount: signals,
 	}); err != nil {
-		h.Logger.ErrorContext(ctx, "an accepted delivery could not be recorded in the history",
-			slog.String("connection_id", connectionID.String()),
+		h.Logger.ErrorContext(ctx, "a delivery could not be recorded in the history",
+			slog.String("integration_id", integrationID.String()),
 			slog.String("error", err.Error()))
 	}
 }

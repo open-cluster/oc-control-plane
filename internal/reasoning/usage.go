@@ -2,8 +2,6 @@ package reasoning
 
 import (
 	"time"
-
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // What one call consumed, and what is recorded about it.
@@ -85,13 +83,4 @@ type Record struct {
 	Method        string
 	PromptVersion string
 	SchemaVersion string
-}
-
-// Spend renders this call in the domain's own terms, so a round accumulates it exactly as it
-// accumulates a replayed transcript's figures.
-func (r Record) Spend() investigation.Usage {
-	return investigation.Usage{
-		Tokens:     r.Usage.Billable(),
-		MicroCents: r.MicroCents,
-	}
 }

@@ -126,10 +126,8 @@ func (b Basis) Explain() string {
 type Episode struct {
 	ID           uuid.UUID
 	Organization string
-	// Environment is DERIVED from the Connection the Signals arrived through, and persisted rather
-	// than joined so a Connection that later moves cannot rewrite the scope of a finished episode.
-	Environment uuid.UUID
-	Connection  uuid.UUID
+	// Integration is the installation the Signals arrived through.
+	Integration uuid.UUID
 	// GroupingKey is the source's own identity for what belongs together. It is shown to an
 	// operator because it is the answer to "why are these one incident", and it is untrusted text
 	// like everything else a customer's system produced.
@@ -144,10 +142,6 @@ type Episode struct {
 	// ResolvedAt is when the last Signal in this episode stopped firing, and is zero while any is.
 	ResolvedAt  time.Time
 	SignalCount int
-	// Investigation is the one case this episode is the subject of, and is nil when none has been
-	// opened. One rather than many: repeated notifications about one failure must not fragment
-	// into many cases.
-	Investigation *uuid.UUID
 	// SupersededBy is the episode an operator merged this one into. Both records survive and
 	// nothing is rewritten, so correcting a grouping does not destroy the record of having made
 	// the original one.

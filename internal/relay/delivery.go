@@ -183,7 +183,7 @@ func (s *SessionService) failUndeliverable(session *sessionState, job storage.Jo
 
 	session.logger.ErrorContext(ctx, "job refused before dispatch",
 		slog.String("job_id", job.ID.String()),
-		slog.String("connection_id", job.ConnectionID.String()),
+		slog.String("integration_id", job.IntegrationID.String()),
 		slog.String("capability_id", job.CapabilityID),
 		slog.Uint64("capability_version", uint64(job.CapabilityVersion)),
 		// The cause is this control plane's own message about its own job, so it carries no

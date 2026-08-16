@@ -55,13 +55,13 @@ func (p *Placements) CreateDirectoryGroup(
 		) {
 			var id uuid.UUID
 			if err := transaction.QueryRow(ctx, `
-				INSERT INTO scim_group (group_id, organization, display_name, external_id)
+				INSERT INTO scim_group (group_id, org_id, display_name, external_id)
 				VALUES ($1, $2, $3, $4)
 				RETURNING group_id`,
 				uuid.New(), organization.String(), displayName,
 				nullableText(externalID)).Scan(&id); err != nil {
-				if isUniqueViolation(err, "scim_group_name_is_unique_per_organization") ||
-					isUniqueViolation(err, "scim_group_external_id_is_unique_per_organization") {
+				if isUniqueViolation(err, "scim_group_name_is_unique_per_org") ||
+					isUniqueViolation(err, "scim_group_external_id_is_unique_per_org") {
 					return DirectoryGroup{}, audit.Target{}, nil, ErrDirectoryGroupExists
 				}
 				return DirectoryGroup{}, audit.Target{}, nil,
@@ -104,10 +104,10 @@ func (p *Placements) ReplaceDirectoryGroup(
 			if _, err := transaction.Exec(ctx, `
 				UPDATE scim_group
 				   SET display_name = $3, external_id = $4, updated_at = now()
-				 WHERE organization = $1 AND group_id = $2`,
+				 WHERE org_id = $1 AND group_id = $2`,
 				organization.String(), id, displayName, nullableText(externalID)); err != nil {
-				if isUniqueViolation(err, "scim_group_name_is_unique_per_organization") ||
-					isUniqueViolation(err, "scim_group_external_id_is_unique_per_organization") {
+				if isUniqueViolation(err, "scim_group_name_is_unique_per_org") ||
+					isUniqueViolation(err, "scim_group_external_id_is_unique_per_org") {
 					return DirectoryGroup{}, audit.Target{}, nil, ErrDirectoryGroupExists
 				}
 				return DirectoryGroup{}, audit.Target{}, nil,
@@ -149,7 +149,7 @@ func (p *Placements) ChangeDirectoryGroupMembers(
 
 			for _, member := range added {
 				if _, err := transaction.Exec(ctx, `
-					INSERT INTO scim_group_member (group_id, organization, user_id)
+					INSERT INTO scim_group_member (group_id, org_id, user_id)
 					VALUES ($1, $2, $3)
 					ON CONFLICT DO NOTHING`,
 					id, organization.String(), member); err != nil {
@@ -160,7 +160,7 @@ func (p *Placements) ChangeDirectoryGroupMembers(
 			for _, member := range removed {
 				if _, err := transaction.Exec(ctx, `
 					DELETE FROM scim_group_member
-					 WHERE group_id = $1 AND organization = $2 AND user_id = $3`,
+					 WHERE group_id = $1 AND org_id = $2 AND user_id = $3`,
 					id, organization.String(), member); err != nil {
 					return DirectoryGroup{}, audit.Target{}, nil,
 						fmt.Errorf("removing a group member: %w", err)
@@ -209,7 +209,7 @@ func (p *Placements) MapDirectoryGroupToRole(
 			}
 			if _, err := transaction.Exec(ctx, `
 				UPDATE scim_group SET role = $3, updated_at = now()
-				 WHERE organization = $1 AND group_id = $2`,
+				 WHERE org_id = $1 AND group_id = $2`,
 				organization.String(), id, nullableText(string(role))); err != nil {
 				return DirectoryGroup{}, audit.Target{}, nil,
 					fmt.Errorf("mapping a directory group: %w", err)
@@ -247,7 +247,7 @@ func (p *Placements) DeleteDirectoryGroup(
 				return struct{}{}, audit.Target{}, nil, err
 			}
 			if _, err := transaction.Exec(ctx, `
-				DELETE FROM scim_group WHERE organization = $1 AND group_id = $2`,
+				DELETE FROM scim_group WHERE org_id = $1 AND group_id = $2`,
 				organization.String(), id); err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("deleting a directory group: %w", err)
@@ -282,7 +282,7 @@ func (p *Placements) DirectoryGroups(
 	var list DirectoryGroupList
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM scim_group
-		 WHERE organization = $1 AND ($2::TEXT IS NULL OR display_name = $2::TEXT)`,
+		 WHERE org_id = $1 AND ($2::TEXT IS NULL OR display_name = $2::TEXT)`,
 		organization.String(), nullableText(displayName)).Scan(&list.Total); err != nil {
 		return DirectoryGroupList{}, fmt.Errorf("counting directory groups: %w", err)
 	}
@@ -290,7 +290,7 @@ func (p *Placements) DirectoryGroups(
 	rows, err := pool.Query(ctx, `
 		SELECT group_id, display_name, external_id, role, created_at, updated_at
 		  FROM scim_group
-		 WHERE organization = $1 AND ($2::TEXT IS NULL OR display_name = $2::TEXT)
+		 WHERE org_id = $1 AND ($2::TEXT IS NULL OR display_name = $2::TEXT)
 		 ORDER BY created_at, group_id
 		 OFFSET $3 LIMIT $4`,
 		organization.String(), nullableText(displayName), max(startIndex-1, 0), pageLimit(count))
@@ -344,7 +344,7 @@ func readDirectoryGroup(
 	row := on.QueryRow(ctx, `
 		SELECT group_id, display_name, external_id, role, created_at, updated_at
 		  FROM scim_group
-		 WHERE organization = $1 AND group_id = $2`, organization.String(), id)
+		 WHERE org_id = $1 AND group_id = $2`, organization.String(), id)
 
 	group, err := scanDirectoryGroup(row, organization.String())
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -378,7 +378,7 @@ func groupMembers(
 ) ([]uuid.UUID, error) {
 	rows, err := on.Query(ctx, `
 		SELECT user_id FROM scim_group_member
-		 WHERE organization = $1 AND group_id = $2
+		 WHERE org_id = $1 AND group_id = $2
 		 ORDER BY user_id`, organization.String(), id)
 	if err != nil {
 		return nil, fmt.Errorf("reading group members: %w", err)
@@ -407,13 +407,13 @@ func setGroupMembers(
 		return err
 	}
 	if _, err := transaction.Exec(ctx, `
-		DELETE FROM scim_group_member WHERE organization = $1 AND group_id = $2`,
+		DELETE FROM scim_group_member WHERE org_id = $1 AND group_id = $2`,
 		organization.String(), id); err != nil {
 		return fmt.Errorf("clearing group members: %w", err)
 	}
 	for _, member := range members {
 		if _, err := transaction.Exec(ctx, `
-			INSERT INTO scim_group_member (group_id, organization, user_id)
+			INSERT INTO scim_group_member (group_id, org_id, user_id)
 			VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
 			id, organization.String(), member); err != nil {
 			return fmt.Errorf("setting group members: %w", err)
@@ -458,7 +458,7 @@ func recomputeProvisionedRole(
 		SELECT scim_group.role
 		  FROM scim_group_member
 		  JOIN scim_group ON scim_group.group_id = scim_group_member.group_id
-		 WHERE scim_group_member.organization = $1
+		 WHERE scim_group_member.org_id = $1
 		   AND scim_group_member.user_id = $2
 		   AND scim_group.role IS NOT NULL`, organization.String(), user)
 	if err != nil {
@@ -497,7 +497,7 @@ func recomputeProvisionedRole(
 		if _, err := transaction.Exec(ctx, `
 			UPDATE organization_membership
 			   SET role = NULL, updated_at = now()
-			 WHERE organization = $1 AND user_id = $2 AND source = $3`,
+			 WHERE org_id = $1 AND user_id = $2 AND source = $3`,
 			organization.String(), user, int16(SourceSCIM)); err != nil {
 			return fmt.Errorf("clearing a provisioned role: %w", err)
 		}
@@ -507,7 +507,7 @@ func recomputeProvisionedRole(
 		if _, err := transaction.Exec(ctx, `
 			UPDATE operator_session
 			   SET revoked_at = now(), revoked_by = 'directory synchronisation'
-			 WHERE user_id = $1 AND organization = $2 AND revoked_at IS NULL`,
+			 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
 			user, organization.String()); err != nil {
 			return fmt.Errorf("revoking sessions: %w", err)
 		}
@@ -517,7 +517,7 @@ func recomputeProvisionedRole(
 	if _, err := transaction.Exec(ctx, `
 		UPDATE organization_membership
 		   SET role = $3, updated_at = now()
-		 WHERE organization = $1 AND user_id = $2 AND source = $4`,
+		 WHERE org_id = $1 AND user_id = $2 AND source = $4`,
 		organization.String(), user, string(strongest), int16(SourceSCIM)); err != nil {
 		return fmt.Errorf("setting a provisioned role: %w", err)
 	}

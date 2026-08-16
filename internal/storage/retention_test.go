@@ -37,9 +37,9 @@ func recordAuditEvent(
 	id := uuid.New()
 	if _, err = connection.Exec(context.Background(), `
 		INSERT INTO audit_event
-			(event_id, organization, actor_kind, actor_display_name, action, target_kind,
+			(event_id, org_id, actor_kind, actor_display_name, action, target_kind,
 			 target_id, outcome, occurred_at)
-		VALUES ($1, $2, 3, 'the retention test', 'connection.update', 'connection', $3, 1, $4)`,
+		VALUES ($1, $2, 3, 'the retention test', 'integration.revised', 'integration', $3, 1, $4)`,
 		id, organization.String(), id.String(), occurredAt); err != nil {
 		t.Fatalf("writing an audit event: %v", err)
 	}
@@ -56,9 +56,9 @@ func declareRetention(t *testing.T, dsn string, organization tenancy.Organizatio
 	defer func() { _ = connection.Close(context.Background()) }()
 
 	if _, err = connection.Exec(context.Background(), `
-		INSERT INTO organization_policy (organization, audit_retention_days)
+		INSERT INTO organization_policy (org_id, audit_retention_days)
 		VALUES ($1, $2)
-		ON CONFLICT (organization) DO UPDATE SET audit_retention_days = EXCLUDED.audit_retention_days`,
+		ON CONFLICT (org_id) DO UPDATE SET audit_retention_days = EXCLUDED.audit_retention_days`,
 		organization.String(), days); err != nil {
 		t.Fatalf("declaring a retention schedule: %v", err)
 	}
@@ -75,7 +75,7 @@ func countAuditEvents(t *testing.T, dsn string, organization tenancy.Organizatio
 
 	var count int
 	if err = connection.QueryRow(context.Background(),
-		`SELECT count(*) FROM audit_event WHERE organization = $1`,
+		`SELECT count(*) FROM audit_event WHERE org_id = $1`,
 		organization.String()).Scan(&count); err != nil {
 		t.Fatalf("counting audit events: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	undeclared := func(when string) {
 		t.Helper()
 		if _, execErr := pool.Exec(context.Background(),
-			`DELETE FROM audit_event WHERE organization = $1`, org.String()); execErr == nil {
+			`DELETE FROM audit_event WHERE org_id = $1`, org.String()); execErr == nil {
 			t.Fatalf("an undeclared DELETE succeeded %s; the record is not append-only", when)
 		}
 	}

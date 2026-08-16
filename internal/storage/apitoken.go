@@ -86,14 +86,14 @@ func (p *Placements) CreateServiceAccount(
 			account := ServiceAccount{Organization: organization.String()}
 			var disabled *time.Time
 			if err := transaction.QueryRow(ctx, `
-				INSERT INTO service_account (service_account_id, organization, name, description,
+				INSERT INTO service_account (service_account_id, org_id, name, description,
 				                             created_by)
 				VALUES ($1, $2, $3, $4, $5)
 				RETURNING service_account_id, name, description, disabled_at, created_at, created_by`,
 				uuid.New(), organization.String(), name, description, principal.ID()).
 				Scan(&account.ID, &account.Name, &account.Description, &disabled,
 					&account.CreatedAt, &account.CreatedBy); err != nil {
-				if isUniqueViolation(err, "service_account_name_is_unique_per_organization") {
+				if isUniqueViolation(err, "service_account_name_is_unique_per_org") {
 					return ServiceAccount{}, audit.Target{}, nil, ErrServiceAccountNameTaken
 				}
 				return ServiceAccount{}, audit.Target{}, nil,
@@ -123,7 +123,7 @@ func (p *Placements) ListServiceAccounts(
 	rows, err := pool.Query(ctx, `
 		SELECT service_account_id, name, description, disabled_at, created_at, created_by
 		  FROM service_account
-		 WHERE organization = $1
+		 WHERE org_id = $1
 		 ORDER BY created_at, service_account_id
 		 LIMIT $2`, organization.String(), maxPageSize)
 	if err != nil {
@@ -162,7 +162,7 @@ func (p *Placements) RemoveServiceAccount(
 			var name string
 			err := transaction.QueryRow(ctx, `
 				DELETE FROM service_account
-				 WHERE organization = $1 AND service_account_id = $2
+				 WHERE org_id = $1 AND service_account_id = $2
 				RETURNING name`, organization.String(), id).Scan(&name)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, ErrServiceAccountUnknown
@@ -190,7 +190,7 @@ func (p *Placements) IssueAPIToken(
 			var role string
 			var lastUsed, revoked *time.Time
 			if err := transaction.QueryRow(ctx, `
-				INSERT INTO api_token (token_id, organization, service_account_id, token_digest,
+				INSERT INTO api_token (token_id, org_id, service_account_id, token_digest,
 				                       prefix, role, expires_at, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				RETURNING token_id, service_account_id, prefix, role, expires_at, last_used_at,
@@ -241,7 +241,7 @@ func (p *Placements) ListAPITokens(
 		SELECT token_id, service_account_id, prefix, role, expires_at, last_used_at,
 		       revoked_at, created_at, created_by
 		  FROM api_token
-		 WHERE organization = $1
+		 WHERE org_id = $1
 		 ORDER BY created_at DESC, token_id
 		 LIMIT $2`, organization.String(), maxPageSize)
 	if err != nil {
@@ -285,7 +285,7 @@ func (p *Placements) RevokeAPIToken(
 			err := transaction.QueryRow(ctx, `
 				UPDATE api_token
 				   SET revoked_at = coalesce(revoked_at, now()), revoked_by = $3
-				 WHERE organization = $1 AND token_id = $2
+				 WHERE org_id = $1 AND token_id = $2
 				RETURNING prefix`, organization.String(), id, principal.ID()).Scan(&prefix)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, ErrTokenUnknown
@@ -351,7 +351,7 @@ func bearerFrom(ctx context.Context, on querier, digest []byte) (authz.Principal
 		   AND api_token.expires_at > now()
 		   AND account.service_account_id = api_token.service_account_id
 		   AND account.disabled_at IS NULL
-		RETURNING api_token.token_id, api_token.organization, api_token.role,
+		RETURNING api_token.token_id, api_token.org_id, api_token.role,
 		          account.service_account_id, account.name`,
 		digest, lastUsedResolution).Scan(&tokenID, &organization, &role, &accountID, &accountName)
 	if errors.Is(err, pgx.ErrNoRows) {

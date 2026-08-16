@@ -91,7 +91,7 @@ func operatorCredentialScope(lookup func(string) (string, bool), cfg *Config) er
 // nothing. It is named here rather than imported from internal/authz because configuration
 // must not depend on the authorization model to parse; the composition root refuses an
 // unrecognised value when it builds the principal.
-const defaultOperatorTokenRole = "organization_owner"
+const defaultOperatorTokenRole = "admin"
 
 // optionalBrowserURL reads a URL a browser will be sent to or arrive from. It must be an
 // absolute origin with no path, because everything downstream appends one.

@@ -173,8 +173,8 @@ func TestAGroupMapYieldsTheStrongestRoleHeld(t *testing.T) {
 		GroupClaim: "groups",
 		GroupRoleMap: map[string]string{
 			"viewers":     string(authz.Viewer),
-			"sre":         string(authz.Investigator),
-			"platform":    string(authz.PlatformAdministrator),
+			"sre":         string(authz.Editor),
+			"platform":    string(authz.Editor),
 			"nonexistent": "a-role-this-build-does-not-have",
 		},
 	}
@@ -186,10 +186,10 @@ func TestAGroupMapYieldsTheStrongestRoleHeld(t *testing.T) {
 	}{
 		{"one mapped group", []any{"viewers"}, authz.Viewer},
 		{"the strongest of several", []any{"viewers", "sre", "platform"},
-			authz.PlatformAdministrator},
+			authz.Editor},
 		{"listed in the other order", []any{"platform", "viewers"},
-			authz.PlatformAdministrator},
-		{"case-folded", []any{"SRE"}, authz.Investigator},
+			authz.Editor},
+		{"case-folded", []any{"SRE"}, authz.Editor},
 		{"a group nobody mapped", []any{"finance"}, ""},
 		// A group naming a role this build no longer has maps to nothing rather than failing
 		// the sign-in: a typo in a directory must not be an outage for everyone.
@@ -281,7 +281,7 @@ func TestAdmissionAppliesThePolicyInTheOrderTheStoriesAskFor(t *testing.T) {
 		RequireVerifiedEmail: true,
 		VerifiedDomains:      []string{"example.test"},
 		GroupClaim:           "groups",
-		GroupRoleMap:         map[string]string{"sre": string(authz.Investigator)},
+		GroupRoleMap:         map[string]string{"sre": string(authz.Editor)},
 	}
 	verified := claims{
 		Email: "ada@example.test", EmailVerified: true, raw: map[string]any{},
@@ -307,7 +307,7 @@ func TestAdmissionAppliesThePolicyInTheOrderTheStoriesAskFor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("admitting: %v", err)
 		}
-		if admitted.Role != authz.Investigator || admitted.MappedFromGroup != "sre" {
+		if admitted.Role != authz.Editor || admitted.MappedFromGroup != "sre" {
 			t.Errorf("granted %q from %q, want the mapped role and its group",
 				admitted.Role, admitted.MappedFromGroup)
 		}

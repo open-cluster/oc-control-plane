@@ -59,7 +59,7 @@ func (p *Placements) RecordSessionConflict(
 		       -- quieter sighting must not talk an operator out of it.
 		       session_conflict_hosts = GREATEST(session_conflict_hosts, $3)
 		 WHERE registration_id = $1
-		   AND organization    = $2`,
+		   AND org_id    = $2`,
 		registrationID, organization.String(), distinctHosts)
 	if err != nil {
 		return fmt.Errorf("recording a session conflict: %w", err)
@@ -125,7 +125,7 @@ func appendConflictEvent(ctx context.Context, transaction pgx.Tx, event conflict
 	}
 	_, err := transaction.Exec(ctx, `
 		INSERT INTO relay_session_conflict_event
-			(organization, registration_id, kind, distinct_hosts, withdrawn_from)
+			(org_id, registration_id, kind, distinct_hosts, withdrawn_from)
 		VALUES ($1, $2, $3, $4, $5)`,
 		event.organization.String(), event.registrationID,
 		int16(event.kind), event.distinctHosts, actor)
@@ -151,7 +151,7 @@ func (p *Placements) SessionConflict(
 	err = pool.QueryRow(ctx, `
 		SELECT session_conflict_at, session_conflict_hosts
 		  FROM relay_registration
-		 WHERE registration_id = $1 AND organization = $2`,
+		 WHERE registration_id = $1 AND org_id = $2`,
 		registrationID, organization.String()).Scan(&detectedAt, &hosts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionConflict{}, nil
@@ -214,7 +214,7 @@ func (p *Placements) ClearSessionConflict(
 		   SET session_conflict_at    = NULL,
 		       session_conflict_hosts = 0
 		 WHERE registration_id     = $1
-		   AND organization        = $2
+		   AND org_id        = $2
 		   AND session_conflict_at IS NOT NULL`,
 		registrationID, organization.String())
 	if err != nil {
@@ -271,7 +271,7 @@ func (p *Placements) explainUnwithdrawn(
 	var exists bool
 	err = pool.QueryRow(ctx, `
 		SELECT true FROM relay_registration
-		 WHERE registration_id = $1 AND organization = $2`,
+		 WHERE registration_id = $1 AND org_id = $2`,
 		registrationID, organization.String()).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WithdrawalRelayUnknown, nil
@@ -323,7 +323,7 @@ func (p *Placements) SessionConflictTrail(
 	rows, err := pool.Query(ctx, `
 		SELECT event_id, kind, distinct_hosts, withdrawn_from, at
 		  FROM relay_session_conflict_event
-		 WHERE organization    = $1
+		 WHERE org_id    = $1
 		   AND registration_id = $2
 		   AND ($4::bigint IS NULL OR event_id < $4::bigint)
 		 ORDER BY event_id DESC

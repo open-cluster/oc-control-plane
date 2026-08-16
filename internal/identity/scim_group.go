@@ -309,10 +309,10 @@ func (h Handlers) mapSCIMGroupToRole(writer http.ResponseWriter, request *http.R
 		}
 		// The same refusal the just-in-time role and the token role get, for the same reason: a
 		// directory group is edited by whoever administers the customer's identity vendor, and
-		// an owner arriving that way is an administrative takeover one directory edit wide.
-		if parsed == authz.OrganizationOwner {
+		// an admin arriving that way is an administrative takeover one directory edit wide.
+		if parsed == authz.Admin {
 			writeJSON(writer, http.StatusBadRequest, errorView{
-				Error: "an owner may not be granted by a directory group; grant it to a person " +
+				Error: "admin may not be granted by a directory group; grant it to a person " +
 					"deliberately"})
 			return
 		}

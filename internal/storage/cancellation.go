@@ -63,7 +63,7 @@ func (p *Placements) RequestJobCancellation(
 		       -- Coalesced so asking twice does not move the moment it was first asked.
 		       cancel_requested_at = COALESCE(cancel_requested_at, now())
 		 WHERE job_id       = $1
-		   AND organization = $2
+		   AND org_id = $2
 		   AND status IN (0, 1)
 		RETURNING status`,
 		jobID, organization.String()).Scan(&resulting)
@@ -93,7 +93,7 @@ func (p *Placements) PendingCancellations(
 	rows, err := pool.Query(ctx, `
 		SELECT job_id, lease_session, lease_epoch
 		  FROM relay_job
-		 WHERE organization        = $1
+		 WHERE org_id        = $1
 		   AND lease_session       = $2
 		   AND status              = 1
 		   AND cancel_requested_at IS NOT NULL`,

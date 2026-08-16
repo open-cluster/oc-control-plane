@@ -61,14 +61,9 @@ func TestTheOperatorRouteTableIsAuthorizable(t *testing.T) {
 func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 	t.Parallel()
 
-	// The one permission decided from a request BODY rather than from the route. Appointing an
-	// owner is the same route as any other membership change, and which permission it needs
-	// depends on what is being granted, so the table cannot carry it. It is recorded here with
-	// its reason rather than being an unexplained gap.
-	decidedInAHandler := map[authz.Permission]string{
-		authz.MemberOwnerManage: "PUT .../members/{user} declares member.manage; appointing an " +
-			"OWNER needs this on top, and which of the two applies is decided from the body",
-	}
+	// Permissions decided somewhere other than the route table, recorded here with their
+	// reason rather than being an unexplained gap. Currently none.
+	decidedInAHandler := map[authz.Permission]string{}
 
 	required := make(map[authz.Permission]bool)
 	for _, route := range operatorRoutes(t) {
@@ -365,41 +360,29 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		key    string
 		reason string
 	}{
+		{"GET /operator/v1/organizations/{organization}/integration-types",
+			"the catalog is Organization-scoped so configured Integrations can be counted per tenant"},
 		{"GET /operator/v1/organizations/{organization}/integrations",
-			"the catalog is Organization-scoped so configured Connections can be counted per tenant"},
-		{"GET /operator/v1/organizations/{organization}/connections",
-			"Connections list Organization-wide, with the Environment as a filter"},
-		{"POST /operator/v1/organizations/{organization}/connections",
-			"creation names its Environment in the body"},
-		{"POST /operator/v1/organizations/{organization}/connections/{connection}/enabled",
+			"Integrations list Organization-wide; org_id is the only boundary"},
+		{"POST /operator/v1/organizations/{organization}/integrations",
+			"creating an Integration is the product's first job"},
+		{"GET /operator/v1/organizations/{organization}/integrations/{integration}",
+			"an Integration has a detail route carrying its status and its webhook identity"},
+		{"PATCH /operator/v1/organizations/{organization}/integrations/{integration}",
+			"revising changes part of a record and leaves its identity and its secret alone"},
+		{"DELETE /operator/v1/organizations/{organization}/integrations/{integration}",
+			"an Integration nothing depends on can be removed; one with a history is refused"},
+		{"POST /operator/v1/organizations/{organization}/integrations/{integration}/enabled",
 			"one idempotent operation replaces the enable and disable pair"},
-		{"POST /operator/v1/organizations/{organization}/connections/{connection}/trigger/rotate-secret",
-			"rotating a trigger verification secret says which secret it rotates"},
-
-		// The operations that turn a Connection from a row somebody created into something with
-		// a history. Each is named here because each is a thing the frontend's contract declares
-		// and the control plane did not serve, and an absence is exactly what nobody notices.
-		{"GET /operator/v1/organizations/{organization}/connections/{connection}",
-			"a Connection has a detail route carrying its state, its credential metadata and its delivery health"},
-		{"PATCH /operator/v1/organizations/{organization}/connections/{connection}",
-			"revising a configuration increments its revision, so \"it changed\" is answerable"},
-		{"DELETE /operator/v1/organizations/{organization}/connections/{connection}",
-			"a Connection nothing depends on can be removed; one with a history is refused with what depends on it"},
-		{"GET /operator/v1/organizations/{organization}/connections/{connection}/dependents",
-			"what depends on a Connection is answerable before an operator tries to remove it"},
-		{"POST /operator/v1/organizations/{organization}/connections/{connection}/validate",
-			"validating is what separates a Connection that is configured from one that works"},
-		{"GET /operator/v1/organizations/{organization}/connections/{connection}/validations",
-			"validation history is what tells an outage from a configuration that never worked"},
-		{"GET /operator/v1/organizations/{organization}/connections/{connection}/deliveries",
-			"delivery history is what correlates a missed investigation with a missed delivery"},
-		{"POST /operator/v1/organizations/{organization}/connections/{connection}/trigger/test-event",
-			"intake can be verified without waiting for a real incident"},
+		{"POST /operator/v1/organizations/{organization}/integrations/{integration}/verify",
+			"verifying is what separates an Integration that is configured from one that works"},
+		{"POST /operator/v1/organizations/{organization}/integrations/{integration}/webhook/rotate-secret",
+			"rotating the webhook secret says which secret it rotates"},
 
 		// The fleet. A hundred relays is a hundred rows, and a hundred rows is not an assessment.
 		{"GET /operator/v1/organizations/{organization}/relays/summary",
 			"a fleet is assessable without reading every row"},
-		{"GET /operator/v1/organizations/{organization}/relays/{registration}/connections",
+		{"GET /operator/v1/organizations/{organization}/relays/{registration}/integrations",
 			"what a Relay serves is what disabling it costs"},
 		{"POST /operator/v1/organizations/{organization}/relays/bootstrap-tokens",
 			"installing a Relay does not require sharing a permanent secret"},
@@ -412,12 +395,14 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 	}
 
 	for _, gone := range []string{
-		"GET /operator/v1/integrations",
-		"GET /operator/v1/organizations/{organization}/environments/{environment}/connections",
-		"POST /operator/v1/organizations/{organization}/environments/{environment}/connections",
-		"POST /operator/v1/organizations/{organization}/connections/{connection}/enable",
-		"POST /operator/v1/organizations/{organization}/connections/{connection}/disable",
-		"POST /operator/v1/organizations/{organization}/connections/{connection}/rotate-secret",
+		// The retired domain: Connections, Environments and the investigation surface are
+		// gone, and a route reappearing here would be the old model growing back.
+		"GET /operator/v1/organizations/{organization}/connections",
+		"POST /operator/v1/organizations/{organization}/connections",
+		"GET /operator/v1/organizations/{organization}/environments",
+		"POST /operator/v1/organizations/{organization}/environments",
+		"GET /operator/v1/organizations/{organization}/investigations",
+		"POST /operator/v1/organizations/{organization}/investigations",
 	} {
 		if served[gone] {
 			t.Errorf("%s is served again; it was corrected deliberately, and a regression here "+
@@ -444,11 +429,11 @@ func TestTheRoleTableIsLegible(t *testing.T) {
 				"be usefully given", role)
 		}
 	}
-	// A sanity bound on the whole thing: the widest role is the owner, and it holds every
+	// A sanity bound on the whole thing: the widest role is the Admin, and it holds every
 	// permission. Anything wider would mean a permission outside the declared set.
-	if len(authz.PermissionsOf(authz.OrganizationOwner)) != len(authz.Permissions()) {
-		t.Errorf("the owner holds %d of %d permissions",
-			len(authz.PermissionsOf(authz.OrganizationOwner)), len(authz.Permissions()))
+	if len(authz.PermissionsOf(authz.Admin)) != len(authz.Permissions()) {
+		t.Errorf("the admin holds %d of %d permissions",
+			len(authz.PermissionsOf(authz.Admin)), len(authz.Permissions()))
 	}
 }
 

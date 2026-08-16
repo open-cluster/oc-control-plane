@@ -129,7 +129,7 @@ func spendBootstrapToken(
 		UPDATE relay_bootstrap_token
 		   SET consumed_at = now()
 		 WHERE token_digest = $1
-		   AND organization = $2
+		   AND org_id = $2
 		   AND consumed_at IS NULL
 		   AND revoked_at IS NULL
 		   AND expires_at > now()`,
@@ -151,7 +151,7 @@ func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
 		expired           bool
 	)
 	err := transaction.QueryRow(ctx, `
-		SELECT organization,
+		SELECT org_id,
 		       consumed_at IS NOT NULL,
 		       revoked_at IS NOT NULL,
 		       expires_at <= now()
@@ -190,7 +190,7 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 	enrolment := registration.enrolment
 	_, err := transaction.Exec(ctx, `
 		INSERT INTO relay_registration
-			(registration_id, organization, credential_digest,
+			(registration_id, org_id, credential_digest,
 			 cluster_fingerprint, relay_version, capabilities)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
 		registration.id, registration.organization.String(), enrolment.CredentialDigest,
@@ -215,7 +215,7 @@ func (p *Placements) IssueBootstrapToken(
 		return err
 	}
 	_, err = pool.Exec(ctx, `
-		INSERT INTO relay_bootstrap_token (token_digest, organization, expires_at)
+		INSERT INTO relay_bootstrap_token (token_digest, org_id, expires_at)
 		VALUES ($1, $2, $3)`,
 		tokenDigest, organization.String(), expiresAt)
 	if err != nil {
@@ -242,7 +242,7 @@ func (p *Placements) VerifyRelayCredential(
 		SELECT credential_digest = $3
 		  FROM relay_registration
 		 WHERE registration_id = $1
-		   AND organization    = $2
+		   AND org_id    = $2
 		   AND revoked_at IS NULL`,
 		registrationID, organization.String(), credentialDigest).Scan(&matches)
 	if errors.Is(err, pgx.ErrNoRows) {

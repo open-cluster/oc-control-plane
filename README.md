@@ -1,54 +1,35 @@
 # OpenCluster Control Plane
 
-The central service of OpenCluster's autonomous incident investigation platform. It owns
-organizations, placements, reasoning, and truth. Customer-side execution lives in the
-OpenCluster Relay, a separate Apache-2.0 repository.
+The central service of OpenCluster: organizations, Integrations, placements, and truth.
+Customer-side execution lives in the OpenCluster Relay, a separate Apache-2.0 repository.
 
 Proprietary. See [LICENSE](./LICENSE).
 
 ## Status
 
-**It investigates.** An engineer names a Kubernetes Connection, a namespace, a workload and a
-time window; the control plane derives the Environment from the Connection, opens a durable case,
-assembles a deterministic brief from live reads, forms competing hypotheses, makes up to two
-further bounded rounds of typed read-only requests, and ends in a most supported explanation whose
-every claim cites the evidence it rests on — or in an abstention that names what was missing.
+The control plane is mid-way through its foundational simplification, specified on the issue
+tracker. The domain model is: an **Organization** is the tenant boundary; an **Integration
+Type** is a kind of tool this build supports; an **Integration** is one configured
+installation belonging to an organization. There are no Environments, no Connection roles and
+no execution-locality settings — org_id is the only boundary, and where work runs is derived
+from whether a Relay serves the integration.
 
-Everything before it is in place: relay registration and sessions, typed bounded capability jobs
-under a fenced lease, Environments and Connections, and alert intake.
+**Alertmanager is connected end-to-end.** Creating the integration mints a webhook secret
+shown exactly once beside its delivery address; firing and resolved alerts arrive
+authenticated, deduplicated and bounded; Signals group into IncidentEpisodes on the identity
+the source itself supplied — never on anything this platform inferred from a Signal's labels —
+and an operator reads them, sees why they were grouped, and corrects a grouping with a merge
+that rewrites nothing.
 
-Two properties are worth stating plainly because they are what the product is for. A confident
-conclusion without sufficient support is **not a permitted outcome** — the output schema rejects an
-uncited claim before it reaches storage. And a case's read models carry one monotonic version that
-advances on *any* change within the case, so a client polling it is never blind to the evidence it
-is waiting for.
+**Kubernetes is connected through the Relay.** Relay registration and sessions, typed bounded
+capability jobs under a fenced lease, inventory synchronization into the change ledger, and
+relay-side redaction are all in place. Verifying a kubernetes Integration judges the bound
+Relay's live session and advertised capabilities, so "verified" means the far end answered.
 
-**It can be evaluated.** The scenario harness (`test/e2e/cmd/scenario`) is ten Kubernetes clusters
-broken in known ways, on purpose, with the cause written down before the system ever sees them. It
-provisions each one, discards the run loudly if the cluster did not reach its declared broken
-state, investigates it through the real control plane and a real Relay, and files two things
-apart: an artifact a scorer reads, and the ground truth they must not. Evidence selection and the
-conclusion are scored separately, by engineers who did not build the system, blind. One wrong and
-confident answer fails the whole set and is not averaged against successes elsewhere.
-
-**Secrets do not leave a customer's cluster.** Relay-side redaction masks high-confidence secret
-shapes from the first install; the control plane records a CoverageGap per masked field, so
-masking is visible rather than indistinguishable from absence, and a masked field can never
-support a certified absence. The end-to-end proof puts a synthetic credential in a real
-container's log and asserts it appears nowhere in this database.
-
-**Alerts become incidents.** Signals from a customer's own alerting group into IncidentEpisodes on
-the identity that source supplied — never on anything this platform inferred from a Signal's labels
-— and an operator reads them, sees why they were grouped, corrects a grouping with a merge that
-rewrites nothing, and may attribute an Investigation to one.
-
-Not built: signal-TRIGGERED investigation. Starting a case from a Signal means resolving its labels
-to a namespace and a workload, which is canonical resource identity and does not exist yet; a case
-started from that inference would confidently investigate the wrong thing. So an episode is
-investigated by an operator who still names the scope.
-
-What this slice deliberately hard-codes is written down in version control history; the
-foundational simplification that replaces it is specified on the issue tracker.
+Not built yet, deliberately: the investigation surface. The previous evidence-chain
+architecture was removed with the old domain model; its replacement — operational provenance
+and a deterministic context router — is the next phase on the issue tracker, and the
+model-provider adapters it will use are kept intact under `internal/reasoning`.
 
 ## Documents
 
@@ -93,15 +74,15 @@ go run ./cmd/controlplane
 | `internal/observability` | slog, OpenTelemetry traces, metrics exported for Prometheus |
 | `internal/health` | Liveness, readiness, metrics. Depends on behaviour, not on storage |
 | `internal/relay` | Relay registration, sessions, and job delivery over the protocol |
-| `internal/intake` | Inbound SignalUpdates, verification, rate limiting. One sub-package per provider |
-| `internal/connection` | Connections and their secrets: the configured instances of an Integration |
-| `internal/environment` | Environments: the scope that groups Connections and bounds evidence |
+| `internal/intake` | Inbound SignalUpdates, verification, rate limiting. Payload adapters live in their provider packages |
+| `internal/integrations` | The Integration domain: the type catalog and the configured installations. Providers live below it: `alertmanager/`, `kubernetes/` |
 | `internal/incident` | IncidentEpisodes: what Signals group into, on their source's own grouping identity |
 | `internal/capability` | The frozen, versioned contracts a Relay may be asked to execute |
-| `internal/investigation` | The case, its rounds, the brief, evidence, hypotheses, coverage gaps, outcomes, the runner and the read models |
+| `internal/changeledger` | The change ledger vocabulary: what changed, remembered after the cluster forgets |
+| `internal/reasoning` | The model-provider boundary and its adapters (`anthropic/`, `zai/`), kept for the provenance rewrite |
 | `internal/identity` | Who an operator is: OIDC sign-in with PKCE, memberships, service accounts, API tokens |
 | `internal/session` | The opaque server-side session and its cookie. No JWT, so sign-out can end it |
-| `internal/authz` | The principal, the eight roles, the permission table, and the one middleware that reads it |
+| `internal/authz` | The principal, the three roles, the permission table, and the one middleware that reads it |
 | `internal/audit` | The append-only record: who did what, to which tenant's what, and whether it was allowed |
 | `internal/operator` | The operator listener and the composition of the route table. Owns no route decisions of its own |
 | `internal/gates` | Build-failing architecture checks, including the dependency boundary |
@@ -119,31 +100,17 @@ than by review:
 - **The Relay's implementation is not a dependency.** The control plane speaks the Relay's
   protocol and never touches a customer cluster, so no Kubernetes library may appear in its
   requirements or its imports.
-- **Persisted enum values are frozen.** Job status, signal status, connection role and the whole
-  investigation vocabulary are stored as integers, and some appear as bare literals in SQL. A
-  constant that moves keeps its old meaning in every row already written, so the values are pinned
-  and the literals checked.
-
-Three properties of the investigator are enforced by the database rather than by application
-discipline, because each is invisible in review:
-
-- **The case version advances on any change within the case**, not only on a lifecycle transition.
-  A trigger on every child table touches the case; a trigger on the case advances its version. The
-  frozen .NET frontend audit recorded the alternative and its consequence.
-- **A claim cannot cite another case's evidence.** The citation's foreign key carries the
-  investigation, so "every claim resolves to an EvidenceItem in the same case" is something the
-  database refuses to break.
-- **An adaptive request cannot exist without the hypothesis that justified it**, and an absence
-  cannot be recorded without a completeness certificate. Both are check constraints. The first is
-  what stops evidence text steering execution; the second is what stops an RBAC misconfiguration
-  becoming a certified negative.
+- **Persisted enum values are frozen.** Job status, signal status, integration status and the
+  integration type ids are stored as integers, and some appear as bare literals in SQL. A
+  constant that moves keeps its old meaning in every row already written, so the values are
+  pinned and the literals checked.
 
 ## The Relay protocol
 
 The contract is consumed as a Go module, pinned by `go.mod` and verified by `go.sum`:
 
 ```
-go get github.com/open-cluster/oc-relay/gen/go@v0.1.0
+go get github.com/open-cluster/oc-relay/gen/go@v0.4.0
 ```
 
 It requires only gRPC and protobuf. The Relay's own module carries client-go because it
@@ -169,16 +136,14 @@ Fetching from the private repository needs
 | `OC_OPERATOR_ADDRESS` | no | Listen address for the operator surface. Empty exposes it nowhere |
 | `OC_OPERATOR_TOKEN_FILE` | with operators | File holding the bootstrap credential. At least 32 characters |
 | `OC_OPERATOR_TOKEN_ORGANIZATION` | with a token | The one Organization that credential reaches. Required, never inferred |
-| `OC_OPERATOR_TOKEN_ROLE` | no | The one role it holds there. Default `organization_owner`, because a deployment with no members yet needs a credential that can create the first one |
+| `OC_OPERATOR_TOKEN_ROLE` | no | The one role it holds there. Default `admin`, because a deployment with no members yet needs a credential that can create the first one |
 | `OC_OPERATOR_PUBLIC_URL` | with sign-in | Where this surface is reachable from a browser. The OIDC redirect URI is built from it, never from a request's Host header |
 | `OC_OPERATOR_CONSOLE_URL` | with sign-in | Where a browser is sent once signed in. Must share a registrable domain with the above |
 | `OC_OPERATOR_ALLOWED_ORIGINS` | with a console | Browser origins a cookie-authenticated unsafe request may come from. Empty permits none |
 | `OC_IDENTITY_ENCRYPTION_KEY_FILE` | with sign-in | 32-byte key, raw or base64, sealing an identity provider's client secret at rest |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
-| `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. A trigger Connection's delivery endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
+| `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. An Integration's webhook endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |
-| `OC_MODEL_TRANSCRIPT_FILE` | no | A recorded transcript of the model boundary. With none, the investigator fails every round honestly saying the reasoning step could not run — an instance that cannot reason must say so rather than look healthy. A transcript recorded against different components refuses to start rather than replaying |
-| `OC_MODEL_TRANSCRIPT_DIR` | no | Where a **live** round files what the model said, one document per round, named by the case and the round's ordinal. This is the other direction from the variable above: that one replays a recording, this one makes them. A deployment that is replaying, or that has no provider at all, records nothing and says so at startup. A directory that cannot be written to is a refusal to start, because discovering it at the end of a round means the round is already paid for |
 
 Each surface has its own listener, and that is what makes a deployment able to publish one
 without publishing the rest. Intake is the only one a customer's own infrastructure reaches
@@ -223,25 +188,22 @@ the cookie at all. Unsafe cookie-authenticated requests additionally require an 
 `OC_OPERATOR_ALLOWED_ORIGINS`; bearer tokens are exempt, because a browser never attaches one
 by itself.
 
-### The eight roles
+### The roles
 
-Fixed sets, compiled rather than editable. Custom roles are out of scope for this release: an
-editable role is a second authorization model to review. The table in `internal/authz/role.go`
-IS the specification — reading it is how to answer "what can an Investigator do", and
-`go test ./internal/gates/ -run TestTheRoleTableIsLegible -v` prints it.
+Three human roles and one machine role. Fixed sets, compiled rather than editable: custom roles
+are out of scope for this release, because an editable role is a second authorization model to
+review. The table in `internal/authz/role.go` IS the specification — reading it is how to answer
+"what can an Editor do", and `go test ./internal/gates/ -run TestTheRoleTableIsLegible -v`
+prints it.
 
 | Role | What it is for |
 | --- | --- |
-| `organization_owner` | Everything, including who else may administer the tenant |
-| `platform_administrator` | Runs the tenant. Cannot appoint an owner — that one permission is the difference between the two |
-| `integration_manager` | Configures Environments and Connections, and deliberately cannot change who may sign in |
-| `investigator` | Opens, cancels and reads Investigations. Cannot damage the estate |
-| `responder` | An Investigator who may also set a Connection's enabled state during an incident |
-| `viewer` | Read-only across the tenant |
-| `auditor` | Reads the record and nothing else, so that the access does not itself become a risk |
+| `admin` | Runs the tenant: identity, members, sessions, tokens, integrations, relays, the record |
+| `editor` | Operates the estate during an incident: verifying integrations, turning one off and back on, correcting an incident grouping. Cannot change what the estate is or who may sign in |
+| `viewer` | Read-only across the tenant's operational record |
 | `directory_synchroniser` | What a customer's directory holds. Reaches the SCIM endpoints and nothing else |
 
-An owner may not be granted by just-in-time provisioning, by an identity provider's group claim,
+Admin may not be granted by just-in-time provisioning, by an identity provider's group claim,
 by a SCIM group mapping, or by an API token: every one of those would make a directory edit or a
 leaked CI variable an administrative takeover.
 
@@ -323,7 +285,7 @@ On the intake listener:
 
 | Path | Purpose |
 | --- | --- |
-| `POST /intake/v1/connections/{connection}/signals` | One webhook delivery on a Connection's opaque intake route. Authenticated by that Connection's shared secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
+| `POST /intake/v1/integrations/{integration}/signals` | One webhook delivery on an Integration's opaque intake route. Authenticated by that Integration's webhook secret in `X-OpenCluster-Token`, checked before the body is read. Answers `202` accepted, `200` already accepted, `401` unauthorized, `400` not understood, `413` too large, `503` not recorded — the 4xx answers are permanent so a source stops retrying, and `503` is the one that means try again |
 
 The intake listener serves plain HTTP and must be deployed behind a TLS-terminating edge.
 Alerting sources cannot sign, so the shared-secret header is a bearer credential that attests
@@ -354,30 +316,26 @@ Under `/operator/v1/organizations/{organization}`, each behind the permission it
 | Path | Permission |
 | --- | --- |
 | `GET\|POST\|PATCH\|DELETE /identity-providers` | `identity.read`, `identity.configure` |
-| `GET /members`, `PUT\|DELETE /members/{user}` | `member.read`, `member.manage`. Appointing an owner additionally needs `member.owner.manage` |
+| `GET /members`, `PUT\|DELETE /members/{user}` | `member.read`, `member.manage` |
 | `GET /sessions`, `POST /members/{user}/revoke-sessions` | `member.read`, `session.revoke` |
 | `GET\|PUT /policy` | `identity.read`, `identity.configure`. Session lifetime and the declared audit retention |
 | `GET /identity-providers/{provider}/saml-metadata` | `identity.read`. This deployment's own SAML metadata, to hand to the identity provider |
 | `GET /directory-groups`, `PUT /directory-groups/{group}/role` | `identity.read`, `identity.configure`. What a synchronised group grants here — an administrator's decision, never the directory's |
 | `GET\|POST /service-accounts`, `DELETE /service-accounts/{account}` | `service-account.read`, `service-account.manage` |
 | `GET\|POST /api-tokens`, `POST /api-tokens/{token}/revoke` | `api-token.read`, `api-token.manage`. A token is shown once, bound to one Organization, one role and an expiry |
-| `GET /audit-events` | `audit.read`. The only route the Auditor role reaches |
+| `GET /audit-events` | `audit.read`. The record, newest first |
 | `GET /relays`, `GET /relays/{id}/session-conflicts` | `relay.read`. The fleet is searched, filtered, sorted and paged by the database |
 | `GET /relays/summary` | `relay.read`. Total, connected, disconnected, revoked, outdated, degraded and active requests, from one query so the numbers cannot disagree with each other |
-| `GET /relays/{id}/connections` | `relay.read`. What a Relay serves, which is what disabling it costs |
+| `GET /relays/{id}/integrations` | `relay.read`. What a Relay serves, which is what disabling it costs |
 | `GET /relays/{id}/failures` | `relay.read`. What a Relay recently failed to complete, so an intermittent one is diagnosed from the record. Why each failed is not held — a job records that it failed, not what the relay said — and the envelope's `partial` says so |
-| `POST /relays/{id}/clear-conflict` | `relay.conflict.clear`. Destroys a credential-theft finding, so only the two administrative roles hold it |
+| `POST /relays/{id}/clear-conflict` | `relay.conflict.clear`. Destroys a credential-theft finding, so only the Admin holds it |
 | `POST /relays/bootstrap-tokens` | `relay.bootstrap-token.issue`. A single-use enrolment token, shown once, with a stated expiry. Separate from reading the fleet: a role that may look at the estate should not by that fact be able to extend it |
-| `GET /integrations` | `integration.read`. Organization-scoped, so configured Connections can be counted per tenant. Serves the full definition per provider — schemas, capabilities, lifecycle |
-| `GET\|POST /connections` | `connection.read`, `connection.create`. Organization-wide, with `environmentId`, `integration`, `role`, `state` and `disabled` as filters the database applies |
-| `GET\|PATCH\|DELETE /connections/{id}` | `connection.read`, `.update`, `.delete`. The detail carries state, configuration revision and credential metadata; a PATCH increments the revision; a DELETE is refused the moment anything depends on it |
-| `GET /connections/{id}/dependents` | `connection.read`. What points at a Connection, answerable before an operator tries to remove it |
-| `POST /connections/{id}/enabled` | `connection.update`. One idempotent operation with a body, replacing the `enable` and `disable` pair |
-| `POST /connections/{id}/validate`, `GET /connections/{id}/validations` | `connection.validate`, `connection.read`. A per-capability result rather than a boolean, and the history of them |
-| `GET /connections/{id}/deliveries` | `connection.read`. Every delivery attempt, accepted or refused, with why |
-| `POST /connections/{id}/trigger/test-event` | `connection.validate`. Verifies intake without waiting for a real incident, and says what it does not prove |
-| `POST /connections/{id}/trigger/rotate-secret` | `connection.trigger.secret.rotate` |
-| `GET\|POST /environments`, `PATCH\|DELETE /environments/{id}` | `environment.read`, `.create`, `.update`, `.delete` |
+| `GET /integration-types` | `integration.read`. The catalog: every type this build serves, its configuration schema, its capabilities, and how many the tenant has configured |
+| `GET\|POST /integrations` | `integration.read`, `integration.create`. Organization-wide, with `type`, `relay` and `disabled` as filters the database applies. Creating a webhook-receiving type mints the secret and returns it exactly once, beside the delivery address |
+| `GET\|PATCH\|DELETE /integrations/{id}` | `integration.read`, `.update`, `.delete`. The detail carries status, webhook identity and verification; a DELETE is refused the moment anything depends on it |
+| `POST /integrations/{id}/enabled` | `integration.update`. One idempotent operation with a body, replacing the `enable` and `disable` pair |
+| `POST /integrations/{id}/verify` | `integration.verify`. The type's own definition judges the observed facts — a delivery that arrived, a relay's advertised capabilities — so "verified" means the far end answered, never that a form validated |
+| `POST /integrations/{id}/webhook/rotate-secret` | `integration.webhook-secret.rotate`. The new secret is shown once; the old one stops working with no overlap window |
 
 Every listing above speaks ONE query contract and answers ONE envelope, so a console has one
 table to build rather than five:
@@ -405,34 +363,13 @@ wrong merge produces an investigation with an incoherent scope.
 
 | Path | Purpose |
 | --- | --- |
-| `GET /incidents` | The list. Filterable by `environmentId`, `connectionId` and `status`; searchable by title and by the source's own grouping key, because that is what an operator arrives holding |
+| `GET /incidents` | The list. Filterable by `integrationId` and `status`; searchable by title and by the source's own grouping key, because that is what an operator arrives holding |
 | `GET /incidents/{id}` | One episode, with the basis on which it was grouped stated both as a value and in words, so a surprising grouping is explainable rather than arguable |
 | `GET /incidents/{id}/signals` | The Signals grouped into it, OLDEST first. Every other listing here is newest first; an incident is read forwards |
 | `POST /incidents/{id}/merge` | Say two episodes are one incident. The episode in the path gives way, the body names the survivor and the reason. Nothing is rewritten: both keep their identity, their Signals and their record, and the absorbed one gains a pointer. Splitting is deliberately absent — this grouping errs toward splitting, so a merge is the correction it produces |
 
 An episode resolves when no Signal in it is still firing, and it holds its grouping key only while
 open — so the same failure next month is a new episode rather than a reopened closed one.
-
-Investigations are read there too:
-
-| Path | Purpose |
-| --- | --- |
-| `POST /investigations` | Open a case. Names a Connection, a namespace, a workload kind and name, and a window. It may also name an `episodeId`, which attributes the case to an IncidentEpisode — one episode has one Investigation, and a second is refused naming the first. It does NOT resolve the scope from the episode, because that would be an inference. It cannot name an Environment — that is derived from the Connection, and a field for it would imply a value that is honoured |
-| `GET /investigations` | The list. Ordered by lifecycle state then recency, with attributed severity as a secondary signal. Carries per-row counts and the case's present tense, so rendering it is one request whatever the row count |
-| `GET /investigations/{id}` | The summary, and the only thing a client polls. Carries identity, brief, state, current round, the outcome with its basis, counts, spend and the case version. Send the version back in `If-None-Match` and an unchanged case answers `304` from one primary-key read |
-| `GET /investigations/{id}/timeline` | Evidence carrying a defensible source time, in source order. Items without one are listed beside it by the evidence read rather than placed on it |
-| `GET /investigations/{id}/evidence` | The evidence, without content. Filterable by `capability`, `source` and `stance` |
-| `GET /investigations/{id}/evidence/{evidence}` | One item with its bounded content. Separate from the listing so a listing is not the size of its contents |
-| `GET /investigations/{id}/hypotheses` | What was proposed, what falsifies each, and where each got to |
-| `GET /investigations/{id}/coverage-gaps` | What could not be checked, and what could not be concluded because of it |
-| `GET /investigations/{id}/coverage` | Per typed capability: one of five states, with its reason. Not-applicable is not a gap |
-| `GET /investigations/{id}/activity` | Every read the case asked for with the hypothesis that justified it, including the ones that returned nothing useful |
-| `GET /investigations/{id}/case-file` | The whole case assembled server-side. `?version=` pins it; a version the case has passed is refused rather than answered from the current state. One code path serves the shared link, the export and the harness artifact |
-| `POST /investigations/{id}/cancel` | Stop a case. Terminal, and it dispatches nothing further |
-| `POST /investigations/{id}/reinvestigate` | Add a round to the same case. Never a second case: the identity, the URL and the permalink survive, and the earlier outcome stays readable and attributed |
-
-Every section response carries the case version it represents, both in the body and as an `ETag`,
-so a client can tell a stale section from a current one without guessing.
 
 ## Development
 
@@ -448,42 +385,3 @@ Tests use one behavioural seam: the composition root, started in-process against
 Postgres with a real listener and real signals. There is no database mock and no interface
 per package. Seams are introduced only for external dependencies that cannot be run
 locally.
-
-There is exactly one exception, and it is recorded at the seam itself in
-`internal/investigation/reasoner.go`: the model boundary. It is nondeterministic and priced per
-call, and what is in question about it — whether its explanations are any good — is answered by the
-scenario harness against a live provider rather than by a commit gate. CI replays transcripts keyed
-by model, prompt version, output schema version and investigator version, and a recording made for
-different components is refused rather than replayed.
-
-### The scenario harness
-
-```
-cd test/e2e
-go run ./cmd/scenario list
-go run ./cmd/scenario run   -results ./harness-run -transcripts ./transcripts
-go run ./cmd/scenario run   -results ./harness-run -transcripts ./transcripts -scenario red-herring
-go run ./cmd/scenario score -results ./harness-run
-```
-
-It is a program rather than a test, and **never a commit gate**: a gate that fails on ordinary
-model variance is ignored within two weeks. Run it manually, before a release, and periodically —
-model drift is a first-class reason, because the same set against a new provider version is the
-only way to learn that an upgrade degraded investigations before a customer reports it.
-
-`run` files artifacts under `<results>/artifacts` and ground truth under `<results>/ground-truth`.
-Hand over the artifact directory and nothing beside it: a scorer who knows the answer grades
-recognition rather than reasoning. `score` joins them afterwards and applies the kill criterion.
-
-It needs a container runtime and the Relay's working tree beside this repository (or named by
-`OC_E2E_RELAY_SOURCE`). A run stands up a database and a single-node Kubernetes per scenario, so
-the whole set takes tens of minutes.
-
-**Scored live runs are real.** The first ran against a live provider on 2026-08-02; run
-summaries are working state, kept out of the repository. `-transcripts` must name a
-directory holding one recording per scenario; recordings come from live runs, never by hand —
-a hand-written transcript would be the builder's imagination scored as though a model had
-reasoned it, which is what blind scoring exists to prevent. A run without `-transcripts`
-refuses and says so. The scenario set is ten deliberately broken clusters chosen from
-failures the founder has seen — a flagged assumption of representativeness, to be revised
-after the first real customer incident.

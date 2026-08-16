@@ -46,7 +46,7 @@ func (p *Placements) ClaimJobs(
 		 WHERE job_id IN (
 		       SELECT job_id
 		         FROM relay_job
-		        WHERE organization    = $1
+		        WHERE org_id    = $1
 		          AND registration_id = $2
 		          AND (status = 0 OR (status = 1 AND lease_expires_at <= now()))
 		        ORDER BY created_at
@@ -57,13 +57,13 @@ func (p *Placements) ClaimJobs(
 		        -- rows below may well be those very jobs.
 		        LIMIT GREATEST($5 - (SELECT count(*)
 		                               FROM relay_job held
-		                              WHERE held.organization     = $1
+		                              WHERE held.org_id           = $1
 		                                AND held.lease_session    = $3
 		                                AND held.status           = 1
 		                                AND held.lease_expires_at > now()), 0)
 		        -- Concurrent claimers take disjoint work instead of blocking on each other.
 		        FOR UPDATE SKIP LOCKED)
-		RETURNING job_id, connection_id, registration_id, capability_id, capability_version,
+		RETURNING job_id, integration_id, registration_id, capability_id, capability_version,
 		          arguments, lease_session, lease_epoch`,
 		organization.String(), claim.RegistrationID, claim.SessionID,
 		claim.LeaseFor.String(), claim.Capacity)
@@ -75,7 +75,7 @@ func (p *Placements) ClaimJobs(
 	var claimed []Job
 	for rows.Next() { // mapping to Job
 		var job Job
-		if err = rows.Scan(&job.ID, &job.ConnectionID, &job.RegistrationID, &job.CapabilityID,
+		if err = rows.Scan(&job.ID, &job.IntegrationID, &job.RegistrationID, &job.CapabilityID,
 			&job.CapabilityVersion, &job.Arguments, &job.LeaseSession, &job.LeaseEpoch); err != nil {
 			return nil, fmt.Errorf("reading claimed job: %w", err)
 		}
@@ -137,7 +137,7 @@ func (p *Placements) AdoptInFlightLeases(
 		  FROM unnest($5::uuid[], $6::bigint[]) AS declared(job_id, lease_epoch)
 		 WHERE relay_job.job_id          = declared.job_id
 		   AND relay_job.lease_epoch     = declared.lease_epoch
-		   AND relay_job.organization    = $1
+		   AND relay_job.org_id          = $1
 		   AND relay_job.registration_id = $2
 		   AND relay_job.status          = 1
 		RETURNING relay_job.job_id`,
@@ -190,7 +190,7 @@ func (p *Placements) ReleaseStrandedLeases(
 		       -- told nothing, keep the result, and resend it forever against a job that is
 		       -- already on its way to being run again.
 		       lease_epoch      = lease_epoch + 1
-		 WHERE organization     = $1
+		 WHERE org_id     = $1
 		   AND registration_id  = $2
 		   AND status           = 1
 		   AND lease_session IS DISTINCT FROM $3`,
@@ -217,7 +217,7 @@ func (p *Placements) SweepExpiredLeases(
 		   SET status           = 0,
 		       lease_session    = NULL,
 		       lease_expires_at = NULL
-		 WHERE organization     = $1
+		 WHERE org_id     = $1
 		   AND status           = 1
 		   AND lease_expires_at <= now()`,
 		organization.String())

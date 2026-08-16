@@ -3,8 +3,6 @@ package reasoning
 import (
 	"errors"
 	"fmt"
-
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // THE FAILURE OUTCOMES, AND WHY THEY ARE TOLD APART.
@@ -16,6 +14,11 @@ import (
 // nobody looked. Reporting the first when the second is true is the single most damaging thing
 // this component could do, so an abstention is not in this enumeration and never shares a code
 // path with one.
+
+// ErrModelUnavailable is the general failure every named outcome also reads as: the
+// reasoning step could not run. It is this package's own sentinel until the provenance
+// rewrite gives the domain one to wrap instead.
+var ErrModelUnavailable = errors.New("the model boundary is unavailable")
 
 var (
 	// ErrRefused is the provider's own safeguards declining. It arrives as a successful response
@@ -161,7 +164,7 @@ func (f *Failure) FailureName() string {
 // Unwrap returns both the outcome's own sentinel and the domain's model-unavailable error, so
 // errors.Is answers yes to the specific failure and to the general one the round is ended by.
 func (f *Failure) Unwrap() []error {
-	unwrapped := []error{investigation.ErrModelUnavailable}
+	unwrapped := []error{ErrModelUnavailable}
 	if sentinel := f.Outcome.sentinel(); sentinel != nil {
 		unwrapped = append(unwrapped, sentinel)
 	}

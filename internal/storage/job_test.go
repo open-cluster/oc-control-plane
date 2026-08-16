@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -504,19 +505,19 @@ func enqueue(
 ) uuid.UUID {
 	t.Helper()
 	return enqueueThrough(t, placements, organization, registration,
-		evidenceConnection(t, placements, organization, registration))
+		kubernetesIntegration(t, placements, organization, registration))
 }
 
-// enqueueThrough records work against a named Connection, for the tests that care which one.
+// enqueueThrough records work against a named Integration, for the tests that care which one.
 func enqueueThrough(
 	t *testing.T, placements *storage.Placements,
-	organization tenancy.Organization, registration, connection uuid.UUID,
+	organization tenancy.Organization, registration, integration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
 	job := storage.Job{
 		ID:                uuid.New(),
-		ConnectionID:      connection,
+		IntegrationID:     integration,
 		RegistrationID:    registration,
 		CapabilityID:      "kubernetes.workload.runtime",
 		CapabilityVersion: 1,
@@ -531,9 +532,9 @@ func enqueueThrough(
 
 // enrolledRelay records a real relay identity through the enrolment path.
 //
-// A bare identifier no longer satisfies the schema: a job names a Connection, and a Connection
-// names the installation that serves it. That is the boundary being enforced rather than a
-// friction to work around, so these tests enrol rather than inventing a UUID.
+// A bare identifier no longer satisfies the schema: a job names an Integration, and an
+// Integration names the installation that serves it. That is the boundary being enforced
+// rather than a friction to work around, so these tests enrol rather than inventing a UUID.
 func enrolledRelay(
 	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
 ) uuid.UUID {
@@ -558,30 +559,22 @@ func enrolledRelay(
 	return registration
 }
 
-// evidenceConnection creates a Kubernetes Connection in the organization's Default
-// Environment, served by the given relay. It is what a job reaches; the relay is where the
-// job runs.
-func evidenceConnection(
+// kubernetesIntegration creates a Kubernetes Integration served by the given relay. It is
+// what a job reaches; the relay is where the job runs.
+func kubernetesIntegration(
 	t *testing.T, placements *storage.Placements,
 	organization tenancy.Organization, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
-	ctx := context.Background()
-	environment, err := placements.EnsureDefaultEnvironment(ctx, ownerOf(t, organization), organization)
+	created, err := placements.CreateIntegration(context.Background(), ownerOf(t, organization),
+		organization, integrations.NewIntegration{
+			Type:    integrations.TypeKubernetes,
+			Name:    "cluster " + uuid.NewString(),
+			RelayID: registration,
+		})
 	if err != nil {
-		t.Fatalf("ensuring the default environment: %v", err)
-	}
-	created, err := placements.CreateConnection(ctx, ownerOf(t, organization), organization, storage.NewConnection{
-		Environment:       environment.ID,
-		Integration:       "kubernetes",
-		Name:              "cluster " + uuid.NewString(),
-		Role:              storage.RoleEvidence,
-		Locality:          storage.LocalityRelay,
-		RelayRegistration: registration,
-	})
-	if err != nil {
-		t.Fatalf("creating an evidence connection: %v", err)
+		t.Fatalf("creating a kubernetes integration: %v", err)
 	}
 	return created.ID
 }

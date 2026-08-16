@@ -120,9 +120,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "user not found"})
 	case errors.Is(err, storage.ErrMembershipUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "membership not found"})
-	case errors.Is(err, storage.ErrLastOwner):
+	case errors.Is(err, storage.ErrLastAdmin):
 		writeJSON(writer, http.StatusConflict, errorView{
-			Error: "an organization must keep at least one owner; appoint another first"})
+			Error: "an organization must keep at least one admin; appoint another first"})
 	case errors.Is(err, storage.ErrServiceAccountUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "service account not found"})
 	case errors.Is(err, storage.ErrServiceAccountNameTaken):

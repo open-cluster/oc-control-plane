@@ -10,33 +10,25 @@ package authz
 type Permission string
 
 // The permissions this build knows. Grouped by the noun rather than by the role, because the
-// question a reviewer asks is "what does connection.delete let someone do", not "what is in
+// question a reviewer asks is "what does integration.delete let someone do", not "what is in
 // this list".
 const (
-	// Environments.
-	EnvironmentRead   Permission = "environment.read"
-	EnvironmentCreate Permission = "environment.create"
-	EnvironmentUpdate Permission = "environment.update"
-	EnvironmentDelete Permission = "environment.delete"
-
-	// Connections and the Integration catalog they instantiate.
-	ConnectionRead   Permission = "connection.read"
-	ConnectionCreate Permission = "connection.create"
-	// ConnectionUpdate covers setting a Connection's enabled state and revising its
-	// configuration.
-	ConnectionUpdate Permission = "connection.update"
-	// ConnectionDelete is NARROW and stays narrow. A Connection that anything has delivered
-	// through, read through, or that is its Environment's last evidence source, is refused —
-	// the record of what a source produced must survive, which is why disabling exists. What
-	// this covers is the Connection created by mistake five minutes ago, which until now had to
-	// be carried forever because the only alternative was destroying history.
-	ConnectionDelete Permission = "connection.delete"
-	// ConnectionValidate exercises a Connection against the system at the far end. It is a
-	// mutation rather than a read: it writes a result, moves the Connection's state, and is the
-	// difference between a Connection that is configured and one that is known to work.
-	ConnectionValidate     Permission = "connection.validate"
-	ConnectionSecretRotate Permission = "connection.trigger.secret.rotate"
-	IntegrationRead        Permission = "integration.read"
+	// Integrations: the catalog of types and the configured installations.
+	IntegrationRead   Permission = "integration.read"
+	IntegrationCreate Permission = "integration.create"
+	// IntegrationUpdate covers renaming, revising configuration and labels, and setting
+	// the enabled state.
+	IntegrationUpdate Permission = "integration.update"
+	// IntegrationDelete is NARROW and stays narrow. An Integration that anything has
+	// delivered through or been read through is refused — the record of what a source
+	// produced must survive, which is why disabling exists. What this covers is the
+	// Integration created by mistake five minutes ago.
+	IntegrationDelete Permission = "integration.delete"
+	// IntegrationVerify exercises an Integration against the system at the far end. It is
+	// a mutation rather than a read: it writes a result and moves the Integration's
+	// status, and is the difference between configured and known to work.
+	IntegrationVerify       Permission = "integration.verify"
+	IntegrationSecretRotate Permission = "integration.webhook-secret.rotate"
 
 	// Relays. Clearing a conflict destroys a credential-theft finding, which is why it is a
 	// permission of its own rather than part of reading the roster.
@@ -44,32 +36,20 @@ const (
 	RelayConflictClear Permission = "relay.conflict.clear"
 	// RelayBootstrapIssue mints a credential that enrols a new Relay into the tenant. It is
 	// separate from reading the fleet because it is the one relay operation that CREATES the
-	// ability to join it, and a role that may look at the estate should not by that fact be able
-	// to extend it.
+	// ability to join it.
 	RelayBootstrapIssue Permission = "relay.bootstrap-token.issue"
 
-	// Incidents: the operational episode Signals group into, and the correction of a grouping.
-	// Reading one is what everybody looking at the tenant does. MERGING decides what an incident
-	// is about — and so what an Investigation opened for it would be scoped to — which is why it
-	// is a permission of its own rather than part of reading.
+	// Incidents: the operational episode Signals group into. MERGING decides what an
+	// incident is about, which is why it is a permission of its own rather than part of
+	// reading.
 	IncidentRead  Permission = "incident.read"
 	IncidentMerge Permission = "incident.merge"
-
-	// Investigations.
-	InvestigationRead   Permission = "investigation.read"
-	InvestigationOpen   Permission = "investigation.open"
-	InvestigationCancel Permission = "investigation.cancel"
-	InvestigationReopen Permission = "investigation.reinvestigate"
 
 	// Identity: who may sign in, as what, and under what policy.
 	IdentityRead      Permission = "identity.read"
 	IdentityConfigure Permission = "identity.configure"
 	MemberRead        Permission = "member.read"
 	MemberManage      Permission = "member.manage"
-	// MemberOwnerManage is the one permission a Platform administrator does not hold. It is
-	// what separates the two administrative roles: an administrator runs the tenant, and an
-	// owner decides who else may.
-	MemberOwnerManage Permission = "member.owner.manage"
 	SessionRevoke     Permission = "session.revoke"
 
 	// Automation.
@@ -79,9 +59,8 @@ const (
 	TokenManage          Permission = "api-token.manage"
 
 	// A directory synchronising itself into a tenant. It is one permission rather than
-	// member.manage because the two are different jobs: an administrator decides who may be in
-	// this tenant, and a directory reports who is in the company. A credential sitting in a
-	// customer's identity vendor should be able to do the second and not the first.
+	// member.manage because the two are different jobs: an administrator decides who may be
+	// in this tenant, and a directory reports who is in the company.
 	DirectorySync Permission = "directory.sync"
 
 	// The record.
@@ -89,15 +68,13 @@ const (
 )
 
 // allPermissions is every permission this build declares, in a stable order. It is the set the
-// route gate validates against and the set an owner holds.
+// route gate validates against and the set an Admin holds.
 var allPermissions = []Permission{
-	EnvironmentRead, EnvironmentCreate, EnvironmentUpdate, EnvironmentDelete,
-	ConnectionRead, ConnectionCreate, ConnectionUpdate, ConnectionDelete, ConnectionValidate,
-	ConnectionSecretRotate, IntegrationRead,
+	IntegrationRead, IntegrationCreate, IntegrationUpdate, IntegrationDelete,
+	IntegrationVerify, IntegrationSecretRotate,
 	RelayRead, RelayConflictClear, RelayBootstrapIssue,
 	IncidentRead, IncidentMerge,
-	InvestigationRead, InvestigationOpen, InvestigationCancel, InvestigationReopen,
-	IdentityRead, IdentityConfigure, MemberRead, MemberManage, MemberOwnerManage, SessionRevoke,
+	IdentityRead, IdentityConfigure, MemberRead, MemberManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,
 	DirectorySync,
 	AuditRead,
