@@ -38,6 +38,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
@@ -151,6 +152,19 @@ func run(
 	}
 	logMigrations(logger, applied)
 
+	// The GitHub App is deployment configuration; a deployment without one still serves
+	// github in the catalog — the compiled provider set and the seeded reference rows
+	// must agree exactly — and connecting it fails live, with the reason. A key that
+	// cannot sign refuses startup, where whoever supplied it is still reading.
+	gitHubClient := github.NewClient(cfg.GitHubAPIURL)
+	var gitHubApp *github.App
+	if len(cfg.GitHubAppKey) > 0 {
+		gitHubApp, err = github.NewApp(cfg.GitHubAppID, cfg.GitHubAppKey, gitHubClient)
+		if err != nil {
+			return fmt.Errorf("%s: %w", config.EnvGitHubAppKeyFile, err)
+		}
+	}
+
 	// The catalog is assembled HERE, and this is the only place that knows every provider.
 	// A duplicate key or a definition missing its verification refuses startup, where the
 	// person who caused it is still the person reading the error.
@@ -158,6 +172,7 @@ func run(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
+		github.Definition(gitHubApp, gitHubClient),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)

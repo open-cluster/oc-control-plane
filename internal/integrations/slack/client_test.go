@@ -192,6 +192,29 @@ func TestRateLimitingRefusesAWaitThatCannotFitTheBudget(t *testing.T) {
 	}
 }
 
+func TestAWaitPastTheCapIsRefusedEvenWithoutADeadline(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	fake.answers["auth.test"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Retry-After", "86400")
+		writer.WriteHeader(http.StatusTooManyRequests)
+	}
+
+	started := time.Now()
+	_, err := NewClient(fake.URL).AuthTest(context.Background(), "xoxb-under-test")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("want ErrRateLimited, got %v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Error("a caller with no deadline was parked on the vendor's say-so")
+	}
+	if fake.called("auth.test") != 1 {
+		t.Errorf("auth.test was called %d times; a day-long wait is not worth taking",
+			fake.called("auth.test"))
+	}
+}
+
 func TestChannelsAreListedBoundedWithTruncationFlagged(t *testing.T) {
 	t.Parallel()
 

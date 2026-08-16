@@ -72,6 +72,13 @@ const (
 	// tests and for API-compatible proxies; empty means Slack's own origin.
 	EnvSlackAPIURL = "OC_SLACK_API_URL"
 
+	// The GitHub App credential is DEPLOYMENT-level configuration: one app, installed by
+	// customers onto their own accounts. The id is public; the private key names a file,
+	// like every credential here.
+	EnvGitHubAppID      = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
+	EnvGitHubAPIURL     = "OC_GITHUB_API_URL"
+
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
 	// configured rather than derived from a request, because the delivery endpoint built from it
@@ -188,6 +195,14 @@ type Config struct {
 	// origin. It exists so a test can stand a fake where slack.com would be.
 	SlackAPIURL string
 
+	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
+	// means this deployment cannot reach GitHub, and connecting it is refused live with
+	// that reason. GitHubAPIURL overrides the vendor origin, for tests and GitHub
+	// Enterprise hosts.
+	GitHubAppID  string
+	GitHubAppKey []byte
+	GitHubAPIURL string
+
 	// IntakeAddress is the listen address for alert intake. It is separate from every other
 	// surface because it is the only one a customer's own infrastructure connects to inbound,
 	// so a deployment can expose it and expose nothing else. Empty disables it, which is
@@ -295,6 +310,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.SlackAPIURL, err = optionalVendorURL(lookup, EnvSlackAPIURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.GitHubAppID, cfg.GitHubAppKey, err = gitHubApp(lookup); err != nil {
+		return Config{}, err
+	}
+	if cfg.GitHubAPIURL, err = optionalVendorURL(lookup, EnvGitHubAPIURL); err != nil {
 		return Config{}, err
 	}
 	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
@@ -490,6 +511,36 @@ func validateHostPort(address string) error {
 		return fmt.Errorf("invalid port %q", port)
 	}
 	return nil
+}
+
+// gitHubApp reads the deployment's GitHub App credential: both halves or neither. Half a
+// credential would serve a catalog whose GitHub entry can never work, and the person who
+// set one variable is still reading when this refuses. The key file's contents never
+// appear in an error.
+func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
+	id, _ := lookup(EnvGitHubAppID)
+	id = strings.TrimSpace(id)
+	path, _ := lookup(EnvGitHubAppKeyFile)
+	path = strings.TrimSpace(path)
+
+	switch {
+	case id == "" && path == "":
+		return "", nil, nil
+	case id == "":
+		return "", nil, fmt.Errorf("%s is required when %s is set",
+			EnvGitHubAppID, EnvGitHubAppKeyFile)
+	case path == "":
+		return "", nil, fmt.Errorf("%s is required when %s is set",
+			EnvGitHubAppKeyFile, EnvGitHubAppID)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s: the key file could not be read", EnvGitHubAppKeyFile)
+	}
+	if len(raw) == 0 {
+		return "", nil, fmt.Errorf("%s: the key file is empty", EnvGitHubAppKeyFile)
+	}
+	return id, raw, nil
 }
 
 // optionalVendorURL reads a base URL a provider reaches its vendor at. Unlike an origin,

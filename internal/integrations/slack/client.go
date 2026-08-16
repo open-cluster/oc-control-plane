@@ -33,6 +33,11 @@ const maxResponseBytes = 4 << 20
 // exists so a caller that forgot cannot hold a connection forever.
 const requestTimeout = 60 * time.Second
 
+// maxRetryWait bounds how long a Retry-After is worth honouring. A vendor asking for
+// more is answered as rate-limited now: one bounded read must not park a goroutine on
+// the vendor's say-so, deadline or none.
+const maxRetryWait = 30 * time.Second
+
 // ErrRateLimited reports that Slack refused the call twice for rate, or asked for a wait
 // the caller's own deadline cannot hold. The read is safe to repeat later: everything this
 // client does is a read, so no retry can double an effect.
@@ -317,6 +322,10 @@ func (c *Client) call(
 			return header, err
 		}
 
+		if wait > maxRetryWait {
+			return nil, fmt.Errorf("%w: %s asked for a %s wait, past what one read may park",
+				ErrRateLimited, method, wait)
+		}
 		deadline, bounded := ctx.Deadline()
 		if bounded && time.Now().Add(wait).After(deadline) {
 			return nil, fmt.Errorf("%w: %s asked for a %s wait, past this call's deadline",
