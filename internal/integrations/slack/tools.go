@@ -29,8 +29,7 @@ const (
 )
 
 // rateLimitNote is the same fact on every tool, stated once.
-const rateLimitNote = "one Slack Web API call per invocation, against the workspace's " +
-	"shared rate budget; a handful of calls per investigation is fine, a scan is not"
+const rateLimitNote = "one Slack Web API call per invocation, against the workspace's shared rate budget; a handful of calls per investigation is fine, a scan is not"
 
 // tools is the declared set, one-to-one with the capabilities the definition declares.
 func tools(client *Client) []integrations.Tool {

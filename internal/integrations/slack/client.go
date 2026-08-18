@@ -161,7 +161,7 @@ func (c *Client) AuthTest(ctx context.Context, token string) (Identity, error) {
 	}
 
 	identity := Identity{Workspace: decoded.Team, Bot: decoded.User}
-	for _, scope := range strings.Split(header.Get("X-OAuth-Scopes"), ",") {
+	for scope := range strings.SplitSeq(header.Get("X-OAuth-Scopes"), ",") {
 		if trimmed := strings.TrimSpace(scope); trimmed != "" {
 			identity.Scopes = append(identity.Scopes, trimmed)
 		}
@@ -203,8 +203,11 @@ func (c *Client) Channels(ctx context.Context, token string, limit int) (Channel
 	}
 	for _, one := range decoded.Channels {
 		listed.Channels = append(listed.Channels, Channel{
-			ID: one.ID, Name: one.Name, Topic: one.Topic.Value,
-			Purpose: one.Purpose.Value, Members: one.Members,
+			ID:      one.ID,
+			Name:    one.Name,
+			Topic:   one.Topic.Value,
+			Purpose: one.Purpose.Value,
+			Members: one.Members,
 		})
 	}
 	return listed, nil
@@ -266,7 +269,10 @@ func (c *Client) Search(ctx context.Context, token string, query SearchQuery) (S
 	}
 	for _, one := range decoded.Messages.Matches {
 		found.Matches = append(found.Matches, Message{
-			TS: one.TS, User: one.Username, Text: one.Text, Channel: one.Channel.Name,
+			TS:      one.TS,
+			User:    one.Username,
+			Text:    one.Text,
+			Channel: one.Channel.Name,
 		})
 	}
 	return found, nil
@@ -296,8 +302,11 @@ func (c *Client) messages(
 	}
 	for _, one := range decoded.Messages {
 		read.Messages = append(read.Messages, Message{
-			TS: one.TS, User: one.User, Text: one.Text,
-			ThreadTS: one.ThreadTS, ReplyCount: one.ReplyCount,
+			TS:         one.TS,
+			User:       one.User,
+			Text:       one.Text,
+			ThreadTS:   one.ThreadTS,
+			ReplyCount: one.ReplyCount,
 		})
 	}
 	return read, nil

@@ -64,18 +64,18 @@ func TestListRepositoriesReportsStableIDsAndTruncation(t *testing.T) {
 	}
 }
 
-func TestReadRepositoryRequiresTheStableID(t *testing.T) {
+func TestReadCommitsRequiresTheStableID(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_repository", nil)
+	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits", nil)
 	if err == nil || !strings.Contains(err.Error(), "repositoryId is required") {
 		t.Fatalf("want a refusal naming the missing id, got %v", err)
 	}
 
-	_, err = run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_repository",
+	_, err = run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits",
 		map[string]any{"repositoryId": "acme-corp/payments"})
 	if err == nil || !strings.Contains(err.Error(), "whole positive number") {
 		t.Fatalf("a name where an id belongs must be refused — names break on rename: %v", err)

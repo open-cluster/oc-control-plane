@@ -19,7 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/reasoning"
 )
 
-// Name is how this provider is written in configuration, telemetry and a round's pinned versions.
+// Name is how this provider is written in configuration and telemetry.
 const Name = "anthropic"
 
 // Provider is one configured Anthropic deployment.
@@ -77,26 +77,6 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 // Name identifies this vendor.
 func (p *Provider) Name() string { return Name }
 
-// Support declares what this provider actually does, so the orchestration reads a declaration
-// rather than assuming.
-//
-// ProviderSideFallback is false, and that is a fact about this build rather than about the vendor:
-// the server-side fallback parameter is not on the typed surface of the SDK version pinned here, so
-// this adapter cannot ask for it. Declaring it true and quietly not doing it would be exactly the
-// silent capability gap the matrix exists to prevent. Cross-model and cross-provider fallback is
-// therefore the configured chain, which is explicit and recorded either way.
-func (p *Provider) Support() reasoning.Support {
-	return reasoning.Support{
-		StrictStructuredOutput:  true,
-		TokenCounting:           true,
-		Streaming:               true,
-		Caching:                 true,
-		RefusalDetection:        true,
-		ProviderSideFallback:    false,
-		RegionalOrZeroRetention: true,
-	}
-}
-
 // Complete asks for one document.
 //
 // Every request streams. The output ceiling has to be generous because thinking and answer text
@@ -149,29 +129,9 @@ func (p *Provider) Complete(
 	return completion, nil
 }
 
-// Measure prices a prompt in input tokens before it is sent, so an oversized deliberation is
-// refused with a stated bound rather than discovered as a rejected request.
-//
-// It is a call against the same model rather than an estimate: a third-party tokenizer is wrong for
-// this vendor by a margin that grows on code and non-English text, which is most of what an
-// investigation reads.
-func (p *Provider) Measure(
-	ctx context.Context, prompt reasoning.Prompt,
-) (reasoning.Count, error) {
-	counted, err := p.client.Messages.CountTokens(ctx, sdk.MessageCountTokensParams{
-		Model:    sdk.Model(prompt.Model),
-		System:   sdk.MessageCountTokensParamsSystemUnion{OfTextBlockArray: systemBlocks(prompt)},
-		Messages: []sdk.MessageParam{sdk.NewUserMessage(contentBlocks(prompt)...)},
-	})
-	if err != nil {
-		return reasoning.Unreported(), p.failure(prompt, "", err)
-	}
-	return reasoning.Counted(counted.InputTokens), nil
-}
-
 // answeringModel reads which model actually replied, falling back to what was asked for only when
-// the response does not say. It matters because a transcript keyed on the requested model would
-// replay against a recording a different model produced.
+// the response does not say: a provider may re-serve a request on another model, and the record
+// must name what actually spoke.
 func answeringModel(message sdk.Message, requested string) string {
 	if answered := strings.TrimSpace(string(message.Model)); answered != "" {
 		return answered

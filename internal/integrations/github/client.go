@@ -209,19 +209,6 @@ func (c *Client) Repositories(
 	return listed, nil
 }
 
-// Repository reads one repository by its stable ID.
-func (c *Client) Repository(
-	ctx context.Context, token string, repository int64,
-) (Repository, error) {
-	var decoded repositoryJSON
-	_, err := c.call(ctx, token, http.MethodGet,
-		"/repositories/"+strconv.FormatInt(repository, 10), nil, &decoded)
-	if err != nil {
-		return Repository{}, err
-	}
-	return decoded.repository(), nil
-}
-
 // Commits reads a repository's history inside a window, bounded, newest first.
 func (c *Client) Commits(
 	ctx context.Context, token string, query CommitsQuery,

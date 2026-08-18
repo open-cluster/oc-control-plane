@@ -47,8 +47,7 @@ func (d *Decider) Decide(
 
 	decision := investigation.Decision{}
 	// One in-deployment retry for an answer that broke its own schema or ran out of
-	// output: the same model usually produces a well-formed document the second time,
-	// and a fallback deployment would be answering a different question about who failed.
+	// output: the same model usually produces a well-formed document the second time.
 	for attempt := 0; attempt < 2; attempt++ {
 		completion, err := d.provider.Complete(ctx, prompt)
 		decision.Spend = decision.Spend.Add(spendOf(d.rate, completion.Usage))

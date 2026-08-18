@@ -18,25 +18,16 @@ import "context"
 // schema, and returns a document. Everything else in this package is the same for every vendor,
 // which is what keeps a second adapter to one directory.
 type Provider interface {
-	// Name identifies the vendor in configuration, telemetry and the round's pinned versions. It
-	// is stable and lower-case: it is written into records that outlive this build.
+	// Name identifies the vendor in configuration and telemetry. It is stable and
+	// lower-case: it is written into records that outlive this build.
 	Name() string
-	// Capabilities declares what this provider can do, so the orchestration reads a declaration
-	// rather than assuming. A capability that is absent must never be reported as satisfied.
-	Support() Support
 	// Complete asks for one document.
 	//
 	// The returned Completion is populated even when the error is non-nil, because a refused or
 	// truncated request still consumed tokens, still names a model and still carries a request
-	// identifier — and all three have to reach the record. A caller reads the Completion for the
-	// record and the error for the outcome.
+	// identifier — and all three have to reach the spend record. A caller reads the Completion
+	// for the figures and the error for the outcome.
 	Complete(ctx context.Context, prompt Prompt) (Completion, error)
-	// Measure reports what a prompt will cost in input tokens before it is sent, so an oversized
-	// deliberation is refused with a stated bound rather than discovered as a rejected request.
-	//
-	// Providers that cannot answer this declare TokenCounting false and return an unreported
-	// count; the orchestration then records the check as skipped rather than as passed.
-	Measure(ctx context.Context, prompt Prompt) (Count, error)
 }
 
 // Prompt is one rendered ask, in the shape every provider is given it.

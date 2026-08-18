@@ -111,21 +111,6 @@ func (o Outcome) sentinel() error {
 	}
 }
 
-// Recoverable reports whether another deployment could plausibly answer what this one would not.
-//
-// It is what the configured fallback chain consults. A rejected request is this build's own defect
-// and would be rejected identically by every hop, so trying the next one spends money to fail
-// again; a malformed answer is retried inside the deployment that produced it rather than escaped
-// from. Only a refusal, an outage and a timeout are things a different model might survive.
-func (o Outcome) Recoverable() bool {
-	switch o {
-	case OutcomeRefused, OutcomeOutage, OutcomeTimeout:
-		return true
-	default:
-		return false
-	}
-}
-
 // Failure is one named failure with the deployment it happened on.
 //
 // It wraps the domain's reasoner-unavailable error as well as its own sentinel. That is

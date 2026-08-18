@@ -250,8 +250,7 @@ func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reason
 		return nil, err
 	}
 	logger.Info("model boundary configured",
-		slog.String("deployment", deployment.String()),
-		slog.String("support", provider.Support().Describe()))
+		slog.String("deployment", deployment.String()))
 	return decider, nil
 }
 

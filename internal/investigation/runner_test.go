@@ -141,7 +141,7 @@ func stubType(
 ) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryObservability,
+		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
 		Capabilities: []string{"stub.read"},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}

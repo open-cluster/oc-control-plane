@@ -19,7 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/reasoning"
 )
 
-// Name is how this provider is written in configuration, telemetry and a round's pinned versions.
+// Name is how this provider is written in configuration and telemetry.
 const Name = "zai"
 
 // defaultBaseURL is where Z.AI serves its open platform API.
@@ -79,34 +79,14 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 // Name identifies this vendor.
 func (p *Provider) Name() string { return Name }
 
-// Support declares what this provider actually does.
-//
-// Two entries are false where the other adapter in this build is true, and both are the matrix
-// doing its job rather than a gap to be embarrassed about.
-//
-// StrictStructuredOutput is false because this vendor offers a JSON output MODE rather than schema
-// enforcement: it will return JSON, but not necessarily the JSON asked for. The schema is therefore
-// rendered into the prompt here, and the answer is validated against the same schema by the
-// orchestration — the guarantee survives, it just costs a retry instead of being free.
-//
-// Streaming is false, and deliberately so. This vendor reports its token usage in one body on a
-// non-streaming call; on a streamed call the usage figures arrive in a final chunk that this
-// adapter would have to assume was sent. A cost figure that is silently absent is worse than a
-// slower call, because it disables the cost ceiling without saying so — so this adapter takes the
-// bounded, non-streamed answer and keeps the accounting correct.
-func (p *Provider) Support() reasoning.Support {
-	return reasoning.Support{
-		StrictStructuredOutput:  false,
-		TokenCounting:           false,
-		Streaming:               false,
-		Caching:                 true,
-		RefusalDetection:        true,
-		ProviderSideFallback:    false,
-		RegionalOrZeroRetention: false,
-	}
-}
-
 // Complete asks for one document.
+//
+// The call is deliberately non-streamed: this vendor reports token usage in one body on a
+// non-streaming call, while on a streamed call the figures arrive in a final chunk this adapter
+// would have to assume was sent. A cost figure that is silently absent is worse than a slower
+// call. And because this vendor offers a JSON output MODE rather than schema enforcement, the
+// schema is rendered into the prompt and the answer is validated by the caller — the guarantee
+// survives, it just costs a retry instead of being free.
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
@@ -141,15 +121,6 @@ func (p *Provider) Complete(
 			prompt.Model, response.StatusCode, requestIdentifier(response, payload), payload)
 	}
 	return p.answer(prompt, response, payload)
-}
-
-// Measure is not offered by this provider.
-//
-// It returns an unreported count rather than an estimate. A third-party tokenizer would produce a
-// number that looks like a measurement and is not one, and the orchestration records a skipped
-// check honestly when the capability is absent.
-func (p *Provider) Measure(context.Context, reasoning.Prompt) (reasoning.Count, error) {
-	return reasoning.Unreported(), nil
 }
 
 // send performs the request. The credential travels in a header and appears nowhere else.

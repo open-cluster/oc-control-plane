@@ -740,10 +740,6 @@ func checkFieldValue(field Field, value any) string {
 		if !isNumber || number != float64(int64(number)) {
 			return refuse()
 		}
-	case FieldBoolean:
-		if _, isBool := value.(bool); !isBool {
-			return refuse()
-		}
 	}
 	return ""
 }

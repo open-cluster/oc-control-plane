@@ -16,10 +16,6 @@ import (
 // anything stable, or the cache silently stops working and looks exactly like a cache
 // that is working.
 
-// PromptVersion names this rendering, pinned into each call's record so a change in
-// wording is attributable when conclusions shift.
-const PromptVersion = "provenance-1"
-
 // maxRunContentBytes bounds how much of one run's content reaches the prompt. A bounded
 // read already keeps real contents small; this is the ceiling that keeps a pathological
 // one from consuming the context window.

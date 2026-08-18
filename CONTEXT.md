@@ -32,7 +32,7 @@ _Avoid:_ provider (as the record noun; "provider package" for the code is fine),
 integration definition (say Definition only for the exported Go value).
 
 **Integration** — one configured installation belonging to an organization: "Production
-Alertmanager", "Acme Slack". The organization-owned runtime record: name, non-secret
+Alertmanager", "Org Slack". The organization-owned runtime record: name, non-secret
 configuration, optional labels, optional Relay binding, status, verification. Several
 Integrations of one type are expressly allowed.
 _Avoid:_ Connection (the retired record noun), instance, source, data source.

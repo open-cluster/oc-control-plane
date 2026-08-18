@@ -7,7 +7,7 @@
 // as a Definition and assembled into a Catalog at the composition root. The composition root
 // is the only place that knows every provider; nothing here imports one.
 //
-// An Integration is one configured installation: "Production Alertmanager", "Acme Slack".
+// An Integration is one configured installation: "Production Alertmanager", "Org Slack".
 // org_id is the tenant boundary. There is no Environment, no Connection role, and no
 // execution locality — where work runs is derivable from whether a Relay serves the
 // integration.
@@ -39,12 +39,8 @@ type Category string
 const (
 	CategoryAlerting      Category = "alerting"
 	CategoryOrchestration Category = "orchestration"
-	CategoryObservability Category = "observability"
 	CategoryCollaboration Category = "collaboration"
 	CategorySourceControl Category = "source-control"
-	CategoryIncident      Category = "incident-response"
-	CategoryDeployment    Category = "deployment"
-	CategoryCloud         Category = "cloud"
 )
 
 // FieldType is what one configuration field holds. Deliberately small: a setup form that
@@ -55,7 +51,6 @@ type FieldType string
 const (
 	FieldString  FieldType = "string"
 	FieldInteger FieldType = "integer"
-	FieldBoolean FieldType = "boolean"
 )
 
 // Field is one thing an Integration of this type is configured with. The configuration
@@ -140,9 +135,6 @@ type Definition struct {
 	// ReceivesWebhooks means an Integration of this type is reached inbound: creating one
 	// mints a webhook secret, and the intake surface accepts deliveries for it.
 	ReceivesWebhooks bool
-	// MinimumRelayVersion is the oldest Relay that can serve this type; empty for a type
-	// no Relay serves.
-	MinimumRelayVersion string
 	// Verify judges an integration against the facts in VerifyInput. It is pure: the
 	// handler gathers, the definition judges, the store records. A definition declares
 	// exactly one of Verify and Probe.

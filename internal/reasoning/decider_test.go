@@ -22,8 +22,7 @@ type fakeProvider struct {
 	prompts     []Prompt
 }
 
-func (f *fakeProvider) Name() string     { return "fake" }
-func (f *fakeProvider) Support() Support { return Support{} }
+func (f *fakeProvider) Name() string { return "fake" }
 
 func (f *fakeProvider) Complete(_ context.Context, prompt Prompt) (Completion, error) {
 	f.prompts = append(f.prompts, prompt)
@@ -38,10 +37,6 @@ func (f *fakeProvider) Complete(_ context.Context, prompt Prompt) (Completion, e
 		f.failures = f.failures[1:]
 	}
 	return next, failure
-}
-
-func (f *fakeProvider) Measure(context.Context, Prompt) (Count, error) {
-	return Unreported(), nil
 }
 
 func testDeployment() Deployment {

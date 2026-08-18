@@ -382,27 +382,6 @@ func TestComplete_TheCredentialAppearsInNoErrorReturnedToTheCaller(t *testing.T)
 	}
 }
 
-func TestCapabilities_MatchWhatThisAdapterActuallyDoes(t *testing.T) {
-	provider, _ := providerUnder(t, streamed(`{}`, fullUsage, "end_turn", ""))
-	declared := provider.Support()
-
-	if !declared.StrictStructuredOutput {
-		t.Error("this adapter sends a declared json schema, so it claims strict output")
-	}
-	if !declared.Streaming {
-		t.Error("this adapter streams every request")
-	}
-	if !declared.Caching || !declared.RefusalDetection || !declared.TokenCounting {
-		t.Errorf("a capability this adapter implements is declared false: %+v", declared)
-	}
-	// The one that is FALSE on purpose. The server-side fallback parameter is not on the typed
-	// surface of the SDK version this build pins, so this adapter cannot ask for it — and
-	// declaring a capability it does not have is exactly the silent gap the matrix prevents.
-	if declared.ProviderSideFallback {
-		t.Error("provider-side fallback is declared but this adapter never asks for it")
-	}
-}
-
 func TestNew_RefusesADeploymentThatCouldNotWork(t *testing.T) {
 	cases := map[string]reasoning.Deployment{
 		"no model":      {Provider: anthropic.Name, Credential: reasoning.Secret("k")},

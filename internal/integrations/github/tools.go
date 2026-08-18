@@ -11,7 +11,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The four read-only tools. Repositories are addressed by their stable numeric ids —
+// The three read-only tools. Repositories are addressed by their stable numeric ids —
 // never by name, which a rename would break mid-incident — and every bound is named, with
 // truncation flagged from the vendor's own pagination.
 
@@ -32,7 +32,6 @@ const rateLimitNote = "one GitHub REST call per invocation, against the installa
 func tools(app *App, client *Client) []integrations.Tool {
 	return []integrations.Tool{
 		listRepositoriesTool(app, client),
-		readRepositoryTool(app, client),
 		readCommitsTool(app, client),
 		readPullRequestsTool(app, client),
 	}
@@ -123,56 +122,6 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 				Truncated: listed.Truncated,
 				Summary:   fmt.Sprintf("%d repositories granted", len(content)),
 				Sources:   sources,
-			}, nil
-		},
-	}
-}
-
-func readRepositoryTool(app *App, client *Client) integrations.Tool {
-	declared := []integrations.ToolArgument{
-		{
-			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
-			Type:        integrations.FieldInteger,
-			Required:    true,
-		},
-	}
-	return integrations.Tool{
-		Name:       "github.read_repository",
-		Capability: ReadRepository,
-		Description: "Reads one repository's identity and state by its stable id: name, " +
-			"default branch, privacy, archive state, description.",
-		WhenToUse: "To confirm what a repository is before reading its history — its " +
-			"default branch is what commits and pull requests land on.",
-		WhenNotToUse: "Not for history; that is github.read_commits and " +
-			"github.read_pull_requests. Not to discover repositories; that is " +
-			"github.list_repositories.",
-		Arguments:   declared,
-		Permissions: "the app installation's own repository grant",
-		RateLimit:   rateLimitNote,
-		Output:      "one repository with id, name, full name, privacy, archive state, default branch and description",
-		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			repository, err := values.identity("repositoryId")
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			token, err := installationTokenFor(ctx, app, request.Integration)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-
-			found, err := client.Repository(ctx, token, repository)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			return integrations.ToolResult{
-				Content: repositoryContentOf(found),
-				Summary: found.FullName,
-				Sources: []string{strconv.FormatInt(found.ID, 10)},
 			}, nil
 		},
 	}

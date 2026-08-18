@@ -11,7 +11,6 @@ import (
 // anyone's code exists in this build, by decision rather than by omission.
 const (
 	ListRepositories = "github.list_repositories"
-	ReadRepository   = "github.read_repository"
 	ReadCommits      = "github.read_commits"
 	ReadPullRequests = "github.read_pull_requests"
 )
@@ -32,7 +31,7 @@ func Definition(app *App, client *Client) integrations.Definition {
 		Category:    integrations.CategorySourceControl,
 		DocumentationURL: "https://docs.github.com/apps/using-github-apps/" +
 			"installing-a-github-app-from-a-third-party",
-		Capabilities: []string{ListRepositories, ReadRepository, ReadCommits, ReadPullRequests},
+		Capabilities: []string{ListRepositories, ReadCommits, ReadPullRequests},
 		Config: []integrations.Field{
 			{
 				Name:  "installationId",

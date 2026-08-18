@@ -17,9 +17,9 @@ import (
 
 // THE SEAM IS THE HTTP ROUND-TRIPPER, AND THIS SUITE NEVER REACHES THE NETWORK.
 //
-// What is worth asserting here is mostly where this vendor DIFFERS from the other one, because the
-// differences are what the capability matrix exists to carry: a JSON mode rather than schema
-// enforcement, cached input tokens with no cache-write count, and its own word for a refusal.
+// What is worth asserting here is mostly where this vendor DIFFERS from the other one: a JSON
+// mode rather than schema enforcement, cached input tokens with no cache-write count, and its
+// own word for a refusal.
 
 type transport struct {
 	mutex     sync.Mutex
@@ -300,45 +300,5 @@ func TestComplete_ACancelledContextEndsTheCallAsATimeout(t *testing.T) {
 	_, err := provider.Complete(ctx, promptFixture())
 	if !errors.Is(err, reasoning.ErrTimeout) {
 		t.Fatalf("got %v, want a cancelled context to end the call as a timeout", err)
-	}
-}
-
-func TestMeasure_ReportsNothingRatherThanAnEstimate(t *testing.T) {
-	provider, _ := providerUnder(t,
-		answered(200, completion(`{"hypotheses":[]}`, "stop", cachedUsage)))
-
-	counted, err := provider.Measure(context.Background(), promptFixture())
-	if err != nil {
-		t.Fatalf("measuring: %v", err)
-	}
-	// A third-party tokenizer would produce a number that LOOKS like a measurement and is not
-	// one. The orchestration records a skipped check honestly instead.
-	if counted.Reported {
-		t.Error("a provider that cannot count tokens returned a figure anyway")
-	}
-}
-
-func TestCapabilities_MatchWhatThisAdapterActuallyDoes(t *testing.T) {
-	provider, _ := providerUnder(t,
-		answered(200, completion(`{"hypotheses":[]}`, "stop", cachedUsage)))
-	declared := provider.Support()
-
-	// The two that are false where the other adapter is true. Both are the matrix doing its job.
-	if declared.StrictStructuredOutput {
-		t.Error("this vendor offers a json mode rather than schema enforcement, so claiming " +
-			"strict output would be a guarantee nobody is providing")
-	}
-	if declared.Streaming {
-		t.Error("this adapter does not stream, and declaring that it does would misreport why " +
-			"its usage figures are reliable")
-	}
-	if declared.TokenCounting {
-		t.Error("this adapter cannot count tokens before sending")
-	}
-	if !declared.RefusalDetection {
-		t.Error("this vendor names its refusals, so the adapter can tell them apart")
-	}
-	if declared.ProviderSideFallback {
-		t.Error("this adapter never asks the provider to re-serve a declined request")
 	}
 }
