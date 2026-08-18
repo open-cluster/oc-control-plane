@@ -96,6 +96,13 @@ func (p *integrationPlane) openEpisode(t *testing.T, alertname, fingerprint stri
 		t.Fatalf("the seeding delivery = %d: %s", status, body)
 	}
 
+	return p.episodeByTitle(t, alertname)
+}
+
+// episodeByTitle resolves the open episode a delivery just created.
+func (p *integrationPlane) episodeByTitle(t *testing.T, title string) string {
+	t.Helper()
+
 	status, body := p.call(t, http.MethodGet, p.base(surfaceOrg)+"/incidents", nil)
 	if status != http.StatusOK {
 		t.Fatalf("listing incidents = %d: %s", status, body)
@@ -108,37 +115,18 @@ func (p *integrationPlane) openEpisode(t *testing.T, alertname, fingerprint stri
 	}
 	decodeInto(t, body, &listed)
 	for _, episode := range listed.Items {
-		if episode.Title == alertname {
+		if episode.Title == title {
 			return episode.ID
 		}
 	}
-	t.Fatalf("no episode for %s: %s", alertname, body)
+	t.Fatalf("no episode titled %s: %s", title, body)
 	return ""
 }
 
 // awaitInvestigation polls until the investigation leaves running.
 func (p *integrationPlane) awaitInvestigation(t *testing.T, id string) string {
 	t.Helper()
-
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		status, body := p.call(t, http.MethodGet,
-			p.base(surfaceOrg)+"/investigations/"+id, nil)
-		if status != http.StatusOK {
-			t.Fatalf("reading the investigation = %d: %s", status, body)
-		}
-		var read struct {
-			Status string `json:"status"`
-		}
-		decodeInto(t, body, &read)
-		if read.Status != "running" {
-			return body
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the investigation never ended: %s", body)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	return p.awaitInvestigationWithin(t, id, 30*time.Second)
 }
 
 func TestInvestigationRecordsItsWholeProvenance(t *testing.T) {
