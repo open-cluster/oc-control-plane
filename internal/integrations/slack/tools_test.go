@@ -55,13 +55,13 @@ func TestListChannelsSelectsByNameAndTopic(t *testing.T) {
 	}
 }
 
-func TestListChannelsAppliesTheDefaultBound(t *testing.T) {
+func TestListChannelsAsksTheVendorForFullPages(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeSlack(t)
 	fake.answers["conversations.list"] = func(writer http.ResponseWriter, request *http.Request) {
-		if got := request.URL.Query().Get("limit"); got != "100" {
-			t.Errorf("an unstated limit reached the vendor as %q, want the named default", got)
+		if got := request.URL.Query().Get("limit"); got != "200" {
+			t.Errorf("the vendor was asked for %q, want the full page the walk reads", got)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"ok":true,"channels":[]}`))
@@ -69,6 +69,64 @@ func TestListChannelsAppliesTheDefaultBound(t *testing.T) {
 
 	if _, err := run(t, NewClient(fake.URL), "slack.list_channels", nil); err != nil {
 		t.Fatalf("listing: %v", err)
+	}
+}
+
+func TestListChannelsWalksPagesToFindAMatch(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	fake.answers["conversations.list"] = func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("cursor") == "" {
+			_, _ = writer.Write([]byte(`{"ok":true,"channels":[
+				{"id":"C1","name":"random","topic":{"value":""},"purpose":{"value":""}}],
+				"response_metadata":{"next_cursor":"page2"}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"ok":true,"channels":[
+			{"id":"C2","name":"payments-alerts","topic":{"value":""},"purpose":{"value":""}}]}`))
+	}
+
+	result, err := run(t, NewClient(fake.URL), "slack.list_channels",
+		map[string]any{"nameContains": "payments"})
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	selected, isTyped := result.Content.([]channelContent)
+	if !isTyped || len(selected) != 1 || selected[0].ID != "C2" {
+		t.Fatalf("selection = %+v; a match beyond the first page must be findable", result.Content)
+	}
+	if result.Truncated {
+		t.Error("the walk reached the workspace's end; nothing was left unread")
+	}
+	if fake.called("conversations.list") != 2 {
+		t.Errorf("the walk made %d calls, want 2", fake.called("conversations.list"))
+	}
+}
+
+func TestListChannelsFlagsAWalkStoppedAtItsPageBound(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	fake.answers["conversations.list"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"channels":[
+			{"id":"C1","name":"random","topic":{"value":""},"purpose":{"value":""}}],
+			"response_metadata":{"next_cursor":"more"}}`))
+	}
+
+	result, err := run(t, NewClient(fake.URL), "slack.list_channels",
+		map[string]any{"nameContains": "payments"})
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	if !result.Truncated {
+		t.Error("a walk that stopped with pages unread must flag truncation")
+	}
+	if fake.called("conversations.list") != maxChannelPages {
+		t.Errorf("the walk made %d calls, want its page bound %d",
+			fake.called("conversations.list"), maxChannelPages)
 	}
 }
 

@@ -328,6 +328,47 @@ func TestTheRoundBudgetForcesAConclusion(t *testing.T) {
 	}
 }
 
+func TestDroppedCallsAreRecordedNotSilentlyDiscarded(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{stubIntegration("S")}}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Content: []string{"found"}}, nil
+	})
+	sixCalls := make([]ToolCall, 6)
+	for index := range sixCalls {
+		sixCalls[index] = ToolCall{Tool: "stub.read", Arguments: map[string]any{
+			"page": float64(index)}}
+	}
+	reasoner := &scripted{decisions: []Decision{
+		{Calls: sixCalls},
+		{Findings: []Finding{{Statement: "done", Sources: []int{1}}}},
+	}}
+
+	runInvestigation(t, store, catalog, reasoner)
+
+	if len(store.runs) != 6 {
+		t.Fatalf("recorded %d runs, want all 6 proposed calls on the record", len(store.runs))
+	}
+	for _, run := range store.runs[:maxCallsPerRound] {
+		if run.Outcome != RunSucceeded {
+			t.Errorf("run %d = %d, want executed", run.Ordinal, run.Outcome)
+		}
+	}
+	for _, run := range store.runs[maxCallsPerRound:] {
+		if run.Outcome != RunFailed || !strings.Contains(run.Error, "not executed") {
+			t.Errorf("dropped run %d = %d %q; a dropped call must be visibly dropped",
+				run.Ordinal, run.Outcome, run.Error)
+		}
+	}
+	if len(reasoner.briefs) < 2 {
+		t.Fatal("the investigation ended before a second decision")
+	}
+	if got := len(reasoner.briefs[1].Runs); got != 6 {
+		t.Errorf("the next brief carried %d runs, want 6 — the model must see the drop", got)
+	}
+}
+
 func TestFindingsCitingRunsThatNeverRanFailTheInvestigation(t *testing.T) {
 	t.Parallel()
 

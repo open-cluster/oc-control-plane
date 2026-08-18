@@ -172,17 +172,28 @@ func TestRepositoriesAreListedUnderTheInstallationToken(t *testing.T) {
 	}
 }
 
+// grantsPayments teaches the fake the installation's repository grant, which is what
+// the client resolves documented /repos/{owner}/{repo} paths from.
+func grantsPayments(fake *fakeGitHub) {
+	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"total_count":1,"repositories":[
+			{"id":1296269,"name":"payments","full_name":"acme-corp/payments"}]}`))
+	}
+}
+
 func TestCommitsAreReadByStableIDInsideTheWindow(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeGitHub(t)
-	fake.answers["/repositories/1296269/commits"] = func(writer http.ResponseWriter, request *http.Request) {
+	grantsPayments(fake)
+	fake.answers["/repos/acme-corp/payments/commits"] = func(writer http.ResponseWriter, request *http.Request) {
 		query := request.URL.Query()
 		if query.Get("since") != "2026-08-15T00:00:00Z" || query.Get("until") != "2026-08-16T00:00:00Z" {
 			t.Errorf("window = [%s, %s]", query.Get("since"), query.Get("until"))
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		writer.Header().Set("Link", `<`+fake.URL+`/repositories/1296269/commits?page=2>; rel="next"`)
+		writer.Header().Set("Link", `<`+fake.URL+`/repos/acme-corp/payments/commits?page=2>; rel="next"`)
 		_, _ = writer.Write([]byte(`[
 			{"sha":"aaa111","commit":{"message":"raise the pool size",
 			 "author":{"name":"Kai","date":"2026-08-15T20:00:00Z"}},
@@ -209,7 +220,8 @@ func TestAnEmptyRepositoryAnswersNoCommitsRatherThanAnError(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeGitHub(t)
-	fake.answers["/repositories/1296269/commits"] = func(writer http.ResponseWriter, _ *http.Request) {
+	grantsPayments(fake)
+	fake.answers["/repos/acme-corp/payments/commits"] = func(writer http.ResponseWriter, _ *http.Request) {
 		// GitHub's own answer for a repository with no commits yet.
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusConflict)
@@ -231,7 +243,8 @@ func TestPullRequestsCarryStateAndBranches(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeGitHub(t)
-	fake.answers["/repositories/1296269/pulls"] = func(writer http.ResponseWriter, request *http.Request) {
+	grantsPayments(fake)
+	fake.answers["/repos/acme-corp/payments/pulls"] = func(writer http.ResponseWriter, request *http.Request) {
 		query := request.URL.Query()
 		if query.Get("state") != "all" || query.Get("sort") != "updated" ||
 			query.Get("direction") != "desc" {
@@ -254,6 +267,83 @@ func TestPullRequestsCarryStateAndBranches(t *testing.T) {
 	if pull.Number != 98 || pull.State != "closed" || pull.MergedAt == "" ||
 		pull.Head != "fix/retry" || pull.Base != "main" {
 		t.Errorf("pull = %+v", pull)
+	}
+}
+
+func TestARenamedRepositoryIsReResolvedOnce(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeGitHub(t)
+	renamed := &atomic.Bool{}
+	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		name := "acme-corp/payments"
+		if renamed.Load() {
+			name = "acme-corp/payments-service"
+		}
+		_, _ = writer.Write([]byte(`{"total_count":1,"repositories":[
+			{"id":1296269,"name":"payments","full_name":"` + name + `"}]}`))
+	}
+	fake.answers["/repos/acme-corp/payments/pulls"] = func(writer http.ResponseWriter, _ *http.Request) {
+		// The rename happened between resolution and this read.
+		renamed.Store(true)
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
+	}
+	fake.answers["/repos/acme-corp/payments-service/pulls"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`[]`))
+	}
+
+	if _, err := NewClient(fake.URL).PullRequests(testContext(t), "ghs_installation",
+		PullsQuery{RepositoryID: 1296269, Limit: 10}); err != nil {
+		t.Fatalf("a rename must re-resolve and retry once, got %v", err)
+	}
+	if fake.called("/installation/repositories") != 2 {
+		t.Errorf("resolution ran %d times, want 2 (once cached, once refreshed)",
+			fake.called("/installation/repositories"))
+	}
+}
+
+func TestNameResolutionWalksTheGrantPages(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeGitHub(t)
+	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("page") == "1" {
+			writer.Header().Set("Link", `<`+fake.URL+`/installation/repositories?page=2>; rel="next"`)
+			_, _ = writer.Write([]byte(`{"total_count":2,"repositories":[
+				{"id":1,"name":"first","full_name":"acme-corp/first"}]}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"total_count":2,"repositories":[
+			{"id":1296269,"name":"payments","full_name":"acme-corp/payments"}]}`))
+	}
+	fake.answers["/repos/acme-corp/payments/pulls"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`[]`))
+	}
+
+	if _, err := NewClient(fake.URL).PullRequests(testContext(t), "ghs_installation",
+		PullsQuery{RepositoryID: 1296269, Limit: 10}); err != nil {
+		t.Fatalf("a repository on the grant's second page must be resolvable: %v", err)
+	}
+}
+
+func TestA410IsNamedAsTheRetiredAPIVersion(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeGitHub(t)
+	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusGone)
+		_, _ = writer.Write([]byte(`{"message":"Gone"}`))
+	}
+
+	_, err := NewClient(fake.URL).PullRequests(testContext(t), "ghs_installation",
+		PullsQuery{RepositoryID: 1296269, Limit: 10})
+	if !errors.Is(err, ErrAPIVersionRetired) {
+		t.Fatalf("a 410 must self-diagnose as the retired API version, got %v", err)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,13 @@ const maxRetryWait = 30 * time.Second
 // client makes is a read, so repeating one later is safe.
 var ErrRateLimited = errors.New("github is rate limiting this app")
 
+// ErrAPIVersionRetired reports a 410 against the pinned API version: GitHub has stopped
+// serving it, and the fix is a control-plane update, not a configuration change. Mapped
+// distinctly so the eventual cliff self-diagnoses instead of reading as a missing
+// resource.
+var ErrAPIVersionRetired = errors.New(
+	"github no longer serves the API version this build pins; update the control plane")
+
 // APIError is GitHub's own refusal: the status and the message the API named.
 type APIError struct {
 	Status  int
@@ -51,6 +59,14 @@ func (e *APIError) Error() string {
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// names caches repository full names by stable numeric id, for the documented
+	// /repos/{owner}/{repo} routes. The id is the stored identity because it survives
+	// renames; the name is resolved from the installation's own repository listing and
+	// re-resolved once when a read answers 404 or 301 — which is what a rename looks
+	// like from here.
+	mu    sync.Mutex
+	names map[int64]string
 }
 
 // NewClient builds the client. An empty base URL means the vendor's own.
@@ -61,6 +77,7 @@ func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		http:    &http.Client{Timeout: requestTimeout},
+		names:   map[int64]string{},
 	}
 }
 
@@ -234,9 +251,7 @@ func (c *Client) Commits(
 			Login string `json:"login"`
 		} `json:"author"`
 	}
-	header, err := c.call(ctx, token, http.MethodGet,
-		"/repositories/"+strconv.FormatInt(query.RepositoryID, 10)+"/commits",
-		parameters, &decoded)
+	header, err := c.repoRead(ctx, token, query.RepositoryID, "/commits", parameters, &decoded)
 	var refusal *APIError
 	if errors.As(err, &refusal) && refusal.Status == http.StatusConflict {
 		// GitHub's answer for a repository with no commits yet. An empty history is an
@@ -287,14 +302,12 @@ func (c *Client) PullRequests(
 			Ref string `json:"ref"`
 		} `json:"base"`
 	}
-	header, err := c.call(ctx, token, http.MethodGet,
-		"/repositories/"+strconv.FormatInt(query.RepositoryID, 10)+"/pulls",
-		url.Values{
-			"state":     {"all"},
-			"sort":      {"updated"},
-			"direction": {"desc"},
-			"per_page":  {strconv.Itoa(query.Limit)},
-		}, &decoded)
+	header, err := c.repoRead(ctx, token, query.RepositoryID, "/pulls", url.Values{
+		"state":     {"all"},
+		"sort":      {"updated"},
+		"direction": {"desc"},
+		"per_page":  {strconv.Itoa(query.Limit)},
+	}, &decoded)
 	if err != nil {
 		return PullRequests{}, err
 	}
@@ -331,6 +344,79 @@ type repositoryJSON struct {
 }
 
 func (r repositoryJSON) repository() Repository { return Repository(r) }
+
+// maxResolvePages bounds the repository-name resolution walk: ten pages of one hundred
+// cover any installation an investigation plausibly reads.
+const maxResolvePages = 10
+
+// repoRead performs one read on a repository addressed by its stable id, over the
+// documented /repos/{owner}/{repo} routes. The undocumented /repositories/{id} forms sit
+// outside GitHub's versioning guarantees and are off this client's map.
+func (c *Client) repoRead(
+	ctx context.Context, token string, repository int64, suffix string,
+	parameters url.Values, out any,
+) (http.Header, error) {
+	name, err := c.fullName(ctx, token, repository, false)
+	if err != nil {
+		return nil, err
+	}
+	header, err := c.call(ctx, token, http.MethodGet, "/repos/"+name+suffix, parameters, out)
+
+	// A 404 or an unfollowed 301 is what a rename looks like: the id is still right,
+	// the cached name is not. Resolve fresh and retry exactly once.
+	var refusal *APIError
+	if errors.As(err, &refusal) &&
+		(refusal.Status == http.StatusNotFound || refusal.Status == http.StatusMovedPermanently) {
+		fresh, resolveErr := c.fullName(ctx, token, repository, true)
+		if resolveErr != nil || fresh == name {
+			return nil, err
+		}
+		return c.call(ctx, token, http.MethodGet, "/repos/"+fresh+suffix, parameters, out)
+	}
+	return header, err
+}
+
+// fullName resolves a repository's owner/name from its stable id, from the
+// installation's own repository listing, cached until a read proves it stale.
+func (c *Client) fullName(
+	ctx context.Context, token string, repository int64, refresh bool,
+) (string, error) {
+	if !refresh {
+		c.mu.Lock()
+		name, cached := c.names[repository]
+		c.mu.Unlock()
+		if cached {
+			return name, nil
+		}
+	}
+
+	for page := 1; page <= maxResolvePages; page++ {
+		var decoded struct {
+			Repositories []repositoryJSON `json:"repositories"`
+		}
+		header, err := c.call(ctx, token, http.MethodGet, "/installation/repositories",
+			url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}}, &decoded)
+		if err != nil {
+			return "", err
+		}
+		c.mu.Lock()
+		for _, one := range decoded.Repositories {
+			c.names[one.ID] = one.FullName
+		}
+		name, found := c.names[repository]
+		c.mu.Unlock()
+		if found {
+			return name, nil
+		}
+		if !hasNextPage(header) {
+			break
+		}
+	}
+	return "", &APIError{
+		Status:  http.StatusNotFound,
+		Message: "repository " + strconv.FormatInt(repository, 10) + " is not in this installation's grant",
+	}
+}
 
 // call performs one REST operation and decodes the answer into out, returning the
 // response headers for the callers that read pagination from them.
@@ -383,6 +469,9 @@ func (c *Client) once(
 	}
 	request.Header.Set("Authorization", "Bearer "+credential)
 	request.Header.Set("Accept", "application/vnd.github+json")
+	// One pinned version, no negotiation: 2022-11-28 is supported on GitHub.com until
+	// 2028-03-10 and is the version the widest range of GHES releases accepts. A 410
+	// below is the cliff arriving, mapped to its own error so it self-diagnoses.
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	response, err := c.http.Do(request)
@@ -409,6 +498,9 @@ func (c *Client) once(
 			return nil, 0, fmt.Errorf("%w: the hourly budget is exhausted", ErrRateLimited)
 		}
 		return nil, wait, nil
+	}
+	if response.StatusCode == http.StatusGone {
+		return nil, 0, fmt.Errorf("%w (%s answered 410)", ErrAPIVersionRetired, path)
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		var refusal struct {

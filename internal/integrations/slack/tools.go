@@ -21,6 +21,10 @@ import (
 const (
 	maxChannelsPerList     = 200
 	defaultChannelsPerList = 100
+	// maxChannelPages bounds the listing walk. Five vendor pages of 200 cover any
+	// workspace an investigation plausibly reads; past that the result flags truncation
+	// rather than scanning on.
+	maxChannelPages        = 5
 	maxMessagesPerRead     = 200
 	defaultMessagesPerRead = 100
 	maxThreadReplies       = 200
@@ -28,7 +32,8 @@ const (
 	defaultSearchMatches   = 20
 )
 
-// rateLimitNote is the same fact on every tool, stated once.
+// rateLimitNote is the shared fact on the single-call tools; list_channels walks
+// pages and declares its own cost.
 const rateLimitNote = "one Slack Web API call per invocation, against the workspace's shared rate budget; a handful of calls per investigation is fine, a scan is not"
 
 // tools is the declared set, one-to-one with the capabilities the definition declares.
@@ -80,7 +85,8 @@ func listChannelsTool(client *Client) integrations.Tool {
 		Name:       "slack.list_channels",
 		Capability: ListChannels,
 		Description: "Lists the workspace's public, unarchived channels with their topics " +
-			"and purposes, so candidate channels can be chosen by name and topic.",
+			"and purposes, walking the listing far enough that a filter match beyond the " +
+			"first page is still found.",
 		WhenToUse: "First, to select the few channels worth reading: match the incident's " +
 			"service, team or alert names against channel names and topics.",
 		WhenNotToUse: "Not for reading messages — it returns no message content. Not for " +
@@ -88,9 +94,11 @@ func listChannelsTool(client *Client) integrations.Tool {
 			"way to enumerate the workspace for its own sake.",
 		Arguments:   declared,
 		Permissions: "the bot token needs the channels:read scope",
-		RateLimit:   rateLimitNote,
+		RateLimit: fmt.Sprintf("up to %d Slack Web API calls per invocation, against the "+
+			"workspace's shared rate budget", maxChannelPages),
 		Output: "a bounded list of channels, each with id, name, topic, purpose and member " +
-			"count, plus a truncated flag when the workspace holds more",
+			"count, plus a truncated flag when more matched than were returned or the " +
+			"walk stopped before the workspace's end",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := readArguments(declared, request.Arguments)
 			if err != nil {
@@ -105,23 +113,36 @@ func listChannelsTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
-			listed, err := client.Channels(ctx, request.Credential, limit)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-
-			selected := make([]channelContent, 0, len(listed.Channels))
-			sources := make([]string, 0, len(listed.Channels))
-			for _, channel := range listed.Channels {
-				if !matchesChannel(channel, needle) {
-					continue
+			// The filter runs inside a bounded pagination walk. Filtering one page
+			// client-side was the defect: a matching channel beyond page one was
+			// invisible while the answer looked complete.
+			var selected []channelContent
+			var sources []string
+			matched, cursor := 0, ""
+			for page := 0; page < maxChannelPages; page++ {
+				listed, err := client.Channels(
+					ctx, request.Credential, maxChannelsPerList, cursor)
+				if err != nil {
+					return integrations.ToolResult{}, err
 				}
-				selected = append(selected, channelContent(channel))
-				sources = append(sources, channel.ID)
+				for _, channel := range listed.Channels {
+					if !matchesChannel(channel, needle) {
+						continue
+					}
+					matched++
+					if len(selected) < limit {
+						selected = append(selected, channelContent(channel))
+						sources = append(sources, channel.ID)
+					}
+				}
+				cursor = listed.NextCursor
+				if cursor == "" || len(selected) >= limit {
+					break
+				}
 			}
 			return integrations.ToolResult{
 				Content:   selected,
-				Truncated: listed.Truncated,
+				Truncated: matched > len(selected) || cursor != "",
 				Summary:   fmt.Sprintf("%d channels matched", len(selected)),
 				Sources:   sources,
 			}, nil
@@ -273,12 +294,12 @@ func threadRepliesTool(client *Client) integrations.Tool {
 			}
 			if read.Truncated {
 				// Refused rather than shortened: part of a thread reads exactly like the
-				// whole of one, and a conclusion quoted from a conversation that continued
-				// past what was read is the mislead this bound exists to prevent.
+				// whole of one. No workaround is suggested — channel history does not
+				// carry a thread's replies, and advising it would send the reader to a
+				// tool that cannot answer.
 				return integrations.ToolResult{}, fmt.Errorf(
-					"the thread holds more than %d replies; read the channel window with "+
-						"slack.get_channel_history instead of quoting part of a discussion",
-					limit)
+					"the thread holds more than %d replies and cannot be read whole by "+
+						"this tool", limit)
 			}
 			return integrations.ToolResult{
 				Content: messagesContent(read.Messages),

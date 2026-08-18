@@ -12,9 +12,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/reasoning"
 )
@@ -79,14 +81,22 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 // Name identifies this vendor.
 func (p *Provider) Name() string { return Name }
 
-// Complete asks for one document.
+// retryBackoff separates one attempt from the next. Long enough for a transient
+// upstream failure to pass, short enough that MaxAttempts stays inside the round's
+// deadline.
+const retryBackoff = 500 * time.Millisecond
+
+// Complete asks for one document, trying up to the deployment's MaxAttempts.
 //
-// The call is deliberately non-streamed: this vendor reports token usage in one body on a
-// non-streaming call, while on a streamed call the figures arrive in a final chunk this adapter
-// would have to assume was sent. A cost figure that is silently absent is worse than a slower
-// call. And because this vendor offers a JSON output MODE rather than schema enforcement, the
-// schema is rendered into the prompt and the answer is validated by the caller — the guarantee
-// survives, it just costs a retry instead of being free.
+// Only an outage is retried: a rejected request is this build's own defect and would be
+// rejected identically every time, and a refusal or malformed answer is the caller's to
+// judge. The call is deliberately non-streamed: this vendor reports token usage in one
+// body on a non-streaming call, while on a streamed call the figures arrive in a final
+// chunk this adapter would have to assume was sent. A cost figure that is silently
+// absent is worse than a slower call. And because this vendor offers a JSON output MODE
+// rather than schema enforcement, the schema is rendered into the prompt and the answer
+// is validated by the caller — the guarantee survives, it just costs a retry instead of
+// being free.
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
@@ -103,6 +113,31 @@ func (p *Provider) Complete(
 			Name, prompt.Model, "the request could not be encoded: "+err.Error())
 	}
 
+	var lastErr error
+	for attempt := 0; attempt < p.deployment.MaxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(retryBackoff):
+			case <-ctx.Done():
+				return reasoning.Completion{}, transportFailure(prompt.Model, ctx.Err())
+			}
+		}
+		completion, err := p.once(ctx, prompt, body)
+		if err == nil {
+			return completion, nil
+		}
+		lastErr = err
+		if !errors.Is(err, reasoning.ErrOutage) || ctx.Err() != nil {
+			return completion, err
+		}
+	}
+	return reasoning.Completion{}, lastErr
+}
+
+// once performs one attempt.
+func (p *Provider) once(
+	ctx context.Context, prompt reasoning.Prompt, body []byte,
+) (reasoning.Completion, error) {
 	response, err := p.send(ctx, body)
 	if err != nil {
 		return reasoning.Completion{}, transportFailure(prompt.Model, err)

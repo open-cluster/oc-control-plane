@@ -3,6 +3,7 @@ package reasoning
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -143,8 +144,12 @@ func compactArguments(arguments map[string]any) string {
 }
 
 // boundedJSON renders a run's content inside the per-run ceiling, saying so when it cut.
-// The cut is repaired to valid UTF-8: json.Marshal leaves multi-byte text unescaped, and
-// a rune split at the byte boundary would hand the provider bytes it may refuse.
+//
+// List content is cut BETWEEN elements: whole items render until the budget, and the
+// note says how many of how many survived — the model reads valid records plus an
+// honest count, never JSON severed mid-token. Non-list content falls back to a byte
+// cut, repaired to valid UTF-8: json.Marshal leaves multi-byte text unescaped, and a
+// rune split at the byte boundary would hand the provider bytes it may refuse.
 func boundedJSON(content any) string {
 	if content == nil {
 		return "null"
@@ -156,8 +161,58 @@ func boundedJSON(content any) string {
 	if len(encoded) <= maxRunContentBytes {
 		return string(encoded)
 	}
+	if elements := listElements(content); elements != nil {
+		if rendered, kept := boundedList(elements); kept > 0 {
+			return rendered
+		}
+		// The first element alone exceeds the budget; a byte cut of it beats an
+		// empty list.
+	}
 	return strings.ToValidUTF8(string(encoded[:maxRunContentBytes]), "") +
 		"… [cut at " + strconv.Itoa(maxRunContentBytes) + " bytes]"
+}
+
+// listElements reads content as a list when it is one, whatever its element type.
+func listElements(content any) []any {
+	value := reflect.ValueOf(content)
+	if value.Kind() != reflect.Slice {
+		return nil
+	}
+	elements := make([]any, value.Len())
+	for index := range elements {
+		elements[index] = value.Index(index).Interface()
+	}
+	return elements
+}
+
+// boundedList renders whole elements until the budget and counts the rest, reporting
+// how many it kept so a list whose very first element bursts the budget can fall back
+// to a byte cut instead of rendering as empty.
+func boundedList(elements []any) (string, int) {
+	var rendered strings.Builder
+	rendered.WriteString("[")
+	kept := 0
+	for _, element := range elements {
+		encoded, err := json.Marshal(element)
+		if err != nil {
+			break
+		}
+		if rendered.Len()+len(encoded)+1 > maxRunContentBytes {
+			break
+		}
+		if kept > 0 {
+			rendered.WriteString(",")
+		}
+		rendered.Write(encoded)
+		kept++
+	}
+	rendered.WriteString("]")
+	if kept < len(elements) {
+		rendered.WriteString(" … [" + strconv.Itoa(kept) + " of " +
+			strconv.Itoa(len(elements)) + " items; the rest cut at " +
+			strconv.Itoa(maxRunContentBytes) + " bytes]")
+	}
+	return rendered.String(), kept
 }
 
 func toolNames(sources []investigation.BriefSource) []string {

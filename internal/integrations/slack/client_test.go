@@ -238,7 +238,7 @@ func TestChannelsAreListedBoundedWithTruncationFlagged(t *testing.T) {
 			"response_metadata":{"next_cursor":"dGVhbTpDMDM"}}`))
 	}
 
-	listed, err := NewClient(fake.URL).Channels(testContext(t), "xoxb-under-test", 2)
+	listed, err := NewClient(fake.URL).Channels(testContext(t), "xoxb-under-test", 2, "")
 	if err != nil {
 		t.Fatalf("listing channels: %v", err)
 	}
@@ -248,8 +248,27 @@ func TestChannelsAreListedBoundedWithTruncationFlagged(t *testing.T) {
 	if listed.Channels[0].Topic != "live incident chat" {
 		t.Errorf("topic = %q; channel selection reads topics", listed.Channels[0].Topic)
 	}
-	if !listed.Truncated {
-		t.Error("a further cursor means the listing is incomplete, and that must be flagged")
+	if listed.NextCursor != "dGVhbTpDMDM" {
+		t.Errorf("cursor = %q; a further cursor means the listing is incomplete, and the "+
+			"caller walks by it", listed.NextCursor)
+	}
+}
+
+func TestChannelsCarryTheCursorTheWalkContinuesFrom(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	fake.answers["conversations.list"] = func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.URL.Query().Get("cursor"); got != "dGVhbTpDMDM" {
+			t.Errorf("cursor = %q, want the one the previous page returned", got)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"channels":[]}`))
+	}
+
+	if _, err := NewClient(fake.URL).Channels(
+		testContext(t), "xoxb-under-test", 2, "dGVhbTpDMDM"); err != nil {
+		t.Fatalf("listing channels: %v", err)
 	}
 }
 
@@ -379,7 +398,7 @@ func TestRequestsCarryTheBearerTokenAndNoQueryToken(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"ok":true,"channels":[]}`))
 	}
 
-	if _, err := NewClient(fake.URL).Channels(testContext(t), "xoxb-under-test", 10); err != nil {
+	if _, err := NewClient(fake.URL).Channels(testContext(t), "xoxb-under-test", 10, ""); err != nil {
 		t.Fatalf("listing channels: %v", err)
 	}
 }

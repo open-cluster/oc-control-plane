@@ -273,6 +273,9 @@ func (f *evalGitHubFake) serve(writer http.ResponseWriter, request *http.Request
 	}
 
 	switch {
+	case strings.HasPrefix(path, "/repos/"):
+		f.serveRepoRead(writer, request, granted)
+		return
 	case path == "/installation/repositories":
 		repos := make([]map[string]any, 0, len(granted.Repos))
 		for _, repo := range granted.Repos {
@@ -282,6 +285,18 @@ func (f *evalGitHubFake) serve(writer http.ResponseWriter, request *http.Request
 			})
 		}
 		evalAnswer(writer, map[string]any{"total_count": len(repos), "repositories": repos})
+	default:
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
+	}
+}
+
+// serveRepoRead answers the documented /repos/{owner}/{repo}/... reads the client uses.
+func (f *evalGitHubFake) serveRepoRead(
+	writer http.ResponseWriter, request *http.Request, granted evalInstallation,
+) {
+	path := request.URL.Path
+	switch {
 	case strings.HasSuffix(path, "/commits"):
 		if f.failCommits != 0 {
 			writer.WriteHeader(f.failCommits)
@@ -311,9 +326,9 @@ func (f *evalGitHubFake) serve(writer http.ResponseWriter, request *http.Request
 }
 
 func repoByPath(granted evalInstallation, path, suffix string) (evalRepo, bool) {
-	id := strings.TrimSuffix(strings.TrimPrefix(path, "/repositories/"), suffix)
+	name := strings.TrimSuffix(strings.TrimPrefix(path, "/repos/"), suffix)
 	for _, repo := range granted.Repos {
-		if strconv.FormatInt(repo.ID, 10) == id {
+		if granted.Account+"/"+repo.Name == name {
 			return repo, true
 		}
 	}

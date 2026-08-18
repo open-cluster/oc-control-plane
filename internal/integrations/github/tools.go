@@ -24,9 +24,16 @@ const (
 	defaultPullRequests = 20
 )
 
-// rateLimitNote is the same fact on every tool, stated once.
-const rateLimitNote = "one GitHub REST call per invocation, against the installation's " +
-	"shared hourly budget; a handful of calls per investigation is fine, a crawl is not"
+// The rate notes tell the truth per tool: a listing is one call; a repository read
+// resolves the id to a name first, which walks the installation's repository listing
+// once per process and again only after a rename.
+const (
+	rateLimitNote = "one GitHub REST call per invocation, against the installation's " +
+		"shared hourly budget; a handful of calls per investigation is fine, a crawl is not"
+	resolvedRateNote = "one GitHub REST call per invocation once the repository's name " +
+		"is cached, plus a bounded resolution walk of the installation's repository " +
+		"listing on the first read; all against the installation's shared hourly budget"
+)
 
 // tools is the declared set, one-to-one with the capabilities the definition declares.
 func tools(app *App, client *Client) []integrations.Tool {
@@ -137,9 +144,9 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		},
 		{
 			Name: "since",
-			Description: "Start of the window, RFC 3339. Use the incident's own window " +
-				"widened by an hour or two — the change that caused an incident usually " +
-				"landed shortly before it.",
+			Description: "Start of the window, RFC 3339. The investigation's window " +
+				"already reaches back before the incident began, and every read is " +
+				"clamped inside it — a wider ask does not widen the read.",
 			Type: integrations.FieldString,
 		},
 		{
@@ -159,15 +166,14 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		Capability: ReadCommits,
 		Description: "Reads one repository's commits inside a time window, newest first, " +
 			"bounded and flagged when the window holds more.",
-		WhenToUse: "To answer \"what changed before this broke\": read the incident " +
-			"window plus a lead of an hour or two on the repository that owns the failing " +
-			"service.",
-		WhenNotToUse: "Not for the intent behind a change — that is " +
-			"github.read_pull_requests, where review and description live. Not " +
-			"unbounded: without a window it reads the recent tail only.",
+		WhenToUse: "To answer \"what changed before this broke\": read the incident's " +
+			"own window on the repository that owns the failing service.",
+		WhenNotToUse: "Not for what was merged as a unit — that is " +
+			"github.read_pull_requests, which carries titles, branches and merge times. " +
+			"Not unbounded: without a window it reads the recent tail only.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant",
-		RateLimit:   rateLimitNote,
+		RateLimit:   resolvedRateNote,
 		Output: "a bounded list of commits, each with sha, message, author and authored " +
 			"time, plus a truncated flag when the window holds more; an empty repository " +
 			"answers an empty list",
@@ -239,13 +245,14 @@ func readPullRequestsTool(app *App, client *Client) integrations.Tool {
 		Description: "Reads one repository's pull requests, most recently updated first, " +
 			"in every state — merged ones are the change context an investigation wants.",
 		WhenToUse: "To see what was merged or in flight around the incident: titles, " +
-			"branches and merge times say what a bare commit list cannot.",
+			"branches and merge times say what a bare commit list cannot. The output " +
+			"carries no description or review content.",
 		WhenNotToUse: "Not for individual commits inside the window; that is " +
 			"github.read_commits. Not to find the repository; that is " +
 			"github.list_repositories.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant",
-		RateLimit:   rateLimitNote,
+		RateLimit:   resolvedRateNote,
 		Output: "a bounded list of pull requests, each with number, title, state, merge " +
 			"and update times, author and branches, plus a truncated flag when the " +
 			"repository holds more",

@@ -315,7 +315,33 @@ func checkDefinition(definition Definition) error {
 				"contract; the router chooses by this metadata, and an empty field is a "+
 				"tool that gets used wrongly", definition.Key, tool.Name)
 		}
+		if err := checkArguments(definition.Key, tool); err != nil {
+			return err
+		}
 		names[tool.Name] = true
+	}
+	return nil
+}
+
+// checkArguments refuses a tool whose argument declarations are incomplete. The model
+// plans calls by these declarations, so a nameless, undescribed or untyped argument is
+// a call that goes wrong at three in the morning instead of failing this build.
+func checkArguments(key string, tool Tool) error {
+	declared := make(map[string]bool, len(tool.Arguments))
+	for _, argument := range tool.Arguments {
+		switch {
+		case argument.Name == "" || argument.Description == "":
+			return fmt.Errorf("integration type %q tool %q declares an argument without "+
+				"a name or a description", key, tool.Name)
+		case argument.Type != FieldString && argument.Type != FieldInteger:
+			return fmt.Errorf("integration type %q tool %q argument %q has type %q, "+
+				"which is not one this catalog serves", key, tool.Name,
+				argument.Name, argument.Type)
+		case declared[argument.Name]:
+			return fmt.Errorf("integration type %q tool %q declares argument %q twice",
+				key, tool.Name, argument.Name)
+		}
+		declared[argument.Name] = true
 	}
 	return nil
 }

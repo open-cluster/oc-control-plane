@@ -113,6 +113,59 @@ func promptFixture() reasoning.Prompt {
 	}
 }
 
+func TestComplete_RetriesATransientServerFailureWithinMaxAttempts(t *testing.T) {
+	provider, round := providerUnder(t,
+		answered(500, `{"error":{"message":"upstream hiccup"}}`),
+		answered(200, completion(`{"findings":[]}`, "stop", cachedUsage)))
+
+	answer, err := provider.Complete(context.Background(), promptFixture())
+	if err != nil {
+		t.Fatalf("a transient failure within the attempt budget must recover: %v", err)
+	}
+	if string(answer.Document) != `{"findings":[]}` {
+		t.Errorf("the document is %q", answer.Document)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 2 {
+		t.Errorf("the call was tried %d times, want 2", calls)
+	}
+}
+
+func TestComplete_StopsRetryingAtMaxAttempts(t *testing.T) {
+	provider, round := providerUnder(t,
+		answered(500, `{"error":{"message":"down"}}`))
+
+	_, err := provider.Complete(context.Background(), promptFixture())
+	if !errors.Is(err, reasoning.ErrOutage) {
+		t.Fatalf("a persistent failure is an outage, got %v", err)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 3 {
+		t.Errorf("the call was tried %d times, want the deployment's MaxAttempts of 3", calls)
+	}
+}
+
+func TestComplete_DoesNotRetryARejectedRequest(t *testing.T) {
+	provider, round := providerUnder(t,
+		answered(400, `{"error":{"message":"bad request"}}`))
+
+	_, err := provider.Complete(context.Background(), promptFixture())
+	if !errors.Is(err, reasoning.ErrRejected) {
+		t.Fatalf("a malformed request is this build's own defect, got %v", err)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 1 {
+		t.Errorf("a rejected request was tried %d times; every retry would fail "+
+			"identically and spend money doing it", calls)
+	}
+}
+
 func TestComplete_ReturnsTheDocumentAndTheModelThatAnswered(t *testing.T) {
 	provider, _ := providerUnder(t,
 		answered(200, completion(`{"hypotheses":[]}`, "stop", cachedUsage)))

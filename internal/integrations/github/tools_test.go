@@ -87,7 +87,8 @@ func TestReadCommitsIsBoundedToTheWindow(t *testing.T) {
 
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
-	fake.answers["/repositories/1296269/commits"] = func(writer http.ResponseWriter, request *http.Request) {
+	grantsPayments(fake)
+	fake.answers["/repos/acme-corp/payments/commits"] = func(writer http.ResponseWriter, request *http.Request) {
 		query := request.URL.Query()
 		if query.Get("since") != "2026-08-15T00:00:00Z" {
 			t.Errorf("since = %q; the incident's own window must bound the read", query.Get("since"))
@@ -135,7 +136,8 @@ func TestReadPullRequestsSurfacesBranchesAndMergeTimes(t *testing.T) {
 
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
-	fake.answer("/repositories/1296269/pulls", `[
+	grantsPayments(fake)
+	fake.answer("/repos/acme-corp/payments/pulls", `[
 		{"number":98,"title":"Retry writes on conflict","state":"closed",
 		 "merged_at":"2026-08-15T21:00:00Z","updated_at":"2026-08-15T21:00:00Z",
 		 "user":{"login":"kai-dev"},"head":{"ref":"fix/retry"},"base":{"ref":"main"}}]`)

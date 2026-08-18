@@ -94,12 +94,13 @@ type Channel struct {
 	Members int
 }
 
-// Channels is a bounded page of the workspace's channels.
+// Channels is one bounded page of the workspace's channels.
 type Channels struct {
 	Channels []Channel
-	// Truncated reports that the workspace holds more than the bound; a reader must not
-	// mistake this page for the whole set.
-	Truncated bool
+	// NextCursor is where the next page starts; empty when this page ends the listing.
+	// The caller walks by it — a single page filtered client-side is how a matching
+	// channel beyond page one silently disappears.
+	NextCursor string
 }
 
 // Message is one message as history, replies and search report it.
@@ -169,9 +170,11 @@ func (c *Client) AuthTest(ctx context.Context, token string) (Identity, error) {
 	return identity, nil
 }
 
-// Channels lists public, unarchived channels, one bounded page. Selection over the result
-// reads names and topics; nothing here reads message content.
-func (c *Client) Channels(ctx context.Context, token string, limit int) (Channels, error) {
+// Channels lists public, unarchived channels, one bounded page from the given cursor.
+// Selection over the result reads names and topics; nothing here reads message content.
+func (c *Client) Channels(
+	ctx context.Context, token string, limit int, cursor string,
+) (Channels, error) {
 	var decoded struct {
 		Channels []struct {
 			ID    string `json:"id"`
@@ -188,18 +191,22 @@ func (c *Client) Channels(ctx context.Context, token string, limit int) (Channel
 			NextCursor string `json:"next_cursor"`
 		} `json:"response_metadata"`
 	}
-	_, err := c.call(ctx, token, "conversations.list", url.Values{
+	parameters := url.Values{
 		"limit":            {strconv.Itoa(limit)},
 		"exclude_archived": {"true"},
 		"types":            {"public_channel"},
-	}, &decoded)
+	}
+	if cursor != "" {
+		parameters.Set("cursor", cursor)
+	}
+	_, err := c.call(ctx, token, "conversations.list", parameters, &decoded)
 	if err != nil {
 		return Channels{}, err
 	}
 
 	listed := Channels{
-		Channels:  make([]Channel, 0, len(decoded.Channels)),
-		Truncated: decoded.ResponseMetadata.NextCursor != "",
+		Channels:   make([]Channel, 0, len(decoded.Channels)),
+		NextCursor: decoded.ResponseMetadata.NextCursor,
 	}
 	for _, one := range decoded.Channels {
 		listed.Channels = append(listed.Channels, Channel{

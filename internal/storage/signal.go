@@ -38,6 +38,13 @@ type Signal struct {
 	Title       string
 	Summary     string
 	Labels      map[string]string
+	// Annotations are the source's own operational pointers — runbook_url,
+	// dashboard links — preserved because they are the operator's knowledge already
+	// attached to the alert, and untrusted text for their whole life.
+	Annotations map[string]string
+	// GeneratorURL is where the source says the alert came from, preserved so the
+	// alert's own pointer is not thrown away at intake.
+	GeneratorURL string
 	// StartedAt is when the source says this episode began, and together with SourceKey it
 	// is what makes one episode distinguishable from the next.
 	StartedAt time.Time
@@ -244,6 +251,14 @@ func upsertSignal(
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("encoding signal labels: %w", err)
 	}
+	// A nil map must land as an empty document, not JSON null: the column is a set of
+	// pointers, and "none" is the empty set.
+	annotations := []byte("{}")
+	if len(signal.Annotations) > 0 {
+		if annotations, err = json.Marshal(signal.Annotations); err != nil {
+			return uuid.Nil, false, fmt.Errorf("encoding signal annotations: %w", err)
+		}
+	}
 
 	var resolvedAt *time.Time
 	if signal.Status == SignalResolved {
@@ -261,20 +276,23 @@ func upsertSignal(
 	err = transaction.QueryRow(ctx, `
 		INSERT INTO signal
 			(signal_id, org_id, integration_id, source_key, status,
-			 title, summary, labels, started_at, resolved_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 title, summary, labels, annotations, generator_url, started_at, resolved_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (integration_id, source_key, started_at) DO UPDATE
-		   SET status      = EXCLUDED.status,
-		       title       = EXCLUDED.title,
-		       summary     = EXCLUDED.summary,
-		       labels      = EXCLUDED.labels,
-		       resolved_at = EXCLUDED.resolved_at,
-		       updated_at  = now()
+		   SET status        = EXCLUDED.status,
+		       title         = EXCLUDED.title,
+		       summary       = EXCLUDED.summary,
+		       labels        = EXCLUDED.labels,
+		       annotations   = EXCLUDED.annotations,
+		       generator_url = EXCLUDED.generator_url,
+		       resolved_at   = EXCLUDED.resolved_at,
+		       updated_at    = now()
 		 WHERE signal.status = 1
 		RETURNING signal_id, xmax = 0`,
 		uuid.New(), organization.String(), delivery.Integration,
 		signal.SourceKey, int16(signal.Status),
-		signal.Title, signal.Summary, labels, signal.StartedAt, resolvedAt).
+		signal.Title, signal.Summary, labels, annotations, signal.GeneratorURL,
+		signal.StartedAt, resolvedAt).
 		Scan(&signalID, &inserted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The guard refused the update: this episode of the alert is already resolved and a

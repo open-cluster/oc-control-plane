@@ -3,6 +3,7 @@ package investigation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"sort"
@@ -144,8 +145,9 @@ func (r *Runner) run(
 	var runs []ToolRun
 	expanded := false
 
+	executed := 0
 	for round := 1; ; round++ {
-		mustConclude := round >= maxRounds || len(runs) >= maxRuns || len(selected) == 0
+		mustConclude := round >= maxRounds || executed >= maxRuns || len(selected) == 0
 
 		decision, decideErr := r.decide(ctx, opened, selected, runs, mustConclude)
 		spend = spend.Add(decision.Spend)
@@ -170,15 +172,35 @@ func (r *Runner) run(
 			return
 		}
 
-		calls := decision.Calls
-		if len(calls) > maxCallsPerRound {
-			calls = calls[:maxCallsPerRound]
+		// A call past a bound is dropped VISIBLY: recorded as a failed run the model
+		// reads in its next brief and the operator sees in provenance. Silent dropping
+		// was the defect — the model believed it had read what it asked for.
+		recordable := len(decision.Calls)
+		overflow := 0
+		if recordable > maxCallsPerRound+maxDroppedRecords {
+			overflow = recordable - (maxCallsPerRound + maxDroppedRecords)
+			recordable = maxCallsPerRound + maxDroppedRecords
 		}
-		for _, call := range calls {
-			if len(runs) >= maxRuns {
-				break
+		for index := 0; index < recordable; index++ {
+			call := decision.Calls[index]
+			var run ToolRun
+			switch {
+			case index >= maxCallsPerRound:
+				reason := fmt.Sprintf("not executed: the decision proposed %d reads "+
+					"and a round performs at most %d", len(decision.Calls), maxCallsPerRound)
+				if overflow > 0 && index == recordable-1 {
+					reason = fmt.Sprintf("%s; %d further proposed reads were also "+
+						"not executed", reason, overflow)
+				}
+				run = droppedRun(opened, call, len(runs)+1, reason)
+			case executed >= maxRuns:
+				run = droppedRun(opened, call, len(runs)+1, fmt.Sprintf(
+					"not executed: the investigation's read budget of %d was exhausted",
+					maxRuns))
+			default:
+				run = r.execute(ctx, opened, selected, credentials, call, len(runs)+1)
+				executed++
 			}
-			run := r.execute(ctx, opened, selected, credentials, call, len(runs)+1)
 			runs = append(runs, run)
 			if err := r.Store.RecordToolRun(ctx, organization, opened.ID, run); err != nil {
 				r.fail(ctx, organization, opened.ID, "a tool run could not be recorded", spend)
@@ -207,6 +229,29 @@ func (r *Runner) run(
 			}
 			remainder = remainder[len(more):]
 		}
+	}
+}
+
+// maxDroppedRecords bounds how many dropped calls one round records individually; the
+// last individually recorded one carries the count of any further ones, so a
+// pathological decision cannot spam provenance.
+const maxDroppedRecords = maxCallsPerRound
+
+// droppedRun records a call that was proposed and not executed, so the drop is on the
+// record rather than silent.
+func droppedRun(opened Investigation, call ToolCall, ordinal int, reason string) ToolRun {
+	now := time.Now().UTC()
+	return ToolRun{
+		ID:          uuid.New(),
+		Ordinal:     ordinal,
+		Tool:        call.Tool,
+		Arguments:   call.Arguments,
+		WindowFrom:  opened.WindowFrom,
+		WindowUntil: opened.WindowUntil,
+		Outcome:     RunFailed,
+		Error:       reason,
+		StartedAt:   now,
+		FinishedAt:  now,
 	}
 }
 
