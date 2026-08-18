@@ -34,6 +34,12 @@ type Tool struct {
 	// An operator and audit consumer only: it never reaches the model, which routes by
 	// the composed description instead.
 	Permissions string
+	// Requires names the verified grants an Integration must have recorded for this
+	// tool to be OFFERED to an investigation at all. Empty means always offered. It is
+	// how availability derives from verified reality: a tool whose path cannot work
+	// with the connected credential — a bot token asked to run user-token search — is
+	// absent from the set, never a call that always fails.
+	Requires []string
 	// Output says what a successful answer holds. Composed into the model-facing
 	// description ("Returns: …") and rendered on the operator catalog view.
 	Output string

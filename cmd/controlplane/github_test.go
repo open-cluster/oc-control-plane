@@ -269,8 +269,8 @@ func TestGitHubCatalogEntrySchemaTakesTheInstallationID(t *testing.T) {
 		if entry.Key != "github" {
 			continue
 		}
-		if len(entry.Capabilities) != 3 || len(entry.Tools) != 3 {
-			t.Errorf("github serves %d capabilities and %d tools, want 3 and 3",
+		if len(entry.Capabilities) != 8 || len(entry.Tools) != 8 {
+			t.Errorf("github serves %d capabilities and %d tools, want 8 and 8",
 				len(entry.Capabilities), len(entry.Tools))
 		}
 		if !strings.Contains(string(entry.ConfigurationSchema), "installationId") {

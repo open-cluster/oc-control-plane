@@ -87,6 +87,11 @@ func runEvalCase(
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
+		// The production default window lead: the cases' fixtures sit at first-seen−40m
+		// and −45m, which the derived window (first-seen − lead → now) must cover the
+		// way a real deployment's would — the harness's zero-value config would
+		// otherwise leave every scripted message and commit outside the window.
+		cfg.InvestigationWindowLead = 2 * time.Hour
 		cfg.SlackAPIURL = slackFake.URL
 		cfg.GitHubAPIURL = githubFake.URL
 		cfg.GitHubAppID = "12345"

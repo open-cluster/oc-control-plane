@@ -68,12 +68,12 @@ const (
 )
 
 // changeContextTools are the reads that can serve a commit-caused world: inventory,
-// channel reading, and commit history. slack.search_messages stays listed although a
-// bot token cannot use it — the catalog offers it as usable, so choosing it is a tool
-// contract defect, not a selection error, and it must not score as irrelevant.
-// Thread and pull-request reads join per case, only where the world holds either.
+// channel reading, and commit history. slack.search_messages is not listed: tool
+// availability derives from verified grants, and a bot-token integration is never
+// offered user-token-only search, so the model cannot select it at all. Thread and
+// pull-request reads join per case, only where the world holds either.
 var changeContextTools = []string{
-	"slack.list_channels", "slack.get_channel_history", "slack.search_messages",
+	"slack.list_channels", "slack.get_channel_history",
 	"github.list_repositories", "github.read_commits",
 }
 
@@ -91,6 +91,12 @@ func evalCases(now time.Time) []evalCase {
 					Messages: messagesIn(messages, "incident")},
 				{ID: "C2", Name: "deploys", Topic: "deploy announcements",
 					Messages: messagesIn(messages, "deploy")},
+			},
+			// The directory users.info serves; message authors travel as these raw ids,
+			// as the real history API sends them.
+			Users: map[string]string{
+				"UDEPLOYBOT": "deploy-bot", "USRELEE00": "sre-lee",
+				"UDEVROWAN0": "dev-rowan",
 			},
 		}}
 	}
@@ -110,7 +116,7 @@ func evalCases(now time.Time) []evalCase {
 		Alertname: "CheckoutLatencyHigh",
 		Labels:    map[string]string{"namespace": "payments", "service": "payments"},
 		Workspaces: paymentsWorkspace(
-			deployMessage(deployAt, "deploy-bot",
+			deployMessage(deployAt, "UDEPLOYBOT",
 				"deployed payments abc123 to production"),
 		),
 		Installations: paymentsRepos([]evalCommit{
@@ -134,7 +140,7 @@ func evalCases(now time.Time) []evalCase {
 		Alertname: "PaymentsErrorsHigh",
 		Labels:    map[string]string{"namespace": "payments", "service": "payments"},
 		Workspaces: paymentsWorkspace(
-			incidentMessage(now.Add(-25*time.Minute), "sre-lee",
+			incidentMessage(now.Add(-25*time.Minute), "USRELEE00",
 				"seeing tls handshake errors and connection pool exhaustion at once"),
 		),
 		Installations: paymentsRepos([]evalCommit{
@@ -161,7 +167,7 @@ func evalCases(now time.Time) []evalCase {
 		Alertname: "CheckoutTimeouts",
 		Labels:    map[string]string{"namespace": "checkout", "service": "checkout"},
 		Workspaces: paymentsWorkspace(
-			incidentMessage(now.Add(-20*time.Minute), "sre-lee",
+			incidentMessage(now.Add(-20*time.Minute), "USRELEE00",
 				"checkout is timing out for most carts"),
 		),
 		Installations: map[string]evalInstallation{evalPrimaryInstallation: {
@@ -191,7 +197,7 @@ func evalCases(now time.Time) []evalCase {
 		Alertname: "APIGateway5xx",
 		Labels:    map[string]string{"namespace": "gateway", "service": "gateway"},
 		Workspaces: paymentsWorkspace(
-			incidentMessage(now.Add(-22*time.Minute), "dev-rowan",
+			incidentMessage(now.Add(-22*time.Minute), "UDEVROWAN0",
 				"probably the dns migration from yesterday again"),
 		),
 		Installations: map[string]evalInstallation{evalPrimaryInstallation: {
@@ -227,9 +233,10 @@ func evalCases(now time.Time) []evalCase {
 			Team: "Acme Marketing",
 			Channels: []evalChannel{{ID: "C9", Name: "campaigns",
 				Topic: "q3 campaign planning", Messages: []evalMessage{
-					{At: now.Add(-30 * time.Minute), User: "mkt-jo",
+					{At: now.Add(-30 * time.Minute), User: "UMKTJO0000",
 						Text: "the newsletter went out on time"},
 				}}},
+			Users: map[string]string{"UMKTJO0000": "mkt-jo"},
 		},
 	}
 	distractors.Installations = map[string]evalInstallation{
@@ -242,7 +249,7 @@ func evalCases(now time.Time) []evalCase {
 		Alertname: "PaymentsCacheStale",
 		Labels:    map[string]string{"namespace": "payments", "service": "payments"},
 		Workspaces: paymentsWorkspace(
-			deployMessage(now.Add(-35*time.Minute), "deploy-bot",
+			deployMessage(now.Add(-35*time.Minute), "UDEPLOYBOT",
 				"payments release r2026-08-18-1 rolled out, commit fee1dead"),
 		),
 		Installations: paymentsRepos([]evalCommit{
@@ -286,7 +293,7 @@ func evalCases(now time.Time) []evalCase {
 		Alertname: "KafkaConsumerLag",
 		Labels:    map[string]string{"namespace": "payments", "service": "payments"},
 		Workspaces: paymentsWorkspace(
-			incidentMessage(now.Add(-28*time.Minute), "sre-lee",
+			incidentMessage(now.Add(-28*time.Minute), "USRELEE00",
 				"consumer lag spiked right after the kafka client bump"),
 		),
 		Installations: paymentsRepos([]evalCommit{
@@ -319,7 +326,8 @@ func evalCases(now time.Time) []evalCase {
 		Truth: groundTruth{
 			// Probing an empty world is honest work, whatever is probed.
 			RelevantTools: append(append([]string{}, changeContextTools...),
-				"slack.get_thread_replies", "github.read_pull_requests"),
+				"slack.get_thread_replies", "github.read_pull_request",
+				"github.read_workflow_runs", "github.list_releases"),
 			ExpectFindings: false,
 		},
 	}

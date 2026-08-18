@@ -36,10 +36,13 @@ type evalChannel struct {
 	Messages []evalMessage
 }
 
-// evalWorkspace is what one Slack token sees.
+// evalWorkspace is what one Slack token sees. Users is the workspace directory —
+// message authors travel as raw ids the way the real API sends them, and users.info
+// resolves them, which is what the users:read grant is for.
 type evalWorkspace struct {
 	Team     string
 	Channels []evalChannel
+	Users    map[string]string
 }
 
 // evalSlackFake serves the Slack Web API surface the tools read, per token, so a
@@ -76,8 +79,14 @@ func (f *evalSlackFake) serve(writer http.ResponseWriter, request *http.Request)
 	query := request.URL.Query()
 	switch request.URL.Path {
 	case "/auth.test":
-		writer.Header().Set("X-OAuth-Scopes", "channels:read,channels:history,search:read")
-		evalAnswer(writer, map[string]any{"ok": true, "team": workspace.Team, "user": "opencluster-bot"})
+		// The scopes a customer-created internal app's bot token really carries per the
+		// setup instructions. Classic search:read is a user-token scope, so it is
+		// absent — which is why the search tool is never offered against this world.
+		writer.Header().Set("X-OAuth-Scopes", "channels:read,channels:history,users:read")
+		evalAnswer(writer, map[string]any{
+			"ok": true, "team": workspace.Team, "user": "opencluster-bot",
+			"url": "https://acme.slack.com/",
+		})
 	case "/conversations.list":
 		channels := make([]map[string]any, 0, len(workspace.Channels))
 		for _, channel := range workspace.Channels {
@@ -112,6 +121,15 @@ func (f *evalSlackFake) serve(writer http.ResponseWriter, request *http.Request)
 			}
 		}
 		evalAnswer(writer, map[string]any{"ok": true, "messages": renderMessages(replies)})
+	case "/users.info":
+		name, known := workspace.Users[query.Get("user")]
+		if !known {
+			_, _ = writer.Write([]byte(`{"ok":false,"error":"user_not_found"}`))
+			return
+		}
+		evalAnswer(writer, map[string]any{"ok": true, "user": map[string]any{
+			"name": name, "profile": map[string]any{"display_name": name},
+		}})
 	case "/search.messages":
 		// Real Slack refuses classic search to a bot token (issue #5 §15); a world
 		// that answered it would flatter the baseline down a path production never has.
@@ -292,10 +310,18 @@ func (f *evalGitHubFake) serve(writer http.ResponseWriter, request *http.Request
 }
 
 // serveRepoRead answers the documented /repos/{owner}/{repo}/... reads the client uses.
+// Routes whose story a world does not script still answer the vendor's own shapes — an
+// empty run listing, an empty release list, a 404 for a pull request that never existed
+// — because a fake that 404s where GitHub would answer teaches the baseline the wrong
+// vendor.
 func (f *evalGitHubFake) serveRepoRead(
 	writer http.ResponseWriter, request *http.Request, granted evalInstallation,
 ) {
 	path := request.URL.Path
+	if repo, sha, isDetail := commitDetailPath(granted, path); isDetail {
+		f.serveCommitDetail(writer, granted, repo, sha)
+		return
+	}
 	switch {
 	case strings.HasSuffix(path, "/commits"):
 		if f.failCommits != 0 {
@@ -311,7 +337,7 @@ func (f *evalGitHubFake) serveRepoRead(
 		if f.moreCommits {
 			writer.Header().Set("Link", `<`+f.URL+path+`?page=2>; rel="next"`)
 		}
-		writeList(writer, renderCommits(repo.Commits, request.URL.Query()))
+		writeList(writer, renderCommits(granted, repo, request.URL.Query()))
 	case strings.HasSuffix(path, "/pulls"):
 		repo, found := repoByPath(granted, path, "/pulls")
 		if !found {
@@ -319,10 +345,60 @@ func (f *evalGitHubFake) serveRepoRead(
 			return
 		}
 		writeList(writer, renderPulls(repo.Pulls))
+	case strings.HasSuffix(path, "/actions/runs"):
+		evalAnswer(writer, map[string]any{"total_count": 0, "workflow_runs": []any{}})
+	case strings.HasSuffix(path, "/releases"):
+		writeList(writer, []map[string]any{})
 	default:
 		writer.WriteHeader(http.StatusNotFound)
 		_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
 	}
+}
+
+// commitDetailPath recognises /repos/{owner}/{repo}/commits/{sha}.
+func commitDetailPath(granted evalInstallation, path string) (evalRepo, string, bool) {
+	trimmed, isRepos := strings.CutPrefix(path, "/repos/")
+	if !isRepos {
+		return evalRepo{}, "", false
+	}
+	repoPart, sha, hasSHA := strings.Cut(trimmed, "/commits/")
+	if !hasSHA || sha == "" || strings.Contains(sha, "/") {
+		return evalRepo{}, "", false
+	}
+	repo, found := repoByPath(granted, "/repos/"+repoPart+"/commits", "/commits")
+	return repo, sha, found
+}
+
+// serveCommitDetail answers one scripted commit whole, with an empty file listing: the
+// worlds script messages and timing, not diffs, and an empty files array is the
+// vendor's own shape for that.
+func (f *evalGitHubFake) serveCommitDetail(
+	writer http.ResponseWriter, granted evalInstallation, repo evalRepo, sha string,
+) {
+	for _, commit := range repo.Commits {
+		if commit.SHA != sha {
+			continue
+		}
+		evalAnswer(writer, map[string]any{
+			"sha": commit.SHA,
+			"commit": map[string]any{
+				"message": commit.Message,
+				"author": map[string]any{
+					"name": commit.Author, "date": commit.At.UTC().Format(time.RFC3339),
+				},
+			},
+			"author":   map[string]any{"login": commit.Author},
+			"html_url": commitPermalink(granted, repo, commit.SHA),
+			"files":    []any{},
+		})
+		return
+	}
+	writer.WriteHeader(http.StatusNotFound)
+	_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
+}
+
+func commitPermalink(granted evalInstallation, repo evalRepo, sha string) string {
+	return "https://github.com/" + granted.Account + "/" + repo.Name + "/commit/" + sha
 }
 
 func repoByPath(granted evalInstallation, path, suffix string) (evalRepo, bool) {
@@ -335,11 +411,11 @@ func repoByPath(granted evalInstallation, path, suffix string) (evalRepo, bool) 
 	return evalRepo{}, false
 }
 
-func renderCommits(commits []evalCommit, query url.Values) []map[string]any {
+func renderCommits(granted evalInstallation, repo evalRepo, query url.Values) []map[string]any {
 	since, _ := time.Parse(time.RFC3339, query.Get("since"))
 	until, _ := time.Parse(time.RFC3339, query.Get("until"))
-	rendered := make([]map[string]any, 0, len(commits))
-	for _, commit := range commits {
+	rendered := make([]map[string]any, 0, len(repo.Commits))
+	for _, commit := range repo.Commits {
 		if !since.IsZero() && commit.At.Before(since) {
 			continue
 		}
@@ -354,7 +430,8 @@ func renderCommits(commits []evalCommit, query url.Values) []map[string]any {
 					"name": commit.Author, "date": commit.At.UTC().Format(time.RFC3339),
 				},
 			},
-			"author": map[string]any{"login": commit.Author},
+			"author":   map[string]any{"login": commit.Author},
+			"html_url": commitPermalink(granted, repo, commit.SHA),
 		})
 	}
 	return rendered

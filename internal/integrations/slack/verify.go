@@ -9,6 +9,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
+// GrantUserToken is the recorded grant marking a user token (as against a bot's). It is
+// this package's own vocabulary, not a Slack scope: classic message search works only
+// under a user token, so the search tool requires this grant beside its scope.
+const GrantUserToken = "user_token"
+
 // scopeGrants maps each OAuth scope the tools need to what losing it costs, so a degraded
 // verification names consequences an operator can act on rather than vendor vocabulary
 // alone.
@@ -16,6 +21,7 @@ var scopeGrants = map[string]string{
 	"channels:read":    "listing channels",
 	"channels:history": "reading channel history and threads",
 	"search:read":      "searching messages",
+	"users:read":       "resolving message authors to names",
 }
 
 // probe verifies a token live against auth.test and judges what came back. It is the one
@@ -30,6 +36,8 @@ func probe(ctx context.Context, client *Client, token string) integrations.Verif
 	missing := missingScopes(identity.Scopes)
 	switch {
 	case len(identity.Scopes) == 0:
+		// No grants recorded: with the scopes unreadable nothing can be derived, and
+		// every grant-gated tool stays absent until a verification can read them.
 		return integrations.Verification{
 			Status: integrations.StatusDegraded,
 			Note: "slack accepted the token for workspace \"" + identity.Workspace +
@@ -41,13 +49,28 @@ func probe(ctx context.Context, client *Client, token string) integrations.Verif
 			Note: "slack accepted the token for workspace \"" + identity.Workspace +
 				"\" and it lacks " + strings.Join(missing, ", ") +
 				", which disables " + costOf(missing),
+			Grants: grantsOf(identity, token),
 		}
 	}
 	return integrations.Verification{
 		Status: integrations.StatusActive,
 		Note: "verified against workspace \"" + identity.Workspace + "\" as bot \"" +
 			identity.Bot + "\"; every scope the tools need is granted",
+		Grants: grantsOf(identity, token),
 	}
+}
+
+// grantsOf records the verified reality tool availability derives from: the granted
+// scopes verbatim, plus the token's kind — classic message search is user-token-only,
+// so "is this a user token" is a fact worth recording, read from the token's own
+// documented prefixes (xoxp for a plain user token, xoxe.xoxp for a rotated one) at the
+// one moment the plaintext is in hand.
+func grantsOf(identity Identity, token string) []string {
+	grants := append([]string(nil), identity.Scopes...)
+	if strings.HasPrefix(token, "xoxp-") || strings.HasPrefix(token, "xoxe.xoxp-") {
+		grants = append(grants, GrantUserToken)
+	}
+	return grants
 }
 
 // judgeFailure turns what went wrong into the operator's answer. Three different facts get

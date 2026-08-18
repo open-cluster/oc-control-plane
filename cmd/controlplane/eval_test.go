@@ -68,6 +68,25 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 			t.Errorf("precision = %v, want 1 for all-relevant calls", score.ToolPrecision)
 		}
 
+		// The world models what a granted bot token really delivers: history authors
+		// arrive as raw ids, users:read resolves them, and the workspace URL yields
+		// permalinks — so the transcript the reasoner saw carries all three.
+		briefs := reasoner.seen()
+		if len(briefs) < 2 {
+			t.Fatalf("the reasoner decided %d times, want at least 2", len(briefs))
+		}
+		transcript, err := json.Marshal(briefs[1].Runs)
+		if err != nil {
+			t.Fatalf("rendering the second brief's runs: %v", err)
+		}
+		for _, wanted := range []string{
+			"deploy-bot", "UDEPLOYBOT", "acme.slack.com/archives/C2",
+		} {
+			if !strings.Contains(string(transcript), wanted) {
+				t.Errorf("the history read does not carry %q: %s", wanted, transcript)
+			}
+		}
+
 		directory := writeEvalReport(t, t.TempDir(), "pipeline-proof", "test",
 			evalAgentRevision(t), "scripted", []evalScore{score}, []evalRecord{record})
 		var report evalReport

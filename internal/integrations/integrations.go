@@ -81,6 +81,12 @@ type Verification struct {
 	Status Status
 	// Note says, in the operator's language, what this run proved or could not.
 	Note string
+	// Grants are facts the probe verified about the credential, in the provider's own
+	// vocabulary — Slack records granted scopes plus the token's kind. Tool
+	// availability derives from them: a tool whose Requires are not all recorded here
+	// is absent from an investigation's set instead of failing at call time. Nil means
+	// nothing was recorded, and gated tools stay absent.
+	Grants []string
 }
 
 // VerifyInput is everything a Definition's Verify may consult. It is gathered by the

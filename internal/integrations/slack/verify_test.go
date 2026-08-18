@@ -24,7 +24,8 @@ func TestProbeWithEveryScopeIsActiveAndNamesTheWorkspace(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeSlack(t)
-	fake.answers["auth.test"] = authTestGranting("channels:read,channels:history,search:read")
+	fake.answers["auth.test"] = authTestGranting(
+		"channels:read,channels:history,search:read,users:read")
 
 	verified := probe(testContext(t), NewClient(fake.URL), "xoxb-under-test")
 	if verified.Status != integrations.StatusActive {
@@ -32,6 +33,34 @@ func TestProbeWithEveryScopeIsActiveAndNamesTheWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(verified.Note, "Acme") || !strings.Contains(verified.Note, "opencluster-bot") {
 		t.Errorf("the note %q does not say whose workspace and bot answered", verified.Note)
+	}
+
+	// The verified grants are on the record — tool availability derives from them —
+	// and a bot token never records user_token, so user-token-only search stays absent.
+	granted := strings.Join(verified.Grants, " ")
+	for _, scope := range []string{"channels:read", "channels:history", "search:read", "users:read"} {
+		if !strings.Contains(granted, scope) {
+			t.Errorf("grants %v do not record scope %s", verified.Grants, scope)
+		}
+	}
+	if strings.Contains(granted, "user_token") {
+		t.Errorf("a bot token recorded user_token: %v", verified.Grants)
+	}
+}
+
+func TestProbeRecordsAUserTokenAsOne(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	fake.answers["auth.test"] = authTestGranting("search:read,channels:read")
+
+	verified := probe(testContext(t), NewClient(fake.URL), "xoxp-a-user-token")
+	found := false
+	for _, grant := range verified.Grants {
+		found = found || grant == "user_token"
+	}
+	if !found {
+		t.Errorf("a user token must record user_token, got %v", verified.Grants)
 	}
 }
 
@@ -111,5 +140,8 @@ func TestProbeWithUnreportedScopesIsDegraded(t *testing.T) {
 	}
 	if !strings.Contains(verified.Note, "scopes") {
 		t.Errorf("the note %q does not say the grants could not be read", verified.Note)
+	}
+	if verified.Grants != nil {
+		t.Errorf("unreadable scopes must record nothing, got %v", verified.Grants)
 	}
 }

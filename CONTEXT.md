@@ -46,7 +46,9 @@ _Avoid:_ role, trigger/evidence classification, connection mode.
 **Verification** — a check of an Integration against reality, judged by the type's own
 definition from observed facts: a delivery that actually arrived, a Relay's live session and
 advertised capabilities. "Verified" always means the far end answered; a well-formed
-configuration proves nothing and is not called verified.
+configuration proves nothing and is not called verified. A verification records the
+**grants** it observed about the credential, in the provider's own vocabulary — Slack: the
+OAuth scopes, plus the token's kind — and tool availability derives from them.
 _Avoid:_ validation (the retired form-checking sense).
 
 **Webhook secret** — the shared secret an inbound source presents. Minted by the platform,
@@ -63,10 +65,11 @@ _Avoid:_ token (as the record noun), API key (for this concept).
 
 **Tool** — one bounded, read-only operation an Integration Type offers an investigation:
 `slack.get_channel_history`, `github.read_commits`. Declared beside its capability with
-its purpose, when to use it, when NOT to, arguments, permissions, rate cost and output —
-all enforced at catalog assembly. Every read is bounded by named limits, flags truncation
-from the vendor's own answer, and clamps any window argument inside the investigation's
-window.
+its purpose, when to use it, when NOT to, arguments, permissions and output — all
+enforced at catalog assembly. A tool may require verified grants; one the Integration's
+recorded grants cannot support is absent from an investigation's set, never a call that
+always fails. Every read is bounded by named limits, flags truncation from the vendor's
+own answer, and clamps any window argument inside the investigation's window.
 
 ## Signals and incidents
 

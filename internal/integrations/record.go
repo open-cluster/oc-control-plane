@@ -110,10 +110,14 @@ type Integration struct {
 	Status           Status
 	LastVerifiedAt   time.Time
 	VerifyNote       string
-	DisabledAt       time.Time
-	CreatedBy        string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// VerifyGrants are the facts the last verification recorded about the credential
+	// (scopes, token kind); tool availability derives from them. Nil when none were
+	// recorded.
+	VerifyGrants []string
+	DisabledAt   time.Time
+	CreatedBy    string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Disabled reports whether this Integration has been turned off.

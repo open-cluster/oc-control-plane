@@ -20,8 +20,10 @@ grouped into IncidentEpisodes on the source's own identity. Kubernetes reads thr
 Relay: sessions, fenced capability jobs, inventory into the change ledger. Slack and
 GitHub read outbound: a pasted bot token or an App installation, verified live against
 the vendor before anything is stored, credentials sealed at rest, and bounded read-only
-tools — channels, history, threads, search; repositories, commits, pull requests by
-stable ids — each declaring when to use it and when not to.
+tools — channels, history, threads; repositories, commits, diffs, pull requests, CI runs,
+job logs, file contents, releases by stable ids — each declaring when to use it and when
+not to. Tool availability derives from what verification recorded the credential was
+granted: user-token-only message search is never offered against a pasted bot token.
 
 **Investigations persist operational provenance.** One opens from an incident or a
 plain-language question; a deterministic router selects a few relevant sources with

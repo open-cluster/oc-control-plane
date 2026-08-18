@@ -9,10 +9,9 @@ import (
 )
 
 // The four read-only tools. Every bound here is named rather than implied, every
-// truncation is flagged from the vendor's own answer, and a thread longer than its bound
-// is refused rather than returned short — part of a thread reads exactly like the whole
-// of one, which is how an investigation quotes a conversation that continued past what it
-// saw.
+// truncation is flagged honestly: a long thread is read from its newest end with the
+// flag saying so, message authors are resolved to names, and every message carries a
+// permalink an operator can follow.
 
 // The named bounds. The maxima follow the vendor's own page ceilings; the defaults are
 // sized for an investigation reading context, not for export.
@@ -49,14 +48,81 @@ type channelContent struct {
 	Members int    `json:"members"`
 }
 
-// messageContent is one message as a tool reports it.
+// messageContent is one message as a tool reports it: the author as a human-readable
+// name beside the raw id, and a permalink an operator can follow to the message itself.
 type messageContent struct {
-	TS         string `json:"ts"`
+	TS string `json:"ts"`
+	// User is the resolved display name, or the raw id when the workspace will not
+	// resolve it; UserID keeps the raw id either way.
 	User       string `json:"user,omitempty"`
+	UserID     string `json:"userId,omitempty"`
 	Text       string `json:"text"`
 	ThreadTS   string `json:"threadTs,omitempty"`
 	ReplyCount int    `json:"replyCount,omitempty"`
 	Channel    string `json:"channel,omitempty"`
+	ChannelID  string `json:"channelId,omitempty"`
+	Permalink  string `json:"permalink,omitempty"`
+}
+
+// renderMessages resolves authors and attaches permalinks for one read's messages.
+// channel is the channel the read addressed; search matches carry their own channel id
+// instead. Resolution is best-effort: a transcript with raw ids beats a failed read.
+func renderMessages(
+	ctx context.Context, client *Client, request integrations.ToolRequest,
+	channel string, messages []Message,
+) []messageContent {
+	workspace := ""
+	if len(messages) > 0 {
+		workspace = client.WorkspaceURL(ctx, request.Credential)
+	}
+	content := make([]messageContent, 0, len(messages))
+	for _, one := range messages {
+		rendered := messageContent{
+			TS: one.TS, Text: one.Text, ThreadTS: one.ThreadTS,
+			ReplyCount: one.ReplyCount, Channel: one.Channel, ChannelID: one.ChannelID,
+		}
+		if one.User != "" {
+			rendered.User = one.User
+			if looksLikeUserID(one.User) {
+				rendered.UserID = one.User
+				if name := client.UserName(ctx, request.Credential, one.User); name != "" {
+					rendered.User = name
+				}
+			}
+		}
+		at := channel
+		if at == "" {
+			at = one.ChannelID
+		}
+		if workspace != "" && at != "" {
+			rendered.Permalink = permalink(workspace, at, one.TS)
+		}
+		content = append(content, rendered)
+	}
+	return content
+}
+
+// looksLikeUserID reports whether the author field is a raw id worth resolving; search
+// matches already carry names, and resolving a name as an id would waste a call.
+func looksLikeUserID(user string) bool {
+	if len(user) < 8 || (user[0] != 'U' && user[0] != 'W') {
+		return false
+	}
+	for _, r := range user {
+		upper := 'A' <= r && r <= 'Z'
+		digit := '0' <= r && r <= '9'
+		if !upper && !digit {
+			return false
+		}
+	}
+	return true
+}
+
+// permalink builds the workspace's documented archive link for one message — the
+// scope-free pointer an operator follows from a finding to the conversation itself.
+func permalink(workspace, channel, ts string) string {
+	return strings.TrimSuffix(workspace, "/") + "/archives/" + channel +
+		"/p" + strings.ReplaceAll(ts, ".", "")
 }
 
 func listChannelsTool(client *Client) integrations.Tool {
@@ -88,6 +154,7 @@ func listChannelsTool(client *Client) integrations.Tool {
 			"way to enumerate the workspace for its own sake.",
 		Arguments:   declared,
 		Permissions: "the bot token needs the channels:read scope",
+		Requires:    []string{"channels:read"},
 		Output: "a bounded list of channels, each with id, name, topic, purpose and member " +
 			"count, plus a truncated flag when more matched than were returned or the " +
 			"walk stopped before the workspace's end",
@@ -179,10 +246,13 @@ func channelHistoryTool(client *Client) integrations.Tool {
 			"slack.list_channels first. Not for a thread's replies; that is " +
 			"slack.get_thread_replies. Not across the whole workspace; that is " +
 			"slack.search_messages.",
-		Arguments:   declared,
-		Permissions: "the bot token needs the channels:history scope",
-		Output: "a bounded list of messages, each with ts, user, text, thread marker and " +
-			"reply count, plus a truncated flag when the window holds more",
+		Arguments: declared,
+		Permissions: "the bot token needs the channels:history scope; users:read resolves " +
+			"authors to names, and without it messages carry raw ids",
+		Requires: []string{"channels:history"},
+		Output: "a bounded list of messages, each with ts, the author resolved to a " +
+			"display name beside the raw id, text, thread marker, reply count and a " +
+			"permalink, plus a truncated flag when the window holds more",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -213,7 +283,7 @@ func channelHistoryTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 			return integrations.ToolResult{
-				Content:   messagesContent(read.Messages),
+				Content:   renderMessages(ctx, client, request, channel, read.Messages),
 				Truncated: read.Truncated,
 				Summary:   fmt.Sprintf("%d messages in %s", len(read.Messages), channel),
 				Sources:   []string{channel},
@@ -247,17 +317,22 @@ func threadRepliesTool(client *Client) integrations.Tool {
 	return integrations.Tool{
 		Name:       "slack.get_thread_replies",
 		Capability: ReadThreads,
-		Description: "Reads one thread whole, or refuses. A thread longer than the bound " +
-			"is an error rather than a shortened transcript.",
+		Description: "Reads one thread's messages in order, answering the newest tail of " +
+			"a bounded walk with the truncated flag set when the thread held more — the " +
+			"end of a war-room thread is where the conclusion lives.",
 		WhenToUse: "When channel history showed a message with replies and the discussion " +
 			"under it is what matters — triage threads, decision threads.",
 		WhenNotToUse: "Not for a channel's timeline; that is slack.get_channel_history. " +
 			"Not speculatively on every message — only where the reply count says a " +
 			"discussion happened.",
-		Arguments:   declared,
-		Permissions: "the bot token needs the channels:history scope",
-		Output: "the thread's messages in order, each with ts, user and text; an error " +
-			"names the bound when the thread exceeds it",
+		Arguments: declared,
+		Permissions: "the bot token needs the channels:history scope; users:read resolves " +
+			"authors to names",
+		Requires: []string{"channels:history"},
+		Output: "the thread's messages in order — the newest tail of what a bounded walk " +
+			"reached — each with ts, the author resolved to a display name, text and a " +
+			"permalink; the truncated flag reports a thread longer than what came back, " +
+			"and the summary says how much was walked and whether the thread continues",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -276,25 +351,25 @@ func threadRepliesTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
-			read, err := client.Replies(ctx, request.Credential, RepliesQuery{
+			tail, err := client.Replies(ctx, request.Credential, RepliesQuery{
 				Channel: channel, ThreadTS: thread, Limit: limit,
 			})
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			if read.Truncated {
-				// Refused rather than shortened: part of a thread reads exactly like the
-				// whole of one. No workaround is suggested — channel history does not
-				// carry a thread's replies, and advising it would send the reader to a
-				// tool that cannot answer.
-				return integrations.ToolResult{}, fmt.Errorf(
-					"the thread holds more than %d replies and cannot be read whole by "+
-						"this tool", limit)
+			summary := fmt.Sprintf("%d thread messages", len(tail.Messages))
+			if tail.Walked > len(tail.Messages) {
+				summary = fmt.Sprintf("the newest %d of %d thread messages",
+					len(tail.Messages), tail.Walked)
+			}
+			if !tail.WalkEnded {
+				summary += "; the thread continues past what was walked"
 			}
 			return integrations.ToolResult{
-				Content: messagesContent(read.Messages),
-				Summary: fmt.Sprintf("%d thread messages", len(read.Messages)),
-				Sources: []string{channel + "/" + thread},
+				Content:   renderMessages(ctx, client, request, channel, tail.Messages),
+				Truncated: tail.Walked > len(tail.Messages) || !tail.WalkEnded,
+				Summary:   summary,
+				Sources:   []string{channel + "/" + thread},
 			}, nil
 		},
 	}
@@ -319,17 +394,21 @@ func searchMessagesTool(client *Client) integrations.Tool {
 	return integrations.Tool{
 		Name:       "slack.search_messages",
 		Capability: SearchMessages,
-		Description: "Searches messages across the workspace for exact terms, bounded, " +
-			"with the remainder flagged.",
+		Description: "Searches messages across the workspace for exact terms, bounded to " +
+			"the investigation's window, with the remainder flagged.",
 		WhenToUse: "When the right channel is unknown and an identifier is: an error " +
-			"message, a ticket number, a hostname. The matches say where to read next.",
+			"message, a ticket number, a hostname. The matches carry channel ids, so " +
+			"the pivot to slack.get_channel_history needs no re-listing.",
 		WhenNotToUse: "Not as a substitute for reading a selected channel's window. Not " +
 			"with vague prose — the vendor matches terms, not meaning. Not repeatedly " +
 			"with rephrasings of one question.",
-		Arguments:   declared,
-		Permissions: "the bot token needs the search:read scope",
-		Output: "a bounded list of matches, each with ts, user, text and the channel it " +
-			"was said in, plus a truncated flag when more matched",
+		Arguments: declared,
+		Permissions: "classic message search works only with a user token granted the " +
+			"search:read scope; a bot token is never offered this tool",
+		Requires: []string{"search:read", GrantUserToken},
+		Output: "a bounded list of matches, each with ts, author, text, the channel name " +
+			"and id it was said in and a permalink, plus a truncated flag when more " +
+			"matched",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -344,14 +423,17 @@ func searchMessagesTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
+			// The window is the investigation's own, structurally: the model asks with
+			// terms, never with dates.
 			found, err := client.Search(ctx, request.Credential, SearchQuery{
 				Query: query, Count: limit,
+				After: request.WindowFrom, Before: request.WindowUntil,
 			})
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
 			return integrations.ToolResult{
-				Content:   messagesContent(found.Matches),
+				Content:   renderMessages(ctx, client, request, "", found.Matches),
 				Truncated: found.Truncated,
 				Summary:   fmt.Sprintf("%d matches", len(found.Matches)),
 				Sources:   matchChannels(found.Matches),
@@ -360,16 +442,21 @@ func searchMessagesTool(client *Client) integrations.Tool {
 	}
 }
 
-// matchChannels reports the distinct channels the matches were said in.
+// matchChannels reports the distinct channels the matches were said in, by id where
+// the vendor gave one — the id is what a history pivot takes.
 func matchChannels(matches []Message) []string {
 	seen := map[string]bool{}
 	var channels []string
 	for _, match := range matches {
-		if match.Channel == "" || seen[match.Channel] {
+		name := match.ChannelID
+		if name == "" {
+			name = match.Channel
+		}
+		if name == "" || seen[name] {
 			continue
 		}
-		seen[match.Channel] = true
-		channels = append(channels, match.Channel)
+		seen[name] = true
+		channels = append(channels, name)
 	}
 	return channels
 }
@@ -384,12 +471,4 @@ func matchesChannel(channel Channel, needle string) bool {
 	return strings.Contains(strings.ToLower(channel.Name), needle) ||
 		strings.Contains(strings.ToLower(channel.Topic), needle) ||
 		strings.Contains(strings.ToLower(channel.Purpose), needle)
-}
-
-func messagesContent(messages []Message) []messageContent {
-	content := make([]messageContent, 0, len(messages))
-	for _, one := range messages {
-		content = append(content, messageContent(one))
-	}
-	return content
 }

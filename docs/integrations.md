@@ -11,8 +11,8 @@ what reading it offers; nothing asks an operator to classify anything.
 | --- | --- | --- | --- | --- |
 | `alertmanager` | inbound webhook | nothing; the platform mints the webhook URL and secret | the last accepted delivery — honesty about what an inbound type can prove | — |
 | `kubernetes` | relay-dispatched | optional namespace allow-list; requires a Relay | the bound Relay's live session and advertised capabilities | workloads, events, container logs (through Relay jobs) |
-| `slack` | outbound | a pasted bot token (sealed at rest, verified live before saving) | `auth.test` against the vendor: workspace, bot identity, granted scopes | channels, channel history, threads, message search |
-| `github` | outbound | an installation id; the App credential is the deployment's | the installation itself: account, suspension, granted repositories | repositories, commits, pull requests — by stable ids |
+| `slack` | outbound | a pasted bot token (sealed at rest, verified live before saving) | `auth.test` against the vendor: workspace, bot identity, granted scopes — recorded, because tool availability derives from them | channels, channel history, threads; message search only with a user token granted `search:read` |
+| `github` | outbound | an installation id; the App credential is the deployment's | the installation itself: account, suspension, granted repositories | repositories, commits, one commit's diff, pull requests with files and checks, workflow runs, job logs, file contents, releases — by stable ids |
 
 ## The lifecycle every Integration shares
 
@@ -40,11 +40,19 @@ installation granted, live.
 
 Outbound types declare **tools**: bounded, read-only operations an investigation may run.
 Every tool declares its purpose, when to use it, when NOT to use it, its arguments,
-required permissions, rate cost, and output — enforced at catalog assembly, rendered in
-the catalog, and used by the investigator to route. Every read is bounded by named limits,
-flags truncation from the vendor's own answer, and clamps any window argument inside the
-investigation's window. A Slack thread longer than its bound is refused rather than
-shortened.
+required permissions, and output — enforced at catalog assembly, rendered in the catalog,
+and used by the investigator to route. Every read is bounded by named limits, flags
+truncation from the vendor's own answer, and clamps any window argument inside the
+investigation's window. A Slack thread longer than its bound answers its newest tail with
+the truncation flagged — the end of a war-room thread is where the conclusion lives.
+
+**Availability derives from verified reality.** Verification records what the credential
+was actually granted — Slack: the OAuth scopes, plus whether the token is a user token —
+and a tool whose requirements those grants cannot support is absent from an
+investigation's set rather than offered and failing at call time. Classic Slack message
+search is user-token-only, so a pasted bot token is never offered `slack.search_messages`.
+The Slack tools want `channels:read`, `channels:history` and `users:read` (author names in
+transcripts); a missing scope degrades verification with the consequence named.
 
 ## Adding a provider
 

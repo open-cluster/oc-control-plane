@@ -46,13 +46,17 @@ func route(
 	scored := make([]selection, 0, len(candidates))
 	for _, candidate := range candidates {
 		definition, known := catalog.ByID(candidate.Type)
-		if !known || len(definition.Tools) == 0 || candidate.Disabled() {
+		if !known || candidate.Disabled() {
+			continue
+		}
+		tools := offeredTools(definition, candidate)
+		if len(tools) == 0 {
 			continue
 		}
 		score, matched := overlap(candidate, terms)
 		scored = append(scored, selection{
 			integration: candidate,
-			tools:       definition.Tools,
+			tools:       tools,
 			score:       score,
 			reason:      reasonFor(definition, matched),
 		})
@@ -72,6 +76,33 @@ func route(
 		cut = len(scored)
 	}
 	return scored[:cut], scored[cut:]
+}
+
+// offeredTools filters a definition's tools to those this integration's verified
+// grants support. Fail closed: a tool whose Requires are not all recorded is absent
+// from the investigation's set, never a call that always fails — which is how a pasted
+// bot token stops being offered user-token-only search.
+func offeredTools(
+	definition integrations.Definition, candidate integrations.Integration,
+) []integrations.Tool {
+	recorded := make(map[string]bool, len(candidate.VerifyGrants))
+	for _, grant := range candidate.VerifyGrants {
+		recorded[grant] = true
+	}
+	offered := make([]integrations.Tool, 0, len(definition.Tools))
+	for _, tool := range definition.Tools {
+		supported := true
+		for _, required := range tool.Requires {
+			if !recorded[required] {
+				supported = false
+				break
+			}
+		}
+		if supported {
+			offered = append(offered, tool)
+		}
+	}
+	return offered
 }
 
 // overlap scores one candidate: how many subject terms appear in its name or labels.

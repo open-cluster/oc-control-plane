@@ -78,6 +78,16 @@ func (a Arguments) Identity(name string) (int64, error) {
 	return int64(number), nil
 }
 
+// OptionalIdentity reads a positive whole number when the caller gave one, reporting
+// absence apart from malformation.
+func (a Arguments) OptionalIdentity(name string) (int64, bool, error) {
+	if _, given := a.values[name]; !given {
+		return 0, false, nil
+	}
+	id, err := a.Identity(name)
+	return id, err == nil, err
+}
+
 // Count reads a bounded whole number, applying the default when absent.
 func (a Arguments) Count(name string, fallback, maximum int) (int, error) {
 	value, given := a.values[name]

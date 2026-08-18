@@ -286,6 +286,71 @@ func TestAForcedConclusionIsLabeledStoppedOnTheWire(t *testing.T) {
 	}
 }
 
+// The org-scoped tool universe is filtered by each Integration's verified grants before
+// the model sees it: a pasted bot token — whose recorded grants can never include
+// user_token — is offered the three grant-supported Slack tools and NOT
+// slack.search_messages, while a user token with the search scope is offered all four.
+// Asserted at the model boundary itself: Brief.Sources is exactly what the reasoner may
+// choose from, so a tool absent there is a capability the model was never offered.
+func TestToolUniverseIsFilteredByVerifiedGrants(t *testing.T) {
+	reasoner := &scriptedReasoner{}
+	plane, vendor := investigationPlaneWith(t, reasoner)
+
+	if status, body := plane.createSlack(t, "Payments Bot Slack",
+		"xoxb-good-token-1234"); status != http.StatusCreated {
+		t.Fatalf("creating the bot-token slack = %d: %s", status, body)
+	}
+	vendor.accept("xoxp-user-token-5678")
+	if status, body := plane.createSlack(t, "Payments User Slack",
+		"xoxp-user-token-5678"); status != http.StatusCreated {
+		t.Fatalf("creating the user-token slack = %d: %s", status, body)
+	}
+
+	episode := plane.openEpisode(t, "DiskFull", "finger-grants")
+	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
+		map[string]any{"episodeId": episode})
+	if status != http.StatusAccepted {
+		t.Fatalf("opening = %d: %s", status, body)
+	}
+	var opened struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, body, &opened)
+	plane.awaitInvestigation(t, opened.ID)
+
+	briefs := reasoner.seen()
+	if len(briefs) == 0 {
+		t.Fatal("the reasoner never decided")
+	}
+	offered := map[string][]string{}
+	for _, source := range briefs[0].Sources {
+		var names []string
+		for _, tool := range source.Tools {
+			names = append(names, tool.Name)
+		}
+		offered[source.Integration.Name] = names
+	}
+
+	bot := offered["Payments Bot Slack"]
+	if len(bot) != 3 {
+		t.Fatalf("the bot token is offered %v, want the three grant-supported tools", bot)
+	}
+	for _, name := range bot {
+		if name == "slack.search_messages" {
+			t.Fatal("user-token-only search was offered to a bot-token integration")
+		}
+	}
+
+	user := offered["Payments User Slack"]
+	found := false
+	for _, name := range user {
+		found = found || name == "slack.search_messages"
+	}
+	if !found {
+		t.Errorf("a user token granted search:read is offered %v; search is missing", user)
+	}
+}
+
 func TestInvestigationFromAQuestionInfersTheSubject(t *testing.T) {
 	reasoner := &scriptedReasoner{}
 	plane, _ := investigationPlaneWith(t, reasoner)

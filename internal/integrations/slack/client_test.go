@@ -311,21 +311,63 @@ func TestHistoryIsBoundedToTheAskedWindow(t *testing.T) {
 	}
 }
 
-func TestRepliesReportWhenAThreadHoldsMore(t *testing.T) {
+// A thread longer than one page is read by walking the vendor's oldest-first pages and
+// keeping the newest tail — the >200-reply war-room thread stays readable, and the
+// answer says how much of it this is.
+func TestRepliesWalkToTheThreadsNewestTail(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeSlack(t)
-	fake.answer("conversations.replies", `{"ok":true,"has_more":true,
-		"messages":[{"ts":"1","user":"U1","text":"parent"}]}`)
+	fake.answers["conversations.replies"] = func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("cursor") == "" {
+			_, _ = writer.Write([]byte(`{"ok":true,"has_more":true,
+				"messages":[{"ts":"1","user":"U1","text":"parent"},
+				            {"ts":"2","user":"U2","text":"first"},
+				            {"ts":"3","user":"U1","text":"second"}],
+				"response_metadata":{"next_cursor":"page-two"}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"ok":true,"has_more":false,
+			"messages":[{"ts":"4","user":"U2","text":"fourth"},
+			            {"ts":"5","user":"U1","text":"the conclusion"}]}`))
+	}
 
-	replies, err := NewClient(fake.URL).Replies(testContext(t), "xoxb-under-test", RepliesQuery{
-		Channel: "C1", ThreadTS: "1767366200.000200", Limit: 10,
+	tail, err := NewClient(fake.URL).Replies(testContext(t), "xoxb-under-test", RepliesQuery{
+		Channel: "C1", ThreadTS: "1", Limit: 2,
 	})
 	if err != nil {
 		t.Fatalf("reading replies: %v", err)
 	}
-	if !replies.Truncated {
-		t.Error("a thread longer than the bound must say so; the tool refuses on this flag")
+	if len(tail.Messages) != 2 || tail.Messages[0].TS != "4" || tail.Messages[1].TS != "5" {
+		t.Fatalf("the tail must hold the newest messages in order: %+v", tail.Messages)
+	}
+	if tail.Walked != 5 || !tail.WalkEnded {
+		t.Errorf("walked=%d ended=%v; the walk saw the whole thread", tail.Walked, tail.WalkEnded)
+	}
+}
+
+// A thread the page cap cannot exhaust answers with WalkEnded false, so the tool can
+// say the thread continues rather than presenting a middle as the end.
+func TestRepliesStopAtThePageCapAndSaySo(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	fake.answer("conversations.replies", `{"ok":true,"has_more":true,
+		"messages":[{"ts":"1","user":"U1","text":"more"}],
+		"response_metadata":{"next_cursor":"again"}}`)
+
+	tail, err := NewClient(fake.URL).Replies(testContext(t), "xoxb-under-test", RepliesQuery{
+		Channel: "C1", ThreadTS: "1", Limit: 5,
+	})
+	if err != nil {
+		t.Fatalf("reading replies: %v", err)
+	}
+	if tail.WalkEnded {
+		t.Error("a walk the cap stopped must not claim the thread's end")
+	}
+	if tail.Walked != maxThreadPages {
+		t.Errorf("walked = %d, want one message per page for %d pages", tail.Walked, maxThreadPages)
 	}
 }
 
