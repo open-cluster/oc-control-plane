@@ -34,6 +34,15 @@ const (
 	StatusFailed
 )
 
+// The ceilings that can force a concluding turn, as stopped_by records them. Persisted
+// text, frozen like an enum: the operator view and its clients key on these words.
+// Empty means the model concluded freely.
+const (
+	StoppedBySpend         = "spend"
+	StoppedByToolRuns      = "tool_runs"
+	StoppedByReasonerTurns = "reasoner_turns"
+)
+
 func (s Status) String() string {
 	switch s {
 	case StatusRunning:
@@ -114,6 +123,12 @@ type Investigation struct {
 	WindowUntil time.Time
 	Status      Status
 	Findings    []Finding
+	// StoppedBy names the ceiling that forced the concluding turn — StoppedBySpend and
+	// its siblings — and is empty when the model concluded freely. A stopped
+	// investigation still concluded, with what was established and what remains
+	// unresolved; the label is what keeps resource exhaustion from being rendered as a
+	// completed diagnosis.
+	StoppedBy string
 	// Error says why a failed investigation failed, in the operator's language.
 	Error       string
 	Spend       Spend
@@ -132,9 +147,9 @@ type Source struct {
 	SelectedAt time.Time
 }
 
-// ToolRun is one tool execution: the scope it ran under and what came of it.
+// ToolRun is one tool execution: the scope it ran under and what came of it. Its
+// identity is (investigation, ordinal) — the ordinal findings cite — not a surrogate id.
 type ToolRun struct {
-	ID            uuid.UUID
 	IntegrationID uuid.UUID
 	// Ordinal is the run's one-based position in the investigation, which is what a
 	// finding cites.
@@ -216,9 +231,10 @@ type Store interface {
 	// RecordToolRun writes one execution as it finished.
 	RecordToolRun(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		run ToolRun) error
-	// ConcludeInvestigation ends one with its findings and spend.
+	// ConcludeInvestigation ends one with its findings and spend. stoppedBy names the
+	// ceiling that forced the concluding turn, empty when the model concluded freely.
 	ConcludeInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		findings []Finding, spend Spend) error
+		findings []Finding, stoppedBy string, spend Spend) error
 	// FailInvestigation ends one with the reason it could not conclude.
 	FailInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		reason string, spend Spend) error
@@ -232,6 +248,10 @@ type Store interface {
 	// select among, with their sealed credentials for the runs.
 	InvestigationCandidates(ctx context.Context, org tenancy.Organization,
 	) ([]integrations.Integration, error)
+	// RecordCredentialUnseal writes the audit event for one credential unseal, before
+	// the credential is used; a use that cannot be recorded does not happen.
+	RecordCredentialUnseal(ctx context.Context, org tenancy.Organization, id uuid.UUID,
+		purpose string) error
 }
 
 // Brief is everything the reasoner may consult for one decision. The text within it —
@@ -246,6 +266,11 @@ type Brief struct {
 	Sources []BriefSource
 	// Runs is every execution so far, in ordinal order, contents included.
 	Runs []ToolRun
+	// SpendSoFar is what the investigation's reasoning has consumed before this
+	// decision. The reasoning layer refuses a non-concluding decision past the spend
+	// ceiling with it — the backstop that makes a runaway structurally impossible even
+	// if a loop forgets its own ceiling check.
+	SpendSoFar Spend
 	// MustConclude says reads are over: the round budget is spent, and this decision must
 	// carry findings.
 	MustConclude bool

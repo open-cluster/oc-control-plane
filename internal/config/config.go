@@ -28,6 +28,14 @@ const (
 	// Ninety days of change history covers any window an investigation would be scoped
 	// to, and is deliberately independent of evidence and audit retention.
 	defaultChangeLedgerRetentionDays = 90
+	// Two hours before the incident began: the change that caused an incident usually
+	// landed before it fired. An evaluation-derived default, not a constant — operators
+	// whose deploy cadence differs configure it.
+	defaultInvestigationWindowLead = 2 * time.Hour
+	// Five dollars per investigation is several times what the bounded deterministic
+	// loop can legitimately spend; the ceiling is a backstop against a runaway, not a
+	// steering wheel. Re-derived from the evaluation suite's measured distributions.
+	defaultModelSpendCeilingCents = 500
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
@@ -88,6 +96,15 @@ const (
 	EnvModelEffort    = "OC_MODEL_EFFORT"
 	EnvModelConsented = "OC_MODEL_CONSENTED_PROVIDERS"
 	EnvModelBaseURL   = "OC_MODEL_BASE_URL"
+	// EnvModelSpendCeiling is the hard spend ceiling per investigation, in whole US
+	// cents. A reached ceiling forces an honest partial conclusion labeled stopped-by-
+	// spend; it cannot be turned off, only raised.
+	EnvModelSpendCeiling = "OC_MODEL_SPEND_CEILING_CENTS"
+
+	// EnvInvestigationWindowLead widens an investigation's window backwards before the
+	// incident began, so the change that caused it is inside the window every read is
+	// clamped to.
+	EnvInvestigationWindowLead = "OC_INVESTIGATION_WINDOW_LEAD"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
@@ -222,6 +239,13 @@ type Config struct {
 	ModelEffort    string
 	ModelConsented []string
 	ModelBaseURL   string
+	// ModelSpendCeilingCents is the hard spend ceiling per investigation, in whole US
+	// cents. Always positive: the ceiling can be raised, never removed.
+	ModelSpendCeilingCents int
+
+	// InvestigationWindowLead is how far before the incident began an investigation's
+	// window reaches back.
+	InvestigationWindowLead time.Duration
 
 	// IntakeAddress is the listen address for alert intake. It is separate from every other
 	// surface because it is the only one a customer's own infrastructure connects to inbound,
@@ -264,6 +288,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		ServiceName:               defaultServiceName,
 		InventoryInterval:         defaultInventoryInterval,
 		ChangeLedgerRetentionDays: defaultChangeLedgerRetentionDays,
+		InvestigationWindowLead:   defaultInvestigationWindowLead,
+		ModelSpendCeilingCents:    defaultModelSpendCeilingCents,
 	}
 
 	var err error
@@ -339,6 +365,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if err = modelDeployment(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.InvestigationWindowLead, err = optionalDuration(
+		lookup, EnvInvestigationWindowLead, cfg.InvestigationWindowLead); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelSpendCeilingCents, err = optionalCents(
+		lookup, EnvModelSpendCeiling, cfg.ModelSpendCeilingCents); err != nil {
 		return Config{}, err
 	}
 	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
@@ -480,6 +514,20 @@ func optionalDays(lookup func(string) (string, bool), key string, fallback int) 
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || parsed < 1 {
 		return 0, fmt.Errorf("%s must be a positive whole number of days", key)
+	}
+	return parsed, nil
+}
+
+// optionalCents refuses zero and negatives: a spend ceiling that is off would make a
+// runaway investigation possible again, so it can only be raised, never removed.
+func optionalCents(lookup func(string) (string, bool), key string, fallback int) (int, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 1 {
+		return 0, fmt.Errorf("%s must be a positive whole number of cents", key)
 	}
 	return parsed, nil
 }

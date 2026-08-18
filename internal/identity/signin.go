@@ -205,7 +205,7 @@ func (h Handlers) completeSignIn(writer http.ResponseWriter, request *http.Reque
 		h.refuseSignIn(writer, request, organization, flow.ProviderID, "the provider is gone")
 		return
 	}
-	clientSecret, err := h.Sealer.Open(provider.ClientSecretSealed)
+	clientSecret, err := h.Sealer.Open(provider.ClientSecretSealed, provider.ID[:])
 	if err != nil {
 		h.fail(writer, request, err)
 		return

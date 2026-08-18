@@ -51,6 +51,11 @@ type Store interface {
 	// suspected disclosure does not mean recreating the Integration.
 	RotateIntegrationWebhookSecret(ctx context.Context, who authz.Principal,
 		org tenancy.Organization, id uuid.UUID, digest []byte, fingerprint string) error
+	// RecordCredentialUnseal writes the audit event for one credential unseal: which
+	// integration's credential was opened, and what for. Recorded BEFORE the credential
+	// is used; a use that cannot be recorded does not happen.
+	RecordCredentialUnseal(ctx context.Context, org tenancy.Organization, id uuid.UUID,
+		purpose string) error
 	// ReplaceIntegrationCredential swaps the sealed outbound credential, applies the
 	// revision it travelled with, and records what the probe of the new one established —
 	// all in one transaction, so a refusal anywhere leaves nothing half-applied. Only an

@@ -46,7 +46,6 @@ type toolView struct {
 	WhenNotToUse string             `json:"whenNotToUse"`
 	Arguments    []toolArgumentView `json:"arguments,omitempty"`
 	Permissions  string             `json:"permissions"`
-	RateLimit    string             `json:"rateLimit"`
 	Output       string             `json:"output"`
 }
 
@@ -87,7 +86,6 @@ func typeViewOf(definition Definition, configured int) typeView {
 			WhenNotToUse: tool.WhenNotToUse,
 			Arguments:    arguments,
 			Permissions:  tool.Permissions,
-			RateLimit:    tool.RateLimit,
 			Output:       tool.Output,
 		})
 	}

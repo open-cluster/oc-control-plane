@@ -66,6 +66,11 @@ type Runner struct {
 	Sealer   seal.Sealer
 	Reasoner Reasoner
 	Logger   *slog.Logger
+	// SpendCeilingMicroCents is the hard spend ceiling per investigation. A reached
+	// ceiling forces the concluding turn and is recorded as stopped_by — an honest
+	// partial investigation, never a failure and never a diagnosis it did not reach.
+	// Zero means no ceiling, which only a test should mean.
+	SpendCeilingMicroCents int64
 
 	running sync.WaitGroup
 	mu      sync.Mutex
@@ -141,15 +146,34 @@ func (r *Runner) run(
 		}
 	}
 
-	credentials := newCredentialCache(r.Sealer)
+	// Every unseal this investigation performs lands in the audit record first, naming
+	// the investigation that needed it.
+	credentials := newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
+		return r.Store.RecordCredentialUnseal(ctx, organization, id,
+			"investigation "+opened.ID.String())
+	})
 	var runs []ToolRun
 	expanded := false
 
 	executed := 0
+	stoppedBy := ""
 	for round := 1; ; round++ {
-		mustConclude := round >= maxRounds || executed >= maxRuns || len(selected) == 0
+		// The ceilings, checked in cost order. Which one fired is recorded, because a
+		// forced conclusion labeled as a free one would dress resource exhaustion as a
+		// completed diagnosis.
+		if stoppedBy == "" {
+			switch {
+			case r.SpendCeilingMicroCents > 0 && spend.MicroCents >= r.SpendCeilingMicroCents:
+				stoppedBy = StoppedBySpend
+			case executed >= maxRuns:
+				stoppedBy = StoppedByToolRuns
+			case round >= maxRounds:
+				stoppedBy = StoppedByReasonerTurns
+			}
+		}
+		mustConclude := stoppedBy != "" || len(selected) == 0
 
-		decision, decideErr := r.decide(ctx, opened, selected, runs, mustConclude)
+		decision, decideErr := r.decide(ctx, opened, selected, runs, spend, mustConclude)
 		spend = spend.Add(decision.Spend)
 		if decideErr != nil {
 			r.fail(ctx, organization, opened.ID, reasonerFailure(decideErr), spend)
@@ -164,7 +188,7 @@ func (r *Runner) run(
 			writeCtx, done := writeWindow(ctx)
 			defer done()
 			if err := r.Store.ConcludeInvestigation(
-				writeCtx, organization, opened.ID, decision.Findings, spend); err != nil {
+				writeCtx, organization, opened.ID, decision.Findings, stoppedBy, spend); err != nil {
 				r.Logger.Error("an investigation's conclusion could not be recorded",
 					slog.String("investigation_id", opened.ID.String()),
 					slog.String("error", err.Error()))
@@ -242,7 +266,6 @@ const maxDroppedRecords = maxCallsPerRound
 func droppedRun(opened Investigation, call ToolCall, ordinal int, reason string) ToolRun {
 	now := time.Now().UTC()
 	return ToolRun{
-		ID:          uuid.New(),
 		Ordinal:     ordinal,
 		Tool:        call.Tool,
 		Arguments:   call.Arguments,
@@ -276,7 +299,7 @@ func (r *Runner) routingTerms(
 // decide asks the reasoner for the next move, under its own deadline.
 func (r *Runner) decide(
 	ctx context.Context, opened Investigation, selected []selection, runs []ToolRun,
-	mustConclude bool,
+	spend Spend, mustConclude bool,
 ) (Decision, error) {
 	sources := make([]BriefSource, 0, len(selected))
 	for _, source := range selected {
@@ -292,6 +315,7 @@ func (r *Runner) decide(
 		WindowUntil:  opened.WindowUntil,
 		Sources:      sources,
 		Runs:         runs,
+		SpendSoFar:   spend,
 		MustConclude: mustConclude,
 	}
 
@@ -307,7 +331,6 @@ func (r *Runner) execute(
 	credentials *credentialCache, call ToolCall, ordinal int,
 ) ToolRun {
 	run := ToolRun{
-		ID:          uuid.New(),
 		Ordinal:     ordinal,
 		Tool:        call.Tool,
 		Arguments:   call.Arguments,
@@ -326,7 +349,7 @@ func (r *Runner) execute(
 	run.IntegrationID = source.integration.ID
 	run.Capability = tool.Capability
 
-	credential, err := credentials.open(source.integration)
+	credential, err := credentials.open(ctx, source.integration)
 	if err != nil {
 		run.Outcome = RunFailed
 		run.Error = "the integration's credential could not be opened"
@@ -464,22 +487,32 @@ func emptyContent(content any) bool {
 }
 
 // credentialCache opens each integration's credential once per investigation, not once
-// per call. Not safe for concurrent use; one investigation runs its calls in sequence.
+// per call — which also means one audit record per integration per investigation, not
+// one per read. Not safe for concurrent use; one investigation runs its calls in
+// sequence.
 type credentialCache struct {
 	sealer seal.Sealer
+	// record writes the unseal's audit event. It runs BEFORE the credential is opened:
+	// a use that cannot be recorded does not happen.
+	record func(ctx context.Context, id uuid.UUID) error
 	opened map[uuid.UUID]string
 	fail   map[uuid.UUID]error
 }
 
-func newCredentialCache(sealer seal.Sealer) *credentialCache {
+func newCredentialCache(
+	sealer seal.Sealer, record func(ctx context.Context, id uuid.UUID) error,
+) *credentialCache {
 	return &credentialCache{
 		sealer: sealer,
+		record: record,
 		opened: map[uuid.UUID]string{},
 		fail:   map[uuid.UUID]error{},
 	}
 }
 
-func (c *credentialCache) open(integration integrations.Integration) (string, error) {
+func (c *credentialCache) open(
+	ctx context.Context, integration integrations.Integration,
+) (string, error) {
 	if credential, held := c.opened[integration.ID]; held {
 		return credential, nil
 	}
@@ -490,7 +523,12 @@ func (c *credentialCache) open(integration integrations.Integration) (string, er
 		c.opened[integration.ID] = ""
 		return "", nil
 	}
-	credential, err := c.sealer.Open(integration.CredentialSealed)
+	if err := c.record(ctx, integration.ID); err != nil {
+		c.fail[integration.ID] = err
+		return "", err
+	}
+	credential, err := c.sealer.Open(integration.CredentialSealed,
+		integrations.CredentialBinding(integration.ID))
 	if err != nil {
 		c.fail[integration.ID] = err
 		return "", err

@@ -15,7 +15,7 @@ page groups them by what they enable.
 | Alert intake | `OC_INTAKE_ADDRESS` (+ `OC_INTAKE_PUBLIC_URL` so webhook endpoints render whole) |
 | Credential-bearing integrations (Slack) | `OC_SEALING_KEY_FILE` — without it, a catalog serving such a type refuses to start the operator surface |
 | GitHub | `OC_GITHUB_APP_ID` + `OC_GITHUB_APP_PRIVATE_KEY_FILE` (both or neither); `OC_GITHUB_API_URL` for Enterprise hosts |
-| Investigations | `OC_MODEL_PROVIDER`, `OC_MODEL_NAME`, `OC_MODEL_KEY_FILE`, `OC_MODEL_CONSENTED_PROVIDERS` (+ optional `OC_MODEL_EFFORT`, `OC_MODEL_BASE_URL`) |
+| Investigations | `OC_MODEL_PROVIDER`, `OC_MODEL_NAME`, `OC_MODEL_KEY_FILE`, `OC_MODEL_CONSENTED_PROVIDERS` (+ optional `OC_MODEL_EFFORT`, `OC_MODEL_BASE_URL`, `OC_MODEL_SPEND_CEILING_CENTS`, `OC_INVESTIGATION_WINDOW_LEAD`) |
 
 ## Rules worth knowing
 
@@ -33,3 +33,11 @@ page groups them by what they enable.
 - **The sealing key** is 32 bytes, raw or base64, in a file. Rotating it makes stored
   credentials unopenable; each then verifies as failed with "paste it again to replace
   it" — replace, don't panic.
+- **The spend ceiling** (`OC_MODEL_SPEND_CEILING_CENTS`, default 500) is a hard
+  per-investigation cap in whole cents. A reached ceiling ends the investigation as an
+  honest partial conclusion labeled `stoppedBy: "spend"`; the ceiling can be raised but
+  never removed.
+- **The window lead** (`OC_INVESTIGATION_WINDOW_LEAD`, default `2h`) widens every
+  investigation's window backwards before the incident began, because the change that
+  caused an incident usually landed before it fired. Every tool read is clamped inside
+  the widened window.

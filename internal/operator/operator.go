@@ -63,8 +63,10 @@ type Handlers struct {
 	// integration credentials, under the deployment's one key.
 	Sealer seal.Sealer
 	// Investigations runs them in the background; the investigation handlers start and
-	// read through it.
-	Investigations *investigation.Runner
+	// read through it. InvestigationWindowLead is how far before the incident began an
+	// investigation's window reaches back.
+	Investigations          *investigation.Runner
+	InvestigationWindowLead time.Duration
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// configured rather than derived from a request, because a URL built from this listener's
 	// own Host header would be one that works from wherever the console is served and not from
@@ -147,9 +149,10 @@ func (h Handlers) Routes() authz.Table {
 		Logger: h.Logger,
 	}.Routes()...)
 	routes = append(routes, investigation.Handlers{
-		Store:  h.Placements,
-		Runner: h.Investigations,
-		Logger: h.Logger,
+		Store:      h.Placements,
+		Runner:     h.Investigations,
+		Logger:     h.Logger,
+		WindowLead: h.InvestigationWindowLead,
 	}.Routes()...)
 	return routes
 }

@@ -310,10 +310,10 @@ func checkDefinition(definition Definition) error {
 			return fmt.Errorf("integration type %q tool %q exercises capability %q, which "+
 				"the type does not declare", definition.Key, tool.Name, tool.Capability)
 		case tool.Description == "" || tool.WhenToUse == "" || tool.WhenNotToUse == "" ||
-			tool.Permissions == "" || tool.RateLimit == "" || tool.Output == "":
+			tool.Permissions == "" || tool.Output == "":
 			return fmt.Errorf("integration type %q tool %q is missing part of its "+
-				"contract; the router chooses by this metadata, and an empty field is a "+
-				"tool that gets used wrongly", definition.Key, tool.Name)
+				"contract; the model routes by the composed description, and an empty "+
+				"field is a tool that gets used wrongly", definition.Key, tool.Name)
 		}
 		if err := checkArguments(definition.Key, tool); err != nil {
 			return err

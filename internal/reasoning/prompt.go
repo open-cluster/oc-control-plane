@@ -87,10 +87,14 @@ func renderSources(out *strings.Builder, sources []investigation.BriefSource) {
 	for _, source := range sources {
 		out.WriteString("- " + source.Integration.Name + "\n")
 		for _, tool := range source.Tools {
-			out.WriteString("  * " + tool.Name + ": " + tool.Description + "\n")
-			out.WriteString("    Use when: " + tool.WhenToUse + "\n")
-			out.WriteString("    Do NOT use when: " + tool.WhenNotToUse + "\n")
-			out.WriteString("    Cost: " + tool.RateLimit + "\n")
+			// The one composed description, rendered here and given verbatim to native
+			// tool calling: a second hand-written representation is the drift this
+			// generation exists to end.
+			definition := tool.Definition()
+			out.WriteString("  * " + definition.Name + ":\n")
+			for _, line := range strings.Split(definition.Description, "\n") {
+				out.WriteString("    " + line + "\n")
+			}
 			if len(tool.Arguments) > 0 {
 				out.WriteString("    Arguments:\n")
 				for _, argument := range tool.Arguments {

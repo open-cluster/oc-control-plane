@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/session"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
@@ -80,7 +82,9 @@ func (h Handlers) createProvider(writer http.ResponseWriter, request *http.Reque
 	if !decode(writer, request, &body) {
 		return
 	}
-	wanted, ok := h.planProvider(writer, body, true)
+	// Minted here, before the client secret is sealed, so the sealed value can bind to
+	// the row it will live on.
+	wanted, ok := h.planProvider(writer, body, uuid.New(), true)
 	if !ok {
 		return
 	}
@@ -115,7 +119,7 @@ func (h Handlers) updateProvider(writer http.ResponseWriter, request *http.Reque
 	}
 	// A secret is optional on an update: changing a domain policy must not require re-entering
 	// a credential the administrator may not have.
-	wanted, ok := h.planProvider(writer, body, false)
+	wanted, ok := h.planProvider(writer, body, id, false)
 	if !ok {
 		return
 	}
@@ -158,7 +162,7 @@ func (h Handlers) deleteProvider(writer http.ResponseWriter, request *http.Reque
 // not work. It answers the caller itself on a refusal, so a handler either has a valid plan or
 // has already returned.
 func (h Handlers) planProvider(
-	writer http.ResponseWriter, body providerRequest, secretRequired bool,
+	writer http.ResponseWriter, body providerRequest, id uuid.UUID, secretRequired bool,
 ) (storage.NewIdentityProvider, bool) {
 	name, ok := validName(writer, body.Name, maxProviderNameLength)
 	if !ok {
@@ -211,7 +215,7 @@ func (h Handlers) planProvider(
 				return storage.NewIdentityProvider{}, false
 			}
 			var err error
-			if sealed, err = h.Sealer.Seal(secret); err != nil {
+			if sealed, err = h.Sealer.Seal(secret, id[:]); err != nil {
 				writeJSON(writer, http.StatusInternalServerError,
 					errorView{Error: "the client secret could not be stored"})
 				return storage.NewIdentityProvider{}, false
@@ -270,6 +274,7 @@ func (h Handlers) planProvider(
 	}
 
 	return storage.NewIdentityProvider{
+		ID:                   id,
 		Name:                 name,
 		Protocol:             protocol,
 		Issuer:               issuer,

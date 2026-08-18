@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
@@ -22,17 +20,6 @@ const (
 	defaultRepositories = 50
 	defaultCommits      = 30
 	defaultPullRequests = 20
-)
-
-// The rate notes tell the truth per tool: a listing is one call; a repository read
-// resolves the id to a name first, which walks the installation's repository listing
-// once per process and again only after a rename.
-const (
-	rateLimitNote = "one GitHub REST call per invocation, against the installation's " +
-		"shared hourly budget; a handful of calls per investigation is fine, a crawl is not"
-	resolvedRateNote = "one GitHub REST call per invocation once the repository's name " +
-		"is cached, plus a bounded resolution walk of the installation's repository " +
-		"listing on the first read; all against the installation's shared hourly budget"
 )
 
 // tools is the declared set, one-to-one with the capabilities the definition declares.
@@ -96,16 +83,15 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 			"repeatedly inside one investigation; the selection does not change mid-incident.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant; nothing beyond it is visible",
-		RateLimit:   rateLimitNote,
 		Output: "a bounded list of repositories, each with id, name, full name, privacy, " +
 			"archive state, default branch and description, plus a truncated flag when " +
 			"the installation selected more",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultRepositories, maxItemsPerRead)
+			limit, err := values.Count("limit", defaultRepositories, maxItemsPerRead)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
@@ -173,32 +159,31 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			"Not unbounded: without a window it reads the recent tail only.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant",
-		RateLimit:   resolvedRateNote,
 		Output: "a bounded list of commits, each with sha, message, author and authored " +
 			"time, plus a truncated flag when the window holds more; an empty repository " +
 			"answers an empty list",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			repository, err := values.identity("repositoryId")
+			repository, err := values.Identity("repositoryId")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultCommits, maxItemsPerRead)
+			limit, err := values.Count("limit", defaultCommits, maxItemsPerRead)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			since, err := values.moment("since")
+			since, err := values.Moment("since")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			until, err := values.moment("until")
+			until, err := values.Moment("until")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			since, until = clampWindow(since, until, request)
+			since, until = request.ClampWindow(since, until)
 			token, err := installationTokenFor(ctx, app, request.Integration)
 			if err != nil {
 				return integrations.ToolResult{}, err
@@ -252,20 +237,19 @@ func readPullRequestsTool(app *App, client *Client) integrations.Tool {
 			"github.list_repositories.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant",
-		RateLimit:   resolvedRateNote,
 		Output: "a bounded list of pull requests, each with number, title, state, merge " +
 			"and update times, author and branches, plus a truncated flag when the " +
 			"repository holds more",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			repository, err := values.identity("repositoryId")
+			repository, err := values.Identity("repositoryId")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultPullRequests, maxItemsPerRead)
+			limit, err := values.Count("limit", defaultPullRequests, maxItemsPerRead)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
@@ -294,19 +278,6 @@ func readPullRequestsTool(app *App, client *Client) integrations.Tool {
 	}
 }
 
-// clampWindow narrows an argument window into the request's own. A read phrased with a
-// wider window still runs inside the investigation's: the bound is structural, not
-// something a prompt asked for.
-func clampWindow(since, until time.Time, request integrations.ToolRequest) (time.Time, time.Time) {
-	if !request.WindowFrom.IsZero() && (since.IsZero() || since.Before(request.WindowFrom)) {
-		since = request.WindowFrom
-	}
-	if !request.WindowUntil.IsZero() && (until.IsZero() || until.After(request.WindowUntil)) {
-		until = request.WindowUntil
-	}
-	return since, until
-}
-
 // installationTokenFor resolves the integration's installation and mints or reuses its
 // token. Every tool starts here, so an unconfigured deployment or a broken installation
 // id fails the same way everywhere.
@@ -324,93 +295,13 @@ func repositoryContentOf(repository Repository) repositoryContent {
 	return repositoryContent(repository)
 }
 
-// arguments is one call's inputs after the undeclared ones were refused.
-type arguments struct {
-	values map[string]any
-}
-
-// readArguments refuses an argument nothing declares. Dropped arguments are the quiet
-// failure mode of tool calling: the caller believes it narrowed the read and it did not.
-func readArguments(
-	declared []integrations.ToolArgument, given map[string]any,
-) (arguments, error) {
-	for name := range given {
-		if !declaresArgument(declared, name) {
-			return arguments{}, fmt.Errorf("argument %q is not one this tool declares", name)
-		}
-	}
-	return arguments{values: given}, nil
-}
-
-func declaresArgument(declared []integrations.ToolArgument, name string) bool {
-	for _, argument := range declared {
-		if argument.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// text reads an optional string argument.
-func (a arguments) text(name string) (string, error) {
-	value, given := a.values[name]
-	if !given {
-		return "", nil
-	}
-	text, isText := value.(string)
-	if !isText {
-		return "", fmt.Errorf("%s must be text", name)
-	}
-	return strings.TrimSpace(text), nil
-}
-
-// identity reads a required positive whole number, the shape every stable id has.
-func (a arguments) identity(name string) (int64, error) {
-	value, given := a.values[name]
-	if !given {
-		return 0, errors.New(name + " is required")
-	}
-	id, err := wholePositiveID(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a whole positive number", name)
-	}
-	return id, nil
-}
-
-// wholePositiveID is the one reading of a stable id from decoded JSON, shared by
-// configuration and tool arguments. Numbers arrive as float64; a whole positive value is
-// required, not merely truncated.
+// wholePositiveID is the one reading of a stable id from decoded JSON configuration.
+// Numbers arrive as float64; a whole positive value is required, not merely truncated.
+// Tool arguments read theirs through the shared integrations.Arguments instead.
 func wholePositiveID(value any) (int64, error) {
 	number, isNumber := value.(float64)
 	if !isNumber || number != float64(int64(number)) || number < 1 {
 		return 0, errors.New("not a whole positive number")
 	}
 	return int64(number), nil
-}
-
-// count reads a bounded whole number, applying the default when absent.
-func (a arguments) count(name string, fallback, maximum int) (int, error) {
-	value, given := a.values[name]
-	if !given {
-		return fallback, nil
-	}
-	number, isNumber := value.(float64)
-	if !isNumber || number != float64(int64(number)) || number < 1 || int(number) > maximum {
-		return 0, fmt.Errorf("%s must be a whole number between 1 and %d", name, maximum)
-	}
-	return int(number), nil
-}
-
-// moment reads an optional RFC 3339 timestamp.
-func (a arguments) moment(name string) (time.Time, error) {
-	text, err := a.text(name)
-	if err != nil || text == "" {
-		return time.Time{}, err
-	}
-	at, parseErr := time.Parse(time.RFC3339, text)
-	if parseErr != nil {
-		return time.Time{}, fmt.Errorf("%s must be an RFC 3339 time such as "+
-			"2026-01-02T15:04:05Z", name)
-	}
-	return at, nil
 }

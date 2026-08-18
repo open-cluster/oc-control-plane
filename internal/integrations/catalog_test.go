@@ -19,7 +19,7 @@ func assembledWith(argument ToolArgument) error {
 		Tools: []Tool{{
 			Name: "stub.read", Capability: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			RateLimit: "free", Output: "data",
+			Output:    "data",
 			Arguments: []ToolArgument{argument},
 			Run: func(context.Context, ToolRequest) (ToolResult, error) {
 				return ToolResult{}, nil
@@ -62,7 +62,7 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 		Tools: []Tool{{
 			Name: "stub.read", Capability: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			RateLimit: "free", Output: "data",
+			Output: "data",
 			Arguments: []ToolArgument{
 				{Name: "limit", Description: "how many", Type: FieldInteger},
 				{Name: "limit", Description: "again", Type: FieldString},

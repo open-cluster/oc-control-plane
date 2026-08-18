@@ -24,6 +24,11 @@ applied.
   investigations are failed with the reason recorded rather than orphaned as running.
 - **Rolling deploys are safe**: leases are fenced, webhook deliveries are idempotent by
   body digest, and the migration lock serialises schema changes.
+- **Sealed-format note (pre-1.0 break)**: sealed secrets now lead with a key-version
+  byte and are bound to their row. Values sealed by earlier builds no longer open —
+  integration credentials verify as failed with "paste it again to replace it", and an
+  OIDC client secret must be re-entered on the identity provider. There is no dual-format
+  reader on purpose: one that guessed would outlive its excuse.
 
 ## Scaling and tiers
 

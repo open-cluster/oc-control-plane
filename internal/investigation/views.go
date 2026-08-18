@@ -43,11 +43,15 @@ type investigationView struct {
 	WindowFrom    string        `json:"windowFrom"`
 	WindowUntil   string        `json:"windowUntil"`
 	Findings      []findingView `json:"findings"`
-	Error         string        `json:"error,omitempty"`
-	Spend         spendView     `json:"spend"`
-	CreatedBy     string        `json:"createdBy,omitempty"`
-	CreatedAt     string        `json:"createdAt"`
-	ConcludedAt   string        `json:"concludedAt,omitempty"`
+	// StoppedBy labels a conclusion a ceiling forced — "spend", "tool_runs",
+	// "reasoner_turns" — so a stopped investigation never renders as a free diagnosis.
+	// Absent when the model concluded freely.
+	StoppedBy   string    `json:"stoppedBy,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	Spend       spendView `json:"spend"`
+	CreatedBy   string    `json:"createdBy,omitempty"`
+	CreatedAt   string    `json:"createdAt"`
+	ConcludedAt string    `json:"concludedAt,omitempty"`
 }
 
 type sourceView struct {
@@ -95,6 +99,7 @@ func investigationViewOf(found Investigation) investigationView {
 		WindowFrom:  stamp(found.WindowFrom),
 		WindowUntil: stamp(found.WindowUntil),
 		Findings:    findings,
+		StoppedBy:   found.StoppedBy,
 		Error:       found.Error,
 		Spend: spendView{
 			InputTokens:  found.Spend.InputTokens,

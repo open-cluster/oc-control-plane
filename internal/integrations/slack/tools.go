@@ -2,10 +2,8 @@ package slack
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
@@ -31,10 +29,6 @@ const (
 	maxSearchMatches       = 100
 	defaultSearchMatches   = 20
 )
-
-// rateLimitNote is the shared fact on the single-call tools; list_channels walks
-// pages and declares its own cost.
-const rateLimitNote = "one Slack Web API call per invocation, against the workspace's shared rate budget; a handful of calls per investigation is fine, a scan is not"
 
 // tools is the declared set, one-to-one with the capabilities the definition declares.
 func tools(client *Client) []integrations.Tool {
@@ -94,21 +88,19 @@ func listChannelsTool(client *Client) integrations.Tool {
 			"way to enumerate the workspace for its own sake.",
 		Arguments:   declared,
 		Permissions: "the bot token needs the channels:read scope",
-		RateLimit: fmt.Sprintf("up to %d Slack Web API calls per invocation, against the "+
-			"workspace's shared rate budget", maxChannelPages),
 		Output: "a bounded list of channels, each with id, name, topic, purpose and member " +
 			"count, plus a truncated flag when more matched than were returned or the " +
 			"walk stopped before the workspace's end",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultChannelsPerList, maxChannelsPerList)
+			limit, err := values.Count("limit", defaultChannelsPerList, maxChannelsPerList)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			needle, err := values.text("nameContains")
+			needle, err := values.Text("nameContains")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
@@ -189,31 +181,30 @@ func channelHistoryTool(client *Client) integrations.Tool {
 			"slack.search_messages.",
 		Arguments:   declared,
 		Permissions: "the bot token needs the channels:history scope",
-		RateLimit:   rateLimitNote,
 		Output: "a bounded list of messages, each with ts, user, text, thread marker and " +
 			"reply count, plus a truncated flag when the window holds more",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			channel, err := values.required("channel")
+			channel, err := values.Required("channel")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultMessagesPerRead, maxMessagesPerRead)
+			limit, err := values.Count("limit", defaultMessagesPerRead, maxMessagesPerRead)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			oldest, err := values.moment("oldest")
+			oldest, err := values.Moment("oldest")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			latest, err := values.moment("latest")
+			latest, err := values.Moment("latest")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			oldest, latest = clampWindow(oldest, latest, request)
+			oldest, latest = request.ClampWindow(oldest, latest)
 
 			read, err := client.History(ctx, request.Credential, HistoryQuery{
 				Channel: channel, Oldest: oldest, Latest: latest, Limit: limit,
@@ -265,23 +256,22 @@ func threadRepliesTool(client *Client) integrations.Tool {
 			"discussion happened.",
 		Arguments:   declared,
 		Permissions: "the bot token needs the channels:history scope",
-		RateLimit:   rateLimitNote,
 		Output: "the thread's messages in order, each with ts, user and text; an error " +
 			"names the bound when the thread exceeds it",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			channel, err := values.required("channel")
+			channel, err := values.Required("channel")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			thread, err := values.required("threadTs")
+			thread, err := values.Required("threadTs")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultMessagesPerRead, maxThreadReplies)
+			limit, err := values.Count("limit", defaultMessagesPerRead, maxThreadReplies)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
@@ -338,19 +328,18 @@ func searchMessagesTool(client *Client) integrations.Tool {
 			"with rephrasings of one question.",
 		Arguments:   declared,
 		Permissions: "the bot token needs the search:read scope",
-		RateLimit:   rateLimitNote,
 		Output: "a bounded list of matches, each with ts, user, text and the channel it " +
 			"was said in, plus a truncated flag when more matched",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			query, err := values.required("query")
+			query, err := values.Required("query")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultSearchMatches, maxSearchMatches)
+			limit, err := values.Count("limit", defaultSearchMatches, maxSearchMatches)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
@@ -385,19 +374,6 @@ func matchChannels(matches []Message) []string {
 	return channels
 }
 
-// clampWindow narrows an argument window into the request's own. A read phrased with a
-// wider window still runs inside the investigation's: the bound is structural, not
-// something a prompt asked for.
-func clampWindow(oldest, latest time.Time, request integrations.ToolRequest) (time.Time, time.Time) {
-	if !request.WindowFrom.IsZero() && (oldest.IsZero() || oldest.Before(request.WindowFrom)) {
-		oldest = request.WindowFrom
-	}
-	if !request.WindowUntil.IsZero() && (latest.IsZero() || latest.After(request.WindowUntil)) {
-		latest = request.WindowUntil
-	}
-	return oldest, latest
-}
-
 // matchesChannel reports whether a channel's name, topic or purpose carries the needle.
 // An empty needle selects everything, which is the unfiltered listing.
 func matchesChannel(channel Channel, needle string) bool {
@@ -416,84 +392,4 @@ func messagesContent(messages []Message) []messageContent {
 		content = append(content, messageContent(one))
 	}
 	return content
-}
-
-// arguments is one call's inputs after the undeclared ones were refused.
-type arguments struct {
-	values map[string]any
-}
-
-// readArguments refuses an argument nothing declares. Dropped arguments are the quiet
-// failure mode of tool calling: the caller believes it narrowed the read and it did not.
-func readArguments(
-	declared []integrations.ToolArgument, given map[string]any,
-) (arguments, error) {
-	for name := range given {
-		if !declaresArgument(declared, name) {
-			return arguments{}, fmt.Errorf("argument %q is not one this tool declares", name)
-		}
-	}
-	return arguments{values: given}, nil
-}
-
-func declaresArgument(declared []integrations.ToolArgument, name string) bool {
-	for _, argument := range declared {
-		if argument.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// text reads an optional string argument.
-func (a arguments) text(name string) (string, error) {
-	value, given := a.values[name]
-	if !given {
-		return "", nil
-	}
-	text, isText := value.(string)
-	if !isText {
-		return "", fmt.Errorf("%s must be text", name)
-	}
-	return strings.TrimSpace(text), nil
-}
-
-// required reads a string argument that must be present and non-empty.
-func (a arguments) required(name string) (string, error) {
-	text, err := a.text(name)
-	if err != nil {
-		return "", err
-	}
-	if text == "" {
-		return "", errors.New(name + " is required")
-	}
-	return text, nil
-}
-
-// count reads a bounded whole number, applying the default when absent.
-func (a arguments) count(name string, fallback, maximum int) (int, error) {
-	value, given := a.values[name]
-	if !given {
-		return fallback, nil
-	}
-	// JSON numbers arrive as float64; a whole number is required, not merely truncated.
-	number, isNumber := value.(float64)
-	if !isNumber || number != float64(int64(number)) || number < 1 || int(number) > maximum {
-		return 0, fmt.Errorf("%s must be a whole number between 1 and %d", name, maximum)
-	}
-	return int(number), nil
-}
-
-// moment reads an optional RFC 3339 timestamp.
-func (a arguments) moment(name string) (time.Time, error) {
-	text, err := a.text(name)
-	if err != nil || text == "" {
-		return time.Time{}, err
-	}
-	at, parseErr := time.Parse(time.RFC3339, text)
-	if parseErr != nil {
-		return time.Time{}, fmt.Errorf("%s must be an RFC 3339 time such as "+
-			"2026-01-02T15:04:05Z", name)
-	}
-	return at, nil
 }

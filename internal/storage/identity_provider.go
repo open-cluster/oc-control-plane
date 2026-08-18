@@ -99,6 +99,9 @@ func (i IdentityProvider) Disabled() bool { return !i.DisabledAt.IsZero() }
 // fields constrain each other: just-in-time provisioning with no verified domain admits
 // nobody, and a group map naming roles this build does not have maps to nothing.
 type NewIdentityProvider struct {
+	// ID is minted by the handler BEFORE anything is sealed, because the sealed client
+	// secret is bound to the row's identity and the binding must exist first.
+	ID                   uuid.UUID
 	Name                 string
 	Protocol             IdentityProtocol
 	Issuer               string
@@ -152,7 +155,7 @@ func (p *Placements) ConfigureIdentityProvider(
 				                               require_verified_email, group_claim, group_role_map)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 				RETURNING `+providerColumns,
-				uuid.New(), organization.String(), wanted.Name, int16(wanted.Protocol),
+				identityOrNew(wanted.ID), organization.String(), wanted.Name, int16(wanted.Protocol),
 				wanted.Issuer, nullableText(wanted.ClientID),
 				nilIfEmptyBytes(wanted.ClientSecretSealed), nullableText(wanted.SAMLMetadata),
 				orEmptyDomains(wanted.VerifiedDomains), wanted.JITEnabled, string(wanted.JITRole),

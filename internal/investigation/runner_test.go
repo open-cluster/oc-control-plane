@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -22,14 +24,17 @@ import (
 
 // memoryStore keeps one investigation's provenance in memory.
 type memoryStore struct {
-	mu         sync.Mutex
-	candidates []integrations.Integration
-	sources    []Source
-	runs       []ToolRun
-	findings   []Finding
-	spend      Spend
-	status     Status
-	failReason string
+	mu           sync.Mutex
+	candidates   []integrations.Integration
+	sources      []Source
+	runs         []ToolRun
+	findings     []Finding
+	stoppedBy    string
+	unseals      []string
+	refuseUnseal bool
+	spend        Spend
+	status       Status
+	failReason   string
 }
 
 func (m *memoryStore) CreateInvestigation(
@@ -75,11 +80,12 @@ func (m *memoryStore) RecordToolRun(
 }
 
 func (m *memoryStore) ConcludeInvestigation(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, findings []Finding, spend Spend,
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, findings []Finding,
+	stoppedBy string, spend Spend,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.status, m.findings, m.spend = StatusConcluded, findings, spend
+	m.status, m.findings, m.stoppedBy, m.spend = StatusConcluded, findings, stoppedBy, spend
 	return nil
 }
 
@@ -110,6 +116,18 @@ func (m *memoryStore) InvestigationCandidates(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.candidates, nil
+}
+
+func (m *memoryStore) RecordCredentialUnseal(
+	_ context.Context, _ tenancy.Organization, id uuid.UUID, purpose string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.refuseUnseal {
+		return errors.New("the record is not writable")
+	}
+	m.unseals = append(m.unseals, id.String()+" for "+purpose)
+	return nil
 }
 
 // scripted plays back decisions in order and remembers the briefs it saw.
@@ -149,7 +167,7 @@ func stubType(
 		Tools: []integrations.Tool{{
 			Name: "stub.read", Capability: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			RateLimit: "free", Output: "items",
+			Output: "items",
 			Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 				return answer(request)
 			},
@@ -169,8 +187,16 @@ func runInvestigation(
 	t *testing.T, store *memoryStore, catalog integrations.Catalog, reasoner Reasoner,
 ) *Runner {
 	t.Helper()
+	return runInvestigationWith(t, store, catalog, seal.Sealer{}, reasoner)
+}
+
+func runInvestigationWith(
+	t *testing.T, store *memoryStore, catalog integrations.Catalog, sealer seal.Sealer,
+	reasoner Reasoner,
+) *Runner {
+	t.Helper()
 	runner := &Runner{
-		Store: store, Catalog: catalog, Reasoner: reasoner,
+		Store: store, Catalog: catalog, Sealer: sealer, Reasoner: reasoner,
 		Logger: slog.New(slog.DiscardHandler),
 	}
 	organization, err := tenancy.NewOrganization("org-test")
@@ -221,6 +247,91 @@ func TestTheRunnerRecordsRoutingRunsAndConclusion(t *testing.T) {
 	}
 	if len(store.findings) != 1 {
 		t.Errorf("findings = %+v", store.findings)
+	}
+}
+
+// Every credential unseal is on the audit record — once per integration per
+// investigation, matching the cache — and it lands BEFORE the credential is used, so a
+// use that cannot be recorded does not happen.
+func TestACredentialUnsealIsOnTheRecordBeforeTheToolRuns(t *testing.T) {
+	t.Parallel()
+
+	sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := stubIntegration("Payments Slack")
+	sealed, err := sealer.Seal("xoxb-token", integrations.CredentialBinding(holder.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder.CredentialSealed = sealed
+
+	var presented []string
+	store := &memoryStore{candidates: []integrations.Integration{holder}}
+	catalog := stubType(t, func(request integrations.ToolRequest) (integrations.ToolResult, error) {
+		presented = append(presented, request.Credential)
+		return integrations.ToolResult{Content: []string{"x"}}, nil
+	})
+	reasoner := &scripted{decisions: []Decision{
+		{Calls: []ToolCall{{Tool: "stub.read"}, {Tool: "stub.read"}}},
+		{Findings: []Finding{{Statement: "done", Sources: []int{1}}}},
+	}}
+
+	runner := &Runner{
+		Store: store, Catalog: catalog, Sealer: sealer, Reasoner: reasoner,
+		Logger: slog.New(slog.DiscardHandler),
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened := Investigation{ID: uuid.New(), Subject: "payments latency"}
+	runner.Start(organization, opened)
+	runner.running.Wait()
+
+	if len(presented) != 2 || presented[0] != "xoxb-token" || presented[1] != "xoxb-token" {
+		t.Fatalf("the tool must be handed the opened credential each call: %q", presented)
+	}
+	if len(store.unseals) != 1 {
+		t.Fatalf("unseals = %v; one integration opened once records exactly one event",
+			store.unseals)
+	}
+	if want := holder.ID.String() + " for investigation " + opened.ID.String(); store.unseals[0] != want {
+		t.Errorf("unseal record = %q, want %q", store.unseals[0], want)
+	}
+}
+
+func TestAnUnrecordableUnsealMeansTheCredentialIsNotUsed(t *testing.T) {
+	t.Parallel()
+
+	sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := stubIntegration("Payments Slack")
+	holder.CredentialSealed, err = sealer.Seal("xoxb-token",
+		integrations.CredentialBinding(holder.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := &memoryStore{
+		candidates: []integrations.Integration{holder}, refuseUnseal: true,
+	}
+	catalog := stubType(t, func(request integrations.ToolRequest) (integrations.ToolResult, error) {
+		t.Error("the tool ran although the unseal could not be recorded")
+		return integrations.ToolResult{}, nil
+	})
+	reasoner := &scripted{decisions: []Decision{
+		{Calls: []ToolCall{{Tool: "stub.read"}}},
+		{},
+	}}
+
+	runInvestigationWith(t, store, catalog, sealer, reasoner)
+
+	if len(store.runs) != 1 || store.runs[0].Outcome != RunFailed {
+		t.Fatalf("runs = %+v; an unrecordable unseal is a failed run", store.runs)
 	}
 }
 
@@ -325,6 +436,80 @@ func TestTheRoundBudgetForcesAConclusion(t *testing.T) {
 	last := reasoner.briefs[len(reasoner.briefs)-1]
 	if !last.MustConclude {
 		t.Error("the final round was not told to conclude")
+	}
+	if store.stoppedBy != StoppedByReasonerTurns {
+		t.Errorf("stopped_by = %q; a turn-forced conclusion must say so", store.stoppedBy)
+	}
+}
+
+// A reached spend ceiling forces the concluding turn and is recorded as what stopped
+// the investigation — an honest partial conclusion, never a failure and never a free
+// diagnosis.
+func TestTheSpendCeilingForcesALabeledConclusion(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{stubIntegration("S")}}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Content: []string{"more"}}, nil
+	})
+	reasoner := &scripted{decisions: []Decision{
+		{Calls: []ToolCall{{Tool: "stub.read"}}, Spend: Spend{MicroCents: 7}},
+		{Calls: []ToolCall{{Tool: "stub.read"}}, Spend: Spend{MicroCents: 7}},
+		{Findings: []Finding{{Statement: "partial", Sources: []int{1}}}},
+	}}
+
+	runner := &Runner{
+		Store: store, Catalog: catalog, Reasoner: reasoner,
+		Logger:                 slog.New(slog.DiscardHandler),
+		SpendCeilingMicroCents: 10,
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Start(organization, Investigation{ID: uuid.New(), Subject: "latency"})
+	runner.running.Wait()
+
+	if store.status != StatusConcluded {
+		t.Fatalf("status = %s, reason %q; a spend stop is a conclusion, not a failure",
+			store.status, store.failReason)
+	}
+	if store.stoppedBy != StoppedBySpend {
+		t.Errorf("stopped_by = %q, want %q", store.stoppedBy, StoppedBySpend)
+	}
+	// The ceiling fired after the second decision (14 >= 10), so the third is the
+	// forced concluding turn — and it must know what was already spent.
+	if len(reasoner.briefs) != 3 || !reasoner.briefs[2].MustConclude {
+		t.Fatalf("briefs = %d; the decision after the ceiling must be the conclusion",
+			len(reasoner.briefs))
+	}
+	if reasoner.briefs[2].SpendSoFar.MicroCents != 14 {
+		t.Errorf("the concluding brief carries spend %d, want 14",
+			reasoner.briefs[2].SpendSoFar.MicroCents)
+	}
+	if len(store.findings) != 1 {
+		t.Errorf("findings = %+v; the partial conclusion must be stored", store.findings)
+	}
+}
+
+// A free conclusion carries no stopped_by label.
+func TestAFreeConclusionIsNotLabeledStopped(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{stubIntegration("S")}}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Content: []string{"found"}}, nil
+	})
+	reasoner := &scripted{decisions: []Decision{
+		{Calls: []ToolCall{{Tool: "stub.read"}}},
+		{Findings: []Finding{{Statement: "done", Sources: []int{1}}}},
+	}}
+
+	runInvestigation(t, store, catalog, reasoner)
+
+	if store.status != StatusConcluded || store.stoppedBy != "" {
+		t.Errorf("status = %s stopped_by = %q; a free conclusion carries no label",
+			store.status, store.stoppedBy)
 	}
 }
 

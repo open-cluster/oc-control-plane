@@ -229,17 +229,20 @@ func renderArguments(arguments map[string]any) string {
 // evalReport is one whole capture: every case's score and the run's identity, written as
 // a JSON artifact. Evaluation state lives here — in files — never in the product schema.
 type evalReport struct {
-	Label      string      `json:"label"`
-	CapturedAt string      `json:"capturedAt"`
-	Revision   string      `json:"revision"`
-	Model      string      `json:"model"`
-	Cases      []evalScore `json:"cases"`
+	Label      string `json:"label"`
+	CapturedAt string `json:"capturedAt"`
+	Revision   string `json:"revision"`
+	// AgentRevision is the derived hash over what the model saw — preamble, conclusion
+	// schema, tool definitions — so any two captures are comparable or visibly not.
+	AgentRevision string      `json:"agentRevision"`
+	Model         string      `json:"model"`
+	Cases         []evalScore `json:"cases"`
 }
 
 // writeEvalReport files the report and the raw records under dir, one directory per
 // capture, and returns the directory.
 func writeEvalReport(
-	t *testing.T, dir, label, revision, model string,
+	t *testing.T, dir, label, revision, agentRevision, model string,
 	scores []evalScore, records []evalRecord,
 ) string {
 	t.Helper()
@@ -250,11 +253,12 @@ func writeEvalReport(
 		t.Fatalf("creating the artifact directory: %v", err)
 	}
 	report := evalReport{
-		Label:      label,
-		CapturedAt: time.Now().UTC().Format(time.RFC3339),
-		Revision:   revision,
-		Model:      model,
-		Cases:      scores,
+		Label:         label,
+		CapturedAt:    time.Now().UTC().Format(time.RFC3339),
+		Revision:      revision,
+		AgentRevision: agentRevision,
+		Model:         model,
+		Cases:         scores,
 	}
 	writeJSONFile(t, filepath.Join(target, "report.json"), report)
 	for index, record := range records {

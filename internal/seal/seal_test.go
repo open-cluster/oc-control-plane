@@ -14,7 +14,7 @@ func TestASealedClientSecretComesBackAndOnlyUnderItsOwnKey(t *testing.T) {
 	const secret = "the-client-secret-a-provider-issued"
 	sealer := sealerWith(t, 1)
 
-	sealed, err := sealer.Seal(secret)
+	sealed, err := sealer.Seal(secret, nil)
 	if err != nil {
 		t.Fatalf("sealing: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestASealedClientSecretComesBackAndOnlyUnderItsOwnKey(t *testing.T) {
 		t.Fatal("the sealed value contains the secret")
 	}
 
-	opened, err := sealer.Open(sealed)
+	opened, err := sealer.Open(sealed, nil)
 	if err != nil {
 		t.Fatalf("opening: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestASealedClientSecretComesBackAndOnlyUnderItsOwnKey(t *testing.T) {
 
 	// Sealing twice must not produce the same bytes, or the column leaks by comparison: two
 	// tenants configuring the same provider would be visible as such to anyone with a dump.
-	again, err := sealer.Seal(secret)
+	again, err := sealer.Seal(secret, nil)
 	if err != nil {
 		t.Fatalf("sealing again: %v", err)
 	}
@@ -42,14 +42,68 @@ func TestASealedClientSecretComesBackAndOnlyUnderItsOwnKey(t *testing.T) {
 
 	// A different key must FAIL rather than return something. GCM's tag is what tells a rotated
 	// key apart from a tampered column, and neither is a secret to present to a provider.
-	if _, err := sealerWith(t, 2).Open(sealed); err == nil {
+	if _, err := sealerWith(t, 2).Open(sealed, nil); err == nil {
 		t.Error("another key opened the secret")
 	}
 	// And a tampered value likewise.
 	tampered := append([]byte(nil), sealed...)
 	tampered[len(tampered)-1] ^= 0xff
-	if _, err := sealer.Open(tampered); err == nil {
+	if _, err := sealer.Open(tampered, nil); err == nil {
 		t.Error("a tampered value opened")
+	}
+}
+
+// A sealed blob is bound to the row it belongs to: a credential copied onto another
+// integration's row — by a mistake or by someone with UPDATE on the table — refuses to
+// open there instead of authenticating as that row's secret.
+func TestASealedValueOpensOnlyUnderItsOwnBinding(t *testing.T) {
+	t.Parallel()
+
+	sealer := sealerWith(t, 1)
+	sealed, err := sealer.Seal("xoxb-a-bot-token", []byte("integration-row-a"))
+	if err != nil {
+		t.Fatalf("sealing: %v", err)
+	}
+
+	opened, err := sealer.Open(sealed, []byte("integration-row-a"))
+	if err != nil || opened != "xoxb-a-bot-token" {
+		t.Fatalf("the right binding must open: %q, %v", opened, err)
+	}
+	if _, err := sealer.Open(sealed, []byte("integration-row-b")); err == nil {
+		t.Error("another row's binding opened the secret")
+	}
+	if _, err := sealer.Open(sealed, nil); err == nil {
+		t.Error("no binding opened a bound secret")
+	}
+}
+
+// The sealed format names the key version it was sealed under, so rotating the key is a
+// re-wrap of rows under a new version — never a mass of blobs nothing can attribute to a
+// key. A version this deployment does not hold is refused by name.
+func TestTheSealedFormatIsVersioned(t *testing.T) {
+	t.Parallel()
+
+	sealer := sealerWith(t, 1)
+	sealed, err := sealer.Seal("a secret", nil)
+	if err != nil {
+		t.Fatalf("sealing: %v", err)
+	}
+	if sealed[0] != KeyVersion {
+		t.Fatalf("the sealed value must lead with key version %d, got %d", KeyVersion, sealed[0])
+	}
+
+	foreign := append([]byte(nil), sealed...)
+	foreign[0] = 9
+	_, err = sealer.Open(foreign, nil)
+	if err == nil || !strings.Contains(err.Error(), "9") {
+		t.Fatalf("an unheld key version must be refused by name, got %v", err)
+	}
+
+	if _, err := sealer.Open([]byte{KeyVersion, 1, 2}, nil); err == nil {
+		t.Error("a value too short to hold a nonce opened")
+	}
+	if _, err := sealer.Open(nil, nil); err == nil {
+		t.Error("an empty value opened")
 	}
 }
 
@@ -62,7 +116,7 @@ func TestWithNoKeyNothingIsSealed(t *testing.T) {
 	if unconfigured.Configured() {
 		t.Fatal("the zero sealer reports itself configured")
 	}
-	if _, err := unconfigured.Seal("a secret"); err == nil {
+	if _, err := unconfigured.Seal("a secret", nil); err == nil {
 		t.Error("an unconfigured sealer sealed something")
 	}
 	if _, err := New(make([]byte, 16)); err == nil {

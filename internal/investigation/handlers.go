@@ -24,9 +24,6 @@ const (
 	// maxQuestionLength bounds an operator's question. Long enough for a sentence with
 	// identifiers in it; anything past this is a paste, not a question.
 	maxQuestionLength = 1024
-	// changeLead widens an investigation's window before the incident began: the change
-	// that caused an incident usually landed before it fired.
-	changeLead = 2 * time.Hour
 	// subjectCandidates bounds how many open episodes a question is matched against.
 	subjectCandidates = 20
 	// clarifyWith bounds how many incident titles a clarification names.
@@ -38,6 +35,10 @@ type Handlers struct {
 	Store  Store
 	Runner *Runner
 	Logger *slog.Logger
+	// WindowLead widens an investigation's window before the incident began: the change
+	// that caused an incident usually landed before it fired. Configuration, because the
+	// right lead follows an organization's deploy cadence, not a constant.
+	WindowLead time.Duration
 }
 
 // Routes is this capability's contribution to the operator API's index.
@@ -106,7 +107,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	window := windowOf(trigger)
+	window := windowOf(trigger, h.WindowLead)
 	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, NewInvestigation{
 		EpisodeID:     trigger.EpisodeID,
 		IntegrationID: trigger.IntegrationID,
@@ -261,14 +262,14 @@ type window struct {
 	until time.Time
 }
 
-// windowOf derives the window from the episode: widened backwards by the change lead,
-// and ending now while the incident is still open.
-func windowOf(trigger Trigger) window {
+// windowOf derives the window from the episode: widened backwards by the configured
+// lead, and ending now while the incident is still open.
+func windowOf(trigger Trigger, lead time.Duration) window {
 	until := trigger.LastSeenAt
 	if !trigger.Resolved {
 		until = time.Now().UTC()
 	}
-	return window{from: trigger.FirstSeenAt.Add(-changeLead), until: until}
+	return window{from: trigger.FirstSeenAt.Add(-lead), until: until}
 }
 
 // listSpec is the shared table contract this listing speaks.

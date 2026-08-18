@@ -197,17 +197,18 @@ func run(
 	// request rather than the process refusing to serve everything else it can do.
 	reasoner := replace.reasoner
 	if reasoner == nil && cfg.ModelProvider != "" {
-		if reasoner, err = modelBoundary(cfg, logger); err != nil {
+		if reasoner, err = modelBoundary(cfg, catalog, logger); err != nil {
 			return err
 		}
 	}
 
 	investigations := &investigation.Runner{
-		Store:    placements,
-		Catalog:  catalog,
-		Sealer:   sealer,
-		Reasoner: reasoner,
-		Logger:   logger,
+		Store:                  placements,
+		Catalog:                catalog,
+		Sealer:                 sealer,
+		Reasoner:               reasoner,
+		Logger:                 logger,
+		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}
 	// Drained on the way out: an investigation mid-flight is failed with the reason
 	// recorded rather than orphaned into a record that says running forever.
@@ -229,13 +230,16 @@ func run(
 // wrong with the model configuration is refused HERE, at startup: an unimplemented
 // provider, an unpriced model, an effort level nothing recognises, a provider nobody
 // consented to.
-func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reasoner, error) {
+func modelBoundary(
+	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger,
+) (investigation.Reasoner, error) {
 	deployment := reasoning.Deployment{
-		Provider:   cfg.ModelProvider,
-		Model:      cfg.ModelName,
-		Effort:     reasoning.Effort(cfg.ModelEffort),
-		BaseURL:    cfg.ModelBaseURL,
-		Credential: reasoning.Secret(cfg.ModelKey),
+		Provider:               cfg.ModelProvider,
+		Model:                  cfg.ModelName,
+		Effort:                 reasoning.Effort(cfg.ModelEffort),
+		BaseURL:                cfg.ModelBaseURL,
+		Credential:             reasoning.Secret(cfg.ModelKey),
+		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}.WithDefaults()
 	if err := deployment.Validate(); err != nil {
 		return nil, err
@@ -249,10 +253,30 @@ func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reason
 	if err != nil {
 		return nil, err
 	}
+	// The agent revision is derived here, over everything that shapes what the model
+	// sees, and stamped on every call's telemetry — attribution nobody has to remember
+	// to bump.
+	revision := reasoning.AgentRevision(catalogTools(catalog))
+	decider.Instrument(reasoning.NewTelemetry(logger, revision))
 	logger.Info("model boundary configured",
-		slog.String("deployment", deployment.String()))
+		slog.String("deployment", deployment.String()),
+		slog.String("agent_revision", revision))
 	return decider, nil
 }
+
+// catalogTools flattens the assembled catalog's tool set, in the catalog's own stable
+// order, for the agent-revision derivation.
+func catalogTools(catalog integrations.Catalog) []integrations.Tool {
+	var tools []integrations.Tool
+	for _, definition := range catalog.All() {
+		tools = append(tools, definition.Tools...)
+	}
+	return tools
+}
+
+// microCentsOf converts a configured whole-cent figure into the integer micro-cents
+// every spend record counts in.
+func microCentsOf(cents int) int64 { return int64(cents) * 1_000_000 }
 
 // assembled is the constructed process: the pieces serve needs, which are meaningless
 // apart and always travel together.
@@ -480,15 +504,16 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 	// cannot ship"; the compile-time half is that authz.Privileged takes the permission
 	// positionally, and the gate in internal/gates is the third.
 	router, err := operator.Handlers{
-		Placements:          process.placements,
-		Logger:              process.logger,
-		Identity:            identities,
-		Origins:             cfg.OperatorAllowedOrigins,
-		Catalog:             process.catalog,
-		Sealer:              process.sealer,
-		Investigations:      process.investigations,
-		IntakeBaseURL:       cfg.IntakePublicURL,
-		MinimumRelayVersion: cfg.MinimumRelayVersion,
+		Placements:              process.placements,
+		Logger:                  process.logger,
+		Identity:                identities,
+		Origins:                 cfg.OperatorAllowedOrigins,
+		Catalog:                 process.catalog,
+		Sealer:                  process.sealer,
+		Investigations:          process.investigations,
+		InvestigationWindowLead: cfg.InvestigationWindowLead,
+		IntakeBaseURL:           cfg.IntakePublicURL,
+		MinimumRelayVersion:     cfg.MinimumRelayVersion,
 	}.Router()
 	if err != nil {
 		return nil, fmt.Errorf("assembling the operator surface: %w", err)

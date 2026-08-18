@@ -56,6 +56,11 @@ type Deployment struct {
 	RequestTimeout time.Duration
 	// MaxAttempts is how many times one call may be tried before the outcome is an outage.
 	MaxAttempts int
+	// SpendCeilingMicroCents is the hard spend ceiling per investigation. The decider
+	// refuses a non-concluding brief whose accumulated spend has reached it — the
+	// backstop behind the runner's own ceiling check. Zero disables the backstop,
+	// which only a test should mean.
+	SpendCeilingMicroCents int64
 }
 
 // Bounds that are safe rather than ambitious. A deployment that names none of them gets these,

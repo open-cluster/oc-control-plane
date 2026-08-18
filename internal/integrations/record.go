@@ -119,11 +119,19 @@ type Integration struct {
 // Disabled reports whether this Integration has been turned off.
 func (i Integration) Disabled() bool { return !i.DisabledAt.IsZero() }
 
+// CredentialBinding is what an Integration's sealed credential is bound to: the row's
+// own identity. One derivation, used by everything that seals or opens, so a blob moved
+// onto another row refuses to open there.
+func CredentialBinding(id uuid.UUID) []byte { return id[:] }
+
 // NewIntegration is what an operator asked for. It travels as one value because the fields
 // constrain each other: a relay-served type needs a Relay, a webhook-receiving type needs a
 // secret digest, and validating them apart would let an invalid combination reach the
 // database and come back as a constraint violation rather than an answer.
 type NewIntegration struct {
+	// ID is minted by the handler BEFORE anything is sealed, because the sealed
+	// credential is bound to the row's identity and the binding must exist first.
+	ID            uuid.UUID
 	Type          TypeID
 	Name          string
 	Configuration map[string]any

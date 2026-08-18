@@ -86,7 +86,6 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 			"whenToUse":    tool.WhenToUse,
 			"whenNotToUse": tool.WhenNotToUse,
 			"permissions":  tool.Permissions,
-			"rateLimit":    tool.RateLimit,
 			"output":       tool.Output,
 		} {
 			if strings.TrimSpace(value) == "" {

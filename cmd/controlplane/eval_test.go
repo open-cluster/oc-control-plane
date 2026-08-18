@@ -11,6 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/reasoning"
 )
@@ -63,8 +68,8 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 			t.Errorf("precision = %v, want 1 for all-relevant calls", score.ToolPrecision)
 		}
 
-		directory := writeEvalReport(t, t.TempDir(), "pipeline-proof", "test", "scripted",
-			[]evalScore{score}, []evalRecord{record})
+		directory := writeEvalReport(t, t.TempDir(), "pipeline-proof", "test",
+			evalAgentRevision(t), "scripted", []evalScore{score}, []evalRecord{record})
 		var report evalReport
 		raw, err := os.ReadFile(filepath.Join(directory, "report.json"))
 		if err != nil {
@@ -132,8 +137,26 @@ func TestEvalBaseline(t *testing.T) {
 	}
 
 	directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
-		label, gitRevision(t), model.Provider+"/"+model.Name, scores, records)
+		label, gitRevision(t), evalAgentRevision(t), model.Provider+"/"+model.Name,
+		scores, records)
 	t.Logf("evaluation capture filed under %s: %d cases", directory, len(scores))
+}
+
+// evalAgentRevision derives the same agent revision production derives, through the
+// same catalog assembly and flattening: the tool declarations do not depend on any
+// client, so the set here hashes identically to the running control plane's.
+func evalAgentRevision(t *testing.T) string {
+	t.Helper()
+	catalog, err := integrations.NewCatalog(
+		alertmanager.Definition(),
+		kubernetes.Definition(),
+		slack.Definition(slack.NewClient("")),
+		github.Definition(nil, github.NewClient("")),
+	)
+	if err != nil {
+		t.Fatalf("assembling the catalog: %v", err)
+	}
+	return reasoning.AgentRevision(catalogTools(catalog))
 }
 
 func evalModelFromEnvironment(t *testing.T) evalModel {

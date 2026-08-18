@@ -31,11 +31,22 @@ clarifying question back. The runner:
 3. expands once, to the next-ranked source, only if everything so far failed or came
    back empty;
 4. ends concluded with findings citing run ordinals, or failed with the reason. Spend is
-   summed in tokens and integer micro-cents over every call, including refused ones.
+   summed in tokens and integer micro-cents over every call, including refused ones. A
+   ceiling — the spend cap, the read budget, the turn budget — forces a final concluding
+   turn and labels the outcome `stoppedBy` (`spend`, `tool_runs`, `reasoner_turns`), so
+   resource exhaustion is never rendered as a free diagnosis.
 
 Reading `GET /investigations/{id}` is the audit: what was queried, why, what came back,
 what was established. A failed reasoning step is a failed investigation — never a
 conclusion.
+
+Every model call emits one span and one structured log line (provider, the model that
+answered, request id, stop reason, latency, token decomposition, integer micro-cents,
+and the derived `agent_revision` — a hash over the prompt preamble, conclusion schema
+and tool definitions, so any change to what the model sees is attributable without a
+version anybody bumps), plus Prometheus series derived from the `oc.reasoning.tokens`,
+`oc.reasoning.spend` and `oc.reasoning.call_duration` instruments (the exporter adds
+its own `_total`/unit suffixes), labeled by provider and model.
 
 ## Health signals worth alerting on
 

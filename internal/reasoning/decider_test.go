@@ -1,9 +1,11 @@
 package reasoning
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +75,7 @@ func briefWith(runs int, mustConclude bool) investigation.Brief {
 				Name: "slack.list_channels", Capability: "slack.list_channels",
 				Description: "lists channels", WhenToUse: "first",
 				WhenNotToUse: "never twice", Permissions: "channels:read",
-				RateLimit: "one call", Output: "channels",
+				Output: "channels",
 			}},
 		}},
 	}
@@ -278,6 +280,75 @@ func TestAnUnpricedModelIsRefusedAtConstruction(t *testing.T) {
 	_, err := NewDecider(testDeployment(), &fakeProvider{}, NewTariff(nil), ConsentTo("fake"))
 	if !errors.Is(err, ErrUnpriced) {
 		t.Fatalf("want ErrUnpriced, got %v", err)
+	}
+}
+
+// The reasoning-layer spend backstop: a non-concluding brief past the ceiling is
+// refused before any request is sent — ErrCeilingReached raised by code, so a loop
+// that forgot its own ceiling check cannot keep reading. The concluding turn always
+// passes: a partial conclusion costs one more call, and refusing it would turn every
+// reached ceiling into a failure.
+func TestASpentBriefMayOnlyConclude(t *testing.T) {
+	t.Parallel()
+
+	deployment := testDeployment()
+	deployment.SpendCeilingMicroCents = 100
+	provider := &fakeProvider{completions: []Completion{{
+		Model: "fake-model", Stop: StopComplete,
+		Document: []byte(`{"findings":[]}`),
+	}}}
+	decider, err := NewDecider(deployment, provider, testTariff(), ConsentTo("fake"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spent := briefWith(0, false)
+	spent.SpendSoFar = investigation.Spend{MicroCents: 100}
+	_, err = decider.Decide(context.Background(), spent)
+	if !errors.Is(err, ErrCeilingReached) {
+		t.Fatalf("want ErrCeilingReached, got %v", err)
+	}
+	if len(provider.completions) != 1 {
+		t.Fatal("the refusal must happen before any request is sent")
+	}
+
+	concluding := briefWith(0, true)
+	concluding.SpendSoFar = investigation.Spend{MicroCents: 100}
+	if _, err := decider.Decide(context.Background(), concluding); err != nil {
+		t.Fatalf("the concluding turn must pass the ceiling: %v", err)
+	}
+}
+
+// Per-call telemetry: one structured log line per provider call, carrying the derived
+// agent revision — the persistence audit's landing place for per-call detail.
+func TestEveryProviderCallEmitsItsTelemetry(t *testing.T) {
+	t.Parallel()
+
+	var lines bytes.Buffer
+	provider := &fakeProvider{completions: []Completion{{
+		Model: "fake-model-v2", RequestID: "req-7", Stop: StopComplete,
+		Document: []byte(`{"findings":[]}`),
+		Usage: TokenUsage{
+			Input: Counted(1000), Output: Counted(50), CacheRead: Counted(400),
+		},
+	}}}
+	decider := deciderWith(t, provider)
+	decider.Instrument(NewTelemetry(
+		slog.New(slog.NewJSONHandler(&lines, nil)), "abcdef0123456789"))
+
+	if _, err := decider.Decide(context.Background(), briefWith(0, true)); err != nil {
+		t.Fatal(err)
+	}
+
+	line := lines.String()
+	for _, expected := range []string{
+		`"provider":"fake"`, `"model_answered":"fake-model-v2"`, `"request_id":"req-7"`,
+		`"stop":"complete"`, `"input_tokens":1000`, `"cache_read_tokens":400`,
+		`"agent_revision":"abcdef0123456789"`, `"spend_microcents"`,
+	} {
+		if !strings.Contains(line, expected) {
+			t.Errorf("the call's log line is missing %s:\n%s", expected, line)
+		}
 	}
 }
 

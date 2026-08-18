@@ -18,7 +18,7 @@ What a reviewer should be able to confirm quickly, and where each property is en
 | Credential | At rest | Notes |
 | --- | --- | --- |
 | Webhook secrets (inbound) | SHA-256 digest only | minted, shown once, constant-time compare, rotate-not-recover; fingerprints are minted, never derived |
-| Integration credentials (Slack bot token) | AES-256-GCM sealed (`internal/seal`) | probed live before storage; write-only after entry; submitting one with no sealing key is refused loudly, never dropped |
+| Integration credentials (Slack bot token) | AES-256-GCM sealed (`internal/seal`) | probed live before storage; write-only after entry; submitting one with no sealing key is refused loudly, never dropped; the sealed blob leads with a key-version byte (rotation is a re-wrap, not mass loss) and is bound to its integration row, so a blob moved onto another row refuses to open; every unseal lands in the audit record (`integration.credential.unsealed`) before the credential is used |
 | Identity provider client secrets | sealed, same key | |
 | Session identifiers, API tokens | digests | API tokens bound to one organization, one role, an expiry |
 | Operator bootstrap token | digest | bound to one organization and one role; deliberately no expiry and no revocation row — it exists to bootstrap a deployment with no members, and revoking it means changing the file and restarting |

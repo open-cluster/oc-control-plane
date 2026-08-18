@@ -161,6 +161,8 @@ Fetching from the private repository needs
 | `OC_MODEL_EFFORT` | no | How hard the model thinks: `low`…`max`. Default `high` |
 | `OC_MODEL_CONSENTED_PROVIDERS` | with a provider | The providers investigation material may be sent to. Nothing listed permits nothing, including the configured one |
 | `OC_MODEL_BASE_URL` | no | Overrides where the provider is reached; https except loopback |
+| `OC_MODEL_SPEND_CEILING_CENTS` | no | Hard spend ceiling per investigation, whole cents. Default `500`; a reached ceiling ends the investigation as an honest partial conclusion labeled stopped-by-spend. Positive only — the ceiling can be raised, never removed |
+| `OC_INVESTIGATION_WINDOW_LEAD` | no | How far before the incident began an investigation's window reaches back. Default `2h`; every tool read is clamped inside the widened window |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
 | `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. An Integration's webhook endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |

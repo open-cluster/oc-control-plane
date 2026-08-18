@@ -84,7 +84,7 @@ func (p *Placements) CreateIntegration(
 				        CASE WHEN $10::BYTEA IS NULL THEN NULL ELSE now() END,
 				        $12, CASE WHEN $13 THEN now() END, $14, $15)
 				RETURNING `+integrationColumns,
-				uuid.New(), organization.String(), int16(wanted.Type), wanted.Name,
+				identityOrNew(wanted.ID), organization.String(), int16(wanted.Type), wanted.Name,
 				configuration, labels, nullableUUID(wanted.RelayID),
 				wanted.WebhookSecretDigest, nullableText(wanted.WebhookSecretFingerprint),
 				wanted.CredentialSealed, nullableText(wanted.CredentialFingerprint),
@@ -803,6 +803,15 @@ func orEmptyConfiguration(configuration map[string]any) map[string]any {
 	return configuration
 }
 
+// identityOrNew honors an identity the handler minted before the insert — the sealed
+// credential is bound to it — and mints one only for a caller that supplied none.
+func identityOrNew(id uuid.UUID) uuid.UUID {
+	if id == uuid.Nil {
+		return uuid.New()
+	}
+	return id
+}
+
 // nullableUUID renders the zero UUID as SQL NULL, which is what "no Relay serves this"
 // means in the column.
 func nullableUUID(id uuid.UUID) *uuid.UUID {
@@ -810,4 +819,21 @@ func nullableUUID(id uuid.UUID) *uuid.UUID {
 		return nil
 	}
 	return &id
+}
+
+// RecordCredentialUnseal writes the audit event for one credential unseal: a system act
+// naming the integration whose credential was opened and the path that opened it. It is
+// recorded BEFORE the credential is used — a use that cannot be recorded does not
+// happen, for the same reason audited operations roll back with their record.
+func (p *Placements) RecordCredentialUnseal(
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, purpose string,
+) error {
+	return p.RecordEvent(ctx, organization, audit.Event{
+		Organization: organization.String(),
+		Actor:        audit.System("control-plane"),
+		Action:       audit.ActionIntegrationCredentialUnsealed,
+		Target:       audit.Target{Kind: audit.TargetIntegration, ID: id.String()},
+		Outcome:      audit.OutcomeAllowed,
+		Detail:       audit.Detail{"purpose": purpose},
+	})
 }

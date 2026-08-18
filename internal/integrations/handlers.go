@@ -235,6 +235,9 @@ func (h Handlers) plan(
 	}
 
 	wanted := NewIntegration{
+		// Minted here, before the probe seals anything, so the sealed credential can
+		// bind to the row it will live on.
+		ID:            uuid.New(),
 		Type:          definition.ID,
 		Name:          name,
 		Configuration: configuration,
@@ -302,7 +305,7 @@ func (h Handlers) probeAndSeal(
 	if credential == "" {
 		return true
 	}
-	sealed, fingerprint, ok := h.sealCredential(writer, credential)
+	sealed, fingerprint, ok := h.sealCredential(writer, credential, wanted.ID)
 	if !ok {
 		return false
 	}
@@ -415,7 +418,7 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				writeJSON(writer, http.StatusBadRequest, errorView{Error: verification.Note})
 				return
 			}
-			sealed, fingerprint, ok := h.sealCredential(writer, credential)
+			sealed, fingerprint, ok := h.sealCredential(writer, credential, id)
 			if !ok {
 				return
 			}
@@ -452,13 +455,13 @@ func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
 	return false
 }
 
-// sealCredential closes over a pasted credential and mints its identity, answering the
-// operator when either fails. Both paths that accept a credential refuse through here,
-// so they cannot drift into refusing differently.
+// sealCredential closes over a pasted credential, bound to the row it will live on, and
+// mints its identity — answering the operator when either fails. Both paths that accept
+// a credential refuse through here, so they cannot drift into refusing differently.
 func (h Handlers) sealCredential(
-	writer http.ResponseWriter, credential string,
+	writer http.ResponseWriter, credential string, id uuid.UUID,
 ) ([]byte, string, bool) {
-	sealed, err := h.Sealer.Seal(credential)
+	sealed, err := h.Sealer.Seal(credential, CredentialBinding(id))
 	if err == nil {
 		if fingerprint, mintErr := MintFingerprint(); mintErr == nil {
 			return sealed, fingerprint, true
@@ -555,7 +558,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	// could say whether the credential still works.
 	if definition.Probe != nil {
 		verified, probeErr := h.Store.RecordIntegrationVerification(
-			ctx, principal, organization, id, h.probeExisting(ctx, definition, found))
+			ctx, principal, organization, id, h.probeExisting(ctx, organization, definition, found))
 		if probeErr != nil {
 			h.fail(writer, request, probeErr)
 			return
@@ -593,14 +596,25 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 
 // probeExisting asks the provider about an Integration as recorded, unsealing its
 // credential for the one call that presents it. A credential that cannot be opened —
-// a rotated key, a tampered column — is judged failed with what the operator can do
-// about it, because "this integration cannot authenticate" is its operational truth.
+// a rotated key, a tampered column, a blob moved from another row — is judged failed
+// with what the operator can do about it, because "this integration cannot
+// authenticate" is its operational truth. The unseal lands in the audit record first;
+// one that cannot be recorded is not used.
 func (h Handlers) probeExisting(
-	ctx context.Context, definition Definition, found Integration,
+	ctx context.Context, organization tenancy.Organization, definition Definition,
+	found Integration,
 ) Verification {
 	input := ProbeInput{Integration: found}
 	if len(found.CredentialSealed) > 0 {
-		credential, err := h.Sealer.Open(found.CredentialSealed)
+		if err := h.Store.RecordCredentialUnseal(
+			ctx, organization, found.ID, "verification probe"); err != nil {
+			return Verification{
+				Status: StatusFailed,
+				Note: "the credential unseal could not be recorded, so the credential " +
+					"was not used; verify again once the record is writable",
+			}
+		}
+		credential, err := h.Sealer.Open(found.CredentialSealed, CredentialBinding(found.ID))
 		if err != nil {
 			return Verification{
 				Status: StatusFailed,

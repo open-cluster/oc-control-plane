@@ -18,7 +18,12 @@ type Decider struct {
 	provider   Provider
 	deployment Deployment
 	rate       Rate
+	telemetry  *Telemetry
 }
+
+// Instrument attaches the per-call telemetry. Without it the decider still works and
+// emits nothing, which is only right for tests.
+func (d *Decider) Instrument(telemetry *Telemetry) { d.telemetry = telemetry }
 
 // NewDecider validates the deployment against consent and the rate table and binds it to
 // its provider.
@@ -43,13 +48,26 @@ func NewDecider(
 func (d *Decider) Decide(
 	ctx context.Context, brief investigation.Brief,
 ) (investigation.Decision, error) {
+	// The spend-ceiling backstop. The runner enforces the ceiling as product behavior —
+	// an honest stopped-by-spend conclusion — so this refusal firing means a loop
+	// forgot its own check; it exists so a runaway is structurally impossible anyway.
+	// The concluding turn is always allowed: a partial conclusion costs one more call
+	// and refusing it would turn every reached ceiling into a failure.
+	if ceiling := d.deployment.SpendCeilingMicroCents; ceiling > 0 &&
+		brief.SpendSoFar.MicroCents >= ceiling && !brief.MustConclude {
+		return investigation.Decision{}, Failed(OutcomeCeilingReached,
+			d.deployment.Provider, d.deployment.Model, fmt.Sprintf(
+				"the investigation has spent %d micro-cents against a ceiling of %d "+
+					"and may only conclude", brief.SpendSoFar.MicroCents, ceiling))
+	}
+
 	prompt := renderBrief(d.deployment, brief)
 
 	decision := investigation.Decision{}
 	// One in-deployment retry for an answer that broke its own schema or ran out of
 	// output: the same model usually produces a well-formed document the second time.
 	for attempt := 0; attempt < 2; attempt++ {
-		completion, err := d.provider.Complete(ctx, prompt)
+		completion, err := d.telemetry.complete(ctx, d.provider, d.deployment, d.rate, prompt)
 		decision.Spend = decision.Spend.Add(spendOf(d.rate, completion.Usage))
 		if err != nil {
 			return decision, err

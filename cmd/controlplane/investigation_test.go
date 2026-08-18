@@ -222,6 +222,9 @@ func TestInvestigationRecordsItsWholeProvenance(t *testing.T) {
 	if read.Spend.InputTokens != 250 || read.Spend.MicroCents != 18 {
 		t.Errorf("spend = %+v, want the two decisions summed", read.Spend)
 	}
+	if strings.Contains(string(final), `"stoppedBy"`) {
+		t.Errorf("a free conclusion must carry no stoppedBy label: %s", final)
+	}
 
 	t.Run("the reasoner saw the run's content, not a summary of one", func(t *testing.T) {
 		briefs := reasoner.seen()
@@ -234,6 +237,53 @@ func TestInvestigationRecordsItsWholeProvenance(t *testing.T) {
 				second.Runs)
 		}
 	})
+}
+
+// A reasoner that never wants to stop is forced to conclude, and the wire view labels
+// the outcome with what stopped it — resource exhaustion is never rendered as a free
+// diagnosis.
+func TestAForcedConclusionIsLabeledStoppedOnTheWire(t *testing.T) {
+	restless := make([]investigation.Decision, 0, 6)
+	for range 5 {
+		restless = append(restless, investigation.Decision{
+			Calls: []investigation.ToolCall{{Tool: "slack.list_channels"}},
+		})
+	}
+	restless = append(restless, investigation.Decision{})
+	reasoner := &scriptedReasoner{decisions: restless}
+	plane, vendor := investigationPlaneWith(t, reasoner)
+	vendor.serveChannels(`{"ok":true,"channels":[
+		{"id":"C1","name":"incidents","topic":{"value":"live incident chat"}}]}`)
+	base := plane.base(surfaceOrg)
+
+	if status, body := plane.createSlack(t, "Acme Slack", "xoxb-good-token-1234"); status != http.StatusCreated {
+		t.Fatalf("creating slack = %d: %s", status, body)
+	}
+	episode := plane.openEpisode(t, "DiskFull", "finger-stopped")
+
+	status, body := plane.call(t, http.MethodPost, base+"/investigations",
+		map[string]any{"episodeId": episode})
+	if status != http.StatusAccepted {
+		t.Fatalf("opening an investigation = %d: %s", status, body)
+	}
+	var opened struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, body, &opened)
+
+	final := plane.awaitInvestigation(t, opened.ID)
+	var read struct {
+		Status    string `json:"status"`
+		StoppedBy string `json:"stoppedBy"`
+	}
+	decodeInto(t, final, &read)
+	if read.Status != "concluded" {
+		t.Fatalf("status = %q; a forced stop is a conclusion, not a failure: %s",
+			read.Status, final)
+	}
+	if read.StoppedBy != "reasoner_turns" {
+		t.Errorf("stoppedBy = %q, want reasoner_turns: %s", read.StoppedBy, final)
+	}
 }
 
 func TestInvestigationFromAQuestionInfersTheSubject(t *testing.T) {
