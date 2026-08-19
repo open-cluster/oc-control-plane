@@ -178,7 +178,7 @@ func listChannelsTool(client *Client) integrations.Tool {
 			var selected []channelContent
 			var sources []string
 			matched, cursor := 0, ""
-			for page := 0; page < maxChannelPages; page++ {
+			for range maxChannelPages {
 				listed, err := client.Channels(
 					ctx, request.Credential, maxChannelsPerList, cursor)
 				if err != nil {

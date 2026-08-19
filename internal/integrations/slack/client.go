@@ -301,7 +301,7 @@ type Thread struct {
 func (c *Client) Replies(ctx context.Context, token string, query RepliesQuery) (Thread, error) {
 	tail := Thread{}
 	cursor := ""
-	for page := 0; page < maxThreadPages; page++ {
+	for range maxThreadPages {
 		parameters := url.Values{
 			"channel": {query.Channel},
 			"ts":      {query.ThreadTS},
@@ -475,7 +475,10 @@ type messageJSON struct {
 
 func (m messageJSON) message() Message {
 	return Message{
-		TS: m.TS, User: m.User, Text: m.Text, ThreadTS: m.ThreadTS,
+		TS:         m.TS,
+		User:       m.User,
+		Text:       m.Text,
+		ThreadTS:   m.ThreadTS,
 		ReplyCount: m.ReplyCount,
 	}
 }
