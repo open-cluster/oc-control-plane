@@ -36,11 +36,14 @@ const (
 
 // The ceilings that can force a concluding turn, as stopped_by records them. Persisted
 // text, frozen like an enum: the operator view and its clients key on these words.
-// Empty means the model concluded freely.
+// Empty means the model concluded freely. Wall clock and stagnation are the autonomous
+// loop's own: the deterministic loop cannot reach them.
 const (
 	StoppedBySpend         = "spend"
 	StoppedByToolRuns      = "tool_runs"
 	StoppedByReasonerTurns = "reasoner_turns"
+	StoppedByWallClock     = "wall_clock"
+	StoppedByStagnation    = "stagnation"
 )
 
 func (s Status) String() string {
@@ -82,11 +85,48 @@ var (
 // Finding is one thing the investigation established, tied to the runs that support it.
 type Finding struct {
 	Statement string
+	// Kind is the finding's causal role — FindingProbableCause and its siblings. Empty
+	// on a deterministic-loop finding, which predates the vocabulary; required from the
+	// autonomous conclusion, enforced where it is decoded.
+	Kind string
+	// Confidence is categorical — confirmed, likely, possible — never an invented
+	// numeric certainty. Empty exactly when Kind is.
+	Confidence string
 	// Sources are one-based ordinals among the investigation's recorded tool runs. Every
 	// finding cites at least one — enforced when the reasoner's answer is decoded — so a
 	// statement nothing was read for cannot be stored as established.
 	Sources []int
 }
+
+// The causal kinds a finding distinguishes: persisted inside the findings record,
+// frozen like an enum. Multiple probable causes are legal — no incident is forced into
+// a single-cause model.
+const (
+	FindingProbableCause      = "probable_cause"
+	FindingContributingFactor = "contributing_factor"
+	FindingSymptom            = "symptom"
+	FindingTriggeringChange   = "triggering_change"
+	FindingPropagationEffect  = "propagation_effect"
+	FindingRuledOut           = "ruled_out"
+	FindingUnresolvedLead     = "unresolved_lead"
+)
+
+// The categorical confidence vocabulary. Persisted, frozen.
+const (
+	ConfidenceConfirmed = "confirmed"
+	ConfidenceLikely    = "likely"
+	ConfidencePossible  = "possible"
+)
+
+// FindingKinds and Confidences enumerate the legal values, for decoders and gates.
+var (
+	FindingKinds = []string{
+		FindingProbableCause, FindingContributingFactor, FindingSymptom,
+		FindingTriggeringChange, FindingPropagationEffect, FindingRuledOut,
+		FindingUnresolvedLead,
+	}
+	Confidences = []string{ConfidenceConfirmed, ConfidenceLikely, ConfidencePossible}
+)
 
 // Spend is what the reasoning behind an investigation consumed.
 type Spend struct {
@@ -123,6 +163,9 @@ type Investigation struct {
 	WindowUntil time.Time
 	Status      Status
 	Findings    []Finding
+	// NextSteps are the conclusion's recommended actions, in the order the operator
+	// should consider them; empty when the conclusion carried none.
+	NextSteps []string
 	// StoppedBy names the ceiling that forced the concluding turn — StoppedBySpend and
 	// its siblings — and is empty when the model concluded freely. A stopped
 	// investigation still concluded, with what was established and what remains
@@ -188,12 +231,17 @@ type NewInvestigation struct {
 	CreatedBy     string
 }
 
-// Trigger is what an episode contributes when it starts an investigation.
+// Trigger is what an episode contributes when it starts an investigation. Annotations
+// and GeneratorURL are the alert's own operational knowledge — runbook and dashboard
+// links, the source's graph — preserved through intake and rendered in the autonomous
+// orientation.
 type Trigger struct {
 	EpisodeID     uuid.UUID
 	IntegrationID uuid.UUID
 	Title         string
 	Labels        map[string]string
+	Annotations   map[string]string
+	GeneratorURL  string
 	FirstSeenAt   time.Time
 	LastSeenAt    time.Time
 	Resolved      bool
@@ -232,9 +280,11 @@ type Store interface {
 	RecordToolRun(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		run ToolRun) error
 	// ConcludeInvestigation ends one with its findings and spend. stoppedBy names the
-	// ceiling that forced the concluding turn, empty when the model concluded freely.
+	// ceiling that forced the concluding turn, empty when the model concluded freely;
+	// nextSteps are the conclusion's recommended actions, nil when the conclusion
+	// carries none.
 	ConcludeInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		findings []Finding, stoppedBy string, spend Spend) error
+		findings []Finding, nextSteps []string, stoppedBy string, spend Spend) error
 	// FailInvestigation ends one with the reason it could not conclude.
 	FailInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		reason string, spend Spend) error
@@ -252,6 +302,10 @@ type Store interface {
 	// the credential is used; a use that cannot be recorded does not happen.
 	RecordCredentialUnseal(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		purpose string) error
+	// WorkloadInventory reads a bounded digest of the change ledger's current workload
+	// identities — a navigation index for the autonomous orientation, never evidence.
+	WorkloadInventory(ctx context.Context, org tenancy.Organization,
+		limit int) ([]string, error)
 }
 
 // Brief is everything the reasoner may consult for one decision. The text within it —

@@ -15,7 +15,7 @@ page groups them by what they enable.
 | Alert intake | `OC_INTAKE_ADDRESS` (+ `OC_INTAKE_PUBLIC_URL` so webhook endpoints render whole) |
 | Credential-bearing integrations (Slack) | `OC_SEALING_KEY_FILE` — without it, a catalog serving such a type refuses to start the operator surface |
 | GitHub | `OC_GITHUB_APP_ID` + `OC_GITHUB_APP_PRIVATE_KEY_FILE` (both or neither); `OC_GITHUB_API_URL` for Enterprise hosts |
-| Investigations | `OC_MODEL_PROVIDER`, `OC_MODEL_NAME`, `OC_MODEL_KEY_FILE`, `OC_MODEL_CONSENTED_PROVIDERS` (+ optional `OC_MODEL_EFFORT`, `OC_MODEL_BASE_URL`, `OC_MODEL_SPEND_CEILING_CENTS`, `OC_INVESTIGATION_WINDOW_LEAD`) |
+| Investigations | `OC_MODEL_PROVIDER`, `OC_MODEL_NAME`, `OC_MODEL_KEY_FILE`, `OC_MODEL_CONSENTED_PROVIDERS` (+ optional `OC_MODEL_EFFORT`, `OC_MODEL_BASE_URL`, `OC_MODEL_SPEND_CEILING_CENTS`, `OC_INVESTIGATION_WINDOW_LEAD`, `OC_INVESTIGATION_ARCHITECTURE`, `OC_INVESTIGATION_MAX_TOOL_RUNS`, `OC_INVESTIGATION_MAX_TURNS`) |
 
 ## Rules worth knowing
 
@@ -41,3 +41,11 @@ page groups them by what they enable.
   investigation's window backwards before the incident began, because the change that
   caused an incident usually landed before it fired. Every tool read is clamped inside
   the widened window.
+- **The architecture** (`OC_INVESTIGATION_ARCHITECTURE`, default `deterministic`)
+  selects which loop investigates. `autonomous` runs the conversational single agent:
+  the model holds one native tool-calling conversation over every offered source and
+  ends with a structured causal conclusion. Its ceilings
+  (`OC_INVESTIGATION_MAX_TOOL_RUNS`, default 30; `OC_INVESTIGATION_MAX_TURNS`, default
+  20) are positive whole numbers; a reached ceiling — like spend, wall clock, or
+  stagnating reads — ends the investigation as an honest partial conclusion with its
+  `stoppedBy` label.

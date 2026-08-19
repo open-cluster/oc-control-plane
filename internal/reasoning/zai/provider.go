@@ -209,6 +209,13 @@ func (p *Provider) answer(
 	}
 
 	completion.Document = []byte(choice.Message.Content)
+	for _, call := range choice.Message.ToolCalls {
+		completion.ToolCalls = append(completion.ToolCalls, reasoning.CompletionCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: []byte(call.Function.Arguments),
+		})
+	}
 	return completion, nil
 }
 
@@ -254,7 +261,8 @@ type completionResponse struct {
 			Content string `json:"content"`
 			// ReasoningContent is this vendor's thinking output. It is read only so that it is
 			// never mistaken for the document; nothing here records or logs it.
-			ReasoningContent string `json:"reasoning_content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []toolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage usage `json:"usage"`

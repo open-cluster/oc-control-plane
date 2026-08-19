@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
@@ -88,7 +89,7 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 		}
 
 		directory := writeEvalReport(t, t.TempDir(), "pipeline-proof", "test",
-			evalAgentRevision(t), "scripted", []evalScore{score}, []evalRecord{record})
+			evalAgentRevision(t, ""), "scripted", []evalScore{score}, []evalRecord{record})
 		var report evalReport
 		raw, err := os.ReadFile(filepath.Join(directory, "report.json"))
 		if err != nil {
@@ -156,15 +157,16 @@ func TestEvalBaseline(t *testing.T) {
 	}
 
 	directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
-		label, gitRevision(t), evalAgentRevision(t), model.Provider+"/"+model.Name,
-		scores, records)
+		label, gitRevision(t), evalAgentRevision(t, model.Architecture),
+		model.Provider+"/"+model.Name, scores, records)
 	t.Logf("evaluation capture filed under %s: %d cases", directory, len(scores))
 }
 
-// evalAgentRevision derives the same agent revision production derives, through the
-// same catalog assembly and flattening: the tool declarations do not depend on any
-// client, so the set here hashes identically to the running control plane's.
-func evalAgentRevision(t *testing.T) string {
+// evalAgentRevision derives the same agent revision production derives for the
+// capture's architecture, through the same catalog assembly and flattening: the tool
+// declarations do not depend on any client, so the set here hashes identically to the
+// running control plane's.
+func evalAgentRevision(t *testing.T, architecture string) string {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
@@ -175,16 +177,20 @@ func evalAgentRevision(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("assembling the catalog: %v", err)
 	}
+	if architecture == config.ArchitectureAutonomous {
+		return reasoning.AutonomousAgentRevision(catalogTools(catalog))
+	}
 	return reasoning.AgentRevision(catalogTools(catalog))
 }
 
 func evalModelFromEnvironment(t *testing.T) evalModel {
 	t.Helper()
 	model := evalModel{
-		Provider: os.Getenv("OC_EVAL_MODEL_PROVIDER"),
-		Name:     os.Getenv("OC_EVAL_MODEL_NAME"),
-		Effort:   os.Getenv("OC_EVAL_MODEL_EFFORT"),
-		BaseURL:  os.Getenv("OC_EVAL_MODEL_BASE_URL"),
+		Provider:     os.Getenv("OC_EVAL_MODEL_PROVIDER"),
+		Name:         os.Getenv("OC_EVAL_MODEL_NAME"),
+		Effort:       os.Getenv("OC_EVAL_MODEL_EFFORT"),
+		BaseURL:      os.Getenv("OC_EVAL_MODEL_BASE_URL"),
+		Architecture: os.Getenv("OC_EVAL_ARCHITECTURE"),
 	}
 	keyFile := os.Getenv("OC_EVAL_MODEL_KEY_FILE")
 	if model.Provider == "" || model.Name == "" || keyFile == "" {

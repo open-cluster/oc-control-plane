@@ -1,6 +1,11 @@
 package reasoning
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+)
 
 // THE PROVIDER CONTRACT, AND THE REASON IT MENTIONS NO VENDOR.
 //
@@ -46,14 +51,67 @@ type Prompt struct {
 	// Content is the rendered deliberation, in the order the ordinals in the answer refer to.
 	Content []Block
 	// Schema is the output contract. The model is not being asked to do anything; it is being
-	// asked to return a document, and this is the shape of the document.
+	// asked to return a document, and this is the shape of the document. Empty on a
+	// native-tool-calling prompt, where the conclude tool's input schema is the contract.
 	Schema Schema
+	// Tools are the native tool definitions, generated from the one declarative
+	// contract — never a second hand-written representation. Present, they put the
+	// prompt in tool-calling mode: the adapter translates each into its vendor's wire
+	// shape, and the answer may carry tool calls.
+	Tools []integrations.ToolDefinition
+	// ForceTool names the one tool the answer must call — the forced concluding turn.
+	// Empty leaves the choice to the model.
+	ForceTool string
+	// Turns is the conversation so far, oldest first: each the assistant's own prior
+	// move with what answered it. The adapter replays them verbatim, because caching is
+	// a prefix match and the transcript is the prefix.
+	Turns []Turn
 	// MaxOutputTokens bounds the answer. On providers where thinking and answer text share the
 	// bound, a value sized around the answer alone truncates mid-thought.
 	MaxOutputTokens int64
 	// Effort is how hard to think. It is the primary cost and latency lever and the right value
 	// is an empirical question, so it is configuration rather than a constant.
 	Effort Effort
+}
+
+// Turn is one completed exchange in a tool-calling conversation: what the assistant
+// said and asked for, then what answered it.
+type Turn struct {
+	Assistant AssistantTurn
+	// Results answer the assistant's calls, in the same order.
+	Results []ToolResultTurn
+	// Instruction is trailing user text after the results — the forced-conclusion
+	// reason, rendered for the model to act on. Usually empty.
+	Instruction string
+}
+
+// AssistantTurn is the model's own prior move, echoed back on later requests.
+type AssistantTurn struct {
+	Text  string
+	Calls []CompletionCall
+	// Raw is the producing adapter's own verbatim rendering of this turn, opaque to
+	// everything else. An adapter whose vendor requires the turn replayed exactly — a
+	// thinking block with its signature, say — stores it here and prefers it when
+	// rebuilding; adapters that can rebuild from the neutral fields ignore it.
+	Raw []byte
+}
+
+// CompletionCall is one native tool call, in this system's shape.
+type CompletionCall struct {
+	// ID is the provider's own identifier for the call, echoed back with its result.
+	ID   string
+	Name string
+	// Arguments is the call's input exactly as the model produced it.
+	Arguments json.RawMessage
+}
+
+// ToolResultTurn is one call's answer, paired by the call's own identifier.
+type ToolResultTurn struct {
+	CallID  string
+	Content string
+	// IsError marks a read that failed or was refused, so the model treats the content
+	// as the reason rather than as data.
+	IsError bool
 }
 
 // Block is one span of prompt text and whether a cacheable prefix ends at it.
@@ -90,8 +148,14 @@ type Completion struct {
 	// RequestID is the provider's own identifier for this call, which is what a vendor support
 	// conversation is conducted in.
 	RequestID string
-	// Document is the answer, as the bytes the schema describes.
+	// Document is the answer, as the bytes the schema describes. On a tool-calling
+	// prompt it is any plain answer text instead.
 	Document []byte
+	// ToolCalls are the native calls the answer asked for, empty when it did not.
+	ToolCalls []CompletionCall
+	// Raw is the adapter's own verbatim rendering of this assistant turn, for replay —
+	// see AssistantTurn.Raw.
+	Raw []byte
 	// Stop is why generation ended, normalized. It is read before the document is, because
 	// reading the document first is the defect that presents a refusal as a conclusion.
 	Stop Stop
@@ -114,6 +178,9 @@ const (
 	// StopTruncated is the output ceiling being reached before the answer finished. The document
 	// is incomplete and cannot be trusted to parse.
 	StopTruncated
+	// StopToolUse is a turn that ended by asking for tools: the completion carries the
+	// calls, and the conversation continues with their results.
+	StopToolUse
 )
 
 func (s Stop) String() string {
@@ -124,6 +191,8 @@ func (s Stop) String() string {
 		return "refused"
 	case StopTruncated:
 		return "truncated"
+	case StopToolUse:
+		return "tool_use"
 	default:
 		return "unrecognised"
 	}

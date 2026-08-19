@@ -47,6 +47,8 @@ func stopOf(reason sdk.StopReason) reasoning.Stop {
 		return reasoning.StopRefused
 	case sdk.StopReasonMaxTokens, sdk.StopReasonModelContextWindowExceeded:
 		return reasoning.StopTruncated
+	case sdk.StopReasonToolUse:
+		return reasoning.StopToolUse
 	default:
 		return reasoning.StopComplete
 	}

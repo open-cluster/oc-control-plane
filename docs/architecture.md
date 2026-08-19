@@ -43,6 +43,7 @@ Each of these was made deliberately; a change to one is a design decision, not a
 | Persisted enums are frozen integers with a build gate | A reordered constant silently relabels every stored row |
 | Investigations persist provenance, never chain-of-thought | What an operator audits is what was done and found, not how a model deliberated |
 | The context router is deterministic; the model routes only among offered tools | Routing must be explainable afterwards; tool choice is what tool metadata is for |
+| Two investigation loops coexist behind one runner shell: the deterministic rounds, and an autonomous conversation over every offered source (`OC_INVESTIGATION_ARCHITECTURE`) | The architecture choice is settled by a scored evaluation, not by argument; the loser is deleted afterwards, never kept behind a switch |
 
 ## Data model, briefly
 

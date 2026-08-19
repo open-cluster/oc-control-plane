@@ -74,7 +74,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	if h.Runner == nil || h.Runner.Reasoner == nil {
+	if h.Runner == nil || (h.Runner.Reasoner == nil && h.Runner.Investigator == nil) {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
 		return
@@ -188,13 +188,14 @@ func matchQuestion(question string, candidates []Trigger) []Trigger {
 	best := 0
 	var matched []Trigger
 	for _, candidate := range candidates {
-		haystack := strings.ToLower(candidate.Title)
+		var haystack strings.Builder
+		haystack.WriteString(strings.ToLower(candidate.Title))
 		for key, value := range candidate.Labels {
-			haystack += " " + strings.ToLower(key) + " " + strings.ToLower(value)
+			haystack.WriteString(" " + strings.ToLower(key) + " " + strings.ToLower(value))
 		}
 		score := 0
 		for _, term := range terms {
-			if strings.Contains(haystack, term) {
+			if strings.Contains(haystack.String(), term) {
 				score++
 			}
 		}

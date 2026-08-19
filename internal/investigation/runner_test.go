@@ -26,9 +26,12 @@ import (
 type memoryStore struct {
 	mu           sync.Mutex
 	candidates   []integrations.Integration
+	trigger      *Trigger
+	inventory    []string
 	sources      []Source
 	runs         []ToolRun
 	findings     []Finding
+	nextSteps    []string
 	stoppedBy    string
 	unseals      []string
 	refuseUnseal bool
@@ -81,11 +84,12 @@ func (m *memoryStore) RecordToolRun(
 
 func (m *memoryStore) ConcludeInvestigation(
 	_ context.Context, _ tenancy.Organization, _ uuid.UUID, findings []Finding,
-	stoppedBy string, spend Spend,
+	nextSteps []string, stoppedBy string, spend Spend,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.status, m.findings, m.stoppedBy, m.spend = StatusConcluded, findings, stoppedBy, spend
+	m.nextSteps = nextSteps
 	return nil
 }
 
@@ -101,7 +105,20 @@ func (m *memoryStore) FailInvestigation(
 func (m *memoryStore) TriggerEpisode(
 	context.Context, tenancy.Organization, uuid.UUID,
 ) (Trigger, error) {
-	return Trigger{}, errors.New("not used by the runner")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.trigger == nil {
+		return Trigger{}, errors.New("no trigger scripted")
+	}
+	return *m.trigger, nil
+}
+
+func (m *memoryStore) WorkloadInventory(
+	context.Context, tenancy.Organization, int,
+) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.inventory, nil
 }
 
 func (m *memoryStore) OpenTriggers(

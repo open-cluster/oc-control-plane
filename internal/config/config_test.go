@@ -223,3 +223,46 @@ func TestLoad_OptionalOverridesApply(t *testing.T) {
 		t.Errorf("OTLPEndpoint = %q", cfg.OTLPEndpoint)
 	}
 }
+
+func TestLoad_InvestigationArchitectureDefaultsAndValidates(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(lookupFrom(validEnvironment(t)))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.InvestigationArchitecture != config.ArchitectureDeterministic {
+		t.Errorf("architecture = %q; the deterministic loop is the default",
+			cfg.InvestigationArchitecture)
+	}
+	if cfg.InvestigationMaxToolRuns != 0 || cfg.InvestigationMaxTurns != 0 {
+		t.Error("unset ceilings mean the built-in defaults, spelled zero")
+	}
+
+	environment := validEnvironment(t)
+	environment["OC_INVESTIGATION_ARCHITECTURE"] = "autonomous"
+	environment["OC_INVESTIGATION_MAX_TOOL_RUNS"] = "40"
+	environment["OC_INVESTIGATION_MAX_TURNS"] = "25"
+	cfg, err = config.Load(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.InvestigationArchitecture != config.ArchitectureAutonomous ||
+		cfg.InvestigationMaxToolRuns != 40 || cfg.InvestigationMaxTurns != 25 {
+		t.Errorf("cfg = %q %d %d", cfg.InvestigationArchitecture,
+			cfg.InvestigationMaxToolRuns, cfg.InvestigationMaxTurns)
+	}
+
+	for key, value := range map[string]string{
+		"OC_INVESTIGATION_ARCHITECTURE":  "swarm",
+		"OC_INVESTIGATION_MAX_TOOL_RUNS": "0",
+		"OC_INVESTIGATION_MAX_TURNS":     "-3",
+	} {
+		environment := validEnvironment(t)
+		environment[key] = value
+		if _, err := config.Load(lookupFrom(environment)); err == nil ||
+			!strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%q must be refused naming the variable, got %v", key, value, err)
+		}
+	}
+}

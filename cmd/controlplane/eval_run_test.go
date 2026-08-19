@@ -58,12 +58,15 @@ type evalSpend struct {
 
 // evalModel is the deployment a real-model evaluation runs against, read from the
 // OC_EVAL_MODEL_* environment by the gated test; zero means the scripted reasoner.
+// Architecture selects which loop investigates — issue #5's candidates are captured by
+// running the same worlds under each.
 type evalModel struct {
-	Provider string
-	Name     string
-	Key      string
-	Effort   string
-	BaseURL  string
+	Provider     string
+	Name         string
+	Key          string
+	Effort       string
+	BaseURL      string
+	Architecture string
 }
 
 // runEvalCase executes one case and returns its record. Each case gets its own plane and
@@ -103,6 +106,9 @@ func runEvalCase(
 			cfg.ModelEffort = model.Effort
 			cfg.ModelBaseURL = model.BaseURL
 			cfg.ModelConsented = []string{model.Provider}
+		}
+		if model.Architecture != "" {
+			cfg.InvestigationArchitecture = model.Architecture
 		}
 	}, wiring{reasoner: reasoner})
 	world := &integrationPlane{

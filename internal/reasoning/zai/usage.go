@@ -58,6 +58,8 @@ func stopOf(reason string) reasoning.Stop {
 		return reasoning.StopRefused
 	case "length", "model_context_window_exceeded":
 		return reasoning.StopTruncated
+	case "tool_calls":
+		return reasoning.StopToolUse
 	default:
 		return reasoning.StopComplete
 	}

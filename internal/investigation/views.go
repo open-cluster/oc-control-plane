@@ -23,6 +23,10 @@ type clarificationView struct {
 
 type findingView struct {
 	Statement string `json:"statement"`
+	// Kind is the finding's causal role and Confidence its categorical certainty.
+	// Absent on findings the deterministic loop concluded, which predate the vocabulary.
+	Kind       string `json:"kind,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
 	// Sources are one-based ordinals among the investigation's runs.
 	Sources []int `json:"sources"`
 }
@@ -43,9 +47,11 @@ type investigationView struct {
 	WindowFrom    string        `json:"windowFrom"`
 	WindowUntil   string        `json:"windowUntil"`
 	Findings      []findingView `json:"findings"`
+	// NextSteps are the conclusion's recommended actions, absent when it carried none.
+	NextSteps []string `json:"nextSteps,omitempty"`
 	// StoppedBy labels a conclusion a ceiling forced — "spend", "tool_runs",
-	// "reasoner_turns" — so a stopped investigation never renders as a free diagnosis.
-	// Absent when the model concluded freely.
+	// "reasoner_turns", "wall_clock", "stagnation" — so a stopped investigation never
+	// renders as a free diagnosis. Absent when the model concluded freely.
 	StoppedBy   string    `json:"stoppedBy,omitempty"`
 	Error       string    `json:"error,omitempty"`
 	Spend       spendView `json:"spend"`
@@ -99,6 +105,7 @@ func investigationViewOf(found Investigation) investigationView {
 		WindowFrom:  stamp(found.WindowFrom),
 		WindowUntil: stamp(found.WindowUntil),
 		Findings:    findings,
+		NextSteps:   found.NextSteps,
 		StoppedBy:   found.StoppedBy,
 		Error:       found.Error,
 		Spend: spendView{

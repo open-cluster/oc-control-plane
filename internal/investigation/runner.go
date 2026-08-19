@@ -65,7 +65,15 @@ type Runner struct {
 	Catalog  integrations.Catalog
 	Sealer   seal.Sealer
 	Reasoner Reasoner
-	Logger   *slog.Logger
+	// Investigator is the autonomous conversation boundary. Set, it selects the
+	// autonomous loop; nil runs the deterministic loop. Both coexist behind this one
+	// shell until a scored evaluation picks the winner.
+	Investigator Investigator
+	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
+	// tuning, so configuration rather than constants; zero means the defaults.
+	MaxToolRuns int
+	MaxTurns    int
+	Logger      *slog.Logger
 	// SpendCeilingMicroCents is the hard spend ceiling per investigation. A reached
 	// ceiling forces the concluding turn and is recorded as stopped_by — an honest
 	// partial investigation, never a failure and never a diagnosis it did not reach.
@@ -131,6 +139,10 @@ func (r *Runner) Drain() {
 func (r *Runner) run(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
 ) {
+	if r.Investigator != nil {
+		r.runAutonomous(ctx, organization, opened)
+		return
+	}
 	spend := Spend{}
 
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
@@ -188,7 +200,8 @@ func (r *Runner) run(
 			writeCtx, done := writeWindow(ctx)
 			defer done()
 			if err := r.Store.ConcludeInvestigation(
-				writeCtx, organization, opened.ID, decision.Findings, stoppedBy, spend); err != nil {
+				writeCtx, organization, opened.ID, decision.Findings, nil,
+				stoppedBy, spend); err != nil {
 				r.Logger.Error("an investigation's conclusion could not be recorded",
 					slog.String("investigation_id", opened.ID.String()),
 					slog.String("error", err.Error()))

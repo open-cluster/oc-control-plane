@@ -309,3 +309,49 @@ func TestChangeLedger_RetentionPrunesByAgeAndOnlyByAge(t *testing.T) {
 		t.Fatalf("the aged entry must go, got %d, %v", removed, err)
 	}
 }
+
+func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
+	placements, organization := migratedPlacement(t)
+	defer placements.Close()
+	registration, integration := ledgerScope(t, placements, organization)
+	ctx := context.Background()
+
+	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	delta := changeledger.Delta{
+		IntegrationID: integration, Baseline: true, ObservedAt: start,
+		Changes: []changeledger.Change{
+			{Namespace: "shop", Kind: changeledger.KindDeployment, Name: "api",
+				UID: "uid-1", ObservedRevision: "g1.a", Change: changeledger.ChangeCreated},
+			{Namespace: "shop", Kind: changeledger.KindStatefulSet, Name: "queue",
+				UID: "uid-2", ObservedRevision: "g1.b", Change: changeledger.ChangeCreated},
+			{Namespace: "shop", Kind: changeledger.KindConfigMap, Name: "settings",
+				UID: "uid-3", ObservedRevision: "g1.c", Change: changeledger.ChangeCreated},
+		},
+	}
+	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, delta); err != nil {
+		t.Fatalf("recording the baseline: %v", err)
+	}
+	gone := changeledger.Delta{
+		IntegrationID: integration, ObservedAt: start.Add(10 * time.Minute),
+		Changes: []changeledger.Change{{
+			Namespace: "shop", Kind: changeledger.KindStatefulSet, Name: "queue",
+			UID: "uid-2", ObservedRevision: "", Change: changeledger.ChangeDeleted,
+		}},
+	}
+	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, gone); err != nil {
+		t.Fatalf("recording the deletion: %v", err)
+	}
+
+	digest, err := placements.WorkloadInventory(ctx, organization, 10)
+	if err != nil {
+		t.Fatalf("reading the inventory: %v", err)
+	}
+	if len(digest) != 1 || digest[0] != "shop/deployment api" {
+		t.Fatalf("digest = %v; deletions drop out and only workload kinds appear", digest)
+	}
+
+	if bounded, err := placements.WorkloadInventory(ctx, organization, 0); err != nil ||
+		len(bounded) != 0 {
+		t.Fatalf("a zero bound reads nothing: %v %v", bounded, err)
+	}
+}

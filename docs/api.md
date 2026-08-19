@@ -45,7 +45,7 @@ Nothing this surface returns is cacheable (`Cache-Control: no-store`).
 | --- | --- | --- |
 | `POST /operator/v1/organizations/{org}/investigations` | `investigation.open` | Body `{episodeId}` or `{question}`. `202` with a running record; an ambiguous question answers `200` with one plain-language `clarification` and opens nothing; no model provider configured answers `503` with the reason |
 | `GET …/investigations` | `investigation.read` | Newest first, standard envelope |
-| `GET …/investigations/{id}` | `investigation.read` | The record plus full provenance: `sources` (rank, reason, selectedAt), `runs` (ordinal, tool, arguments, window, outcome, truncated, summary, sources, error), `findings` (statement + run ordinals), `spend` (tokens, integer micro-cents) |
+| `GET …/investigations/{id}` | `investigation.read` | The record plus full provenance: `sources` (rank, reason, selectedAt), `runs` (ordinal, tool, arguments, window, outcome, truncated, summary, sources, error), `findings` (statement + run ordinals; autonomous conclusions add `kind` and `confidence`), `nextSteps` when the conclusion recommended actions, `stoppedBy` when a ceiling forced the end, `spend` (tokens, integer micro-cents) |
 
 A finding's `sources` are one-based ordinals among `runs` — every finding cites at least
 one, enforced before anything persists.

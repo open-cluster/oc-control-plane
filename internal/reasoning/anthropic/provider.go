@@ -8,6 +8,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -126,7 +127,26 @@ func (p *Provider) Complete(
 	}
 
 	completion.Document = []byte(textOf(message))
+	completion.ToolCalls = toolCallsOf(message)
+	// The whole turn is captured for verbatim replay: this vendor requires its own
+	// thinking blocks, signatures included, echoed back during a tool loop.
+	if raw, err := json.Marshal(message); err == nil {
+		completion.Raw = raw
+	}
 	return completion, nil
+}
+
+// toolCallsOf reads the native calls out of the answer, in this system's shape.
+func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
+	var calls []reasoning.CompletionCall
+	for _, block := range message.Content {
+		if use, isUse := block.AsAny().(sdk.ToolUseBlock); isUse {
+			calls = append(calls, reasoning.CompletionCall{
+				ID: use.ID, Name: use.Name, Arguments: use.Input,
+			})
+		}
+	}
+	return calls
 }
 
 // answeringModel reads which model actually replied, falling back to what was asked for only when

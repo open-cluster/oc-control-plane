@@ -22,8 +22,8 @@ import (
 var _ investigation.Store = (*Placements)(nil)
 
 const investigationColumns = `investigation_id, episode_id, integration_id, question,
-	       subject, window_from, window_until, status, findings, stopped_by, error,
-	       spend_input_tokens, spend_output_tokens, spend_micro_cents,
+	       subject, window_from, window_until, status, findings, next_steps, stopped_by,
+	       error, spend_input_tokens, spend_output_tokens, spend_micro_cents,
 	       created_by, created_at, concluded_at`
 
 // CreateInvestigation records one, born running. Opening is an operator act and lands in
@@ -276,17 +276,23 @@ func (p *Placements) RecordToolRun(
 }
 
 // ConcludeInvestigation ends one with its findings and spend. stoppedBy names the
-// ceiling that forced the concluding turn, empty when the model concluded freely.
+// ceiling that forced the concluding turn, empty when the model concluded freely;
+// nextSteps are the conclusion's recommended actions, nil when it carries none.
 func (p *Placements) ConcludeInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	findings []investigation.Finding, stoppedBy string, spend investigation.Spend,
+	findings []investigation.Finding, nextSteps []string, stoppedBy string,
+	spend investigation.Spend,
 ) error {
 	encoded, err := json.Marshal(orEmptyFindings(findings))
 	if err != nil {
 		return fmt.Errorf("encoding findings: %w", err)
 	}
+	steps, err := json.Marshal(orEmptyStrings(nextSteps))
+	if err != nil {
+		return fmt.Errorf("encoding next steps: %w", err)
+	}
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", spend)
+		encoded, steps, stoppedBy, "", spend)
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
@@ -295,14 +301,15 @@ func (p *Placements) FailInvestigation(
 	reason string, spend investigation.Spend,
 ) error {
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
-		[]byte("[]"), "", reason, spend)
+		[]byte("[]"), []byte("[]"), "", reason, spend)
 }
 
 // endInvestigation is the one write both endings share. Guarded on the row still
 // running, so an investigation cannot be ended twice.
 func (p *Placements) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	status int16, findings []byte, stoppedBy, reason string, spend investigation.Spend,
+	status int16, findings, nextSteps []byte, stoppedBy, reason string,
+	spend investigation.Spend,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -312,14 +319,15 @@ func (p *Placements) endInvestigation(
 		UPDATE investigation
 		   SET status              = $3,
 		       findings            = $4,
-		       stopped_by          = $5,
-		       error               = $6,
-		       spend_input_tokens  = $7,
-		       spend_output_tokens = $8,
-		       spend_micro_cents   = $9,
+		       next_steps          = $5,
+		       stopped_by          = $6,
+		       error               = $7,
+		       spend_input_tokens  = $8,
+		       spend_output_tokens = $9,
+		       spend_micro_cents   = $10,
 		       concluded_at        = now()
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1`,
-		id, organization.String(), status, findings, stoppedBy, reason,
+		id, organization.String(), status, findings, nextSteps, stoppedBy, reason,
 		spend.InputTokens, spend.OutputTokens, spend.MicroCents)
 	if err != nil {
 		return fmt.Errorf("ending an investigation: %w", err)
@@ -330,14 +338,16 @@ func (p *Placements) endInvestigation(
 	return nil
 }
 
-// triggerColumns joins an episode with its newest signal's labels: the alert's own
-// namespace and service labels are the terms routing and subject inference match on, and
-// the episode row does not carry them itself.
+// triggerColumns joins an episode with its newest signal's labels, annotations and
+// generator URL: the labels are the terms routing and subject inference match on, and
+// the annotations carry the operator's own runbook and dashboard links — held context
+// the autonomous orientation renders. The episode row carries none of them itself.
 const triggerColumns = `e.episode_id, e.integration_id, e.title, e.status,
-	       e.first_seen_at, e.last_seen_at, coalesce(s.labels, '{}'::jsonb)
+	       e.first_seen_at, e.last_seen_at, coalesce(s.labels, '{}'::jsonb),
+	       coalesce(s.annotations, '{}'::jsonb), coalesce(s.generator_url, '')
 	  FROM incident_episode e
 	  LEFT JOIN LATERAL (
-	      SELECT labels FROM signal
+	      SELECT labels, annotations, generator_url FROM signal
 	       WHERE signal.episode_id = e.episode_id
 	       ORDER BY started_at DESC
 	       LIMIT 1
@@ -435,13 +445,23 @@ func scanInvestigation(row scanned, organization string) (investigation.Investig
 		episodeID     *uuid.UUID
 		integrationID *uuid.UUID
 		findings      []byte
+		nextSteps     []byte
 		concludedAt   *time.Time
 	)
 	if err := row.Scan(&found.ID, &episodeID, &integrationID, &found.Question,
 		&found.Subject, &found.WindowFrom, &found.WindowUntil, &found.Status, &findings,
-		&found.StoppedBy, &found.Error, &found.Spend.InputTokens, &found.Spend.OutputTokens,
-		&found.Spend.MicroCents, &found.CreatedBy, &found.CreatedAt, &concludedAt); err != nil {
+		&nextSteps, &found.StoppedBy, &found.Error, &found.Spend.InputTokens,
+		&found.Spend.OutputTokens, &found.Spend.MicroCents, &found.CreatedBy,
+		&found.CreatedAt, &concludedAt); err != nil {
 		return investigation.Investigation{}, err
+	}
+	if len(nextSteps) > 0 {
+		if err := json.Unmarshal(nextSteps, &found.NextSteps); err != nil {
+			return investigation.Investigation{}, fmt.Errorf("decoding next steps: %w", err)
+		}
+		if len(found.NextSteps) == 0 {
+			found.NextSteps = nil
+		}
 	}
 	if episodeID != nil {
 		found.EpisodeID = *episodeID
@@ -454,15 +474,18 @@ func scanInvestigation(row scanned, organization string) (investigation.Investig
 	}
 	if len(findings) > 0 {
 		var decoded []struct {
-			Statement string `json:"statement"`
-			Sources   []int  `json:"sources"`
+			Statement  string `json:"statement"`
+			Kind       string `json:"kind"`
+			Confidence string `json:"confidence"`
+			Sources    []int  `json:"sources"`
 		}
 		if err := json.Unmarshal(findings, &decoded); err != nil {
 			return investigation.Investigation{}, fmt.Errorf("decoding findings: %w", err)
 		}
 		for _, finding := range decoded {
 			found.Findings = append(found.Findings, investigation.Finding{
-				Statement: finding.Statement, Sources: finding.Sources,
+				Statement: finding.Statement, Kind: finding.Kind,
+				Confidence: finding.Confidence, Sources: finding.Sources,
 			})
 		}
 	}
@@ -471,18 +494,25 @@ func scanInvestigation(row scanned, organization string) (investigation.Investig
 
 func scanTrigger(row scanned) (investigation.Trigger, error) {
 	var (
-		trigger investigation.Trigger
-		status  int16
-		labels  []byte
+		trigger     investigation.Trigger
+		status      int16
+		labels      []byte
+		annotations []byte
 	)
 	if err := row.Scan(&trigger.EpisodeID, &trigger.IntegrationID, &trigger.Title,
-		&status, &trigger.FirstSeenAt, &trigger.LastSeenAt, &labels); err != nil {
+		&status, &trigger.FirstSeenAt, &trigger.LastSeenAt, &labels, &annotations,
+		&trigger.GeneratorURL); err != nil {
 		return investigation.Trigger{}, err
 	}
 	trigger.Resolved = status == int16(incident.StatusResolved)
 	if len(labels) > 0 {
 		if err := json.Unmarshal(labels, &trigger.Labels); err != nil {
 			return investigation.Trigger{}, fmt.Errorf("decoding trigger labels: %w", err)
+		}
+	}
+	if len(annotations) > 0 {
+		if err := json.Unmarshal(annotations, &trigger.Annotations); err != nil {
+			return investigation.Trigger{}, fmt.Errorf("decoding trigger annotations: %w", err)
 		}
 	}
 	return trigger, nil
@@ -495,13 +525,22 @@ func orEmptyStrings(values []string) []string {
 	return values
 }
 
+// orEmptyFindings renders findings for the JSONB column. Kind and confidence appear
+// only when set, so a deterministic-loop finding keeps the exact shape it always had.
 func orEmptyFindings(findings []investigation.Finding) []map[string]any {
 	encoded := make([]map[string]any, 0, len(findings))
 	for _, finding := range findings {
-		encoded = append(encoded, map[string]any{
+		one := map[string]any{
 			"statement": finding.Statement,
 			"sources":   finding.Sources,
-		})
+		}
+		if finding.Kind != "" {
+			one["kind"] = finding.Kind
+		}
+		if finding.Confidence != "" {
+			one["confidence"] = finding.Confidence
+		}
+		encoded = append(encoded, one)
 	}
 	return encoded
 }

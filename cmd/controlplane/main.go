@@ -105,8 +105,9 @@ func start() error {
 // so investigations run against a scripted reasoner instead of a paid provider.
 // Production supplies nothing here.
 type wiring struct {
-	onListen func(net.Addr)
-	reasoner investigation.Reasoner
+	onListen     func(net.Addr)
+	reasoner     investigation.Reasoner
+	investigator investigation.Investigator
 }
 
 // run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -192,13 +193,23 @@ func run(
 		}
 	}
 
-	// The model boundary: a test's scripted reasoner outranks configuration, and a
-	// deployment that configured neither cannot investigate — the surface says so per
-	// request rather than the process refusing to serve everything else it can do.
+	// The model boundary: a test's scripted reasoner or investigator outranks
+	// configuration, and a deployment that configured neither cannot investigate — the
+	// surface says so per request rather than the process refusing to serve everything
+	// else it can do. The configured architecture selects WHICH boundary is built; the
+	// other stays nil, and the runner dispatches on that.
 	reasoner := replace.reasoner
-	if reasoner == nil && cfg.ModelProvider != "" {
-		if reasoner, err = modelBoundary(cfg, catalog, logger); err != nil {
-			return err
+	investigator := replace.investigator
+	if reasoner == nil && investigator == nil && cfg.ModelProvider != "" {
+		switch cfg.InvestigationArchitecture {
+		case config.ArchitectureAutonomous:
+			if investigator, err = autonomousBoundary(cfg, catalog, logger); err != nil {
+				return err
+			}
+		default:
+			if reasoner, err = modelBoundary(cfg, catalog, logger); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -207,6 +218,9 @@ func run(
 		Catalog:                catalog,
 		Sealer:                 sealer,
 		Reasoner:               reasoner,
+		Investigator:           investigator,
+		MaxToolRuns:            cfg.InvestigationMaxToolRuns,
+		MaxTurns:               cfg.InvestigationMaxTurns,
 		Logger:                 logger,
 		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}
@@ -262,6 +276,41 @@ func modelBoundary(
 		slog.String("deployment", deployment.String()),
 		slog.String("agent_revision", revision))
 	return decider, nil
+}
+
+// autonomousBoundary builds the configured deployment's conversation driver, with the
+// same startup refusals as the deterministic boundary and its own derived revision, so
+// a capture of either architecture is attributable.
+func autonomousBoundary(
+	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger,
+) (investigation.Investigator, error) {
+	deployment := reasoning.Deployment{
+		Provider:               cfg.ModelProvider,
+		Model:                  cfg.ModelName,
+		Effort:                 reasoning.Effort(cfg.ModelEffort),
+		BaseURL:                cfg.ModelBaseURL,
+		Credential:             reasoning.Secret(cfg.ModelKey),
+		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
+	}.WithDefaults()
+	if err := deployment.Validate(); err != nil {
+		return nil, err
+	}
+	provider, err := providers.Open(deployment, providers.Options{})
+	if err != nil {
+		return nil, err
+	}
+	agent, err := reasoning.NewAgent(deployment, provider,
+		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelConsented...))
+	if err != nil {
+		return nil, err
+	}
+	revision := reasoning.AutonomousAgentRevision(catalogTools(catalog))
+	agent.Instrument(reasoning.NewTelemetry(logger, revision))
+	logger.Info("model boundary configured",
+		slog.String("deployment", deployment.String()),
+		slog.String("architecture", config.ArchitectureAutonomous),
+		slog.String("agent_revision", revision))
+	return agent, nil
 }
 
 // catalogTools flattens the assembled catalog's tool set, in the catalog's own stable

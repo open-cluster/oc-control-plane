@@ -127,13 +127,27 @@ ordinal is what a finding cites.
 
 **Finding** — one thing an investigation established, citing the ordinals of the runs
 that support it. A statement citing no run cannot be stored; enforced at decode and again
-before persistence.
+before persistence. An autonomous conclusion's findings additionally carry a **kind** —
+the causal role: probable_cause, contributing_factor, symptom, triggering_change,
+propagation_effect, ruled_out, unresolved_lead — and a categorical **confidence**:
+confirmed, likely, possible. Never an invented numeric certainty; multiple probable
+causes are legal.
 _Avoid:_ conclusion (as the record noun), claim.
 
-**Reasoner** — the model boundary, declared by the investigation domain and implemented
-by `internal/reasoning` over vendor adapters. The domain never learns a vendor exists;
-per decision it returns further tool calls or findings. A failed reasoning step fails the
-investigation — it is never presented as a conclusion.
+**Reasoner** — the deterministic loop's model boundary, declared by the investigation
+domain and implemented by `internal/reasoning` over vendor adapters. The domain never
+learns a vendor exists; per decision it returns further tool calls or findings. A failed
+reasoning step fails the investigation — it is never presented as a conclusion.
+
+**Investigator** — the autonomous loop's model boundary, beside Reasoner until a scored
+evaluation picks one: it opens a **Conversation** from an **Orientation** and returns
+**Moves**. The Orientation is assembled only from context the platform already holds —
+the trigger's own metadata, the offered sources, the change ledger's workload digest —
+never by querying a vendor. A Move carries further calls or the **Conclusion**: the
+concluding document of findings and recommended next steps, checked on its way into the
+Investigation record and never itself a persisted record. A ceiling that ends the reads
+— spend, tool runs, reasoner turns, wall clock, stagnation — is recorded as what
+stopped the investigation, never dressed as a free diagnosis.
 
 **Spend** — what the reasoning consumed: tokens and integer micro-cents, summed over
 every call including refused and truncated ones.
