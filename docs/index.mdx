@@ -1,0 +1,41 @@
+---
+title: "OpenCluster"
+description: "Connect your alerting, cluster, chat and source control. When an alert fires, OpenCluster investigates — and shows its work."
+---
+
+OpenCluster turns a firing alert into an investigated incident. It receives alerts from
+your existing Alertmanager, groups them into incidents, and — when you ask — runs an
+autonomous investigation across your connected systems: what is happening, what probably
+caused it, what changed, what was ruled out, and what to do next. Every claim cites the
+exact reads that support it, so a conclusion is something you can audit, not something
+you have to trust.
+
+## What you get
+
+- **Incidents, not alert noise.** Alerts group into incident episodes using your
+  Alertmanager's own grouping, and an episode resolves itself when nothing in it still
+  fires.
+- **Investigations with causal structure.** A conclusion distinguishes probable cause,
+  triggering change, contributing factor, symptom, ruled-out explanation and unresolved
+  lead — each with a stated confidence and the reads that back it.
+- **Read-only, bounded access.** OpenCluster never posts to your chat, never writes to
+  your repositories, and never touches your cluster directly. Every read is bounded,
+  recorded, and clamped to the incident's time window.
+- **Honesty over theater.** If the evidence establishes nothing, the conclusion says so.
+  If a budget ended the investigation early, the outcome is labeled as stopped, never
+  dressed up as a completed diagnosis.
+
+## Start here
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  From zero to your first investigated incident.
+</Card>
+<Card title="Integrations" icon="plug" href="/integrations/overview">
+  Connect Alertmanager, Kubernetes, Slack and GitHub.
+</Card>
+<Card title="Investigations" icon="magnifying-glass" href="/investigations/overview">
+  What an investigation gives you and how to read one.
+</Card>
+<Card title="Self-hosted" icon="server" href="/self-hosted/overview">
+  Deploy and operate OpenCluster yourself.
+</Card>

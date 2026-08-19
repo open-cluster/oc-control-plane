@@ -38,14 +38,7 @@ thought is stored. The model deployment is configuration, never a per-tenant con
 | --- | --- |
 | `./CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
 | `./AGENTS.md` | Working in this repository: boundaries, gates, and what "done" requires |
-| `docs/architecture.md` | The shape, and the decisions that still hold |
-| `docs/integrations.md` | The types this build serves, the shared lifecycle, credentials, tools |
-| `docs/api.md` | The contract rules a client builds against, and the investigation surface |
-| `docs/configuration.md` | Variables grouped by what they enable, and the rules worth knowing |
-| `docs/deployment.md` | Listeners, lifecycle, tiers, upgrades |
-| `docs/security.md` | Isolation, credentials, untrusted input, authorization, the record |
-| `docs/operations.md` | What runs on its own, incidents, investigations, what to alert on |
-| `docs/troubleshooting.md` | Symptoms and what each actually means |
+| `docs/` | User-facing product documentation: MDX pages plus `docs/docs.json`, authored here and published through Mintlify into the org-level docs site. Product pages only — architecture and contract notes for contributors live in this README, `AGENTS.md`, and `CONTEXT.md` |
 
 A gate fails the build if a document cites another that does not exist, so a rename cannot
 silently leave a dangling reference behind.
@@ -165,9 +158,8 @@ Fetching from the private repository needs
 | `OC_MODEL_BASE_URL` | no | Overrides where the provider is reached; https except loopback |
 | `OC_MODEL_SPEND_CEILING_CENTS` | no | Hard spend ceiling per investigation, whole cents. Default `500`; a reached ceiling ends the investigation as an honest partial conclusion labeled stopped-by-spend. Positive only — the ceiling can be raised, never removed |
 | `OC_INVESTIGATION_WINDOW_LEAD` | no | How far before the incident began an investigation's window reaches back. Default `2h`; every tool read is clamped inside the widened window |
-| `OC_INVESTIGATION_ARCHITECTURE` | no | Which loop investigates: `deterministic` (default) or `autonomous`, the conversational single agent on native tool calling |
-| `OC_INVESTIGATION_MAX_TOOL_RUNS` | no | The autonomous loop's read ceiling. Default `30`; positive only |
-| `OC_INVESTIGATION_MAX_TURNS` | no | The autonomous loop's conversation-turn ceiling. Default `20`; positive only |
+| `OC_INVESTIGATION_MAX_TOOL_RUNS` | no | The investigation's read ceiling. Default `30`; positive only |
+| `OC_INVESTIGATION_MAX_TURNS` | no | The investigation's conversation-turn ceiling. Default `20`; positive only |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
 | `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. An Integration's webhook endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |

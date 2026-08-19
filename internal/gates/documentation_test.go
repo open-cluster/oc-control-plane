@@ -11,9 +11,12 @@ import (
 
 // Directories whose Markdown is not maintained here: vendored agent skills, generated
 // output, and dependencies. A reference inside them is not this repository's to keep correct.
+// plans and artifacts are gitignored working state — CI never sees them, so a gate that read
+// them would pass or fail depending on what happens to be on one machine's disk.
 var unmaintainedDirectories = map[string]bool{
 	".git": true, ".claude": true, ".agents": true, ".codex": true,
 	"gen": true, "node_modules": true, "vendor": true,
+	"plans": true, "artifacts": true,
 }
 
 // A document that lives beside the frozen .NET implementation is cited by writing its path
@@ -46,7 +49,7 @@ var siblingRepositories = map[string]bool{
 // as a citation — a decision record describing `ADR-NNN-slug.md` names a pattern, not a
 // file — and nothing distinguishes the two reliably. Bare filenames are therefore not
 // checked, which is a deliberate hole rather than an oversight.
-var documentPath = regexp.MustCompile(`(?:[\w.@-]+/)+[\w.@-]+\.md`)
+var documentPath = regexp.MustCompile(`(?:[\w.@-]+/)+[\w.@-]+\.mdx?`)
 
 // A reference that no longer resolves breaks nothing and fails no build. It misleads
 // whoever follows it, months later, with no signal that anything is wrong — and review does
@@ -149,7 +152,7 @@ func documentationFiles(t *testing.T) []string {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if !strings.HasSuffix(entry.Name(), ".md") && !strings.HasSuffix(entry.Name(), ".mdx") {
 			return nil
 		}
 		relative, relErr := filepath.Rel(moduleRoot, path)

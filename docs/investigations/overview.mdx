@@ -1,0 +1,58 @@
+---
+title: "Investigations"
+description: "Open an investigation on an incident and get a causal, cited, auditable conclusion — not a restated symptom."
+---
+
+An investigation answers the question an on-call engineer actually has: **what is
+happening, why, and what should I do about it**. OpenCluster's investigator reads across
+your connected integrations autonomously — deciding what to look at next the way an
+experienced responder would — and concludes with findings that have causal structure,
+stated confidence, and citations back to every read that supports them.
+
+## What a conclusion contains
+
+**Findings**, each labeled with its causal role:
+
+| Kind | Meaning |
+| --- | --- |
+| Probable cause | What initiated the incident. Several are legal — an incident with several causes is reported as one |
+| Triggering change | The deployment or edit that set it off |
+| Contributing factor | Made it worse or let it spread |
+| Symptom | A visible effect, not an explanation |
+| Propagation effect | Damage arriving downstream of the cause |
+| Ruled out | An explanation that was checked and excluded |
+| Unresolved lead | A plausible explanation that could not be checked, and what read would settle it |
+
+Each finding carries a **confidence** — `confirmed` (the cited reads establish it),
+`likely` (supported, while a plausible alternative remains), or `possible` (one open
+explanation among several) — and cites the numbered reads that support it. A finding
+without a citation cannot exist: it is refused before it is stored.
+
+**Next steps**: recommended actions an operator can execute, ordered by reversibility —
+rollback before configuration change before code fix before infrastructure change.
+
+**The full record**: every source consulted, every read with its scope and outcome and
+what came back in summary, and what was spent — so any claim can be audited down to the
+read it came from.
+
+## Opening one
+
+- **From an incident**: open an investigation on any open incident episode.
+- **By asking**: pose a question in plain words — "investigate checkout latency". If it
+  ties to exactly one open incident, the investigation opens; if it matches none or
+  several, you get one clarifying question back and nothing opens.
+
+Opening needs the **Editor** or **Admin** role (it spends model budget and reads your
+systems); reading investigations needs only **Viewer**. A deployment without a model
+provider configured refuses to open investigations and says so.
+
+## The three outcomes
+
+| Outcome | Meaning |
+| --- | --- |
+| **Concluded** | The investigator finished and stands behind the conclusion. Zero findings is a legal conclusion — it means the reads established nothing, honestly |
+| **Concluded, stopped by a limit** | A budget (spend, reads, turns, time, or stagnating reads) ended the reading early. The conclusion is real but partial: what was established, what remains unresolved, and the best next step — labeled, never dressed up as a completed diagnosis |
+| **Failed** | The investigation could not run — a model provider refusal or outage, or an integrity check refusing an untraceable finding. A failure is never rendered as a conclusion |
+
+Read on: [how investigations work](/investigations/how-investigations-work) explains
+what the investigator is given, the rules it reads under, and how to read the record.

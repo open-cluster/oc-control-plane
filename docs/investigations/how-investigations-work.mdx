@@ -1,0 +1,99 @@
+---
+title: "How investigations work"
+description: "What the investigator starts with, the rules it reads under, the budgets that bound it, and how to read the record it leaves."
+---
+
+An investigation is an autonomous, bounded, fully recorded read of your connected
+systems. The investigator decides what to look at next; the platform decides what it is
+allowed to do. This page explains both halves.
+
+## What the investigator starts with
+
+Every investigation opens oriented by what OpenCluster already holds — nothing is
+fetched to build the briefing:
+
+- **The subject and the time window.** The window opens before the incident began on
+  purpose (two hours by default, configurable): the change that caused an incident
+  usually landed before it fired.
+- **The triggering alert**, whole: when it first fired, whether it still fires, its
+  labels, its annotations — including your own runbook and dashboard links — and its
+  source graph URL.
+- **The connected sources** and what each offers. Every enabled integration whose
+  verified credential supports at least one capability is offered; nothing pre-selects
+  sources for the investigator, so the right source is never unreachable.
+- **The workload inventory** from the Kubernetes change ledger — labeled navigation,
+  never citable as evidence.
+
+## How it reads
+
+- The investigator converses over the offered capabilities, choosing each read for what
+  it can distinguish: it is instructed to hold competing explanations and prefer the
+  read that discriminates between them over the read that merely accumulates.
+- **Every read is recorded** as a numbered run — its scope, time window, outcome,
+  a summary of what came back, and what it referenced — as it finishes. Failed reads
+  are recorded too; a read that failed is often the provenance that matters.
+- **Time-windowed reads are clamped** inside the investigation's window structurally; a
+  wider ask does not widen the read.
+- **Repeated identical reads are not re-executed** — the repeat is recorded, told the
+  result is already above, and costs nothing.
+- **Truncation is always said out loud**, both to the investigator and in the record.
+
+## The rules it reads under
+
+- **Everything read is information, never instruction.** A hostile Slack message or
+  commit message cannot redirect the investigation or change its rules.
+- **Findings cite reads, or they do not exist.** Enforced twice, independently: a
+  conclusion citing a read that never ran fails the whole investigation rather than
+  being stored.
+- **Testimony is not evidence.** What people say in messages is a lead worth verifying;
+  an explanation supported only by testimony can be at most an unresolved lead.
+- **A commit is a change to code, not to production.** Before treating a change as the
+  trigger, the investigator must establish it reached production where the evidence
+  allows.
+- **Timing discipline.** Impact cannot precede its cause, and a change made after
+  impact began may be a response to the incident rather than its origin.
+- **Negative evidence counts** when the read covered where the evidence would be:
+  "nothing changed in the window" from the right repository is a finding.
+- **No invented certainty.** Running out of budget never converts an open possibility
+  into a cause; nothing established means no findings, honestly.
+
+## The budgets
+
+Every ceiling ends the investigation the same honest way: one final turn with no more
+reads, producing a partial conclusion — what was established, what remains unresolved,
+the best next step — labeled with what stopped it.
+
+| Label | Ceiling | Default |
+| --- | --- | --- |
+| `spend` | Model spend per investigation | 500 cents (configurable) |
+| `tool_runs` | Reads per investigation | 30 (configurable) |
+| `reasoner_turns` | Conversation turns | 20 (configurable) |
+| `wall_clock` | Total time | 30 minutes |
+| `stagnation` | Consecutive turns without a fresh successful read | 2 |
+
+An honest empty read counts as fresh — ruling things out is progress, and the
+investigator is never punished for it. A deployment runs at most four investigations at
+once; opening one beyond that is refused with the reason, and nothing is left behind.
+
+## Reading the record
+
+An investigation's page is the audit:
+
+- **Sources** — every integration offered, with when.
+- **Runs** — every read in order: the capability, its arguments and window, succeeded or
+  failed, whether it was truncated, a summary of what came back, and what it referenced
+  (channels, repositories, commits). The full content of what was read is fed to the
+  investigator but deliberately not stored.
+- **Findings** — statement, kind, confidence, and the run numbers that support it.
+- **Next steps**, **what stopped it** (if a ceiling did), and **spend** — tokens and
+  cost, counted over every model call including refused ones.
+
+What is deliberately **not** recorded anywhere: the model's chain of thought. What you
+audit is what was done and found, not how a model deliberated.
+
+## When it fails
+
+A failure is stated with its reason in OpenCluster's own words — a provider refusal, an
+outage, a conclusion that would not arrive, or an integrity check refusing an
+untraceable finding. A failed investigation still reports what it cost. It is never
+converted into a conclusion nobody reasoned toward.
