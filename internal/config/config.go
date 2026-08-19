@@ -72,6 +72,23 @@ const (
 	// tests and for API-compatible proxies; empty means Slack's own origin.
 	EnvSlackAPIURL = "OC_SLACK_API_URL"
 
+	// EnvSentryAPIURL overrides where the Sentry provider reaches its vendor. It exists for
+	// tests and for self-hosted Sentry instances; empty means Sentry's own SaaS origin.
+	EnvSentryAPIURL = "OC_SENTRY_API_URL"
+
+	// EnvDatadogAPIURL overrides where the Datadog provider reaches its vendor, for every
+	// site an Integration might name. It exists for tests; empty means each Integration's
+	// own configured site, which is the per-tenant norm for this vendor.
+	EnvDatadogAPIURL = "OC_DATADOG_API_URL"
+
+	// EnvNewRelicAPIURL overrides where the New Relic provider reaches NerdGraph, for
+	// every region an Integration might name. It exists for tests.
+	EnvNewRelicAPIURL = "OC_NEWRELIC_API_URL"
+
+	// EnvPagerDutyAPIURL overrides where the PagerDuty provider reaches its vendor. It
+	// exists for tests; empty means PagerDuty's own one origin.
+	EnvPagerDutyAPIURL = "OC_PAGERDUTY_API_URL"
+
 	// The GitHub App credential is DEPLOYMENT-level configuration: one app, installed by
 	// customers onto their own accounts. The id is public; the private key names a file,
 	// like every credential here.
@@ -205,6 +222,23 @@ type Config struct {
 	// origin. It exists so a test can stand a fake where slack.com would be.
 	SlackAPIURL string
 
+	// SentryAPIURL is where the Sentry provider reaches its vendor; empty means Sentry's
+	// own origin. It exists so a test can stand a fake where sentry.io would be, and so a
+	// self-hosted Sentry can be reached at its own origin.
+	SentryAPIURL string
+
+	// DatadogAPIURL, when set, sends every Datadog call there regardless of the site an
+	// Integration names. It exists so a test can stand one fake Datadog.
+	DatadogAPIURL string
+
+	// NewRelicAPIURL, when set, sends every New Relic call there regardless of the region
+	// an Integration names. It exists so a test can stand one fake NerdGraph.
+	NewRelicAPIURL string
+
+	// PagerDutyAPIURL is where the PagerDuty provider reaches its vendor; empty means
+	// PagerDuty's own origin. It exists so a test can stand a fake.
+	PagerDutyAPIURL string
+
 	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
 	// means this deployment cannot reach GitHub, and connecting it is refused live with
 	// that reason. GitHubAPIURL overrides the vendor origin, for tests and GitHub
@@ -330,6 +364,18 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.SlackAPIURL, err = optionalVendorURL(lookup, EnvSlackAPIURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.SentryAPIURL, err = optionalVendorURL(lookup, EnvSentryAPIURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.DatadogAPIURL, err = optionalVendorURL(lookup, EnvDatadogAPIURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.NewRelicAPIURL, err = optionalVendorURL(lookup, EnvNewRelicAPIURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.PagerDutyAPIURL, err = optionalVendorURL(lookup, EnvPagerDutyAPIURL); err != nil {
 		return Config{}, err
 	}
 	if cfg.GitHubAppID, cfg.GitHubAppKey, err = gitHubApp(lookup); err != nil {

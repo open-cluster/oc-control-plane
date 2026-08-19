@@ -55,6 +55,10 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"TypeKubernetes", int(integrations.TypeKubernetes), 2},
 		{"TypeSlack", int(integrations.TypeSlack), 3},
 		{"TypeGitHub", int(integrations.TypeGitHub), 4},
+		{"TypeSentry", int(integrations.TypeSentry), 5},
+		{"TypeDatadog", int(integrations.TypeDatadog), 6},
+		{"TypeNewRelic", int(integrations.TypeNewRelic), 7},
+		{"TypePagerDuty", int(integrations.TypePagerDuty), 8},
 
 		// An Integration's observed status. A value that moved here would silently
 		// re-label every existing row: an Integration stored as failed would start reading
@@ -128,7 +132,8 @@ var (
 	}
 	integrationTypeValues = []int{
 		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
-		int(integrations.TypeSlack), int(integrations.TypeGitHub),
+		int(integrations.TypeSlack), int(integrations.TypeGitHub), int(integrations.TypeSentry),
+		int(integrations.TypeDatadog), int(integrations.TypeNewRelic), int(integrations.TypePagerDuty),
 	}
 	changeKindValues = []int{
 		int(changeledger.ChangeBaseline), int(changeledger.ChangeCreated),

@@ -39,7 +39,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/datadog"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/newrelic"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/pagerduty"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/sentry"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/observability"
@@ -178,6 +182,10 @@ func run(
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
 		github.Definition(gitHubApp, gitHubClient),
+		sentry.Definition(sentry.NewClient(cfg.SentryAPIURL)),
+		datadog.Definition(datadog.NewClient(cfg.DatadogAPIURL)),
+		newrelic.Definition(newrelic.NewClient(cfg.NewRelicAPIURL)),
+		pagerduty.Definition(pagerduty.NewClient(cfg.PagerDutyAPIURL)),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)
