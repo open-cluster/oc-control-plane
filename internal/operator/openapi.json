@@ -1,0 +1,355 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "OpenCluster Control Plane — Integrations (dev reference)",
+    "version": "dev",
+    "description": "A development-only reference for the Integrations capability of the operator API. It does not cover the whole surface (relays, identity, incidents, investigations) — only the routes this build's Integration catalog exercises. Every request needs the bootstrap or session Bearer token in the Authorize dialog above."
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "bearerAuth": [] }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } },
+        "required": ["error"]
+      },
+      "Tool": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "capability": { "type": "string" },
+          "description": { "type": "string" },
+          "whenToUse": { "type": "string" },
+          "whenNotToUse": { "type": "string" },
+          "permissions": { "type": "string" },
+          "rateLimit": { "type": "string" },
+          "output": { "type": "string" },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "type": { "type": "string" },
+                "required": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "IntegrationType": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "example": "sentry" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "logo": { "type": "string" },
+          "category": { "type": "string" },
+          "documentationUrl": { "type": "string" },
+          "capabilities": { "type": "array", "items": { "type": "string" } },
+          "requiresRelay": { "type": "boolean" },
+          "receivesWebhooks": { "type": "boolean" },
+          "configurationSchema": {
+            "type": "object",
+            "description": "JSON Schema for this type's configuration fields."
+          },
+          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/Tool" } },
+          "configured": { "type": "integer" }
+        }
+      },
+      "Integration": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "type": { "type": "string", "example": "sentry" },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["configured", "active", "degraded", "failed"] },
+          "disabled": { "type": "boolean" },
+          "configuration": { "type": "object", "additionalProperties": true },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+          "relayId": { "type": "string", "format": "uuid" },
+          "webhook": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "url": { "type": "string" },
+              "secretFingerprint": { "type": "string" },
+              "secretCreatedAt": { "type": "string", "format": "date-time" },
+              "secretRotatedAt": { "type": "string", "format": "date-time" }
+            }
+          },
+          "credential": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "fingerprint": { "type": "string" },
+              "createdAt": { "type": "string", "format": "date-time" },
+              "rotatedAt": { "type": "string", "format": "date-time" }
+            }
+          },
+          "lastVerifiedAt": { "type": "string", "format": "date-time" },
+          "verifyNote": { "type": "string" },
+          "createdBy": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateIntegrationRequest": {
+        "type": "object",
+        "required": ["type", "name", "configuration"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The Integration Type's stable key, from GET .../integration-types.",
+            "example": "sentry"
+          },
+          "name": { "type": "string", "example": "Production Sentry" },
+          "configuration": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Shaped by the type's configurationSchema. A declared secret field's plaintext goes here too — it is extracted, sealed, and never echoed back.",
+            "example": { "organizationSlug": "acme", "authToken": "paste-the-token-here" }
+          },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+          "relayId": {
+            "type": "string",
+            "description": "Required only when the type's requiresRelay is true."
+          }
+        }
+      },
+      "CreatedIntegration": {
+        "type": "object",
+        "properties": {
+          "integration": { "$ref": "#/components/schemas/Integration" },
+          "webhookSecret": {
+            "type": "string",
+            "description": "Present exactly once, only for a webhook-receiving type."
+          }
+        }
+      },
+      "ReviseIntegrationRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "configuration": { "type": "object", "additionalProperties": true },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      },
+      "SetEnabledRequest": {
+        "type": "object",
+        "required": ["enabled"],
+        "properties": { "enabled": { "type": "boolean" } }
+      },
+      "RotatedSecret": {
+        "type": "object",
+        "properties": {
+          "webhookSecret": { "type": "string" },
+          "secretFingerprint": { "type": "string" },
+          "effect": { "type": "string" }
+        }
+      },
+      "IntegrationList": {
+        "type": "object",
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Integration" } },
+          "next": { "type": "string", "nullable": true },
+          "total": { "type": "integer", "nullable": true },
+          "partial": { "type": "array", "items": {} }
+        }
+      }
+    },
+    "parameters": {
+      "organization": {
+        "name": "organization",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" },
+        "example": "test-org"
+      },
+      "integration": {
+        "name": "integration",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "The request was refused.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  },
+  "paths": {
+    "/operator/v1/organizations/{organization}/integration-types": {
+      "get": {
+        "summary": "List the Integration Types this build serves",
+        "tags": ["Integrations"],
+        "parameters": [{ "$ref": "#/components/parameters/organization" }],
+        "responses": {
+          "200": {
+            "description": "The catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "types": { "type": "array", "items": { "$ref": "#/components/schemas/IntegrationType" } }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/operator/v1/organizations/{organization}/integrations": {
+      "get": {
+        "summary": "List the tenant's configured Integrations",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Filter by Integration Type key." },
+          { "name": "disabled", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          { "name": "after", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of Integrations.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IntegrationList" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "summary": "Create an Integration",
+        "description": "For a credential-bearing type this probes the vendor live BEFORE anything is stored — a wrong token fails here, not during the next incident.",
+        "tags": ["Integrations"],
+        "parameters": [{ "$ref": "#/components/parameters/organization" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateIntegrationRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatedIntegration" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/operator/v1/organizations/{organization}/integrations/{integration}": {
+      "get": {
+        "summary": "Read one Integration",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "$ref": "#/components/parameters/integration" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Integration.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Integration" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "summary": "Revise an Integration",
+        "description": "Leaves identity, type, relay binding and secret alone unless configuration carries a new secret field, which is probed and sealed before anything is applied.",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "$ref": "#/components/parameters/integration" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReviseIntegrationRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The revised Integration.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Integration" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "summary": "Delete an Integration",
+        "description": "Refused when durable records depend on it; disable it instead.",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "$ref": "#/components/parameters/integration" }
+        ],
+        "responses": {
+          "204": { "description": "Deleted." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/operator/v1/organizations/{organization}/integrations/{integration}/enabled": {
+      "post": {
+        "summary": "Set whether an Integration is enabled",
+        "description": "Idempotent: sets the state, never toggles.",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "$ref": "#/components/parameters/integration" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetEnabledRequest" } } }
+        },
+        "responses": {
+          "204": { "description": "Applied." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/operator/v1/organizations/{organization}/integrations/{integration}/verify": {
+      "post": {
+        "summary": "Verify an Integration against reality",
+        "description": "For a credential-bearing type this asks the vendor live and records what it answered — this is how to (re)test Sentry, Datadog, New Relic or PagerDuty after creating one.",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "$ref": "#/components/parameters/integration" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Integration, with its refreshed status and verifyNote.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Integration" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/operator/v1/organizations/{organization}/integrations/{integration}/webhook/rotate-secret": {
+      "post": {
+        "summary": "Rotate a webhook-receiving Integration's inbound secret",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/organization" },
+          { "$ref": "#/components/parameters/integration" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new secret, once.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RotatedSecret" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  }
+}

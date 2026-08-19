@@ -95,7 +95,7 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 // The unauthenticated surface is a NAMED list. A fourth public route is a security decision,
 // and this gate is what makes it one somebody has to write down rather than one that lands in a
 // diff nobody reads twice.
-func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
+func TestThePublicSurfaceIsExactlyTheNamedRoutes(t *testing.T) {
 	t.Parallel()
 
 	// Each is public because a caller who is not signed in is precisely who needs it, and each
@@ -113,6 +113,14 @@ func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
 			"so it arrives cross-site by construction and carries no credential of ours; what " +
 			"binds it to a sign-in this product started is the single-use relay state and the " +
 			"request identifier inside the assertion, checked together",
+		// The development API reference. Both serve static schema text describing routes and
+		// shapes — no tenant data, no secret, nothing a credential would gate meaningfully.
+		// Swagger UI's own "Try it out" calls carry whatever Bearer token a person enters into
+		// its Authorize dialog; that token, not this page, is what does the real work.
+		"GET /operator/v1/openapi.json": "the specification a reader has no credential yet to " +
+			"have read, same as any public API reference",
+		"GET /operator/v1/docs": "the page that renders it; gating the page and not the JSON " +
+			"it fetches would not have hidden anything, only added a step",
 	}
 
 	found := make(map[string]bool)

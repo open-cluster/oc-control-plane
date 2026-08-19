@@ -134,6 +134,7 @@ func (h Handlers) Routes() authz.Table {
 			authz.RelayBootstrapIssue, http.HandlerFunc(h.issueBootstrapToken)),
 	}
 
+	routes = append(routes, docsRoutes()...)
 	routes = append(routes, h.Identity.Routes()...)
 	routes = append(routes, integrations.Handlers{
 		Store:         h.Placements,
