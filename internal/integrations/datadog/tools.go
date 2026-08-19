@@ -185,11 +185,7 @@ func siteAndCredentialOf(request integrations.ToolRequest) (string, credential, 
 }
 
 func monitorToContent(monitor Monitor) monitorContent {
-	return monitorContent{
-		ID: monitor.ID, Name: monitor.Name, Type: monitor.Type, Query: monitor.Query,
-		Message: monitor.Message, Tags: monitor.Tags, OverallState: monitor.OverallState,
-		Created: monitor.Created, Modified: monitor.Modified,
-	}
+	return monitorContent(monitor)
 }
 
 // arguments is one call's inputs after the undeclared ones were refused.
