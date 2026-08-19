@@ -23,18 +23,21 @@ that rewrites nothing. Splits do not exist because the grouping errs toward spli
 Open one from an episode, or ask a question in plain words — ambiguity gets one
 clarifying question back. The runner:
 
-1. selects up to two readable sources deterministically (term overlap with the subject
-   and the alert's own labels), recording each reason;
-2. lets the model choose among those sources' declared tools, bounded in rounds and
-   calls, recording every run — scope, window, outcome, truncation, summary, source
+1. offers every connected source whose verified grants support at least one tool,
+   recording each offer;
+2. orients the model with what the platform already holds — the subject, the window,
+   the triggering alert's own metadata and firing time, the offered sources, the
+   change ledger's workload digest — and lets it converse over the offered tools,
+   recording every run — scope, window, outcome, truncation, summary, source
    references — as it finishes;
-3. expands once, to the next-ranked source, only if everything so far failed or came
-   back empty;
-4. ends concluded with findings citing run ordinals, or failed with the reason. Spend is
-   summed in tokens and integer micro-cents over every call, including refused ones. A
-   ceiling — the spend cap, the read budget, the turn budget — forces a final concluding
-   turn and labels the outcome `stoppedBy` (`spend`, `tool_runs`, `reasoner_turns`), so
-   resource exhaustion is never rendered as a free diagnosis.
+3. suppresses identical repeat reads and forces a conclusion when reads stagnate;
+4. ends concluded with findings citing run ordinals — each with its causal kind and
+   categorical confidence — plus recommended next steps, or failed with the reason.
+   Spend is summed in tokens and integer micro-cents over every call, including refused
+   ones. A ceiling — the spend cap, the read budget, the turn budget, wall clock,
+   stagnation — forces a final concluding turn and labels the outcome `stoppedBy`
+   (`spend`, `tool_runs`, `reasoner_turns`, `wall_clock`, `stagnation`), so resource
+   exhaustion is never rendered as a free diagnosis.
 
 Reading `GET /investigations/{id}` is the audit: what was queried, why, what came back,
 what was established. A failed reasoning step is a failed investigation — never a

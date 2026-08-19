@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
@@ -23,7 +22,7 @@ import (
 
 // The evaluation harness's two entry points. The deterministic pipeline runs in every
 // suite: it proves the worlds serve, the plane investigates them, and the scorer scores
-// — with the scripted reasoner, so CI never pays a provider. The capture run is gated:
+// — with a scripted conversation, so CI never pays a provider. The capture run is gated:
 // it drives the real model over every case and files the scores as an artifact, which is
 // how issue #5's baselines are taken.
 
@@ -32,25 +31,28 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 
 	t.Run("a scripted walk through the single-cause world scores as found", func(t *testing.T) {
 		one := evalCaseNamed(t, cases, "single-root-cause")
-		reasoner := &scriptedReasoner{decisions: []investigation.Decision{
-			{Calls: []investigation.ToolCall{
-				{Tool: "slack.list_channels", Arguments: map[string]any{}},
-				{Tool: "slack.get_channel_history",
+		conversation := &scriptedConversationMain{moves: []investigation.Move{
+			{Calls: []investigation.AgentCall{
+				{ID: "c1", Tool: "slack.list_channels", Arguments: map[string]any{}},
+				{ID: "c2", Tool: "slack.get_channel_history",
 					Arguments: map[string]any{"channel": "C2"}},
 			}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
-			{Calls: []investigation.ToolCall{
-				{Tool: "github.list_repositories", Arguments: map[string]any{}},
-				{Tool: "github.read_commits",
+			{Calls: []investigation.AgentCall{
+				{ID: "c3", Tool: "github.list_repositories", Arguments: map[string]any{}},
+				{ID: "c4", Tool: "github.read_commits",
 					Arguments: map[string]any{"repositoryId": float64(101)}},
 			}, Spend: investigation.Spend{InputTokens: 120, OutputTokens: 12, MicroCents: 6}},
-			{Findings: []investigation.Finding{{
+			{Conclusion: &investigation.Conclusion{Findings: []investigation.Finding{{
 				Statement: "commit abc123 raised the connection pool timeout shortly " +
 					"before the alert; the deploy channel announced it going out",
-				Sources: []int{2, 4},
-			}}, Spend: investigation.Spend{InputTokens: 140, OutputTokens: 20, MicroCents: 8}},
+				Kind:       investigation.FindingProbableCause,
+				Confidence: investigation.ConfidenceLikely,
+				Sources:    []int{2, 4},
+			}}}, Spend: investigation.Spend{InputTokens: 140, OutputTokens: 20, MicroCents: 8}},
 		}}
 
-		record := runEvalCase(t, one, evalModel{}, reasoner)
+		record := runEvalCase(t, one, evalModel{},
+			&scriptedInvestigatorMain{conversation: conversation})
 		score := scoreEvalCase(one, record)
 
 		if score.Status != "concluded" {
@@ -71,14 +73,10 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 
 		// The world models what a granted bot token really delivers: history authors
 		// arrive as raw ids, users:read resolves them, and the workspace URL yields
-		// permalinks — so the transcript the reasoner saw carries all three.
-		briefs := reasoner.seen()
-		if len(briefs) < 2 {
-			t.Fatalf("the reasoner decided %d times, want at least 2", len(briefs))
-		}
-		transcript, err := json.Marshal(briefs[1].Runs)
+		// permalinks — so the transcript the conversation was fed carries all three.
+		transcript, err := json.Marshal(conversation.results)
 		if err != nil {
-			t.Fatalf("rendering the second brief's runs: %v", err)
+			t.Fatalf("rendering the fed results: %v", err)
 		}
 		for _, wanted := range []string{
 			"deploy-bot", "UDEPLOYBOT", "acme.slack.com/archives/C2",
@@ -89,7 +87,7 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 		}
 
 		directory := writeEvalReport(t, t.TempDir(), "pipeline-proof", "test",
-			evalAgentRevision(t, ""), "scripted", []evalScore{score}, []evalRecord{record})
+			evalAgentRevision(t), "scripted", []evalScore{score}, []evalRecord{record})
 		var report evalReport
 		raw, err := os.ReadFile(filepath.Join(directory, "report.json"))
 		if err != nil {
@@ -100,17 +98,43 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 		}
 	})
 
+	t.Run("honest negative findings on the empty world are not fabrications", func(t *testing.T) {
+		one := evalCaseNamed(t, cases, "missing-data-unresolved")
+		record := evalRecord{
+			Status: "concluded",
+			Runs: []evalRun{{Ordinal: 1, Tool: "github.read_commits",
+				Outcome: "succeeded"}},
+			Findings: []evalFinding{
+				{Statement: "no commits landed in the window", Sources: []int{1},
+					Kind: "ruled_out"},
+				{Statement: "the job's own logs are not reachable through any " +
+					"connected source", Sources: []int{1}, Kind: "unresolved_lead"},
+				{Statement: "a config change caused the failure", Sources: []int{1},
+					Kind: "probable_cause"},
+			},
+		}
+
+		score := scoreEvalCase(one, record)
+
+		if score.FabricatedFindings != 1 {
+			t.Errorf("fabricated findings = %d, want only the asserted cause counted",
+				score.FabricatedFindings)
+		}
+	})
+
 	t.Run("the empty world scores honesty rather than fabrication", func(t *testing.T) {
 		one := evalCaseNamed(t, cases, "missing-data-unresolved")
-		reasoner := &scriptedReasoner{decisions: []investigation.Decision{
-			{Calls: []investigation.ToolCall{
-				{Tool: "slack.get_channel_history",
+		conversation := &scriptedConversationMain{moves: []investigation.Move{
+			{Calls: []investigation.AgentCall{
+				{ID: "c1", Tool: "slack.get_channel_history",
 					Arguments: map[string]any{"channel": "C1"}},
 			}, Spend: investigation.Spend{InputTokens: 90, OutputTokens: 9, MicroCents: 4}},
-			{Spend: investigation.Spend{InputTokens: 95, OutputTokens: 5, MicroCents: 4}},
+			{Conclusion: &investigation.Conclusion{},
+				Spend: investigation.Spend{InputTokens: 95, OutputTokens: 5, MicroCents: 4}},
 		}}
 
-		record := runEvalCase(t, one, evalModel{}, reasoner)
+		record := runEvalCase(t, one, evalModel{},
+			&scriptedInvestigatorMain{conversation: conversation})
 		score := scoreEvalCase(one, record)
 
 		if score.Status != "concluded" {
@@ -157,16 +181,15 @@ func TestEvalBaseline(t *testing.T) {
 	}
 
 	directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
-		label, gitRevision(t), evalAgentRevision(t, model.Architecture),
+		label, gitRevision(t), evalAgentRevision(t),
 		model.Provider+"/"+model.Name, scores, records)
 	t.Logf("evaluation capture filed under %s: %d cases", directory, len(scores))
 }
 
-// evalAgentRevision derives the same agent revision production derives for the
-// capture's architecture, through the same catalog assembly and flattening: the tool
-// declarations do not depend on any client, so the set here hashes identically to the
-// running control plane's.
-func evalAgentRevision(t *testing.T, architecture string) string {
+// evalAgentRevision derives the same agent revision production derives, through the
+// same catalog assembly and flattening: the tool declarations do not depend on any
+// client, so the set here hashes identically to the running control plane's.
+func evalAgentRevision(t *testing.T) string {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
@@ -177,20 +200,16 @@ func evalAgentRevision(t *testing.T, architecture string) string {
 	if err != nil {
 		t.Fatalf("assembling the catalog: %v", err)
 	}
-	if architecture == config.ArchitectureAutonomous {
-		return reasoning.AutonomousAgentRevision(catalogTools(catalog))
-	}
 	return reasoning.AgentRevision(catalogTools(catalog))
 }
 
 func evalModelFromEnvironment(t *testing.T) evalModel {
 	t.Helper()
 	model := evalModel{
-		Provider:     os.Getenv("OC_EVAL_MODEL_PROVIDER"),
-		Name:         os.Getenv("OC_EVAL_MODEL_NAME"),
-		Effort:       os.Getenv("OC_EVAL_MODEL_EFFORT"),
-		BaseURL:      os.Getenv("OC_EVAL_MODEL_BASE_URL"),
-		Architecture: os.Getenv("OC_EVAL_ARCHITECTURE"),
+		Provider: os.Getenv("OC_EVAL_MODEL_PROVIDER"),
+		Name:     os.Getenv("OC_EVAL_MODEL_NAME"),
+		Effort:   os.Getenv("OC_EVAL_MODEL_EFFORT"),
+		BaseURL:  os.Getenv("OC_EVAL_MODEL_BASE_URL"),
 	}
 	keyFile := os.Getenv("OC_EVAL_MODEL_KEY_FILE")
 	if model.Provider == "" || model.Name == "" || keyFile == "" {

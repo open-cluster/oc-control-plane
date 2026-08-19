@@ -24,7 +24,7 @@ type clarificationView struct {
 type findingView struct {
 	Statement string `json:"statement"`
 	// Kind is the finding's causal role and Confidence its categorical certainty.
-	// Absent on findings the deterministic loop concluded, which predate the vocabulary.
+	// Absent on findings concluded before the vocabulary existed.
 	Kind       string `json:"kind,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
 	// Sources are one-based ordinals among the investigation's runs.

@@ -5,16 +5,15 @@ import (
 	"time"
 )
 
-// THE CONVERSATION BOUNDARY — the autonomous loop's model seam, beside Reasoner.
+// THE CONVERSATION BOUNDARY — the investigation's model seam.
 //
-// The deterministic loop re-renders its whole brief every round; the autonomous loop
-// holds one conversation whose provider carries the transcript natively, so its seam is
-// conversation-shaped: open once with the orientation, then feed each move's results
-// back and receive the next move. Like Reasoner, it is declared here in the domain's
-// vocabulary and implemented by the reasoning infrastructure; this package never learns
-// a vendor exists. Both seams coexist until a scored evaluation picks the winner.
+// The loop holds one conversation whose provider carries the transcript natively, so
+// the seam is conversation-shaped: open once with the orientation, then feed each
+// move's results back and receive the next move. It is declared here in the domain's
+// vocabulary and implemented by the reasoning infrastructure; this package never
+// learns a vendor exists.
 
-// Orientation is everything the autonomous investigator is given at open. All of it is
+// Orientation is everything the investigator is given at open. All of it is
 // context the platform already holds — the trigger, the catalog, the ledger — and none
 // of it comes from querying a vendor: the investigator itself decides which sources to
 // actually read. The text within it originates in a customer's systems and stays
@@ -30,7 +29,7 @@ type Orientation struct {
 	// Sources is every offered integration with the tools its verified grants support,
 	// in stable name order. The whole universe, not a routed subset: nothing may
 	// permanently prevent the investigator from reaching a connected source.
-	Sources []BriefSource
+	Sources []OfferedSource
 	// Inventory is the change ledger's bounded workload digest — navigation, never
 	// evidence. Empty when the ledger holds nothing.
 	Inventory []string

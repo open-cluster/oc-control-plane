@@ -32,9 +32,9 @@ const (
 	// landed before it fired. An evaluation-derived default, not a constant — operators
 	// whose deploy cadence differs configure it.
 	defaultInvestigationWindowLead = 2 * time.Hour
-	// Five dollars per investigation is several times what the bounded deterministic
-	// loop can legitimately spend; the ceiling is a backstop against a runaway, not a
-	// steering wheel. Re-derived from the evaluation suite's measured distributions.
+	// Five dollars per investigation is several times what a legitimate investigation
+	// spends; the ceiling is a backstop against a runaway, not a steering wheel.
+	// Re-derived from the evaluation suite's measured distributions.
 	defaultModelSpendCeilingCents = 500
 )
 
@@ -106,11 +106,6 @@ const (
 	// clamped to.
 	EnvInvestigationWindowLead = "OC_INVESTIGATION_WINDOW_LEAD"
 
-	// EnvInvestigationArchitecture selects which loop investigates: "deterministic"
-	// (the default) or "autonomous", the conversational single agent. Both coexist
-	// behind the same runner shell until a scored evaluation picks the winner; the
-	// loser is deleted, never kept behind a switch.
-	EnvInvestigationArchitecture = "OC_INVESTIGATION_ARCHITECTURE"
 	// EnvInvestigationMaxToolRuns and EnvInvestigationMaxTurns are the autonomous
 	// loop's safety ceilings — evaluation-derived tuning, so they are configuration
 	// rather than constants. Unset means the built-in defaults.
@@ -258,9 +253,6 @@ type Config struct {
 	// window reaches back.
 	InvestigationWindowLead time.Duration
 
-	// InvestigationArchitecture is which loop investigates: ArchitectureDeterministic
-	// or ArchitectureAutonomous.
-	InvestigationArchitecture string
 	// InvestigationMaxToolRuns and InvestigationMaxTurns are the autonomous loop's
 	// ceilings; zero means the built-in defaults.
 	InvestigationMaxToolRuns int
@@ -384,9 +376,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if err = modelDeployment(lookup, &cfg); err != nil {
-		return Config{}, err
-	}
-	if cfg.InvestigationArchitecture, err = optionalArchitecture(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.InvestigationMaxToolRuns, err = optionalPositive(
@@ -546,27 +535,6 @@ func optionalDays(lookup func(string) (string, bool), key string, fallback int) 
 		return 0, fmt.Errorf("%s must be a positive whole number of days", key)
 	}
 	return parsed, nil
-}
-
-// The investigation architectures a deployment may select.
-const (
-	ArchitectureDeterministic = "deterministic"
-	ArchitectureAutonomous    = "autonomous"
-)
-
-// optionalArchitecture reads which loop investigates, defaulting to deterministic. An
-// unrecognised word is refused at startup, where whoever typed it is still reading.
-func optionalArchitecture(lookup func(string) (string, bool)) (string, error) {
-	value, ok := lookup(EnvInvestigationArchitecture)
-	trimmed := strings.TrimSpace(value)
-	if !ok || trimmed == "" {
-		return ArchitectureDeterministic, nil
-	}
-	if trimmed != ArchitectureDeterministic && trimmed != ArchitectureAutonomous {
-		return "", fmt.Errorf("%s must be %q or %q", EnvInvestigationArchitecture,
-			ArchitectureDeterministic, ArchitectureAutonomous)
-	}
-	return trimmed, nil
 }
 
 // optionalPositive reads a positive whole number, or zero when absent — zero meaning

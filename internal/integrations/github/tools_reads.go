@@ -501,8 +501,10 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 		WhenToUse: "When a changed file's full context matters: the config value " +
 			"around a diff hunk, the threshold a commit moved, the manifest a deploy " +
 			"reads.",
-		WhenNotToUse: "Not to browse a repository — read files a commit or diff named. " +
-			"Not for the change itself; that is github.read_commit.",
+		WhenNotToUse: "Not to browse a repository, and never with a guessed path — read " +
+			"files a commit or diff actually named; a path no read named will not be " +
+			"found by probing candidates. Not for the change itself; that is " +
+			"github.read_commit.",
 		Arguments:   declared,
 		Permissions: "the app installation needs the Contents read permission",
 		Output: fmt.Sprintf("the file's first %d bytes at the ref, with a truncated "+

@@ -12,12 +12,14 @@ import (
 // scorer can check without judgement.
 
 // causeTruth is one real cause in a world. It counts as found when a finding's statement
-// carries any marker AND cites a run of the named tool — a statement without provenance
-// is not a found cause.
+// carries any marker AND cites a run of one of the named tools — a statement without
+// provenance is not a found cause. Tools is a set because sound provenance has more
+// than one spelling: the commit listing that surfaced a change and the diff read that
+// verified it are both the change's evidence.
 type causeTruth struct {
 	Name    string
 	Markers []string
-	Tool    string
+	Tools   []string
 }
 
 // readTruth is one read a correct investigation makes: the discriminating reads whose
@@ -67,14 +69,29 @@ const (
 	evalPrimaryInstallation = "5001"
 )
 
-// changeContextTools are the reads that can serve a commit-caused world: inventory,
-// channel reading, and commit history. slack.search_messages is not listed: tool
-// availability derives from verified grants, and a bot-token integration is never
-// offered user-token-only search, so the model cannot select it at all. Thread and
-// pull-request reads join per case, only where the world holds either.
+// changeContextTools are the reads that serve a commit-caused world's causal workflow:
+// inventory, channel reading, commit history, the suspect commit's own diff, and the
+// cheap rule-outs (CI runs, releases) whose negative answers the ground truth rewards.
+// slack.search_messages is not listed: tool availability derives from verified grants,
+// and a bot-token integration is never offered user-token-only search, so the model
+// cannot select it at all. Thread, pull-request and file reads join per case, only
+// where the world holds either.
 var changeContextTools = []string{
 	"slack.list_channels", "slack.get_channel_history",
-	"github.list_repositories", "github.read_commits",
+	"github.list_repositories", "github.read_commits", "github.read_commit",
+	"github.read_workflow_runs", "github.list_releases",
+}
+
+// fileContextTools extends the change-context set for the worlds whose commits name
+// readable files: there, reading the configuration a diff touched is the mechanism
+// verification the causal workflow ends on.
+var fileContextTools = append(
+	append([]string{}, changeContextTools...), "github.read_file")
+
+// commitEvidence is the provenance a commit-caused finding may cite: the listing that
+// surfaced the change, the diff that verified it, or the file it touched.
+var commitEvidence = []string{
+	"github.read_commits", "github.read_commit", "github.read_file",
 }
 
 // evalCases builds the nine §11 archetypes against a shared clock, so every fixture sits
@@ -101,11 +118,13 @@ func evalCases(now time.Time) []evalCase {
 		}}
 	}
 
-	paymentsRepos := func(commits []evalCommit, pulls []evalPull) map[string]evalInstallation {
+	paymentsRepos := func(
+		commits []evalCommit, pulls []evalPull, files map[string]string,
+	) map[string]evalInstallation {
 		return map[string]evalInstallation{evalPrimaryInstallation: {
 			Account: "acme-corp",
 			Repos: []evalRepo{
-				{ID: 101, Name: "payments", Commits: commits, Pulls: pulls},
+				{ID: 101, Name: "payments", Commits: commits, Pulls: pulls, Files: files},
 				{ID: 102, Name: "deploy", Commits: nil, Pulls: nil},
 			},
 		}}
@@ -121,16 +140,20 @@ func evalCases(now time.Time) []evalCase {
 		),
 		Installations: paymentsRepos([]evalCommit{
 			{SHA: "abc123", Message: "raise connection pool timeout to 30s",
-				Author: "kai-dev", At: commitAt},
-		}, nil),
+				Author: "kai-dev", At: commitAt,
+				Files: []evalChange{{Path: "config/pool.yaml",
+					Patch: "@@ -1,3 +1,3 @@\n pool:\n-  connect_timeout: 2s\n+  connect_timeout: 30s"}}},
+		}, nil, map[string]string{
+			"config/pool.yaml": "pool:\n  connect_timeout: 30s\n  max_connections: 40\n",
+		}),
 		Truth: groundTruth{
 			Causes: []causeTruth{{
 				Name:    "pool-timeout-commit",
 				Markers: []string{"pool timeout", "abc123"},
-				Tool:    "github.read_commits",
+				Tools:   commitEvidence,
 			}},
 			Discriminating: []readTruth{{Tool: "github.read_commits"}},
-			RelevantTools:  changeContextTools,
+			RelevantTools:  fileContextTools,
 			ExpectFindings: true,
 		},
 	}
@@ -145,19 +168,26 @@ func evalCases(now time.Time) []evalCase {
 		),
 		Installations: paymentsRepos([]evalCommit{
 			{SHA: "def456", Message: "reduce db pool size to 5",
-				Author: "kai-dev", At: now.Add(-70 * time.Minute)},
+				Author: "kai-dev", At: now.Add(-70 * time.Minute),
+				Files: []evalChange{{Path: "config/db.yaml",
+					Patch: "@@ -1,3 +1,3 @@\n db:\n-  pool_size: 50\n+  pool_size: 5"}}},
 			{SHA: "789abc", Message: "enable strict tls verification on upstreams",
-				Author: "ash-ops", At: now.Add(-50 * time.Minute)},
-		}, nil),
+				Author: "ash-ops", At: now.Add(-50 * time.Minute),
+				Files: []evalChange{{Path: "config/upstreams.yaml",
+					Patch: "@@ -1,3 +1,3 @@\n upstreams:\n-  tls_verify: off\n+  tls_verify: strict"}}},
+		}, nil, map[string]string{
+			"config/db.yaml":        "db:\n  pool_size: 5\n  host: payments-db\n",
+			"config/upstreams.yaml": "upstreams:\n  tls_verify: strict\n  timeout: 5s\n",
+		}),
 		Truth: groundTruth{
 			Causes: []causeTruth{
 				{Name: "pool-size", Markers: []string{"pool size", "def456"},
-					Tool: "github.read_commits"},
+					Tools: commitEvidence},
 				{Name: "strict-tls", Markers: []string{"tls", "789abc"},
-					Tool: "github.read_commits"},
+					Tools: commitEvidence},
 			},
 			Discriminating: []readTruth{{Tool: "github.read_commits"}},
-			RelevantTools:  changeContextTools,
+			RelevantTools:  fileContextTools,
 			ExpectFindings: true,
 		},
 	}
@@ -176,7 +206,11 @@ func evalCases(now time.Time) []evalCase {
 				{ID: 103, Name: "checkout"},
 				{ID: 101, Name: "payments", Commits: []evalCommit{
 					{SHA: "cafe01", Message: "drop payments api rate limit to 10 rps",
-						Author: "ash-ops", At: commitAt},
+						Author: "ash-ops", At: commitAt,
+						Files: []evalChange{{Path: "config/ratelimit.yaml",
+							Patch: "@@ -1,3 +1,3 @@\n api:\n-  rate_limit_rps: 500\n+  rate_limit_rps: 10"}}},
+				}, Files: map[string]string{
+					"config/ratelimit.yaml": "api:\n  rate_limit_rps: 10\n  burst: 20\n",
 				}},
 			},
 		}},
@@ -184,10 +218,10 @@ func evalCases(now time.Time) []evalCase {
 			Causes: []causeTruth{{
 				Name:    "payments-rate-limit",
 				Markers: []string{"rate limit", "cafe01"},
-				Tool:    "github.read_commits",
+				Tools:   commitEvidence,
 			}},
 			Discriminating: []readTruth{{Tool: "github.read_commits", ArgMarker: "101"}},
-			RelevantTools:  changeContextTools,
+			RelevantTools:  fileContextTools,
 			ExpectFindings: true,
 		},
 	}
@@ -205,7 +239,11 @@ func evalCases(now time.Time) []evalCase {
 			Repos: []evalRepo{
 				{ID: 104, Name: "gateway", Commits: []evalCommit{
 					{SHA: "beef02", Message: "remove retry on upstream 502",
-						Author: "kai-dev", At: now.Add(-30 * time.Minute)},
+						Author: "kai-dev", At: now.Add(-30 * time.Minute),
+						Files: []evalChange{{Path: "config/gateway.yaml",
+							Patch: "@@ -1,3 +1,3 @@\n upstream:\n-  retry_on_502: true\n+  retry_on_502: false"}}},
+				}, Files: map[string]string{
+					"config/gateway.yaml": "upstream:\n  retry_on_502: false\n  timeout: 10s\n",
 				}},
 				{ID: 105, Name: "dns-zones"},
 			},
@@ -214,11 +252,11 @@ func evalCases(now time.Time) []evalCase {
 			Causes: []causeTruth{{
 				Name:    "retry-removal",
 				Markers: []string{"retry", "beef02"},
-				Tool:    "github.read_commits",
+				Tools:   commitEvidence,
 			}},
 			MustNotClaim:   []string{"dns"},
 			Discriminating: []readTruth{{Tool: "github.read_commits", ArgMarker: "104"}},
-			RelevantTools:  changeContextTools,
+			RelevantTools:  fileContextTools,
 			ExpectFindings: true,
 		},
 	}
@@ -254,19 +292,23 @@ func evalCases(now time.Time) []evalCase {
 		),
 		Installations: paymentsRepos([]evalCommit{
 			{SHA: "fee1dead", Message: "switch cache to write-through",
-				Author: "kai-dev", At: deployAt},
-		}, nil),
+				Author: "kai-dev", At: deployAt,
+				Files: []evalChange{{Path: "config/cache.yaml",
+					Patch: "@@ -1,3 +1,3 @@\n cache:\n-  mode: write-back\n+  mode: write-through"}}},
+		}, nil, map[string]string{
+			"config/cache.yaml": "cache:\n  mode: write-through\n  ttl: 300s\n",
+		}),
 		Truth: groundTruth{
 			Causes: []causeTruth{{
 				Name:    "cache-write-through",
 				Markers: []string{"write-through", "fee1dead"},
-				Tool:    "github.read_commits",
+				Tools:   commitEvidence,
 			}},
 			Discriminating: []readTruth{
 				{Tool: "slack.get_channel_history", ArgMarker: "C2"},
 				{Tool: "github.read_commits"},
 			},
-			RelevantTools:  changeContextTools,
+			RelevantTools:  fileContextTools,
 			ExpectFindings: true,
 		},
 	}
@@ -280,7 +322,7 @@ func evalCases(now time.Time) []evalCase {
 		Causes: []causeTruth{{
 			Name:    "deploy-observed",
 			Markers: []string{"abc123", "deploy"},
-			Tool:    "slack.get_channel_history",
+			Tools:   []string{"slack.get_channel_history"},
 		}},
 		MustNotClaim:   []string{"pool timeout"},
 		Discriminating: []readTruth{{Tool: "github.read_commits"}},
@@ -298,18 +340,63 @@ func evalCases(now time.Time) []evalCase {
 		),
 		Installations: paymentsRepos([]evalCommit{
 			{SHA: "0ddba11", Message: "bump kafka client to 3.9",
-				Author: "ash-ops", At: now.Add(-55 * time.Minute)},
-		}, nil),
+				Author: "ash-ops", At: now.Add(-55 * time.Minute),
+				Files: []evalChange{{Path: "go.mod",
+					Patch: "@@ -3,3 +3,3 @@\n require (\n-\tacme.dev/kafka-client v3.8.0\n+\tacme.dev/kafka-client v3.9.0"}}},
+		}, nil, map[string]string{
+			"go.mod": "module acme.dev/payments\n\nrequire (\n\tacme.dev/kafka-client v3.9.0\n)\n",
+		}),
 		MoreHistory: true,
 		MoreCommits: true,
 		Truth: groundTruth{
 			Causes: []causeTruth{{
 				Name:    "kafka-client-bump",
 				Markers: []string{"kafka client", "0ddba11"},
-				Tool:    "github.read_commits",
+				Tools:   commitEvidence,
 			}},
 			Discriminating: []readTruth{{Tool: "github.read_commits"}},
-			RelevantTools:  changeContextTools,
+			RelevantTools:  fileContextTools,
+			ExpectFindings: true,
+		},
+	}
+
+	// The anti-overfit twin of the timing principle: the causal commit and its deploy
+	// PRECEDE the alert, and a post-onset remediation commit with its own deploy chatter
+	// tempts misattribution. An investigator that learned only "the commit nearest the
+	// alert wins" — or "any post-onset commit is innocent, any pre-onset commit guilty,
+	// no mechanism needed" — fails here; the judge grades the causal direction.
+	remediation := evalCase{
+		Name:      "remediation-red-herring",
+		Alertname: "QueueBacklogGrowing",
+		Labels:    map[string]string{"namespace": "payments", "service": "worker"},
+		Workspaces: paymentsWorkspace(
+			deployMessage(now.Add(-40*time.Minute), "UDEPLOYBOT",
+				"deployed worker bad111 to production"),
+			incidentMessage(now.Add(-6*time.Minute), "USRELEE00",
+				"restoring consumer concurrency to drain the backlog"),
+			deployMessage(now.Add(-5*time.Minute), "UDEPLOYBOT",
+				"deployed worker aid222 to production"),
+		),
+		Installations: paymentsRepos([]evalCommit{
+			{SHA: "bad111", Message: "reduce worker consumer concurrency to 1",
+				Author: "kai-dev", At: now.Add(-45 * time.Minute),
+				Files: []evalChange{{Path: "config/worker.yaml",
+					Patch: "@@ -1,3 +1,3 @@\n worker:\n-  consumer_concurrency: 16\n+  consumer_concurrency: 1"}}},
+			{SHA: "aid222", Message: "restore worker consumer concurrency to 16",
+				Author: "ash-ops", At: now.Add(-7 * time.Minute),
+				Files: []evalChange{{Path: "config/worker.yaml",
+					Patch: "@@ -1,3 +1,3 @@\n worker:\n-  consumer_concurrency: 1\n+  consumer_concurrency: 16"}}},
+		}, nil, map[string]string{
+			"config/worker.yaml": "worker:\n  consumer_concurrency: 16\n  queue: payments-events\n",
+		}),
+		Truth: groundTruth{
+			Causes: []causeTruth{{
+				Name:    "concurrency-drop",
+				Markers: []string{"concurrency", "bad111"},
+				Tools:   commitEvidence,
+			}},
+			Discriminating: []readTruth{{Tool: "github.read_commits"}},
+			RelevantTools:  fileContextTools,
 			ExpectFindings: true,
 		},
 	}
@@ -334,7 +421,7 @@ func evalCases(now time.Time) []evalCase {
 
 	return []evalCase{
 		singleCause, multiCause, symptomVsCause, deceptive, distractors,
-		pivot, failedTool, truncated, missing,
+		pivot, failedTool, truncated, missing, remediation,
 	}
 }
 

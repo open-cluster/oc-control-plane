@@ -112,15 +112,16 @@ concluded with findings or failed with the reason. The slim record: trigger, sub
 window, lifecycle, findings, spend.
 _Avoid:_ case, case file, round (as a persisted record).
 
-**Provenance** — what an investigation persists: the sources the router selected with the
+**Provenance** — what an investigation persists: the sources it was offered with the
 reasons, every tool run with its scope, window, outcome, truncation, summary and source
 references, and findings citing runs. Operational fact an operator can audit — never a
 model's chain of thought.
 _Avoid:_ evidence (as a record noun), evidence chain.
 
-**Source** (of an investigation) — one Integration the router selected, with its rank and
-the reason it was chosen. Selection is deterministic and explainable; one expansion may
-follow, only when everything read so far produced nothing, with its reason recorded.
+**Source** (of an investigation) — one Integration the investigation was offered, with
+its rank and the reason recorded. The offer is every enabled Integration whose verified
+grants support at least one tool; the investigator itself decides which offered sources
+to actually read.
 
 **Run** — one tool execution inside an investigation, succeeded or failed alike. Its
 ordinal is what a finding cites.
@@ -134,14 +135,11 @@ confirmed, likely, possible. Never an invented numeric certainty; multiple proba
 causes are legal.
 _Avoid:_ conclusion (as the record noun), claim.
 
-**Reasoner** — the deterministic loop's model boundary, declared by the investigation
-domain and implemented by `internal/reasoning` over vendor adapters. The domain never
-learns a vendor exists; per decision it returns further tool calls or findings. A failed
-reasoning step fails the investigation — it is never presented as a conclusion.
-
-**Investigator** — the autonomous loop's model boundary, beside Reasoner until a scored
-evaluation picks one: it opens a **Conversation** from an **Orientation** and returns
-**Moves**. The Orientation is assembled only from context the platform already holds —
+**Investigator** — the investigation's model boundary, declared by the investigation
+domain and implemented by `internal/reasoning` over vendor adapters; the domain never
+learns a vendor exists. It opens a **Conversation** from an **Orientation** and returns
+**Moves**. A failed reasoning step fails the investigation — it is never presented as a
+conclusion. The Orientation is assembled only from context the platform already holds —
 the trigger's own metadata, the offered sources, the change ledger's workload digest —
 never by querying a vendor. A Move carries further calls or the **Conclusion**: the
 concluding document of findings and recommended next steps, checked on its way into the

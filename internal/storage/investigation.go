@@ -220,7 +220,7 @@ func (p *Placements) QueryInvestigations(
 	return list, nil
 }
 
-// RecordSource writes one router selection.
+// RecordSource writes one offered source.
 func (p *Placements) RecordSource(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	source investigation.Source,
@@ -407,7 +407,7 @@ func (p *Placements) OpenTriggers(
 	return triggers, nil
 }
 
-// InvestigationCandidates reports the enabled integrations the router may select among.
+// InvestigationCandidates reports the enabled integrations an investigation may be offered.
 func (p *Placements) InvestigationCandidates(
 	ctx context.Context, organization tenancy.Organization,
 ) ([]integrations.Integration, error) {
@@ -526,7 +526,8 @@ func orEmptyStrings(values []string) []string {
 }
 
 // orEmptyFindings renders findings for the JSONB column. Kind and confidence appear
-// only when set, so a deterministic-loop finding keeps the exact shape it always had.
+// only when set, so a finding recorded before the vocabulary existed keeps the exact
+// shape it always had.
 func orEmptyFindings(findings []investigation.Finding) []map[string]any {
 	encoded := make([]map[string]any, 0, len(findings))
 	for _, finding := range findings {

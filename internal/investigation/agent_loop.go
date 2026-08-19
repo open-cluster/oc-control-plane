@@ -3,9 +3,9 @@ package investigation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,14 +14,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// THE AUTONOMOUS LOOP — one conversational investigator, running BESIDE the
-// deterministic loop behind the same Runner shell. The shell's guarantees are shared:
-// concurrency and drain, provenance recorded as it happens, one audited credential
-// unseal per integration, the citation check, and the detached write window for the
-// final record. What differs is the drive: one held conversation instead of
-// re-rendered briefs, the whole offered tool universe instead of a routed subset, and
-// safety ceilings — every one an honest stopped-by conclusion, never a silent cut and
-// never resource exhaustion dressed up as a diagnosis.
+// THE AUTONOMOUS LOOP — one conversational investigator behind the Runner shell. The
+// shell guarantees concurrency and drain, provenance recorded as it happens, one
+// audited credential unseal per integration, the citation check, and the detached
+// write window for the final record. The loop drives one held conversation over the
+// whole offered tool universe, under safety ceilings — every one an honest stopped-by
+// conclusion, never a silent cut and never resource exhaustion dressed up as a
+// diagnosis.
 
 // The autonomous loop's own bounds. Runs and turns are evaluation-derived tuning: they
 // start as defaults and are configuration, not constants — the Runner's fields
@@ -43,16 +42,23 @@ const (
 	inventoryDigestLimit = 50
 )
 
-// runAutonomous is one whole autonomous investigation: orientation from held context,
-// then a conversation of moves and executions, then the conclusion or the failure.
-func (r *Runner) runAutonomous(
+// errProvenance marks a run that could not be recorded. It aborts the investigation
+// wherever it surfaces — a read whose record failed must not inform a conclusion.
+var errProvenance = errors.New("a tool run could not be recorded")
+
+// errNoConclusion marks a conversation that would not conclude when its reads were
+// withdrawn.
+var errNoConclusion = errors.New("the reasoner did not conclude when required to")
+
+// run is one whole investigation: orientation from held context, then a conversation
+// of moves and executions, then the conclusion or the failure.
+func (r *Runner) run(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
 ) {
-	spend := Spend{}
-
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
-		r.fail(ctx, organization, opened.ID, "the connected sources could not be read", spend)
+		r.fail(ctx, organization, opened.ID,
+			"the connected sources could not be read", Spend{})
 		return
 	}
 	offered := offeredSources(r.Catalog, candidates)
@@ -64,98 +70,105 @@ func (r *Runner) runAutonomous(
 			SelectedAt:    time.Now().UTC(),
 		}
 		if err := r.Store.RecordSource(ctx, organization, opened.ID, recorded); err != nil {
-			r.fail(ctx, organization, opened.ID, "the offer could not be recorded", spend)
+			r.fail(ctx, organization, opened.ID, "the offer could not be recorded", Spend{})
 			return
 		}
 	}
 
-	conversation, err := r.Investigator.OpenConversation(
-		ctx, r.orientation(ctx, organization, opened, offered))
+	conversation, err := r.Investigator.OpenConversation(ctx,
+		r.orientation(ctx, organization, opened, offered))
 	if err != nil {
-		r.fail(ctx, organization, opened.ID, reasonerFailure(err), spend)
+		r.fail(ctx, organization, opened.ID, reasonerFailure(err), Spend{})
 		return
 	}
 
-	credentials := newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
-		return r.Store.RecordCredentialUnseal(ctx, organization, id,
-			"investigation "+opened.ID.String())
-	})
-	maxRuns := r.MaxToolRuns
-	if maxRuns <= 0 {
-		maxRuns = defaultMaxToolRuns
+	loop := &autonomousLoop{
+		runner:       r,
+		organization: organization,
+		opened:       opened,
+		offered:      offered,
+		credentials: newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
+			return r.Store.RecordCredentialUnseal(ctx, organization, id,
+				"investigation "+opened.ID.String())
+		}),
+		maxRuns:            r.MaxToolRuns,
+		maxTurns:           r.MaxTurns,
+		executedIdentities: map[string]int{},
 	}
-	maxTurns := r.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = defaultMaxTurns
+	if loop.maxRuns <= 0 {
+		loop.maxRuns = defaultMaxToolRuns
+	}
+	if loop.maxTurns <= 0 {
+		loop.maxTurns = defaultMaxTurns
 	}
 
-	var runs []ToolRun
+	conclusion, stoppedBy, err := loop.converse(ctx, conversation)
+	if err != nil {
+		r.fail(ctx, organization, opened.ID, failureReason(err), loop.spend)
+		return
+	}
+	r.conclude(ctx, organization, opened.ID, conclusion,
+		len(loop.runs), loop.turns, loop.executed, stoppedBy, loop.spend)
+}
+
+// autonomousLoop is one investigation's execution state: the ordinal space, the
+// duplicate map, the read budget and the spend.
+type autonomousLoop struct {
+	runner       *Runner
+	organization tenancy.Organization
+	opened       Investigation
+	offered      []OfferedSource
+	credentials  *credentialCache
+	maxRuns      int
+	maxTurns     int
+
+	runs               []ToolRun
+	executedIdentities map[string]int
+	executed           int
+	turns              int
+	spend              Spend
+}
+
+// converse drives the conversation to its conclusion: moves in, executions out, until
+// the model concludes or a ceiling forces it to.
+func (l *autonomousLoop) converse(
+	ctx context.Context, conversation Conversation,
+) (Conclusion, string, error) {
 	var results []CallResult
-	executedIdentities := map[string]int{}
-	executed := 0
 	stagnant := 0
 	stoppedBy := ""
 
 	for turn := 1; ; turn++ {
+		l.turns++
 		if stoppedBy == "" {
-			stoppedBy = r.firedCeiling(ctx, spend, executed, maxRuns, turn, maxTurns,
-				stagnant)
+			stoppedBy = l.firedCeiling(ctx, turn, stagnant)
 		}
-		mustConclude := stoppedBy != "" || len(offered) == 0
+		mustConclude := stoppedBy != "" || len(l.offered) == 0
 
-		move, moveErr := r.nextMove(ctx, conversation, results, mustConclude,
-			concludeReason(stoppedBy, len(offered)))
-		spend = spend.Add(move.Spend)
+		move, moveErr := l.nextMove(ctx, conversation, results, mustConclude,
+			concludeReason(stoppedBy, len(l.offered)))
+		l.spend = l.spend.Add(move.Spend)
 		if moveErr != nil {
-			r.fail(ctx, organization, opened.ID, reasonerFailure(moveErr), spend)
-			return
+			return Conclusion{}, "", moveErr
 		}
 
 		if move.Conclusion != nil {
-			r.concludeAutonomous(ctx, organization, opened.ID, *move.Conclusion,
-				len(runs), turn, executed, stoppedBy, spend)
-			return
+			return *move.Conclusion, stoppedBy, nil
 		}
 		if mustConclude {
-			r.fail(ctx, organization, opened.ID,
-				"the reasoner did not conclude when required to", spend)
-			return
+			return Conclusion{}, "", errNoConclusion
 		}
 
-		// Execute the move's calls in order, recording every one as it happens: an
-		// identical repeat is suppressed with the original named, and a call past the
-		// read budget is dropped visibly — the model reads both in its next turn.
-		results = results[:0]
+		// A fresh slice per turn: the conversation may hold what it was fed.
+		results = make([]CallResult, 0, len(move.Calls))
 		freshRead := false
 		for _, call := range move.Calls {
-			ordinal := len(runs) + 1
-			var run ToolRun
-			identity := callIdentityOf(call)
-			switch {
-			case executedIdentities[identity] != 0:
-				run = suppressedRun(opened, call, ordinal, executedIdentities[identity])
-			case executed >= maxRuns:
-				run = droppedRun(opened, ToolCall{Tool: call.Tool, Arguments: call.Arguments},
-					ordinal, fmt.Sprintf(
-						"not executed: the investigation's read budget of %d was exhausted",
-						maxRuns))
-			default:
-				run = r.execute(ctx, opened, briefSelections(offered), credentials,
-					ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
-				executed++
-				executedIdentities[identity] = ordinal
-				// An honest empty answer is still a fresh read — "nothing changed in
-				// the window" is information, and a loop that punished it as
-				// stagnation would rush exactly the investigations that should rule
-				// things out.
-				if run.Outcome == RunSucceeded {
-					freshRead = true
-				}
+			run, fresh, err := l.executeCall(ctx, call)
+			if err != nil {
+				return Conclusion{}, "", err
 			}
-			runs = append(runs, run)
-			if err := r.Store.RecordToolRun(ctx, organization, opened.ID, run); err != nil {
-				r.fail(ctx, organization, opened.ID, "a tool run could not be recorded", spend)
-				return
+			if fresh {
+				freshRead = true
 			}
 			results = append(results, CallResult{CallID: call.ID, Run: run})
 		}
@@ -167,18 +180,70 @@ func (r *Runner) runAutonomous(
 	}
 }
 
+// executeCall performs one proposed call and records it, whatever became of it: an
+// identical repeat is suppressed with the original named, a call past the read budget
+// is dropped visibly, and everything else executes as a read. The second return says
+// whether the call produced fresh evidence — what the stagnation guard counts.
+func (l *autonomousLoop) executeCall(
+	ctx context.Context, call AgentCall,
+) (ToolRun, bool, error) {
+	identity := callIdentityOf(call)
+	fresh := false
+	executedRead := false
+	var run ToolRun
+
+	switch {
+	case l.executedIdentities[identity] != 0:
+		run = suppressedRun(l.opened, call, l.nextOrdinal(), l.executedIdentities[identity])
+	case l.executed >= l.maxRuns:
+		run = droppedRun(l.opened, ToolCall{Tool: call.Tool, Arguments: call.Arguments},
+			l.nextOrdinal(), fmt.Sprintf(
+				"not executed: the investigation's read budget of %d was exhausted",
+				l.maxRuns))
+	default:
+		run = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials,
+			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, l.nextOrdinal())
+		l.executed++
+		// An honest empty answer is still a fresh read — "nothing changed in the
+		// window" is information, and a loop that punished it as stagnation would rush
+		// exactly the investigations that should rule things out.
+		fresh = run.Outcome == RunSucceeded
+		executedRead = true
+	}
+
+	if err := l.record(ctx, run); err != nil {
+		return ToolRun{}, false, err
+	}
+	if executedRead {
+		l.executedIdentities[identity] = run.Ordinal
+	}
+	return run, fresh, nil
+}
+
+// record writes one run into the provenance, in ordinal order.
+func (l *autonomousLoop) record(ctx context.Context, run ToolRun) error {
+	l.runs = append(l.runs, run)
+	if err := l.runner.Store.RecordToolRun(
+		ctx, l.organization, l.opened.ID, run); err != nil {
+		return errProvenance
+	}
+	return nil
+}
+
+// nextOrdinal is the ordinal the next recorded run takes.
+func (l *autonomousLoop) nextOrdinal() int { return len(l.runs) + 1 }
+
 // firedCeiling names the ceiling that ends the reads now, empty when none has. Checked
 // in cost order; which one fired is recorded, and the model is told why its reads are
 // over — the reason is part of the prompt.
-func (r *Runner) firedCeiling(
-	ctx context.Context, spend Spend, executed, maxRuns, turn, maxTurns, stagnant int,
-) string {
+func (l *autonomousLoop) firedCeiling(ctx context.Context, turn, stagnant int) string {
 	switch {
-	case r.SpendCeilingMicroCents > 0 && spend.MicroCents >= r.SpendCeilingMicroCents:
+	case l.runner.SpendCeilingMicroCents > 0 &&
+		l.spend.MicroCents >= l.runner.SpendCeilingMicroCents:
 		return StoppedBySpend
-	case executed >= maxRuns:
+	case l.executed >= l.maxRuns:
 		return StoppedByToolRuns
-	case turn > maxTurns:
+	case turn > l.maxTurns:
 		return StoppedByReasonerTurns
 	case wallClockAlmostOver(ctx, wallClockReserve):
 		return StoppedByWallClock
@@ -190,7 +255,7 @@ func (r *Runner) firedCeiling(
 }
 
 // nextMove asks the conversation for its next move under the per-turn deadline.
-func (r *Runner) nextMove(
+func (l *autonomousLoop) nextMove(
 	ctx context.Context, conversation Conversation, results []CallResult,
 	mustConclude bool, reason string,
 ) (Move, error) {
@@ -199,11 +264,20 @@ func (r *Runner) nextMove(
 	return conversation.Next(moveCtx, results, mustConclude, reason)
 }
 
-// concludeAutonomous checks the conclusion and writes it, with the ceiling that forced
-// it — empty when the model concluded freely. The scale of the conversation — turns
-// taken, reads executed — is context-size instrumentation, emitted here because the
-// loop is the only place that knows both numbers.
-func (r *Runner) concludeAutonomous(
+// failureReason renders a conversation error as the recordable failure reason: the
+// loop's own sentinels speak for themselves, anything else came from the model boundary.
+func failureReason(err error) string {
+	if errors.Is(err, errProvenance) || errors.Is(err, errNoConclusion) {
+		return err.Error()
+	}
+	return reasonerFailure(err)
+}
+
+// conclude checks the conclusion and writes it, with the ceiling that forced it —
+// empty when the model concluded freely. The scale of the conversation — turns taken,
+// reads executed — is context-size instrumentation, emitted here because the loop is
+// the only place that knows both numbers.
+func (r *Runner) conclude(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	conclusion Conclusion, runs, turns, executed int, stoppedBy string, spend Spend,
 ) {
@@ -221,7 +295,7 @@ func (r *Runner) concludeAutonomous(
 			slog.String("error", err.Error()))
 		return
 	}
-	r.Logger.Info("autonomous investigation concluded",
+	r.Logger.Info("investigation concluded",
 		slog.String("investigation_id", id.String()),
 		slog.Int("turns", turns),
 		slog.Int("tool_runs", executed),
@@ -230,13 +304,12 @@ func (r *Runner) concludeAutonomous(
 }
 
 // offeredSources is every enabled candidate whose verified grants support at least one
-// tool, in stable name order: the autonomous investigator's whole universe. The grant
-// filter is the router's own, so availability derives from verified reality on both
-// loops identically.
+// tool, in stable name order: the investigator's whole universe, derived from verified
+// reality.
 func offeredSources(
 	catalog integrations.Catalog, candidates []integrations.Integration,
-) []BriefSource {
-	var sources []BriefSource
+) []OfferedSource {
+	var sources []OfferedSource
 	for _, candidate := range candidates {
 		definition, known := catalog.ByID(candidate.Type)
 		if !known || candidate.Disabled() {
@@ -246,7 +319,7 @@ func offeredSources(
 		if len(tools) == 0 {
 			continue
 		}
-		sources = append(sources, BriefSource{Integration: candidate, Tools: tools})
+		sources = append(sources, OfferedSource{Integration: candidate, Tools: tools})
 	}
 	sortSourcesByName(sources)
 	return sources
@@ -328,7 +401,7 @@ func boundNextSteps(steps []string) []string {
 // orientation, never fails the investigation.
 func (r *Runner) orientation(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
-	offered []BriefSource,
+	offered []OfferedSource,
 ) Orientation {
 	oriented := Orientation{
 		Subject:     opened.Subject,
@@ -349,9 +422,8 @@ func (r *Runner) orientation(
 	return oriented
 }
 
-// briefSelections adapts the offered sources to the executor's selection shape, so the
-// autonomous loop shares the deterministic loop's execute path unchanged.
-func briefSelections(offered []BriefSource) []selection {
+// selections adapts the offered sources to the executor's shape.
+func selections(offered []OfferedSource) []selection {
 	selections := make([]selection, 0, len(offered))
 	for _, source := range offered {
 		selections = append(selections, selection{
@@ -359,11 +431,4 @@ func briefSelections(offered []BriefSource) []selection {
 		})
 	}
 	return selections
-}
-
-// sortSourcesByName keeps the offer order stable run to run.
-func sortSourcesByName(sources []BriefSource) {
-	sort.SliceStable(sources, func(i, j int) bool {
-		return sources[i].Integration.Name < sources[j].Integration.Name
-	})
 }

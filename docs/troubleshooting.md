@@ -32,7 +32,7 @@ Symptoms, what each actually means, and where the answer is written down.
 | Ends `failed`: "cited a read that never ran" | The model produced an untraceable finding and it was refused rather than stored |
 | Ends concluded with no findings | Honest: what was read established nothing. Read the runs — the provenance shows what was tried |
 | Runs show `truncated` | The source held more than the bound; the content shown is real but not the whole. Narrow the window or the query |
-| A run failed "not one of the tools the selected sources offer" | The model reached outside the router's selection; the read did not happen and the record says so |
+| A run failed "not one of the tools the selected sources offer" | The model reached outside the offered tool universe; the read did not happen and the record says so |
 
 ## Relays
 

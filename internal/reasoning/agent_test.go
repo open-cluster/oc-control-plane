@@ -40,8 +40,9 @@ func testOrientation() investigation.Orientation {
 				"runbook_url": "https://runbooks.acme/latency",
 			},
 			GeneratorURL: "https://prometheus.acme/graph?g0",
+			FirstSeenAt:  time.Date(2026, 8, 16, 11, 45, 0, 0, time.UTC),
 		},
-		Sources: []investigation.BriefSource{{
+		Sources: []investigation.OfferedSource{{
 			Integration: integrations.Integration{Name: "Acme Slack"},
 			Tools: []integrations.Tool{{
 				Name: "slack.list_channels", Capability: "slack.list_channels",
@@ -91,7 +92,7 @@ func succeededResult(callID string, ordinal int) investigation.CallResult {
 func TestTheAgentPreambleIsPinned(t *testing.T) {
 	t.Parallel()
 
-	const pinned = "453210f4f870d6aa9504a7a7d6de606b7f8d9a2262e4bb096f4c348c863c643a"
+	const pinned = "f2216480ad5d85aa60094cdfcf7539823da83c7607dd9ecae5fe6fa83ca704f1"
 	digest := sha256.Sum256([]byte(agentPreamble))
 	if hex.EncodeToString(digest[:]) != pinned {
 		t.Fatalf("the agent preamble changed. If the change is deliberate, update this "+
@@ -100,8 +101,8 @@ func TestTheAgentPreambleIsPinned(t *testing.T) {
 	}
 }
 
-// The §7 verbatim survivals: the untrusted-content rule and the cite-or-abstain rule
-// carry over word for word from the deterministic preamble.
+// The two rules that must never drift: the untrusted-content rule and the
+// cite-or-abstain rule, held word for word.
 func TestTheSurvivingRulesAreVerbatim(t *testing.T) {
 	t.Parallel()
 
@@ -122,22 +123,85 @@ func TestTheSurvivingRulesAreVerbatim(t *testing.T) {
 	}
 }
 
+// The orientation must say when the trigger actually fired and that the window opens
+// earlier on purpose: without the firing time the model reads the window's start as the
+// incident's onset and rejects every cause that landed after it.
+func TestTheOrientationCarriesTheTriggerTiming(t *testing.T) {
+	t.Parallel()
+
+	oriented := testOrientation()
+	rendered := renderOrientation(oriented)
+	for _, held := range []string{
+		"first fired: 2026-08-16T11:45:00Z",
+		"window opens earlier",
+		"still firing",
+	} {
+		if !strings.Contains(rendered, held) {
+			t.Errorf("the orientation does not carry %q:\n%s", held, rendered)
+		}
+	}
+
+	oriented.Trigger.Resolved = true
+	if resolved := renderOrientation(oriented); !strings.Contains(resolved, "resolved") {
+		t.Errorf("a resolved trigger is not said to be resolved:\n%s", resolved)
+	}
+
+	oriented.Trigger.FirstSeenAt = time.Time{}
+	if unknown := renderOrientation(oriented); strings.Contains(unknown, "first fired") {
+		t.Errorf("an unknown firing time must not be rendered:\n%s", unknown)
+	}
+}
+
+// The ordinal universe follows the highest ordinal fed back, not the count, so a
+// transcript whose ordinals are not dense still cites only runs that happened.
+func TestAConclusionMayCiteTheHighestOrdinalFedBack(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeProvider{completions: []Completion{
+		toolCallCompletion(t, "call-1", "slack.list_channels", map[string]any{}),
+		concludeCompletion(t, map[string]any{
+			"findings": []map[string]any{{
+				"statement":  "the subordinate's read established the deploy",
+				"kind":       "probable_cause",
+				"confidence": "likely",
+				"sources":    []int{4},
+			}},
+			"next_steps": []string{},
+		}),
+	}}
+	conversation, err := agentWith(t, provider).OpenConversation(
+		context.Background(), testOrientation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// One result whose ordinal is 5: the transcript's ordinals are not dense.
+	report := succeededResult("call-1", 5)
+	move, err := conversation.Next(context.Background(), []investigation.CallResult{report},
+		false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if move.Conclusion == nil || move.Conclusion.Findings[0].Sources[0] != 4 {
+		t.Fatalf("move = %+v, want the conclusion citing run 4", move)
+	}
+}
+
 func TestTheAutonomousRevisionMovesWithItsInputs(t *testing.T) {
 	t.Parallel()
 
 	tools := []integrations.Tool{revisionTool("a.read", "reads a")}
-	base := AutonomousAgentRevision(tools)
+	base := AgentRevision(tools)
 	if len(base) != 16 {
 		t.Fatalf("revision %q is not 16 hex characters", base)
 	}
-	if again := AutonomousAgentRevision(tools); again != base {
+	if again := AgentRevision(tools); again != base {
 		t.Fatal("two derivations over the same inputs differ")
 	}
-	if AutonomousAgentRevision(tools) == AgentRevision(tools) {
-		t.Error("the autonomous and deterministic architectures hash alike; a capture " +
-			"could not tell them apart")
-	}
-	moved := AutonomousAgentRevision([]integrations.Tool{
+	moved := AgentRevision([]integrations.Tool{
 		revisionTool("a.read", "reads a, differently")})
 	if moved == base {
 		t.Error("a changed tool description did not move the revision")
@@ -180,6 +244,7 @@ func TestOpenConversationRendersHeldContextAndOffersNativeTools(t *testing.T) {
 		"namespace: payments", "runbook_url: https://runbooks.acme/latency",
 		"https://prometheus.acme/graph?g0", "Acme Slack",
 		"payments/deployment api-server",
+		"first fired: 2026-08-16T11:45:00Z", "still firing",
 	} {
 		if !strings.Contains(orientation, held) {
 			t.Errorf("the orientation does not carry %q:\n%s", held, orientation)

@@ -1,8 +1,9 @@
 // Package investigation owns the investigation domain: opening one from an alert episode
-// or an operator's question, routing it to a small ranked set of connected sources,
-// running bounded read tools against them, and persisting OPERATIONAL PROVENANCE — what
-// was triggered, which integrations were queried and why, which tools ran over which
-// window, what each returned or failed with, and the findings with their sources.
+// or an operator's question, offering every grant-supported connected source to an
+// autonomous conversation, running bounded read tools against them, and persisting
+// OPERATIONAL PROVENANCE — what was triggered, which integrations were offered, which
+// tools ran over which window, what each returned or failed with, and the findings with
+// their sources.
 //
 // What is deliberately NOT here is an AI chain of thought. No hypothesis, no evidence
 // stance, no coverage certificate is persisted: the reasoner's working is its own, and
@@ -36,8 +37,7 @@ const (
 
 // The ceilings that can force a concluding turn, as stopped_by records them. Persisted
 // text, frozen like an enum: the operator view and its clients key on these words.
-// Empty means the model concluded freely. Wall clock and stagnation are the autonomous
-// loop's own: the deterministic loop cannot reach them.
+// Empty means the model concluded freely.
 const (
 	StoppedBySpend         = "spend"
 	StoppedByToolRuns      = "tool_runs"
@@ -86,7 +86,7 @@ var (
 type Finding struct {
 	Statement string
 	// Kind is the finding's causal role — FindingProbableCause and its siblings. Empty
-	// on a deterministic-loop finding, which predates the vocabulary; required from the
+	// on a finding concluded before the vocabulary existed; required from the
 	// autonomous conclusion, enforced where it is decoded.
 	Kind string
 	// Confidence is categorical — confirmed, likely, possible — never an invented
@@ -180,12 +180,11 @@ type Investigation struct {
 	ConcludedAt time.Time
 }
 
-// Source is one integration the router selected, with the reason it was.
+// Source is one integration the investigation was offered, with the reason recorded.
 type Source struct {
 	IntegrationID uuid.UUID
 	Rank          int
-	// Reason says why this source joined the investigation — its score's terms, or the
-	// expansion that pulled it in.
+	// Reason says why this source joined the investigation.
 	Reason     string
 	SelectedAt time.Time
 }
@@ -273,7 +272,7 @@ type Store interface {
 	// QueryInvestigations reports a page, newest first.
 	QueryInvestigations(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		page Page) (List, error)
-	// RecordSource writes one router selection.
+	// RecordSource writes one offered source.
 	RecordSource(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		source Source) error
 	// RecordToolRun writes one execution as it finished.
@@ -294,8 +293,8 @@ type Store interface {
 	// OpenTriggers reports the organization's open episodes, for inferring a question's
 	// subject. Bounded: subject inference reads recent context, not history.
 	OpenTriggers(ctx context.Context, org tenancy.Organization, limit int) ([]Trigger, error)
-	// InvestigationCandidates reports the enabled integrations whose types the router may
-	// select among, with their sealed credentials for the runs.
+	// InvestigationCandidates reports the enabled integrations an investigation may be
+	// offered, with their sealed credentials for the runs.
 	InvestigationCandidates(ctx context.Context, org tenancy.Organization,
 	) ([]integrations.Integration, error)
 	// RecordCredentialUnseal writes the audit event for one credential unseal, before
@@ -308,53 +307,14 @@ type Store interface {
 		limit int) ([]string, error)
 }
 
-// Brief is everything the reasoner may consult for one decision. The text within it —
-// subject, question, tool results — originates in a customer's systems and stays
-// untrusted: it may steer which declared tool is called next, and nothing else.
-type Brief struct {
-	Subject     string
-	Question    string
-	WindowFrom  time.Time
-	WindowUntil time.Time
-	// Sources are the router's selection: each integration and the tools its type offers.
-	Sources []BriefSource
-	// Runs is every execution so far, in ordinal order, contents included.
-	Runs []ToolRun
-	// SpendSoFar is what the investigation's reasoning has consumed before this
-	// decision. The reasoning layer refuses a non-concluding decision past the spend
-	// ceiling with it — the backstop that makes a runaway structurally impossible even
-	// if a loop forgets its own ceiling check.
-	SpendSoFar Spend
-	// MustConclude says reads are over: the round budget is spent, and this decision must
-	// carry findings.
-	MustConclude bool
-}
-
-// BriefSource is one selected integration and what may be read from it.
-type BriefSource struct {
+// OfferedSource is one offered integration and what may be read from it.
+type OfferedSource struct {
 	Integration integrations.Integration
 	Tools       []integrations.Tool
-}
-
-// Decision is what the reasoner returned: further reads, or the conclusion.
-type Decision struct {
-	// Calls are the reads to perform next; empty means conclude.
-	Calls []ToolCall
-	// Findings is the conclusion, possibly empty when nothing was established.
-	Findings []Finding
-	// Spend is what producing this decision cost.
-	Spend Spend
 }
 
 // ToolCall is one proposed read.
 type ToolCall struct {
 	Tool      string
 	Arguments map[string]any
-}
-
-// Reasoner is the model boundary, in this domain's vocabulary. Implemented by the
-// reasoning infrastructure; a test stands a fake here, which is the surviving test seam
-// of the recorded-transcript mechanism.
-type Reasoner interface {
-	Decide(ctx context.Context, brief Brief) (Decision, error)
 }

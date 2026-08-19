@@ -13,13 +13,13 @@ import (
 // domain's Investigator boundary. One conversation per investigation: the frozen preamble and
 // the orientation render once and cache; each turn replays the transcript and appends
 // the newest results; the provider's native tool calling carries the calls, and the
-// conclude tool's call IS the conclusion. The decider's guarantees hold here too: every
-// attempt is priced, a refusal is named and never read as an answer, and a malformed
-// document gets exactly one in-deployment retry.
+// conclude tool's call IS the conclusion. Every attempt is priced, a refusal is named
+// and never read as an answer, and a malformed document gets exactly one in-deployment
+// retry.
 
-// Agent builds conversations against one configured deployment. Validated at startup
-// exactly like the Decider, for the same reason: a deployment nobody consented to is a
-// refusal whoever configured it reads, not a 03:00 failure.
+// Agent builds conversations against one configured deployment. Validated at startup:
+// a deployment nobody consented to is a refusal whoever configured it reads, not a
+// 03:00 failure.
 type Agent struct {
 	provider   Provider
 	deployment Deployment
@@ -58,7 +58,7 @@ func (a *Agent) OpenConversation(
 	return &conversation{
 		agent:       a,
 		orientation: renderOrientation(orientation),
-		tools:       conversationTools(orientation.Sources),
+		tools:       conversationTools(orientation),
 	}, nil
 }
 
@@ -74,8 +74,9 @@ type conversation struct {
 	// cached orientation, because a transcript cannot open with an empty assistant
 	// message.
 	opening string
-	// runs counts every recorded run fed back so far: the ordinal universe a
-	// conclusion may cite.
+	// runs is the highest run ordinal fed back so far: the ordinal universe a
+	// conclusion may cite. A maximum rather than a count, so a transcript whose
+	// ordinals are not dense still cites only runs that happened.
 	runs int
 	// spent accumulates this conversation's cost, for the spend-ceiling backstop. The
 	// loop enforces the ceiling as product behavior; this refusal firing means a loop
@@ -90,7 +91,7 @@ func (c *conversation) Next(
 ) (investigation.Move, error) {
 	move := investigation.Move{}
 
-	// The spend-ceiling backstop, exactly the decider's: the concluding turn is always
+	// The spend-ceiling backstop: the concluding turn is always
 	// allowed, because a partial conclusion costs one more call and refusing it would
 	// turn every reached ceiling into a failure.
 	if ceiling := c.agent.deployment.SpendCeilingMicroCents; ceiling > 0 &&
@@ -172,8 +173,10 @@ func (c *conversation) appendResults(results []investigation.CallResult) {
 	rendered := make([]ToolResultTurn, 0, len(results))
 	for _, result := range results {
 		rendered = append(rendered, renderResult(result))
+		if result.Run.Ordinal > c.runs {
+			c.runs = result.Run.Ordinal
+		}
 	}
-	c.runs += len(results)
 	if len(c.turns) == 0 {
 		// Results with no assistant turn cannot happen through the loop; keeping them
 		// as a bare turn preserves the transcript's honesty anyway.
@@ -229,12 +232,15 @@ func (c *conversation) prompt(forced bool) Prompt {
 }
 
 // conversationTools generates the native definitions: every offered tool once, then
-// conclude. Definition order follows the orientation's stable source order, so the
-// definition set — and the agent revision derived over it — is stable run to run.
-func conversationTools(sources []investigation.BriefSource) []integrations.ToolDefinition {
+// conclude last — the forced concluding turn depends on conclude's position. Definition
+// order follows the orientation's stable source order, so the definition set — and the
+// agent revision derived over it — is stable run to run.
+func conversationTools(
+	orientation investigation.Orientation,
+) []integrations.ToolDefinition {
 	seen := map[string]bool{}
 	var definitions []integrations.ToolDefinition
-	for _, source := range sources {
+	for _, source := range orientation.Sources {
 		for _, tool := range source.Tools {
 			if seen[tool.Name] {
 				continue
@@ -350,4 +356,18 @@ func oneOf(value string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// maxStatementLength bounds one finding. Enforced here rather than in the schema because
+// several providers silently drop schema bounds.
+const maxStatementLength = 2048
+
+// spendOf prices one call in the domain's own terms. Cache reads and writes are
+// input-side tokens the provider handled, so they count as input.
+func spendOf(rate Rate, usage TokenUsage) investigation.Spend {
+	return investigation.Spend{
+		InputTokens:  usage.Input.Or(0) + usage.CacheRead.Or(0) + usage.CacheWrite.Or(0),
+		OutputTokens: usage.Output.Or(0),
+		MicroCents:   rate.Cost(usage),
+	}
 }

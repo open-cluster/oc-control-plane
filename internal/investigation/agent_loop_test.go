@@ -552,7 +552,9 @@ func TestWallClockReserveIsDetectedFromTheDeadline(t *testing.T) {
 func TestEachCeilingNamesItself(t *testing.T) {
 	t.Parallel()
 
-	runner := &Runner{SpendCeilingMicroCents: 10}
+	loop := &autonomousLoop{
+		runner: &Runner{SpendCeilingMicroCents: 10}, maxRuns: 30, maxTurns: 20,
+	}
 	open := context.Background()
 	almostOver, done := context.WithTimeout(context.Background(), time.Second)
 	defer done()
@@ -574,8 +576,9 @@ func TestEachCeilingNamesItself(t *testing.T) {
 		{"stagnation", open, Spend{}, 0, 1, 2, StoppedByStagnation},
 	}
 	for _, one := range cases {
-		got := runner.firedCeiling(one.ctx, one.spend, one.executed, 30, one.turn, 20,
-			one.stagnant)
+		loop.spend = one.spend
+		loop.executed = one.executed
+		got := loop.firedCeiling(one.ctx, one.turn, one.stagnant)
 		if got != one.want {
 			t.Errorf("%s: fired %q, want %q", one.name, got, one.want)
 		}

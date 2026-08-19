@@ -31,6 +31,7 @@ type evalRecord struct {
 
 type evalFinding struct {
 	Statement string `json:"statement"`
+	Kind      string `json:"kind,omitempty"`
 	Sources   []int  `json:"sources"`
 }
 
@@ -57,22 +58,19 @@ type evalSpend struct {
 }
 
 // evalModel is the deployment a real-model evaluation runs against, read from the
-// OC_EVAL_MODEL_* environment by the gated test; zero means the scripted reasoner.
-// Architecture selects which loop investigates — issue #5's candidates are captured by
-// running the same worlds under each.
+// OC_EVAL_MODEL_* environment by the gated test; zero means the scripted conversation.
 type evalModel struct {
-	Provider     string
-	Name         string
-	Key          string
-	Effort       string
-	BaseURL      string
-	Architecture string
+	Provider string
+	Name     string
+	Key      string
+	Effort   string
+	BaseURL  string
 }
 
 // runEvalCase executes one case and returns its record. Each case gets its own plane and
 // database; the fakes are the case's own, so worlds cannot bleed into each other.
 func runEvalCase(
-	t *testing.T, one evalCase, model evalModel, reasoner investigation.Reasoner,
+	t *testing.T, one evalCase, model evalModel, investigator investigation.Investigator,
 ) evalRecord {
 	t.Helper()
 
@@ -107,10 +105,7 @@ func runEvalCase(
 			cfg.ModelBaseURL = model.BaseURL
 			cfg.ModelConsented = []string{model.Provider}
 		}
-		if model.Architecture != "" {
-			cfg.InvestigationArchitecture = model.Architecture
-		}
-	}, wiring{reasoner: reasoner})
+	}, wiring{investigator: investigator})
 	world := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,
 	}
@@ -147,7 +142,7 @@ func runEvalCase(
 	decodeInto(t, body, &opened)
 
 	started := time.Now()
-	final := world.awaitInvestigationWithin(t, opened.ID, evalCaseTimeout(reasoner))
+	final := world.awaitInvestigationWithin(t, opened.ID, evalCaseTimeout(investigator))
 	elapsed := time.Since(started)
 
 	var read struct {
@@ -173,10 +168,10 @@ func runEvalCase(
 	}
 }
 
-// evalCaseTimeout sizes the wait for the model at the boundary: a scripted reasoner
-// answers instantly, a real one thinks for minutes across several rounds.
-func evalCaseTimeout(reasoner investigation.Reasoner) time.Duration {
-	if reasoner != nil {
+// evalCaseTimeout sizes the wait for the model at the boundary: a scripted conversation
+// answers instantly, a real one thinks for minutes across several turns.
+func evalCaseTimeout(investigator investigation.Investigator) time.Duration {
+	if investigator != nil {
 		return 30 * time.Second
 	}
 	return 25 * time.Minute

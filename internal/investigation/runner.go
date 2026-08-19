@@ -3,9 +3,7 @@ package investigation
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -22,15 +20,9 @@ import (
 // product decision: they are what "fast, cheap, and not hammering every connected
 // system" means in numbers.
 const (
-	// maxRounds is how many decisions the reasoner gets; the last one must conclude.
-	maxRounds = 4
-	// maxCallsPerRound bounds one decision's reads.
-	maxCallsPerRound = 4
-	// maxRuns bounds the whole investigation's reads.
-	maxRuns = 12
 	// runTimeout bounds one tool execution.
 	runTimeout = 30 * time.Second
-	// decideTimeout bounds one reasoner decision; models that think take minutes.
+	// decideTimeout bounds one reasoner turn; models that think take minutes.
 	decideTimeout = 6 * time.Minute
 	// investigationTimeout bounds the whole run.
 	investigationTimeout = 30 * time.Minute
@@ -46,7 +38,6 @@ const (
 const (
 	maxRunErrorLength = 1024
 	maxSummaryLength  = 512
-	maxReasonLength   = 512
 )
 
 // bounded cuts text at a rune boundary inside the limit.
@@ -58,16 +49,14 @@ func bounded(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// Runner executes investigations in the background: routes, reads, records, and asks
-// the reasoner to decide. One per process, so shutdown can drain what is running.
+// Runner executes investigations in the background: offers the sources, reads, records,
+// and converses with the model. One per process, so shutdown can drain what is running.
 type Runner struct {
-	Store    Store
-	Catalog  integrations.Catalog
-	Sealer   seal.Sealer
-	Reasoner Reasoner
-	// Investigator is the autonomous conversation boundary. Set, it selects the
-	// autonomous loop; nil runs the deterministic loop. Both coexist behind this one
-	// shell until a scored evaluation picks the winner.
+	Store   Store
+	Catalog integrations.Catalog
+	Sealer  seal.Sealer
+	// Investigator is the conversation-shaped model boundary the investigation runs
+	// against.
 	Investigator Investigator
 	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
 	// tuning, so configuration rather than constants; zero means the defaults.
@@ -133,147 +122,6 @@ func (r *Runner) Drain() {
 	r.running.Wait()
 }
 
-// run is one whole investigation: route, then a bounded loop of reasoner decisions and
-// tool executions, then the conclusion or the failure — every step recorded as it
-// happens, so an investigation that dies mid-flight still shows how far it got.
-func (r *Runner) run(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
-) {
-	if r.Investigator != nil {
-		r.runAutonomous(ctx, organization, opened)
-		return
-	}
-	spend := Spend{}
-
-	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
-	if err != nil {
-		r.fail(ctx, organization, opened.ID, "the connected sources could not be read", spend)
-		return
-	}
-	selected, remainder := route(r.Catalog, candidates, r.routingTerms(ctx, organization, opened))
-	for rank, source := range selected {
-		if err := r.recordSource(ctx, organization, opened.ID, source, rank+1); err != nil {
-			r.fail(ctx, organization, opened.ID, "the routing could not be recorded", spend)
-			return
-		}
-	}
-
-	// Every unseal this investigation performs lands in the audit record first, naming
-	// the investigation that needed it.
-	credentials := newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
-		return r.Store.RecordCredentialUnseal(ctx, organization, id,
-			"investigation "+opened.ID.String())
-	})
-	var runs []ToolRun
-	expanded := false
-
-	executed := 0
-	stoppedBy := ""
-	for round := 1; ; round++ {
-		// The ceilings, checked in cost order. Which one fired is recorded, because a
-		// forced conclusion labeled as a free one would dress resource exhaustion as a
-		// completed diagnosis.
-		if stoppedBy == "" {
-			switch {
-			case r.SpendCeilingMicroCents > 0 && spend.MicroCents >= r.SpendCeilingMicroCents:
-				stoppedBy = StoppedBySpend
-			case executed >= maxRuns:
-				stoppedBy = StoppedByToolRuns
-			case round >= maxRounds:
-				stoppedBy = StoppedByReasonerTurns
-			}
-		}
-		mustConclude := stoppedBy != "" || len(selected) == 0
-
-		decision, decideErr := r.decide(ctx, opened, selected, runs, spend, mustConclude)
-		spend = spend.Add(decision.Spend)
-		if decideErr != nil {
-			r.fail(ctx, organization, opened.ID, reasonerFailure(decideErr), spend)
-			return
-		}
-
-		if mustConclude || len(decision.Calls) == 0 {
-			if citation := checkCitations(decision.Findings, len(runs)); citation != "" {
-				r.fail(ctx, organization, opened.ID, citation, spend)
-				return
-			}
-			writeCtx, done := writeWindow(ctx)
-			defer done()
-			if err := r.Store.ConcludeInvestigation(
-				writeCtx, organization, opened.ID, decision.Findings, nil,
-				stoppedBy, spend); err != nil {
-				r.Logger.Error("an investigation's conclusion could not be recorded",
-					slog.String("investigation_id", opened.ID.String()),
-					slog.String("error", err.Error()))
-			}
-			return
-		}
-
-		// A call past a bound is dropped VISIBLY: recorded as a failed run the model
-		// reads in its next brief and the operator sees in provenance. Silent dropping
-		// was the defect — the model believed it had read what it asked for.
-		recordable := len(decision.Calls)
-		overflow := 0
-		if recordable > maxCallsPerRound+maxDroppedRecords {
-			overflow = recordable - (maxCallsPerRound + maxDroppedRecords)
-			recordable = maxCallsPerRound + maxDroppedRecords
-		}
-		for index := 0; index < recordable; index++ {
-			call := decision.Calls[index]
-			var run ToolRun
-			switch {
-			case index >= maxCallsPerRound:
-				reason := fmt.Sprintf("not executed: the decision proposed %d reads "+
-					"and a round performs at most %d", len(decision.Calls), maxCallsPerRound)
-				if overflow > 0 && index == recordable-1 {
-					reason = fmt.Sprintf("%s; %d further proposed reads were also "+
-						"not executed", reason, overflow)
-				}
-				run = droppedRun(opened, call, len(runs)+1, reason)
-			case executed >= maxRuns:
-				run = droppedRun(opened, call, len(runs)+1, fmt.Sprintf(
-					"not executed: the investigation's read budget of %d was exhausted",
-					maxRuns))
-			default:
-				run = r.execute(ctx, opened, selected, credentials, call, len(runs)+1)
-				executed++
-			}
-			runs = append(runs, run)
-			if err := r.Store.RecordToolRun(ctx, organization, opened.ID, run); err != nil {
-				r.fail(ctx, organization, opened.ID, "a tool run could not be recorded", spend)
-				return
-			}
-		}
-
-		// The one expansion, and only when the whole first selection produced nothing:
-		// widening a search that is finding things is how every connected system gets
-		// hammered, which this router exists to prevent.
-		if !expanded && nothingFound(runs) && len(remainder) > 0 {
-			expanded = true
-			more := remainder
-			if len(more) > expansionSources {
-				more = more[:expansionSources]
-			}
-			for offset, source := range more {
-				source.reason = "expanded after the first selection returned nothing: " +
-					source.reason
-				if err := r.recordSource(ctx, organization, opened.ID, source,
-					len(selected)+offset+1); err != nil {
-					r.fail(ctx, organization, opened.ID, "the routing could not be recorded", spend)
-					return
-				}
-				selected = append(selected, source)
-			}
-			remainder = remainder[len(more):]
-		}
-	}
-}
-
-// maxDroppedRecords bounds how many dropped calls one round records individually; the
-// last individually recorded one carries the count of any further ones, so a
-// pathological decision cannot spam provenance.
-const maxDroppedRecords = maxCallsPerRound
-
 // droppedRun records a call that was proposed and not executed, so the drop is on the
 // record rather than silent.
 func droppedRun(opened Investigation, call ToolCall, ordinal int, reason string) ToolRun {
@@ -289,52 +137,6 @@ func droppedRun(opened Investigation, call ToolCall, ordinal int, reason string)
 		StartedAt:   now,
 		FinishedAt:  now,
 	}
-}
-
-// routingTerms is what the router matches candidates against: the subject, the
-// operator's question, and the triggering alert's own labels — a namespace or service
-// label is exactly the term that picks the right channel and repository.
-func (r *Runner) routingTerms(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
-) []string {
-	parts := []string{opened.Subject, opened.Question}
-	if opened.EpisodeID != uuid.Nil {
-		// Best-effort: an unreadable trigger narrows the terms, never fails the run.
-		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {
-			for key, value := range trigger.Labels {
-				parts = append(parts, key, value)
-			}
-		}
-	}
-	return subjectTerms(parts...)
-}
-
-// decide asks the reasoner for the next move, under its own deadline.
-func (r *Runner) decide(
-	ctx context.Context, opened Investigation, selected []selection, runs []ToolRun,
-	spend Spend, mustConclude bool,
-) (Decision, error) {
-	sources := make([]BriefSource, 0, len(selected))
-	for _, source := range selected {
-		sources = append(sources, BriefSource{
-			Integration: source.integration,
-			Tools:       source.tools,
-		})
-	}
-	brief := Brief{
-		Subject:      opened.Subject,
-		Question:     opened.Question,
-		WindowFrom:   opened.WindowFrom,
-		WindowUntil:  opened.WindowUntil,
-		Sources:      sources,
-		Runs:         runs,
-		SpendSoFar:   spend,
-		MustConclude: mustConclude,
-	}
-
-	decideCtx, done := context.WithTimeout(ctx, decideTimeout)
-	defer done()
-	return r.Reasoner.Decide(decideCtx, brief)
 }
 
 // execute performs one proposed read and reports it as a run, success or failure alike:
@@ -391,18 +193,6 @@ func (r *Runner) execute(
 	run.Sources = result.Sources
 	run.Content = result.Content
 	return run
-}
-
-func (r *Runner) recordSource(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	source selection, rank int,
-) error {
-	return r.Store.RecordSource(ctx, organization, id, Source{
-		IntegrationID: source.integration.ID,
-		Rank:          rank,
-		Reason:        bounded(source.reason, maxReasonLength),
-		SelectedAt:    time.Now().UTC(),
-	})
 }
 
 // fail ends the investigation with the reason, writing inside a detached window so a
@@ -471,32 +261,6 @@ func toolNamed(selected []selection, name string) (selection, integrations.Tool,
 		}
 	}
 	return selection{}, integrations.Tool{}, false
-}
-
-// nothingFound reports whether every run so far failed or came back empty, which is what
-// justifies the one expansion.
-func nothingFound(runs []ToolRun) bool {
-	for _, run := range runs {
-		if run.Outcome == RunSucceeded && !emptyContent(run.Content) {
-			return false
-		}
-	}
-	return true
-}
-
-// emptyContent reports whether a run's answer holds nothing. Tool contents are slices of
-// items or single records; reflection here keeps the judgement out of every provider.
-func emptyContent(content any) bool {
-	if content == nil {
-		return true
-	}
-	value := reflect.ValueOf(content)
-	switch value.Kind() {
-	case reflect.Slice, reflect.Map:
-		return value.Len() == 0
-	default:
-		return false
-	}
 }
 
 // credentialCache opens each integration's credential once per investigation, not once

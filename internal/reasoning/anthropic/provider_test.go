@@ -145,10 +145,29 @@ func providerUnder(t *testing.T, responses ...*http.Response) (*anthropic.Provid
 
 func promptFixture() reasoning.Prompt {
 	return reasoning.Prompt{
-		Model:           "claude-opus-5",
-		System:          []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
-		Content:         []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema:          reasoning.ConclusionSchema(),
+		Model:   "claude-opus-5",
+		System:  []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
+		Content: []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
+		Schema: reasoning.Schema{
+			Name:    "judgement",
+			Version: "1",
+			Document: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"findings": map[string]any{"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"statement": map[string]any{"type": "string"},
+							},
+							"required":             []any{"statement"},
+							"additionalProperties": false,
+						}},
+				},
+				"required":             []any{"findings"},
+				"additionalProperties": false,
+			},
+		},
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
 	}

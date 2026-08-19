@@ -203,12 +203,21 @@ func evalAnswer(writer http.ResponseWriter, payload map[string]any) {
 	_, _ = writer.Write(encoded)
 }
 
-// evalCommit is one scripted commit.
+// evalCommit is one scripted commit. Files carries its changed files with their patch
+// hunks, so the mechanism-verifying diff read the investigator should make has
+// something real to return.
 type evalCommit struct {
 	SHA     string
 	Message string
 	Author  string
 	At      time.Time
+	Files   []evalChange
+}
+
+// evalChange is one changed file inside a scripted commit.
+type evalChange struct {
+	Path  string
+	Patch string
 }
 
 // evalPull is one scripted pull request.
@@ -220,12 +229,14 @@ type evalPull struct {
 	Author   string
 }
 
-// evalRepo is one scripted repository with its history.
+// evalRepo is one scripted repository with its history. Files is the tree's readable
+// contents by path at any ref — the worlds do not model branching.
 type evalRepo struct {
 	ID      int64
 	Name    string
 	Commits []evalCommit
 	Pulls   []evalPull
+	Files   map[string]string
 }
 
 // evalInstallation is what one GitHub App installation granted.
@@ -242,7 +253,8 @@ type evalGitHubFake struct {
 
 	mu            sync.Mutex
 	installations map[string]evalInstallation
-	// failCommits answers every commits read with this HTTP status when non-zero.
+	// failCommits answers every commits read — listing and detail — with this HTTP
+	// status when non-zero.
 	failCommits int
 	// moreCommits adds a next-page Link header to commits answers.
 	moreCommits bool
@@ -319,7 +331,19 @@ func (f *evalGitHubFake) serveRepoRead(
 ) {
 	path := request.URL.Path
 	if repo, sha, isDetail := commitDetailPath(granted, path); isDetail {
+		// The failure injection covers listing and detail alike: the world's story is
+		// "the commits API is down", not "the listing is down but a SHA learned from
+		// chat reads fine".
+		if f.failCommits != 0 {
+			writer.WriteHeader(f.failCommits)
+			_, _ = writer.Write([]byte(`{"message":"Server Error"}`))
+			return
+		}
 		f.serveCommitDetail(writer, granted, repo, sha)
+		return
+	}
+	if repo, filePath, isContents := contentsPath(granted, path); isContents {
+		serveFileContents(writer, repo, filePath)
 		return
 	}
 	switch {
@@ -355,6 +379,33 @@ func (f *evalGitHubFake) serveRepoRead(
 	}
 }
 
+// contentsPath recognises /repos/{owner}/{repo}/contents/{path...}.
+func contentsPath(granted evalInstallation, path string) (evalRepo, string, bool) {
+	trimmed, isRepos := strings.CutPrefix(path, "/repos/")
+	if !isRepos {
+		return evalRepo{}, "", false
+	}
+	repoPart, filePath, hasPath := strings.Cut(trimmed, "/contents/")
+	if !hasPath || filePath == "" {
+		return evalRepo{}, "", false
+	}
+	repo, found := repoByPath(granted, "/repos/"+repoPart+"/contents", "/contents")
+	return repo, filePath, found
+}
+
+// serveFileContents answers a raw file read from the repository's scripted tree, or the
+// vendor's own 404 for a path that does not exist.
+func serveFileContents(writer http.ResponseWriter, repo evalRepo, filePath string) {
+	content, exists := repo.Files[filePath]
+	if !exists {
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
+		return
+	}
+	writer.Header().Set("Content-Type", "application/vnd.github.raw+json")
+	_, _ = writer.Write([]byte(content))
+}
+
 // commitDetailPath recognises /repos/{owner}/{repo}/commits/{sha}.
 func commitDetailPath(granted evalInstallation, path string) (evalRepo, string, bool) {
 	trimmed, isRepos := strings.CutPrefix(path, "/repos/")
@@ -369,15 +420,22 @@ func commitDetailPath(granted evalInstallation, path string) (evalRepo, string, 
 	return repo, sha, found
 }
 
-// serveCommitDetail answers one scripted commit whole, with an empty file listing: the
-// worlds script messages and timing, not diffs, and an empty files array is the
-// vendor's own shape for that.
+// serveCommitDetail answers one scripted commit whole, with its changed files in the
+// vendor's own shape — a world that answered every diff read with an empty listing
+// would make the mechanism-verifying read structurally worthless.
 func (f *evalGitHubFake) serveCommitDetail(
 	writer http.ResponseWriter, granted evalInstallation, repo evalRepo, sha string,
 ) {
 	for _, commit := range repo.Commits {
 		if commit.SHA != sha {
 			continue
+		}
+		files := make([]map[string]any, 0, len(commit.Files))
+		for _, change := range commit.Files {
+			files = append(files, map[string]any{
+				"filename": change.Path, "status": "modified",
+				"additions": 1, "deletions": 1, "patch": change.Patch,
+			})
 		}
 		evalAnswer(writer, map[string]any{
 			"sha": commit.SHA,
@@ -389,7 +447,7 @@ func (f *evalGitHubFake) serveCommitDetail(
 			},
 			"author":   map[string]any{"login": commit.Author},
 			"html_url": commitPermalink(granted, repo, commit.SHA),
-			"files":    []any{},
+			"files":    files,
 		})
 		return
 	}

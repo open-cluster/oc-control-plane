@@ -1,8 +1,6 @@
 package reasoning
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"testing"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -11,7 +9,7 @@ import (
 // The derived agent revision must move exactly when what the model sees moves: the
 // preamble, the conclusion schema, or the tool-definition set — and must not move for
 // anything else. That is the whole property a manually bumped version constant could
-// never keep.
+// never keep. (The preamble's own pin lives beside the conversation tests.)
 
 func revisionTool(name, description string) integrations.Tool {
 	return integrations.Tool{
@@ -21,21 +19,6 @@ func revisionTool(name, description string) integrations.Tool {
 		Arguments: []integrations.ToolArgument{
 			{Name: "limit", Description: "how many", Type: integrations.FieldInteger},
 		},
-	}
-}
-
-// The preamble is pinned: an edit fails this test until the pin is updated, which is
-// what makes every prompt change a deliberate act — the agent revision then moves on
-// its own, attributing the change in telemetry and evaluation records.
-func TestThePreambleIsPinned(t *testing.T) {
-	t.Parallel()
-
-	const pinned = "d0a403b9ca0ecf829de651816782500cc178d1595c46809672df77d9f1586fe7"
-	digest := sha256.Sum256([]byte(preamble))
-	if hex.EncodeToString(digest[:]) != pinned {
-		t.Fatalf("the preamble changed. If the change is deliberate, update this pin to "+
-			"%s; the derived agent revision has already moved with it.",
-			hex.EncodeToString(digest[:]))
 	}
 }
 
@@ -64,24 +47,24 @@ func TestAgentRevisionMovesWithEachOfItsThreeInputs(t *testing.T) {
 		}
 		return rendered
 	}
-	base := agentRevision("the preamble", ConclusionSchema(),
+	base := agentRevision("the preamble", concludeSchema(),
 		definitions(revisionTool("a.read", "reads a")))
 
-	if moved := agentRevision("the preamble, edited", ConclusionSchema(),
+	if moved := agentRevision("the preamble, edited", concludeSchema(),
 		definitions(revisionTool("a.read", "reads a"))); moved == base {
 		t.Error("an edited preamble did not move the revision")
 	}
-	otherSchema := ConclusionSchema()
+	otherSchema := concludeSchema()
 	otherSchema.Version = "999"
 	if moved := agentRevision("the preamble", otherSchema,
 		definitions(revisionTool("a.read", "reads a"))); moved == base {
 		t.Error("a changed conclusion schema did not move the revision")
 	}
-	if moved := agentRevision("the preamble", ConclusionSchema(),
+	if moved := agentRevision("the preamble", concludeSchema(),
 		definitions(revisionTool("a.read", "reads a, differently"))); moved == base {
 		t.Error("a changed tool description did not move the revision")
 	}
-	if moved := agentRevision("the preamble", ConclusionSchema(),
+	if moved := agentRevision("the preamble", concludeSchema(),
 		definitions(revisionTool("a.read", "reads a"),
 			revisionTool("b.read", "reads b"))); moved == base {
 		t.Error("an added tool did not move the revision")

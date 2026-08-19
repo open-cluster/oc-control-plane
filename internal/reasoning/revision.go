@@ -11,25 +11,15 @@ import (
 // The derived agent revision: attribution without a version anybody has to remember to
 // bump. A manually maintained prompt-version constant is itself a drift source — the
 // last one claimed pinning that never happened — so the revision is a hash over
-// everything that shapes what the model sees: the frozen preamble, the conclusion
+// everything that shapes what the model sees: the frozen preamble, the conclude tool's
 // schema, and the assembled tool-definition set. Any change to any of them changes the
 // revision; nothing else does. It travels in per-call telemetry and evaluation records,
 // and is deliberately not a schema column: no audit or replay consumer exists.
 
-// AgentRevision derives the deterministic architecture's revision from the assembled
-// catalog's tools. Computed once at startup, where the catalog is assembled.
+// AgentRevision derives the investigator's revision from the assembled catalog's tools
+// plus conclude, the one synthetic tool. Computed once at startup, where the catalog is
+// assembled.
 func AgentRevision(tools []integrations.Tool) string {
-	definitions := make([]integrations.ToolDefinition, 0, len(tools))
-	for _, tool := range tools {
-		definitions = append(definitions, tool.Definition())
-	}
-	return agentRevision(preamble, ConclusionSchema(), definitions)
-}
-
-// AutonomousAgentRevision derives the autonomous architecture's revision: its own
-// preamble, the conclude tool's schema, and the same tool-definition set plus conclude
-// itself. Two captures of different architectures can never hash alike.
-func AutonomousAgentRevision(tools []integrations.Tool) string {
 	definitions := make([]integrations.ToolDefinition, 0, len(tools)+1)
 	for _, tool := range tools {
 		definitions = append(definitions, tool.Definition())

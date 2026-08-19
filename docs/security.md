@@ -32,7 +32,7 @@ Reasoning's `Secret` type renders as a placeholder in every format a log could r
 Everything a customer's systems produce — alert payloads, channel messages, commit
 messages, tool results — is untrusted for its whole life: information, never
 instruction. The investigator's prompt states it; more importantly, the structure limits
-it: the model can only call declared tools of router-selected sources, arguments are
+it: the model can only call declared tools of grant-supported offered sources, arguments are
 validated per declaration, window arguments are clamped into the investigation's window
 in provider code, and findings must cite recorded runs. Intake bounds bodies (1 MiB),
 rate-limits before authentication, and normalises with per-field caps.

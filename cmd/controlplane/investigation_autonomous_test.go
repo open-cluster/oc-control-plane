@@ -21,17 +21,24 @@ import (
 
 // scriptedConversationMain plays back moves and remembers what it was fed.
 type scriptedConversationMain struct {
-	mu    sync.Mutex
-	moves []investigation.Move
-	fed   []bool // each Next's mustConclude
+	mu      sync.Mutex
+	moves   []investigation.Move
+	failure error
+	fed     []bool // each Next's mustConclude
+	// results is every fed-back call result, in order — what the model actually read.
+	results []investigation.CallResult
 }
 
 func (s *scriptedConversationMain) Next(
-	_ context.Context, _ []investigation.CallResult, mustConclude bool, _ string,
+	_ context.Context, results []investigation.CallResult, mustConclude bool, _ string,
 ) (investigation.Move, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fed = append(s.fed, mustConclude)
+	s.results = append(s.results, results...)
+	if s.failure != nil {
+		return investigation.Move{}, s.failure
+	}
 	if len(s.moves) == 0 {
 		return investigation.Move{Conclusion: &investigation.Conclusion{}}, nil
 	}
@@ -179,6 +186,12 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 	}
 	if orientation.Trigger == nil || orientation.Trigger.Labels["namespace"] != "payments" {
 		t.Errorf("trigger = %+v; the alert's own labels are held context", orientation.Trigger)
+	}
+
+	// The conversation read the run's content, not a summary of one.
+	if len(conversation.results) != 1 || conversation.results[0].Run.Content == nil {
+		t.Errorf("the conversation was fed %+v; the next turn needs the run's content",
+			conversation.results)
 	}
 }
 

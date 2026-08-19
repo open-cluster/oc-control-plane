@@ -129,9 +129,11 @@ func listChannelsTool(client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name: "nameContains",
-			Description: "Case-insensitive text to select channels by name, topic or " +
-				"purpose. Use terms from the incident: a service name, a team name, " +
-				"\"incident\", \"alerts\".",
+			Description: "Optional case-insensitive text to select channels by name, " +
+				"topic or purpose. Omit it to list every channel: one unfiltered " +
+				"listing shows what exists, where guessed filter terms miss channels " +
+				"whose names you did not predict. Filter only when an unfiltered " +
+				"listing came back truncated.",
 			Type: integrations.FieldString,
 		},
 		{
@@ -147,8 +149,9 @@ func listChannelsTool(client *Client) integrations.Tool {
 		Description: "Lists the workspace's public, unarchived channels with their topics " +
 			"and purposes, walking the listing far enough that a filter match beyond the " +
 			"first page is still found.",
-		WhenToUse: "First, to select the few channels worth reading: match the incident's " +
-			"service, team or alert names against channel names and topics.",
+		WhenToUse: "First, to see which channels exist and select the few worth reading " +
+			"by their names and topics. Prefer one unfiltered listing over guessing " +
+			"filter terms.",
 		WhenNotToUse: "Not for reading messages — it returns no message content. Not for " +
 			"finding where something was SAID; that is slack.search_messages. Never as a " +
 			"way to enumerate the workspace for its own sake.",

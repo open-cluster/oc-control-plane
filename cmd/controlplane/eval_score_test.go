@@ -130,6 +130,11 @@ func scoreEvalCase(one evalCase, record evalRecord) evalScore {
 
 	for _, finding := range record.Findings {
 		score.FindingText = append(score.FindingText, finding.Statement)
+		// A finding whose kind rules an explanation out — or leaves it explicitly open —
+		// is not claiming it; only an asserting kind can claim a banned marker.
+		if !assertsSomething(finding.Kind) {
+			continue
+		}
 		statement := strings.ToLower(finding.Statement)
 		for _, banned := range one.Truth.MustNotClaim {
 			if strings.Contains(statement, strings.ToLower(banned)) &&
@@ -139,9 +144,21 @@ func scoreEvalCase(one evalCase, record evalRecord) evalScore {
 		}
 	}
 	if !one.Truth.ExpectFindings {
-		score.FabricatedFindings = len(record.Findings)
+		for _, finding := range record.Findings {
+			if assertsSomething(finding.Kind) {
+				score.FabricatedFindings++
+			}
+		}
 	}
 	return score
+}
+
+// assertsSomething reports whether a finding's kind claims a positive fact about the
+// incident. Ruling an explanation out and naming an unresolved lead are honest work on
+// a world where nothing happened — counting them as fabrication would grade the right
+// behavior wrong. An absent kind (a legacy record) still counts as an assertion.
+func assertsSomething(kind string) bool {
+	return kind != "ruled_out" && kind != "unresolved_lead"
 }
 
 // rulesOut reports whether a statement mentioning a banned marker is ruling it out
@@ -161,9 +178,13 @@ func rulesOut(statement string) bool {
 }
 
 // causeFound applies the two-part test: a marker in a finding's statement, and that
-// finding citing a run of the cause's tool. A cause asserted without its provenance does
-// not count.
+// finding citing a run of one of the cause's evidence tools. A cause asserted without
+// its provenance does not count.
 func causeFound(cause causeTruth, record evalRecord) bool {
+	evidence := map[string]bool{}
+	for _, tool := range cause.Tools {
+		evidence[tool] = true
+	}
 	for _, finding := range record.Findings {
 		statement := strings.ToLower(finding.Statement)
 		carries := false
@@ -177,7 +198,7 @@ func causeFound(cause causeTruth, record evalRecord) bool {
 			continue
 		}
 		for _, ordinal := range finding.Sources {
-			if run, found := runAt(record.Runs, ordinal); found && run.Tool == cause.Tool {
+			if run, found := runAt(record.Runs, ordinal); found && evidence[run.Tool] {
 				return true
 			}
 		}
