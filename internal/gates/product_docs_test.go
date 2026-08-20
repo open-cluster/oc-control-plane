@@ -17,9 +17,19 @@ import (
 // version control is the archive.
 var docsRoot = filepath.Join(moduleRoot, "docs")
 
-// TestProductDocumentationIsMintlifyMDX holds docs/ to product MDX only. A stray .md, a
-// scratch note, or a plan dropped here would be synced to the public documentation site by
-// CI, which is why the shape is a build gate rather than a review habit.
+// The site chrome, by name. Mintlify publishes docs/ directly from this repository, so the
+// logo and favicon ship beside the content — and they are a NAMED list rather than "any
+// .svg", which would exempt every stray diagram export and turn the gate off. A new chrome
+// file has to be added here, and adding one is a decision.
+var docsChrome = map[string]bool{
+	"favicon.svg":    true,
+	"logo/light.svg": true,
+	"logo/dark.svg":  true,
+}
+
+// TestProductDocumentationIsMintlifyMDX holds docs/ to the published site's own files. A
+// stray .md, a scratch note, or a plan dropped here would be published to the public
+// documentation site, which is why the shape is a build gate rather than a review habit.
 func TestProductDocumentationIsMintlifyMDX(t *testing.T) {
 	t.Parallel()
 
@@ -37,12 +47,13 @@ func TestProductDocumentationIsMintlifyMDX(t *testing.T) {
 		}
 		relative = filepath.ToSlash(relative)
 		switch {
-		case relative == "docs.json":
+		case relative == "docs.json" || docsChrome[relative]:
 		case strings.HasSuffix(relative, ".mdx"):
 			pages++
 		default:
-			t.Errorf("docs/%s is not a product documentation page; docs/ holds MDX pages "+
-				"and docs.json only, and working artifacts stay out of the tree", relative)
+			t.Errorf("docs/%s is not a product documentation page; docs/ holds MDX pages, "+
+				"docs.json and the named site chrome only, and working artifacts stay out "+
+				"of the tree", relative)
 		}
 		return nil
 	})

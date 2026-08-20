@@ -38,7 +38,7 @@ thought is stored. The model deployment is configuration, never a per-tenant con
 | --- | --- |
 | `./CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
 | `./AGENTS.md` | Working in this repository: boundaries, gates, and what "done" requires |
-| `docs/` | User-facing product documentation: MDX pages plus `docs/docs.json`, authored here and published through Mintlify into the org-level docs site. Product pages only — architecture and contract notes for contributors live in this README, `AGENTS.md`, and `CONTEXT.md` |
+| `docs/` | User-facing product documentation: MDX pages, `docs/docs.json` and the site chrome, published through Mintlify directly from this directory. Product pages only — architecture and contract notes for contributors live in this README, `AGENTS.md`, and `CONTEXT.md` |
 
 A gate fails the build if a document cites another that does not exist, so a rename cannot
 silently leave a dangling reference behind.

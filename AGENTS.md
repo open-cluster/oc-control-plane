@@ -56,7 +56,7 @@ wire, the database), not call sequences.
 | --- | --- |
 | `README.md` | Overview, quick start, configuration, endpoints — the contributor's reference |
 | `CONTEXT.md` | The glossary; every identifier uses it |
-| `docs/` | User-facing product documentation: Mintlify MDX pages plus `docs/docs.json`, authored here, synced by CI into the org-level docs site |
+| `docs/` | User-facing product documentation: Mintlify MDX pages, `docs/docs.json` and the named site chrome. Mintlify publishes this directory directly |
 
 `docs/` is product documentation only, written for an SRE who has never read this code:
 task-oriented, outcome-first, no internal vocabulary (package names, table names, sealed

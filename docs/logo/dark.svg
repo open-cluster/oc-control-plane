@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 32" role="img" aria-label="OpenCluster">
+  <!-- The OpenCluster mark on a dark surface: the mark in dark content colour, the wordmark in
+       the dark theme's strong text colour, mirroring the app. -->
+  <g transform="scale(0.6667)" fill="#ececef" stroke="#ececef" stroke-width="0.6" stroke-linejoin="round">
+    <polygon points="30.6,24 27.3,29.72 20.7,29.72 17.4,24 20.7,18.28 27.3,18.28" />
+    <polygon points="42.48,30.86 39.18,36.58 32.58,36.58 29.28,30.86 32.58,25.14 39.18,25.14" />
+    <polygon points="30.6,37.72 27.3,43.44 20.7,43.44 17.4,37.72 20.7,32 27.3,32" />
+    <polygon points="18.72,30.86 15.42,36.58 8.82,36.58 5.52,30.86 8.82,25.14 15.42,25.14" />
+    <polygon points="18.72,17.14 15.42,22.86 8.82,22.86 5.52,17.14 8.82,11.42 15.42,11.42" />
+    <polygon points="30.6,10.28 27.3,16 20.7,16 17.4,10.28 20.7,4.56 27.3,4.56" />
+    <polygon points="42.48,17.14 39.18,22.86 32.58,22.86 29.28,17.14 32.58,11.42 39.18,11.42" />
+  </g>
+  <text x="38" y="16" dominant-baseline="central" fill="#ffffff"
+        font-family="'GitLab Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'Helvetica Neue', sans-serif"
+        font-size="17" font-weight="600" letter-spacing="-0.2">OpenCluster</text>
+</svg>
