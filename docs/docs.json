@@ -4,9 +4,15 @@
   "name": "OpenCluster",
   "description": "OpenCluster documentation: connect your alerting, cluster, chat and source control, and investigate incidents with an autonomous, auditable, read-only investigator.",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#2F5CA0",
+    "light": "#9DC7F1",
+    "dark": "#3A383F"
+  },
+  "background": {
+    "color": {
+      "light": "#FBFAFD",
+      "dark": "#18171D"
+    }
   },
   "favicon": "/favicon.svg",
   "logo": {
