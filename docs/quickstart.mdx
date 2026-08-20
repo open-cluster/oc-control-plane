@@ -1,0 +1,80 @@
+---
+title: "Quickstart"
+description: "Connect your Alertmanager, watch alerts become an incident, and run your first investigation."
+---
+
+By the end of this page you will have alerts flowing into OpenCluster, grouped into an
+incident, and a first investigation concluded with cited findings.
+
+## Prerequisites
+
+- A running OpenCluster deployment and a sign-in with the **Admin** role. If you operate
+  the deployment yourself, start with [self-hosted setup](/self-hosted/overview) — for
+  investigations it must also have a [model provider configured](/self-hosted/configuration).
+- A Prometheus Alertmanager you can reconfigure, **version 0.29.0 or later** — the
+  first release whose documented configuration supports the custom authentication
+  header the webhook needs.
+
+## Get started
+
+<Steps>
+  <Step title="Connect Alertmanager">
+    In the console, open **Integrations**, choose **Prometheus Alertmanager**, name it,
+    and create it. There is nothing else to configure — OpenCluster mints the webhook
+    endpoint for you.
+
+    The response shows two things: the **webhook URL** and the **webhook secret**. The
+    secret is shown this one time and never again; if it is lost, rotate it.
+  </Step>
+  <Step title="Point your Alertmanager at it">
+    Add a receiver that delivers to the webhook URL and presents the secret in the
+    `X-OpenCluster-Token` header:
+
+    ```yaml
+    receivers:
+      - name: opencluster
+        webhook_configs:
+          - url: "https://oc.example.com/intake/v1/integrations/<integration-id>/signals"
+            http_config:
+              http_headers:
+                X-OpenCluster-Token:
+                  secrets:
+                    - "<webhook secret>"
+    ```
+
+    Route the alerts you care about to that receiver and reload Alertmanager.
+  </Step>
+  <Step title="Prove the path">
+    Fire a test alert (or wait for a real one). Then open the integration and press
+    **Verify**: it reports when the last delivery was accepted. Until one arrives it
+    reads "nothing has arrived yet" — that is the honest answer, not an error.
+  </Step>
+  <Step title="Watch the incident form">
+    Accepted alerts appear as signals and group into **incident episodes** under your
+    Alertmanager's own grouping. An episode resolves itself when none of its alerts
+    still fire. Open **Incidents** to see them.
+  </Step>
+  <Step title="Connect Slack and GitHub (recommended)">
+    An investigation can only read what you connect. Add
+    [Slack](/integrations/slack) for the incident conversation and
+    [GitHub](/integrations/github) for what changed — each takes a few minutes.
+  </Step>
+  <Step title="Open an investigation">
+    From an open incident, open an investigation (any member with the **Editor** or
+    **Admin** role can). Or ask in plain words — "investigate checkout latency" — and
+    OpenCluster ties the question to an open incident, asking one clarifying question
+    if it matches none or several.
+  </Step>
+  <Step title="Read the conclusion">
+    The investigation runs in the background: it reads across your connected sources,
+    records every read, and concludes with findings — each labeled with its causal role
+    and confidence, each citing the reads that support it — plus recommended next steps.
+    See [how investigations work](/investigations/how-investigations-work) for how to
+    read the record.
+  </Step>
+</Steps>
+
+<Tip>
+  Connecting an integration needs the Admin role; verifying one and opening
+  investigations needs Editor or above; reading everything needs only Viewer.
+</Tip>

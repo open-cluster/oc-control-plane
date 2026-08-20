@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -30,11 +31,17 @@ type Tool struct {
 	// tool, never dropped.
 	Arguments []ToolArgument
 	// Permissions names what the connected account must be granted for this tool to work.
+	// An operator and audit consumer only: it never reaches the model, which routes by
+	// the composed description instead.
 	Permissions string
-	// RateLimit says what calling this costs against the provider's limits, so a caller
-	// can weigh a call rather than discover the ceiling.
-	RateLimit string
-	// Output says what a successful answer holds.
+	// Requires names the verified grants an Integration must have recorded for this
+	// tool to be OFFERED to an investigation at all. Empty means always offered. It is
+	// how availability derives from verified reality: a tool whose path cannot work
+	// with the connected credential — a bot token asked to run user-token search — is
+	// absent from the set, never a call that always fails.
+	Requires []string
+	// Output says what a successful answer holds. Composed into the model-facing
+	// description ("Returns: …") and rendered on the operator catalog view.
 	Output string
 	// Run performs the read, bounded by the declared arguments and the request's context.
 	Run func(ctx context.Context, request ToolRequest) (ToolResult, error)
@@ -62,6 +69,20 @@ type ToolRequest struct {
 	WindowUntil time.Time
 }
 
+// ClampWindow narrows an argument window into this request's own. A read phrased with a
+// wider window still runs inside the investigation's: the bound is structural, not
+// something a prompt asked for. Zero request bounds — a direct call outside any
+// investigation — clamp nothing.
+func (r ToolRequest) ClampWindow(from, until time.Time) (time.Time, time.Time) {
+	if !r.WindowFrom.IsZero() && (from.IsZero() || from.Before(r.WindowFrom)) {
+		from = r.WindowFrom
+	}
+	if !r.WindowUntil.IsZero() && (until.IsZero() || until.After(r.WindowUntil)) {
+		until = r.WindowUntil
+	}
+	return from, until
+}
+
 // ToolResult is one answer.
 type ToolResult struct {
 	// Content is the answer in types that marshal to JSON; its shape is the tool's Output
@@ -75,4 +96,65 @@ type ToolResult struct {
 	// ids — so a finding built on this run can be followed to its origin.
 	Summary string
 	Sources []string
+}
+
+// ToolDefinition is the model-facing rendering of one Tool: the single declarative
+// contract turned into what a provider's native tool-calling API is given. Nothing else
+// may hand-write a second representation of a tool — a provider adapter translates THIS
+// value into its vendor's wire shape.
+type ToolDefinition struct {
+	Name string
+	// Description is composed from the declared contract: what the tool does, when to
+	// use it, when not to, and what comes back — the whole of what a model routes by,
+	// in one place.
+	Description string
+	// InputSchema is JSON Schema for the call's arguments, generated from the declared
+	// argument list: typed, described, required listed, closed to inventions. Rendered
+	// deterministically, because the definition set feeds the derived agent revision.
+	InputSchema map[string]any
+}
+
+// Definition renders this tool's model-facing definition.
+func (t Tool) Definition() ToolDefinition {
+	properties := make(map[string]any, len(t.Arguments))
+	var required []string
+	for _, argument := range t.Arguments {
+		schemaType := "string"
+		if argument.Type == FieldInteger {
+			schemaType = "integer"
+		}
+		properties[argument.Name] = map[string]any{
+			"type":        schemaType,
+			"description": argument.Description,
+		}
+		if argument.Required {
+			required = append(required, argument.Name)
+		}
+	}
+	sort.Strings(required)
+
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
+	}
+	if len(required) > 0 {
+		schema["required"] = toAny(required)
+	}
+	return ToolDefinition{
+		Name: t.Name,
+		Description: t.Description +
+			"\nUse when: " + t.WhenToUse +
+			"\nDo not use when: " + t.WhenNotToUse +
+			"\nReturns: " + t.Output,
+		InputSchema: schema,
+	}
+}
+
+func toAny(values []string) []any {
+	anys := make([]any, 0, len(values))
+	for _, value := range values {
+		anys = append(anys, value)
+	}
+	return anys
 }

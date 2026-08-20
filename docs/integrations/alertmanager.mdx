@@ -1,0 +1,132 @@
+---
+title: "Prometheus Alertmanager"
+description: "Deliver firing and resolved alerts to OpenCluster over a webhook, and let them group into incidents."
+---
+
+Connecting Alertmanager gives OpenCluster your alerts as they fire and resolve. Alerts
+become signals, signals group into incident episodes using your Alertmanager's own
+grouping, and an incident's triggering alert — its labels, annotations, runbook and
+dashboard links, and source graph URL — orients every investigation you open on it.
+
+This integration is inbound only: OpenCluster never calls your Alertmanager.
+
+## Prerequisites
+
+- Alertmanager **0.29.0 or later** — the webhook authenticates with a custom HTTP
+  header (`http_config.http_headers`), which 0.29.0 is the first release to support in
+  its documented configuration.
+- The **Admin** role in OpenCluster to create the integration.
+- Alertmanager must be able to reach the deployment's intake endpoint over HTTPS.
+
+## Connect
+
+<Steps>
+  <Step title="Create the integration">
+    In the console, open **Integrations**, choose **Prometheus Alertmanager**, name it,
+    and create it. There is nothing to configure — the webhook endpoint and its secret
+    are minted for you.
+  </Step>
+  <Step title="Copy the webhook URL and secret">
+    The creation response carries the webhook URL and the webhook secret.
+
+    <Warning>
+      The secret is shown this one time. It is stored only as a digest and cannot be
+      read back; if it is lost, rotate it.
+    </Warning>
+  </Step>
+  <Step title="Configure the receiver">
+    Add a receiver delivering to the URL, presenting the secret in the
+    `X-OpenCluster-Token` header, and route alerts to it:
+
+    ```yaml
+    receivers:
+      - name: opencluster
+        webhook_configs:
+          - url: "https://oc.example.com/intake/v1/integrations/<integration-id>/signals"
+            http_config:
+              http_headers:
+                X-OpenCluster-Token:
+                  secrets:
+                    - "<webhook secret>"
+
+    route:
+      routes:
+        - receiver: opencluster
+          continue: true
+    ```
+
+    Reload Alertmanager.
+  </Step>
+  <Step title="Prove the path">
+    Send a test alert, then press **Verify** on the integration. It answers with the
+    time of the last accepted delivery. Before anything has arrived it reads
+    "nothing has arrived yet — add the webhook URL and secret to your Alertmanager and
+    send a test alert to prove the path".
+  </Step>
+</Steps>
+
+## What happens after connection
+
+- Each accepted delivery's alerts become **signals**. Everything on the alert is kept:
+  labels, annotations (including `runbook_url` and dashboard links), the generator URL,
+  and the alert's own start and end times.
+- Signals group into **incident episodes** under the delivery's own grouping key —
+  OpenCluster never re-guesses your grouping. An episode resolves itself when none of
+  its signals still fire, and re-firing later opens a new episode.
+- A wrong grouping is corrected by **merging** episodes (with a reason, nothing
+  rewritten). Splitting does not exist, because the grouping errs toward splitting.
+- Duplicate deliveries are recognized by body content and acknowledged without being
+  applied twice, so Alertmanager retries are harmless.
+
+## Delivery contract
+
+Alertmanager's webhook payload (version 4) is accepted whole. The endpoint answers:
+
+| Response | Meaning |
+| --- | --- |
+| `202` | Accepted and recorded |
+| `200` | A replay of a body already accepted; nothing was written twice |
+| `401` | Wrong or rotated secret, or the integration is disabled — fix the configuration; retrying will not help |
+| `400` | The payload was not understood (an unknown alert status, a missing fingerprint or start time, or an empty alert list) — permanent |
+| `413` | The body exceeded 1 MiB — permanent |
+| `429` | Slow down; delivery is rate limited per integration (burst 60, sustained 1 per second) — retry after the `Retry-After` |
+| `503` | OpenCluster could not record the delivery — retry |
+
+## Rotating the secret
+
+Rotate from the integration's page (Admin only). The new secret is shown once; **the
+old secret stops working immediately — there is no overlap window** — so update
+Alertmanager in the same maintenance step. The webhook URL never changes.
+
+## Limitations
+
+- Nothing is read back from Alertmanager: no silences, no inhibitions, no "what else is
+  firing" queries. Only what arrives in a webhook exists in OpenCluster.
+- One delivery carries at most 2048 alerts and 1 MiB. Long field values are truncated
+  (title 512, summary 4096, URLs 2048 characters).
+- Only `firing` and `resolved` alerts are understood; one unusable alert rejects the
+  whole delivery, and Alertmanager will not retry a `400`.
+- When Alertmanager itself truncates a delivery (`truncatedAlerts`), it is accepted and
+  the truncation is recorded — the record of that moment is knowingly incomplete.
+- Verification reports the last accepted delivery and never expires: a source that broke
+  yesterday still shows the last time it worked. The timestamp, not the green status, is
+  the health signal.
+- The header is a shared secret, not a signature: it authenticates the sender and
+  attests nothing about the body. Anyone holding the secret can deliver — treat it
+  accordingly, and rotate it when in doubt.
+
+## Troubleshooting
+
+| Symptom | Meaning |
+| --- | --- |
+| Deliveries answer `401` | The secret is wrong or was rotated, or the integration is disabled |
+| Deliveries answer `400` | The payload is not what Alertmanager v4 sends — check for middleware rewriting the body, or an alert with an unusual status |
+| Deliveries answer `200`, not `202` | A replay; Alertmanager should stop retrying that body. Nothing is wrong |
+| Verify says "nothing has arrived yet" after a test alert | The alert did not reach intake: check the URL, the route, and that your network allows Alertmanager to reach the deployment |
+| Deliveries answer `429` | More than 60 deliveries burst or a sustained rate above 1 per second from this integration — group more aggressively |
+
+## Disconnect
+
+Disable the integration to stop accepting deliveries (they answer `401`) while keeping
+the incident record. Deleting is refused while signals, incidents or investigations
+depend on it — which, after any real use, they do; disable is the retirement path.

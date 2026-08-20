@@ -1,0 +1,72 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "OpenCluster",
+  "description": "OpenCluster documentation: connect your alerting, cluster, chat and source control, and investigate incidents with an autonomous, auditable, read-only investigator.",
+  "colors": {
+    "primary": "#2F5CA0",
+    "light": "#9DC7F1",
+    "dark": "#3A383F"
+  },
+  "background": {
+    "color": {
+      "light": "#FBFAFD",
+      "dark": "#18171D"
+    }
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "pages": [
+      {
+        "group": "Getting started",
+        "pages": [
+          "index",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Integrations",
+        "pages": [
+          "integrations/overview",
+          "integrations/alertmanager",
+          "integrations/kubernetes",
+          "integrations/slack",
+          "integrations/github"
+        ]
+      },
+      {
+        "group": "Investigations",
+        "pages": [
+          "investigations/overview",
+          "investigations/how-investigations-work"
+        ]
+      },
+      {
+        "group": "Security",
+        "pages": [
+          "security/overview",
+          "security/credentials"
+        ]
+      },
+      {
+        "group": "Self-hosted",
+        "pages": [
+          "self-hosted/overview",
+          "self-hosted/configuration",
+          "self-hosted/operations",
+          "self-hosted/troubleshooting"
+        ]
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view"
+    ]
+  }
+}

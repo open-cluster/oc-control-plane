@@ -1,0 +1,126 @@
+---
+title: "GitHub"
+description: "Let investigations read what changed: commits and diffs, pull requests, CI runs and failing-job logs, file contents and releases."
+---
+
+Connecting GitHub gives investigations the change side of an incident: which commits
+landed in the window, what a commit actually changed, what a pull request intended,
+whether CI objected and what the failing job logged, what a configuration file contains,
+and what shipped. All of it is read-only — no write path to anyone's code exists in
+OpenCluster, by decision rather than by omission.
+
+Access follows a **GitHub App installation**: OpenCluster reads exactly the
+repositories the installation selects, nothing more, and repositories are tracked by
+stable IDs that survive renames.
+
+## Prerequisites
+
+- A GitHub App configured on the OpenCluster deployment (below). On self-hosted
+  OpenCluster you create this App yourself; on a managed deployment it already exists.
+- Permission to install that App on your GitHub organization or account.
+- The **Admin** role in OpenCluster to create the integration.
+
+## One-time: the GitHub App (deployment operators)
+
+Skip this section if your deployment already has a GitHub App.
+
+<Steps>
+  <Step title="Create the App">
+    On GitHub (or your GitHub Enterprise Server instance): **Settings → Developer
+    settings → GitHub Apps → New GitHub App**. It needs no webhook and no callback —
+    OpenCluster only reads.
+  </Step>
+  <Step title="Grant read-only permissions">
+    | Permission | Access | Used for |
+    | --- | --- | --- |
+    | Metadata | Read | Listing the installation's repositories (GitHub requires it for every App) |
+    | Contents | Read | Commits, diffs, file contents, releases |
+    | Pull requests | Read | A pull request's description and changed files |
+    | Checks | Read | CI check status on a change |
+    | Actions | Read | Workflow runs and failing-job logs |
+  </Step>
+  <Step title="Configure the deployment">
+    Generate a private key (GitHub downloads a PEM file) and configure:
+
+    ```bash
+    OC_GITHUB_APP_ID=<the App's id>
+    OC_GITHUB_APP_PRIVATE_KEY_FILE=/path/to/app-key.pem
+    # GitHub Enterprise Server only:
+    OC_GITHUB_API_URL=https://github.example.com/api/v3
+    ```
+
+    Both App variables are required together. For GitHub Enterprise Server, create the
+    App on the GHES instance itself and point `OC_GITHUB_API_URL` at its API path.
+  </Step>
+</Steps>
+
+The App's key never leaves the deployment: an integration stores only its installation
+ID, and OpenCluster mints short-lived installation tokens as needed.
+
+## Connect
+
+<Steps>
+  <Step title="Install the App and select repositories">
+    Install the deployment's GitHub App on your organization or account and select the
+    repositories investigations may read. The selection is the whole boundary — nothing
+    beyond it is ever visible.
+  </Step>
+  <Step title="Find the installation ID">
+    Open the installation's settings page; the numeric ID is at the end of its URL
+    (`…/settings/installations/12345678`).
+  </Step>
+  <Step title="Create the integration">
+    In the console, open **Integrations**, choose **GitHub**, name it, and enter the
+    **Installation ID**. The installation is checked live against GitHub before
+    anything is stored.
+  </Step>
+</Steps>
+
+One integration serves one installation. If the App is installed on several
+organizations, connect each installation as its own integration.
+
+## What verification tells you
+
+| Result | Meaning |
+| --- | --- |
+| `active` | Working; the note names the account verified against and roughly how many repositories the installation grants |
+| `degraded` — "the installation grants no repositories" | Give it at least one repository in the App's settings on GitHub |
+| `degraded` — "github is rate limiting this app" | Try again in a few minutes |
+| `failed` — "github does not know installation …" | The ID is wrong, or the App was uninstalled; check the ID or reinstall |
+| `failed` — "installation … is suspended in github" | Unsuspend it on GitHub and verify again |
+| `failed` — "this deployment has no GitHub App configured" | Whoever operates the deployment must configure the App first |
+
+## What investigations read
+
+- **Repositories** the installation selected, searched by name.
+- **Commit history** inside the incident window, and **one commit whole**: its changed
+  files and their patches, bounded and honestly truncated.
+- **Pull requests**: description, changed files, and CI check status in one answer.
+- **Workflow runs** in the window, and the **log tail of a failing job** — the end of
+  the log, where the failure speaks.
+- **File contents** at any branch, tag or commit — the configuration a commit touched
+  can be inspected, not guessed.
+- **Releases** — what shipped, and when.
+
+Every read is recorded in the investigation with its scope and outcome. Time-windowed
+reads (commits, workflow runs) are clamped inside the investigation's window; a wider
+ask does not widen the read.
+
+## Limitations
+
+- Read-only, always. No code search; history is read by window on known repositories.
+- Bounded answers, truncation always flagged: at most 100 changed files are rendered per
+  commit or pull request, patches share a fixed budget per answer, job logs answer their
+  final 16 KiB, and file reads answer their first 64 KiB.
+- GitHub's own ceilings apply: commit listings show at most 300 files per commit, pull
+  requests at most 3,000; very large diffs are refused by GitHub itself, and the answer
+  says so and points at reading the pull request or individual files instead.
+- Only published releases are listed — bare tags are invisible, by GitHub's own rule.
+- GitHub rate limits are honored: a rate-limited read waits once as GitHub asks, then
+  reports the limit; an exhausted hourly budget is reported immediately.
+
+## Disconnect
+
+Disable the integration to remove GitHub from investigations while keeping the record.
+Delete is refused while investigation records depend on it. Uninstalling the App on
+GitHub works independently — the next verification reports what happened.

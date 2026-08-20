@@ -11,9 +11,13 @@ import (
 // anyone's code exists in this build, by decision rather than by omission.
 const (
 	ListRepositories = "github.list_repositories"
-	ReadRepository   = "github.read_repository"
 	ReadCommits      = "github.read_commits"
-	ReadPullRequests = "github.read_pull_requests"
+	ReadCommit       = "github.read_commit"
+	ReadPullRequest  = "github.read_pull_request"
+	ReadWorkflowRuns = "github.read_workflow_runs"
+	ReadJobLog       = "github.read_job_log"
+	ReadFile         = "github.read_file"
+	ListReleases     = "github.list_releases"
 )
 
 // Definition is what this provider exports to the catalog. Metadata mirrors the seeded
@@ -27,12 +31,13 @@ func Definition(app *App, client *Client) integrations.Definition {
 		ID:          integrations.TypeGitHub,
 		Key:         "github",
 		Name:        "GitHub",
-		Description: "Read repositories, commits and pull requests from the installations you select: read-only change context.",
+		Description: "Read repositories, commits, diffs, pull requests, CI runs and releases from the installations you select: read-only change context.",
 		Logo:        "github",
 		Category:    integrations.CategorySourceControl,
 		DocumentationURL: "https://docs.github.com/apps/using-github-apps/" +
 			"installing-a-github-app-from-a-third-party",
-		Capabilities: []string{ListRepositories, ReadRepository, ReadCommits, ReadPullRequests},
+		Capabilities: []string{ListRepositories, ReadCommits, ReadCommit, ReadPullRequest,
+			ReadWorkflowRuns, ReadJobLog, ReadFile, ListReleases},
 		Config: []integrations.Field{
 			{
 				Name:  "installationId",

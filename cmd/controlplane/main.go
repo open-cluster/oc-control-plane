@@ -105,8 +105,8 @@ func start() error {
 // so investigations run against a scripted reasoner instead of a paid provider.
 // Production supplies nothing here.
 type wiring struct {
-	onListen func(net.Addr)
-	reasoner investigation.Reasoner
+	onListen     func(net.Addr)
+	investigator investigation.Investigator
 }
 
 // run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -192,22 +192,26 @@ func run(
 		}
 	}
 
-	// The model boundary: a test's scripted reasoner outranks configuration, and a
-	// deployment that configured neither cannot investigate — the surface says so per
-	// request rather than the process refusing to serve everything else it can do.
-	reasoner := replace.reasoner
-	if reasoner == nil && cfg.ModelProvider != "" {
-		if reasoner, err = modelBoundary(cfg, logger); err != nil {
+	// The model boundary: a test's scripted investigator outranks configuration, and a
+	// deployment that configured no model provider cannot investigate — the surface
+	// says so per request rather than the process refusing to serve everything else it
+	// can do.
+	investigator := replace.investigator
+	if investigator == nil && cfg.ModelProvider != "" {
+		if investigator, err = modelBoundary(cfg, catalog, logger); err != nil {
 			return err
 		}
 	}
 
 	investigations := &investigation.Runner{
-		Store:    placements,
-		Catalog:  catalog,
-		Sealer:   sealer,
-		Reasoner: reasoner,
-		Logger:   logger,
+		Store:                  placements,
+		Catalog:                catalog,
+		Sealer:                 sealer,
+		Investigator:           investigator,
+		MaxToolRuns:            cfg.InvestigationMaxToolRuns,
+		MaxTurns:               cfg.InvestigationMaxTurns,
+		Logger:                 logger,
+		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}
 	// Drained on the way out: an investigation mid-flight is failed with the reason
 	// recorded rather than orphaned into a record that says running forever.
@@ -225,17 +229,20 @@ func run(
 	})
 }
 
-// modelBoundary builds the configured deployment's reasoner. Everything that could be
-// wrong with the model configuration is refused HERE, at startup: an unimplemented
-// provider, an unpriced model, an effort level nothing recognises, a provider nobody
-// consented to.
-func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reasoner, error) {
+// modelBoundary builds the configured deployment's conversation driver. Everything
+// that could be wrong with the model configuration is refused HERE, at startup: an
+// unimplemented provider, an unpriced model, an effort level nothing recognises, a
+// provider nobody consented to.
+func modelBoundary(
+	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger,
+) (investigation.Investigator, error) {
 	deployment := reasoning.Deployment{
-		Provider:   cfg.ModelProvider,
-		Model:      cfg.ModelName,
-		Effort:     reasoning.Effort(cfg.ModelEffort),
-		BaseURL:    cfg.ModelBaseURL,
-		Credential: reasoning.Secret(cfg.ModelKey),
+		Provider:               cfg.ModelProvider,
+		Model:                  cfg.ModelName,
+		Effort:                 reasoning.Effort(cfg.ModelEffort),
+		BaseURL:                cfg.ModelBaseURL,
+		Credential:             reasoning.Secret(cfg.ModelKey),
+		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}.WithDefaults()
 	if err := deployment.Validate(); err != nil {
 		return nil, err
@@ -244,16 +251,32 @@ func modelBoundary(cfg config.Config, logger *slog.Logger) (investigation.Reason
 	if err != nil {
 		return nil, err
 	}
-	decider, err := reasoning.NewDecider(deployment, provider,
+	agent, err := reasoning.NewAgent(deployment, provider,
 		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelConsented...))
 	if err != nil {
 		return nil, err
 	}
+	revision := reasoning.AgentRevision(catalogTools(catalog))
+	agent.Instrument(reasoning.NewTelemetry(logger, revision))
 	logger.Info("model boundary configured",
 		slog.String("deployment", deployment.String()),
-		slog.String("support", provider.Support().Describe()))
-	return decider, nil
+		slog.String("agent_revision", revision))
+	return agent, nil
 }
+
+// catalogTools flattens the assembled catalog's tool set, in the catalog's own stable
+// order, for the agent-revision derivation.
+func catalogTools(catalog integrations.Catalog) []integrations.Tool {
+	var tools []integrations.Tool
+	for _, definition := range catalog.All() {
+		tools = append(tools, definition.Tools...)
+	}
+	return tools
+}
+
+// microCentsOf converts a configured whole-cent figure into the integer micro-cents
+// every spend record counts in.
+func microCentsOf(cents int) int64 { return int64(cents) * 1_000_000 }
 
 // assembled is the constructed process: the pieces serve needs, which are meaningless
 // apart and always travel together.
@@ -481,15 +504,16 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 	// cannot ship"; the compile-time half is that authz.Privileged takes the permission
 	// positionally, and the gate in internal/gates is the third.
 	router, err := operator.Handlers{
-		Placements:          process.placements,
-		Logger:              process.logger,
-		Identity:            identities,
-		Origins:             cfg.OperatorAllowedOrigins,
-		Catalog:             process.catalog,
-		Sealer:              process.sealer,
-		Investigations:      process.investigations,
-		IntakeBaseURL:       cfg.IntakePublicURL,
-		MinimumRelayVersion: cfg.MinimumRelayVersion,
+		Placements:              process.placements,
+		Logger:                  process.logger,
+		Identity:                identities,
+		Origins:                 cfg.OperatorAllowedOrigins,
+		Catalog:                 process.catalog,
+		Sealer:                  process.sealer,
+		Investigations:          process.investigations,
+		InvestigationWindowLead: cfg.InvestigationWindowLead,
+		IntakeBaseURL:           cfg.IntakePublicURL,
+		MinimumRelayVersion:     cfg.MinimumRelayVersion,
 	}.Router()
 	if err != nil {
 		return nil, fmt.Errorf("assembling the operator surface: %w", err)

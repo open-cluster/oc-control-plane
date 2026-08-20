@@ -145,10 +145,29 @@ func providerUnder(t *testing.T, responses ...*http.Response) (*anthropic.Provid
 
 func promptFixture() reasoning.Prompt {
 	return reasoning.Prompt{
-		Model:           "claude-opus-5",
-		System:          []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
-		Content:         []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema:          reasoning.ConclusionSchema(),
+		Model:   "claude-opus-5",
+		System:  []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
+		Content: []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
+		Schema: reasoning.Schema{
+			Name:    "judgement",
+			Version: "1",
+			Document: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"findings": map[string]any{"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"statement": map[string]any{"type": "string"},
+							},
+							"required":             []any{"statement"},
+							"additionalProperties": false,
+						}},
+				},
+				"required":             []any{"findings"},
+				"additionalProperties": false,
+			},
+		},
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
 	}
@@ -379,27 +398,6 @@ func TestComplete_TheCredentialAppearsInNoErrorReturnedToTheCaller(t *testing.T)
 	}
 	if strings.Contains(err.Error(), "sk-test-credential") {
 		t.Error("the credential reached an error message the caller will log")
-	}
-}
-
-func TestCapabilities_MatchWhatThisAdapterActuallyDoes(t *testing.T) {
-	provider, _ := providerUnder(t, streamed(`{}`, fullUsage, "end_turn", ""))
-	declared := provider.Support()
-
-	if !declared.StrictStructuredOutput {
-		t.Error("this adapter sends a declared json schema, so it claims strict output")
-	}
-	if !declared.Streaming {
-		t.Error("this adapter streams every request")
-	}
-	if !declared.Caching || !declared.RefusalDetection || !declared.TokenCounting {
-		t.Errorf("a capability this adapter implements is declared false: %+v", declared)
-	}
-	// The one that is FALSE on purpose. The server-side fallback parameter is not on the typed
-	// surface of the SDK version this build pins, so this adapter cannot ask for it — and
-	// declaring a capability it does not have is exactly the silent gap the matrix prevents.
-	if declared.ProviderSideFallback {
-		t.Error("provider-side fallback is declared but this adapter never asks for it")
 	}
 }
 

@@ -1,0 +1,70 @@
+---
+title: "Security overview"
+description: "The properties a security reviewer should be able to confirm quickly: isolation, least privilege, untrusted input, and the audit record."
+---
+
+OpenCluster is built for a hostile default: everything a customer's systems produce is
+untrusted for its whole life, every boundary is structural rather than filtered, and
+what cannot be recorded does not happen.
+
+## Tenant isolation
+
+- Every organization's data is keyed by the organization alone; a cross-organization
+  reference is structurally impossible in the schema, not filtered at read time.
+- Organizations resolve to their assigned database placement explicitly; an
+  unresolvable organization is an error, never a shared-pool fallback.
+- Asking about an organization you are not a member of answers exactly like an
+  organization that does not exist, so the surface cannot be used to enumerate
+  customers.
+
+## Least privilege, structurally
+
+- **Read-only integrations.** No write path to your chat, code or cluster exists in the
+  product. Slack is never posted to; GitHub is never written; cluster access goes
+  through a Relay that connects outbound and exposes nothing inbound.
+- **Three compiled roles** — Admin, Editor, Viewer. Admin can never be granted by
+  directory sync, identity-provider group claims or API tokens; every route declares the
+  permission it requires, and refused attempts by credential-holders are recorded.
+- **Scoped credentials.** A Slack token's verified scopes decide what investigations may
+  read; a GitHub App installation's repository selection is the whole boundary; a
+  Relay's service account is the ceiling on cluster access, narrowable but never
+  widenable from OpenCluster.
+
+## Untrusted input
+
+Alert payloads, chat messages, commit messages, file contents, tool results — all of it
+is information, never instruction. The investigator's rules state it, and the structure
+enforces it: the model can only call declared read capabilities of connected
+integrations, arguments are validated, time windows are clamped in platform code, and
+findings must cite recorded reads or the investigation fails. Inbound alert intake
+bounds body sizes, rate-limits before authenticating, and normalizes every field with
+caps.
+
+## The record
+
+- Every change to durable state carries an audit entry committed together with the
+  change itself — an unattributable operation cannot happen. Audit entries can never be
+  edited or deleted, and the database itself enforces that.
+- Investigations persist operational provenance — what was consulted, what each read
+  covered and returned in summary, what was concluded — and never a model's chain of
+  thought, and never bulk copies of what was read.
+- Credential-shaped values are mechanically dropped from audit detail before writing,
+  and secrets render as placeholders in every format a log can reach.
+
+## Sessions and sign-in
+
+Operator sessions are opaque server-side records, not JWTs — signing out revokes
+immediately. Sign-in goes through your organization's own identity provider (OIDC with
+PKCE, or SAML with verified assertions); OpenCluster requests only identity, never
+directory-wide scopes. SCIM provisioning is a separate surface with exactly one
+permission.
+
+## Credentials
+
+How webhook secrets, pasted tokens and deployment keys are held is its own page:
+[credential handling](/security/credentials).
+
+## Reporting
+
+Report security findings through your organization's private support channel, not a
+public tracker.

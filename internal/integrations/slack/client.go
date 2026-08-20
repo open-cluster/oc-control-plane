@@ -9,6 +9,8 @@ package slack
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -54,11 +57,34 @@ type APIError struct {
 
 func (e *APIError) Error() string { return "slack refused the call: " + e.Code }
 
+// maxCachedNames bounds the user-name cache. Names are stable and small; the bound
+// exists so a pathological workspace cannot grow process memory without limit. A full
+// cache is cleared whole rather than evicted cleverly — resolution then costs one call
+// again, which is the cheap failure.
+const maxCachedNames = 4096
+
 // Client is the one HTTP client this provider holds. One per vendor, deliberately: a
 // second client is a second place a header, a bound or a retry rule could differ.
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// names caches resolved user display names and urls the workspace's permalinks are
+	// built from, keyed by a digest of the credential itself: a token identifies exactly
+	// one workspace, so two workspaces cannot bleed into each other — and replacing an
+	// integration's credential naturally stops serving the old workspace's answers,
+	// which keying by integration would not. One users.info per author per process, not
+	// per read.
+	mu    sync.Mutex
+	names map[string]string
+	urls  map[string]string
+}
+
+// cacheKey derives the workspace-identity key a token's cached answers live under. A
+// digest, so the plaintext credential is never held as a map key.
+func cacheKey(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:8])
 }
 
 // NewClient builds the client. An empty base URL means the vendor's own.
@@ -69,6 +95,8 @@ func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		http:    &http.Client{Timeout: requestTimeout},
+		names:   map[string]string{},
+		urls:    map[string]string{},
 	}
 }
 
@@ -78,6 +106,9 @@ type Identity struct {
 	// operator recognises an installation by.
 	Workspace string
 	Bot       string
+	// URL is the workspace's own address, which is what a message permalink is built
+	// from — scope-free, unlike everything else about a message.
+	URL string
 	// Scopes is what the token was granted, read from the X-OAuth-Scopes header on the
 	// answer. Verification compares it with what the tools need.
 	Scopes []string
@@ -94,12 +125,13 @@ type Channel struct {
 	Members int
 }
 
-// Channels is a bounded page of the workspace's channels.
+// Channels is one bounded page of the workspace's channels.
 type Channels struct {
 	Channels []Channel
-	// Truncated reports that the workspace holds more than the bound; a reader must not
-	// mistake this page for the whole set.
-	Truncated bool
+	// NextCursor is where the next page starts; empty when this page ends the listing.
+	// The caller walks by it — a single page filtered client-side is how a matching
+	// channel beyond page one silently disappears.
+	NextCursor string
 }
 
 // Message is one message as history, replies and search report it.
@@ -110,8 +142,10 @@ type Message struct {
 	// ThreadTS names the thread this message heads or belongs to; empty outside threads.
 	ThreadTS   string
 	ReplyCount int
-	// Channel is the channel name, populated by search, whose matches span channels.
-	Channel string
+	// Channel is the channel name and ChannelID its id, populated by search, whose
+	// matches span channels — the id is what the pivot to history takes, unre-listed.
+	Channel   string
+	ChannelID string
 }
 
 // Messages is a bounded read of a channel or thread.
@@ -136,10 +170,14 @@ type RepliesQuery struct {
 	Limit    int
 }
 
-// SearchQuery bounds one search.
+// SearchQuery bounds one search. Before and After narrow it to the investigation's
+// window with Slack's own date-granular modifiers, widened a day each way so the
+// window's edge days are not lost to the granularity.
 type SearchQuery struct {
-	Query string
-	Count int
+	Query  string
+	Count  int
+	After  time.Time
+	Before time.Time
 }
 
 // SearchResults is a bounded search answer.
@@ -154,14 +192,15 @@ func (c *Client) AuthTest(ctx context.Context, token string) (Identity, error) {
 	var decoded struct {
 		Team string `json:"team"`
 		User string `json:"user"`
+		URL  string `json:"url"`
 	}
 	header, err := c.call(ctx, token, "auth.test", nil, &decoded)
 	if err != nil {
 		return Identity{}, err
 	}
 
-	identity := Identity{Workspace: decoded.Team, Bot: decoded.User}
-	for _, scope := range strings.Split(header.Get("X-OAuth-Scopes"), ",") {
+	identity := Identity{Workspace: decoded.Team, Bot: decoded.User, URL: decoded.URL}
+	for scope := range strings.SplitSeq(header.Get("X-OAuth-Scopes"), ",") {
 		if trimmed := strings.TrimSpace(scope); trimmed != "" {
 			identity.Scopes = append(identity.Scopes, trimmed)
 		}
@@ -169,9 +208,11 @@ func (c *Client) AuthTest(ctx context.Context, token string) (Identity, error) {
 	return identity, nil
 }
 
-// Channels lists public, unarchived channels, one bounded page. Selection over the result
-// reads names and topics; nothing here reads message content.
-func (c *Client) Channels(ctx context.Context, token string, limit int) (Channels, error) {
+// Channels lists public, unarchived channels, one bounded page from the given cursor.
+// Selection over the result reads names and topics; nothing here reads message content.
+func (c *Client) Channels(
+	ctx context.Context, token string, limit int, cursor string,
+) (Channels, error) {
 	var decoded struct {
 		Channels []struct {
 			ID    string `json:"id"`
@@ -188,23 +229,30 @@ func (c *Client) Channels(ctx context.Context, token string, limit int) (Channel
 			NextCursor string `json:"next_cursor"`
 		} `json:"response_metadata"`
 	}
-	_, err := c.call(ctx, token, "conversations.list", url.Values{
+	parameters := url.Values{
 		"limit":            {strconv.Itoa(limit)},
 		"exclude_archived": {"true"},
 		"types":            {"public_channel"},
-	}, &decoded)
+	}
+	if cursor != "" {
+		parameters.Set("cursor", cursor)
+	}
+	_, err := c.call(ctx, token, "conversations.list", parameters, &decoded)
 	if err != nil {
 		return Channels{}, err
 	}
 
 	listed := Channels{
-		Channels:  make([]Channel, 0, len(decoded.Channels)),
-		Truncated: decoded.ResponseMetadata.NextCursor != "",
+		Channels:   make([]Channel, 0, len(decoded.Channels)),
+		NextCursor: decoded.ResponseMetadata.NextCursor,
 	}
 	for _, one := range decoded.Channels {
 		listed.Channels = append(listed.Channels, Channel{
-			ID: one.ID, Name: one.Name, Topic: one.Topic.Value,
-			Purpose: one.Purpose.Value, Members: one.Members,
+			ID:      one.ID,
+			Name:    one.Name,
+			Topic:   one.Topic.Value,
+			Purpose: one.Purpose.Value,
+			Members: one.Members,
 		})
 	}
 	return listed, nil
@@ -226,15 +274,71 @@ func (c *Client) History(ctx context.Context, token string, query HistoryQuery) 
 	return c.messages(ctx, token, "conversations.history", parameters)
 }
 
-// Replies reads one thread, bounded. Truncated true means the thread holds more than the
-// bound — the tool above this refuses on it rather than presenting part of a thread as
-// the thread.
-func (c *Client) Replies(ctx context.Context, token string, query RepliesQuery) (Messages, error) {
-	return c.messages(ctx, token, "conversations.replies", url.Values{
-		"channel": {query.Channel},
-		"ts":      {query.ThreadTS},
-		"limit":   {strconv.Itoa(query.Limit)},
-	})
+// maxThreadPages bounds the tail walk: ten vendor pages of two hundred cover any
+// war-room thread an investigation plausibly reads; past that the answer says the walk
+// stopped rather than scanning on.
+const maxThreadPages = 10
+
+// threadPageSize is the vendor's own page ceiling for replies.
+const threadPageSize = 200
+
+// Thread is a thread's newest tail: the last messages of a walk from its start, because
+// the vendor serves replies oldest-first with no way to ask for the end directly.
+type Thread struct {
+	// Messages is the newest tail, at most the query's limit, in order.
+	Messages []Message
+	// Walked is how many messages the walk saw.
+	Walked int
+	// WalkEnded reports the walk reached the thread's end, making Messages truly the
+	// thread's newest tail. False means the page cap stopped it: Messages is the tail
+	// of what was walked, and the thread continues past it.
+	WalkEnded bool
+}
+
+// Replies reads one thread's newest tail, walking the vendor's oldest-first pages with
+// the cursor and keeping the last messages — which is how a thread longer than any one
+// page stays readable instead of refused.
+func (c *Client) Replies(ctx context.Context, token string, query RepliesQuery) (Thread, error) {
+	tail := Thread{}
+	cursor := ""
+	for range maxThreadPages {
+		parameters := url.Values{
+			"channel": {query.Channel},
+			"ts":      {query.ThreadTS},
+			"limit":   {strconv.Itoa(threadPageSize)},
+		}
+		if cursor != "" {
+			parameters.Set("cursor", cursor)
+		}
+		var decoded struct {
+			HasMore          bool          `json:"has_more"`
+			Messages         []messageJSON `json:"messages"`
+			ResponseMetadata struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if _, err := c.call(ctx, token, "conversations.replies", parameters, &decoded); err != nil {
+			return Thread{}, err
+		}
+		tail.Walked += len(decoded.Messages)
+		for _, one := range decoded.Messages {
+			tail.Messages = append(tail.Messages, one.message())
+		}
+		if over := len(tail.Messages) - query.Limit; over > 0 {
+			tail.Messages = append([]Message(nil), tail.Messages[over:]...)
+		}
+		cursor = decoded.ResponseMetadata.NextCursor
+		if cursor == "" && !decoded.HasMore {
+			tail.WalkEnded = true
+			return tail, nil
+		}
+		if cursor == "" {
+			// has_more with no cursor is not an answer this client can walk; stop and
+			// report through WalkEnded rather than looping on the same page.
+			return tail, nil
+		}
+	}
+	return tail, nil
 }
 
 // Search runs one bounded message search across the workspace.
@@ -247,13 +351,23 @@ func (c *Client) Search(ctx context.Context, token string, query SearchQuery) (S
 				Username string `json:"username"`
 				Text     string `json:"text"`
 				Channel  struct {
+					ID   string `json:"id"`
 					Name string `json:"name"`
 				} `json:"channel"`
 			} `json:"matches"`
 		} `json:"messages"`
 	}
+	// The window travels as Slack's own date-granular modifiers, widened a day each
+	// way so the edge days survive the granularity.
+	terms := query.Query
+	if !query.After.IsZero() {
+		terms += " after:" + query.After.UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	if !query.Before.IsZero() {
+		terms += " before:" + query.Before.UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	}
 	_, err := c.call(ctx, token, "search.messages", url.Values{
-		"query": {query.Query},
+		"query": {terms},
 		"count": {strconv.Itoa(query.Count)},
 	}, &decoded)
 	if err != nil {
@@ -266,25 +380,116 @@ func (c *Client) Search(ctx context.Context, token string, query SearchQuery) (S
 	}
 	for _, one := range decoded.Messages.Matches {
 		found.Matches = append(found.Matches, Message{
-			TS: one.TS, User: one.Username, Text: one.Text, Channel: one.Channel.Name,
+			TS:        one.TS,
+			User:      one.Username,
+			Text:      one.Text,
+			Channel:   one.Channel.Name,
+			ChannelID: one.Channel.ID,
 		})
 	}
 	return found, nil
 }
 
-// messages is the shared shape of history and replies.
+// UserName resolves one user id to a display name via users.info, cached per
+// credential so an investigation resolves each author once per process, not once per
+// read. A user the workspace will not show answers as the empty string, never an
+// error: a transcript with raw ids beats a failed read — and the vendor's own refusal
+// (a user it will not show, a token without users:read) is cached too, so a transcript
+// full of unresolvable authors costs one refused call, not one per message.
+func (c *Client) UserName(ctx context.Context, token, user string) string {
+	key := cacheKey(token) + "/" + user
+	c.mu.Lock()
+	name, cached := c.names[key]
+	c.mu.Unlock()
+	if cached {
+		return name
+	}
+
+	var decoded struct {
+		User struct {
+			Name    string `json:"name"`
+			Profile struct {
+				DisplayName string `json:"display_name"`
+				RealName    string `json:"real_name"`
+			} `json:"profile"`
+		} `json:"user"`
+	}
+	if _, err := c.call(ctx, token, "users.info",
+		url.Values{"user": {user}}, &decoded); err != nil {
+		var refusal *APIError
+		if errors.As(err, &refusal) {
+			c.remember(key, "")
+		}
+		return ""
+	}
+	name = decoded.User.Profile.DisplayName
+	if name == "" {
+		name = decoded.User.Profile.RealName
+	}
+	if name == "" {
+		name = decoded.User.Name
+	}
+	c.remember(key, name)
+	return name
+}
+
+// remember stores one resolved (or refused) name inside the cache bound.
+func (c *Client) remember(key, name string) {
+	c.mu.Lock()
+	if len(c.names) >= maxCachedNames {
+		c.names = map[string]string{}
+	}
+	c.names[key] = name
+	c.mu.Unlock()
+}
+
+// WorkspaceURL reports the workspace's own address for building permalinks, cached per
+// credential. Empty when the vendor will not say; a transcript without links beats a
+// failed read.
+func (c *Client) WorkspaceURL(ctx context.Context, token string) string {
+	key := cacheKey(token)
+	c.mu.Lock()
+	address, cached := c.urls[key]
+	c.mu.Unlock()
+	if cached {
+		return address
+	}
+	identity, err := c.AuthTest(ctx, token)
+	if err != nil {
+		return ""
+	}
+	c.mu.Lock()
+	c.urls[key] = identity.URL
+	c.mu.Unlock()
+	return identity.URL
+}
+
+// messageJSON is the vendor's message shape, decoded once for history and replies.
+type messageJSON struct {
+	TS         string `json:"ts"`
+	User       string `json:"user"`
+	Text       string `json:"text"`
+	ThreadTS   string `json:"thread_ts"`
+	ReplyCount int    `json:"reply_count"`
+}
+
+func (m messageJSON) message() Message {
+	return Message{
+		TS:         m.TS,
+		User:       m.User,
+		Text:       m.Text,
+		ThreadTS:   m.ThreadTS,
+		ReplyCount: m.ReplyCount,
+	}
+}
+
+// messages is the shared shape of history reads.
 func (c *Client) messages(
 	ctx context.Context, token, method string, parameters url.Values,
 ) (Messages, error) {
 	var decoded struct {
-		HasMore  bool `json:"has_more"`
-		Messages []struct {
-			TS         string `json:"ts"`
-			User       string `json:"user"`
-			Text       string `json:"text"`
-			ThreadTS   string `json:"thread_ts"`
-			ReplyCount int    `json:"reply_count"`
-		} `json:"messages"`
+		HasMore  bool          `json:"has_more"`
+		Messages []messageJSON `json:"messages"`
 	}
 	if _, err := c.call(ctx, token, method, parameters, &decoded); err != nil {
 		return Messages{}, err
@@ -295,10 +500,7 @@ func (c *Client) messages(
 		Truncated: decoded.HasMore,
 	}
 	for _, one := range decoded.Messages {
-		read.Messages = append(read.Messages, Message{
-			TS: one.TS, User: one.User, Text: one.Text,
-			ThreadTS: one.ThreadTS, ReplyCount: one.ReplyCount,
-		})
+		read.Messages = append(read.Messages, one.message())
 	}
 	return read, nil
 }

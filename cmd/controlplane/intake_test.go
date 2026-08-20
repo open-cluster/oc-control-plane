@@ -145,7 +145,8 @@ func (p *intakePlane) signals(t *testing.T) []recordedSignal {
 	defer func() { _ = connection.Close(ctx) }()
 
 	rows, err := connection.Query(ctx, `
-		SELECT source_key, status, title, summary, labels, started_at, resolved_at, received_at
+		SELECT source_key, status, title, summary, labels, annotations, generator_url,
+		       started_at, resolved_at, received_at
 		  FROM signal WHERE org_id = $1 ORDER BY source_key, started_at`, intakeOrganization)
 	if err != nil {
 		t.Fatalf("reading signals: %v", err)
@@ -155,14 +156,18 @@ func (p *intakePlane) signals(t *testing.T) []recordedSignal {
 	var recorded []recordedSignal
 	for rows.Next() {
 		var signal recordedSignal
-		var labels []byte
+		var labels, annotations []byte
 		if err = rows.Scan(&signal.SourceKey, &signal.Status, &signal.Title,
-			&signal.Summary, &labels, &signal.StartedAt, &signal.ResolvedAt,
+			&signal.Summary, &labels, &annotations, &signal.GeneratorURL,
+			&signal.StartedAt, &signal.ResolvedAt,
 			&signal.ReceivedAt); err != nil {
 			t.Fatalf("scanning signal: %v", err)
 		}
 		if err = json.Unmarshal(labels, &signal.Labels); err != nil {
 			t.Fatalf("decoding labels: %v", err)
+		}
+		if err = json.Unmarshal(annotations, &signal.Annotations); err != nil {
+			t.Fatalf("decoding annotations: %v", err)
 		}
 		recorded = append(recorded, signal)
 	}
@@ -258,14 +263,16 @@ type recordedScope struct {
 }
 
 type recordedSignal struct {
-	SourceKey  string
-	Status     int16
-	Title      string
-	Summary    string
-	Labels     map[string]string
-	StartedAt  time.Time
-	ResolvedAt *time.Time
-	ReceivedAt time.Time
+	SourceKey    string
+	Status       int16
+	Title        string
+	Summary      string
+	Labels       map[string]string
+	Annotations  map[string]string
+	GeneratorURL string
+	StartedAt    time.Time
+	ResolvedAt   *time.Time
+	ReceivedAt   time.Time
 }
 
 // firing renders a v4 webhook payload for an episode that began at startsAt and has not ended.
@@ -297,7 +304,9 @@ func alertmanagerBody(
 	    "status": %q,
 	    "fingerprint": %q,
 	    "labels": {"alertname": "NodeNotReady", "severity": "critical", "namespace": "payments"},
-	    "annotations": {"summary": "the node stopped reporting"},
+	    "annotations": {"summary": "the node stopped reporting",
+	                    "runbook_url": "https://runbooks.acme.example/node-not-ready"},
+	    "generatorURL": "https://prometheus.acme.example/graph?g0.expr=up",
 	    "startsAt": %q,
 	    "endsAt": %q
 	  }]
@@ -340,6 +349,14 @@ func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
 	}
 	if signal.Labels["severity"] != "critical" || signal.Labels["namespace"] != "payments" {
 		t.Errorf("labels did not survive normalisation: %v", signal.Labels)
+	}
+	if signal.Annotations["runbook_url"] != "https://runbooks.acme.example/node-not-ready" {
+		t.Errorf("annotations did not survive normalisation: %v; the operator's own "+
+			"runbook pointer must not be thrown away at intake", signal.Annotations)
+	}
+	if signal.GeneratorURL != "https://prometheus.acme.example/graph?g0.expr=up" {
+		t.Errorf("generator url = %q; the alert's own pointer must survive intake",
+			signal.GeneratorURL)
 	}
 	if !signal.StartedAt.Equal(observed) {
 		t.Errorf("started at %s, want the source's own time %s", signal.StartedAt, observed)

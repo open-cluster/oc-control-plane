@@ -20,8 +20,10 @@ grouped into IncidentEpisodes on the source's own identity. Kubernetes reads thr
 Relay: sessions, fenced capability jobs, inventory into the change ledger. Slack and
 GitHub read outbound: a pasted bot token or an App installation, verified live against
 the vendor before anything is stored, credentials sealed at rest, and bounded read-only
-tools — channels, history, threads, search; repositories, commits, pull requests by
-stable ids — each declaring when to use it and when not to.
+tools — channels, history, threads; repositories, commits, diffs, pull requests, CI runs,
+job logs, file contents, releases by stable ids — each declaring when to use it and when
+not to. Tool availability derives from what verification recorded the credential was
+granted: user-token-only message search is never offered against a pasted bot token.
 
 **Investigations persist operational provenance.** One opens from an incident or a
 plain-language question; a deterministic router selects a few relevant sources with
@@ -36,14 +38,7 @@ thought is stored. The model deployment is configuration, never a per-tenant con
 | --- | --- |
 | `./CONTEXT.md` | The domain glossary. Every document and every identifier uses this vocabulary |
 | `./AGENTS.md` | Working in this repository: boundaries, gates, and what "done" requires |
-| `docs/architecture.md` | The shape, and the decisions that still hold |
-| `docs/integrations.md` | The types this build serves, the shared lifecycle, credentials, tools |
-| `docs/api.md` | The contract rules a client builds against, and the investigation surface |
-| `docs/configuration.md` | Variables grouped by what they enable, and the rules worth knowing |
-| `docs/deployment.md` | Listeners, lifecycle, tiers, upgrades |
-| `docs/security.md` | Isolation, credentials, untrusted input, authorization, the record |
-| `docs/operations.md` | What runs on its own, incidents, investigations, what to alert on |
-| `docs/troubleshooting.md` | Symptoms and what each actually means |
+| `docs/` | User-facing product documentation: MDX pages, `docs/docs.json` and the site chrome, published through Mintlify directly from this directory. Product pages only — architecture and contract notes for contributors live in this README, `AGENTS.md`, and `CONTEXT.md` |
 
 A gate fails the build if a document cites another that does not exist, so a rename cannot
 silently leave a dangling reference behind.
@@ -161,6 +156,10 @@ Fetching from the private repository needs
 | `OC_MODEL_EFFORT` | no | How hard the model thinks: `low`…`max`. Default `high` |
 | `OC_MODEL_CONSENTED_PROVIDERS` | with a provider | The providers investigation material may be sent to. Nothing listed permits nothing, including the configured one |
 | `OC_MODEL_BASE_URL` | no | Overrides where the provider is reached; https except loopback |
+| `OC_MODEL_SPEND_CEILING_CENTS` | no | Hard spend ceiling per investigation, whole cents. Default `500`; a reached ceiling ends the investigation as an honest partial conclusion labeled stopped-by-spend. Positive only — the ceiling can be raised, never removed |
+| `OC_INVESTIGATION_WINDOW_LEAD` | no | How far before the incident began an investigation's window reaches back. Default `2h`; every tool read is clamped inside the widened window |
+| `OC_INVESTIGATION_MAX_TOOL_RUNS` | no | The investigation's read ceiling. Default `30`; positive only |
+| `OC_INVESTIGATION_MAX_TURNS` | no | The investigation's conversation-turn ceiling. Default `20`; positive only |
 | `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
 | `OC_INTAKE_PUBLIC_URL` | with intake | The origin a customer's own alerting reaches intake at. An Integration's webhook endpoint is built from it, never from a request's Host header: that URL is pasted into somebody else's system, and one that works from wherever the console is served is not one that works from the customer's alerting. Empty serves the endpoint as an absence rather than as a guess |
 | `OC_MINIMUM_RELAY_VERSION` | no | The relay version floor the fleet summary counts `outdated` against. Empty compares nothing, and the summary says so rather than reporting zero outdated as though every Relay were current |

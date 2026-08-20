@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,18 @@ const maxRetryWait = 30 * time.Second
 // client makes is a read, so repeating one later is safe.
 var ErrRateLimited = errors.New("github is rate limiting this app")
 
+// ErrAPIVersionRetired reports a 410 against the pinned API version: GitHub has stopped
+// serving it, and the fix is a control-plane update, not a configuration change. Mapped
+// distinctly so the eventual cliff self-diagnoses instead of reading as a missing
+// resource.
+var ErrAPIVersionRetired = errors.New(
+	"github no longer serves the API version this build pins; update the control plane")
+
+// ErrResponseTooLarge reports an answer past the read's bound: nothing of it is kept,
+// because a silently cut prefix of an unbounded answer is not an honest read. Callers
+// that can say something more useful than the raw refusal match on this.
+var ErrResponseTooLarge = errors.New("the answer exceeds this read's bound")
+
 // APIError is GitHub's own refusal: the status and the message the API named.
 type APIError struct {
 	Status  int
@@ -51,6 +64,14 @@ func (e *APIError) Error() string {
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// names caches repository full names by stable numeric id, for the documented
+	// /repos/{owner}/{repo} routes. The id is the stored identity because it survives
+	// renames; the name is resolved from the installation's own repository listing and
+	// re-resolved once when a read answers 404 or 301 — which is what a rename looks
+	// like from here.
+	mu    sync.Mutex
+	names map[int64]string
 }
 
 // NewClient builds the client. An empty base URL means the vendor's own.
@@ -61,6 +82,7 @@ func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		http:    &http.Client{Timeout: requestTimeout},
+		names:   map[int64]string{},
 	}
 }
 
@@ -89,7 +111,10 @@ type Repository struct {
 // Repositories is a bounded page of the installation's selected repositories.
 type Repositories struct {
 	Repositories []Repository
-	Truncated    bool
+	// Truncated says the installation selected more than this page carries; NextPage
+	// says the vendor serves a further page, which is what a walk continues on.
+	Truncated bool
+	NextPage  bool
 }
 
 // Commit is one commit as the listing reports it.
@@ -99,6 +124,9 @@ type Commit struct {
 	// Author is the GitHub login when one is linked, and the git author name otherwise.
 	Author   string
 	AuthorAt string
+	// HTMLURL is the commit's permalink, the pointer an operator follows from a
+	// finding to the change itself.
+	HTMLURL string
 }
 
 // Commits is a bounded read of a repository's history.
@@ -112,31 +140,6 @@ type CommitsQuery struct {
 	RepositoryID int64
 	Since        time.Time
 	Until        time.Time
-	Limit        int
-}
-
-// PullRequest is one pull request as the listing reports it.
-type PullRequest struct {
-	Number    int
-	Title     string
-	State     string
-	MergedAt  string
-	UpdatedAt string
-	Author    string
-	Head      string
-	Base      string
-}
-
-// PullRequests is a bounded read of a repository's pull requests, most recently updated
-// first.
-type PullRequests struct {
-	PullRequests []PullRequest
-	Truncated    bool
-}
-
-// PullsQuery bounds one pull-request read.
-type PullsQuery struct {
-	RepositoryID int64
 	Limit        int
 }
 
@@ -185,41 +188,34 @@ func (c *Client) mintInstallationToken(
 	return installationToken{token: decoded.Token, expires: decoded.ExpiresAt}, nil
 }
 
-// Repositories lists what the installation selected, one bounded page, by stable IDs.
+// Repositories lists what the installation selected, one bounded page from page
+// (one-based), by stable IDs.
 func (c *Client) Repositories(
-	ctx context.Context, token string, limit int,
+	ctx context.Context, token string, limit, page int,
 ) (Repositories, error) {
 	var decoded struct {
 		TotalCount   int              `json:"total_count"`
 		Repositories []repositoryJSON `json:"repositories"`
 	}
-	_, err := c.call(ctx, token, http.MethodGet, "/installation/repositories",
-		url.Values{"per_page": {strconv.Itoa(limit)}}, &decoded)
+	parameters := url.Values{"per_page": {strconv.Itoa(limit)}}
+	if page > 1 {
+		parameters.Set("page", strconv.Itoa(page))
+	}
+	header, err := c.call(ctx, token, http.MethodGet, "/installation/repositories",
+		parameters, &decoded)
 	if err != nil {
 		return Repositories{}, err
 	}
 
 	listed := Repositories{
 		Repositories: make([]Repository, 0, len(decoded.Repositories)),
-		Truncated:    decoded.TotalCount > len(decoded.Repositories),
+		Truncated:    hasNextPage(header) || decoded.TotalCount > len(decoded.Repositories),
+		NextPage:     hasNextPage(header),
 	}
 	for _, one := range decoded.Repositories {
 		listed.Repositories = append(listed.Repositories, one.repository())
 	}
 	return listed, nil
-}
-
-// Repository reads one repository by its stable ID.
-func (c *Client) Repository(
-	ctx context.Context, token string, repository int64,
-) (Repository, error) {
-	var decoded repositoryJSON
-	_, err := c.call(ctx, token, http.MethodGet,
-		"/repositories/"+strconv.FormatInt(repository, 10), nil, &decoded)
-	if err != nil {
-		return Repository{}, err
-	}
-	return decoded.repository(), nil
 }
 
 // Commits reads a repository's history inside a window, bounded, newest first.
@@ -246,10 +242,9 @@ func (c *Client) Commits(
 		Author *struct {
 			Login string `json:"login"`
 		} `json:"author"`
+		HTMLURL string `json:"html_url"`
 	}
-	header, err := c.call(ctx, token, http.MethodGet,
-		"/repositories/"+strconv.FormatInt(query.RepositoryID, 10)+"/commits",
-		parameters, &decoded)
+	header, err := c.repoRead(ctx, token, query.RepositoryID, "/commits", parameters, &decoded)
 	var refusal *APIError
 	if errors.As(err, &refusal) && refusal.Status == http.StatusConflict {
 		// GitHub's answer for a repository with no commits yet. An empty history is an
@@ -270,64 +265,12 @@ func (c *Client) Commits(
 			Message:  one.Commit.Message,
 			Author:   one.Commit.Author.Name,
 			AuthorAt: one.Commit.Author.Date,
+			HTMLURL:  one.HTMLURL,
 		}
 		if one.Author != nil && one.Author.Login != "" {
 			commit.Author = one.Author.Login
 		}
 		read.Commits = append(read.Commits, commit)
-	}
-	return read, nil
-}
-
-// PullRequests reads a repository's pull requests, most recently updated first, in every
-// state — a merged pull request is exactly the change context an investigation wants.
-func (c *Client) PullRequests(
-	ctx context.Context, token string, query PullsQuery,
-) (PullRequests, error) {
-	var decoded []struct {
-		Number    int     `json:"number"`
-		Title     string  `json:"title"`
-		State     string  `json:"state"`
-		MergedAt  *string `json:"merged_at"`
-		UpdatedAt string  `json:"updated_at"`
-		User      *struct {
-			Login string `json:"login"`
-		} `json:"user"`
-		Head struct {
-			Ref string `json:"ref"`
-		} `json:"head"`
-		Base struct {
-			Ref string `json:"ref"`
-		} `json:"base"`
-	}
-	header, err := c.call(ctx, token, http.MethodGet,
-		"/repositories/"+strconv.FormatInt(query.RepositoryID, 10)+"/pulls",
-		url.Values{
-			"state":     {"all"},
-			"sort":      {"updated"},
-			"direction": {"desc"},
-			"per_page":  {strconv.Itoa(query.Limit)},
-		}, &decoded)
-	if err != nil {
-		return PullRequests{}, err
-	}
-
-	read := PullRequests{
-		PullRequests: make([]PullRequest, 0, len(decoded)),
-		Truncated:    hasNextPage(header),
-	}
-	for _, one := range decoded {
-		pull := PullRequest{
-			Number: one.Number, Title: one.Title, State: one.State,
-			UpdatedAt: one.UpdatedAt, Head: one.Head.Ref, Base: one.Base.Ref,
-		}
-		if one.MergedAt != nil {
-			pull.MergedAt = *one.MergedAt
-		}
-		if one.User != nil {
-			pull.Author = one.User.Login
-		}
-		read.PullRequests = append(read.PullRequests, pull)
 	}
 	return read, nil
 }
@@ -345,83 +288,204 @@ type repositoryJSON struct {
 
 func (r repositoryJSON) repository() Repository { return Repository(r) }
 
-// call performs one REST operation and decodes the answer into out, returning the
-// response headers for the callers that read pagination from them.
-//
-// A rate refusal carrying Retry-After is retried exactly once, and only when the wait
-// fits the caller's own deadline; an exhausted hourly budget is answered as ErrRateLimited
-// immediately, because its reset is not worth sleeping towards. Every operation here is
-// a read or an idempotent mint, so the retry cannot double an effect.
-func (c *Client) call(
-	ctx context.Context, credential, method, path string, parameters url.Values, out any,
-) (http.Header, error) {
-	for attempt := 0; ; attempt++ {
-		header, wait, err := c.once(ctx, credential, method, path, parameters, out)
-		if wait == 0 || attempt == 1 {
-			if wait != 0 {
-				return nil, fmt.Errorf("%w: %s answered for rate twice", ErrRateLimited, path)
-			}
-			return header, err
-		}
+// maxResolvePages bounds the repository-name resolution walk: ten pages of one hundred
+// cover any installation an investigation plausibly reads.
+const maxResolvePages = 10
 
-		if wait > maxRetryWait {
-			return nil, fmt.Errorf("%w: %s asked for a %s wait, past what one read may park",
-				ErrRateLimited, path, wait)
+// repoRead performs one JSON read on a repository addressed by its stable id, over the
+// documented /repos/{owner}/{repo} routes. The undocumented /repositories/{id} forms sit
+// outside GitHub's versioning guarantees and are off this client's map.
+func (c *Client) repoRead(
+	ctx context.Context, token string, repository int64, suffix string,
+	parameters url.Values, out any,
+) (http.Header, error) {
+	return c.repoReadBounded(ctx, token, repository, suffix, parameters, 0, out)
+}
+
+// repoReadBounded is repoRead under a caller-named response bound; zero means the
+// standard one.
+func (c *Client) repoReadBounded(
+	ctx context.Context, token string, repository int64, suffix string,
+	parameters url.Values, bound int, out any,
+) (http.Header, error) {
+	var header http.Header
+	err := c.withRepoName(ctx, token, repository, func(name string) error {
+		body, _, answered, err := c.rawCall(ctx, token, fetchSpec{
+			path: "/repos/" + name + suffix, parameters: parameters, bound: bound,
+		})
+		if err != nil {
+			return err
 		}
-		deadline, bounded := ctx.Deadline()
-		if bounded && time.Now().Add(wait).After(deadline) {
-			return nil, fmt.Errorf("%w: %s asked for a %s wait, past this call's deadline",
-				ErrRateLimited, path, wait)
+		if err := json.Unmarshal(body, out); err != nil {
+			return fmt.Errorf("decoding the %s answer: %w", suffix, err)
 		}
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		header = answered
+		return nil
+	})
+	return header, err
+}
+
+// withRepoName runs one read against the repository's resolved owner/name — and once
+// more with a freshly resolved name when the answer looks like a rename (a 404, or a
+// 301 left unfollowed): the id is still right, the cached name is not.
+func (c *Client) withRepoName(
+	ctx context.Context, token string, repository int64, read func(name string) error,
+) error {
+	name, err := c.fullName(ctx, token, repository, false)
+	if err != nil {
+		return err
+	}
+	err = read(name)
+	var refusal *APIError
+	if errors.As(err, &refusal) &&
+		(refusal.Status == http.StatusNotFound || refusal.Status == http.StatusMovedPermanently) {
+		fresh, resolveErr := c.fullName(ctx, token, repository, true)
+		if resolveErr != nil || fresh == name {
+			return err
 		}
+		return read(fresh)
+	}
+	return err
+}
+
+// fullName resolves a repository's owner/name from its stable id, from the
+// installation's own repository listing, cached until a read proves it stale.
+func (c *Client) fullName(
+	ctx context.Context, token string, repository int64, refresh bool,
+) (string, error) {
+	if !refresh {
+		c.mu.Lock()
+		name, cached := c.names[repository]
+		c.mu.Unlock()
+		if cached {
+			return name, nil
+		}
+	}
+
+	for page := 1; page <= maxResolvePages; page++ {
+		var decoded struct {
+			Repositories []repositoryJSON `json:"repositories"`
+		}
+		header, err := c.call(ctx, token, http.MethodGet, "/installation/repositories",
+			url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}}, &decoded)
+		if err != nil {
+			return "", err
+		}
+		c.mu.Lock()
+		for _, one := range decoded.Repositories {
+			c.names[one.ID] = one.FullName
+		}
+		name, found := c.names[repository]
+		c.mu.Unlock()
+		if found {
+			return name, nil
+		}
+		if !hasNextPage(header) {
+			break
+		}
+	}
+	return "", &APIError{
+		Status:  http.StatusNotFound,
+		Message: "repository " + strconv.FormatInt(repository, 10) + " is not in this installation's grant",
 	}
 }
 
-// once performs one attempt. A non-zero wait reports a retryable rate refusal; everything
-// else is the final answer.
-func (c *Client) once(
+// call performs one JSON REST operation over rawCall and decodes the answer into out,
+// returning the response headers for the callers that read pagination from them.
+func (c *Client) call(
 	ctx context.Context, credential, method, path string, parameters url.Values, out any,
-) (http.Header, time.Duration, error) {
-	address := c.baseURL + path
-	if len(parameters) > 0 {
-		address += "?" + parameters.Encode()
+) (http.Header, error) {
+	body, _, header, err := c.rawCall(ctx, credential, fetchSpec{
+		method: method, path: path, parameters: parameters,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return nil, fmt.Errorf("decoding the %s answer: %w", path, err)
+	}
+	return header, nil
+}
+
+// fetchSpec is one read's shape: the standard JSON call leaves accept, rangeHeader and
+// bound zero; the raw paths — file contents, log downloads — name their media type,
+// their tail range, and the larger bound the responses documented to outgrow the
+// standard one are given.
+type fetchSpec struct {
+	method      string
+	path        string
+	parameters  url.Values
+	accept      string
+	rangeHeader string
+	bound       int
+}
+
+// fetch performs one HTTP attempt with this client's one set of headers, bounds and
+// refusal mappings. A non-zero wait reports a retryable rate refusal.
+func (c *Client) fetch(
+	ctx context.Context, credential string, spec fetchSpec,
+) ([]byte, int, http.Header, time.Duration, error) {
+	address := c.baseURL + spec.path
+	if len(spec.parameters) > 0 {
+		address += "?" + spec.parameters.Encode()
+	}
+	method := spec.method
+	if method == "" {
+		method = http.MethodGet
 	}
 	request, err := http.NewRequestWithContext(ctx, method, address, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("building the %s request: %w", path, err)
+		return nil, 0, nil, 0, fmt.Errorf("building the %s request: %w", spec.path, err)
 	}
+	// The log download 302s to an expiring storage URL on another host; Go follows and
+	// drops Authorization across hosts, which is exactly the behavior the redirect
+	// needs — the storage URL carries its own authorization.
 	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("Accept", "application/vnd.github+json")
+	accept := spec.accept
+	if accept == "" {
+		accept = "application/vnd.github+json"
+	}
+	request.Header.Set("Accept", accept)
+	if spec.rangeHeader != "" {
+		request.Header.Set("Range", spec.rangeHeader)
+	}
+	// One pinned version, no negotiation: 2022-11-28 is supported on GitHub.com until
+	// 2028-03-10 and is the version the widest range of GHES releases accepts. A 410
+	// below is the cliff arriving, mapped to its own error so it self-diagnoses.
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	response, err := c.http.Do(request)
 	if err != nil {
 		// The transport error is wrapped, not quoted onward to an operator: url.Error
 		// carries the full URL, and the caller decides what an operator sees.
-		return nil, 0, fmt.Errorf("reaching github for %s: %w", path, err)
+		return nil, 0, nil, 0, fmt.Errorf("reaching github for %s: %w", spec.path, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	if err != nil {
-		return nil, 0, fmt.Errorf("reading the %s answer: %w", path, err)
+	bound := spec.bound
+	if bound == 0 {
+		bound = maxResponseBytes
 	}
-	if len(body) > maxResponseBytes {
-		return nil, 0, fmt.Errorf("the %s answer exceeds %d bytes; refusing to read further",
-			path, maxResponseBytes)
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(bound)+1))
+	if err != nil {
+		return nil, 0, nil, 0, fmt.Errorf("reading the %s answer: %w", spec.path, err)
+	}
+	if len(body) > bound {
+		return nil, 0, nil, 0, fmt.Errorf(
+			"%w: the %s answer exceeds %d bytes; refusing to read further",
+			ErrResponseTooLarge, spec.path, bound)
 	}
 
 	if wait, limited := rateRefusal(response); limited {
 		if wait == 0 {
 			// The hourly budget: no named wait, a reset up to an hour away and not
 			// worth sleeping towards.
-			return nil, 0, fmt.Errorf("%w: the hourly budget is exhausted", ErrRateLimited)
+			return nil, 0, nil, 0, fmt.Errorf("%w: the hourly budget is exhausted", ErrRateLimited)
 		}
-		return nil, wait, nil
+		return nil, 0, nil, wait, nil
+	}
+	if response.StatusCode == http.StatusGone {
+		return nil, 0, nil, 0, fmt.Errorf("%w (%s answered 410)", ErrAPIVersionRetired, spec.path)
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		var refusal struct {
@@ -431,13 +495,43 @@ func (c *Client) once(
 		if refusal.Message == "" {
 			refusal.Message = "no reason given"
 		}
-		return nil, 0, &APIError{Status: response.StatusCode, Message: refusal.Message}
+		return nil, 0, nil, 0, &APIError{Status: response.StatusCode, Message: refusal.Message}
 	}
+	return body, response.StatusCode, response.Header, 0, nil
+}
 
-	if err := json.Unmarshal(body, out); err != nil {
-		return nil, 0, fmt.Errorf("decoding the %s answer: %w", path, err)
+// rawCall performs one read, retrying a rate refusal that names a wait exactly once,
+// and only when the wait fits the caller's own deadline; an exhausted hourly budget is
+// answered as ErrRateLimited immediately, because its reset is not worth sleeping
+// towards. Every operation this client makes is a read or an idempotent mint, so the
+// retry cannot double an effect.
+func (c *Client) rawCall(
+	ctx context.Context, credential string, spec fetchSpec,
+) ([]byte, int, http.Header, error) {
+	for attempt := 0; ; attempt++ {
+		body, status, header, wait, err := c.fetch(ctx, credential, spec)
+		if wait == 0 || attempt == 1 {
+			if wait != 0 {
+				return nil, 0, nil, fmt.Errorf("%w: %s answered for rate twice",
+					ErrRateLimited, spec.path)
+			}
+			return body, status, header, err
+		}
+		if wait > maxRetryWait {
+			return nil, 0, nil, fmt.Errorf("%w: %s asked for a %s wait, past what one read may park",
+				ErrRateLimited, spec.path, wait)
+		}
+		deadline, bounded := ctx.Deadline()
+		if bounded && time.Now().Add(wait).After(deadline) {
+			return nil, 0, nil, fmt.Errorf("%w: %s asked for a %s wait, past this call's deadline",
+				ErrRateLimited, spec.path, wait)
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return nil, 0, nil, ctx.Err()
+		}
 	}
-	return response.Header, 0, nil
 }
 
 // rateRefusal reads GitHub's two rate-limit shapes: a secondary limit naming a wait worth
@@ -465,4 +559,23 @@ func rateRefusal(response *http.Response) (time.Duration, bool) {
 // GitHub paginates with.
 func hasNextPage(header http.Header) bool {
 	return strings.Contains(header.Get("Link"), `rel="next"`)
+}
+
+// partialOmitsHead reports whether a ranged answer left out the representation's start.
+// A suffix range covering a file whole still answers 206 with a range starting at zero
+// — that is the whole content, not a truncation, and flagging it would over-claim. A
+// partial answer that will not say its range is treated as truncated.
+func partialOmitsHead(status int, header http.Header) bool {
+	if status != http.StatusPartialContent {
+		return false
+	}
+	rest, ranged := strings.CutPrefix(header.Get("Content-Range"), "bytes ")
+	if !ranged {
+		return true
+	}
+	start, _, dashed := strings.Cut(rest, "-")
+	if !dashed {
+		return true
+	}
+	return strings.TrimSpace(start) != "0"
 }

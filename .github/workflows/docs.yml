@@ -1,0 +1,37 @@
+# Documentation CI. docs/ in this repository is the published documentation site itself:
+# Mintlify's GitHub app serves this directory directly (content directory "docs", deploying
+# on every push to main), so there is no sync step and no cross-repository credential —
+# publication is the hosting connection, made once in the Mintlify dashboard. This job only
+# proves the site builds and its links resolve before a change lands. Actions are pinned by
+# commit SHA, as in ci.yml.
+name: docs
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'docs/**', '.github/workflows/docs.yml' ]
+  pull_request:
+    paths: [ 'docs/**', '.github/workflows/docs.yml' ]
+
+permissions:
+  contents: read
+
+# The Mintlify CLI is pinned for the same reason the Go tools are: a floating validator
+# is a gate whose meaning changes without a commit.
+env:
+  MINT_VERSION: 4.2.810
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate the Mintlify build
+        working-directory: docs
+        run: npx --yes mint@${MINT_VERSION} validate
+
+      - name: Check for broken links
+        working-directory: docs
+        run: npx --yes mint@${MINT_VERSION} broken-links

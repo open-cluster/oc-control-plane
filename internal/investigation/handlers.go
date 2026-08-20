@@ -24,9 +24,6 @@ const (
 	// maxQuestionLength bounds an operator's question. Long enough for a sentence with
 	// identifiers in it; anything past this is a paste, not a question.
 	maxQuestionLength = 1024
-	// changeLead widens an investigation's window before the incident began: the change
-	// that caused an incident usually landed before it fired.
-	changeLead = 2 * time.Hour
 	// subjectCandidates bounds how many open episodes a question is matched against.
 	subjectCandidates = 20
 	// clarifyWith bounds how many incident titles a clarification names.
@@ -38,6 +35,10 @@ type Handlers struct {
 	Store  Store
 	Runner *Runner
 	Logger *slog.Logger
+	// WindowLead widens an investigation's window before the incident began: the change
+	// that caused an incident usually landed before it fired. Configuration, because the
+	// right lead follows an organization's deploy cadence, not a constant.
+	WindowLead time.Duration
 }
 
 // Routes is this capability's contribution to the operator API's index.
@@ -73,7 +74,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	if h.Runner == nil || h.Runner.Reasoner == nil {
+	if h.Runner == nil || h.Runner.Investigator == nil {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
 		return
@@ -106,7 +107,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	window := windowOf(trigger)
+	window := windowOf(trigger, h.WindowLead)
 	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, NewInvestigation{
 		EpisodeID:     trigger.EpisodeID,
 		IntegrationID: trigger.IntegrationID,
@@ -187,13 +188,14 @@ func matchQuestion(question string, candidates []Trigger) []Trigger {
 	best := 0
 	var matched []Trigger
 	for _, candidate := range candidates {
-		haystack := strings.ToLower(candidate.Title)
+		var haystack strings.Builder
+		haystack.WriteString(strings.ToLower(candidate.Title))
 		for key, value := range candidate.Labels {
-			haystack += " " + strings.ToLower(key) + " " + strings.ToLower(value)
+			haystack.WriteString(" " + strings.ToLower(key) + " " + strings.ToLower(value))
 		}
 		score := 0
 		for _, term := range terms {
-			if strings.Contains(haystack, term) {
+			if strings.Contains(haystack.String(), term) {
 				score++
 			}
 		}
@@ -261,14 +263,14 @@ type window struct {
 	until time.Time
 }
 
-// windowOf derives the window from the episode: widened backwards by the change lead,
-// and ending now while the incident is still open.
-func windowOf(trigger Trigger) window {
+// windowOf derives the window from the episode: widened backwards by the configured
+// lead, and ending now while the incident is still open.
+func windowOf(trigger Trigger, lead time.Duration) window {
 	until := trigger.LastSeenAt
 	if !trigger.Resolved {
 		until = time.Now().UTC()
 	}
-	return window{from: trigger.FirstSeenAt.Add(-changeLead), until: until}
+	return window{from: trigger.FirstSeenAt.Add(-lead), until: until}
 }
 
 // listSpec is the shared table contract this listing speaks.
@@ -418,4 +420,34 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
+}
+
+// subjectTerms reduces the subject and question to the words worth matching: lower-cased,
+// punctuation split, short noise words dropped. Deliberately dumb — a stemmer or an
+// embedding here would make the matching unexplainable, and the explanation is the point.
+func subjectTerms(parts ...string) []string {
+	seen := map[string]bool{}
+	var terms []string
+	for _, part := range parts {
+		for _, word := range strings.FieldsFunc(strings.ToLower(part), func(r rune) bool {
+			letter := 'a' <= r && r <= 'z'
+			digit := '0' <= r && r <= '9'
+			return !letter && !digit && r != '-' && r != '_'
+		}) {
+			if len(word) < 3 || noiseWords[word] || seen[word] {
+				continue
+			}
+			seen[word] = true
+			terms = append(terms, word)
+		}
+	}
+	return terms
+}
+
+// noiseWords are the words that match everything and select nothing.
+var noiseWords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "what": true, "why": true,
+	"how": true, "is": true, "are": true, "was": true, "has": true, "have": true,
+	"our": true, "this": true, "that": true, "not": true, "you": true, "about": true,
+	"happening": true, "wrong": true, "down": true, "broken": true,
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // The definition's promises, pinned. These are what the seeded reference row, the setup
-// flow and the router rely on; a drift here is a product change, not a refactor.
+// flow and the investigator rely on; a drift here is a product change, not a refactor.
 
 func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 	t.Parallel()
@@ -78,7 +78,6 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 			"whenToUse":    tool.WhenToUse,
 			"whenNotToUse": tool.WhenNotToUse,
 			"permissions":  tool.Permissions,
-			"rateLimit":    tool.RateLimit,
 			"output":       tool.Output,
 		} {
 			if strings.TrimSpace(value) == "" {

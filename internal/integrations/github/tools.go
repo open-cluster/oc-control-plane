@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The four read-only tools. Repositories are addressed by their stable numeric ids —
-// never by name, which a rename would break mid-incident — and every bound is named, with
-// truncation flagged from the vendor's own pagination.
+// The listing tools of the causal workflow: find the repository, read its history.
+// Repositories are addressed by their stable numeric ids — never by name, which a
+// rename would break mid-incident — and every bound is named, with truncation flagged
+// from the vendor's own pagination. The deep reads live in tools_reads.go.
 
 // The named bounds. GitHub's page ceiling is 100 everywhere; the defaults are sized for
 // an investigation reading change context, not for export.
@@ -21,20 +21,24 @@ const (
 	maxItemsPerRead     = 100
 	defaultRepositories = 50
 	defaultCommits      = 30
-	defaultPullRequests = 20
+	// maxRepositoryPages bounds the listing walk a name filter runs inside, so a match
+	// beyond page one is still found without scanning a giant installation forever.
+	maxRepositoryPages = 5
 )
 
-// rateLimitNote is the same fact on every tool, stated once.
-const rateLimitNote = "one GitHub REST call per invocation, against the installation's " +
-	"shared hourly budget; a handful of calls per investigation is fine, a crawl is not"
-
-// tools is the declared set, one-to-one with the capabilities the definition declares.
+// tools is the declared set, one-to-one with the capabilities the definition declares:
+// the eight steps of the causal workflow, from finding the repository to reading what
+// shipped.
 func tools(app *App, client *Client) []integrations.Tool {
 	return []integrations.Tool{
 		listRepositoriesTool(app, client),
-		readRepositoryTool(app, client),
 		readCommitsTool(app, client),
-		readPullRequestsTool(app, client),
+		readCommitTool(app, client),
+		readPullRequestTool(app, client),
+		readWorkflowRunsTool(app, client),
+		readJobLogTool(app, client),
+		readFileTool(app, client),
+		listReleasesTool(app, client),
 	}
 }
 
@@ -51,26 +55,21 @@ type repositoryContent struct {
 
 // commitContent is one commit as a tool reports it.
 type commitContent struct {
-	SHA      string `json:"sha"`
-	Message  string `json:"message"`
-	Author   string `json:"author,omitempty"`
-	AuthorAt string `json:"authorAt,omitempty"`
-}
-
-// pullRequestContent is one pull request as a tool reports it.
-type pullRequestContent struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	MergedAt  string `json:"mergedAt,omitempty"`
-	UpdatedAt string `json:"updatedAt"`
+	SHA       string `json:"sha"`
+	Message   string `json:"message"`
 	Author    string `json:"author,omitempty"`
-	Head      string `json:"head,omitempty"`
-	Base      string `json:"base,omitempty"`
+	AuthorAt  string `json:"authorAt,omitempty"`
+	Permalink string `json:"permalink,omitempty"`
 }
 
 func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
+		{
+			Name: "nameContains",
+			Description: "Case-insensitive text to select repositories by name or " +
+				"description. Use the incident's service name.",
+			Type: integrations.FieldString,
+		},
 		{
 			Name: "limit",
 			Description: fmt.Sprintf("How many repositories to return, at most %d. Default %d.",
@@ -83,23 +82,25 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 		Capability: ListRepositories,
 		Description: "Lists the repositories this installation selected, by stable id, " +
 			"with names and descriptions.",
-		WhenToUse: "First, to find which repository holds the failing service: match the " +
-			"incident's service name against repository names and descriptions, then use " +
-			"the id everywhere after.",
+		WhenToUse: "First, to find which repository holds the failing service: filter by " +
+			"the incident's service name, then use the id everywhere after.",
 		WhenNotToUse: "Not for commit or pull-request content — it returns none. Never " +
 			"repeatedly inside one investigation; the selection does not change mid-incident.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant; nothing beyond it is visible",
-		RateLimit:   rateLimitNote,
 		Output: "a bounded list of repositories, each with id, name, full name, privacy, " +
 			"archive state, default branch and description, plus a truncated flag when " +
-			"the installation selected more",
+			"more matched than were returned or the walk stopped early",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultRepositories, maxItemsPerRead)
+			limit, err := values.Count("limit", defaultRepositories, maxItemsPerRead)
+			if err != nil {
+				return integrations.ToolResult{}, err
+			}
+			needle, err := values.Text("nameContains")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
@@ -108,71 +109,42 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
-			listed, err := client.Repositories(ctx, token, limit)
-			if err != nil {
-				return integrations.ToolResult{}, err
+			// The filter runs inside a bounded pagination walk, so a matching
+			// repository beyond page one is still found.
+			var content []repositoryContent
+			var sources []string
+			matched, walkEnded := 0, false
+			for page := 1; page <= maxRepositoryPages; page++ {
+				listed, err := client.Repositories(ctx, token, maxItemsPerRead, page)
+				if err != nil {
+					return integrations.ToolResult{}, err
+				}
+				for _, one := range listed.Repositories {
+					if !matchesRepository(one, needle) {
+						continue
+					}
+					matched++
+					if len(content) < limit {
+						content = append(content, repositoryContentOf(one))
+						sources = append(sources, strconv.FormatInt(one.ID, 10))
+					}
+				}
+				if !listed.NextPage {
+					walkEnded = true
+					break
+				}
+				if len(content) >= limit {
+					break
+				}
 			}
-			content := make([]repositoryContent, 0, len(listed.Repositories))
-			sources := make([]string, 0, len(listed.Repositories))
-			for _, one := range listed.Repositories {
-				content = append(content, repositoryContentOf(one))
-				sources = append(sources, strconv.FormatInt(one.ID, 10))
-			}
+			// A whole walk answers untruncated however many pages it took: the
+			// per-page Truncated says one PAGE held less than the installation, which
+			// is every page of a multi-page grant and not what this answer means.
 			return integrations.ToolResult{
 				Content:   content,
-				Truncated: listed.Truncated,
-				Summary:   fmt.Sprintf("%d repositories granted", len(content)),
+				Truncated: matched > len(content) || !walkEnded,
+				Summary:   fmt.Sprintf("%d repositories matched", len(content)),
 				Sources:   sources,
-			}, nil
-		},
-	}
-}
-
-func readRepositoryTool(app *App, client *Client) integrations.Tool {
-	declared := []integrations.ToolArgument{
-		{
-			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
-			Type:        integrations.FieldInteger,
-			Required:    true,
-		},
-	}
-	return integrations.Tool{
-		Name:       "github.read_repository",
-		Capability: ReadRepository,
-		Description: "Reads one repository's identity and state by its stable id: name, " +
-			"default branch, privacy, archive state, description.",
-		WhenToUse: "To confirm what a repository is before reading its history — its " +
-			"default branch is what commits and pull requests land on.",
-		WhenNotToUse: "Not for history; that is github.read_commits and " +
-			"github.read_pull_requests. Not to discover repositories; that is " +
-			"github.list_repositories.",
-		Arguments:   declared,
-		Permissions: "the app installation's own repository grant",
-		RateLimit:   rateLimitNote,
-		Output:      "one repository with id, name, full name, privacy, archive state, default branch and description",
-		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			repository, err := values.identity("repositoryId")
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			token, err := installationTokenFor(ctx, app, request.Integration)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-
-			found, err := client.Repository(ctx, token, repository)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			return integrations.ToolResult{
-				Content: repositoryContentOf(found),
-				Summary: found.FullName,
-				Sources: []string{strconv.FormatInt(found.ID, 10)},
 			}, nil
 		},
 	}
@@ -188,9 +160,9 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		},
 		{
 			Name: "since",
-			Description: "Start of the window, RFC 3339. Use the incident's own window " +
-				"widened by an hour or two — the change that caused an incident usually " +
-				"landed shortly before it.",
+			Description: "Start of the window, RFC 3339. The investigation's window " +
+				"already reaches back before the incident began, and every read is " +
+				"clamped inside it — a wider ask does not widen the read.",
 			Type: integrations.FieldString,
 		},
 		{
@@ -210,40 +182,38 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		Capability: ReadCommits,
 		Description: "Reads one repository's commits inside a time window, newest first, " +
 			"bounded and flagged when the window holds more.",
-		WhenToUse: "To answer \"what changed before this broke\": read the incident " +
-			"window plus a lead of an hour or two on the repository that owns the failing " +
-			"service.",
-		WhenNotToUse: "Not for the intent behind a change — that is " +
-			"github.read_pull_requests, where review and description live. Not " +
+		WhenToUse: "To answer \"what changed before this broke\": read the incident's " +
+			"own window on the repository that owns the failing service.",
+		WhenNotToUse: "Not for a commit's actual diff — that is github.read_commit. Not " +
 			"unbounded: without a window it reads the recent tail only.",
 		Arguments:   declared,
 		Permissions: "the app installation's own repository grant",
-		RateLimit:   rateLimitNote,
-		Output: "a bounded list of commits, each with sha, message, author and authored " +
-			"time, plus a truncated flag when the window holds more; an empty repository " +
-			"answers an empty list",
+		Output: "a bounded list of commits, each with sha, message, author, authored " +
+			"time and permalink, plus a truncated flag when the window holds more; an " +
+			"empty repository answers an empty list; a message like \"Merge pull " +
+			"request #123\" carries the number github.read_pull_request takes",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
+			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			repository, err := values.identity("repositoryId")
+			repository, err := values.Identity("repositoryId")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limit, err := values.count("limit", defaultCommits, maxItemsPerRead)
+			limit, err := values.Count("limit", defaultCommits, maxItemsPerRead)
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			since, err := values.moment("since")
+			since, err := values.Moment("since")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			until, err := values.moment("until")
+			until, err := values.Moment("until")
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			since, until = clampWindow(since, until, request)
+			since, until = request.ClampWindow(since, until)
 			token, err := installationTokenFor(ctx, app, request.Integration)
 			if err != nil {
 				return integrations.ToolResult{}, err
@@ -257,7 +227,10 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			}
 			content := make([]commitContent, 0, len(read.Commits))
 			for _, one := range read.Commits {
-				content = append(content, commitContent(one))
+				content = append(content, commitContent{
+					SHA: one.SHA, Message: one.Message, Author: one.Author,
+					AuthorAt: one.AuthorAt, Permalink: one.HTMLURL,
+				})
 			}
 			return integrations.ToolResult{
 				Content:   content,
@@ -267,88 +240,6 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			}, nil
 		},
 	}
-}
-
-func readPullRequestsTool(app *App, client *Client) integrations.Tool {
-	declared := []integrations.ToolArgument{
-		{
-			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
-			Type:        integrations.FieldInteger,
-			Required:    true,
-		},
-		{
-			Name: "limit",
-			Description: fmt.Sprintf("How many pull requests to return, at most %d. Default %d.",
-				maxItemsPerRead, defaultPullRequests),
-			Type: integrations.FieldInteger,
-		},
-	}
-	return integrations.Tool{
-		Name:       "github.read_pull_requests",
-		Capability: ReadPullRequests,
-		Description: "Reads one repository's pull requests, most recently updated first, " +
-			"in every state — merged ones are the change context an investigation wants.",
-		WhenToUse: "To see what was merged or in flight around the incident: titles, " +
-			"branches and merge times say what a bare commit list cannot.",
-		WhenNotToUse: "Not for individual commits inside the window; that is " +
-			"github.read_commits. Not to find the repository; that is " +
-			"github.list_repositories.",
-		Arguments:   declared,
-		Permissions: "the app installation's own repository grant",
-		RateLimit:   rateLimitNote,
-		Output: "a bounded list of pull requests, each with number, title, state, merge " +
-			"and update times, author and branches, plus a truncated flag when the " +
-			"repository holds more",
-		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-			values, err := readArguments(declared, request.Arguments)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			repository, err := values.identity("repositoryId")
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			limit, err := values.count("limit", defaultPullRequests, maxItemsPerRead)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			token, err := installationTokenFor(ctx, app, request.Integration)
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-
-			read, err := client.PullRequests(ctx, token, PullsQuery{
-				RepositoryID: repository, Limit: limit,
-			})
-			if err != nil {
-				return integrations.ToolResult{}, err
-			}
-			content := make([]pullRequestContent, 0, len(read.PullRequests))
-			for _, one := range read.PullRequests {
-				content = append(content, pullRequestContent(one))
-			}
-			return integrations.ToolResult{
-				Content:   content,
-				Truncated: read.Truncated,
-				Summary:   fmt.Sprintf("%d pull requests, newest first", len(content)),
-				Sources:   []string{strconv.FormatInt(repository, 10)},
-			}, nil
-		},
-	}
-}
-
-// clampWindow narrows an argument window into the request's own. A read phrased with a
-// wider window still runs inside the investigation's: the bound is structural, not
-// something a prompt asked for.
-func clampWindow(since, until time.Time, request integrations.ToolRequest) (time.Time, time.Time) {
-	if !request.WindowFrom.IsZero() && (since.IsZero() || since.Before(request.WindowFrom)) {
-		since = request.WindowFrom
-	}
-	if !request.WindowUntil.IsZero() && (until.IsZero() || until.After(request.WindowUntil)) {
-		until = request.WindowUntil
-	}
-	return since, until
 }
 
 // installationTokenFor resolves the integration's installation and mints or reuses its
@@ -368,93 +259,25 @@ func repositoryContentOf(repository Repository) repositoryContent {
 	return repositoryContent(repository)
 }
 
-// arguments is one call's inputs after the undeclared ones were refused.
-type arguments struct {
-	values map[string]any
+// matchesRepository reports whether a repository's names or description carry the
+// needle. An empty needle selects everything, which is the unfiltered listing.
+func matchesRepository(repository Repository, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	needle = strings.ToLower(needle)
+	return strings.Contains(strings.ToLower(repository.Name), needle) ||
+		strings.Contains(strings.ToLower(repository.FullName), needle) ||
+		strings.Contains(strings.ToLower(repository.Description), needle)
 }
 
-// readArguments refuses an argument nothing declares. Dropped arguments are the quiet
-// failure mode of tool calling: the caller believes it narrowed the read and it did not.
-func readArguments(
-	declared []integrations.ToolArgument, given map[string]any,
-) (arguments, error) {
-	for name := range given {
-		if !declaresArgument(declared, name) {
-			return arguments{}, fmt.Errorf("argument %q is not one this tool declares", name)
-		}
-	}
-	return arguments{values: given}, nil
-}
-
-func declaresArgument(declared []integrations.ToolArgument, name string) bool {
-	for _, argument := range declared {
-		if argument.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// text reads an optional string argument.
-func (a arguments) text(name string) (string, error) {
-	value, given := a.values[name]
-	if !given {
-		return "", nil
-	}
-	text, isText := value.(string)
-	if !isText {
-		return "", fmt.Errorf("%s must be text", name)
-	}
-	return strings.TrimSpace(text), nil
-}
-
-// identity reads a required positive whole number, the shape every stable id has.
-func (a arguments) identity(name string) (int64, error) {
-	value, given := a.values[name]
-	if !given {
-		return 0, errors.New(name + " is required")
-	}
-	id, err := wholePositiveID(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a whole positive number", name)
-	}
-	return id, nil
-}
-
-// wholePositiveID is the one reading of a stable id from decoded JSON, shared by
-// configuration and tool arguments. Numbers arrive as float64; a whole positive value is
-// required, not merely truncated.
+// wholePositiveID is the one reading of a stable id from decoded JSON configuration.
+// Numbers arrive as float64; a whole positive value is required, not merely truncated.
+// Tool arguments read theirs through the shared integrations.Arguments instead.
 func wholePositiveID(value any) (int64, error) {
 	number, isNumber := value.(float64)
 	if !isNumber || number != float64(int64(number)) || number < 1 {
 		return 0, errors.New("not a whole positive number")
 	}
 	return int64(number), nil
-}
-
-// count reads a bounded whole number, applying the default when absent.
-func (a arguments) count(name string, fallback, maximum int) (int, error) {
-	value, given := a.values[name]
-	if !given {
-		return fallback, nil
-	}
-	number, isNumber := value.(float64)
-	if !isNumber || number != float64(int64(number)) || number < 1 || int(number) > maximum {
-		return 0, fmt.Errorf("%s must be a whole number between 1 and %d", name, maximum)
-	}
-	return int(number), nil
-}
-
-// moment reads an optional RFC 3339 timestamp.
-func (a arguments) moment(name string) (time.Time, error) {
-	text, err := a.text(name)
-	if err != nil || text == "" {
-		return time.Time{}, err
-	}
-	at, parseErr := time.Parse(time.RFC3339, text)
-	if parseErr != nil {
-		return time.Time{}, fmt.Errorf("%s must be an RFC 3339 time such as "+
-			"2026-01-02T15:04:05Z", name)
-	}
-	return at, nil
 }

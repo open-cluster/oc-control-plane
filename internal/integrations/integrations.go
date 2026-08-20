@@ -7,7 +7,7 @@
 // as a Definition and assembled into a Catalog at the composition root. The composition root
 // is the only place that knows every provider; nothing here imports one.
 //
-// An Integration is one configured installation: "Production Alertmanager", "Acme Slack".
+// An Integration is one configured installation: "Production Alertmanager", "Org Slack".
 // org_id is the tenant boundary. There is no Environment, no Connection role, and no
 // execution locality — where work runs is derivable from whether a Relay serves the
 // integration.
@@ -39,12 +39,8 @@ type Category string
 const (
 	CategoryAlerting      Category = "alerting"
 	CategoryOrchestration Category = "orchestration"
-	CategoryObservability Category = "observability"
 	CategoryCollaboration Category = "collaboration"
 	CategorySourceControl Category = "source-control"
-	CategoryIncident      Category = "incident-response"
-	CategoryDeployment    Category = "deployment"
-	CategoryCloud         Category = "cloud"
 )
 
 // FieldType is what one configuration field holds. Deliberately small: a setup form that
@@ -55,7 +51,6 @@ type FieldType string
 const (
 	FieldString  FieldType = "string"
 	FieldInteger FieldType = "integer"
-	FieldBoolean FieldType = "boolean"
 )
 
 // Field is one thing an Integration of this type is configured with. The configuration
@@ -86,6 +81,12 @@ type Verification struct {
 	Status Status
 	// Note says, in the operator's language, what this run proved or could not.
 	Note string
+	// Grants are facts the probe verified about the credential, in the provider's own
+	// vocabulary — Slack records granted scopes plus the token's kind. Tool
+	// availability derives from them: a tool whose Requires are not all recorded here
+	// is absent from an investigation's set instead of failing at call time. Nil means
+	// nothing was recorded, and gated tools stay absent.
+	Grants []string
 }
 
 // VerifyInput is everything a Definition's Verify may consult. It is gathered by the
@@ -140,9 +141,6 @@ type Definition struct {
 	// ReceivesWebhooks means an Integration of this type is reached inbound: creating one
 	// mints a webhook secret, and the intake surface accepts deliveries for it.
 	ReceivesWebhooks bool
-	// MinimumRelayVersion is the oldest Relay that can serve this type; empty for a type
-	// no Relay serves.
-	MinimumRelayVersion string
 	// Verify judges an integration against the facts in VerifyInput. It is pure: the
 	// handler gathers, the definition judges, the store records. A definition declares
 	// exactly one of Verify and Probe.
@@ -318,12 +316,38 @@ func checkDefinition(definition Definition) error {
 			return fmt.Errorf("integration type %q tool %q exercises capability %q, which "+
 				"the type does not declare", definition.Key, tool.Name, tool.Capability)
 		case tool.Description == "" || tool.WhenToUse == "" || tool.WhenNotToUse == "" ||
-			tool.Permissions == "" || tool.RateLimit == "" || tool.Output == "":
+			tool.Permissions == "" || tool.Output == "":
 			return fmt.Errorf("integration type %q tool %q is missing part of its "+
-				"contract; the router chooses by this metadata, and an empty field is a "+
-				"tool that gets used wrongly", definition.Key, tool.Name)
+				"contract; the model routes by the composed description, and an empty "+
+				"field is a tool that gets used wrongly", definition.Key, tool.Name)
+		}
+		if err := checkArguments(definition.Key, tool); err != nil {
+			return err
 		}
 		names[tool.Name] = true
+	}
+	return nil
+}
+
+// checkArguments refuses a tool whose argument declarations are incomplete. The model
+// plans calls by these declarations, so a nameless, undescribed or untyped argument is
+// a call that goes wrong at three in the morning instead of failing this build.
+func checkArguments(key string, tool Tool) error {
+	declared := make(map[string]bool, len(tool.Arguments))
+	for _, argument := range tool.Arguments {
+		switch {
+		case argument.Name == "" || argument.Description == "":
+			return fmt.Errorf("integration type %q tool %q declares an argument without "+
+				"a name or a description", key, tool.Name)
+		case argument.Type != FieldString && argument.Type != FieldInteger:
+			return fmt.Errorf("integration type %q tool %q argument %q has type %q, "+
+				"which is not one this catalog serves", key, tool.Name,
+				argument.Name, argument.Type)
+		case declared[argument.Name]:
+			return fmt.Errorf("integration type %q tool %q declares argument %q twice",
+				key, tool.Name, argument.Name)
+		}
+		declared[argument.Name] = true
 	}
 	return nil
 }

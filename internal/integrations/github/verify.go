@@ -49,7 +49,7 @@ func probe(
 	if err != nil {
 		return judgeFailure(err, installation)
 	}
-	granted, err := client.Repositories(ctx, token, repositoryProbePage)
+	granted, err := client.Repositories(ctx, token, repositoryProbePage, 1)
 	if err != nil {
 		return judgeFailure(err, installation)
 	}

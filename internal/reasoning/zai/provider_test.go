@@ -17,9 +17,9 @@ import (
 
 // THE SEAM IS THE HTTP ROUND-TRIPPER, AND THIS SUITE NEVER REACHES THE NETWORK.
 //
-// What is worth asserting here is mostly where this vendor DIFFERS from the other one, because the
-// differences are what the capability matrix exists to carry: a JSON mode rather than schema
-// enforcement, cached input tokens with no cache-write count, and its own word for a refusal.
+// What is worth asserting here is mostly where this vendor DIFFERS from the other one: a JSON
+// mode rather than schema enforcement, cached input tokens with no cache-write count, and its
+// own word for a refusal.
 
 type transport struct {
 	mutex     sync.Mutex
@@ -104,12 +104,84 @@ func providerUnder(t *testing.T, responses ...*http.Response) (*zai.Provider, *t
 
 func promptFixture() reasoning.Prompt {
 	return reasoning.Prompt{
-		Model:           "glm-4.7",
-		System:          []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
-		Content:         []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema:          reasoning.ConclusionSchema(),
+		Model:   "glm-4.7",
+		System:  []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
+		Content: []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
+		Schema: reasoning.Schema{
+			Name:    "judgement",
+			Version: "1",
+			Document: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"findings": map[string]any{"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"statement": map[string]any{"type": "string"},
+							},
+							"required":             []any{"statement"},
+							"additionalProperties": false,
+						}},
+				},
+				"required":             []any{"findings"},
+				"additionalProperties": false,
+			},
+		},
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
+	}
+}
+
+func TestComplete_RetriesATransientServerFailureWithinMaxAttempts(t *testing.T) {
+	provider, round := providerUnder(t,
+		answered(500, `{"error":{"message":"upstream hiccup"}}`),
+		answered(200, completion(`{"findings":[]}`, "stop", cachedUsage)))
+
+	answer, err := provider.Complete(context.Background(), promptFixture())
+	if err != nil {
+		t.Fatalf("a transient failure within the attempt budget must recover: %v", err)
+	}
+	if string(answer.Document) != `{"findings":[]}` {
+		t.Errorf("the document is %q", answer.Document)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 2 {
+		t.Errorf("the call was tried %d times, want 2", calls)
+	}
+}
+
+func TestComplete_StopsRetryingAtMaxAttempts(t *testing.T) {
+	provider, round := providerUnder(t,
+		answered(500, `{"error":{"message":"down"}}`))
+
+	_, err := provider.Complete(context.Background(), promptFixture())
+	if !errors.Is(err, reasoning.ErrOutage) {
+		t.Fatalf("a persistent failure is an outage, got %v", err)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 3 {
+		t.Errorf("the call was tried %d times, want the deployment's MaxAttempts of 3", calls)
+	}
+}
+
+func TestComplete_DoesNotRetryARejectedRequest(t *testing.T) {
+	provider, round := providerUnder(t,
+		answered(400, `{"error":{"message":"bad request"}}`))
+
+	_, err := provider.Complete(context.Background(), promptFixture())
+	if !errors.Is(err, reasoning.ErrRejected) {
+		t.Fatalf("a malformed request is this build's own defect, got %v", err)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 1 {
+		t.Errorf("a rejected request was tried %d times; every retry would fail "+
+			"identically and spend money doing it", calls)
 	}
 }
 
@@ -300,45 +372,5 @@ func TestComplete_ACancelledContextEndsTheCallAsATimeout(t *testing.T) {
 	_, err := provider.Complete(ctx, promptFixture())
 	if !errors.Is(err, reasoning.ErrTimeout) {
 		t.Fatalf("got %v, want a cancelled context to end the call as a timeout", err)
-	}
-}
-
-func TestMeasure_ReportsNothingRatherThanAnEstimate(t *testing.T) {
-	provider, _ := providerUnder(t,
-		answered(200, completion(`{"hypotheses":[]}`, "stop", cachedUsage)))
-
-	counted, err := provider.Measure(context.Background(), promptFixture())
-	if err != nil {
-		t.Fatalf("measuring: %v", err)
-	}
-	// A third-party tokenizer would produce a number that LOOKS like a measurement and is not
-	// one. The orchestration records a skipped check honestly instead.
-	if counted.Reported {
-		t.Error("a provider that cannot count tokens returned a figure anyway")
-	}
-}
-
-func TestCapabilities_MatchWhatThisAdapterActuallyDoes(t *testing.T) {
-	provider, _ := providerUnder(t,
-		answered(200, completion(`{"hypotheses":[]}`, "stop", cachedUsage)))
-	declared := provider.Support()
-
-	// The two that are false where the other adapter is true. Both are the matrix doing its job.
-	if declared.StrictStructuredOutput {
-		t.Error("this vendor offers a json mode rather than schema enforcement, so claiming " +
-			"strict output would be a guarantee nobody is providing")
-	}
-	if declared.Streaming {
-		t.Error("this adapter does not stream, and declaring that it does would misreport why " +
-			"its usage figures are reliable")
-	}
-	if declared.TokenCounting {
-		t.Error("this adapter cannot count tokens before sending")
-	}
-	if !declared.RefusalDetection {
-		t.Error("this vendor names its refusals, so the adapter can tell them apart")
-	}
-	if declared.ProviderSideFallback {
-		t.Error("this adapter never asks the provider to re-serve a declined request")
 	}
 }

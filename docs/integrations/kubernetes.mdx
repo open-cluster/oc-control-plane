@@ -1,0 +1,78 @@
+---
+title: "Kubernetes"
+description: "Connect a cluster through a Relay and keep a durable record of what changed, used to orient investigations."
+---
+
+Connecting Kubernetes gives OpenCluster a continuously maintained **change ledger** for
+your cluster: workload revisions and configuration changes, kept beyond what the cluster
+itself remembers. Investigations start oriented by it — which workloads exist and what
+changed recently — instead of rediscovering your estate inside every incident.
+
+Cluster access goes through a **Relay** you run inside the cluster. The Relay connects
+outbound to OpenCluster; your cluster's API server is never exposed, and OpenCluster
+holds no cluster credential.
+
+## Prerequisites
+
+- A Relay deployed in the cluster and connected to your OpenCluster deployment.
+- The **Admin** role in OpenCluster to create the integration.
+
+## Connect
+
+<Steps>
+  <Step title="Create the integration">
+    In the console, open **Integrations**, choose **Kubernetes**, name it, and select
+    the Relay that serves this cluster.
+  </Step>
+  <Step title="Optionally narrow the namespaces">
+    **Namespaces this integration may read** takes a comma-separated allow-list. It
+    narrows on top of the Relay's own permissions and can never widen them: access the
+    Relay's service account does not have cannot be granted here. Empty means every
+    namespace the service account can reach.
+  </Step>
+  <Step title="Verify">
+    Verification judges the bound Relay live: whether it is connected right now, and
+    whether it advertises each capability this integration needs. A capability the
+    Relay does not advertise is your cluster's own configuration answering — fix it in
+    the cluster (RBAC or the Relay build), then verify again.
+  </Step>
+</Steps>
+
+## What happens after connection
+
+The Relay synchronizes inventory on a schedule and reports changes to Deployments,
+StatefulSets, DaemonSets, ConfigMaps and Secrets. Each change records identifiers,
+image references, quantities and versions — **never content**: no environment values,
+no ConfigMap data, no Secret material leaves your cluster through this path.
+
+Investigations use the record two ways:
+
+- The **workload inventory** orients every investigation: a bounded digest of what runs
+  in the cluster, labeled as navigation and never citable as evidence.
+- **What changed in the window** around an incident is part of the investigation's
+  briefing, with honest coverage boundaries — "nothing changed" is only claimed where
+  watching was actually in place.
+
+## Statuses
+
+| Status | Meaning |
+| --- | --- |
+| `failed` — "no relay serves this integration" | Bind a Relay and verify again |
+| `failed` — "the relay serving this integration is not connected" | The Relay holds no live session; check its side of the wire |
+| `degraded` — "does not advertise: …" | The cluster's RBAC or the Relay build lacks a capability; fix in the cluster |
+| `active` | The Relay is connected and advertises everything this integration needs |
+
+## Limitations
+
+- Investigations do not yet read the cluster live: no pod listing, no events, no
+  container logs during an investigation. Today the integration feeds the change ledger
+  and orientation; live cluster reads arrive as a follow-up.
+- The change ledger keeps entries for a retention period the deployment configures
+  (90 days by default).
+- Watching starts when the integration connects: changes before that are unknown, and
+  the record says so rather than claiming a quiet history.
+
+## Disconnect
+
+Disable the integration to stop synchronization while keeping the record. Deleting is
+refused while records depend on it; disable is the retirement path.

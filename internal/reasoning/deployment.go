@@ -11,7 +11,7 @@ import (
 //
 // A model is a deployment choice that moves with price, availability, regional obligation and what
 // a tenant will consent to. Every one of those becomes a release if the choice is compiled in, so
-// it is resolved at startup, validated there, and pinned into the round that used it.
+// it is resolved at startup and validated there.
 
 // Secret is a credential that must never be rendered.
 //
@@ -44,9 +44,6 @@ type Deployment struct {
 	// MaxOutputTokens bounds one answer. It is set generously where thinking and answer share the
 	// bound, because a value sized around the answer alone truncates mid-thought.
 	MaxOutputTokens int64
-	// MaxPromptTokens refuses an oversized deliberation before it is sent, where the provider can
-	// measure one. Zero means no pre-flight bound.
-	MaxPromptTokens int64
 	// BaseURL overrides where the provider is reached. It is also the ONLY host this deployment
 	// may reach: the allowed host is derived from configuration rather than from anything a
 	// response contains, so a redirect cannot move where the credential is sent.
@@ -59,9 +56,11 @@ type Deployment struct {
 	RequestTimeout time.Duration
 	// MaxAttempts is how many times one call may be tried before the outcome is an outage.
 	MaxAttempts int
-	// MaxConcurrent bounds in-flight requests to this deployment, so one investigation cannot
-	// consume the capacity of every other. Zero means the package default.
-	MaxConcurrent int
+	// SpendCeilingMicroCents is the hard spend ceiling per investigation. The decider
+	// refuses a non-concluding brief whose accumulated spend has reached it — the
+	// backstop behind the runner's own ceiling check. Zero disables the backstop,
+	// which only a test should mean.
+	SpendCeilingMicroCents int64
 }
 
 // Bounds that are safe rather than ambitious. A deployment that names none of them gets these,
@@ -74,7 +73,6 @@ const (
 	// look at a healthy vendor while the real answer was one minute away.
 	defaultRequestTimeout = 5 * time.Minute
 	defaultMaxAttempts    = 3
-	defaultMaxConcurrent  = 4
 )
 
 // WithDefaults fills what an operator did not name. It never loosens what they did.
@@ -90,9 +88,6 @@ func (d Deployment) WithDefaults() Deployment {
 	}
 	if d.MaxAttempts <= 0 {
 		d.MaxAttempts = defaultMaxAttempts
-	}
-	if d.MaxConcurrent <= 0 {
-		d.MaxConcurrent = defaultMaxConcurrent
 	}
 	return d
 }

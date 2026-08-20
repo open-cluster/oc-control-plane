@@ -372,3 +372,50 @@ func (s *scanSeconds) Scan(value any) error {
 		return fmt.Errorf("requested_interval_seconds held %T", value)
 	}
 }
+
+// WorkloadInventory reads a bounded digest of the ledger's current workload
+// identities — each rendered "namespace/kind name" — for the autonomous
+// orientation. A navigation index, never evidence: deletions drop out, and only the
+// watched workload kinds appear. Empty when no Relay has synchronized anything.
+func (p *Placements) WorkloadInventory(
+	ctx context.Context, organization tenancy.Organization, limit int,
+) ([]string, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT namespace, object_kind, object_name
+		  FROM (
+		      SELECT DISTINCT ON (namespace, object_kind, object_name)
+		             namespace, object_kind, object_name, change_kind
+		        FROM change_ledger
+		       WHERE org_id = $1 AND object_kind IN ($2, $3, $4)
+		       ORDER BY namespace, object_kind, object_name, observed_at DESC
+		  ) latest
+		 WHERE change_kind <> $5
+		 ORDER BY namespace, object_name
+		 LIMIT $6`,
+		organization.String(), int16(changeledger.KindDeployment),
+		int16(changeledger.KindStatefulSet), int16(changeledger.KindDaemonSet),
+		int16(changeledger.ChangeDeleted), limit)
+	if err != nil {
+		return nil, fmt.Errorf("reading the workload inventory: %w", err)
+	}
+	defer rows.Close()
+
+	var digest []string
+	for rows.Next() {
+		var namespace, name string
+		var kind int16
+		if err := rows.Scan(&namespace, &kind, &name); err != nil {
+			return nil, fmt.Errorf("reading a workload identity: %w", err)
+		}
+		digest = append(digest, namespace+"/"+
+			changeledger.ObjectKind(kind).String()+" "+name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the workload inventory: %w", err)
+	}
+	return digest, nil
+}

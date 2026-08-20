@@ -1,0 +1,49 @@
+---
+title: "Self-hosted deployment"
+description: "One static binary, one Postgres per placement, four listeners bound deliberately — and a lifecycle that refuses what cannot work."
+---
+
+A self-hosted OpenCluster is one static binary and PostgreSQL. Migrations are embedded
+and applied automatically at startup under a lock, so concurrently starting instances
+cannot race the schema, and the log reports what each start applied.
+
+## The four listeners, and where each belongs
+
+Each surface has its own listener, so you can publish one without publishing the rest.
+
+| Listener | Bind it | Because |
+| --- | --- | --- |
+| Health (`OC_HTTP_ADDRESS`) | where your cluster scrapes | `/healthz` liveness never consults a dependency; `/readyz` reports whether the required database placement is reachable; `/metrics` serves Prometheus |
+| Operator (`OC_OPERATOR_ADDRESS`) | somewhere private, behind TLS | it reads across organizations; empty exposes it nowhere |
+| Intake (`OC_INTAKE_ADDRESS`) | publicly, behind a TLS-terminating edge | the one surface a customer's infrastructure reaches inbound; the webhook secret is a bearer credential, and publishing it without TLS hands that credential out in cleartext |
+| Relay (`OC_RELAY_ADDRESS`) | publicly, behind the TLS terminator whose public keys the Relays pin | Relays connect outbound and pin the key, not a certificate authority |
+
+## Lifecycle
+
+- **Startup refuses what cannot work**: an unusable listen address, a placement typo, an
+  unparseable GitHub App key, an unpriced or unconsented model, a credential-bearing
+  catalog with no sealing key. The first problem stops the start and names the offending
+  variable — a deployment that starts is one whose configuration can be served.
+- **Shutdown drains**: SIGTERM stops accepting, in-flight requests finish inside
+  `OC_SHUTDOWN_TIMEOUT`, Relay sessions get half the budget to flush, and running
+  investigations are recorded as failed with the reason rather than orphaned as running.
+- **Rolling deploys are safe**: webhook deliveries are idempotent by body content, the
+  migration lock serializes schema changes, and leases are fenced.
+
+## Placements and tiers
+
+A **placement** is one PostgreSQL database. `OC_PLACEMENTS` names them;
+`OC_DEFAULT_PLACEMENT` serves organizations with no explicit assignment (the shared
+tier); `OC_PLACEMENT_ASSIGNMENTS` pins an organization to a dedicated placement. An
+unassigned organization with no default is a hard error, never a fallback. Readiness
+deliberately requires only this instance's own placement — one dedicated organization's outage
+must not withdraw the instance from everyone else.
+
+## Upgrades
+
+Migrations are forward-only and append-only; an applied migration is never edited.
+Upgrading is: deploy the new binary, let it migrate at startup. `OC_MINIMUM_RELAY_VERSION`
+is how the fleet summary counts Relays that need upgrading.
+
+Next: [configuration](/self-hosted/configuration) for every variable, and
+[operations](/self-hosted/operations) for day two.

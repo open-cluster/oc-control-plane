@@ -1,0 +1,61 @@
+---
+title: "Operations"
+description: "Day two: what runs on its own, what each record means, what to alert on, and what the telemetry carries."
+---
+
+Day-two OpenCluster: what runs on its own, what an operator drives, and what to watch.
+
+## What runs on its own
+
+| Worker | Cadence | Does |
+| --- | --- | --- |
+| Audit pruner | hourly | Applies each organization's declared audit retention |
+| Change-ledger pruner | hourly | Ages change entries past `OC_CHANGE_LEDGER_RETENTION_DAYS` |
+| Relay inventory sync | `OC_INVENTORY_INTERVAL` (each Relay floors it) | Feeds the change ledger for Kubernetes integrations |
+| Investigation runner | per opened investigation | Reads, records and concludes in the background; at most four at once per process |
+
+## Incidents
+
+Alerts group into incident episodes on the source's own grouping identity; an episode
+resolves when nothing in it still fires, and a wrong grouping is corrected by a merge
+that rewrites nothing. Splits do not exist because the grouping errs toward splitting.
+
+## Investigations, operationally
+
+The runner offers every enabled source whose verified grants support at least one
+capability, orients the investigator with what the platform already holds, records every
+read as it finishes, suppresses identical repeats, and forces a conclusion when reads
+stagnate or a ceiling is reached. Spend is summed over every model call, including
+refused ones. The outcome semantics — concluded, stopped-by-limit, failed — are on
+[how investigations work](/investigations/how-investigations-work).
+
+Every model call emits one trace span and one structured log line: provider, the model
+that answered, request id, stop reason, latency, token decomposition, cost, and a
+derived revision hash over everything the model sees — so any change to prompt or
+capability definitions is attributable without a version anybody bumps.
+
+## Health signals worth alerting on
+
+- `readyz` unready: this instance's required database placement is unreachable.
+- Integration status `failed` or `degraded` after verification — a revoked token, a
+  suspended installation, a disconnected Relay, missing scopes. The note says which.
+- Relay fleet summary `outdated` or `disconnected` counts.
+- Investigations ending `failed` with reasons naming the model provider: check the
+  deployment's model configuration and the vendor's status.
+
+## Metrics
+
+Prometheus series are served on `/metrics`, low-cardinality by design (never labeled by
+organization). The families worth dashboards:
+
+- `oc.intake.deliveries` by disposition (accepted, duplicate, unauthenticated,
+  oversized, malformed, rate_limited, unavailable), `oc.intake.signals`, and episode
+  grouping counters.
+- `oc.reasoning.tokens`, `oc.reasoning.spend` and `oc.reasoning.call_duration`, labeled
+  by provider and model (the exporter adds its own suffixes).
+
+## Retention
+
+Audit retention is each organization's own declaration, enforced hourly. The change ledger's
+retention is the deployment's setting. Signals, incidents and investigation provenance
+are kept: they are the operational record.

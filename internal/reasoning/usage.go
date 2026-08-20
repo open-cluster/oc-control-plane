@@ -1,10 +1,6 @@
 package reasoning
 
-import (
-	"time"
-)
-
-// What one call consumed, and what is recorded about it.
+// What one call consumed.
 //
 // The distinction this file exists to keep is between a figure of zero and no figure at all. Zero
 // is a measurement — the cache missed. Absent is the lack of one — the provider never said.
@@ -51,36 +47,4 @@ type TokenUsage struct {
 // priced differently.
 func (u TokenUsage) Billable() int64 {
 	return u.Input.Or(0) + u.Output.Or(0) + u.CacheWrite.Or(0) + u.CacheRead.Or(0)
-}
-
-// Record is everything worth knowing about one completed call, whatever answered it.
-//
-// It is one type rather than a scattering of log fields because the same set has to reach
-// telemetry, an audit entry and a case file, and a set assembled separately in three places is a
-// set that disagrees with itself within a quarter.
-type Record struct {
-	// Provider and RequestedModel are what configuration asked for.
-	Provider       string
-	RequestedModel string
-	// AnsweringModel is what actually replied. It differs from RequestedModel when a provider
-	// re-served the request itself, and it is the one written into the round's pinned versions.
-	AnsweringModel string
-	// RequestID is the provider's own identifier for the call.
-	RequestID string
-	Usage     TokenUsage
-	// FellBack reports that an earlier configured deployment gave way to this one. A round that
-	// fell back is not a failed round, but it is not an ordinary one either.
-	FellBack bool
-	// FellBackFrom names what gave way, so a regression after a provider change is attributable.
-	FellBackFrom string
-	Stop         Stop
-	// MicroCents is what this call cost, in integers. Two calls that cost the same report the
-	// same number, which is the one property a cost figure has to have.
-	MicroCents int64
-	Latency    time.Duration
-	// Method names which boundary call this was, so a deciding round stays separable from
-	// a concluding one when the records are read back.
-	Method        string
-	PromptVersion string
-	SchemaVersion string
 }

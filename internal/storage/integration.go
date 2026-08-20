@@ -28,7 +28,8 @@ const integrationColumns = `integration_id, integration_type_id, name, configura
 	       webhook_secret_digest, webhook_secret_fingerprint, webhook_secret_created_at,
 	       webhook_secret_rotated_at, credential_sealed, credential_fingerprint,
 	       credential_created_at, credential_rotated_at, labels, relay_id, status,
-	       last_verified_at, verify_note, disabled_at, created_by, created_at, updated_at`
+	       last_verified_at, verify_note, verify_grants, disabled_at, created_by,
+	       created_at, updated_at`
 
 // CreateIntegration records one configured installation.
 //
@@ -63,11 +64,15 @@ func (p *Placements) CreateIntegration(
 				status   = int16(integrations.StatusConfigured)
 				verified = false
 				note     string
+				grants   []byte
 			)
 			if wanted.Verification != nil {
 				status = int16(wanted.Verification.Status)
 				verified = true
 				note = wanted.Verification.Note
+				if grants, err = encodedGrants(wanted.Verification.Grants); err != nil {
+					return integrations.Integration{}, audit.Target{}, nil, err
+				}
 			}
 
 			row := transaction.QueryRow(ctx, `
@@ -77,18 +82,19 @@ func (p *Placements) CreateIntegration(
 				                         webhook_secret_created_at,
 				                         credential_sealed, credential_fingerprint,
 				                         credential_created_at,
-				                         status, last_verified_at, verify_note, created_by)
+				                         status, last_verified_at, verify_note,
+				                         verify_grants, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 				        CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE now() END,
 				        $10, $11,
 				        CASE WHEN $10::BYTEA IS NULL THEN NULL ELSE now() END,
-				        $12, CASE WHEN $13 THEN now() END, $14, $15)
+				        $12, CASE WHEN $13 THEN now() END, $14, $15, $16)
 				RETURNING `+integrationColumns,
-				uuid.New(), organization.String(), int16(wanted.Type), wanted.Name,
+				identityOrNew(wanted.ID), organization.String(), int16(wanted.Type), wanted.Name,
 				configuration, labels, nullableUUID(wanted.RelayID),
 				wanted.WebhookSecretDigest, nullableText(wanted.WebhookSecretFingerprint),
 				wanted.CredentialSealed, nullableText(wanted.CredentialFingerprint),
-				status, verified, note, wanted.CreatedBy)
+				status, verified, note, grants, wanted.CreatedBy)
 
 			created, err := scanIntegration(row, organization.String())
 			switch {
@@ -517,6 +523,10 @@ func (p *Placements) ReplaceIntegrationCredential(
 						fmt.Errorf("encoding labels: %w", err)
 				}
 			}
+			grants, err := encodedGrants(verification.Grants)
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
@@ -529,13 +539,15 @@ func (p *Placements) ReplaceIntegrationCredential(
 				       status                 = $8,
 				       last_verified_at       = now(),
 				       verify_note            = $9,
+				       verify_grants          = $10,
 				       updated_at             = now()
 				 WHERE integration_id = $1
 				   AND org_id = $2
 				   AND credential_sealed IS NOT NULL
 				RETURNING `+integrationColumns,
 				id, organization.String(), revision.Name, configuration, labels,
-				sealed, fingerprint, int16(verification.Status), verification.Note)
+				sealed, fingerprint, int16(verification.Status), verification.Note,
+				grants)
 
 			replaced, err := scanIntegration(row, organization.String())
 			switch {
@@ -565,15 +577,21 @@ func (p *Placements) RecordIntegrationVerification(
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
+			grants, err := encodedGrants(verification.Grants)
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
 				   SET status           = $3,
 				       last_verified_at = now(),
 				       verify_note      = $4,
+				       verify_grants    = $5,
 				       updated_at       = now()
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization.String(), int16(verification.Status), verification.Note)
+				id, organization.String(), int16(verification.Status), verification.Note,
+				grants)
 
 			verified, err := scanIntegration(row, organization.String())
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -701,6 +719,7 @@ type nullableIntegration struct {
 	labels                []byte
 	relay                 *uuid.UUID
 	lastVerifiedAt        *time.Time
+	verifyGrants          []byte
 	disabledAt            *time.Time
 }
 
@@ -713,7 +732,8 @@ func (n *nullableIntegration) destinations(found *integrations.Integration) []an
 		&n.webhookRotatedAt, &found.CredentialSealed, &n.credentialFingerprint,
 		&n.credentialCreatedAt, &n.credentialRotatedAt, &n.labels, &n.relay,
 		&found.Status, &n.lastVerifiedAt,
-		&found.VerifyNote, &n.disabledAt, &found.CreatedBy, &found.CreatedAt, &found.UpdatedAt,
+		&found.VerifyNote, &n.verifyGrants, &n.disabledAt, &found.CreatedBy,
+		&found.CreatedAt, &found.UpdatedAt,
 	}
 }
 
@@ -769,6 +789,11 @@ func finishIntegration(
 	if nullable.credentialRotatedAt != nil {
 		found.Credential.RotatedAt = *nullable.credentialRotatedAt
 	}
+	if len(nullable.verifyGrants) > 0 {
+		if err := json.Unmarshal(nullable.verifyGrants, &found.VerifyGrants); err != nil {
+			return integrations.Integration{}, fmt.Errorf("decoding verification grants: %w", err)
+		}
+	}
 	if len(nullable.labels) > 0 {
 		if err := json.Unmarshal(nullable.labels, &found.Labels); err != nil {
 			return integrations.Integration{}, fmt.Errorf("decoding integration labels: %w", err)
@@ -803,6 +828,28 @@ func orEmptyConfiguration(configuration map[string]any) map[string]any {
 	return configuration
 }
 
+// encodedGrants renders a verification's grants for the JSONB column: SQL NULL when
+// none were recorded, so "nothing recorded" and "recorded as empty" stay two facts.
+func encodedGrants(grants []string) ([]byte, error) {
+	if grants == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(grants)
+	if err != nil {
+		return nil, fmt.Errorf("encoding verification grants: %w", err)
+	}
+	return encoded, nil
+}
+
+// identityOrNew honors an identity the handler minted before the insert — the sealed
+// credential is bound to it — and mints one only for a caller that supplied none.
+func identityOrNew(id uuid.UUID) uuid.UUID {
+	if id == uuid.Nil {
+		return uuid.New()
+	}
+	return id
+}
+
 // nullableUUID renders the zero UUID as SQL NULL, which is what "no Relay serves this"
 // means in the column.
 func nullableUUID(id uuid.UUID) *uuid.UUID {
@@ -810,4 +857,21 @@ func nullableUUID(id uuid.UUID) *uuid.UUID {
 		return nil
 	}
 	return &id
+}
+
+// RecordCredentialUnseal writes the audit event for one credential unseal: a system act
+// naming the integration whose credential was opened and the path that opened it. It is
+// recorded BEFORE the credential is used — a use that cannot be recorded does not
+// happen, for the same reason audited operations roll back with their record.
+func (p *Placements) RecordCredentialUnseal(
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, purpose string,
+) error {
+	return p.RecordEvent(ctx, organization, audit.Event{
+		Organization: organization.String(),
+		Actor:        audit.System("control-plane"),
+		Action:       audit.ActionIntegrationCredentialUnsealed,
+		Target:       audit.Target{Kind: audit.TargetIntegration, ID: id.String()},
+		Outcome:      audit.OutcomeAllowed,
+		Detail:       audit.Detail{"purpose": purpose},
+	})
 }

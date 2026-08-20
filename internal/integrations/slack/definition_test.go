@@ -8,7 +8,7 @@ import (
 )
 
 // The definition's promises, pinned. These are what the seeded reference row, the setup
-// flow and the router rely on; a drift here is a product change, not a refactor.
+// flow and the investigator rely on; a drift here is a product change, not a refactor.
 
 func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 	t.Parallel()
@@ -71,7 +71,7 @@ func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
 	}
 }
 
-// Every tool carries the full routing discipline. The router chooses by this metadata, so
+// Every tool carries its full contract. The model chooses by this metadata, so
 // an empty field is not missing documentation — it is a tool that will be misrouted and
 // then patched with prompts.
 func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
@@ -86,7 +86,6 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 			"whenToUse":    tool.WhenToUse,
 			"whenNotToUse": tool.WhenNotToUse,
 			"permissions":  tool.Permissions,
-			"rateLimit":    tool.RateLimit,
 			"output":       tool.Output,
 		} {
 			if strings.TrimSpace(value) == "" {

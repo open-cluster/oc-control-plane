@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -21,15 +20,9 @@ import (
 // product decision: they are what "fast, cheap, and not hammering every connected
 // system" means in numbers.
 const (
-	// maxRounds is how many decisions the reasoner gets; the last one must conclude.
-	maxRounds = 4
-	// maxCallsPerRound bounds one decision's reads.
-	maxCallsPerRound = 4
-	// maxRuns bounds the whole investigation's reads.
-	maxRuns = 12
 	// runTimeout bounds one tool execution.
 	runTimeout = 30 * time.Second
-	// decideTimeout bounds one reasoner decision; models that think take minutes.
+	// decideTimeout bounds one reasoner turn; models that think take minutes.
 	decideTimeout = 6 * time.Minute
 	// investigationTimeout bounds the whole run.
 	investigationTimeout = 30 * time.Minute
@@ -45,7 +38,6 @@ const (
 const (
 	maxRunErrorLength = 1024
 	maxSummaryLength  = 512
-	maxReasonLength   = 512
 )
 
 // bounded cuts text at a rune boundary inside the limit.
@@ -57,14 +49,25 @@ func bounded(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// Runner executes investigations in the background: routes, reads, records, and asks
-// the reasoner to decide. One per process, so shutdown can drain what is running.
+// Runner executes investigations in the background: offers the sources, reads, records,
+// and converses with the model. One per process, so shutdown can drain what is running.
 type Runner struct {
-	Store    Store
-	Catalog  integrations.Catalog
-	Sealer   seal.Sealer
-	Reasoner Reasoner
-	Logger   *slog.Logger
+	Store   Store
+	Catalog integrations.Catalog
+	Sealer  seal.Sealer
+	// Investigator is the conversation-shaped model boundary the investigation runs
+	// against.
+	Investigator Investigator
+	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
+	// tuning, so configuration rather than constants; zero means the defaults.
+	MaxToolRuns int
+	MaxTurns    int
+	Logger      *slog.Logger
+	// SpendCeilingMicroCents is the hard spend ceiling per investigation. A reached
+	// ceiling forces the concluding turn and is recorded as stopped_by — an honest
+	// partial investigation, never a failure and never a diagnosis it did not reach.
+	// Zero means no ceiling, which only a test should mean.
+	SpendCeilingMicroCents int64
 
 	running sync.WaitGroup
 	mu      sync.Mutex
@@ -119,140 +122,21 @@ func (r *Runner) Drain() {
 	r.running.Wait()
 }
 
-// run is one whole investigation: route, then a bounded loop of reasoner decisions and
-// tool executions, then the conclusion or the failure — every step recorded as it
-// happens, so an investigation that dies mid-flight still shows how far it got.
-func (r *Runner) run(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
-) {
-	spend := Spend{}
-
-	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
-	if err != nil {
-		r.fail(ctx, organization, opened.ID, "the connected sources could not be read", spend)
-		return
+// droppedRun records a call that was proposed and not executed, so the drop is on the
+// record rather than silent.
+func droppedRun(opened Investigation, call ToolCall, ordinal int, reason string) ToolRun {
+	now := time.Now().UTC()
+	return ToolRun{
+		Ordinal:     ordinal,
+		Tool:        call.Tool,
+		Arguments:   call.Arguments,
+		WindowFrom:  opened.WindowFrom,
+		WindowUntil: opened.WindowUntil,
+		Outcome:     RunFailed,
+		Error:       reason,
+		StartedAt:   now,
+		FinishedAt:  now,
 	}
-	selected, remainder := route(r.Catalog, candidates, r.routingTerms(ctx, organization, opened))
-	for rank, source := range selected {
-		if err := r.recordSource(ctx, organization, opened.ID, source, rank+1); err != nil {
-			r.fail(ctx, organization, opened.ID, "the routing could not be recorded", spend)
-			return
-		}
-	}
-
-	credentials := newCredentialCache(r.Sealer)
-	var runs []ToolRun
-	expanded := false
-
-	for round := 1; ; round++ {
-		mustConclude := round >= maxRounds || len(runs) >= maxRuns || len(selected) == 0
-
-		decision, decideErr := r.decide(ctx, opened, selected, runs, mustConclude)
-		spend = spend.Add(decision.Spend)
-		if decideErr != nil {
-			r.fail(ctx, organization, opened.ID, reasonerFailure(decideErr), spend)
-			return
-		}
-
-		if mustConclude || len(decision.Calls) == 0 {
-			if citation := checkCitations(decision.Findings, len(runs)); citation != "" {
-				r.fail(ctx, organization, opened.ID, citation, spend)
-				return
-			}
-			writeCtx, done := writeWindow(ctx)
-			defer done()
-			if err := r.Store.ConcludeInvestigation(
-				writeCtx, organization, opened.ID, decision.Findings, spend); err != nil {
-				r.Logger.Error("an investigation's conclusion could not be recorded",
-					slog.String("investigation_id", opened.ID.String()),
-					slog.String("error", err.Error()))
-			}
-			return
-		}
-
-		calls := decision.Calls
-		if len(calls) > maxCallsPerRound {
-			calls = calls[:maxCallsPerRound]
-		}
-		for _, call := range calls {
-			if len(runs) >= maxRuns {
-				break
-			}
-			run := r.execute(ctx, opened, selected, credentials, call, len(runs)+1)
-			runs = append(runs, run)
-			if err := r.Store.RecordToolRun(ctx, organization, opened.ID, run); err != nil {
-				r.fail(ctx, organization, opened.ID, "a tool run could not be recorded", spend)
-				return
-			}
-		}
-
-		// The one expansion, and only when the whole first selection produced nothing:
-		// widening a search that is finding things is how every connected system gets
-		// hammered, which this router exists to prevent.
-		if !expanded && nothingFound(runs) && len(remainder) > 0 {
-			expanded = true
-			more := remainder
-			if len(more) > expansionSources {
-				more = more[:expansionSources]
-			}
-			for offset, source := range more {
-				source.reason = "expanded after the first selection returned nothing: " +
-					source.reason
-				if err := r.recordSource(ctx, organization, opened.ID, source,
-					len(selected)+offset+1); err != nil {
-					r.fail(ctx, organization, opened.ID, "the routing could not be recorded", spend)
-					return
-				}
-				selected = append(selected, source)
-			}
-			remainder = remainder[len(more):]
-		}
-	}
-}
-
-// routingTerms is what the router matches candidates against: the subject, the
-// operator's question, and the triggering alert's own labels — a namespace or service
-// label is exactly the term that picks the right channel and repository.
-func (r *Runner) routingTerms(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
-) []string {
-	parts := []string{opened.Subject, opened.Question}
-	if opened.EpisodeID != uuid.Nil {
-		// Best-effort: an unreadable trigger narrows the terms, never fails the run.
-		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {
-			for key, value := range trigger.Labels {
-				parts = append(parts, key, value)
-			}
-		}
-	}
-	return subjectTerms(parts...)
-}
-
-// decide asks the reasoner for the next move, under its own deadline.
-func (r *Runner) decide(
-	ctx context.Context, opened Investigation, selected []selection, runs []ToolRun,
-	mustConclude bool,
-) (Decision, error) {
-	sources := make([]BriefSource, 0, len(selected))
-	for _, source := range selected {
-		sources = append(sources, BriefSource{
-			Integration: source.integration,
-			Tools:       source.tools,
-		})
-	}
-	brief := Brief{
-		Subject:      opened.Subject,
-		Question:     opened.Question,
-		WindowFrom:   opened.WindowFrom,
-		WindowUntil:  opened.WindowUntil,
-		Sources:      sources,
-		Runs:         runs,
-		MustConclude: mustConclude,
-	}
-
-	decideCtx, done := context.WithTimeout(ctx, decideTimeout)
-	defer done()
-	return r.Reasoner.Decide(decideCtx, brief)
 }
 
 // execute performs one proposed read and reports it as a run, success or failure alike:
@@ -262,7 +146,6 @@ func (r *Runner) execute(
 	credentials *credentialCache, call ToolCall, ordinal int,
 ) ToolRun {
 	run := ToolRun{
-		ID:          uuid.New(),
 		Ordinal:     ordinal,
 		Tool:        call.Tool,
 		Arguments:   call.Arguments,
@@ -281,7 +164,7 @@ func (r *Runner) execute(
 	run.IntegrationID = source.integration.ID
 	run.Capability = tool.Capability
 
-	credential, err := credentials.open(source.integration)
+	credential, err := credentials.open(ctx, source.integration)
 	if err != nil {
 		run.Outcome = RunFailed
 		run.Error = "the integration's credential could not be opened"
@@ -310,18 +193,6 @@ func (r *Runner) execute(
 	run.Sources = result.Sources
 	run.Content = result.Content
 	return run
-}
-
-func (r *Runner) recordSource(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	source selection, rank int,
-) error {
-	return r.Store.RecordSource(ctx, organization, id, Source{
-		IntegrationID: source.integration.ID,
-		Rank:          rank,
-		Reason:        bounded(source.reason, maxReasonLength),
-		SelectedAt:    time.Now().UTC(),
-	})
 }
 
 // fail ends the investigation with the reason, writing inside a detached window so a
@@ -392,49 +263,33 @@ func toolNamed(selected []selection, name string) (selection, integrations.Tool,
 	return selection{}, integrations.Tool{}, false
 }
 
-// nothingFound reports whether every run so far failed or came back empty, which is what
-// justifies the one expansion.
-func nothingFound(runs []ToolRun) bool {
-	for _, run := range runs {
-		if run.Outcome == RunSucceeded && !emptyContent(run.Content) {
-			return false
-		}
-	}
-	return true
-}
-
-// emptyContent reports whether a run's answer holds nothing. Tool contents are slices of
-// items or single records; reflection here keeps the judgement out of every provider.
-func emptyContent(content any) bool {
-	if content == nil {
-		return true
-	}
-	value := reflect.ValueOf(content)
-	switch value.Kind() {
-	case reflect.Slice, reflect.Map:
-		return value.Len() == 0
-	default:
-		return false
-	}
-}
-
 // credentialCache opens each integration's credential once per investigation, not once
-// per call. Not safe for concurrent use; one investigation runs its calls in sequence.
+// per call — which also means one audit record per integration per investigation, not
+// one per read. Not safe for concurrent use; one investigation runs its calls in
+// sequence.
 type credentialCache struct {
 	sealer seal.Sealer
+	// record writes the unseal's audit event. It runs BEFORE the credential is opened:
+	// a use that cannot be recorded does not happen.
+	record func(ctx context.Context, id uuid.UUID) error
 	opened map[uuid.UUID]string
 	fail   map[uuid.UUID]error
 }
 
-func newCredentialCache(sealer seal.Sealer) *credentialCache {
+func newCredentialCache(
+	sealer seal.Sealer, record func(ctx context.Context, id uuid.UUID) error,
+) *credentialCache {
 	return &credentialCache{
 		sealer: sealer,
+		record: record,
 		opened: map[uuid.UUID]string{},
 		fail:   map[uuid.UUID]error{},
 	}
 }
 
-func (c *credentialCache) open(integration integrations.Integration) (string, error) {
+func (c *credentialCache) open(
+	ctx context.Context, integration integrations.Integration,
+) (string, error) {
 	if credential, held := c.opened[integration.ID]; held {
 		return credential, nil
 	}
@@ -445,7 +300,12 @@ func (c *credentialCache) open(integration integrations.Integration) (string, er
 		c.opened[integration.ID] = ""
 		return "", nil
 	}
-	credential, err := c.sealer.Open(integration.CredentialSealed)
+	if err := c.record(ctx, integration.ID); err != nil {
+		c.fail[integration.ID] = err
+		return "", err
+	}
+	credential, err := c.sealer.Open(integration.CredentialSealed,
+		integrations.CredentialBinding(integration.ID))
 	if err != nil {
 		c.fail[integration.ID] = err
 		return "", err

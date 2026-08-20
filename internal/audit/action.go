@@ -46,6 +46,9 @@ const (
 	// Replacing the outbound credential is its own act, apart from revising: it is the
 	// answer to "who rotated the token, and did the new one work".
 	ActionIntegrationCredentialReplaced Action = "integration.credential.replaced"
+	// Every unseal of a stored credential is on the record — the verification probe, the
+	// investigation runner — so credential USE is observable, not only credential change.
+	ActionIntegrationCredentialUnsealed Action = "integration.credential.unsealed"
 	ActionRelayRosterRead               Action = "relay.roster.read"
 	ActionConflictTrailRead             Action = "relay.conflict-trail.read"
 	ActionConflictCleared               Action = "relay.conflict.cleared"

@@ -29,6 +29,9 @@ const (
 	maxSummaryRunes  = 4096
 	maxSourceKeyLen  = 512
 	maxAlertsPerBody = 2048
+	// maxGeneratorURLRunes bounds the alert's own origin pointer. A longer one is
+	// pathological and cut rather than refused: the alert itself is still usable.
+	maxGeneratorURLRunes = 2048
 )
 
 // payload is the v4 webhook contract. Only the fields this platform uses are declared: an
@@ -53,6 +56,9 @@ type payload struct {
 
 type alert struct {
 	Status string `json:"status"`
+	// GeneratorURL is where the source says this alert came from — the alert's own
+	// pointer back to its origin, preserved rather than thrown away at intake.
+	GeneratorURL string `json:"generatorURL"`
 	// Fingerprint is Alertmanager's own identity for this alert. It is the deduplication key
 	// because the source already has one, and inventing a different one guarantees
 	// disagreement about what "the same alert" means.
@@ -127,6 +133,10 @@ func signalFrom(one alert, groupKey string) (storage.Signal, error) {
 	signal.Title = truncate(titleOf(one), maxTitleRunes)
 	signal.Summary = truncate(summaryOf(one), maxSummaryRunes)
 	signal.Labels = one.Labels
+	// Annotations travel whole, like labels: they carry the operator's own runbook and
+	// dashboard pointers, which are exactly what an investigation wants at hand.
+	signal.Annotations = one.Annotations
+	signal.GeneratorURL = truncate(one.GeneratorURL, maxGeneratorURLRunes)
 	return signal, nil
 }
 

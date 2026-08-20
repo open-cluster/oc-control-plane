@@ -1,0 +1,116 @@
+---
+title: "Slack"
+description: "Let investigations read the incident conversation: channels, history and threads — bounded, read-only, never posting."
+---
+
+Connecting Slack gives investigations the human side of an incident: what was reported,
+when, by whom, and what the responders tried. OpenCluster reads your workspace's public
+channels — bounded, inside the incident's time window, with authors resolved to names
+and every message linked back to Slack — and **never posts anything**.
+
+## Prerequisites
+
+- Permission to create a Slack app in your workspace and install it.
+- The **Admin** role in OpenCluster to create the integration.
+
+## Required scopes, and why
+
+| Scope | Why OpenCluster asks for it |
+| --- | --- |
+| `channels:read` | List public channels so an investigation can find where the incident was discussed |
+| `channels:history` | Read channel messages and threads inside the incident window |
+| `users:read` | Resolve message authors to display names — without it, transcripts carry raw user IDs |
+| `search:read` (user tokens only) | Search messages by keyword inside the incident window |
+
+Slack grants `search:read` only to **user tokens**, never to bot tokens. A bot-token
+install is the normal path: everything except message search works, and the
+integration honestly reports the difference (see below).
+
+## Connect
+
+<Steps>
+  <Step title="Create a Slack app">
+    At [api.slack.com/apps](https://api.slack.com/apps), create an app in your
+    workspace. Under **OAuth & Permissions**, add the bot token scopes
+    `channels:read`, `channels:history` and `users:read`.
+  </Step>
+  <Step title="Install it and copy the bot token">
+    Install the app to the workspace and copy the **Bot User OAuth Token**
+    (`xoxb-…`).
+  </Step>
+  <Step title="Create the integration">
+    In the console, open **Integrations**, choose **Slack**, name it, and paste the
+    token into **Bot token**. The token is verified live against Slack before it is
+    saved — a token Slack refuses is never stored — then encrypted at rest and never
+    shown again.
+  </Step>
+  <Step title="Invite the bot where incidents are discussed">
+    Slack lets an app read a channel's history only where it is a member. `/invite`
+    the app in your incident channels — membership stays a deliberate human act.
+  </Step>
+</Steps>
+
+## What verification tells you
+
+Verification checks the token live and records the workspace, the bot identity and the
+granted scopes. What investigations may read is derived from those recorded scopes —
+a capability the token cannot support is absent from investigations, never offered and
+then failing.
+
+| Result | Meaning |
+| --- | --- |
+| `active` | Every scope the tools need is granted |
+| `degraded` — "it lacks search:read, which disables searching messages" | The expected outcome for a bot token: everything except search works |
+| `degraded` — "reported no scopes" | Slack accepted the token but did not report scopes, so nothing can be offered; reinstall the app and verify again |
+| `failed` — "slack refused the token (invalid_auth)" | The token is wrong or was revoked at Slack; paste a current one |
+
+<Note>
+  Message search needs a user token (`xoxp-…`) granted `search:read`. Pasting a user
+  token instead of a bot token is supported: OpenCluster detects the token type at
+  verification and offers search only where it can actually work.
+</Note>
+
+## What investigations read
+
+- **Channel listing** — public, unarchived channels with topics and purposes, searched
+  by name across a bounded walk of the workspace.
+- **Channel history** — messages inside the incident window, authors resolved to
+  display names, each message carrying its Slack permalink.
+- **Threads** — a thread's newest messages first. A war-room thread longer than the
+  bound answers its newest tail with the truncation flagged, because the end of the
+  thread is where the conclusion lives.
+- **Message search** (user token only) — keyword search automatically bounded to the
+  incident window, answering with channel references so the investigation can pivot
+  straight into history.
+
+Every read is recorded in the investigation with its scope and outcome, and everything
+read is treated as information, never as instruction — a message cannot redirect an
+investigation.
+
+## Limitations
+
+- **Public channels only.** No private channels, direct messages or group messages —
+  the scopes for them are never requested.
+- **Read-only, structurally.** No posting, reacting or joining exists in the
+  integration at all.
+- Message text only: files, attachments, reactions and message edits are not read.
+- Bounded reads: channel listing walks up to 1,000 channels per call; history reads up
+  to 200 messages per call; a thread is walked up to 2,000 messages deep for its newest
+  tail. Every truncation is flagged, never silent.
+- Slack rate limits are honored: a rate-limited read waits once as Slack asks, then
+  reports the limit rather than hammering the workspace.
+
+## Replacing the token
+
+Edit the integration and paste a new **Bot token**. The new token is verified live
+before it replaces the old one, in one step. Leaving the field empty keeps the existing
+credential. If the deployment's encryption key changed and verification says the stored
+credential could not be opened, pasting the token again is the fix.
+
+## Disconnect
+
+Disable the integration to remove Slack from investigations while keeping the record
+and credential; re-enabling restores it as it was. Delete removes the integration and
+its credential, and is refused while investigation records depend on it. Revoking the
+token at Slack works independently — the next verification reports it `failed` with the
+reason.

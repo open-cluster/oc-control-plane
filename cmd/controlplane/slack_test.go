@@ -39,7 +39,8 @@ type vendorFake struct {
 
 func newVendorFake(t *testing.T, accepts string) *vendorFake {
 	t.Helper()
-	fake := &vendorFake{accepts: accepts, scopes: "channels:read,channels:history,search:read"}
+	fake := &vendorFake{accepts: accepts,
+		scopes: "channels:read,channels:history,search:read,users:read"}
 	fake.Server = httptest.NewServer(http.HandlerFunc(
 		func(writer http.ResponseWriter, request *http.Request) {
 			fake.mu.Lock()
@@ -256,8 +257,11 @@ func TestSlackMissingScopesSurfaceAsDegraded(t *testing.T) {
 		t.Errorf("status = %q, want degraded; note: %s",
 			created.Integration.Status, created.Integration.VerifyNote)
 	}
-	if !strings.Contains(created.Integration.VerifyNote, "search:read") {
-		t.Errorf("the note %q does not name the missing scope", created.Integration.VerifyNote)
+	for _, missing := range []string{"search:read", "users:read"} {
+		if !strings.Contains(created.Integration.VerifyNote, missing) {
+			t.Errorf("the note %q does not name the missing scope %s",
+				created.Integration.VerifyNote, missing)
+		}
 	}
 }
 
