@@ -1,0 +1,99 @@
+---
+title: "GitHub"
+description: "Give investigations read-only access to selected repositories, changes, CI failures, files, and releases."
+---
+
+Connect GitHub so investigations can inspect code changes, pull requests, CI failures,
+files, and releases in selected repositories. Access is read-only and follows a GitHub
+App installation.
+
+## What OpenCluster uses it for
+
+GitHub helps establish what changed near an incident, whether a change passed CI, what
+a pull request intended, and what configuration or release was present. OpenCluster
+only sees repositories selected for the App installation.
+
+## Prerequisites
+
+- A GitHub App configured for the OpenCluster deployment.
+- Permission to install that App on the target account or organization.
+- The **Admin** role in OpenCluster.
+
+## GitHub App permissions
+
+| Repository permission | Access | Why it is needed |
+| --- | --- | --- |
+| Metadata | Read | List repositories granted to the installation. GitHub requires this permission for every App. |
+| Contents | Read | Read commits, diffs, files, and releases. |
+| Pull requests | Read | Read pull request descriptions and changed files. |
+| Checks | Read | Read check results for a change. |
+| Actions | Read | Read workflow runs and failing job logs. |
+
+No write permission is required.
+
+## Configure the App for a self-hosted deployment
+
+Create the App in GitHub with the permissions above. It needs no webhook. Generate a
+private key, then set the deployment's App ID, private-key file, and — for GitHub
+Enterprise Server — API URL as described in the
+[configuration reference](/self-hosted/configuration#integrations).
+
+The private key stays on the deployment. OpenCluster stores only an installation ID for
+each integration and creates short-lived installation tokens when needed.
+
+## Connect
+
+<Steps>
+  <Step title="Install the App">
+    Install the OpenCluster GitHub App and select the repositories investigations may
+    read.
+  </Step>
+  <Step title="Copy the installation ID">
+    Open the installation settings. The numeric ID is the final segment of its URL,
+    such as `…/settings/installations/12345678`.
+  </Step>
+  <Step title="Create the integration">
+    In **Integrations**, choose **GitHub**, enter a name and the installation ID, then
+    create the integration. OpenCluster checks the installation before storing it.
+  </Step>
+</Steps>
+
+Create one integration for each App installation.
+
+## Verify
+
+Verification checks the App installation and its repository selection. `active` means
+the installation is available with at least one repository. A suspended, removed, or
+unknown installation fails verification. An installation with no repositories is
+degraded.
+
+## During investigations
+
+OpenCluster may read repository metadata, commits and diffs, pull requests, checks,
+workflow runs and failing-job log tails, file contents, or published releases. Reads
+that support time windows are clamped to the incident window. The path depends on the
+incident; all repositories and data types are not read automatically.
+
+## Limitations
+
+- No write operations and no code search.
+- Large files, logs, and diffs are bounded; truncation is marked.
+- GitHub's repository, file, diff, and API rate limits still apply.
+- Release reads include published releases, not every tag.
+- Changing the App's selected repositories changes what future investigations can
+  access.
+
+## Troubleshooting
+
+- **Deployment has no GitHub App:** configure the App ID and private-key file, then
+  restart OpenCluster.
+- **Installation not found:** confirm the ID belongs to this App and that the App is
+  still installed.
+- **No repositories:** select at least one repository in the installation settings.
+- **Rate limited:** wait for GitHub's limit to reset, then verify or investigate again.
+
+## Disconnect
+
+Disable the integration to remove GitHub from new investigations while retaining the
+record. Deletion is refused when investigation records depend on it. Uninstalling or
+suspending the App in GitHub takes effect independently.

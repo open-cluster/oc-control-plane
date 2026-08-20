@@ -29,6 +29,11 @@ func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 	if definition.Probe == nil {
 		t.Error("no probe; nothing could ever verify a pasted token against the vendor")
 	}
+	const wantDescription = "Give investigations read-only access to Slack conversations visible " +
+		"to the connected token; OpenCluster never posts to Slack."
+	if definition.Description != wantDescription {
+		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
+	}
 }
 
 func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
@@ -41,6 +46,15 @@ func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
 	token := definition.Config[0]
 	if token.Name != "botToken" || !token.Secret || !token.Required {
 		t.Errorf("botToken = %+v; it must be required and secret", token)
+	}
+	if token.Title != "Slack token" {
+		t.Errorf("token title = %q, want Slack token", token.Title)
+	}
+	const wantTokenDescription = "A bot token (xoxb-…) for public-channel reads, or a user " +
+		"token (xoxp-… or xoxe.xoxp-…) for message search. It is verified live against " +
+		"Slack before being saved, stored sealed, and never shown again."
+	if token.Description != wantTokenDescription {
+		t.Errorf("token description = %q, want %q", token.Description, wantTokenDescription)
 	}
 	if !strings.Contains(string(definition.ConfigurationSchema()), `"writeOnly":true`) {
 		t.Error("the rendered schema does not say the token is write-only")

@@ -19,12 +19,13 @@ import (
 // integration_type row; a test proves the two agree.
 func Definition() integrations.Definition {
 	return integrations.Definition{
-		ID:          integrations.TypeKubernetes,
-		Key:         "kubernetes",
-		Name:        "Kubernetes",
-		Description: "Read workloads, events and container logs through a Relay running in your cluster.",
-		Logo:        "kubernetes",
-		Category:    integrations.CategoryOrchestration,
+		ID:   integrations.TypeKubernetes,
+		Key:  "kubernetes",
+		Name: "Kubernetes",
+		Description: "Give investigations a read-only inventory of Kubernetes " +
+			"workloads through an outbound Relay.",
+		Logo:     "kubernetes",
+		Category: integrations.CategoryInfrastructure,
 		DocumentationURL: "https://kubernetes.io/docs/reference/access-authn-authz/" +
 			"rbac/#role-and-clusterrole",
 		Capabilities: []string{

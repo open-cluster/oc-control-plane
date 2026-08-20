@@ -1,0 +1,93 @@
+---
+title: "Quickstart"
+description: "Connect Alertmanager and Slack, deliver an alert, and run your first useful investigation."
+---
+
+This path creates an incident from Alertmanager and gives its investigation a Slack
+conversation to inspect.
+
+## Before you start
+
+You need:
+
+- a running OpenCluster deployment with a model provider configured;
+- an OpenCluster account with the **Admin** role;
+- Prometheus Alertmanager 0.29.0 or later;
+- permission to create and install a Slack app.
+
+If you operate OpenCluster, complete the [self-hosted setup](/self-hosted/overview)
+first.
+
+## 1. Connect Alertmanager
+
+In **Integrations**, choose **Prometheus Alertmanager**, enter a name, and create the
+integration. Copy the webhook URL and secret from the response. The secret is shown
+once.
+
+Add the receiver to Alertmanager and route a test alert to it:
+
+```yaml
+receivers:
+  - name: opencluster
+    webhook_configs:
+      - url: "https://oc.example.com/intake/v1/integrations/<integration-id>/signals"
+        http_config:
+          http_headers:
+            X-OpenCluster-Token:
+              secrets:
+                - "<webhook-secret>"
+
+route:
+  routes:
+    - receiver: opencluster
+      continue: true
+```
+
+Reload Alertmanager. See [Prometheus Alertmanager](/integrations/alerting/alertmanager)
+for routing options and delivery responses.
+
+## 2. Connect Slack
+
+Create a Slack app with these bot token scopes:
+
+- `channels:read`
+- `channels:history`
+- `users:read`
+
+Install the app, copy its `xoxb-` token, and paste the token into a new **Slack**
+integration. Invite the app to a public channel used for incident response.
+
+Open the integration and select **Verify**. A bot token normally verifies as
+`degraded` because Slack does not grant bots `search:read`; channel and thread reads are
+still available. See [Slack](/integrations/collaboration/slack) for the full access
+model.
+
+## 3. Deliver an alert
+
+Fire a test alert. Add a short message about the alert to the Slack channel, including
+the affected service or alert name so the conversation is useful during investigation.
+
+Verify the Alertmanager integration. It should report the time of the accepted
+delivery. Open **Incidents** and select the incident created from the alert.
+
+## 4. Run the investigation
+
+From the open incident, start an investigation. An **Editor** or **Admin** can start
+one. It runs in the background.
+
+The quickstart succeeds when the finished record shows:
+
+- `status: concluded` with no `stoppedBy` value;
+- Slack among the sources made available for the incident;
+- at least one recorded Slack read and its result;
+- cited findings when the recorded reads support a conclusion;
+- unresolved questions when the cause cannot be established.
+
+An investigation may conclude with no findings and still verify this path. That means
+the Slack read completed, but the available data did not support a defensible cause. A
+concluded record with `stoppedBy` is a partial conclusion forced by a configured limit;
+a `failed` record produced no valid conclusion. Neither verifies the quickstart. Use
+[Troubleshooting](/self-hosted/troubleshooting) before trying again.
+
+Next, read [How investigations work](/getting-started/how-investigations-work) or add
+[GitHub](/integrations/source-control/github) for deployment and code context.

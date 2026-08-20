@@ -56,11 +56,19 @@ func TestDefinition_DeclaresTheRelayShape(t *testing.T) {
 	if definition.ID != integrations.TypeKubernetes || definition.Key != "kubernetes" {
 		t.Errorf("the definition's identity is (%d, %q)", definition.ID, definition.Key)
 	}
+	if definition.Category != integrations.Category("infrastructure") {
+		t.Errorf("category = %q, want infrastructure", definition.Category)
+	}
 	if !definition.RequiresRelay || definition.ReceivesWebhooks {
 		t.Error("kubernetes is relay-served and receives no webhooks")
 	}
 	if len(definition.Capabilities) != 3 {
 		t.Errorf("kubernetes declares %d capabilities, want the three typed reads",
 			len(definition.Capabilities))
+	}
+	const wantDescription = "Give investigations a read-only inventory of Kubernetes " +
+		"workloads through an outbound Relay."
+	if definition.Description != wantDescription {
+		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
 	}
 }

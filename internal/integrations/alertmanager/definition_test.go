@@ -50,4 +50,9 @@ func TestDefinition_DeclaresTheInboundShape(t *testing.T) {
 	if len(definition.Capabilities) == 0 {
 		t.Error("no capabilities declared; the catalog cannot say what connecting this does")
 	}
+	const wantDescription = "Create incidents from firing and resolved Alertmanager alerts " +
+		"delivered through an authenticated webhook."
+	if definition.Description != wantDescription {
+		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
+	}
 }

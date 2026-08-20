@@ -1,0 +1,38 @@
+---
+title: "How investigations work"
+description: "See how an incident becomes a bounded, adaptive investigation across connected systems."
+---
+
+An investigation starts from an open incident. OpenCluster combines the triggering
+alert with a bounded time window and the connected sources available to that
+organization.
+
+## Investigation flow
+
+1. **Orient.** OpenCluster starts with the incident question, alert labels and
+   annotations, timing, source links, and a current Kubernetes workload inventory when
+   available.
+2. **Select useful sources.** Verified integrations expose only the reads their granted
+   access supports. OpenCluster chooses among them based on the incident; it does not
+   query every integration by default.
+3. **Follow the results.** Each result informs the next read. The path is adaptive,
+   not a fixed checklist.
+4. **Conclude.** OpenCluster records supported findings, unresolved leads, and practical
+   next steps. Each finding cites the reads behind it.
+
+## Access boundaries
+
+Investigations can only use enabled integrations and verified access. Read windows are
+bounded around the incident, repeated identical reads are suppressed, and truncated
+results are marked. Slack and GitHub access is read-only. The Kubernetes integration
+currently contributes a workload inventory derived from recorded changes; it does not
+provide live pod, event, or log reads.
+
+## When the cause is not established
+
+OpenCluster does not turn an incomplete lead into a root cause. It may conclude with
+unresolved leads or no findings. If a spend, read, turn, time, or progress limit stops
+the work, the record identifies that limit and preserves the partial result.
+
+For the operator workflow, see [Investigate an incident](/investigations/investigate-an-incident).
+For conclusion semantics, see [Understand findings and citations](/investigations/findings-and-citations).

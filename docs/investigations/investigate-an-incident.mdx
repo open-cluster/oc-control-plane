@@ -1,0 +1,45 @@
+---
+title: "Investigate an incident"
+description: "Start an investigation, monitor its progress, and decide what to do with the result."
+---
+
+Start an investigation from an open incident when you need a cited explanation across
+the systems connected to OpenCluster.
+
+## Prerequisites
+
+- The deployment has a configured and consented model provider.
+- The incident is open.
+- At least one relevant integration is connected and verified.
+- You have the **Editor** or **Admin** role.
+
+Alertmanager supplies the incident context. Slack and GitHub are the live sources an
+investigation can read. Kubernetes supplies a current workload inventory for
+orientation.
+
+## Start the investigation
+
+Open **Incidents**, select the incident, and start an investigation. You can also ask
+OpenCluster to investigate in plain language. If the question matches none or several
+open incidents, OpenCluster asks for clarification instead of choosing one.
+
+The investigation continues in the background. A deployment runs a bounded number at
+once; if capacity is full, the request is refused and no partial investigation is
+created.
+
+## Review the result
+
+Check the outcome first:
+
+| Outcome | Meaning |
+| --- | --- |
+| `concluded` | The investigation finished. It may still contain unresolved leads or no findings. |
+| Concluded with a limit | The result is partial. The record names the spend, read, turn, time, or progress limit. |
+| `failed` | The investigation could not produce a valid conclusion. The record gives the reason. |
+
+Then review findings in causal order, open their cited reads, and check whether any
+result was truncated or failed. Treat next steps as recommendations for an operator to
+evaluate; OpenCluster does not execute them.
+
+See [Understand findings and citations](/investigations/findings-and-citations) for the
+meaning of finding types, confidence, and citations.

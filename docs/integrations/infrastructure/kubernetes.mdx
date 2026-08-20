@@ -1,0 +1,100 @@
+---
+title: "Kubernetes"
+description: "Give investigations a current, read-only Kubernetes workload inventory through an outbound Relay."
+---
+
+Connect Kubernetes to give investigations a current inventory of Deployments,
+StatefulSets, and DaemonSets. OpenCluster does not currently read live objects, events,
+or container logs during an investigation.
+
+## What OpenCluster uses it for
+
+A Relay in your cluster synchronizes resource changes. OpenCluster derives a bounded
+list of current workload names from that data and includes it when an investigation
+starts. The list helps identify relevant services and repositories; it is navigation
+context, not evidence of a cause.
+
+## Prerequisites
+
+- A Relay deployed in the cluster and connected to OpenCluster.
+- Relay service-account access to the namespaces and resource types you want recorded.
+- The **Admin** role in OpenCluster.
+
+## Access and trust boundary
+
+The Relay connects outbound. OpenCluster does not receive a Kubernetes credential and
+your API server does not need an inbound route. The Relay's service account defines the
+maximum access. An integration namespace allow-list can narrow that access but cannot
+widen it.
+
+For tracked Deployments, StatefulSets, DaemonSets, ConfigMaps, and Secrets, OpenCluster
+receives identifiers, image references, quantities, versions, and hashes. It does not
+receive ConfigMap data, Secret data, or environment values through this integration.
+
+## Permissions
+
+Grant the Relay read access only in the namespaces this integration should cover. The
+control plane uses these resource groups:
+
+| Purpose | Kubernetes resources | Why the Relay needs access |
+| --- | --- | --- |
+| Inventory synchronization | `apps/deployments`, `apps/statefulsets`, `apps/daemonsets`, core `configmaps`, core `secrets` | Observe resource identity and selected metadata as objects are created, changed, or deleted. |
+| Workload runtime capability | Workload objects and core `pods` | Required for the capability that verification expects; investigations do not currently invoke it. |
+| Namespace event capability | Core `events` | Required for the capability that verification expects; investigations do not currently invoke it. |
+| Container log capability | Core `pods` and `pods/log` | Required for the capability that verification expects; investigations do not currently invoke it. |
+
+Do not grant create, update, patch, or delete access. This repository does not ship the
+Relay's Kubernetes Role or define the exact read verbs behind each advertised live
+capability. Review the Role included with the Relay version you deploy. A successful
+OpenCluster verification confirms that the Relay advertised the capabilities; it does
+not prove the Role is least-privilege.
+
+## Connect
+
+<Steps>
+  <Step title="Create the integration">
+    In **Integrations**, choose **Kubernetes**, enter a name, and select the Relay for
+    the cluster.
+  </Step>
+  <Step title="Set the namespace boundary">
+    Optionally enter a comma-separated namespace allow-list. Leave it empty to use all
+    namespaces reachable by the Relay's service account.
+  </Step>
+  <Step title="Verify the Relay">
+    Select **Verify**. An active result means the Relay is connected and advertises the
+    Kubernetes read capabilities expected by this integration.
+  </Step>
+</Steps>
+
+## During investigations
+
+OpenCluster includes a bounded list of current workload identities in the initial
+incident context. It does not include the recorded change history and cannot make live
+Kubernetes reads from this integration.
+
+## Limitations
+
+- Inventory starts after the integration is connected and the Relay synchronizes.
+- OpenCluster retains the underlying resource-change metadata for the deployment's
+  configured period; the default is 90 days. That history is not currently available
+  to investigations or operators as a source.
+- Verification still checks that the Relay advertises workload, event, and log read
+  capabilities. Investigations do not currently invoke those live reads.
+- No live pod listing, Kubernetes events, object manifests, or container logs are
+  available during investigations.
+- The investigation inventory contains namespace, workload kind, and workload name. It
+  does not contain live status, image versions, or configuration values.
+
+## Troubleshooting
+
+- **Relay is not connected:** check the Relay process, outbound network path, and its
+  OpenCluster endpoint.
+- **Required capabilities are missing:** check Relay version and Kubernetes RBAC, then
+  verify again.
+- **Expected workloads are absent:** confirm the namespace boundary, service-account
+  permissions, synchronization interval, and Relay connection.
+
+## Disconnect
+
+Disable the integration to stop synchronization while retaining existing records.
+Deletion is refused when retained records depend on it.

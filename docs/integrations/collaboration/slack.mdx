@@ -1,0 +1,103 @@
+---
+title: "Slack"
+description: "Give investigations read-only access to conversations visible to a connected Slack token."
+---
+
+Connect Slack so investigations can read relevant conversations. OpenCluster never
+posts, reacts, or joins channels. Access depends on the token you connect: the
+recommended bot token reads public channels the app has joined, while user-token search
+can return any conversation visible to that user, including private channels and direct
+messages.
+
+## What OpenCluster uses it for
+
+Slack provides responder observations, decisions, and actions around an incident.
+OpenCluster can list public channels, read channel history and threads, resolve author
+names, and—when a user token permits it—search messages.
+
+## Prerequisites
+
+- Permission to create and install a Slack app.
+- The **Admin** role in OpenCluster.
+
+## Scopes
+
+| Scope | Why it is needed |
+| --- | --- |
+| `channels:read` | Find public channels and read their names, topics, and purposes. |
+| `channels:history` | Read messages and threads in channels the app can access. |
+| `users:read` | Resolve message authors to display names. |
+| `search:read` | Search conversations visible to the connected user, which can include private channels and direct messages. Slack grants this scope to user tokens, not bot tokens. |
+
+The recommended bot-token setup uses the first three scopes. It supports public-channel
+and thread reads but not workspace search. Connect a user token only if the broader
+search boundary is acceptable.
+
+## Connect
+
+<Steps>
+  <Step title="Create the Slack app">
+    Create an app at [api.slack.com/apps](https://api.slack.com/apps). Under **OAuth &
+    Permissions**, add `channels:read`, `channels:history`, and `users:read` as bot token
+    scopes.
+  </Step>
+  <Step title="Install the app">
+    Install it to the workspace and copy the Bot User OAuth Token (`xoxb-…`).
+  </Step>
+  <Step title="Create the integration">
+    In OpenCluster, choose **Slack**, enter a name, and paste the token. OpenCluster
+    verifies the token with Slack before encrypting and storing it.
+
+    The operator API retains the configuration key `botToken` for compatibility. The
+    field accepts either token type described on this page.
+  </Step>
+  <Step title="Grant channel access">
+    Invite the app to each public incident channel it should read. OpenCluster does not
+    join channels on its own.
+  </Step>
+</Steps>
+
+## Verify
+
+Select **Verify** on the integration. Verification records the workspace, identity,
+token type, and granted scopes.
+
+A bot token normally reports `degraded` because it lacks `search:read`. This does not
+disable channel history or thread reads. A token with none of the usable scopes cannot
+be offered to investigations.
+
+## During investigations
+
+Available reads depend on verified scopes, token type, and channel membership.
+OpenCluster may list public channels, read history within the incident window, follow a
+thread, or search by keyword when a user token has `search:read`. Search covers
+conversations visible to that user, not only channels joined by the app. Messages are
+treated as leads; a responder's statement alone does not establish a cause.
+
+## Limitations
+
+- Bot-token channel and thread reads are limited to public channels available to the
+  app. User-token search can return private-channel, group-message, and direct-message
+  results visible to that user.
+- Search uses Slack's day-level date filters. A result can fall outside the exact
+  investigation window on either boundary day.
+- Text only. Files, attachments, reactions, and edit history are not read.
+- Reads are bounded. Truncated channel, history, and thread results are marked.
+- Slack rate limits are honored and surfaced in the investigation record.
+
+## Troubleshooting
+
+- **`invalid_auth`:** paste a current token and verify again.
+- **No channel messages:** invite the app to the channel and confirm
+  `channels:history` is granted.
+- **No message search:** use a user token with `search:read`, or rely on channel and
+  thread reads.
+- **Stored credential cannot be opened:** the deployment sealing key changed; paste the
+  token again.
+
+## Replace or disconnect
+
+Paste a new token to replace the credential after it passes live verification. Disable
+the integration to remove Slack from new investigations while retaining its record.
+Delete it to remove the stored credential; deletion is refused when investigation
+records depend on it. Revoking the token in Slack takes effect independently.

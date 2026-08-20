@@ -37,10 +37,10 @@ const (
 type Category string
 
 const (
-	CategoryAlerting      Category = "alerting"
-	CategoryOrchestration Category = "orchestration"
-	CategoryCollaboration Category = "collaboration"
-	CategorySourceControl Category = "source-control"
+	CategoryAlerting       Category = "alerting"
+	CategoryInfrastructure Category = "infrastructure"
+	CategoryCollaboration  Category = "collaboration"
+	CategorySourceControl  Category = "source-control"
 )
 
 // FieldType is what one configuration field holds. Deliberately small: a setup form that

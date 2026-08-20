@@ -109,15 +109,81 @@ func TestEverySeededIntegrationTypeHasAPage(t *testing.T) {
 	if len(keys) == 0 {
 		t.Fatal("no seeded integration types found; the gate would pass vacuously")
 	}
+	pages := docsPages(t)
 	for _, key := range keys {
-		// documentExists matches the case a reference was written in, because os.Stat
-		// alone is case-insensitive on Windows and case-sensitive on Linux, where CI runs.
-		if !documentExists("docs/integrations/" + key + ".mdx") {
-			t.Errorf("integration type %q has no documentation page at docs/integrations/%s.mdx; "+
-				"an integration is complete only when an operator can connect it without "+
-				"reading source code", key, key)
+		matches := 0
+		for page := range pages {
+			parts := strings.Split(page, "/")
+			if len(parts) == 3 && parts[0] == "integrations" && parts[2] == key {
+				matches++
+			}
+		}
+		if matches != 1 {
+			t.Errorf("integration type %q has %d documentation pages under a product-role "+
+				"directory in docs/integrations; want exactly one so an operator can connect "+
+				"it without reading source code", key, matches)
 		}
 	}
+}
+
+// TestIntegrationNavigationUsesProductRoles keeps the integration catalog scannable as
+// it grows: systems are grouped by the role they play in OpenCluster, not published as a
+// flat provider list or an arbitrary vendor taxonomy.
+func TestIntegrationNavigationUsesProductRoles(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join(docsRoot, "docs.json"))
+	if err != nil {
+		t.Fatalf("reading docs/docs.json: %v", err)
+	}
+	var site map[string]any
+	if err := json.Unmarshal(raw, &site); err != nil {
+		t.Fatalf("docs/docs.json is not valid JSON: %v", err)
+	}
+	integrations, found := navigationGroup(site["navigation"], "Integrations")
+	if !found {
+		t.Fatal("docs.json navigation has no Integrations group")
+	}
+
+	want := map[string]string{
+		"Alerting":       "integrations/alerting/alertmanager",
+		"Infrastructure": "integrations/infrastructure/kubernetes",
+		"Collaboration":  "integrations/collaboration/slack",
+		"Source control": "integrations/source-control/github",
+	}
+	for role, page := range want {
+		group, present := navigationGroup(integrations, role)
+		if !present {
+			t.Errorf("Integrations navigation has no %q group", role)
+			continue
+		}
+		pages := map[string]bool{}
+		collectPages(group, pages)
+		if !pages[page] {
+			t.Errorf("Integrations > %s does not contain %q", role, page)
+		}
+	}
+}
+
+func navigationGroup(node any, name string) (map[string]any, bool) {
+	switch typed := node.(type) {
+	case map[string]any:
+		if typed["group"] == name {
+			return typed, true
+		}
+		for _, child := range typed {
+			if found, ok := navigationGroup(child, name); ok {
+				return found, true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if found, ok := navigationGroup(child, name); ok {
+				return found, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // navigationPages reports every page reference in docs.json's navigation, walking the
