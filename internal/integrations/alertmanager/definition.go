@@ -12,12 +12,13 @@ const ReceiveAlerts = "alertmanager.receive_alerts"
 // integration_type row; a test proves the two agree.
 func Definition() integrations.Definition {
 	return integrations.Definition{
-		ID:          integrations.TypeAlertmanager,
-		Key:         "alertmanager",
-		Name:        "Prometheus Alertmanager",
-		Description: "Receive firing and resolved alerts from your existing Alertmanager over a webhook.",
-		Logo:        "alertmanager",
-		Category:    integrations.CategoryAlerting,
+		ID:   integrations.TypeAlertmanager,
+		Key:  "alertmanager",
+		Name: "Prometheus Alertmanager",
+		Description: "Create incidents from firing and resolved Alertmanager alerts " +
+			"delivered through an authenticated webhook.",
+		Logo:     "alertmanager",
+		Category: integrations.CategoryAlerting,
 		DocumentationURL: "https://prometheus.io/docs/alerting/latest/configuration/" +
 			"#webhook_config",
 		Capabilities: []string{ReceiveAlerts},

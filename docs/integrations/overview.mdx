@@ -1,73 +1,21 @@
 ---
-title: "Integrations overview"
-description: "What connecting a system gives OpenCluster, how the lifecycle works, and what each status means."
+title: "Integrations"
+description: "Choose systems by the role they play in an OpenCluster investigation."
 ---
 
-An integration connects one of your systems to OpenCluster. Each one is read-only or
-inbound-only: OpenCluster receives your alerts and reads your systems for evidence, and
-never writes to any of them.
+Integrations either create incident context or make relevant data available during an
+investigation. OpenCluster chooses useful sources as the investigation develops; a
+connected system is not queried on every incident.
 
-## What each integration gives you
-
-| Integration | Direction | What OpenCluster gets |
+| Role | Integration | What it provides |
 | --- | --- | --- |
-| [Prometheus Alertmanager](/integrations/alertmanager) | inbound webhook | Firing and resolved alerts, grouped into incidents |
-| [Kubernetes](/integrations/kubernetes) | through a Relay in your cluster | A continuously maintained record of workload and configuration changes, used to orient investigations |
-| [Slack](/integrations/slack) | outbound, read-only | Incident conversation: channels, history, threads — and message search with a user token |
-| [GitHub](/integrations/github) | outbound, read-only | Change context: commits and diffs, pull requests, CI runs and failing-job logs, file contents, releases |
+| Alerting | [Prometheus Alertmanager](/integrations/alerting/alertmanager) | Firing and resolved alerts that create and update incidents |
+| Infrastructure | [Kubernetes](/integrations/infrastructure/kubernetes) | A current workload inventory through an outbound Relay |
+| Collaboration | [Slack](/integrations/collaboration/slack) | Read-only conversations visible to the connected token |
+| Source control | [GitHub](/integrations/source-control/github) | Read-only repository, change, pull request, CI, file, and release data |
 
-You can connect several integrations of one type — two workspaces, two clusters — each
-as its own integration with its own name and credential.
+Connecting an integration requires **Admin**. Verification records what the granted
+access supports. Investigations only receive capabilities that were verified.
 
-## The lifecycle
-
-Every integration follows the same path: **create → verify → operate → disable →
-delete**.
-
-- **Create** checks the configuration and, for credential-bearing types, proves the
-  credential against the vendor *before* anything is stored. A credential the vendor
-  refuses is never saved.
-- **Verify** re-checks the integration on demand, live. Its status is observed, never
-  declared — the note under it says exactly what was established, in plain words.
-- **Disable** stops the integration (deliveries are refused, investigations skip it) but
-  keeps the record, its verification history and its credential. Re-enabling restores it
-  as it was.
-- **Delete** is refused while anything depends on the integration — signals, incidents
-  or investigation records. Disable is the retirement path; the record of what a source
-  produced survives.
-
-## Statuses
-
-| Status | Meaning |
-| --- | --- |
-| `configured` | Created; nothing has been checked or has arrived yet |
-| `active` | The last verification established everything the integration offers |
-| `degraded` | The far end answered, and part of the offer is unavailable — the note names what and why |
-| `failed` | The last verification could not establish the integration works — the note names the reason |
-
-Degraded is not broken: a Slack workspace connected with a bot token, for example, is
-degraded only because message search needs a user token — everything else works.
-
-## Capabilities follow the verified reality
-
-What an investigation may read through an integration is derived from what its
-credential was actually granted, checked at verification. A capability the credential
-cannot support is simply absent from investigations — never offered and then failing.
-That is why verifying after changing scopes or permissions matters: it is how
-OpenCluster learns what changed.
-
-## Who can do what
-
-| Action | Role |
-| --- | --- |
-| View integrations and their status | Viewer and above |
-| Verify, rename, enable or disable | Editor and above |
-| Create, delete, rotate a webhook secret | Admin |
-
-## Credentials
-
-Webhook secrets are minted by OpenCluster, shown once, and stored only as digests.
-Pasted credentials (a Slack token) are verified live before storage, encrypted at rest,
-and never shown again — reads render only a fingerprint. The GitHub App credential
-stays with whoever operates the deployment and is never stored per integration. The
-full behavior is on [Credential handling](/security/credentials).
+See [Credentials and data access](/security/credentials-and-data-access) before granting
+access.

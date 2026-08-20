@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "OpenCluster",
-  "description": "OpenCluster documentation: connect your alerting, cluster, chat and source control, and investigate incidents with an autonomous, auditable, read-only investigator.",
+  "description": "Set up OpenCluster, connect incident data, and investigate alerts.",
   "colors": {
     "primary": "#2F5CA0",
     "light": "#9DC7F1",
@@ -20,36 +20,57 @@
     "dark": "/logo/dark.svg"
   },
   "navigation": {
-    "pages": [
+    "groups": [
       {
         "group": "Getting started",
         "pages": [
           "index",
-          "quickstart"
+          "getting-started/quickstart",
+          "getting-started/how-investigations-work"
+        ]
+      },
+      {
+        "group": "Investigations",
+        "pages": [
+          "investigations/investigate-an-incident",
+          "investigations/findings-and-citations"
         ]
       },
       {
         "group": "Integrations",
         "pages": [
           "integrations/overview",
-          "integrations/alertmanager",
-          "integrations/kubernetes",
-          "integrations/slack",
-          "integrations/github"
-        ]
-      },
-      {
-        "group": "Investigations",
-        "pages": [
-          "investigations/overview",
-          "investigations/how-investigations-work"
+          {
+            "group": "Alerting",
+            "pages": [
+              "integrations/alerting/alertmanager"
+            ]
+          },
+          {
+            "group": "Infrastructure",
+            "pages": [
+              "integrations/infrastructure/kubernetes"
+            ]
+          },
+          {
+            "group": "Collaboration",
+            "pages": [
+              "integrations/collaboration/slack"
+            ]
+          },
+          {
+            "group": "Source control",
+            "pages": [
+              "integrations/source-control/github"
+            ]
+          }
         ]
       },
       {
         "group": "Security",
         "pages": [
-          "security/overview",
-          "security/credentials"
+          "security/security-model",
+          "security/credentials-and-data-access"
         ]
       },
       {
@@ -63,6 +84,17 @@
       }
     ]
   },
+  "redirects": [
+    { "source": "/quickstart", "destination": "/getting-started/quickstart" },
+    { "source": "/investigations/overview", "destination": "/investigations/investigate-an-incident" },
+    { "source": "/investigations/how-investigations-work", "destination": "/getting-started/how-investigations-work" },
+    { "source": "/integrations/alertmanager", "destination": "/integrations/alerting/alertmanager" },
+    { "source": "/integrations/kubernetes", "destination": "/integrations/infrastructure/kubernetes" },
+    { "source": "/integrations/slack", "destination": "/integrations/collaboration/slack" },
+    { "source": "/integrations/github", "destination": "/integrations/source-control/github" },
+    { "source": "/security/overview", "destination": "/security/security-model" },
+    { "source": "/security/credentials", "destination": "/security/credentials-and-data-access" }
+  ],
   "contextual": {
     "options": [
       "copy",

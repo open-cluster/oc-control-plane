@@ -1,48 +1,49 @@
 ---
 title: "Troubleshooting"
-description: "Symptoms, what each actually means, and where the fix is."
+description: "Resolve startup, readiness, integration, Relay, and investigation failures."
 ---
 
-Every refusal in OpenCluster names its reason. This page maps the common symptoms to
-what they actually mean.
+Start with the exact error shown by OpenCluster. Startup and verification errors name
+the configuration or remote access that failed.
 
-## The process
+## Process and database
 
-| Symptom | Meaning |
+| Symptom | Check |
 | --- | --- |
-| Exits at startup naming an `OC_` variable | The configuration cannot be served. The message names the variable and the rule; nothing starts degraded |
-| Startup refuses: the catalog serves Slack and there is no sealing key | The build serves a credential-bearing integration type and the deployment cannot encrypt a credential. Configure `OC_SEALING_KEY_FILE`, or bind no operator surface |
-| `readyz` 503 while `healthz` 200 | The required database placement is unreachable. Liveness ignores dependencies on purpose — do not restart your way out of a database outage |
+| Startup exits with an `OC_` variable | Correct the named value or missing paired setting. OpenCluster does not start with invalid configuration. |
+| `/healthz` is `200`, `/readyz` is `503` | Check the PostgreSQL placement, DSN file, network path, and database health. Restarting does not repair the dependency. |
+| Slack cannot be enabled without a sealing key | Configure a 32-byte `OC_SEALING_KEY_FILE` and restart. |
 
 ## Integrations
 
-| Symptom | Meaning |
+| Symptom | Check |
 | --- | --- |
-| Create refused with a vendor reason (`invalid_auth`, "does not know installation …") | The live check failed: the pasted credential or installation id is wrong at the vendor. Nothing was saved |
-| Create refused: "no sealing key" | The deployment cannot hold the credential; nothing was saved or silently dropped |
-| Verify turns an integration `failed` or `degraded` | The far end's answer changed: revoked token, suspended installation, disconnected Relay, missing scopes. The note names it |
-| "the stored credential could not be opened; paste it again" | The sealing key changed since the credential was stored. Re-paste the credential |
-| Webhook deliveries answer 401 | Wrong or rotated secret, or the integration is disabled — a disabled one refuses rather than records |
-| Deliveries answer 200 instead of 202 | A replay of a body already accepted; the source should stop retrying it. Nothing was written twice |
-| Delete refused with "records depending on it" | Signals, incidents or investigations reference the integration. Disable instead; the record of what a source produced must survive |
+| Alertmanager returns `401` | Replace the webhook secret, or enable the integration. |
+| Alertmanager verification has no delivery | Check its route, receiver URL, custom header, and network access to intake. |
+| Slack returns `invalid_auth` | Paste a current token and verify it again. |
+| Slack history is empty | Invite the app to the public channel and grant `channels:history`. |
+| GitHub installation is unknown | Confirm the installation ID belongs to the configured App and the App is installed. |
+| A credential cannot be opened | The sealing key changed. Paste the integration credential again. |
+| Delete is refused | Retained operational records depend on the integration. Disable it instead. |
+
+## Relays and Kubernetes
+
+| Symptom | Check |
+| --- | --- |
+| Relay is not connected | Check Relay logs, endpoint, TLS pin, and outbound network path. |
+| Kubernetes verification lacks capabilities | Check the Relay version and its Kubernetes RBAC. |
+| Workload inventory is missing | Check the namespace allow-list, service-account access, inventory interval, and when synchronization began. |
 
 ## Investigations
 
-| Symptom | Meaning |
+| Symptom | Check |
 | --- | --- |
-| Opening refused: "no model provider" | The deployment has no `OC_MODEL_*` configuration; everything else still works |
-| Opening refused: "already running its limit" | Four investigations are running on this process; wait for one to end |
-| A clarifying question instead of an investigation | The question tied to zero or several open incidents. Answer the one question it asked |
-| Ends `failed`: "the reasoning step could not run" | The model provider refused, timed out or is down; the reason says which |
-| Ends `failed`: "cited a read that never ran" | The model produced an untraceable finding and it was refused rather than stored |
-| Ends concluded with no findings | Honest: what was read established nothing. Read the runs — the record shows what was tried |
-| Runs show `truncated` | The source held more than the read's bound; the content is real but not the whole. Narrow the window or the query |
-| A run failed "not one of the tools the selected sources offer" | The model reached outside the offered capabilities; the read did not happen and the record says so |
+| No model provider is configured | Set the provider, model, key file, and consent list. |
+| Configured provider is not consented | Add the same provider to `OC_MODEL_CONSENTED_PROVIDERS`. |
+| Investigation capacity is full | Wait for a running investigation to finish, then retry. |
+| Investigation failed | Read the recorded reason. Check provider credentials, endpoint, limits, and provider status. |
+| Investigation concluded with no findings | Review the reads and connect the missing source; the available data supported no defensible finding. |
+| A read is truncated | Narrow the question, repository, channel, or time window where possible. |
 
-## Relays
-
-| Symptom | Meaning |
-| --- | --- |
-| Kubernetes verify: "relay is not connected" | The Relay holds no live session — its side of the wire, its logs |
-| Verify degraded: "does not advertise: …" | The cluster's own RBAC or the Relay build lacks the capability; fix in the cluster |
-| Session conflicts on the roster | Two Relays presented one identity — a possible credential theft. Clearing the mark destroys the finding, so only an Admin can, and it is audited |
+Use [Understand findings and citations](/investigations/findings-and-citations) to
+interpret partial and empty conclusions.

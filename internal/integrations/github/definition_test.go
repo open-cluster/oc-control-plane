@@ -26,6 +26,11 @@ func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 	if definition.Verify != nil || definition.Probe == nil {
 		t.Error("github verifies by probing the live installation, not from gathered facts")
 	}
+	const wantDescription = "Give investigations read-only access to selected repositories " +
+		"for commits, pull requests, CI failures, files, and releases."
+	if definition.Description != wantDescription {
+		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
+	}
 }
 
 // The App credential is deployment configuration, so the integration's own configuration

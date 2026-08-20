@@ -220,17 +220,20 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("reading the catalog = %d: %s", status, body)
 	}
+	type catalogType struct {
+		Key                 string          `json:"key"`
+		Name                string          `json:"name"`
+		Description         string          `json:"description"`
+		Logo                string          `json:"logo"`
+		Category            string          `json:"category"`
+		Capabilities        []string        `json:"capabilities"`
+		RequiresRelay       bool            `json:"requiresRelay"`
+		ReceivesWebhooks    bool            `json:"receivesWebhooks"`
+		ConfigurationSchema json.RawMessage `json:"configurationSchema"`
+		Configured          int             `json:"configured"`
+	}
 	var catalog struct {
-		Types []struct {
-			Key                 string          `json:"key"`
-			Name                string          `json:"name"`
-			Category            string          `json:"category"`
-			Capabilities        []string        `json:"capabilities"`
-			RequiresRelay       bool            `json:"requiresRelay"`
-			ReceivesWebhooks    bool            `json:"receivesWebhooks"`
-			ConfigurationSchema json.RawMessage `json:"configurationSchema"`
-			Configured          int             `json:"configured"`
-		} `json:"types"`
+		Types []catalogType `json:"types"`
 	}
 	decodeInto(t, body, &catalog)
 
@@ -272,26 +275,40 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		}
 		defer func() { _ = database.Close(ctx) }()
 
-		rows, err := database.Query(ctx, `SELECT key FROM integration_type ORDER BY key`)
+		rows, err := database.Query(ctx, `
+			SELECT key, name, description, logo, category
+			  FROM integration_type
+			 ORDER BY key`)
 		if err != nil {
 			t.Fatalf("reading integration_type: %v", err)
 		}
 		defer rows.Close()
-		var seeded []string
+		seeded := map[string]catalogType{}
 		for rows.Next() {
-			var key string
-			if err := rows.Scan(&key); err != nil {
+			var entry catalogType
+			if err := rows.Scan(&entry.Key, &entry.Name, &entry.Description,
+				&entry.Logo, &entry.Category); err != nil {
 				t.Fatalf("scanning a type row: %v", err)
 			}
-			seeded = append(seeded, key)
+			seeded[entry.Key] = entry
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("reading integration_type: %v", err)
 		}
 
 		if len(seeded) != len(catalog.Types) {
 			t.Fatalf("the table seeds %v and the catalog serves %d types", seeded, len(catalog.Types))
 		}
-		for _, key := range seeded {
-			if _, present := byKey[key]; !present {
-				t.Errorf("integration_type seeds %q and the compiled catalog does not serve it", key)
+		for _, compiled := range catalog.Types {
+			stored, present := seeded[compiled.Key]
+			if !present {
+				t.Errorf("the compiled catalog serves %q and integration_type does not", compiled.Key)
+				continue
+			}
+			if stored.Name != compiled.Name || stored.Description != compiled.Description ||
+				stored.Logo != compiled.Logo || stored.Category != compiled.Category {
+				t.Errorf("integration_type metadata for %q = %+v, compiled catalog = %+v",
+					compiled.Key, stored, compiled)
 			}
 		}
 	})

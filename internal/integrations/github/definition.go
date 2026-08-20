@@ -28,12 +28,13 @@ const (
 // exactly; connecting is what fails, live and with the reason, when the probe runs.
 func Definition(app *App, client *Client) integrations.Definition {
 	return integrations.Definition{
-		ID:          integrations.TypeGitHub,
-		Key:         "github",
-		Name:        "GitHub",
-		Description: "Read repositories, commits, diffs, pull requests, CI runs and releases from the installations you select: read-only change context.",
-		Logo:        "github",
-		Category:    integrations.CategorySourceControl,
+		ID:   integrations.TypeGitHub,
+		Key:  "github",
+		Name: "GitHub",
+		Description: "Give investigations read-only access to selected repositories for " +
+			"commits, pull requests, CI failures, files, and releases.",
+		Logo:     "github",
+		Category: integrations.CategorySourceControl,
 		DocumentationURL: "https://docs.github.com/apps/using-github-apps/" +
 			"installing-a-github-app-from-a-third-party",
 		Capabilities: []string{ListRepositories, ReadCommits, ReadCommit, ReadPullRequest,

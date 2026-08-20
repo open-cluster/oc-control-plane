@@ -54,15 +54,15 @@ wire, the database), not call sequences.
 
 | Where | What |
 | --- | --- |
-| `README.md` | Overview, quick start, configuration, endpoints — the contributor's reference |
+| `README.md` | Repository overview, status, shortest development path, and contributor pointers |
 | `CONTEXT.md` | The glossary; every identifier uses it |
 | `docs/` | User-facing product documentation: Mintlify MDX pages, `docs/docs.json` and the named site chrome. Mintlify publishes this directory directly |
 
 `docs/` is product documentation only, written for an SRE who has never read this code:
 task-oriented, outcome-first, no internal vocabulary (package names, table names, sealed
 blobs, agent plumbing). Every supported integration type must have
-`docs/integrations/<key>.mdx`, in navigation, matching shipped behavior — an integration
-is not done without its page, and the docs gate plus the Mintlify build in CI enforce
-the structure. Plans, scratch notes, and working state stay out of the repository;
+`docs/integrations/<product-role>/<key>.mdx`, in role-based navigation, matching shipped
+behavior — an integration is not done without its page, and the docs gate plus the
+Mintlify build in CI enforce the structure. Plans, scratch notes, and working state stay out of the repository;
 specifications for unbuilt work live on the issue tracker, and version control is the
 archive.

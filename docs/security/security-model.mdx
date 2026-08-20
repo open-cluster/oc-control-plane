@@ -1,0 +1,76 @@
+---
+title: "Security model"
+description: "Understand OpenCluster access boundaries, tenant isolation, read-only behavior, and self-hosted trust boundaries."
+---
+
+OpenCluster receives alerts and reads selected operational data to investigate an
+incident. Access is limited by organization, integration grants, and deployment
+configuration.
+
+## What OpenCluster accesses
+
+| System | Access |
+| --- | --- |
+| Alertmanager | Receives authenticated firing and resolved alert webhooks. It does not call Alertmanager. |
+| Kubernetes | Receives workload inventory and configuration-change metadata from an outbound Relay. It does not hold cluster credentials or perform live investigation reads. |
+| Slack | Bot-token reads cover public channels available to the app. User-token search can return any conversation visible to that user, including private channels and direct messages. OpenCluster does not write to Slack. |
+| GitHub | Reads repositories selected for a GitHub App installation. It has no write operations. |
+| Model provider | Receives the incident context and bounded source results needed to produce the investigation. |
+
+See [Credentials and data access](/security/credentials-and-data-access) for exact
+credentials, scopes, and model-provider data.
+
+## Tenant isolation
+
+Every request is evaluated in one organization. Durable records and references remain
+within that organization. An organization is resolved to an explicit PostgreSQL
+placement; resolution failure is an error, not a fallback to another placement.
+
+Membership and role checks protect operator actions. Requests cannot use existence
+errors to enumerate organizations the caller cannot access.
+
+## Read and write boundaries
+
+OpenCluster writes its own incidents, investigation records, audit entries, and
+integration state. It does not write to Slack, GitHub, or Kubernetes. It does not run
+recommended remediation steps.
+
+Alertmanager is the intentional inbound exception: an authenticated webhook creates
+signals and updates incidents in OpenCluster. A Kubernetes Relay also sends inventory
+and change records outbound from the cluster to OpenCluster.
+
+## Untrusted source content
+
+Alerts, messages, commit text, files, and other source results are treated as incident
+data, not instructions. An investigation can only use the read operations exposed by
+verified integrations. Time windows, argument validation, and result bounds are
+enforced outside the model. Findings must cite recorded reads.
+
+## Audit and retention
+
+Audit entries cover sign-in and identity administration, organization policy changes,
+service accounts and API tokens, integration administration and credential use, Relay
+bootstrap and conflict actions, incident merges, investigation starts, and denied
+authorization. Alert intake, Relay inventory updates, and background investigation
+progress are not separate audit entries; those operations have their own durable records
+or provenance. Credential-shaped fields are removed from audit details.
+
+Investigation records retain the source, scope, outcome, references, and summary of each
+read; they do not retain the model's private reasoning or a permanent bulk copy of every
+source result.
+
+Retention differs by record type. Audit retention is configured per organization.
+Kubernetes change history uses the deployment retention setting. Incidents,
+investigations, and their provenance remain part of the operational record.
+
+## Self-hosted trust boundaries
+
+In a self-hosted deployment, you control the binary, PostgreSQL placements, TLS edge,
+sealing key, GitHub App key, model-provider key, and Relay endpoint. The control plane
+must be allowed to reach configured vendors and the selected model provider.
+
+Relays connect outbound from customer clusters and pin the control-plane endpoint's
+public key. Publish the intake and Relay listeners behind TLS. Keep the operator
+listener private and authenticated.
+
+OpenCluster makes no compliance certification claim in this documentation.

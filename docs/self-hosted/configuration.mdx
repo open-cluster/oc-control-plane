@@ -1,87 +1,91 @@
 ---
 title: "Configuration"
-description: "Every environment variable, grouped by what it enables — and the rules that keep a misconfiguration from starting."
+description: "Configure storage, listeners, integrations, investigations, and operational limits."
 ---
 
-Configuration is environment variables, validated at startup: the first problem refuses
-the start and names the offending variable. No environment value ever carries a
-credential — every secret is a **file** the variable names — and no error quotes a
-secret file's contents.
+OpenCluster reads configuration from environment variables and validates it before
+starting. Variables that refer to credentials contain file paths, not secret values.
 
-## By what it enables
+## Storage and process
 
-| To enable | Set |
-| --- | --- |
-| The process at all | `OC_HTTP_ADDRESS`, `OC_PLACEMENTS`, and `OC_DEFAULT_PLACEMENT` or `OC_PLACEMENT_ASSIGNMENTS` |
-| Relays (Kubernetes) | `OC_RELAY_ADDRESS` + `OC_RELAY_SPKI_PINS` |
-| The operator surface | `OC_OPERATOR_ADDRESS` + `OC_OPERATOR_TOKEN_FILE` + `OC_OPERATOR_TOKEN_ORGANIZATION` |
-| Browser sign-in | `OC_OPERATOR_PUBLIC_URL`, `OC_OPERATOR_CONSOLE_URL`, `OC_OPERATOR_ALLOWED_ORIGINS`, `OC_SEALING_KEY_FILE` |
-| Alert intake | `OC_INTAKE_ADDRESS` (+ `OC_INTAKE_PUBLIC_URL` so webhook endpoints render whole) |
-| Credential-bearing integrations (Slack) | `OC_SEALING_KEY_FILE` |
-| GitHub | `OC_GITHUB_APP_ID` + `OC_GITHUB_APP_PRIVATE_KEY_FILE` (both or neither); `OC_GITHUB_API_URL` for Enterprise hosts |
-| Investigations | `OC_MODEL_PROVIDER`, `OC_MODEL_NAME`, `OC_MODEL_KEY_FILE`, `OC_MODEL_CONSENTED_PROVIDERS` |
-
-## The full table
-
-| Variable | Required | Meaning |
+| Variable | Required | Purpose |
 | --- | --- | --- |
-| `OC_HTTP_ADDRESS` | yes | Listen address for health, readiness and metrics |
-| `OC_PLACEMENTS` | yes | `name=path-to-dsn-file` pairs, comma separated |
-| `OC_DEFAULT_PLACEMENT` | one of these two | Placement serving organizations with no explicit assignment |
-| `OC_PLACEMENT_ASSIGNMENTS` | one of these two | `organization=placement` pairs, comma separated |
-| `OC_SHUTDOWN_TIMEOUT` | no | Drain budget on SIGTERM. Default `15s` |
-| `OC_SERVICE_NAME` | no | Telemetry service name. Default `oc-control-plane` |
-| `OC_OTLP_ENDPOINT` | no | Trace collector `host:port`. Empty disables trace export |
-| `OC_RELAY_ADDRESS` | no | Listen address for the Relay endpoint. Empty serves no Relays |
-| `OC_RELAY_SPKI_PINS` | with relays | This endpoint's public key digests, handed to a Relay at enrolment. Comma separated; more than one so a rotation can overlap |
-| `OC_OPERATOR_ADDRESS` | no | Listen address for the operator surface. Empty exposes it nowhere |
-| `OC_OPERATOR_TOKEN_FILE` | with operators | File holding the bootstrap credential, at least 32 characters |
-| `OC_OPERATOR_TOKEN_ORGANIZATION` | with a token | The one organization that credential reaches. Required, never inferred |
-| `OC_OPERATOR_TOKEN_ROLE` | no | The one role it holds there. Default `admin` |
-| `OC_OPERATOR_PUBLIC_URL` | with sign-in | Where the operator surface is reachable from a browser; the OIDC redirect URI is built from it |
-| `OC_OPERATOR_CONSOLE_URL` | with sign-in | Where a browser is sent once signed in. Must share a registrable domain with the above |
-| `OC_OPERATOR_ALLOWED_ORIGINS` | with a console | Browser origins a cookie-authenticated unsafe request may come from. Empty permits none |
-| `OC_SEALING_KEY_FILE` | see below | 32-byte key, raw or base64, encrypting stored credentials at rest |
-| `OC_SLACK_API_URL` | no | Where the Slack integration reaches its vendor. Empty means Slack's own origin |
-| `OC_GITHUB_APP_ID` | with GitHub | The deployment's GitHub App id. Both App variables or neither |
-| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | with GitHub | File holding the App's private key, PEM |
-| `OC_GITHUB_API_URL` | no | Where the GitHub integration reaches its vendor. Empty means api.github.com; set `https://HOST/api/v3` for GitHub Enterprise Server |
-| `OC_MODEL_PROVIDER` | with investigations | The model provider: `anthropic` or `zai`. Empty means investigations refuse to open, with the reason |
-| `OC_MODEL_NAME` | with a provider | The exact model identifier, never constructed |
-| `OC_MODEL_KEY_FILE` | with a provider | File holding the provider API key |
-| `OC_MODEL_EFFORT` | no | How hard the model thinks: `low`, `medium`, `high`, `xhigh`, `max`. Default `high` |
-| `OC_MODEL_CONSENTED_PROVIDERS` | with a provider | The providers investigation material may be sent to. Nothing listed permits nothing, including the configured one |
-| `OC_MODEL_BASE_URL` | no | Overrides where the provider is reached; https except loopback |
-| `OC_MODEL_SPEND_CEILING_CENTS` | no | Hard spend ceiling per investigation, whole cents. Default `500`. Positive only — raisable, never removable |
-| `OC_INVESTIGATION_WINDOW_LEAD` | no | How far before the incident began an investigation's window reaches back. Default `2h` |
-| `OC_INVESTIGATION_MAX_TOOL_RUNS` | no | Reads per investigation. Default `30`; positive only |
-| `OC_INVESTIGATION_MAX_TURNS` | no | Conversation turns per investigation. Default `20`; positive only |
-| `OC_INTAKE_ADDRESS` | no | Listen address for alert intake. Empty takes no alerts |
-| `OC_INTAKE_PUBLIC_URL` | with intake | The https origin a customer's alerting reaches intake at; webhook URLs are built from it, never from a request's Host header |
-| `OC_MINIMUM_RELAY_VERSION` | no | The Relay version floor the fleet summary counts `outdated` against |
-| `OC_INVENTORY_INTERVAL` | no | Tick interval requested from every Relay's inventory synchronization. Default `5m`; each Relay floors it locally |
-| `OC_CHANGE_LEDGER_RETENTION_DAYS` | no | How many days the change ledger keeps an entry. Default `90` |
+| `OC_HTTP_ADDRESS` | Yes | Health, readiness, and metrics listen address. |
+| `OC_PLACEMENTS` | Yes | Comma-separated `name=dsn-file-path` entries. |
+| `OC_DEFAULT_PLACEMENT` | One placement rule required | Placement for organizations without an explicit assignment. |
+| `OC_PLACEMENT_ASSIGNMENTS` | One placement rule required | Comma-separated `organization=placement` entries. |
+| `OC_SHUTDOWN_TIMEOUT` | No | Graceful shutdown budget. Default: `15s`. |
+| `OC_SERVICE_NAME` | No | Telemetry service name. Default: `oc-control-plane`. |
+| `OC_OTLP_ENDPOINT` | No | OTLP trace collector as `host:port`. Empty disables trace export. |
 
-## Rules worth knowing
+`OC_DEFAULT_PLACEMENT` or `OC_PLACEMENT_ASSIGNMENTS` must resolve every served
+organization. OpenCluster does not fall back to another placement after resolution
+fails.
 
-- **Placements.** At least one of `OC_DEFAULT_PLACEMENT` or `OC_PLACEMENT_ASSIGNMENTS`
-  is required. An unassigned organization with no default is a hard error, never a
-  fallback. A placement's DSN carries a password, so it is read from a file.
-- **Half a credential is refused.** A GitHub App id without its key file, a model
-  provider without its model name or key — each refuses startup while whoever set the
-  first variable is still reading.
-- **Consent is explicit.** `OC_MODEL_CONSENTED_PROVIDERS` must name the configured
-  provider or investigations refuse to start; an empty list permits nothing.
-- **Vendor URLs** (`OC_SLACK_API_URL`, `OC_GITHUB_API_URL`, `OC_MODEL_BASE_URL`,
-  `OC_INTAKE_PUBLIC_URL`, `OC_OPERATOR_PUBLIC_URL`) must be https except on loopback,
-  because a credential is presented to whatever answers there.
-- **The sealing key** is required whenever the deployment serves browser sign-in or a
-  credential-bearing integration type (Slack). Rotating it makes stored credentials
-  unopenable; each then verifies as failed with "paste it again to replace it" —
-  re-paste, don't panic. See [credential handling](/security/credentials).
-- **The spend ceiling** ends an investigation that reaches it as an honest partial
-  conclusion labeled `spend` — see
-  [how investigations work](/investigations/how-investigations-work).
-- **The window lead** widens every investigation's window backwards before the incident
-  began, because the change that caused an incident usually landed before it fired.
-  Every read is clamped inside the widened window.
+## Operator access
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_OPERATOR_ADDRESS` | No | Operator listener. Empty disables it. |
+| `OC_OPERATOR_TOKEN_FILE` | With bootstrap access | File containing a token of at least 32 characters. |
+| `OC_OPERATOR_TOKEN_ORGANIZATION` | With bootstrap token | Organization the token can access. |
+| `OC_OPERATOR_TOKEN_ROLE` | No | Token role. Default: `admin`. |
+| `OC_OPERATOR_PUBLIC_URL` | With browser sign-in | Public HTTPS origin used for identity-provider redirects. |
+| `OC_OPERATOR_CONSOLE_URL` | With browser sign-in | Console URL used after sign-in. |
+| `OC_OPERATOR_ALLOWED_ORIGINS` | With browser console | Origins allowed for cookie-authenticated unsafe requests. |
+| `OC_SEALING_KEY_FILE` | With operator listener | File containing a 32-byte raw or base64 key for stored credentials. The operator surface can accept Slack credentials, so it refuses to start without this key. |
+
+The operator public and console URLs must share a registrable domain. Keep the operator
+listener private even when a browser-facing proxy is configured.
+
+## Intake and Relay
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_INTAKE_ADDRESS` | No | Alert intake listener. Empty disables intake. |
+| `OC_INTAKE_PUBLIC_URL` | With intake | Public HTTPS origin used to generate webhook URLs. |
+| `OC_RELAY_ADDRESS` | No | Relay listener. Empty disables Relay access. |
+| `OC_RELAY_SPKI_PINS` | With Relay | Comma-separated public-key digests given to Relays at enrolment. Keep overlapping pins during rotation. |
+| `OC_MINIMUM_RELAY_VERSION` | No | Version floor used to report outdated Relays. |
+| `OC_INVENTORY_INTERVAL` | No | Requested Relay inventory interval. Default: `5m`; each Relay may apply a floor. |
+| `OC_CHANGE_LEDGER_RETENTION_DAYS` | No | Kubernetes change-history retention. Default: `90`. |
+
+## Integrations
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_SLACK_API_URL` | No | Slack API origin override. Empty uses Slack. |
+| `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
+| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
+| `OC_GITHUB_API_URL` | No | GitHub API origin. Use `https://HOST/api/v3` for GitHub Enterprise Server. |
+
+The GitHub App ID and key file are required together. Slack requires
+`OC_SEALING_KEY_FILE` because its token is stored encrypted.
+
+## Investigations
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_MODEL_PROVIDER` | With investigations | `anthropic` or `zai`. Empty disables new investigations. |
+| `OC_MODEL_NAME` | With provider | Exact provider model identifier. |
+| `OC_MODEL_KEY_FILE` | With provider | File containing the provider API key. |
+| `OC_MODEL_CONSENTED_PROVIDERS` | With provider | Comma-separated providers approved to receive investigation data. Must include the configured provider. |
+| `OC_MODEL_EFFORT` | No | `low`, `medium`, `high`, `xhigh`, or `max`. Default: `high`. |
+| `OC_MODEL_BASE_URL` | No | Provider endpoint override. HTTPS is required except for loopback. |
+| `OC_MODEL_SPEND_CEILING_CENTS` | No | Positive per-investigation spend ceiling. Default: `500`. |
+| `OC_INVESTIGATION_WINDOW_LEAD` | No | Time added before the incident start. Default: `2h`. |
+| `OC_INVESTIGATION_MAX_TOOL_RUNS` | No | Maximum source reads. Default: `30`. |
+| `OC_INVESTIGATION_MAX_TURNS` | No | Maximum reasoning turns. Default: `20`. |
+
+Provider consent is deployment-wide. Review [what is sent to the model
+provider](/security/credentials-and-data-access#data-sent-to-the-model-provider) before
+enabling investigations.
+
+## Validation rules
+
+- Public URLs and vendor overrides require HTTPS except on loopback.
+- Partial GitHub or model-provider credentials refuse startup.
+- Enabling the operator listener requires a sealing key because the catalog accepts
+  Slack credentials.
+- An unlisted model provider cannot receive investigation data.
+- The first invalid setting stops startup and names the variable to fix.

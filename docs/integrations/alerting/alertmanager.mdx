@@ -1,0 +1,101 @@
+---
+title: "Prometheus Alertmanager"
+description: "Create incidents from authenticated Alertmanager webhook deliveries."
+---
+
+Connect Alertmanager to create and update incidents from firing and resolved alerts.
+OpenCluster receives webhooks; it does not call Alertmanager.
+
+## What OpenCluster uses it for
+
+OpenCluster records the alert status, times, labels, annotations, fingerprint, and
+generator URL. It uses Alertmanager's grouping key to group delivered alerts into an
+incident. The triggering alert becomes the starting context for an investigation.
+
+## Prerequisites
+
+- Prometheus Alertmanager 0.29.0 or later. Version 0.29.0 added the custom HTTP header
+  configuration used for the webhook secret.
+- Network access from Alertmanager to the OpenCluster intake endpoint over HTTPS.
+- The **Admin** role in OpenCluster.
+
+## Access
+
+This integration is inbound only. The generated secret authenticates webhook
+deliveries in the `X-OpenCluster-Token` header. OpenCluster stores only a digest of the
+secret and cannot show it again.
+
+## Connect
+
+<Steps>
+  <Step title="Create the integration">
+    In **Integrations**, choose **Prometheus Alertmanager**, enter a name, and create
+    the integration. Copy the webhook URL and secret from the response.
+  </Step>
+  <Step title="Configure Alertmanager">
+    Add the receiver, then route alerts to it:
+
+    ```yaml
+    receivers:
+      - name: opencluster
+        webhook_configs:
+          - url: "https://oc.example.com/intake/v1/integrations/<integration-id>/signals"
+            send_resolved: true
+            http_config:
+              http_headers:
+                X-OpenCluster-Token:
+                  secrets:
+                    - "<webhook-secret>"
+
+    route:
+      routes:
+        - receiver: opencluster
+          continue: true
+    ```
+
+    Reload Alertmanager after validating the configuration.
+  </Step>
+</Steps>
+
+## Verify
+
+Fire a test alert, open the integration, and select **Verify**. Verification reports the
+time of the last accepted delivery. If no delivery has arrived, check the receiver,
+route, URL, secret, and network path.
+
+## During investigations
+
+The alert supplies the incident timing, labels, annotations, runbook and dashboard URLs
+when present, and the generator URL. Alertmanager is not a live investigation source;
+OpenCluster cannot query silences, inhibitions, or other active alerts.
+
+## Delivery behavior
+
+| Response | Meaning |
+| --- | --- |
+| `202` | The delivery was accepted. |
+| `200` | The same body was already accepted; it was not applied twice. |
+| `400` | The payload is invalid and should not be retried unchanged. |
+| `401` | The secret is wrong, was rotated, or the integration is disabled. |
+| `413` | The body is larger than 1 MiB. |
+| `429` | The integration exceeded its delivery rate; retry after `Retry-After`. |
+| `503` | OpenCluster could not record the delivery; retry. |
+
+Deliveries can contain at most 2,048 alerts. Only `firing` and `resolved` statuses are
+accepted. If Alertmanager marks a delivery as truncated, OpenCluster records that the
+incident context is incomplete.
+
+## Troubleshooting
+
+- **Verify shows no delivery:** send a firing test alert and check Alertmanager logs.
+- **`401`:** replace the configured secret with the current value. Rotated secrets stop
+  working immediately.
+- **`400`:** confirm middleware has not changed Alertmanager's version 4 webhook body.
+- **`429`:** reduce delivery frequency or group alerts more aggressively.
+
+## Rotate or disconnect
+
+Rotating creates a new secret and invalidates the old one immediately. Update
+Alertmanager in the same maintenance step. Disable the integration to reject new
+deliveries while retaining incident history. Deletion is refused when retained records
+depend on the integration.
