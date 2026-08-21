@@ -195,7 +195,7 @@ func evalAgentRevision(t *testing.T) string {
 		alertmanager.Definition(),
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient("")),
-		github.Definition(nil, github.NewClient("")),
+		github.Definition(nil, nil, github.NewClient("")),
 	)
 	if err != nil {
 		t.Fatalf("assembling the catalog: %v", err)

@@ -27,6 +27,11 @@ type typeView struct {
 	Capabilities     []string `json:"capabilities"`
 	RequiresRelay    bool     `json:"requiresRelay"`
 	ReceivesWebhooks bool     `json:"receivesWebhooks"`
+	// SupportsConnect says this deployment can connect the type through the provider's
+	// own installation flow, so a setup surface offers one button instead of a form.
+	// False is the self-hosted deployment that registered no application with the
+	// vendor, and the configuration form is what it renders.
+	SupportsConnect bool `json:"supportsConnect"`
 	// ConfigurationSchema is JSON Schema for the type's settings, rendered from the
 	// definition so it cannot drift from what the create operation accepts.
 	ConfigurationSchema json.RawMessage `json:"configurationSchema"`
@@ -99,6 +104,7 @@ func typeViewOf(definition Definition, configured int) typeView {
 		Capabilities:        capabilities,
 		RequiresRelay:       definition.RequiresRelay,
 		ReceivesWebhooks:    definition.ReceivesWebhooks,
+		SupportsConnect:     definition.Connectable(),
 		ConfigurationSchema: definition.ConfigurationSchema(),
 		Tools:               tools,
 		Configured:          configured,

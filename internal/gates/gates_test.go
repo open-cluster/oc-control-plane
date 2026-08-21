@@ -172,6 +172,9 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			"the organization and the role, and no caller-supplied value selects it",
 		"RedeemSignIn": "consumes an authorization state that names no tenant; the flow row " +
 			"found is the authority for the organization the sign-in belongs to",
+		"RedeemConnectFlow": "consumes an installation state that names no tenant; the flow " +
+			"row found is the authority for the organization the integration binds to, and " +
+			"an organization named in the provider's callback is never read",
 		// The change ledger's pruner deletes by AGE across every placement, bounded per
 		// statement. It reads no tenant data and takes no caller-supplied value at all — a
 		// horizon and a batch size are the whole request — so there is no tenant in the

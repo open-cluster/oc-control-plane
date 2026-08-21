@@ -158,6 +158,11 @@ type Definition struct {
 	// Tools are the bounded reads connecting this type makes available, one per declared
 	// read capability, rendered in the catalog with the routing guidance each declares.
 	Tools []Tool
+	// Connect is the provider's own installation flow, when this deployment can offer
+	// one. Nil means the type is connected through its configuration form — which is
+	// what a self-hosted deployment that registered no application with the vendor has,
+	// and it stays supported.
+	Connect *Connect
 }
 
 // ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.

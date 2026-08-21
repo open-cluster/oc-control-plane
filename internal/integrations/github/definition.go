@@ -26,7 +26,11 @@ const (
 // The App may be nil — a deployment that configured none still serves github in the
 // catalog, because the compiled provider set and the seeded reference rows must agree
 // exactly; connecting is what fails, live and with the reason, when the probe runs.
-func Definition(app *App, client *Client) integrations.Definition {
+//
+// The Installer may be nil too, and separately: a deployment holding an App credential but
+// no registered installation flow serves the configuration form below and no connect
+// button. That is the self-hosted path, and it stays supported.
+func Definition(installer *Installer, app *App, client *Client) integrations.Definition {
 	return integrations.Definition{
 		ID:   integrations.TypeGitHub,
 		Key:  "github",
@@ -39,12 +43,16 @@ func Definition(app *App, client *Client) integrations.Definition {
 			"installing-a-github-app-from-a-third-party",
 		Capabilities: []string{ListRepositories, ReadCommits, ReadCommit, ReadPullRequest,
 			ReadWorkflowRuns, ReadJobLog, ReadFile, ListReleases},
+		// The configuration form is the fallback, not the front door. Where this
+		// deployment registered an installation flow, a customer presses Connect and
+		// never sees this field; where it did not, this is how GitHub is connected.
 		Config: []integrations.Field{
 			{
 				Name:  "installationId",
 				Title: "Installation ID",
 				Description: "The numeric id of the app installation on your account, " +
-					"from the installation's settings page URL. Access follows the " +
+					"from the installation's settings page URL. Only needed where this " +
+					"deployment offers no one-click installation. Access follows the " +
 					"repositories that installation selects, by stable ids that survive " +
 					"renames.",
 				Type:     integrations.FieldInteger,
@@ -66,7 +74,8 @@ func Definition(app *App, client *Client) integrations.Definition {
 			// and an unknown id when it never did.
 			return probe(ctx, app, client, installation, input.Integration.VerifyFacts)
 		},
-		Tools: tools(app, client),
+		Tools:   tools(app, client),
+		Connect: connect(installer, app, client),
 	}
 }
 
