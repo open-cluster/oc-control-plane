@@ -189,6 +189,9 @@ var enumColumns = map[string]map[string][]int{
 	// open-episode listing filters on an EPISODE's status; the two enums share the file.
 	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),
 		episodeStatusValues...)},
+	// The brief carries only what CONCLUDED turns established: a running turn has
+	// established nothing yet, and a failed one established nothing at all.
+	"conversation_brief.go": {"status": investigationStatusValues},
 	// Claiming, renewing and sweeping all guard on the investigation still running, and
 	// the recovery sweep fails it — so the file writes an investigation status as a
 	// literal twice, in the two places that mean the most.

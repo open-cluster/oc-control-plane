@@ -79,8 +79,8 @@ func (r *Runner) run(
 		}
 	}
 
-	exchange, err := r.Investigator.OpenExchange(ctx,
-		r.orientation(ctx, organization, opened, offered))
+	oriented := r.orientation(ctx, organization, opened, offered, events)
+	exchange, err := r.Investigator.OpenExchange(ctx, oriented)
 	if err != nil {
 		r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), Spend{})
 		return
@@ -98,6 +98,7 @@ func (r *Runner) run(
 		}),
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
+		budget:             r.ContextBudget,
 		executedIdentities: map[string]int{},
 	}
 	if loop.maxRuns <= 0 {
@@ -106,6 +107,10 @@ func (r *Runner) run(
 	if loop.maxTurns <= 0 {
 		loop.maxTurns = defaultMaxTurns
 	}
+
+	// The orientation is what the transcript opens with, so it is what the turn's own
+	// context starts at. Everything read afterwards adds to it.
+	loop.carried = orientationTokens(oriented)
 
 	conclusion, stoppedBy, err := loop.converse(ctx, exchange)
 	if err != nil {
@@ -127,6 +132,12 @@ type autonomousLoop struct {
 	credentials  *credentialCache
 	maxRuns      int
 	maxTurns     int
+	// budget is how many tokens of transcript this turn may accumulate before the
+	// concluding turn is forced. Zero means no budget.
+	budget int
+	// carried is the running estimate of what this turn's transcript costs: the
+	// orientation it opened with, plus every result fed back since.
+	carried int
 
 	runs               []ToolRun
 	executedIdentities map[string]int
@@ -179,6 +190,7 @@ func (l *autonomousLoop) converse(
 			if fresh {
 				freshRead = true
 			}
+			l.carried += runTokens(run)
 			results = append(results, CallResult{CallID: call.ID, Run: run})
 		}
 		if freshRead {
@@ -288,6 +300,12 @@ func (l *autonomousLoop) firedCeiling(ctx context.Context, turn, stagnant int) s
 		return StoppedByWallClock
 	case stagnant >= maxStagnantTurns:
 		return StoppedByStagnation
+	// The transcript alone would outgrow the model's working budget. Within one turn
+	// there is no surgery: per-result caps already bound each read, and if the whole
+	// still crosses the line the conclusion is FORCED rather than the turn failing or
+	// being silently cut. One mechanism, at one level, is the whole design.
+	case l.budget > 0 && l.carried >= l.budget:
+		return StoppedByContext
 	default:
 		return ""
 	}
@@ -407,6 +425,44 @@ func callIdentityOf(call AgentCall) string {
 	return call.Tool + " " + string(encoded)
 }
 
+// orientationTokens estimates what an orientation costs before a single read has happened.
+// The tool definitions are counted too, because a catalog of forty tools is not free and a
+// budget that ignored them would be a budget that overflowed on the tools alone.
+func orientationTokens(oriented Orientation) int {
+	total := EstimateTokens(oriented.Subject) + EstimateTokens(oriented.Question)
+	for _, identity := range oriented.Inventory {
+		total += EstimateTokens(identity)
+	}
+	for _, source := range oriented.Sources {
+		total += EstimateTokens(source.Integration.Name)
+		for _, tool := range source.Tools {
+			total += EstimateTokens(tool.Name) + EstimateTokens(tool.Description) +
+				EstimateTokens(tool.WhenToUse) + EstimateTokens(tool.WhenNotToUse)
+		}
+	}
+	if oriented.Brief != nil {
+		total += briefTokens(*oriented.Brief)
+	}
+	return total
+}
+
+// runTokens estimates what feeding one result back costs. The CONTENT is what fills a
+// transcript — the summary is one line and the payload is everything the vendor returned —
+// so it is what the estimate is mostly of.
+func runTokens(run ToolRun) int {
+	total := EstimateTokens(run.Tool) + EstimateTokens(run.Summary) +
+		EstimateTokens(run.Error)
+	for _, source := range run.Sources {
+		total += EstimateTokens(source)
+	}
+	if run.Content != nil {
+		if encoded, err := json.Marshal(run.Content); err == nil {
+			total += EstimateTokens(string(encoded))
+		}
+	}
+	return total
+}
+
 // concludeReason says why reads are over, written for the model to act on.
 func concludeReason(stoppedBy string, offered int) string {
 	if offered == 0 {
@@ -423,6 +479,8 @@ func concludeReason(stoppedBy string, offered int) string {
 		return "The investigation's time is nearly over."
 	case StoppedByStagnation:
 		return "Your recent reads produced no new evidence."
+	case StoppedByContext:
+		return "This turn has filled the working context available to it."
 	default:
 		return ""
 	}
@@ -453,7 +511,7 @@ func boundNextSteps(steps []string) []string {
 // orientation, never fails the investigation.
 func (r *Runner) orientation(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
-	offered []OfferedSource,
+	offered []OfferedSource, events *stream,
 ) Orientation {
 	oriented := Orientation{
 		Subject:     opened.Subject,
@@ -461,6 +519,10 @@ func (r *Runner) orientation(
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Sources:     offered,
+		// What the Conversation has established so far, compacted on the way in if it has
+		// outgrown the budget. Nil for a single-shot investigation, which has nothing to
+		// continue from.
+		Brief: r.conversationBrief(ctx, organization, opened, events),
 	}
 	if opened.EpisodeID != uuid.Nil {
 		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {

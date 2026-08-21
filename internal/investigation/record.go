@@ -325,6 +325,17 @@ type Store interface {
 	// identities — a navigation index for the autonomous orientation, never evidence.
 	WorkloadInventory(ctx context.Context, org tenancy.Organization,
 		limit int) ([]string, error)
+	// ConversationBrief reads what a conversation contributes to its next turn: the
+	// newest running summary, a verbatim tail of what was said, and the prior turns'
+	// findings with their citations as references. Never copied tool payloads — a finding
+	// already names the runs that established it, and those runs are still in the record.
+	ConversationBrief(ctx context.Context, org tenancy.Organization,
+		conversation uuid.UUID, tail int) (Brief, error)
+	// RecordConversationSummary writes the next summary version. Superseded versions are
+	// kept, and the authoritative transcript is never touched.
+	RecordConversationSummary(ctx context.Context, org tenancy.Organization,
+		conversation uuid.UUID, summary Summary, tokensBefore, tokensAfter int,
+		model string) error
 	// DrainConversation opens the next turn of a conversation from whatever messages
 	// arrived while this one was running, and reports whether one opened. It is called at
 	// the terminal boundary — the "next safe point" — because that is the moment a second

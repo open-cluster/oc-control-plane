@@ -136,9 +136,9 @@ func agentFindingSchema() map[string]any {
 }
 
 // renderOrientation writes the held-context message: subject, window, the trigger's own
-// metadata, the connected sources with the tool names each offers, and the ledger's
-// workload digest. Everything here already sat in the platform; nothing was fetched to
-// say it.
+// metadata, the connected sources with the tool names each offers, the ledger's workload
+// digest, and — for a Conversation turn — the brief of what has already been said and
+// established. Everything here already sat in the platform; nothing was fetched to say it.
 func renderOrientation(orientation investigation.Orientation) string {
 	out := &strings.Builder{}
 	out.WriteString("SUBJECT: " + orientation.Subject + "\n")
@@ -190,6 +190,10 @@ func renderOrientation(orientation investigation.Orientation) string {
 			out.WriteString("- " + line + "\n")
 		}
 	}
+
+	// The conversation last, so a follow-up reads the estate first and then what has
+	// already been said about it — the same order a person joining an incident would.
+	out.WriteString(renderBrief(orientation.Brief))
 	return out.String()
 }
 

@@ -33,6 +33,9 @@ type memoryStore struct {
 	answer       string
 	drained      []uuid.UUID
 	drainOpens   bool
+	brief        Brief
+	briefFails   bool
+	summaries    []recordedSummary
 	findings     []Finding
 	nextSteps    []string
 	stoppedBy    string
@@ -95,6 +98,39 @@ func (m *memoryStore) ConcludeInvestigation(
 	m.answer, m.findings, m.nextSteps = conclusion.Answer, conclusion.Findings,
 		conclusion.NextSteps
 	return nil
+}
+
+// brief is what a scripted conversation contributes to its next turn, and summaries
+// records every compaction the runner performed.
+func (m *memoryStore) ConversationBrief(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ int,
+) (Brief, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.briefFails {
+		return Brief{}, errors.New("the brief could not be read")
+	}
+	return m.brief, nil
+}
+
+func (m *memoryStore) RecordConversationSummary(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, summary Summary,
+	before, after int, model string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.summaries = append(m.summaries, recordedSummary{
+		summary: summary, before: before, after: after, model: model,
+	})
+	return nil
+}
+
+// recordedSummary is one compaction as the store saw it.
+type recordedSummary struct {
+	summary Summary
+	before  int
+	after   int
+	model   string
 }
 
 // drained records every conversation the runner tried to take up at a terminal boundary.

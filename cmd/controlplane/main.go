@@ -204,16 +204,22 @@ func run(
 	}
 
 	investigations := &investigation.Runner{
-		Events:                 placements,
-		Store:                  placements,
-		Leases:                 placements,
-		Catalog:                catalog,
-		Sealer:                 sealer,
-		Investigator:           investigator,
-		MaxToolRuns:            cfg.InvestigationMaxToolRuns,
-		MaxTurns:               cfg.InvestigationMaxTurns,
-		OrgConcurrent:          cfg.OrgConcurrentInvestigations,
-		WindowLead:             cfg.InvestigationWindowLead,
+		Events:        placements,
+		Store:         placements,
+		Leases:        placements,
+		Catalog:       catalog,
+		Sealer:        sealer,
+		Investigator:  investigator,
+		MaxToolRuns:   cfg.InvestigationMaxToolRuns,
+		MaxTurns:      cfg.InvestigationMaxTurns,
+		OrgConcurrent: cfg.OrgConcurrentInvestigations,
+		WindowLead:    cfg.InvestigationWindowLead,
+		// The context budget is computed HERE, where the model is known, and handed to the
+		// domain as a number. internal/investigation must never learn what a vendor is,
+		// and "how big is this model's window" is a vendor fact.
+		ContextBudget: reasoning.ContextBudget(cfg.ModelName, cfg.ModelContextWindow,
+			cfg.ContextThresholdPercent),
+		ModelName:              cfg.ModelName,
 		Logger:                 logger,
 		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}

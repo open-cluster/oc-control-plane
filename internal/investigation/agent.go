@@ -38,6 +38,11 @@ type Orientation struct {
 	// Inventory is the change ledger's bounded workload digest — navigation, never
 	// evidence. Empty when the ledger holds nothing.
 	Inventory []string
+	// Brief is what the Conversation this turn belongs to has established so far: the
+	// running summary, the verbatim recent tail, and the prior turns' findings with their
+	// citations as references. Nil for a single-shot investigation, which has no
+	// conversation and therefore nothing to continue from.
+	Brief *Brief
 }
 
 // AgentCall is one read the Exchange proposed. The identifier is the provider's

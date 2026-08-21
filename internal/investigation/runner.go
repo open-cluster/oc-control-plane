@@ -78,6 +78,15 @@ type Runner struct {
 	// the operator surface's own, because a follow-up asks about the same period the
 	// question before it did.
 	WindowLead time.Duration
+	// ContextBudget is how many tokens of conversation context a turn may carry before
+	// older turns are compacted. Computed by the composition root from the model and the
+	// deployment's threshold, because THIS package must never learn what a vendor is.
+	// Zero means no budget, which only a test should mean.
+	ContextBudget int
+	// ModelName is recorded beside a summary, so a compaction that happened under one
+	// model's budget is legible after a deployment moves to another. It is a label and
+	// nothing here behaves differently for it.
+	ModelName string
 	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
 	// tuning, so configuration rather than constants; zero means the defaults.
 	MaxToolRuns int
