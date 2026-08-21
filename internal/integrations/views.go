@@ -151,9 +151,26 @@ type integrationView struct {
 	// the account, its type, how far its grant reaches. Non-secret by construction: a
 	// provider records only what an operator would read off the provider's own screen.
 	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
-	CreatedBy   string         `json:"createdBy,omitempty"`
-	CreatedAt   string         `json:"createdAt"`
-	UpdatedAt   string         `json:"updatedAt"`
+	// Capabilities is what this Integration can actually do: every capability its type
+	// declares, judged against the grants its last verification recorded, each with the
+	// reason it is unavailable when it is.
+	//
+	// Served rather than left to a client. The join needs the type's declarations, the
+	// integration's grants and — for some providers — deployment configuration a browser
+	// cannot see, so a console computing it would be a console computing it wrongly.
+	Capabilities []capabilityView `json:"capabilities"`
+	CreatedBy    string           `json:"createdBy,omitempty"`
+	CreatedAt    string           `json:"createdAt"`
+	UpdatedAt    string           `json:"updatedAt"`
+}
+
+// capabilityView is one capability's availability as an operator reads it.
+type capabilityView struct {
+	Capability string `json:"capability"`
+	Available  bool   `json:"available"`
+	// Reason says why an unavailable capability is unavailable. Absent when it works:
+	// there is nothing to explain about a thing that does.
+	Reason string `json:"reason,omitempty"`
 }
 
 // createdView is the one response that carries the webhook secret, exactly once.
@@ -171,8 +188,19 @@ type rotatedView struct {
 
 func (h Handlers) viewOf(found Integration) integrationView {
 	typeKey := ""
+	// An empty list rather than null, for the reason the catalog's is: "this integration
+	// offers nothing" is a fact worth rendering, and a client should not have to handle
+	// two spellings of it.
+	capabilities := []capabilityView{}
 	if definition, known := h.Catalog.ByID(found.Type); known {
 		typeKey = definition.Key
+		for _, state := range definition.CapabilityStatesFor(found) {
+			// A conversion rather than a field-by-field copy, and it is the stricter of
+			// the two: it compiles only while the two shapes are identical, so a field
+			// added to the domain type stops the build here until somebody decides what
+			// the wire should say about it. A copy would have silently said nothing.
+			capabilities = append(capabilities, capabilityView(state))
+		}
 	}
 	view := integrationView{
 		ID:            found.ID.String(),
@@ -187,6 +215,7 @@ func (h Handlers) viewOf(found Integration) integrationView {
 		UpdatedAt:     stamp(found.UpdatedAt),
 		VerifyNote:    found.VerifyNote,
 		VerifyFacts:   found.VerifyFacts,
+		Capabilities:  capabilities,
 	}
 	if found.RelayID != uuid.Nil {
 		view.RelayID = found.RelayID.String()

@@ -123,17 +123,27 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 func TestVerifiedScopesMatchWhatTheToolsClaim(t *testing.T) {
 	t.Parallel()
 
+	// Both halves: a required scope must be needed by something, and an optional one must
+	// be worth holding. A scope in neither map is a scope nothing checks.
+	known := map[string]string{}
+	for scope, cost := range requiredScopes {
+		known[scope] = cost
+	}
+	for scope, cost := range optionalScopes {
+		known[scope] = cost
+	}
+
 	claimed := map[string]bool{}
 	for _, tool := range Definition(NewClient("")).Tools {
-		for scope := range scopeGrants {
+		for scope := range known {
 			if strings.Contains(tool.Permissions, scope) {
 				claimed[scope] = true
 			}
 		}
 	}
-	for scope := range scopeGrants {
+	for scope := range known {
 		if !claimed[scope] {
-			t.Errorf("verification demands %s and no tool claims to need it", scope)
+			t.Errorf("verification knows %s and no tool claims to need it", scope)
 		}
 	}
 }

@@ -257,11 +257,16 @@ func TestSlackMissingScopesSurfaceAsDegraded(t *testing.T) {
 		t.Errorf("status = %q, want degraded; note: %s",
 			created.Integration.Status, created.Integration.VerifyNote)
 	}
-	for _, missing := range []string{"search:read", "users:read"} {
-		if !strings.Contains(created.Integration.VerifyNote, missing) {
-			t.Errorf("the note %q does not name the missing scope %s",
-				created.Integration.VerifyNote, missing)
-		}
+	if !strings.Contains(created.Integration.VerifyNote, "users:read") {
+		t.Errorf("the note %q does not name the missing scope users:read",
+			created.Integration.VerifyNote)
+	}
+	// search:read is NOT named. Degraded means a capability this integration was
+	// configured to provide is failing, and workspace-wide search was never asked for —
+	// listing it here is what made every correct installation look broken.
+	if strings.Contains(created.Integration.VerifyNote, "search:read") {
+		t.Errorf("the note %q holds a scope this product never requests",
+			created.Integration.VerifyNote)
 	}
 }
 
@@ -436,4 +441,46 @@ func credentialFingerprint(t *testing.T, body string) string {
 		return shapes.Integration.Credential.Fingerprint
 	}
 	return ""
+}
+
+// The correction this release exists for. A bot token holding every scope OpenCluster asks
+// for is a CORRECT installation, and it used to report degraded because it lacked
+// workspace-wide search — a permission this product deliberately declines to request. The
+// customer was being told to fix something that was not broken.
+func TestSlackRecommendedBotInstallationIsActiveWithSearchUnavailable(t *testing.T) {
+	vendor := newVendorFake(t, "xoxb-good-token-1234")
+	vendor.grant("channels:read,channels:history,users:read")
+	plane := startSlackPlane(t, vendor)
+
+	status, body := plane.createSlack(t, "Acme Slack", "xoxb-good-token-1234")
+	if status != http.StatusCreated {
+		t.Fatalf("creating with the recommended scopes = %d: %s", status, body)
+	}
+	var created createdBody
+	decodeInto(t, body, &created)
+
+	if created.Integration.Status != "active" {
+		t.Fatalf("status = %q, want active — a correct installation must not report "+
+			"itself broken; note: %s",
+			created.Integration.Status, created.Integration.VerifyNote)
+	}
+
+	// Unavailable, not missing. Its absence is a stated choice, and saying so is what
+	// stops an operator going looking for a permission to grant.
+	search := created.Integration.capability(t, "slack.search_messages")
+	if search.Available {
+		t.Error("workspace-wide search reads as available on a token that was never " +
+			"granted it")
+	}
+	if search.Reason == "" {
+		t.Error("search is unavailable and says nothing about why")
+	}
+
+	// The capabilities the installation does have are reported as working, individually,
+	// so an operator can see what OpenCluster can and cannot read.
+	for _, working := range []string{"slack.list_channels", "slack.read_channel_history"} {
+		if reported := created.Integration.capability(t, working); !reported.Available {
+			t.Errorf("%s has its scope and reads as unavailable: %+v", working, reported)
+		}
+	}
 }

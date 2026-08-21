@@ -67,6 +67,9 @@ func TestProbeRecordsAUserTokenAsOne(t *testing.T) {
 func TestProbeWithAMissingScopeIsDegradedAndNamesWhatItCosts(t *testing.T) {
 	t.Parallel()
 
+	// A scope this product DOES request and the installation did not grant. It used to be
+	// search:read here, which is the one scope we never ask for — asserting on it was
+	// asserting that a correct installation reads as broken.
 	fake := newFakeSlack(t)
 	fake.answers["auth.test"] = authTestGranting("channels:read,channels:history")
 
@@ -74,7 +77,7 @@ func TestProbeWithAMissingScopeIsDegradedAndNamesWhatItCosts(t *testing.T) {
 	if verified.Status != integrations.StatusDegraded {
 		t.Fatalf("status = %s, want degraded; note: %s", verified.Status, verified.Note)
 	}
-	if !strings.Contains(verified.Note, "search:read") {
+	if !strings.Contains(verified.Note, "users:read") {
 		t.Errorf("the note %q does not name the missing scope", verified.Note)
 	}
 }
@@ -143,5 +146,24 @@ func TestProbeWithUnreportedScopesIsDegraded(t *testing.T) {
 	}
 	if verified.Grants != nil {
 		t.Errorf("unreadable scopes must record nothing, got %v", verified.Grants)
+	}
+}
+
+func TestProbeWithABotTokensOwnScopesIsActive(t *testing.T) {
+	t.Parallel()
+
+	// The recommended bot installation, exactly: every scope the offered tools need and
+	// no workspace-wide search, which this product deliberately does not ask for. It
+	// reported degraded, which told a customer their correct installation was broken.
+	fake := newFakeSlack(t)
+	fake.answers["auth.test"] = authTestGranting("channels:read,channels:history,users:read")
+
+	verified := probe(testContext(t), NewClient(fake.URL), "xoxb-under-test")
+	if verified.Status != integrations.StatusActive {
+		t.Fatalf("status = %s, want active; note: %s", verified.Status, verified.Note)
+	}
+	if strings.Contains(verified.Note, "search:read") {
+		t.Errorf("the note %q still holds a scope we never requested against the customer",
+			verified.Note)
 	}
 }

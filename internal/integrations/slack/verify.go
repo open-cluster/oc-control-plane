@@ -14,14 +14,29 @@ import (
 // under a user token, so the search tool requires this grant beside its scope.
 const GrantUserToken = "user_token"
 
-// scopeGrants maps each OAuth scope the tools need to what losing it costs, so a degraded
-// verification names consequences an operator can act on rather than vendor vocabulary
-// alone.
-var scopeGrants = map[string]string{
+// requiredScopes maps each OAuth scope this product ASKS FOR to what losing it costs, so a
+// degraded verification names consequences an operator can act on rather than vendor
+// vocabulary alone.
+//
+// Required means requested. A scope we deliberately do not ask for cannot be missing, and
+// treating one as missing is how a correctly installed bot came to report itself broken:
+// the recommended installation grants no workspace-wide search, so every recommended
+// installation was degraded on the strength of a permission this product declines to hold.
+var requiredScopes = map[string]string{
 	"channels:read":    "listing channels",
 	"channels:history": "reading channel history and threads",
-	"search:read":      "searching messages",
 	"users:read":       "resolving message authors to names",
+}
+
+// optionalScopes are grants an installation MAY hold and this product never requests. They
+// are recorded when present, because a tool gated on one becomes available, and their
+// absence is a stated choice rather than a gap: it does not touch the integration's status
+// and it is reported as an unavailable capability rather than a missing scope.
+//
+// search:read is here by decision. The default security story is that OpenCluster reasons
+// over conversations it was deliberately invited into, not everything an employee can see.
+var optionalScopes = map[string]string{
+	"search:read": "searching messages across the workspace",
 }
 
 // probe verifies a token live against auth.test and judges what came back. It is the one
@@ -106,7 +121,7 @@ func missingScopes(granted []string) []string {
 		held[scope] = true
 	}
 	var missing []string
-	for scope := range scopeGrants {
+	for scope := range requiredScopes {
 		if !held[scope] {
 			missing = append(missing, scope)
 		}
@@ -119,7 +134,7 @@ func missingScopes(granted []string) []string {
 func costOf(missing []string) string {
 	costs := make([]string, 0, len(missing))
 	for _, scope := range missing {
-		costs = append(costs, scopeGrants[scope])
+		costs = append(costs, requiredScopes[scope])
 	}
 	return strings.Join(costs, " and ")
 }

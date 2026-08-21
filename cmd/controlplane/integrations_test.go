@@ -172,9 +172,30 @@ type integrationBody struct {
 		CreatedAt   string `json:"secretCreatedAt"`
 		RotatedAt   string `json:"secretRotatedAt"`
 	} `json:"webhook"`
-	LastVerifiedAt string         `json:"lastVerifiedAt"`
-	VerifyNote     string         `json:"verifyNote"`
-	VerifyFacts    map[string]any `json:"verifyFacts"`
+	LastVerifiedAt string           `json:"lastVerifiedAt"`
+	VerifyNote     string           `json:"verifyNote"`
+	VerifyFacts    map[string]any   `json:"verifyFacts"`
+	Capabilities   []capabilityBody `json:"capabilities"`
+}
+
+// capabilityBody is one capability as the integration read reports it: available or not,
+// and why not. Served rather than joined in a console, so every client reads one answer.
+type capabilityBody struct {
+	Capability string `json:"capability"`
+	Available  bool   `json:"available"`
+	Reason     string `json:"reason"`
+}
+
+// capability finds one reported capability by name.
+func (b integrationBody) capability(t *testing.T, name string) capabilityBody {
+	t.Helper()
+	for _, reported := range b.Capabilities {
+		if reported.Capability == name {
+			return reported
+		}
+	}
+	t.Fatalf("no capability %q is reported at all; reported: %+v", name, b.Capabilities)
+	return capabilityBody{}
 }
 
 type createdBody struct {

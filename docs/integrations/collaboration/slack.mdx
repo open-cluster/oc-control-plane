@@ -62,9 +62,15 @@ search boundary is acceptable.
 Select **Verify** on the integration. Verification records the workspace, identity,
 token type, and granted scopes.
 
-A bot token normally reports `degraded` because it lacks `search:read`. This does not
-disable channel history or thread reads. A token with none of the usable scopes cannot
-be offered to investigations.
+A bot token holding the scopes OpenCluster asks for reports `active`. Workspace-wide
+search is listed as an unavailable capability rather than a missing scope, because
+OpenCluster does not request `search:read` — its absence is a deliberate boundary, not a
+gap to close.
+
+`degraded` means a capability this integration was configured to provide has stopped
+working: a scope was revoked, or Slack is refusing the token. The integration read reports
+each capability individually, with the reason when one is unavailable. A token with none
+of the usable scopes cannot be offered to investigations.
 
 ## During investigations
 
