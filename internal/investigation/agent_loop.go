@@ -14,10 +14,10 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// THE AUTONOMOUS LOOP — one conversational investigator behind the Runner shell. The
+// THE AUTONOMOUS LOOP — one autonomous investigator behind the Runner shell. The
 // shell guarantees concurrency and drain, provenance recorded as it happens, one
 // audited credential unseal per integration, the citation check, and the detached
-// write window for the final record. The loop drives one held conversation over the
+// write window for the final record. The loop drives one held Exchange over the
 // whole offered tool universe, under safety ceilings — every one an honest stopped-by
 // conclusion, never a silent cut and never resource exhaustion dressed up as a
 // diagnosis.
@@ -28,14 +28,14 @@ import (
 const (
 	// defaultMaxToolRuns bounds the whole investigation's reads.
 	defaultMaxToolRuns = 30
-	// defaultMaxTurns bounds the conversation's reading turns; the turn after the last
+	// defaultMaxTurns bounds the Exchange's reading turns; the turn after the last
 	// is the forced conclusion.
 	defaultMaxTurns = 20
 	// maxStagnantTurns is how many consecutive turns may produce no new evidence before
 	// the conclusion is forced. A turn with a fresh successful read resets the count.
 	maxStagnantTurns = 2
 	// wallClockReserve is how much of the investigation's deadline is kept back for the
-	// concluding turn: a conversation that would run into the deadline concludes with
+	// concluding turn: an Exchange that would run into the deadline concludes with
 	// what it has instead of dying mid-read as a failure.
 	wallClockReserve = 2 * time.Minute
 	// inventoryDigestLimit bounds the orientation's workload digest.
@@ -46,22 +46,26 @@ const (
 // wherever it surfaces — a read whose record failed must not inform a conclusion.
 var errProvenance = errors.New("a tool run could not be recorded")
 
-// errNoConclusion marks a conversation that would not conclude when its reads were
+// errNoConclusion marks an Exchange that would not conclude when its reads were
 // withdrawn.
 var errNoConclusion = errors.New("the reasoner did not conclude when required to")
 
-// run is one whole investigation: orientation from held context, then a conversation
+// run is one whole investigation: orientation from held context, then an Exchange
 // of moves and executions, then the conclusion or the failure.
 func (r *Runner) run(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
 ) {
+	events := newStream(r.Events, r.Telemetry, organization, opened.ID)
+	startedAt := time.Now()
+
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
-		r.fail(ctx, organization, opened.ID,
+		r.fail(ctx, organization, opened.ID, events,
 			"the connected sources could not be read", Spend{})
 		return
 	}
 	offered := offeredSources(r.Catalog, candidates)
+	r.announce(ctx, events, EventStarted, startedPayload(opened, len(offered), true))
 	for rank, source := range offered {
 		recorded := Source{
 			IntegrationID: source.Integration.ID,
@@ -70,15 +74,16 @@ func (r *Runner) run(
 			SelectedAt:    time.Now().UTC(),
 		}
 		if err := r.Store.RecordSource(ctx, organization, opened.ID, recorded); err != nil {
-			r.fail(ctx, organization, opened.ID, "the offer could not be recorded", Spend{})
+			r.fail(ctx, organization, opened.ID, events,
+				"the offer could not be recorded", Spend{})
 			return
 		}
 	}
 
-	conversation, err := r.Investigator.OpenConversation(ctx,
-		r.orientation(ctx, organization, opened, offered))
+	oriented := r.orientation(ctx, organization, opened, offered, events)
+	exchange, err := r.Investigator.OpenExchange(ctx, oriented)
 	if err != nil {
-		r.fail(ctx, organization, opened.ID, reasonerFailure(err), Spend{})
+		r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), Spend{})
 		return
 	}
 
@@ -87,12 +92,14 @@ func (r *Runner) run(
 		organization: organization,
 		opened:       opened,
 		offered:      offered,
+		events:       events,
 		credentials: newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
 			return r.Store.RecordCredentialUnseal(ctx, organization, id,
 				"investigation "+opened.ID.String())
 		}),
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
+		budget:             r.ContextBudget,
 		executedIdentities: map[string]int{},
 	}
 	if loop.maxRuns <= 0 {
@@ -102,13 +109,19 @@ func (r *Runner) run(
 		loop.maxTurns = defaultMaxTurns
 	}
 
-	conclusion, stoppedBy, err := loop.converse(ctx, conversation)
+	// The orientation is what the transcript opens with, so it is what the turn's own
+	// context starts at. Everything read afterwards adds to it.
+	loop.carried = orientationTokens(oriented)
+
+	conclusion, stoppedBy, err := loop.converse(ctx, exchange)
 	if err != nil {
-		r.fail(ctx, organization, opened.ID, failureReason(err), loop.spend)
+		r.fail(ctx, organization, opened.ID, events, failureReason(err), loop.spend)
+		r.Telemetry.ended(time.Since(startedAt), StatusFailed.String(), "")
 		return
 	}
-	r.conclude(ctx, organization, opened.ID, conclusion,
+	r.conclude(ctx, organization, opened.ID, events, conclusion,
 		len(loop.runs), loop.turns, loop.executed, stoppedBy, loop.spend)
+	r.Telemetry.ended(time.Since(startedAt), StatusConcluded.String(), stoppedBy)
 }
 
 // autonomousLoop is one investigation's execution state: the ordinal space, the
@@ -118,9 +131,16 @@ type autonomousLoop struct {
 	organization tenancy.Organization
 	opened       Investigation
 	offered      []OfferedSource
+	events       *stream
 	credentials  *credentialCache
 	maxRuns      int
 	maxTurns     int
+	// budget is how many tokens of transcript this turn may accumulate before the
+	// concluding turn is forced. Zero means no budget.
+	budget int
+	// carried is the running estimate of what this turn's transcript costs: the
+	// orientation it opened with, plus every result fed back since.
+	carried int
 
 	runs               []ToolRun
 	executedIdentities map[string]int
@@ -129,23 +149,34 @@ type autonomousLoop struct {
 	spend              Spend
 }
 
-// converse drives the conversation to its conclusion: moves in, executions out, until
+// converse drives the Exchange to its conclusion: moves in, executions out, until
 // the model concludes or a ceiling forces it to.
 func (l *autonomousLoop) converse(
-	ctx context.Context, conversation Conversation,
+	ctx context.Context, exchange Exchange,
 ) (Conclusion, string, error) {
 	var results []CallResult
 	stagnant := 0
 	stoppedBy := ""
 
 	for turn := 1; ; turn++ {
+		// Cancellation is checked HERE rather than left to the model boundary to notice.
+		// The run is cancelled when this worker's lease is lost, and whether it actually
+		// stops must not depend on a vendor adapter honouring a context — a worker that
+		// kept reading for an investigation another worker now owns is the exact thing
+		// the fence exists to prevent.
+		if err := ctx.Err(); err != nil {
+			return Conclusion{}, "", err
+		}
 		l.turns++
 		if stoppedBy == "" {
-			stoppedBy = l.firedCeiling(ctx, turn, stagnant)
+			if stoppedBy = l.firedCeiling(ctx, turn, stagnant); stoppedBy != "" {
+				l.runner.announce(ctx, l.events, EventProgress,
+					progressPayload(ceilingProgress(stoppedBy)))
+			}
 		}
 		mustConclude := stoppedBy != "" || len(l.offered) == 0
 
-		move, moveErr := l.nextMove(ctx, conversation, results, mustConclude,
+		move, moveErr := l.nextMove(ctx, exchange, results, mustConclude,
 			concludeReason(stoppedBy, len(l.offered)))
 		l.spend = l.spend.Add(move.Spend)
 		if moveErr != nil {
@@ -159,7 +190,7 @@ func (l *autonomousLoop) converse(
 			return Conclusion{}, "", errNoConclusion
 		}
 
-		// A fresh slice per turn: the conversation may hold what it was fed.
+		// A fresh slice per turn: the Exchange may hold what it was fed.
 		results = make([]CallResult, 0, len(move.Calls))
 		freshRead := false
 		for _, call := range move.Calls {
@@ -170,6 +201,7 @@ func (l *autonomousLoop) converse(
 			if fresh {
 				freshRead = true
 			}
+			l.carried += runTokens(run)
 			results = append(results, CallResult{CallID: call.ID, Run: run})
 		}
 		if freshRead {
@@ -195,14 +227,26 @@ func (l *autonomousLoop) executeCall(
 	switch {
 	case l.executedIdentities[identity] != 0:
 		run = suppressedRun(l.opened, call, l.nextOrdinal(), l.executedIdentities[identity])
+		// A suppressed repeat is not a read, so it is not a tool event. It is still worth
+		// saying: somebody watching should see that the agent asked for something it
+		// already had, rather than a silent pause.
+		l.runner.announce(ctx, l.events, EventProgress, progressPayload(
+			"Skipped a repeat of "+l.offeredName(call.Tool)+
+				"; the earlier read already answers it"))
 	case l.executed >= l.maxRuns:
 		run = droppedRun(l.opened, ToolCall{Tool: call.Tool, Arguments: call.Arguments},
 			l.nextOrdinal(), fmt.Sprintf(
 				"not executed: the investigation's read budget of %d was exhausted",
 				l.maxRuns))
+		l.runner.announce(ctx, l.events, EventProgress, progressPayload(
+			"Did not run "+l.offeredName(call.Tool)+"; the read budget is exhausted"))
 	default:
+		ordinal := l.nextOrdinal()
+		l.announceToolStarted(ctx, call, ordinal)
 		run = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials,
-			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, l.nextOrdinal())
+			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
+		l.runner.announce(ctx, l.events, EventToolCompleted, toolCompletedPayload(run))
+		l.runner.Telemetry.ranTool(run)
 		l.executed++
 		// An honest empty answer is still a fresh read — "nothing changed in the
 		// window" is information, and a loop that punished it as stagnation would rush
@@ -218,6 +262,40 @@ func (l *autonomousLoop) executeCall(
 		l.executedIdentities[identity] = run.Ordinal
 	}
 	return run, fresh, nil
+}
+
+// offeredName renders a tool name for a PROGRESS line, which is prose the platform writes.
+//
+// A tool name arrives from the model, and a model can invent one — the run then fails with
+// "not one of the tools the selected sources offer". Interpolating it would put a string
+// the model chose into a sentence the platform is supposed to have authored, which is the
+// one thing this stream promises never to carry. So a name is only spoken when it is one
+// this deployment actually offers; anything else is described rather than quoted.
+func (l *autonomousLoop) offeredName(tool string) string {
+	if _, _, offered := toolNamed(selections(l.offered), tool); offered {
+		return tool
+	}
+	return "a tool that is not offered"
+}
+
+// announceToolStarted says which read is about to happen and where it is going, resolving
+// the integration from the offered sources with the same lookup the execution itself uses,
+// so the event names the source the read actually reaches.
+func (l *autonomousLoop) announceToolStarted(
+	ctx context.Context, call AgentCall, ordinal int,
+) {
+	integration, name := "", ""
+	if source, _, offered := toolNamed(selections(l.offered), call.Tool); offered {
+		integration = source.integration.ID.String()
+		name = source.integration.Name
+	}
+	payload := toolStartedPayload(ToolRun{
+		Ordinal: ordinal, Tool: call.Tool, Arguments: call.Arguments,
+	}, integration)
+	if name != "" {
+		payload["integration"] = name
+	}
+	l.runner.announce(ctx, l.events, EventToolStarted, payload)
 }
 
 // record writes one run into the provenance, in ordinal order.
@@ -249,22 +327,28 @@ func (l *autonomousLoop) firedCeiling(ctx context.Context, turn, stagnant int) s
 		return StoppedByWallClock
 	case stagnant >= maxStagnantTurns:
 		return StoppedByStagnation
+	// The transcript alone would outgrow the model's working budget. Within one turn
+	// there is no surgery: per-result caps already bound each read, and if the whole
+	// still crosses the line the conclusion is FORCED rather than the turn failing or
+	// being silently cut. One mechanism, at one level, is the whole design.
+	case l.budget > 0 && l.carried >= l.budget:
+		return StoppedByContext
 	default:
 		return ""
 	}
 }
 
-// nextMove asks the conversation for its next move under the per-turn deadline.
+// nextMove asks the Exchange for its next move under the per-turn deadline.
 func (l *autonomousLoop) nextMove(
-	ctx context.Context, conversation Conversation, results []CallResult,
+	ctx context.Context, exchange Exchange, results []CallResult,
 	mustConclude bool, reason string,
 ) (Move, error) {
 	moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 	defer done()
-	return conversation.Next(moveCtx, results, mustConclude, reason)
+	return exchange.Next(moveCtx, results, mustConclude, reason)
 }
 
-// failureReason renders a conversation error as the recordable failure reason: the
+// failureReason renders an Exchange error as the recordable failure reason: the
 // loop's own sentinels speak for themselves, anything else came from the model boundary.
 func failureReason(err error) string {
 	if errors.Is(err, errProvenance) || errors.Is(err, errNoConclusion) {
@@ -274,27 +358,40 @@ func failureReason(err error) string {
 }
 
 // conclude checks the conclusion and writes it, with the ceiling that forced it —
-// empty when the model concluded freely. The scale of the conversation — turns taken,
+// empty when the model concluded freely. The scale of the Exchange — turns taken,
 // reads executed — is context-size instrumentation, emitted here because the loop is
 // the only place that knows both numbers.
 func (r *Runner) conclude(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	conclusion Conclusion, runs, turns, executed int, stoppedBy string, spend Spend,
+	events *stream, conclusion Conclusion, runs, turns, executed int, stoppedBy string,
+	spend Spend,
 ) {
 	if citation := checkCitations(conclusion.Findings, runs); citation != "" {
-		r.fail(ctx, organization, id, citation, spend)
+		r.fail(ctx, organization, id, events, citation, spend)
 		return
 	}
 	writeCtx, done := writeWindow(ctx)
 	defer done()
 	if err := r.Store.ConcludeInvestigation(writeCtx, organization, id,
-		conclusion.Findings, boundNextSteps(conclusion.NextSteps), stoppedBy,
-		spend); err != nil {
+		Conclusion{
+			Answer:    bounded(conclusion.Answer, MaxAnswerLength),
+			Findings:  conclusion.Findings,
+			NextSteps: boundNextSteps(conclusion.NextSteps),
+		}, stoppedBy, spend); err != nil {
 		r.Logger.Error("an investigation's conclusion could not be recorded",
 			slog.String("investigation_id", id.String()),
 			slog.String("error", err.Error()))
 		return
 	}
+	// The answer as one checkpoint, then the terminal event. Today's providers deliver the
+	// concluding document whole, so there is one delta and it is final; the shape is the
+	// streaming one, so a provider that later delivers it in pieces changes nothing a
+	// reader has to learn.
+	if conclusion.Answer != "" {
+		r.announce(writeCtx, events, EventAnswerDelta,
+			answerDeltaPayload(conclusion.Answer, true))
+	}
+	r.announce(writeCtx, events, EventConcluded, concludedPayload(conclusion, stoppedBy))
 	r.Logger.Info("investigation concluded",
 		slog.String("investigation_id", id.String()),
 		slog.Int("turns", turns),
@@ -355,6 +452,44 @@ func callIdentityOf(call AgentCall) string {
 	return call.Tool + " " + string(encoded)
 }
 
+// orientationTokens estimates what an orientation costs before a single read has happened.
+// The tool definitions are counted too, because a catalog of forty tools is not free and a
+// budget that ignored them would be a budget that overflowed on the tools alone.
+func orientationTokens(oriented Orientation) int {
+	total := EstimateTokens(oriented.Subject) + EstimateTokens(oriented.Question)
+	for _, identity := range oriented.Inventory {
+		total += EstimateTokens(identity)
+	}
+	for _, source := range oriented.Sources {
+		total += EstimateTokens(source.Integration.Name)
+		for _, tool := range source.Tools {
+			total += EstimateTokens(tool.Name) + EstimateTokens(tool.Description) +
+				EstimateTokens(tool.WhenToUse) + EstimateTokens(tool.WhenNotToUse)
+		}
+	}
+	if oriented.Brief != nil {
+		total += briefTokens(*oriented.Brief)
+	}
+	return total
+}
+
+// runTokens estimates what feeding one result back costs. The CONTENT is what fills a
+// transcript — the summary is one line and the payload is everything the vendor returned —
+// so it is what the estimate is mostly of.
+func runTokens(run ToolRun) int {
+	total := EstimateTokens(run.Tool) + EstimateTokens(run.Summary) +
+		EstimateTokens(run.Error)
+	for _, source := range run.Sources {
+		total += EstimateTokens(source)
+	}
+	if run.Content != nil {
+		if encoded, err := json.Marshal(run.Content); err == nil {
+			total += EstimateTokens(string(encoded))
+		}
+	}
+	return total
+}
+
 // concludeReason says why reads are over, written for the model to act on.
 func concludeReason(stoppedBy string, offered int) string {
 	if offered == 0 {
@@ -371,6 +506,8 @@ func concludeReason(stoppedBy string, offered int) string {
 		return "The investigation's time is nearly over."
 	case StoppedByStagnation:
 		return "Your recent reads produced no new evidence."
+	case StoppedByContext:
+		return "This turn has filled the working context available to it."
 	default:
 		return ""
 	}
@@ -401,7 +538,7 @@ func boundNextSteps(steps []string) []string {
 // orientation, never fails the investigation.
 func (r *Runner) orientation(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
-	offered []OfferedSource,
+	offered []OfferedSource, events *stream,
 ) Orientation {
 	oriented := Orientation{
 		Subject:     opened.Subject,
@@ -409,6 +546,10 @@ func (r *Runner) orientation(
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Sources:     offered,
+		// What the Conversation has established so far, compacted on the way in if it has
+		// outgrown the budget. Nil for a single-shot investigation, which has nothing to
+		// continue from.
+		Brief: r.conversationBrief(ctx, organization, opened, events),
 	}
 	if opened.EpisodeID != uuid.Nil {
 		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {

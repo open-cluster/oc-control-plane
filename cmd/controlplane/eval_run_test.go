@@ -27,6 +27,28 @@ type evalRecord struct {
 	// DistractorIntegrations are the integration ids seeded as irrelevant, so scoring
 	// can count reads against them.
 	DistractorIntegrations []string `json:"distractorIntegrations,omitempty"`
+
+	// Answer is the direct reply the last turn gave. Empty for an alert-triggered
+	// investigation, which was asked nothing and owes no prose.
+	Answer string `json:"answer,omitempty"`
+	// Turns is the per-turn breakdown of a conversation. The fields above stay the union
+	// across turns, so an incident case is scored exactly as it was before conversations
+	// existed.
+	Turns []evalTurn `json:"turns,omitempty"`
+	// Compactions is how many times the conversation was compacted, counted from the
+	// turns' own event streams rather than from anything the model said.
+	Compactions int `json:"compactions,omitempty"`
+}
+
+// evalTurn is one turn of a conversation: what was asked, what came back, and the reads
+// that turn made.
+type evalTurn struct {
+	Turn     int           `json:"turn"`
+	Question string        `json:"question"`
+	Answer   string        `json:"answer"`
+	Status   string        `json:"status"`
+	Findings []evalFinding `json:"findings"`
+	Runs     []evalRun     `json:"runs"`
 }
 
 type evalFinding struct {
@@ -67,11 +89,27 @@ type evalModel struct {
 	BaseURL  string
 }
 
-// runEvalCase executes one case and returns its record. Each case gets its own plane and
-// database; the fakes are the case's own, so worlds cannot bleed into each other.
+// runEvalCase executes one case and returns its record. A case with a question is a
+// CONVERSATION and is asked through the operator surface; every other case is an incident
+// and arrives as an alert. Both run against the same world and are scored by the same
+// scorer, because what an investigation is worth does not depend on what triggered it.
 func runEvalCase(
 	t *testing.T, one evalCase, model evalModel, investigator investigation.Investigator,
 ) evalRecord {
+	t.Helper()
+
+	world, distractors := startEvalWorld(t, one, model, investigator)
+	if one.Question != "" {
+		return runEvalConversation(t, world, one, distractors, investigator)
+	}
+	return runEvalIncident(t, world, one, distractors, investigator)
+}
+
+// startEvalWorld brings up one case's whole plane: its own database, its own vendor fakes,
+// and the integrations it is meant to read - plus the distractors it is meant not to.
+func startEvalWorld(
+	t *testing.T, one evalCase, model evalModel, investigator investigation.Investigator,
+) (*integrationPlane, []string) {
 	t.Helper()
 
 	slackFake := newEvalSlackFake(t, one.Workspaces)
@@ -97,6 +135,16 @@ func runEvalCase(
 		cfg.GitHubAPIURL = githubFake.URL
 		cfg.GitHubAppID = "12345"
 		cfg.GitHubAppKey = appKeyPEM(t)
+		// A question needs the surface it is asked through, and a long conversation
+		// needs a window small enough to overflow on a modest transcript rather than a
+		// bought one.
+		cfg.ConversationsEnabled = one.Question != ""
+		if one.ContextWindow > 0 {
+			cfg.ModelContextWindow = one.ContextWindow
+		}
+		if one.ContextThresholdPercent > 0 {
+			cfg.ContextThresholdPercent = one.ContextThresholdPercent
+		}
 		if model.Provider != "" {
 			cfg.ModelProvider = model.Provider
 			cfg.ModelName = model.Name
@@ -110,13 +158,17 @@ func runEvalCase(
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,
 	}
 
-	if status, body := world.createSlack(t, "Payments Team Slack",
-		evalPrimaryToken); status != http.StatusCreated {
-		t.Fatalf("creating the slack integration = %d: %s", status, body)
+	if len(one.Workspaces) > 0 {
+		if status, body := world.createSlack(t, "Payments Team Slack",
+			evalPrimaryToken); status != http.StatusCreated {
+			t.Fatalf("creating the slack integration = %d: %s", status, body)
+		}
 	}
-	if status, body := world.createGitHub(t, "Payments GitHub",
-		mustAtoi(t, evalPrimaryInstallation)); status != http.StatusCreated {
-		t.Fatalf("creating the github integration = %d: %s", status, body)
+	if len(one.Installations) > 0 {
+		if status, body := world.createGitHub(t, "Payments GitHub",
+			mustAtoi(t, evalPrimaryInstallation)); status != http.StatusCreated {
+			t.Fatalf("creating the github integration = %d: %s", status, body)
+		}
 	}
 
 	var distractors []string
@@ -129,6 +181,16 @@ func runEvalCase(
 			mustAtoi(t, one.DistractorInstallation))
 		distractors = append(distractors, createdIntegrationID(t, status, body))
 	}
+
+	return world, distractors
+}
+
+// runEvalIncident delivers the case's alert and reads the one investigation it opens.
+func runEvalIncident(
+	t *testing.T, world *integrationPlane, one evalCase, distractors []string,
+	investigator investigation.Investigator,
+) evalRecord {
+	t.Helper()
 
 	episode := world.evalOpenEpisode(t, one.Alertname, one.Labels)
 	status, body := world.call(t, http.MethodPost, world.base(surfaceOrg)+"/investigations",
@@ -145,14 +207,7 @@ func runEvalCase(
 	final := world.awaitInvestigationWithin(t, opened.ID, evalCaseTimeout(investigator))
 	elapsed := time.Since(started)
 
-	var read struct {
-		Status   string        `json:"status"`
-		Error    string        `json:"error"`
-		Findings []evalFinding `json:"findings"`
-		Spend    evalSpend     `json:"spend"`
-		Sources  []evalSource  `json:"sources"`
-		Runs     []evalRun     `json:"runs"`
-	}
+	var read evalTurnRead
 	decodeInto(t, final, &read)
 
 	return evalRecord{
@@ -166,6 +221,90 @@ func runEvalCase(
 		Spend:                  read.Spend,
 		DistractorIntegrations: distractors,
 	}
+}
+
+// runEvalConversation asks the case's question, then each follow-up, one turn at a time.
+// The aggregate fields are the union across turns, so the scorer that grades an incident
+// grades this without knowing which it is looking at.
+func runEvalConversation(
+	t *testing.T, world *integrationPlane, one evalCase, distractors []string,
+	investigator investigation.Investigator,
+) evalRecord {
+	t.Helper()
+
+	record := evalRecord{Case: one.Name, DistractorIntegrations: distractors}
+	started := time.Now()
+
+	conversation, turn := world.openConversation(t, one.Question, one.Question)
+	if turn == "" {
+		t.Fatal("opening a conversation with a question opened no turn")
+	}
+
+	for position, question := range append([]string{one.Question}, one.FollowUps...) {
+		if position > 0 {
+			opened, queued := world.say(t, conversation, question)
+			if queued || opened == "" {
+				t.Fatalf("turn %d was queued behind a run that had already ended",
+					position+1)
+			}
+			turn = opened
+		}
+		body := world.awaitInvestigationWithin(t, turn, evalCaseTimeout(investigator))
+
+		var read evalTurnRead
+		decodeInto(t, body, &read)
+		record.Turns = append(record.Turns, evalTurn{
+			Turn: position + 1, Question: question, Answer: read.Answer,
+			Status: read.Status, Findings: read.Findings, Runs: read.Runs,
+		})
+
+		// The aggregate is the union. Run ordinals are per-investigation, so a finding
+		// and the runs it cites stay together: a cause is only ever scored against the
+		// turn that made it.
+		record.Status = read.Status
+		record.Error = read.Error
+		record.Answer = read.Answer
+		record.Findings = append(record.Findings, read.Findings...)
+		record.Runs = append(record.Runs, read.Runs...)
+		record.Sources = append(record.Sources, read.Sources...)
+		record.Spend.InputTokens += read.Spend.InputTokens
+		record.Spend.OutputTokens += read.Spend.OutputTokens
+		record.Spend.MicroCents += read.Spend.MicroCents
+		record.Compactions += countCompactions(t, world, turn)
+	}
+	record.WallClock = time.Since(started)
+	return record
+}
+
+// evalTurnRead is one ended investigation as the operator surface returns it.
+type evalTurnRead struct {
+	Status   string        `json:"status"`
+	Error    string        `json:"error"`
+	Answer   string        `json:"answer"`
+	Findings []evalFinding `json:"findings"`
+	Spend    evalSpend     `json:"spend"`
+	Sources  []evalSource  `json:"sources"`
+	Runs     []evalRun     `json:"runs"`
+}
+
+// countCompactions reads one turn's event stream and counts what it says about memory.
+// It is counted from the STREAM rather than from anything the model said, because the
+// whole point of the measure is that it does not rely on the model being honest about it.
+func countCompactions(t *testing.T, world *integrationPlane, id string) int {
+	t.Helper()
+
+	status, body := world.call(t, http.MethodGet,
+		world.base(surfaceOrg)+"/investigations/"+id+"/events", nil)
+	if status != http.StatusOK {
+		t.Fatalf("reading the event stream = %d: %s", status, body)
+	}
+	compactions := 0
+	for _, event := range parseEventStream(t, body) {
+		if event.kind == "compacted" {
+			compactions++
+		}
+	}
+	return compactions
 }
 
 // evalCaseTimeout sizes the wait for the model at the boundary: a scripted conversation

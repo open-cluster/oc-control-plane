@@ -19,7 +19,7 @@ import (
 )
 
 // The runner shell against an in-memory store and stub tools: the guarantees every
-// investigation shares whatever the conversation does — audited credential unseals,
+// investigation shares whatever the exchange does — audited credential unseals,
 // honest failed runs, the concurrency cap, and the window handed to every tool.
 
 // memoryStore keeps one investigation's provenance in memory.
@@ -30,6 +30,13 @@ type memoryStore struct {
 	inventory    []string
 	sources      []Source
 	runs         []ToolRun
+	answer       string
+	drained      []uuid.UUID
+	drainOpens   bool
+	brief        Brief
+	briefFails   bool
+	endRefused   bool
+	summaries    []recordedSummary
 	findings     []Finding
 	nextSteps    []string
 	stoppedBy    string
@@ -83,14 +90,58 @@ func (m *memoryStore) RecordToolRun(
 }
 
 func (m *memoryStore) ConcludeInvestigation(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, findings []Finding,
-	nextSteps []string, stoppedBy string, spend Spend,
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, conclusion Conclusion,
+	stoppedBy string, spend Spend,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.status, m.findings, m.stoppedBy, m.spend = StatusConcluded, findings, stoppedBy, spend
-	m.nextSteps = nextSteps
+	m.status, m.stoppedBy, m.spend = StatusConcluded, stoppedBy, spend
+	m.answer, m.findings, m.nextSteps = conclusion.Answer, conclusion.Findings,
+		conclusion.NextSteps
 	return nil
+}
+
+// brief is what a scripted conversation contributes to its next turn, and summaries
+// records every compaction the runner performed.
+func (m *memoryStore) ConversationBrief(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ int,
+) (Brief, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.briefFails {
+		return Brief{}, errors.New("the brief could not be read")
+	}
+	return m.brief, nil
+}
+
+func (m *memoryStore) RecordConversationSummary(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, summary Summary,
+	before, after int, model string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.summaries = append(m.summaries, recordedSummary{
+		summary: summary, before: before, after: after, model: model,
+	})
+	return nil
+}
+
+// recordedSummary is one compaction as the store saw it.
+type recordedSummary struct {
+	summary Summary
+	before  int
+	after   int
+	model   string
+}
+
+// drained records every conversation the runner tried to take up at a terminal boundary.
+func (m *memoryStore) DrainConversation(
+	_ context.Context, _ tenancy.Organization, conversation uuid.UUID, _ time.Duration,
+) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.drained = append(m.drained, conversation)
+	return m.drainOpens, nil
 }
 
 func (m *memoryStore) FailInvestigation(
@@ -98,6 +149,11 @@ func (m *memoryStore) FailInvestigation(
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.endRefused {
+		// What the guarded update answers when the row is no longer running, which is
+		// what the sweeper having got there first looks like from here.
+		return ErrUnknown
+	}
 	m.status, m.failReason, m.spend = StatusFailed, reason, spend
 	return nil
 }
@@ -200,7 +256,7 @@ func TestACredentialUnsealIsOnTheRecordBeforeTheToolRuns(t *testing.T) {
 		presented = append(presented, request.Credential)
 		return integrations.ToolResult{Content: []string{"x"}}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{
 			{ID: "c1", Tool: "stub.read", Arguments: map[string]any{"page": float64(1)}},
 			{ID: "c2", Tool: "stub.read", Arguments: map[string]any{"page": float64(2)}},
@@ -213,7 +269,7 @@ func TestACredentialUnsealIsOnTheRecordBeforeTheToolRuns(t *testing.T) {
 
 	runner := &Runner{
 		Store: store, Catalog: catalog, Sealer: sealer,
-		Investigator: &scriptedInvestigator{conversation: conversation},
+		Investigator: &scriptedInvestigator{exchange: exchange},
 		Logger:       slog.New(slog.DiscardHandler),
 	}
 	organization, err := tenancy.NewOrganization("org-test")
@@ -257,14 +313,14 @@ func TestAnUnrecordableUnsealMeansTheCredentialIsNotUsed(t *testing.T) {
 		t.Error("the tool ran although the unseal could not be recorded")
 		return integrations.ToolResult{}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read"}}},
 		{Conclusion: &Conclusion{}},
 	}}
 
 	runner := &Runner{
 		Store: store, Catalog: catalog, Sealer: sealer,
-		Investigator: &scriptedInvestigator{conversation: conversation},
+		Investigator: &scriptedInvestigator{exchange: exchange},
 		Logger:       slog.New(slog.DiscardHandler),
 	}
 	organization, err := tenancy.NewOrganization("org-test")
@@ -286,12 +342,12 @@ func TestACallNamingNoOfferedToolIsAFailedRunNotACrash(t *testing.T) {
 	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "c1", Tool: "github.read_commits"}}},
 		{Conclusion: &Conclusion{}},
 	}}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if len(store.runs) != 1 || store.runs[0].Outcome != RunFailed ||
 		!strings.Contains(store.runs[0].Error, "offer") {
@@ -304,12 +360,12 @@ func TestACallNamingNoOfferedToolIsAFailedRunNotACrash(t *testing.T) {
 }
 
 // investigatorFunc adapts a function to the boundary, for the one test that needs to
-// block inside a conversation.
-type investigatorFunc func(context.Context, Orientation) (Conversation, error)
+// block inside a exchange.
+type investigatorFunc func(context.Context, Orientation) (Exchange, error)
 
-func (f investigatorFunc) OpenConversation(
+func (f investigatorFunc) OpenExchange(
 	ctx context.Context, orientation Orientation,
-) (Conversation, error) {
+) (Exchange, error) {
 	return f(ctx, orientation)
 }
 
@@ -339,7 +395,7 @@ func TestTheRunnerReportsItsConcurrencyCap(t *testing.T) {
 		Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler),
 		Investigator: investigatorFunc(func(
 			context.Context, Orientation,
-		) (Conversation, error) {
+		) (Exchange, error) {
 			return blocking, nil
 		}),
 	}
@@ -373,7 +429,7 @@ func TestTheToolReceivesTheInvestigationWindowAndCredential(t *testing.T) {
 		seen = request
 		return integrations.ToolResult{Content: []string{"x"}}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read", Arguments: map[string]any{}}}},
 		{Conclusion: &Conclusion{Findings: []Finding{{
 			Statement: "s", Kind: FindingSymptom, Confidence: ConfidencePossible,
@@ -381,7 +437,7 @@ func TestTheToolReceivesTheInvestigationWindowAndCredential(t *testing.T) {
 		}}}},
 	}}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if seen.WindowFrom.IsZero() || seen.WindowUntil.IsZero() {
 		t.Error("the tool ran without the investigation's window; nothing could clamp to it")

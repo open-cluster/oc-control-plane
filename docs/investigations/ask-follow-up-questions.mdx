@@ -1,0 +1,94 @@
+---
+title: "Ask follow-up questions"
+description: "Keep narrowing a problem in one conversation instead of starting over each time."
+---
+
+A conversation lets you keep asking. Each question you send opens an investigation, and
+every investigation after the first already knows what the ones before it read, what you
+told it to focus on, and what has already been ruled out.
+
+Use a conversation when one question is not the whole question: narrowing a cause,
+checking what contradicts a theory, or asking something operational outside an incident.
+
+## Prerequisites
+
+- The deployment has conversations enabled.
+- The deployment has a configured and consented model provider.
+- You have the **Editor** or **Admin** role.
+
+## Start a conversation
+
+Open a conversation with a subject, and optionally the incident it is about. A conversation
+started from an incident already knows the alert, so you do not have to describe it.
+
+Send your first question and OpenCluster starts investigating. Send another when the answer
+arrives, and it continues from where the last one stopped.
+
+Several people can take part in one conversation, and every message records who sent it.
+Two people looking at the same incident can also hold separate conversations, so one line of
+questioning does not derail another.
+
+## What a follow-up already knows
+
+| Carried forward | Why it matters |
+| --- | --- |
+| What earlier questions established | The answer is not re-read and not paid for twice. |
+| The reads behind each of those facts | You can still check any claim, however old. |
+| Instructions you gave | "Ignore the database, look at deployments" keeps holding. |
+| Hypotheses already ruled out | A dead end stays closed unless new evidence reopens it. |
+| Questions left unanswered | What was not settled is not quietly forgotten. |
+| The services and resources already read | A follow-up does not rediscover your estate. |
+
+What is **not** carried forward is another conversation's messages. Two conversations about
+one incident share the incident, never each other.
+
+## Ask something that is not an incident
+
+A conversation is also how you ask an operational question in peacetime — "which version is
+currently deployed?" — and get a direct answer rather than a causal report. The answer still
+cites the reads that support it.
+
+## Send a message while OpenCluster is working
+
+You do not have to wait for a green light. A message sent mid-investigation is accepted and
+taken up as soon as the current one finishes. Send three and they are answered together, as
+one question in three parts, rather than as three competing investigations.
+
+The response tells you which happened: either the investigation it started, or that it was
+queued.
+
+## Watch an investigation as it runs
+
+Each investigation publishes an ordered stream of what it is doing: which read is running
+against which integration, what each read returned in one line, when one failed, and the
+answer as it is produced.
+
+You can close the page and come back. The stream resumes exactly where you stopped — nothing
+missed and nothing repeated.
+
+The stream never contains the model's private reasoning. Every line is written by
+OpenCluster from what it did, not by the model describing itself.
+
+## Long conversations
+
+A conversation that runs for hours keeps working. When the record of it grows past what the
+model can hold, OpenCluster consolidates the older part into a structured summary: the goal,
+your instructions in your own words, established facts with their citations, what was ruled
+out, and what is still open. The full transcript is never edited or deleted — only what the
+model carries changes.
+
+If a single question is too large to answer inside that budget, the investigation concludes
+with what it established and says it stopped for context, exactly as it does for any other
+limit. A partial answer is never presented as a finished one.
+
+## When something goes wrong
+
+| What you see | What it means |
+| --- | --- |
+| The message was queued | An investigation is still running. Yours is next. |
+| Too many investigations waiting | Your organization is at its limit. Wait for one to finish. |
+| An investigation stopped for `context` | The question filled the working context. Ask a narrower one. |
+| An investigation failed with "the worker running this investigation stopped" | OpenCluster restarted mid-run. Ask again; nothing was lost from the record. |
+
+See [Understand findings and citations](/investigations/findings-and-citations) for what a
+finding's type and confidence mean.

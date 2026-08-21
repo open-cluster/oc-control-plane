@@ -22,9 +22,9 @@ import (
 var _ investigation.Store = (*Placements)(nil)
 
 const investigationColumns = `investigation_id, episode_id, integration_id, question,
-	       subject, window_from, window_until, status, findings, next_steps, stopped_by,
-	       error, spend_input_tokens, spend_output_tokens, spend_micro_cents,
-	       created_by, created_at, concluded_at`
+	       conversation_id, turn, subject, window_from, window_until, status, answer,
+	       findings, next_steps, stopped_by, error, spend_input_tokens,
+	       spend_output_tokens, spend_micro_cents, created_by, created_at, concluded_at`
 
 // CreateInvestigation records one, born running. Opening is an operator act and lands in
 // the audit record; everything the runner writes afterwards is the investigation's own
@@ -275,24 +275,23 @@ func (p *Placements) RecordToolRun(
 	return nil
 }
 
-// ConcludeInvestigation ends one with its findings and spend. stoppedBy names the
-// ceiling that forced the concluding turn, empty when the model concluded freely;
-// nextSteps are the conclusion's recommended actions, nil when it carries none.
+// ConcludeInvestigation ends one with its concluding document and spend. stoppedBy
+// names the ceiling that forced the concluding turn, empty when the model concluded
+// freely.
 func (p *Placements) ConcludeInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	findings []investigation.Finding, nextSteps []string, stoppedBy string,
-	spend investigation.Spend,
+	conclusion investigation.Conclusion, stoppedBy string, spend investigation.Spend,
 ) error {
-	encoded, err := json.Marshal(orEmptyFindings(findings))
+	encoded, err := json.Marshal(orEmptyFindings(conclusion.Findings))
 	if err != nil {
 		return fmt.Errorf("encoding findings: %w", err)
 	}
-	steps, err := json.Marshal(orEmptyStrings(nextSteps))
+	steps, err := json.Marshal(orEmptyStrings(conclusion.NextSteps))
 	if err != nil {
 		return fmt.Errorf("encoding next steps: %w", err)
 	}
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusConcluded),
-		encoded, steps, stoppedBy, "", spend)
+		conclusion.Answer, encoded, steps, stoppedBy, "", spend)
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
@@ -301,14 +300,14 @@ func (p *Placements) FailInvestigation(
 	reason string, spend investigation.Spend,
 ) error {
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
-		[]byte("[]"), []byte("[]"), "", reason, spend)
+		"", []byte("[]"), []byte("[]"), "", reason, spend)
 }
 
 // endInvestigation is the one write both endings share. Guarded on the row still
 // running, so an investigation cannot be ended twice.
 func (p *Placements) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	status int16, findings, nextSteps []byte, stoppedBy, reason string,
+	status int16, answer string, findings, nextSteps []byte, stoppedBy, reason string,
 	spend investigation.Spend,
 ) error {
 	pool, err := p.Pool(organization)
@@ -318,17 +317,23 @@ func (p *Placements) endInvestigation(
 	tag, err := pool.Exec(ctx, `
 		UPDATE investigation
 		   SET status              = $3,
-		       findings            = $4,
-		       next_steps          = $5,
-		       stopped_by          = $6,
-		       error               = $7,
-		       spend_input_tokens  = $8,
-		       spend_output_tokens = $9,
-		       spend_micro_cents   = $10,
-		       concluded_at        = now()
+		       answer              = $4,
+		       findings            = $5,
+		       next_steps          = $6,
+		       stopped_by          = $7,
+		       error               = $8,
+		       spend_input_tokens  = $9,
+		       spend_output_tokens = $10,
+		       spend_micro_cents   = $11,
+		       concluded_at        = now(),
+		       -- The lease goes with the ending. A terminal investigation is nobody's to
+		       -- hold, and leaving one behind would make the sweeper reason about work
+		       -- that is already finished.
+		       lease_worker        = '',
+		       lease_expires_at    = NULL
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1`,
-		id, organization.String(), status, findings, nextSteps, stoppedBy, reason,
-		spend.InputTokens, spend.OutputTokens, spend.MicroCents)
+		id, organization.String(), status, answer, findings, nextSteps, stoppedBy,
+		reason, spend.InputTokens, spend.OutputTokens, spend.MicroCents)
 	if err != nil {
 		return fmt.Errorf("ending an investigation: %w", err)
 	}
@@ -441,19 +446,28 @@ func (p *Placements) InvestigationCandidates(
 
 func scanInvestigation(row scanned, organization string) (investigation.Investigation, error) {
 	var (
-		found         = investigation.Investigation{OrgID: organization}
-		episodeID     *uuid.UUID
-		integrationID *uuid.UUID
-		findings      []byte
-		nextSteps     []byte
-		concludedAt   *time.Time
+		found          = investigation.Investigation{OrgID: organization}
+		episodeID      *uuid.UUID
+		integrationID  *uuid.UUID
+		conversationID *uuid.UUID
+		turn           *int
+		findings       []byte
+		nextSteps      []byte
+		concludedAt    *time.Time
 	)
 	if err := row.Scan(&found.ID, &episodeID, &integrationID, &found.Question,
-		&found.Subject, &found.WindowFrom, &found.WindowUntil, &found.Status, &findings,
-		&nextSteps, &found.StoppedBy, &found.Error, &found.Spend.InputTokens,
+		&conversationID, &turn, &found.Subject, &found.WindowFrom, &found.WindowUntil,
+		&found.Status, &found.Answer, &findings, &nextSteps, &found.StoppedBy,
+		&found.Error, &found.Spend.InputTokens,
 		&found.Spend.OutputTokens, &found.Spend.MicroCents, &found.CreatedBy,
 		&found.CreatedAt, &concludedAt); err != nil {
 		return investigation.Investigation{}, err
+	}
+	if conversationID != nil {
+		found.ConversationID = *conversationID
+	}
+	if turn != nil {
+		found.Turn = *turn
 	}
 	if len(nextSteps) > 0 {
 		if err := json.Unmarshal(nextSteps, &found.NextSteps); err != nil {

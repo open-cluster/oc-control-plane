@@ -50,6 +50,13 @@ const (
 	InvestigationRead Permission = "investigation.read"
 	InvestigationOpen Permission = "investigation.open"
 
+	// Conversations: the multi-turn context a person talks to. Writing covers opening one
+	// and sending a message to one, because both do the same thing — a message opens a
+	// turn, and a turn is an investigation. It is granted exactly where investigation.open
+	// is, since anyone who may spend the budget once may spend it twice in a row.
+	ConversationRead  Permission = "conversation.read"
+	ConversationWrite Permission = "conversation.write"
+
 	// Identity: who may sign in, as what, and under what policy.
 	IdentityRead      Permission = "identity.read"
 	IdentityConfigure Permission = "identity.configure"
@@ -80,6 +87,7 @@ var allPermissions = []Permission{
 	RelayRead, RelayConflictClear, RelayBootstrapIssue,
 	IncidentRead, IncidentMerge,
 	InvestigationRead, InvestigationOpen,
+	ConversationRead, ConversationWrite,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,
 	DirectorySync,

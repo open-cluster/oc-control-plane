@@ -35,6 +35,9 @@ type Handlers struct {
 	Store  Store
 	Runner *Runner
 	Logger *slog.Logger
+	// Events replays what an investigation has already emitted, for the stream route.
+	// Nil serves that one route a plain refusal and leaves everything else working.
+	Events EventReader
 	// WindowLead widens an investigation's window before the incident began: the change
 	// that caused an incident usually landed before it fired. Configuration, because the
 	// right lead follows an organization's deploy cadence, not a constant.
@@ -52,6 +55,11 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.open)),
 		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}",
 			authz.InvestigationRead, http.HandlerFunc(h.read)),
+		// Watching an investigation run is reading it. There is no second permission,
+		// because the stream says nothing the finished record will not say — it says it
+		// while there is still something to watch.
+		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/events",
+			authz.InvestigationRead, http.HandlerFunc(h.streamEvents)),
 	}
 }
 

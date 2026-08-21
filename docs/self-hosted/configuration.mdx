@@ -86,6 +86,27 @@ no credential at all.
 | `OC_INVESTIGATION_MAX_TOOL_RUNS` | No | Maximum source reads. Default: `30`. |
 | `OC_INVESTIGATION_MAX_TURNS` | No | Maximum reasoning turns. Default: `20`. |
 
+## Conversations
+
+Conversations let an operator ask follow-up questions in one context. They are off until
+you turn them on; single-shot investigations are unaffected either way.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_CONVERSATIONS_ENABLED` | No | `true` serves the conversation routes. Default: `false`, and every conversation route answers `404`. |
+| `OC_ORG_MAX_CONCURRENT_INVESTIGATIONS` | No | Investigations one organization may run at once. Default: `4`. |
+| `OC_ORG_MAX_WAITING_INVESTIGATIONS` | No | Investigations one organization may queue behind those. Opening past it is refused. Default: `16`. |
+| `OC_MODEL_CONTEXT_WINDOW` | No | The model's context window in tokens. Default: resolved from the model name, or `128000` for a model this build does not recognise. |
+| `OC_CONTEXT_THRESHOLD_PERCENT` | No | How full a conversation's estimated context may get before older turns are summarized. `1`–`99`. Default: `50`. |
+
+The two per-organization ceilings are what keep one tenant from consuming the deployment.
+Work above the concurrency ceiling waits rather than failing; work above the queue ceiling
+is refused with a plain reason.
+
+Raise `OC_MODEL_CONTEXT_WINDOW` only if you know your model's window is larger than the
+default this build resolves. Setting it too high does not produce an error — it produces
+turns that fail when the provider rejects an oversized request.
+
 Provider consent is deployment-wide. Review [what is sent to the model
 provider](/security/credentials-and-data-access#data-sent-to-the-model-provider) before
 enabling investigations.

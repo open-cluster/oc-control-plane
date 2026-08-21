@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/open-cluster/oc-control-plane/internal/changeledger"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -85,6 +86,18 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"RunSucceeded", int(investigation.RunSucceeded), 1},
 		{"RunFailed", int(investigation.RunFailed), 2},
 
+		// The investigation event stream's vocabulary. The column CHECK is written as a
+		// range, so a value that moved would still be stored and would simply mean
+		// something else to every reader.
+		{"EventStarted", int(investigation.EventStarted), 1},
+		{"EventProgress", int(investigation.EventProgress), 2},
+		{"EventToolStarted", int(investigation.EventToolStarted), 3},
+		{"EventToolCompleted", int(investigation.EventToolCompleted), 4},
+		{"EventAnswerDelta", int(investigation.EventAnswerDelta), 5},
+		{"EventConcluded", int(investigation.EventConcluded), 6},
+		{"EventFailed", int(investigation.EventFailed), 7},
+		{"EventCompacted", int(investigation.EventCompacted), 8},
+
 		// The change ledger's vocabulary. The baseline exclusion in every change query is
 		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
 		// every baseline into a reportable change.
@@ -93,6 +106,17 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"KindDaemonSet", int(changeledger.KindDaemonSet), 3},
 		{"KindConfigMap", int(changeledger.KindConfigMap), 4},
 		{"KindSecret", int(changeledger.KindSecret), 5},
+
+		// A conversation's own vocabularies. Every one is written as a bare literal in
+		// the SQL that reads or writes it, so a constant that moved would silently
+		// re-label rows: a person's message would start reading as the agent's.
+		{"SurfaceWeb", int(conversation.SurfaceWeb), 1},
+		{"StateOpen", int(conversation.StateOpen), 1},
+		{"StateClosed", int(conversation.StateClosed), 2},
+		{"RolePerson", int(conversation.RolePerson), 1},
+		{"RoleAgent", int(conversation.RoleAgent), 2},
+		{"ActorPrincipal", int(conversation.ActorPrincipal), 1},
+		{"ActorExternal", int(conversation.ActorExternal), 2},
 
 		{"ChangeBaseline", int(changeledger.ChangeBaseline), 1},
 		{"ChangeCreated", int(changeledger.ChangeCreated), 2},
@@ -134,6 +158,9 @@ var (
 		int(changeledger.ChangeBaseline), int(changeledger.ChangeCreated),
 		int(changeledger.ChangeModified), int(changeledger.ChangeDeleted),
 	}
+	conversationRoleValues = []int{
+		int(conversation.RolePerson), int(conversation.RoleAgent),
+	}
 )
 
 // enumColumns maps a file in internal/storage to the values its SQL may compare each enum
@@ -162,6 +189,22 @@ var enumColumns = map[string]map[string][]int{
 	// open-episode listing filters on an EPISODE's status; the two enums share the file.
 	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),
 		episodeStatusValues...)},
+	// The brief carries only what CONCLUDED turns established: a running turn has
+	// established nothing yet, and a failed one established nothing at all.
+	"conversation_brief.go": {"status": investigationStatusValues},
+	// Claiming, renewing and sweeping all guard on the investigation still running, and
+	// the recovery sweep fails it — so the file writes an investigation status as a
+	// literal twice, in the two places that mean the most.
+	"investigation_lease.go": {"status": investigationStatusValues},
+	// Opening a turn counts INVESTIGATIONS that are still running and derives the window
+	// from whether the EPISODE is still open, so the same two enums share this file too.
+	// The queued-message reads filter on a MESSAGE's role, because only what a person
+	// said becomes the turn's question.
+	"conversation.go": {
+		"status": append(append([]int(nil), investigationStatusValues...),
+			episodeStatusValues...),
+		"role": conversationRoleValues,
+	},
 	// The ledger opens scopes only for kubernetes Integrations and excludes baselines from
 	// every change query.
 	"change_ledger.go": {
@@ -172,7 +215,9 @@ var enumColumns = map[string]map[string][]int{
 
 // scannedColumns is every column name the gate reads comparisons against. A column absent from
 // this list is invisible to the gate, so extending the persisted vocabulary starts here.
-var scannedColumns = []string{"status", "outcome", "integration_type_id", "change_kind"}
+var scannedColumns = []string{
+	"status", "outcome", "integration_type_id", "change_kind", "role",
+}
 
 // Every integer an enum column is compared against must be a value some constant holds. This
 // catches the literal gate one cannot see: a typed 5 where 4 was meant, or a value invented for

@@ -62,6 +62,7 @@ var reads = map[Permission]bool{
 	RelayRead:          true,
 	IncidentRead:       true,
 	InvestigationRead:  true,
+	ConversationRead:   true,
 	IdentityRead:       true,
 	MemberRead:         true,
 	ServiceAccountRead: true,
@@ -78,7 +79,8 @@ func ReadOnly(permission Permission) bool { return reads[permission] }
 // integrations, the fleet, the incidents, the investigations, and what happened. Identity
 // and automation reads are deliberately not here — who may sign in is the Admin's to see.
 var estateReads = []Permission{
-	IntegrationRead, RelayRead, IncidentRead, InvestigationRead, AuditRead,
+	IntegrationRead, RelayRead, IncidentRead, InvestigationRead, ConversationRead,
+	AuditRead,
 }
 
 // granted is the table. It is the specification of each role, and it is the thing to read
@@ -96,6 +98,7 @@ var granted = map[Role]map[Permission]bool{
 	// secret rotation stay with the Admin — those change what the estate IS.
 	Editor: setOf(append(append([]Permission(nil), estateReads...),
 		IntegrationVerify, IntegrationUpdate, IncidentMerge, InvestigationOpen,
+		ConversationWrite,
 	)...),
 
 	Viewer: setOf(estateReads...),

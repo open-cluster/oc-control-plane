@@ -11,7 +11,7 @@ import (
 )
 
 // Investigations at the composition seam: a real database, a fake vendor where Slack
-// would be, and a scripted conversation at the model boundary. What is asserted is what
+// would be, and a scripted exchange at the model boundary. What is asserted is what
 // an operator relies on: the tool universe the model is offered, subject inference and
 // clarification, honest failure, refusal without a provider, and tenancy.
 
@@ -77,7 +77,7 @@ func (p *integrationPlane) awaitInvestigation(t *testing.T, id string) string {
 // investigator may choose from, so a tool absent there is a capability the model was
 // never offered.
 func TestToolUniverseIsFilteredByVerifiedGrants(t *testing.T) {
-	investigator := &scriptedInvestigatorMain{conversation: &scriptedConversationMain{}}
+	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
 	plane, vendor := autonomousPlaneWith(t, investigator, nil)
 
 	if status, body := plane.createSlack(t, "Payments Bot Slack",
@@ -132,7 +132,7 @@ func TestToolUniverseIsFilteredByVerifiedGrants(t *testing.T) {
 }
 
 func TestInvestigationFromAQuestionInfersTheSubject(t *testing.T) {
-	investigator := &scriptedInvestigatorMain{conversation: &scriptedConversationMain{}}
+	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
 	plane, _ := autonomousPlaneWith(t, investigator, nil)
 	base := plane.base(surfaceOrg)
 
@@ -160,7 +160,7 @@ func TestInvestigationFromAQuestionInfersTheSubject(t *testing.T) {
 
 func TestAnAmbiguousQuestionGetsOneClarificationInPlainLanguage(t *testing.T) {
 	plane, _ := autonomousPlaneWith(t, &scriptedInvestigatorMain{
-		conversation: &scriptedConversationMain{},
+		exchange: &scriptedExchangeMain{},
 	}, nil)
 	base := plane.base(surfaceOrg)
 
@@ -196,11 +196,11 @@ func TestAnAmbiguousQuestionGetsOneClarificationInPlainLanguage(t *testing.T) {
 }
 
 func TestAFailedReasonerFailsTheInvestigationHonestly(t *testing.T) {
-	conversation := &scriptedConversationMain{
+	exchange := &scriptedExchangeMain{
 		failure: investigation.ErrReasonerUnavailable,
 	}
 	plane, _ := autonomousPlaneWith(t,
-		&scriptedInvestigatorMain{conversation: conversation}, nil)
+		&scriptedInvestigatorMain{exchange: exchange}, nil)
 	base := plane.base(surfaceOrg)
 
 	episode := plane.openEpisode(t, "DiskFull", "finger-fail")
@@ -247,7 +247,7 @@ func TestInvestigationsRefuseWhenNoModelProviderIsConfigured(t *testing.T) {
 
 func TestAnotherTenantSeesNoInvestigations(t *testing.T) {
 	plane, _ := autonomousPlaneWith(t, &scriptedInvestigatorMain{
-		conversation: &scriptedConversationMain{},
+		exchange: &scriptedExchangeMain{},
 	}, func(cfg *config.Config) {
 		cfg.Assignments[neighbourOrg] = "shared"
 	})

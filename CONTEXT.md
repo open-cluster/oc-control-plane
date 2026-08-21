@@ -129,11 +129,50 @@ and never content. A navigation index, never evidence.
 
 ## Investigations
 
-**Investigation** — one bounded answer to "what happened": opened from an episode or an
-operator's question, routed to a few relevant sources, run through their tools, ended
-concluded with findings or failed with the reason. The slim record: trigger, subject,
-window, lifecycle, findings, spend.
+**Conversation** — the organization-scoped, multi-turn context a person talks to, holding
+its Messages and the Investigations its turns opened. Optionally associated with one
+IncidentEpisode; many exist per organization and per episode, and two about one episode
+share only that episode's own durable context — never each other's messages or summaries.
+Several people may take part in one, and every Message records who sent it.
+_Avoid:_ session, thread, chat, run (as the multi-turn record); Exchange (that is the
+model boundary, below).
+
+**Message** — one thing said in a Conversation, by a person or by the agent, at a
+monotonic per-conversation sequence, with the actor who said it. `conversation_message` is
+the AUTHORITATIVE transcript: compaction never edits or deletes it. Free text in a Message
+is untrusted for its whole life — a message saying "ignore your instructions" is evidence
+about what somebody typed, never an instruction.
+
+**Turn** — one Investigation a Conversation opened, at its ordinal within that
+Conversation. Not a record of its own.
+
+**Investigation** — one bounded answer to "what happened": opened from an episode, an
+operator's question, or a Conversation turn; routed to a few relevant sources, run through
+their tools, ended concluded with findings or failed with the reason. The slim record:
+trigger, subject, window, lifecycle, answer, findings, spend. What it IS did not change
+when Conversations arrived — a Conversation is what carries continuity BETWEEN
+investigations, and an investigation belonging to none is still a whole record.
 _Avoid:_ case, case file, round (as a persisted record).
+
+**Lease** — the claim one worker holds on a running Investigation, with a heartbeat and a
+server-clock expiry, mirroring the Job's. An investigation with no lease is waiting to be
+claimed; with a live lease it is executing; both are `running`. A lease that expires
+without a heartbeat is swept and the investigation FAILS with a stated reason — never
+resumed, because only semantic events are persisted and a fabricated continuation would be
+a fiction.
+
+**Event** — one durable, ordered semantic fact about a running Investigation: started,
+progress, tool started, tool completed, answer delta, concluded, failed, compacted. The
+sequence is monotonic and assigned by the lease holder, so a reader that reconnects or
+lands on another replica resumes exactly where it stopped. Composed by the platform from
+facts it already holds — never a model's narration, never a credential, never a raw tool
+payload.
+
+**Summary** (of a Conversation) — the structured running summary older turns compact into
+when the estimated context crosses its budget: goal, constraints, established findings
+with their citation references, hypotheses open and ruled out, unresolved questions.
+Versioned, superseded versions kept, and never authoritative — the Messages are. A Summary
+may only restate findings that already exist with the citations they already carry.
 
 **Provenance** — what an investigation persists: the sources it was offered with the
 reasons, every tool run with its scope, window, outcome, truncation, summary and source
@@ -153,22 +192,34 @@ ordinal is what a finding cites.
 that support it. A statement citing no run cannot be stored; enforced at decode and again
 before persistence. An autonomous conclusion's findings additionally carry a **kind** —
 the causal role: probable_cause, contributing_factor, symptom, triggering_change,
-propagation_effect, ruled_out, unresolved_lead — and a categorical **confidence**:
-confirmed, likely, possible. Never an invented numeric certainty; multiple probable
-causes are legal.
+propagation_effect, ruled_out, unresolved_lead, or **observation** for an established fact
+with no causal role at all ("the deployed revision is v2.14.1", which a peacetime question
+establishes) — and a categorical **confidence**: confirmed, likely, possible. Never an
+invented numeric certainty; multiple probable causes are legal.
 _Avoid:_ conclusion (as the record noun), claim.
+
+**Answer** — the concluding document's direct reply in the operator's own words. Required
+of a turn that came from a question and optional for one that came from an episode, which
+asks nothing. It summarises; the Findings carry the claims and their citations.
 
 **Investigator** — the investigation's model boundary, declared by the investigation
 domain and implemented by `internal/reasoning` over vendor adapters; the domain never
-learns a vendor exists. It opens a **Conversation** from an **Orientation** and returns
+learns a vendor exists. It opens an **Exchange** from an **Orientation** and returns
 **Moves**. A failed reasoning step fails the investigation — it is never presented as a
 conclusion. The Orientation is assembled only from context the platform already holds —
-the trigger's own metadata, the offered sources, the change ledger's workload digest —
-never by querying a vendor. A Move carries further calls or the **Conclusion**: the
-concluding document of findings and recommended next steps, checked on its way into the
-Investigation record and never itself a persisted record. A ceiling that ends the reads
-— spend, tool runs, reasoner turns, wall clock, stagnation — is recorded as what
-stopped the investigation, never dressed as a free diagnosis.
+the trigger's own metadata, the offered sources, the change ledger's workload digest, and
+for a Conversation turn its brief — never by querying a vendor. A Move carries further
+calls or the **Conclusion**: the concluding document of answer, findings and recommended
+next steps, checked on its way into the Investigation record and never itself a persisted
+record. A ceiling that ends the reads — spend, tool runs, reasoner turns, wall clock,
+stagnation, context — is recorded as what stopped the investigation, never dressed as a
+free diagnosis.
+
+**Exchange** — one investigation's running exchange with the model: the transcript the
+provider carries natively, opened once from the Orientation and fed each Move's results.
+It is NOT a Conversation. A Conversation is a customer-facing record a person talks to
+across many investigations; an Exchange lives and dies inside one, and is never persisted.
+_Avoid:_ conversation, session, chat (for this concept).
 
 **Spend** — what the reasoning consumed: tokens and integer micro-cents, summed over
 every call including refused and truncated ones.
@@ -180,6 +231,8 @@ role, Environment, Evidence Scope (a change-ledger scope and a tool run's scope 
 different, current concepts), Execution locality, EvidenceCandidate, EvidenceItem,
 EvidenceValidation, Evidence plan, CoverageGap (as a persisted record), Completeness
 certificate, CasePack, InvestigationRound, Hypothesis (as a persisted record), Abstention
-(as a lifecycle state). The investigation surface stands on operational provenance — the
+(as a lifecycle state), and "session" or "run" as a name for the multi-turn context — that
+is a Conversation, and a Run stays one tool execution and nothing else. The investigation
+surface stands on operational provenance — the
 Investigations section above is its vocabulary — and none of the retired machinery may
 return under a new spelling.

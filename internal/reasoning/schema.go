@@ -15,7 +15,7 @@ package reasoning
 
 // SchemaVersion is the version of the documents built here. Bumping it invalidates
 // every recording made against the old shape.
-const SchemaVersion = "4"
+const SchemaVersion = "5"
 
 // The small JSON Schema vocabulary the documents are built from.
 

@@ -36,6 +36,16 @@ const (
 	// spends; the ceiling is a backstop against a runaway, not a steering wheel.
 	// Re-derived from the evaluation suite's measured distributions.
 	defaultModelSpendCeilingCents = 500
+	// A tenant may hold four investigations at once and queue sixteen more. The first
+	// number is what "one tenant cannot consume the whole deployment" means; the second
+	// is what keeps overload boring — work above it is refused with a plain reason rather
+	// than accumulating until something falls over.
+	defaultOrgConcurrentInvestigations = 4
+	defaultOrgWaitingInvestigations    = 16
+	// Half the model's working budget before older turns are compacted. A soft threshold
+	// rather than the ceiling itself: compacting at the edge means the very turn that
+	// triggered it has no room to run.
+	defaultContextThresholdPercent = 50
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
@@ -123,6 +133,25 @@ const (
 	// rather than constants. Unset means the built-in defaults.
 	EnvInvestigationMaxToolRuns = "OC_INVESTIGATION_MAX_TOOL_RUNS"
 	EnvInvestigationMaxTurns    = "OC_INVESTIGATION_MAX_TURNS"
+
+	// EnvConversationsEnabled is the per-deployment switch for the conversation surface.
+	// It is the existing configuration mechanism doing the job of a feature flag, because
+	// a flag platform is a system to operate and this is one boolean.
+	EnvConversationsEnabled = "OC_CONVERSATIONS_ENABLED"
+	// EnvOrgConcurrentInvestigations and EnvOrgWaitingInvestigations are the
+	// per-organization ceilings: how many turns one tenant may have executing at once,
+	// and how many may wait behind them.
+	EnvOrgConcurrentInvestigations = "OC_ORG_MAX_CONCURRENT_INVESTIGATIONS"
+	EnvOrgWaitingInvestigations    = "OC_ORG_MAX_WAITING_INVESTIGATIONS"
+	// EnvModelContextWindow is the model's working context window, in tokens. Empty means
+	// the per-model default table decides, which is what a deployment that has not
+	// thought about it should get. Named for the WINDOW rather than the unit, because a
+	// variable whose name ends in TOKENS reads as a credential to anything scanning for
+	// one — including this repository's own gate.
+	EnvModelContextWindow = "OC_MODEL_CONTEXT_WINDOW"
+	// EnvContextThresholdPercent is how full the estimated context may get before older
+	// turns are compacted into the running summary.
+	EnvContextThresholdPercent = "OC_CONTEXT_THRESHOLD_PERCENT"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
@@ -275,6 +304,19 @@ type Config struct {
 	// window reaches back.
 	InvestigationWindowLead time.Duration
 
+	// ConversationsEnabled turns the conversation surface on. Off by default: the
+	// single-shot investigation path is untouched either way, so a deployment that has
+	// not opted in behaves exactly as it did.
+	ConversationsEnabled bool
+	// OrgConcurrentInvestigations and OrgWaitingInvestigations bound one organization's
+	// executing and queued turns.
+	OrgConcurrentInvestigations int
+	OrgWaitingInvestigations    int
+	// ModelContextWindow is the configured context window in tokens; zero means the
+	// per-model default table decides. ContextThresholdPercent is how full the estimate
+	// may get before compaction.
+	ModelContextWindow      int
+	ContextThresholdPercent int
 	// InvestigationMaxToolRuns and InvestigationMaxTurns are the autonomous loop's
 	// ceilings; zero means the built-in defaults.
 	InvestigationMaxToolRuns int
@@ -323,6 +365,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		ChangeLedgerRetentionDays: defaultChangeLedgerRetentionDays,
 		InvestigationWindowLead:   defaultInvestigationWindowLead,
 		ModelSpendCeilingCents:    defaultModelSpendCeilingCents,
+
+		OrgConcurrentInvestigations: defaultOrgConcurrentInvestigations,
+		OrgWaitingInvestigations:    defaultOrgWaitingInvestigations,
+		ContextThresholdPercent:     defaultContextThresholdPercent,
 	}
 
 	var err error
@@ -416,6 +462,27 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.InvestigationWindowLead, err = optionalDuration(
 		lookup, EnvInvestigationWindowLead, cfg.InvestigationWindowLead); err != nil {
+		return Config{}, err
+	}
+	if cfg.ConversationsEnabled, err = optionalFlag(
+		lookup, EnvConversationsEnabled); err != nil {
+		return Config{}, err
+	}
+	if cfg.OrgConcurrentInvestigations, err = optionalPositiveOr(
+		lookup, EnvOrgConcurrentInvestigations,
+		cfg.OrgConcurrentInvestigations); err != nil {
+		return Config{}, err
+	}
+	if cfg.OrgWaitingInvestigations, err = optionalPositiveOr(
+		lookup, EnvOrgWaitingInvestigations, cfg.OrgWaitingInvestigations); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelContextWindow, err = optionalPositive(
+		lookup, EnvModelContextWindow); err != nil {
+		return Config{}, err
+	}
+	if cfg.ContextThresholdPercent, err = optionalPercent(
+		lookup, EnvContextThresholdPercent, cfg.ContextThresholdPercent); err != nil {
 		return Config{}, err
 	}
 	if cfg.ModelSpendCeilingCents, err = optionalCents(
@@ -575,6 +642,52 @@ func optionalPositive(lookup func(string) (string, bool), key string) (int, erro
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || parsed < 1 {
 		return 0, fmt.Errorf("%s must be a positive whole number", key)
+	}
+	return parsed, nil
+}
+
+// optionalFlag reads a boolean switch. Only the words Go itself accepts are accepted, and
+// anything else is refused rather than read as false: a deployment that meant to turn
+// something on and typed "yes" should learn that, not run with it off.
+func optionalFlag(lookup func(string) (string, bool), key string) (bool, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	return parsed, nil
+}
+
+// optionalPositiveOr is optionalPositive with a default that is not zero.
+func optionalPositiveOr(
+	lookup func(string) (string, bool), key string, fallback int,
+) (int, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 1 {
+		return 0, fmt.Errorf("%s must be a positive whole number", key)
+	}
+	return parsed, nil
+}
+
+// optionalPercent reads a threshold as whole percent, refusing anything outside 1-99. A
+// hundred would compact at the ceiling, which is where there is no room left to compact.
+func optionalPercent(
+	lookup func(string) (string, bool), key string, fallback int,
+) (int, error) {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 1 || parsed > 99 {
+		return 0, fmt.Errorf("%s must be a whole percentage between 1 and 99", key)
 	}
 	return parsed, nil
 }

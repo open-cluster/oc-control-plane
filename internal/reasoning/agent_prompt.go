@@ -105,10 +105,10 @@ func ConcludeDefinition() integrations.ToolDefinition {
 	return integrations.ToolDefinition{
 		Name: ConcludeToolName,
 		Description: "End the investigation with its structured conclusion. Call this " +
-			"exactly once, when your reads are done: findings with their kind, " +
-			"confidence and the run ordinals that support them, and the recommended " +
-			"next steps. Return no findings rather than a guess when nothing was " +
-			"established.",
+			"exactly once, when your reads are done: the direct answer in the " +
+			"operator's own words, findings with their kind, confidence and the run " +
+			"ordinals that support them, and the recommended next steps. Return no " +
+			"findings rather than a guess when nothing was established.",
 		InputSchema: concludeSchema().Document,
 	}
 }
@@ -119,6 +119,7 @@ func concludeSchema() Schema {
 		Name:    ConcludeToolName,
 		Version: SchemaVersion,
 		Document: object(properties{
+			"answer":     stringField,
 			"findings":   array(agentFindingSchema()),
 			"next_steps": array(stringField),
 		}),
@@ -135,9 +136,9 @@ func agentFindingSchema() map[string]any {
 }
 
 // renderOrientation writes the held-context message: subject, window, the trigger's own
-// metadata, the connected sources with the tool names each offers, and the ledger's
-// workload digest. Everything here already sat in the platform; nothing was fetched to
-// say it.
+// metadata, the connected sources with the tool names each offers, the ledger's workload
+// digest, and — for a Conversation turn — the brief of what has already been said and
+// established. Everything here already sat in the platform; nothing was fetched to say it.
 func renderOrientation(orientation investigation.Orientation) string {
 	out := &strings.Builder{}
 	out.WriteString("SUBJECT: " + orientation.Subject + "\n")
@@ -189,6 +190,10 @@ func renderOrientation(orientation investigation.Orientation) string {
 			out.WriteString("- " + line + "\n")
 		}
 	}
+
+	// The conversation last, so a follow-up reads the estate first and then what has
+	// already been said about it — the same order a person joining an incident would.
+	out.WriteString(renderBrief(orientation.Brief))
 	return out.String()
 }
 
@@ -230,8 +235,8 @@ func renderResult(result investigation.CallResult) ToolResultTurn {
 // what the concluding call must carry.
 func concludeInstruction(reason string) string {
 	instruction := "No further reads are available. Conclude now: call " +
-		ConcludeToolName + " with the findings the runs above support (or none), the " +
-		"unresolved leads, and the recommended next steps."
+		ConcludeToolName + " with the direct answer, the findings the runs above " +
+		"support (or none), the unresolved leads, and the recommended next steps."
 	if reason != "" {
 		instruction = reason + " " + instruction
 	}
