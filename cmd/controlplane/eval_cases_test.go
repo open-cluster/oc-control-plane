@@ -44,6 +44,11 @@ type groundTruth struct {
 	// ExpectFindings false means the honest conclusion is no findings at all.
 	ExpectFindings bool
 
+	// MustNotAnswer are the world's OWN plausible wrong values — the revision that is not
+	// deployed, the team that does not own the service. A world builds them in to punish
+	// reading its evidence carelessly, so an answer asserting one is a false claim rather
+	// than a partial answer. Naming one in order to rule it out is not.
+	MustNotAnswer []string
 	// AnswerMarkers are what the direct reply must carry. A question's deliverable is
 	// its answer, so these are checked against the answer text and nothing else.
 	AnswerMarkers []string

@@ -73,6 +73,10 @@ func evalConversationCases(now time.Time) []evalCase {
 		DistractorSlackToken: "xoxb-eval-marketing",
 		Truth: groundTruth{
 			AnswerMarkers: []string{"v2.14.1"},
+			// The superseded revision, announced earlier in the same channel. It is what
+			// reading the deploy channel out of order produces, which is the exact
+			// mistake this world was built to punish.
+			MustNotAnswer: []string{"v2.13.9"},
 			Discriminating: []readTruth{
 				{Tool: "slack.get_channel_history", ArgMarker: "C2"},
 			},
@@ -110,6 +114,10 @@ func evalConversationCases(now time.Time) []evalCase {
 		DistractorInstallation: "5002",
 		Truth: groundTruth{
 			AnswerMarkers: []string{"payments-platform"},
+			// Two wrong owners, one in the distractor repository and one in the same
+			// CODEOWNERS file under a different path. An ownership answer that hedges
+			// between the right team and either of them has not answered the question.
+			MustNotAnswer: []string{"web-guild", "docs-guild"},
 			Discriminating: []readTruth{
 				{Tool: "github.read_file", ArgMarker: "CODEOWNERS"},
 			},
@@ -145,7 +153,16 @@ func evalConversationCases(now time.Time) []evalCase {
 		}},
 		DistractorSlackToken: "xoxb-eval-marketing",
 		Truth: groundTruth{
-			AnswerMarkers:  []string{"abc123"},
+			// The question asks WHEN it changed and WHO changed it. Marking only the
+			// commit scored a third of an answer as a whole one, so the author is marked
+			// too. The date is deliberately NOT marked: it is derived from the run's own
+			// clock and a model may write it a dozen defensible ways, so a marker would
+			// produce false negatives. That clause is the rubric layer's to judge, and
+			// this comment is here so its absence reads as a decision rather than a gap.
+			AnswerMarkers: []string{"abc123", "kai-dev"},
+			// The readme commit and its author: the most recent change to the repository,
+			// and the wrong answer to a question about the pool CONFIGURATION.
+			MustNotAnswer:  []string{"fed321", "dev-rowan"},
 			Discriminating: []readTruth{{Tool: "github.read_commits"}},
 			RelevantTools: []string{
 				"github.list_repositories", "github.read_commits", "github.read_commit",

@@ -277,3 +277,99 @@ func summaryCarries(summary investigation.Summary, text string) bool {
 	}
 	return false
 }
+
+// THE TWO WORLDS THAT HAD NO DRIVER. Their ground truth was written and never executed —
+// nothing had asked the fakes for a CODEOWNERS file or a commit list on these cases, so
+// nobody knew whether their evidence was even reachable. A world whose truth has never
+// run is worse than a weak marker: a weak marker at least produces a number that can be
+// argued with, and an unreachable one produces a zero that means nothing about the agent.
+
+func TestAnOwnershipQuestionIsAnsweredFromCodeowners(t *testing.T) {
+	one := evalCaseNamed(t, evalCases(time.Now().UTC()), "peacetime-who-owns-the-service")
+
+	exchange := &scriptedExchangeMain{moves: []investigation.Move{
+		{Calls: []investigation.AgentCall{
+			{ID: "c1", Tool: "github.list_repositories", Arguments: map[string]any{}},
+			{ID: "c2", Tool: "github.read_file", Arguments: map[string]any{
+				"repositoryId": float64(101), "path": "CODEOWNERS"}},
+		}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
+		{Conclusion: &investigation.Conclusion{
+			Answer: "@acme-corp/payments-platform owns the payments service; CODEOWNERS " +
+				"assigns /payments/ to that team.",
+			Findings: []investigation.Finding{{
+				Statement: "CODEOWNERS in acme-corp/payments assigns /payments/ to " +
+					"@acme-corp/payments-platform",
+				Kind:       investigation.FindingObservation,
+				Confidence: investigation.ConfidenceConfirmed,
+				Sources:    []int{2},
+			}},
+		}, Spend: investigation.Spend{InputTokens: 120, OutputTokens: 20, MicroCents: 8}},
+	}}
+
+	score := scoreEvalCase(one, runEvalCase(t, one, evalModel{},
+		&scriptedInvestigatorMain{exchange: exchange}))
+
+	if score.Status != "concluded" {
+		t.Fatalf("status = %q", score.Status)
+	}
+	if score.AnswerMarkersFound != score.AnswerMarkersTotal || score.AnswerMarkersTotal == 0 {
+		t.Errorf("answer markers %d/%d; the team name is the deliverable",
+			score.AnswerMarkersFound, score.AnswerMarkersTotal)
+	}
+	if score.DiscriminatingMade != score.DiscriminatingTotal {
+		t.Errorf("discriminating reads %d/%d; ownership is in CODEOWNERS and nowhere else",
+			score.DiscriminatingMade, score.DiscriminatingTotal)
+	}
+	// The world carries two other teams. Naming one beside the answer is the hedge this
+	// world exists to punish, and a clean answer must not trip it.
+	if score.FalseClaims != 0 {
+		t.Errorf("false claims = %d on an answer naming only the owning team",
+			score.FalseClaims)
+	}
+}
+
+func TestAChangeQuestionIsAnsweredWithTheCommitAndItsAuthor(t *testing.T) {
+	one := evalCaseNamed(t, evalCases(time.Now().UTC()),
+		"peacetime-when-did-this-last-change")
+
+	exchange := &scriptedExchangeMain{moves: []investigation.Move{
+		{Calls: []investigation.AgentCall{
+			{ID: "c1", Tool: "github.list_repositories", Arguments: map[string]any{}},
+			{ID: "c2", Tool: "github.read_commits",
+				Arguments: map[string]any{"repositoryId": float64(101)}},
+		}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
+		{Conclusion: &investigation.Conclusion{
+			Answer: "the pool configuration last changed in commit abc123, which raised " +
+				"connect_timeout to 30s; kai-dev authored it.",
+			Findings: []investigation.Finding{{
+				Statement: "commit abc123 by kai-dev changed config/pool.yaml, raising " +
+					"connect_timeout from 2s to 30s",
+				Kind:       investigation.FindingObservation,
+				Confidence: investigation.ConfidenceConfirmed,
+				Sources:    []int{2},
+			}},
+		}, Spend: investigation.Spend{InputTokens: 120, OutputTokens: 20, MicroCents: 8}},
+	}}
+
+	score := scoreEvalCase(one, runEvalCase(t, one, evalModel{},
+		&scriptedInvestigatorMain{exchange: exchange}))
+
+	if score.Status != "concluded" {
+		t.Fatalf("status = %q", score.Status)
+	}
+	// BOTH clauses. Marking only the commit scored a third of an answer as a whole one,
+	// which is what this assertion exists to stop coming back.
+	if score.AnswerMarkersFound != score.AnswerMarkersTotal || score.AnswerMarkersTotal < 2 {
+		t.Errorf("answer markers %d/%d; the question asks when AND who",
+			score.AnswerMarkersFound, score.AnswerMarkersTotal)
+	}
+	if score.DiscriminatingMade != score.DiscriminatingTotal {
+		t.Errorf("discriminating reads %d/%d; the commit list is the evidence",
+			score.DiscriminatingMade, score.DiscriminatingTotal)
+	}
+	// The readme commit is the most recent change and the wrong answer.
+	if score.FalseClaims != 0 {
+		t.Errorf("false claims = %d on an answer naming only the pool commit",
+			score.FalseClaims)
+	}
+}
