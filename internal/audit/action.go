@@ -64,6 +64,13 @@ const (
 	// afterwards is the investigation's own provenance, a record of its own.
 	ActionInvestigationOpened Action = "investigation.opened"
 
+	// Conversations. Opening one and sending a message to one are both operator acts, and
+	// both are recorded because a conversation several people take part in has to be able
+	// to answer who asked what. The turns a message opens are investigations and are
+	// audited as those; recording them twice would say the same thing in two vocabularies.
+	ActionConversationOpened  Action = "conversation.opened"
+	ActionConversationMessage Action = "conversation.message-sent"
+
 	// Authorization itself. A refusal is on the record because credential probing is only
 	// visible if the attempts that failed are visible too.
 	ActionAuthorizationRefused Action = "authorization.refused"

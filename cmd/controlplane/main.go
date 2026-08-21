@@ -512,6 +512,8 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		Sealer:                  process.sealer,
 		Investigations:          process.investigations,
 		InvestigationWindowLead: cfg.InvestigationWindowLead,
+		ConversationsEnabled:    cfg.ConversationsEnabled,
+		MaxWaitingTurns:         cfg.OrgWaitingInvestigations,
 		IntakeBaseURL:           cfg.IntakePublicURL,
 		MinimumRelayVersion:     cfg.MinimumRelayVersion,
 	}.Router()

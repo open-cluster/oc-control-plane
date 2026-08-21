@@ -31,6 +31,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
@@ -67,6 +68,13 @@ type Handlers struct {
 	// investigation's window reaches back.
 	Investigations          *investigation.Runner
 	InvestigationWindowLead time.Duration
+	// ConversationsEnabled is the per-deployment switch for the conversation surface.
+	// While it is off every conversation route answers 404 — the deployment does not have
+	// that surface — and single-shot investigations are untouched.
+	ConversationsEnabled bool
+	// MaxWaitingTurns bounds one organization's unclaimed turns, so overload is a plain
+	// refusal rather than a queue that grows without bound.
+	MaxWaitingTurns int
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// configured rather than derived from a request, because a URL built from this listener's
 	// own Host header would be one that works from wherever the console is served and not from
@@ -153,6 +161,18 @@ func (h Handlers) Routes() authz.Table {
 		Runner:     h.Investigations,
 		Logger:     h.Logger,
 		WindowLead: h.InvestigationWindowLead,
+	}.Routes()...)
+	// The conversation routes are DECLARED whether or not this deployment serves them, so
+	// the route table — which is the API's index and what the gates validate — is the same
+	// table in every build. The switch lives in the handlers, which answer 404 while it is
+	// off; a table that changed shape with configuration would be a permission matrix
+	// nobody could review.
+	routes = append(routes, conversation.Handlers{
+		Store:           h.Placements,
+		Logger:          h.Logger,
+		Enabled:         h.ConversationsEnabled,
+		WindowLead:      h.InvestigationWindowLead,
+		MaxWaitingTurns: h.MaxWaitingTurns,
 	}.Routes()...)
 	return routes
 }
