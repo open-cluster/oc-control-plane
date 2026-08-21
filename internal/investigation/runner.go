@@ -55,9 +55,12 @@ type Runner struct {
 	Store   Store
 	Catalog integrations.Catalog
 	Sealer  seal.Sealer
-	// Investigator is the conversation-shaped model boundary the investigation runs
-	// against.
+	// Investigator is the exchange-shaped model boundary the investigation runs against.
 	Investigator Investigator
+	// Events is where the semantic event stream is written. Nil disables the stream and
+	// nothing else: an investigation runs, concludes and records its provenance exactly
+	// the same, because the stream is how a run is WATCHED and not what it is.
+	Events EventSink
 	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
 	// tuning, so configuration rather than constants; zero means the defaults.
 	MaxToolRuns int
@@ -196,10 +199,12 @@ func (r *Runner) execute(
 }
 
 // fail ends the investigation with the reason, writing inside a detached window so a
-// cancelled run can still say why it stopped.
+// cancelled run can still say why it stopped. The terminal event is written in the same
+// window and for the same reason: a reader left watching a spinner forever is exactly the
+// failure this is here to prevent.
 func (r *Runner) fail(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	reason string, spend Spend,
+	events *stream, reason string, spend Spend,
 ) {
 	writeCtx, done := writeWindow(ctx)
 	defer done()
@@ -208,6 +213,45 @@ func (r *Runner) fail(
 		r.Logger.Error("a failed investigation could not be recorded as failed",
 			slog.String("investigation_id", id.String()),
 			slog.String("error", err.Error()))
+	}
+	r.announce(writeCtx, events, EventFailed, failedPayload(reason))
+}
+
+// announce writes one event and swallows the failure into a log line.
+//
+// An event that could not be written must not end an investigation. The record is the
+// investigation and its provenance; the stream is a view of it being produced, and trading
+// a completed diagnosis for a missing progress line would be the wrong way round. A write
+// that fails is visible as a gap in the sequence, which is what the log line explains.
+func (r *Runner) announce(
+	ctx context.Context, events *stream, eventType EventType, payload map[string]any,
+) {
+	if err := events.emit(ctx, eventType, payload); err != nil {
+		r.Logger.Warn("an investigation event could not be written",
+			slog.String("event", eventType.String()),
+			slog.String("error", err.Error()))
+	}
+}
+
+// ceilingProgress is what a person watching reads when the reads end. Composed HERE from
+// the ceiling that fired — the model is never asked to narrate, so there is no reasoning to
+// leak and no prompt surface to review.
+func ceilingProgress(stoppedBy string) string {
+	switch stoppedBy {
+	case StoppedBySpend:
+		return "Stopping the reads: the investigation reached its spend ceiling"
+	case StoppedByToolRuns:
+		return "Stopping the reads: the investigation used its read budget"
+	case StoppedByReasonerTurns:
+		return "Stopping the reads: the investigation used its turn budget"
+	case StoppedByWallClock:
+		return "Stopping the reads: the investigation is nearly out of time"
+	case StoppedByStagnation:
+		return "Stopping the reads: the last few produced no new evidence"
+	case StoppedByContext:
+		return "Stopping the reads: this turn has filled the model's working context"
+	default:
+		return "Stopping the reads"
 	}
 }
 

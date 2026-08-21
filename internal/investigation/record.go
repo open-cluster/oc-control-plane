@@ -167,6 +167,11 @@ type Investigation struct {
 	IntegrationID uuid.UUID
 	// Question is the operator's own words, empty for an alert-triggered investigation.
 	Question string
+	// ConversationID is the Conversation this investigation is a turn of, zero for a
+	// single-shot one. Turn is its one-based position among that conversation's turns,
+	// zero when there is no conversation. The two are set together or not at all.
+	ConversationID uuid.UUID
+	Turn           int
 	// Subject is what is being investigated, in plain language.
 	Subject     string
 	WindowFrom  time.Time

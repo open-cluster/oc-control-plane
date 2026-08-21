@@ -204,6 +204,7 @@ func run(
 	}
 
 	investigations := &investigation.Runner{
+		Events:                 placements,
 		Store:                  placements,
 		Catalog:                catalog,
 		Sealer:                 sealer,
@@ -229,7 +230,7 @@ func run(
 	})
 }
 
-// modelBoundary builds the configured deployment's conversation driver. Everything
+// modelBoundary builds the configured deployment's Exchange driver. Everything
 // that could be wrong with the model configuration is refused HERE, at startup: an
 // unimplemented provider, an unpriced model, an effort level nothing recognises, a
 // provider nobody consented to.

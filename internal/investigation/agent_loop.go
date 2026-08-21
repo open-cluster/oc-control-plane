@@ -55,13 +55,16 @@ var errNoConclusion = errors.New("the reasoner did not conclude when required to
 func (r *Runner) run(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
 ) {
+	events := newStream(r.Events, organization, opened.ID)
+
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
-		r.fail(ctx, organization, opened.ID,
+		r.fail(ctx, organization, opened.ID, events,
 			"the connected sources could not be read", Spend{})
 		return
 	}
 	offered := offeredSources(r.Catalog, candidates)
+	r.announce(ctx, events, EventStarted, startedPayload(opened, len(offered), true))
 	for rank, source := range offered {
 		recorded := Source{
 			IntegrationID: source.Integration.ID,
@@ -70,7 +73,8 @@ func (r *Runner) run(
 			SelectedAt:    time.Now().UTC(),
 		}
 		if err := r.Store.RecordSource(ctx, organization, opened.ID, recorded); err != nil {
-			r.fail(ctx, organization, opened.ID, "the offer could not be recorded", Spend{})
+			r.fail(ctx, organization, opened.ID, events,
+				"the offer could not be recorded", Spend{})
 			return
 		}
 	}
@@ -78,7 +82,7 @@ func (r *Runner) run(
 	exchange, err := r.Investigator.OpenExchange(ctx,
 		r.orientation(ctx, organization, opened, offered))
 	if err != nil {
-		r.fail(ctx, organization, opened.ID, reasonerFailure(err), Spend{})
+		r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), Spend{})
 		return
 	}
 
@@ -87,6 +91,7 @@ func (r *Runner) run(
 		organization: organization,
 		opened:       opened,
 		offered:      offered,
+		events:       events,
 		credentials: newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
 			return r.Store.RecordCredentialUnseal(ctx, organization, id,
 				"investigation "+opened.ID.String())
@@ -104,10 +109,10 @@ func (r *Runner) run(
 
 	conclusion, stoppedBy, err := loop.converse(ctx, exchange)
 	if err != nil {
-		r.fail(ctx, organization, opened.ID, failureReason(err), loop.spend)
+		r.fail(ctx, organization, opened.ID, events, failureReason(err), loop.spend)
 		return
 	}
-	r.conclude(ctx, organization, opened.ID, conclusion,
+	r.conclude(ctx, organization, opened.ID, events, conclusion,
 		len(loop.runs), loop.turns, loop.executed, stoppedBy, loop.spend)
 }
 
@@ -118,6 +123,7 @@ type autonomousLoop struct {
 	organization tenancy.Organization
 	opened       Investigation
 	offered      []OfferedSource
+	events       *stream
 	credentials  *credentialCache
 	maxRuns      int
 	maxTurns     int
@@ -141,7 +147,10 @@ func (l *autonomousLoop) converse(
 	for turn := 1; ; turn++ {
 		l.turns++
 		if stoppedBy == "" {
-			stoppedBy = l.firedCeiling(ctx, turn, stagnant)
+			if stoppedBy = l.firedCeiling(ctx, turn, stagnant); stoppedBy != "" {
+				l.runner.announce(ctx, l.events, EventProgress,
+					progressPayload(ceilingProgress(stoppedBy)))
+			}
 		}
 		mustConclude := stoppedBy != "" || len(l.offered) == 0
 
@@ -195,14 +204,24 @@ func (l *autonomousLoop) executeCall(
 	switch {
 	case l.executedIdentities[identity] != 0:
 		run = suppressedRun(l.opened, call, l.nextOrdinal(), l.executedIdentities[identity])
+		// A suppressed repeat is not a read, so it is not a tool event. It is still worth
+		// saying: somebody watching should see that the agent asked for something it
+		// already had, rather than a silent pause.
+		l.runner.announce(ctx, l.events, EventProgress, progressPayload(
+			"Skipped a repeat of "+call.Tool+"; the earlier read already answers it"))
 	case l.executed >= l.maxRuns:
 		run = droppedRun(l.opened, ToolCall{Tool: call.Tool, Arguments: call.Arguments},
 			l.nextOrdinal(), fmt.Sprintf(
 				"not executed: the investigation's read budget of %d was exhausted",
 				l.maxRuns))
+		l.runner.announce(ctx, l.events, EventProgress, progressPayload(
+			"Did not run "+call.Tool+"; the read budget is exhausted"))
 	default:
+		ordinal := l.nextOrdinal()
+		l.announceToolStarted(ctx, call, ordinal)
 		run = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials,
-			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, l.nextOrdinal())
+			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
+		l.runner.announce(ctx, l.events, EventToolCompleted, toolCompletedPayload(run))
 		l.executed++
 		// An honest empty answer is still a fresh read — "nothing changed in the
 		// window" is information, and a loop that punished it as stagnation would rush
@@ -218,6 +237,26 @@ func (l *autonomousLoop) executeCall(
 		l.executedIdentities[identity] = run.Ordinal
 	}
 	return run, fresh, nil
+}
+
+// announceToolStarted says which read is about to happen and where it is going, resolving
+// the integration from the offered sources with the same lookup the execution itself uses,
+// so the event names the source the read actually reaches.
+func (l *autonomousLoop) announceToolStarted(
+	ctx context.Context, call AgentCall, ordinal int,
+) {
+	integration, name := "", ""
+	if source, _, offered := toolNamed(selections(l.offered), call.Tool); offered {
+		integration = source.integration.ID.String()
+		name = source.integration.Name
+	}
+	payload := toolStartedPayload(ToolRun{
+		Ordinal: ordinal, Tool: call.Tool, Arguments: call.Arguments,
+	}, integration)
+	if name != "" {
+		payload["integration"] = name
+	}
+	l.runner.announce(ctx, l.events, EventToolStarted, payload)
 }
 
 // record writes one run into the provenance, in ordinal order.
@@ -279,10 +318,11 @@ func failureReason(err error) string {
 // the only place that knows both numbers.
 func (r *Runner) conclude(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	conclusion Conclusion, runs, turns, executed int, stoppedBy string, spend Spend,
+	events *stream, conclusion Conclusion, runs, turns, executed int, stoppedBy string,
+	spend Spend,
 ) {
 	if citation := checkCitations(conclusion.Findings, runs); citation != "" {
-		r.fail(ctx, organization, id, citation, spend)
+		r.fail(ctx, organization, id, events, citation, spend)
 		return
 	}
 	writeCtx, done := writeWindow(ctx)
@@ -298,6 +338,15 @@ func (r *Runner) conclude(
 			slog.String("error", err.Error()))
 		return
 	}
+	// The answer as one checkpoint, then the terminal event. Today's providers deliver the
+	// concluding document whole, so there is one delta and it is final; the shape is the
+	// streaming one, so a provider that later delivers it in pieces changes nothing a
+	// reader has to learn.
+	if conclusion.Answer != "" {
+		r.announce(writeCtx, events, EventAnswerDelta,
+			answerDeltaPayload(conclusion.Answer, true))
+	}
+	r.announce(writeCtx, events, EventConcluded, concludedPayload(conclusion, stoppedBy))
 	r.Logger.Info("investigation concluded",
 		slog.String("investigation_id", id.String()),
 		slog.Int("turns", turns),

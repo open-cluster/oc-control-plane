@@ -22,9 +22,9 @@ import (
 var _ investigation.Store = (*Placements)(nil)
 
 const investigationColumns = `investigation_id, episode_id, integration_id, question,
-	       subject, window_from, window_until, status, answer, findings, next_steps,
-	       stopped_by, error, spend_input_tokens, spend_output_tokens, spend_micro_cents,
-	       created_by, created_at, concluded_at`
+	       conversation_id, turn, subject, window_from, window_until, status, answer,
+	       findings, next_steps, stopped_by, error, spend_input_tokens,
+	       spend_output_tokens, spend_micro_cents, created_by, created_at, concluded_at`
 
 // CreateInvestigation records one, born running. Opening is an operator act and lands in
 // the audit record; everything the runner writes afterwards is the investigation's own
@@ -441,20 +441,28 @@ func (p *Placements) InvestigationCandidates(
 
 func scanInvestigation(row scanned, organization string) (investigation.Investigation, error) {
 	var (
-		found         = investigation.Investigation{OrgID: organization}
-		episodeID     *uuid.UUID
-		integrationID *uuid.UUID
-		findings      []byte
-		nextSteps     []byte
-		concludedAt   *time.Time
+		found          = investigation.Investigation{OrgID: organization}
+		episodeID      *uuid.UUID
+		integrationID  *uuid.UUID
+		conversationID *uuid.UUID
+		turn           *int
+		findings       []byte
+		nextSteps      []byte
+		concludedAt    *time.Time
 	)
 	if err := row.Scan(&found.ID, &episodeID, &integrationID, &found.Question,
-		&found.Subject, &found.WindowFrom, &found.WindowUntil, &found.Status,
-		&found.Answer, &findings, &nextSteps, &found.StoppedBy, &found.Error,
-		&found.Spend.InputTokens,
+		&conversationID, &turn, &found.Subject, &found.WindowFrom, &found.WindowUntil,
+		&found.Status, &found.Answer, &findings, &nextSteps, &found.StoppedBy,
+		&found.Error, &found.Spend.InputTokens,
 		&found.Spend.OutputTokens, &found.Spend.MicroCents, &found.CreatedBy,
 		&found.CreatedAt, &concludedAt); err != nil {
 		return investigation.Investigation{}, err
+	}
+	if conversationID != nil {
+		found.ConversationID = *conversationID
+	}
+	if turn != nil {
+		found.Turn = *turn
 	}
 	if len(nextSteps) > 0 {
 		if err := json.Unmarshal(nextSteps, &found.NextSteps); err != nil {

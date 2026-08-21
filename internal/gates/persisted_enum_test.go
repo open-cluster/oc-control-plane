@@ -86,6 +86,18 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"RunSucceeded", int(investigation.RunSucceeded), 1},
 		{"RunFailed", int(investigation.RunFailed), 2},
 
+		// The investigation event stream's vocabulary. The column CHECK is written as a
+		// range, so a value that moved would still be stored and would simply mean
+		// something else to every reader.
+		{"EventStarted", int(investigation.EventStarted), 1},
+		{"EventProgress", int(investigation.EventProgress), 2},
+		{"EventToolStarted", int(investigation.EventToolStarted), 3},
+		{"EventToolCompleted", int(investigation.EventToolCompleted), 4},
+		{"EventAnswerDelta", int(investigation.EventAnswerDelta), 5},
+		{"EventConcluded", int(investigation.EventConcluded), 6},
+		{"EventFailed", int(investigation.EventFailed), 7},
+		{"EventCompacted", int(investigation.EventCompacted), 8},
+
 		// The change ledger's vocabulary. The baseline exclusion in every change query is
 		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
 		// every baseline into a reportable change.

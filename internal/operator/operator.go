@@ -160,6 +160,7 @@ func (h Handlers) Routes() authz.Table {
 		Store:      h.Placements,
 		Runner:     h.Investigations,
 		Logger:     h.Logger,
+		Events:     h.Placements,
 		WindowLead: h.InvestigationWindowLead,
 	}.Routes()...)
 	// The conversation routes are DECLARED whether or not this deployment serves them, so

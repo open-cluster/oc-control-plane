@@ -58,6 +58,14 @@ func (d Detail) Safe() Detail {
 	return safe
 }
 
+// NamesACredential reports whether a key's value is unfit to leave the control plane.
+//
+// It is exported so that the other paths carrying structured data outward — the
+// investigation event stream — drop the same keys by the same rule. One list of forbidden
+// words is the whole point: a second copy is a second place for one of them to be missing,
+// and the one that goes missing is the one that matters.
+func NamesACredential(key string) bool { return namesACredential(key) }
+
 func namesACredential(key string) bool {
 	folded := strings.ToLower(strings.NewReplacer("-", "", "_", "", " ", "").Replace(key))
 	for _, word := range credentialWords {
