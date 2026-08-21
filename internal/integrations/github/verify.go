@@ -55,6 +55,7 @@ func judge(
 			Status: integrations.StatusFailed,
 			Note: "this deployment has no GitHub App configured, so it cannot reach " +
 				"github; ask whoever operates it to configure one",
+			Facts: carried(known),
 		}, "no-app"}
 	}
 
@@ -63,6 +64,7 @@ func judge(
 		return judged{integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note:   "the deployment's GitHub App credential could not sign a request",
+			Facts:  carried(known),
 		}, "app-credential-unusable"}
 	}
 	found, err := client.Installation(ctx, jwt, installation)
@@ -70,11 +72,14 @@ func judge(
 		return judgeFailure(err, installation, known)
 	}
 	if found.Suspended {
+		// A suspended installation is answered before its repositories are listed, so the
+		// reach the last run established is carried rather than replaced with a zero this
+		// one never checked.
 		return judged{integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note: "installation " + strconv.FormatInt(installation, 10) + " for " +
 				found.Account + " is suspended in github; unsuspend it and verify again",
-			Facts: factsOf(found, 0, false),
+			Facts: identityOf(known, found),
 		}, "suspended"}
 	}
 
@@ -86,7 +91,7 @@ func judge(
 	if err != nil {
 		return judgeFailure(err, installation, known)
 	}
-	facts := factsOf(found, len(granted.Repositories), granted.Truncated)
+	facts := withReach(identityOf(known, found), len(granted.Repositories), granted.Truncated)
 	if len(granted.Repositories) == 0 {
 		return judged{integrations.Verification{
 			Status: integrations.StatusDegraded,
@@ -108,18 +113,46 @@ func judge(
 	}, "verified"}
 }
 
-// factsOf records what this run established about the installation, in the vocabulary an
-// operator reads off GitHub's own settings page. Nothing here is a credential or an
-// authorization: it exists so a console can say WHICH account is connected and how far it
-// reaches, and so support can answer that without asking for a screenshot.
-func factsOf(found Installation, repositories int, truncated bool) map[string]any {
-	return map[string]any{
-		FactAccount:                found.Account,
-		FactAccountType:            found.AccountType,
-		FactRepositorySelection:    found.RepositorySelection,
-		FactRepositoryCount:        repositories,
-		FactRepositoryCountAtLeast: truncated,
+// identityOf records who answered, in the vocabulary an operator reads off GitHub's own
+// settings page. Nothing here is a credential or an authorization: it exists so a console
+// can say WHICH account is connected, and so support can answer that without asking for a
+// screenshot.
+func identityOf(known map[string]any, found Installation) map[string]any {
+	facts := copied(known, 3)
+	facts[FactAccount] = found.Account
+	facts[FactAccountType] = found.AccountType
+	facts[FactRepositorySelection] = found.RepositorySelection
+	return facts
+}
+
+// withReach adds how far the installation's grant went.
+func withReach(facts map[string]any, repositories int, truncated bool) map[string]any {
+	facts[FactRepositoryCount] = repositories
+	facts[FactRepositoryCountAtLeast] = truncated
+	return facts
+}
+
+// carried is what a run that established nothing records: whatever the last one did.
+//
+// Facts describe the INSTALLATION, not the attempt. A rate limit does not un-connect an
+// account, and dropping them on every failure would cost the one thing that tells a removed
+// installation apart from an id that never existed — so the second failing verification in
+// a row would stop saying "no longer installed on acme-corp" and go back to "check the id".
+// Nil for a record that never had any, so "nothing was ever established" stays a fact of
+// its own.
+func carried(known map[string]any) map[string]any {
+	if len(known) == 0 {
+		return nil
 	}
+	return copied(known, 0)
+}
+
+func copied(known map[string]any, extra int) map[string]any {
+	facts := make(map[string]any, len(known)+extra)
+	for key, value := range known {
+		facts[key] = value
+	}
+	return facts
 }
 
 // repositoryProbePage bounds how many repositories a verification lists. The point is
@@ -138,22 +171,26 @@ func judgeFailure(err error, installation int64, known map[string]any) judged {
 		return judged{integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note:   "github refused this deployment's app credential; its key or app id is wrong",
+			Facts:  carried(known),
 		}, "app-credential-refused"}
 	case errors.As(err, &refusal):
 		return judged{integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note:   "github refused the check: " + refusal.Message,
+			Facts:  carried(known),
 		}, "refused"}
 	case errors.Is(err, ErrRateLimited):
 		return judged{integrations.Verification{
 			Status: integrations.StatusDegraded,
 			Note:   "github is rate limiting this app; verify again in a few minutes",
+			Facts:  carried(known),
 		}, "rate-limited"}
 	default:
 		return judged{integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note: "github could not be reached from this deployment; check its network " +
 				"path and verify again",
+			Facts: carried(known),
 		}, "unreachable"}
 	}
 }
@@ -168,6 +205,7 @@ func gone(installation int64, known map[string]any) judged {
 			Status: integrations.StatusFailed,
 			Note: "the github app is no longer installed on " + account +
 				"; it was uninstalled or its access was revoked, so connect github again",
+			Facts: carried(known),
 		}, "revoked"}
 	}
 	return judged{integrations.Verification{

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -39,6 +40,9 @@ type installFake struct {
 	// reachable is what /user/installations answers: the installations the authenticated
 	// person can administer. The callback's installation id is refused unless it is here.
 	reachable []int64
+	// accounts names the account each installation belongs to; anything unnamed is
+	// acme-corp, which is the single-account case most of these tests want.
+	accounts map[int64]string
 	// exchanged records every authorization code the fake was asked to exchange.
 	exchanged []string
 	// credentials records the Authorization header each path was asked with, so a test can
@@ -56,6 +60,7 @@ func newInstallFake(t *testing.T, reachable ...int64) *installFake {
 
 	fake := &installFake{
 		reachable:   reachable,
+		accounts:    map[int64]string{},
 		credentials: map[string]string{},
 		knownCode:   "the-authorization-code",
 	}
@@ -65,6 +70,10 @@ func newInstallFake(t *testing.T, reachable ...int64) *installFake {
 			fake.credentials[request.URL.Path] = request.Header.Get("Authorization")
 			known, suspended := fake.knownCode, fake.suspended
 			reachable := append([]int64(nil), fake.reachable...)
+			accounts := map[int64]string{}
+			for id, login := range fake.accounts {
+				accounts[id] = login
+			}
 			fake.mu.Unlock()
 
 			switch {
@@ -88,7 +97,8 @@ func newInstallFake(t *testing.T, reachable ...int64) *installFake {
 				entries := make([]string, 0, len(reachable))
 				for _, id := range reachable {
 					entries = append(entries, `{"id":`+itoa(id)+
-						`,"account":{"login":"acme-corp","type":"Organization"}}`)
+						`,"account":{"login":"`+login(accounts, id)+
+						`","type":"Organization"}}`)
 				}
 				_, _ = writer.Write([]byte(`{"total_count":` + itoa(int64(len(entries))) +
 					`,"installations":[` + strings.Join(entries, ",") + `]}`))
@@ -118,7 +128,8 @@ func newInstallFake(t *testing.T, reachable ...int64) *installFake {
 					suspendedAt = `"2026-08-01T00:00:00Z"`
 				}
 				_, _ = writer.Write([]byte(`{"id":` + id + `,
-					"account":{"login":"acme-corp","type":"Organization"},
+					"account":{"login":"` + loginNamed(accounts, id) +
+					`","type":"Organization"},
 					"repository_selection":"selected","suspended_at":` + suspendedAt + `}`))
 
 			default:
@@ -146,6 +157,25 @@ func (f *installFake) uninstall() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reachable = nil
+}
+
+// login is the account an installation belongs to, defaulting to the one account most of
+// these tests use.
+func login(accounts map[int64]string, id int64) string {
+	if named, ok := accounts[id]; ok {
+		return named
+	}
+	return "acme-corp"
+}
+
+// loginNamed is login for a path segment that arrived as text.
+func loginNamed(accounts map[int64]string, id string) string {
+	for known, named := range accounts {
+		if itoa(known) == id {
+			return named
+		}
+	}
+	return "acme-corp"
 }
 
 func holds(ids []int64, wanted string) bool {
@@ -239,6 +269,8 @@ type landedBody struct {
 	Note          string `json:"note"`
 }
 
+// integrations lists a tenant's, which is where the assertions about what was recorded are
+// made: the wire is the seam, not the store.
 func (p *integrationPlane) integrations(t *testing.T, organization string) []integrationBody {
 	t.Helper()
 
@@ -363,7 +395,7 @@ func TestConnectingGitHubStoresNoUserAccessToken(t *testing.T) {
 		t.Fatalf("reading the integration = %d: %s", status, record)
 	}
 	if strings.Contains(record, installedToken) || strings.Contains(record, "gho_") {
-		t.Fatalf("a user access token survived the enrolment: %s", record)
+		t.Fatalf("a user access token survived the connection: %s", record)
 	}
 	if strings.Contains(record, `"credential"`) {
 		t.Errorf("a github integration holds a credential it should not: %s", record)
@@ -498,6 +530,24 @@ func TestReconnectingAfterARevocationSucceeds(t *testing.T) {
 	decodeInto(t, verified, &record)
 	if record.Status != "failed" || !strings.Contains(record.VerifyNote, "no longer installed") {
 		t.Errorf("a revoked installation reports %q: %s", record.Status, record.VerifyNote)
+	}
+
+	// And it keeps saying so. What tells a removed installation from an id that never
+	// existed is the account the LAST verification recorded, so a failing run that dropped
+	// it would make the second answer worse than the first.
+	status, twice := plane.call(t, http.MethodPost,
+		plane.base(surfaceOrg)+"/integrations/"+opened.IntegrationID+"/verify", nil)
+	if status != http.StatusOK {
+		t.Fatalf("verifying a revoked installation again = %d: %s", status, twice)
+	}
+	var second integrationBody
+	decodeInto(t, twice, &second)
+	if !strings.Contains(second.VerifyNote, "no longer installed") {
+		t.Errorf("the second verification forgot which account was connected: %s",
+			second.VerifyNote)
+	}
+	if second.VerifyFacts["account"] != "acme-corp" {
+		t.Errorf("a failed verification erased what was connected: %+v", second.VerifyFacts)
 	}
 
 	// The customer installs it again and reconnects.
@@ -781,5 +831,117 @@ func TestAViewerCannotStartAnInstallationFlow(t *testing.T) {
 	}
 	if found := plane.integrations(t, surfaceOrg); len(found) != 0 {
 		t.Errorf("a refused start produced %d integrations", len(found))
+	}
+}
+
+// A company with two GitHub organizations is not forced to choose. Both connect, both are
+// verified, and each names the account it belongs to.
+func TestTwoGitHubAccountsCanBothBeConnected(t *testing.T) {
+	vendor := newInstallFake(t, 77, 88)
+	vendor.mu.Lock()
+	vendor.accounts[88] = "acme-labs"
+	vendor.mu.Unlock()
+	plane := startInstallPlane(t, vendor, "")
+
+	for _, installation := range []string{"77", "88"} {
+		_, started := plane.startConnect(t, surfaceOrg)
+		status, landed := plane.returnFromGitHub(t, url.Values{
+			"state": {stateOf(t, started)}, "code": {"the-authorization-code"},
+			"installation_id": {installation},
+		})
+		if status != http.StatusOK || !strings.Contains(landed, "connected") {
+			t.Fatalf("connecting installation %s = %d: %s", installation, status, landed)
+		}
+	}
+
+	found := plane.integrations(t, surfaceOrg)
+	if len(found) != 2 {
+		t.Fatalf("two accounts produced %d integrations", len(found))
+	}
+	names := map[string]bool{}
+	for _, one := range found {
+		if one.Status != "active" {
+			t.Errorf("%q is %q, want active; note: %s", one.Name, one.Status, one.VerifyNote)
+		}
+		names[one.Name] = true
+	}
+	if !names["GitHub — acme-corp"] || !names["GitHub — acme-labs"] {
+		t.Errorf("the two integrations are named %v and do not name their accounts", names)
+	}
+}
+
+// Reinstalling on the same account gives the same suggested name under a different
+// installation. The second one is disambiguated rather than refused, and neither name is
+// cut mid-rune — the suggested name carries an em dash.
+func TestReinstallingOnOneAccountDoesNotCollideOnTheName(t *testing.T) {
+	vendor := newInstallFake(t, 77, 88)
+	plane := startInstallPlane(t, vendor, "")
+
+	for _, installation := range []string{"77", "88"} {
+		_, started := plane.startConnect(t, surfaceOrg)
+		if status, landed := plane.returnFromGitHub(t, url.Values{
+			"state": {stateOf(t, started)}, "code": {"the-authorization-code"},
+			"installation_id": {installation},
+		}); status != http.StatusOK {
+			t.Fatalf("connecting installation %s = %d: %s", installation, status, landed)
+		}
+	}
+
+	found := plane.integrations(t, surfaceOrg)
+	if len(found) != 2 {
+		t.Fatalf("two installations on one account produced %d integrations", len(found))
+	}
+	for _, one := range found {
+		if !utf8.ValidString(one.Name) {
+			t.Errorf("the name %q is not valid UTF-8", one.Name)
+		}
+		if !strings.HasPrefix(one.Name, "GitHub — acme-corp") {
+			t.Errorf("the name %q lost the account it belongs to", one.Name)
+		}
+	}
+	if found[0].Name == found[1].Name {
+		t.Errorf("both installations are called %q", found[0].Name)
+	}
+}
+
+// Disconnecting removes reach: a disabled integration is not offered to an investigation,
+// and a deleted one is gone. The record of what it produced is what makes deletion refusable
+// — with nothing depending on it, removal is one action.
+func TestDisconnectingGitHubRemovesReach(t *testing.T) {
+	vendor := newInstallFake(t, 77)
+	plane := startInstallPlane(t, vendor, "")
+
+	_, started := plane.startConnect(t, surfaceOrg)
+	_, landed := plane.returnFromGitHub(t, url.Values{
+		"state": {stateOf(t, started)}, "code": {"the-authorization-code"},
+		"installation_id": {"77"},
+	})
+	var opened landedBody
+	decodeInto(t, landed, &opened)
+	address := plane.base(surfaceOrg) + "/integrations/" + opened.IntegrationID
+
+	status, body := plane.call(t, http.MethodPost, address+"/enabled",
+		map[string]any{"enabled": false})
+	if status != http.StatusNoContent && status != http.StatusOK {
+		t.Fatalf("disabling = %d: %s", status, body)
+	}
+	status, body = plane.call(t, http.MethodGet, address, nil)
+	if status != http.StatusOK {
+		t.Fatalf("reading a disabled integration = %d: %s", status, body)
+	}
+	var disabled integrationBody
+	decodeInto(t, body, &disabled)
+	if !disabled.Disabled {
+		t.Error("a disabled integration does not say it is disabled")
+	}
+
+	if status, body = plane.call(t, http.MethodDelete, address, nil); status != http.StatusNoContent {
+		t.Fatalf("deleting = %d, want 204: %s", status, body)
+	}
+	if status, body = plane.call(t, http.MethodGet, address, nil); status != http.StatusNotFound {
+		t.Errorf("reading a deleted integration = %d, want 404: %s", status, body)
+	}
+	if found := plane.integrations(t, surfaceOrg); len(found) != 0 {
+		t.Errorf("disconnecting left %d integrations behind", len(found))
 	}
 }

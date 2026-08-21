@@ -178,6 +178,43 @@ func (c *Client) Installation(
 	}, nil
 }
 
+// UserInstallation is one App installation an authenticated user can administer.
+type UserInstallation struct {
+	ID      int64
+	Account string
+}
+
+// UserInstallations asks, under a USER access token, which installations of this App that
+// person can reach. It is the only read this client makes with a credential that is not the
+// deployment's own, and the token it is given is discarded by its caller immediately after.
+func (c *Client) UserInstallations(
+	ctx context.Context, token string, page int,
+) ([]UserInstallation, bool, error) {
+	var decoded struct {
+		Installations []struct {
+			ID      int64 `json:"id"`
+			Account struct {
+				Login string `json:"login"`
+			} `json:"account"`
+		} `json:"installations"`
+	}
+	parameters := url.Values{"per_page": {"100"}}
+	if page > 1 {
+		parameters.Set("page", strconv.Itoa(page))
+	}
+	header, err := c.call(ctx, token, http.MethodGet, "/user/installations",
+		parameters, &decoded)
+	if err != nil {
+		return nil, false, err
+	}
+
+	reachable := make([]UserInstallation, 0, len(decoded.Installations))
+	for _, one := range decoded.Installations {
+		reachable = append(reachable, UserInstallation{ID: one.ID, Account: one.Account.Login})
+	}
+	return reachable, hasNextPage(header), nil
+}
+
 // mintInstallationToken asks for a token scoped to one installation's grant. It is a POST
 // and still safe to repeat: minting again invalidates nothing and grants nothing new.
 func (c *Client) mintInstallationToken(

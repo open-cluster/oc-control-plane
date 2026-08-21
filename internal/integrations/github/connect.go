@@ -35,7 +35,7 @@ const defaultWebURL = "https://github.com"
 
 // userInstallationPages bounds the walk over the installations an authenticated user can
 // reach. A person who belongs to more accounts than this has other problems; the bound is
-// here so a hostile or broken answer cannot make one enrolment page forever.
+// here so a hostile or broken answer cannot make one connect attempt page forever.
 const userInstallationPages = 10
 
 // ErrNotYours reports a callback naming an installation the authenticated GitHub user
@@ -98,7 +98,7 @@ func connect(installer *Installer, app *App, client *Client) *integrations.Conne
 	return &integrations.Connect{
 		Authorize: installer.authorize,
 		Redeem: func(ctx context.Context, returned integrations.ConnectReturn) (
-			integrations.Enrolment, error,
+			integrations.ConnectBinding, error,
 		) {
 			return installer.redeem(ctx, client, returned)
 		},
@@ -125,27 +125,33 @@ func (i *Installer) authorize(state, callback string) (string, error) {
 // Branching on it would be trusting a query parameter to decide whether to write.
 func (i *Installer) redeem(
 	ctx context.Context, client *Client, returned integrations.ConnectReturn,
-) (integrations.Enrolment, error) {
+) (integrations.ConnectBinding, error) {
 	// Nothing else in the query is read. An organization identifier here is not consulted
 	// by anything: the tenant comes from the flow this state redeemed.
 	code := strings.TrimSpace(returned.Query.Get("code"))
 	installation, err := installationFromCallback(returned.Query.Get("installation_id"))
 	if err != nil || code == "" {
-		return integrations.Enrolment{}, ErrNotAnInstallation
+		countCheck(ctx, "not-an-installation", "refused")
+		return integrations.ConnectBinding{}, ErrNotAnInstallation
 	}
 
 	token, err := i.exchange(ctx, code, returned.Callback)
 	if err != nil {
-		return integrations.Enrolment{}, err
+		// The commonest shape of a misregistered App: the deployment's OAuth client is
+		// wrong and every connect dies here, which is a number rather than a mystery.
+		countCheck(ctx, "exchange-refused", "refused")
+		return integrations.ConnectBinding{}, err
 	}
 	// The token exists for this one question and for nothing else. It is never returned,
 	// never stored, and no read is made with it beyond the installations listing below.
 	account, err := i.prove(ctx, client, token, installation)
 	if err != nil {
-		return integrations.Enrolment{}, err
+		countCheck(ctx, "not-administered", "refused")
+		return integrations.ConnectBinding{}, err
 	}
+	countCheck(ctx, "proven", "proven")
 
-	return integrations.Enrolment{
+	return integrations.ConnectBinding{
 		Name: "GitHub — " + account,
 		// The installation id is recorded as a JSON number, which is what it is after a
 		// round trip through the configuration column.
@@ -234,41 +240,4 @@ func (i *Installer) prove(
 		}
 	}
 	return "", ErrNotYours
-}
-
-// UserInstallation is one App installation an authenticated user can administer.
-type UserInstallation struct {
-	ID      int64
-	Account string
-}
-
-// UserInstallations asks, under a USER access token, which installations of this App that
-// person can reach. It is the only read this client makes with a credential that is not the
-// deployment's own, and the token it is given is discarded by its caller immediately after.
-func (c *Client) UserInstallations(
-	ctx context.Context, token string, page int,
-) ([]UserInstallation, bool, error) {
-	var decoded struct {
-		Installations []struct {
-			ID      int64 `json:"id"`
-			Account struct {
-				Login string `json:"login"`
-			} `json:"account"`
-		} `json:"installations"`
-	}
-	parameters := url.Values{"per_page": {"100"}}
-	if page > 1 {
-		parameters.Set("page", strconv.Itoa(page))
-	}
-	header, err := c.call(ctx, token, http.MethodGet, "/user/installations",
-		parameters, &decoded)
-	if err != nil {
-		return nil, false, err
-	}
-
-	reachable := make([]UserInstallation, 0, len(decoded.Installations))
-	for _, one := range decoded.Installations {
-		reachable = append(reachable, UserInstallation{ID: one.ID, Account: one.Account.Login})
-	}
-	return reachable, hasNextPage(header), nil
 }

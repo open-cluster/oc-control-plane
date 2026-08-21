@@ -61,12 +61,12 @@ type Connect struct {
 	Authorize func(state, callback string) (string, error)
 	// Redeem proves that what came back belongs to whoever is standing at the provider's
 	// end, and reports what to record. Refusing is the point of it: a return that proves
-	// nothing must produce an error rather than an Enrolment.
+	// nothing must produce an error rather than a ConnectBinding.
 	//
 	// Its errors reach an operator, so their text is the PROVIDER PACKAGE'S OWN and never
 	// something the vendor sent — a message composed from a vendor response is
 	// attacker-influenced text on a route reached by a browser.
-	Redeem func(ctx context.Context, returned ConnectReturn) (Enrolment, error)
+	Redeem func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
 }
 
 // ConnectReturn is the callback as it arrived.
@@ -79,10 +79,10 @@ type ConnectReturn struct {
 	Callback string
 }
 
-// Enrolment is what a proven return says to record. It carries no credential: a type whose
+// ConnectBinding is what a proven return says to record. It carries no credential: a type
 // runtime access needs one seals it through the ordinary create path, and GitHub's does not
 // need one at all.
-type Enrolment struct {
+type ConnectBinding struct {
 	// Name is what to call the Integration if it is new, in the operator's language —
 	// "GitHub — acme-corp". A name already taken is disambiguated by the handler.
 	Name string

@@ -681,3 +681,43 @@ func TestTheDefaultBaseURLIsTheVendors(t *testing.T) {
 		t.Errorf("default base URL = %q", NewClient("").baseURL)
 	}
 }
+
+// A refused credential and a malformed request are not rate limits, and repeating either
+// would spend the budget the retry exists to protect. Only a vendor that ASKS for a wait
+// gets a second attempt.
+func TestARefusedCredentialAndAValidationFailureAreNotRetried(t *testing.T) {
+	t.Parallel()
+
+	for name, refusal := range map[string]struct {
+		status  int
+		message string
+	}{
+		"a refused credential":  {http.StatusUnauthorized, "Bad credentials"},
+		"a validation failure":  {http.StatusUnprocessableEntity, "Validation Failed"},
+		"a permissions refusal": {http.StatusForbidden, "Resource not accessible by integration"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := newFakeGitHub(t)
+			fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(refusal.status)
+				_, _ = writer.Write([]byte(`{"message":"` + refusal.message + `"}`))
+			}
+
+			_, err := NewClient(fake.URL).Repositories(testContext(t), "ghs_installation", 10, 1)
+			var answered *APIError
+			if !errors.As(err, &answered) || answered.Status != refusal.status {
+				t.Fatalf("want a %d refusal, got %v", refusal.status, err)
+			}
+			if errors.Is(err, ErrRateLimited) {
+				t.Error("a refusal was read as a rate limit, which is what makes it retryable")
+			}
+			if called := fake.called("/installation/repositories"); called != 1 {
+				t.Errorf("called %d times; a refusal this deployment caused cannot be "+
+					"fixed by asking again", called)
+			}
+		})
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -33,21 +34,52 @@ const connectTimeout = 30 * time.Second
 // state is the only thing standing between a captured callback and a bound installation.
 const refusedConnect = "this connection cannot be completed"
 
-// The closed vocabulary the console is handed back. It is this build's own words: nothing
-// a vendor said reaches a URL, because everything a vendor says on this route is text an
-// attacker may have chosen.
+// connectOutcome is how a finished flow reads to whoever started it: one word from a
+// closed vocabulary this build owns.
+//
+// Closed on purpose. This route is reached by a browser, so anything a provider said on it
+// is text somebody else chose, and it must not reach a redirect URL where it would be a
+// link a person could be sent. The provider's own reason goes to the log instead, where
+// the operator running the deployment reads it and an outsider does not.
+type connectOutcome string
+
 const (
-	outcomeConnected = "connected"
-	// outcomeRefused covers every state failure, so the redirect says no more than the
-	// JSON answer would.
-	outcomeRefused = "refused"
+	outcomeConnected connectOutcome = "connected"
+	// outcomeRefused covers every state failure, so a caller cannot tell an unknown state
+	// from an expired one, a replayed one, or somebody else's.
+	outcomeRefused connectOutcome = "refused"
 	// outcomeUnproven is the documented attack failing: the provider would not confirm
-	// that whoever authorized this can reach the installation the callback named.
-	outcomeUnproven = "unproven"
-	// outcomeUnverified is an association that was proven and an installation that then
-	// did not answer. The Integration is not created; the note says why.
-	outcomeUnverified = "unverified"
+	// that whoever authorized this can reach what the callback named.
+	outcomeUnproven connectOutcome = "unproven"
+	// outcomeUnverified is an association that was proven and a far end that then did not
+	// answer. Nothing is created, and verifying the record again is what tells an operator
+	// more.
+	outcomeUnverified connectOutcome = "unverified"
 )
+
+// status is the answer where there is no console to send the browser to.
+func (o connectOutcome) status() int {
+	if o == outcomeConnected {
+		return http.StatusOK
+	}
+	return http.StatusBadRequest
+}
+
+// note is what a landing says, in this build's words.
+func (o connectOutcome) note() string {
+	switch o {
+	case outcomeConnected:
+		return "connected"
+	case outcomeUnproven:
+		return "the provider would not confirm that the account you authorized with can " +
+			"administer what it returned, so nothing was connected"
+	case outcomeUnverified:
+		return "the association was proven and the provider did not then answer, so " +
+			"nothing was connected; start again"
+	default:
+		return refusedConnect
+	}
+}
 
 // connectStartedView is where to send the browser.
 type connectStartedView struct {
@@ -193,7 +225,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	enrolment, err := definition.Connect.Redeem(ctx, ConnectReturn{
+	bound, err := definition.Connect.Redeem(ctx, ConnectReturn{
 		Query: request.URL.Query(), Callback: h.callbackURL(),
 	})
 	if err != nil {
@@ -203,23 +235,23 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 			slog.String("org_id", organization.String()),
 			slog.String("type", definition.Key),
 			slog.String("reason", err.Error()))
-		h.landConnect(writer, request, flow.ReturnTo, outcomeUnproven, "", err.Error())
+		h.landConnect(writer, request, flow.ReturnTo, outcomeUnproven, "")
 		return
 	}
 
-	h.bindEnrolment(ctx, writer, request, principal, organization, definition, flow, enrolment)
+	h.record(ctx, writer, request, principal, organization, definition, flow.ReturnTo, bound)
 }
 
-// bindEnrolment records what a proven return established: the same installation connected
+// record writes what a proven return established: the same installation connected
 // again is re-verified rather than duplicated, and a new one is probed live and born
 // verified in the transaction that creates it.
-func (h Handlers) bindEnrolment(
+func (h Handlers) record(
 	ctx context.Context, writer http.ResponseWriter, request *http.Request,
 	principal authz.Principal, organization tenancy.Organization, definition Definition,
-	flow ConnectFlow, enrolment Enrolment,
+	returnTo string, bound ConnectBinding,
 ) {
 	existing, err := h.Store.IntegrationConfiguredAs(
-		ctx, organization, definition.ID, enrolment.Configuration)
+		ctx, organization, definition.ID, bound.Configuration)
 	switch {
 	case err == nil:
 		// The customer changed an installation this tenant already has, and the provider
@@ -230,8 +262,7 @@ func (h Handlers) bindEnrolment(
 			h.fail(writer, request, recordErr)
 			return
 		}
-		h.landConnect(writer, request, flow.ReturnTo, outcomeFor(verified),
-			verified.ID.String(), verified.VerifyNote)
+		h.landConnect(writer, request, returnTo, outcomeFor(verified), verified.ID.String())
 		return
 	case !errors.Is(err, ErrUnknown):
 		h.fail(writer, request, err)
@@ -241,8 +272,8 @@ func (h Handlers) bindEnrolment(
 	wanted := NewIntegration{
 		ID:            uuid.New(),
 		Type:          definition.ID,
-		Name:          enrolment.Name,
-		Configuration: enrolment.Configuration,
+		Name:          bound.Name,
+		Configuration: bound.Configuration,
 		CreatedBy:     principal.ID(),
 	}
 	verification := definition.Probe(ctx, ProbeInput{Integration: Integration{
@@ -253,7 +284,11 @@ func (h Handlers) bindEnrolment(
 	if verification.Status == StatusFailed {
 		// Proven association, and the installation would not answer. Nothing is recorded:
 		// an Integration born failed is one an operator has to clean up.
-		h.landConnect(writer, request, flow.ReturnTo, outcomeUnverified, "", verification.Note)
+		h.Logger.WarnContext(ctx, "a proven integration connect did not verify",
+			slog.String("org_id", organization.String()),
+			slog.String("type", definition.Key),
+			slog.String("note", verification.Note))
+		h.landConnect(writer, request, returnTo, outcomeUnverified, "")
 		return
 	}
 	wanted.Verification = &verification
@@ -263,7 +298,7 @@ func (h Handlers) bindEnrolment(
 		// The account's own name is taken by an Integration configured differently — a
 		// reinstall on the same account under a new id is the ordinary case. Disambiguated
 		// once, by something stable, rather than retried in a loop.
-		wanted.Name = disambiguate(enrolment.Name, wanted.ID)
+		wanted.Name = disambiguate(bound.Name, wanted.ID)
 		created, err = h.Store.CreateIntegration(ctx, principal, organization, wanted)
 	}
 	if err != nil {
@@ -275,8 +310,7 @@ func (h Handlers) bindEnrolment(
 		slog.String("integration_id", created.ID.String()),
 		slog.String("type", definition.Key))
 
-	h.landConnect(writer, request, flow.ReturnTo, outcomeFor(created),
-		created.ID.String(), created.VerifyNote)
+	h.landConnect(writer, request, returnTo, outcomeFor(created), created.ID.String())
 }
 
 // disambiguate names the second Integration for one account: reinstalling on the same
@@ -284,15 +318,22 @@ func (h Handlers) bindEnrolment(
 // own identity rather than a counter, which would need a read to know where it had got to,
 // and it is stable for the record it names.
 func disambiguate(name string, id uuid.UUID) string {
-	disambiguated := name + " (" + id.String()[:8] + ")"
-	if len(disambiguated) > maxNameLength {
-		disambiguated = disambiguated[:maxNameLength]
+	suffix := " (" + id.String()[:8] + ")"
+	// Trimmed by runes rather than by bytes. A suggested name is a provider's own text and
+	// carries an em dash; cutting it mid-rune would produce a name that is not valid UTF-8,
+	// which the database refuses at the end of a flow the customer has already finished.
+	room := maxNameLength - len(suffix)
+	for len(name) > room {
+		name = name[:len(name)-1]
+		for len(name) > 0 && !utf8.ValidString(name) {
+			name = name[:len(name)-1]
+		}
 	}
-	return disambiguated
+	return name + suffix
 }
 
 // outcomeFor reports how the console should read what landed.
-func outcomeFor(integration Integration) string {
+func outcomeFor(integration Integration) connectOutcome {
 	if integration.Status == StatusActive {
 		return outcomeConnected
 	}
@@ -307,57 +348,62 @@ func (h Handlers) refuseConnect(
 ) {
 	h.Logger.WarnContext(request.Context(), "an integration connect callback was refused",
 		slog.String("reason", because))
-	h.landConnect(writer, request, returnTo, outcomeRefused, "", refusedConnect)
+	h.landConnect(writer, request, returnTo, outcomeRefused, "")
 }
 
 // landConnect puts the browser back where it started.
 //
 // The browser is standing here, so it is sent on rather than shown a JSON body: the whole
 // point of the flow is that the customer lands back in OpenCluster with the integration
-// already connected. The outcome and the integration's identity travel as query parameters
-// from a closed vocabulary this build owns; the note is rendered into the answer only when
-// there is nowhere to send the browser.
+// already connected. A deployment that has not said where its console is answers the same
+// facts as JSON rather than guessing an origin.
 func (h Handlers) landConnect(
-	writer http.ResponseWriter, request *http.Request, returnTo, outcome, id, note string,
+	writer http.ResponseWriter, request *http.Request, returnTo string,
+	outcome connectOutcome, id string,
 ) {
-	if h.ConsoleURL == "" {
-		writeJSON(writer, statusFor(outcome), connectLandedView{
-			Outcome: outcome, IntegrationID: id, Note: note,
+	target, sendable := h.consoleTarget(returnTo, outcome, id)
+	if !sendable {
+		writeJSON(writer, outcome.status(), connectLandedView{
+			Outcome: string(outcome), IntegrationID: id, Note: outcome.note(),
 		})
 		return
+	}
+	http.Redirect(writer, request, target, http.StatusFound)
+}
+
+// consoleTarget is where the browser lands, and whether there is anywhere to send it. The
+// console's origin is configuration; the path is the one the flow started with, already
+// validated as a same-site path.
+func (h Handlers) consoleTarget(
+	returnTo string, outcome connectOutcome, id string,
+) (string, bool) {
+	if h.ConsoleURL == "" {
+		return "", false
 	}
 	if returnTo == "" {
 		returnTo = "/"
 	}
 	target, err := url.Parse(strings.TrimSuffix(h.ConsoleURL, "/") + returnTo)
 	if err != nil {
-		writeJSON(writer, statusFor(outcome), connectLandedView{
-			Outcome: outcome, IntegrationID: id, Note: note,
-		})
-		return
+		return "", false
 	}
 	parameters := target.Query()
-	parameters.Set("connect", outcome)
+	parameters.Set("connect", string(outcome))
 	if id != "" {
 		parameters.Set("integration", id)
 	}
 	target.RawQuery = parameters.Encode()
-	http.Redirect(writer, request, target.String(), http.StatusFound)
+	return target.String(), true
 }
 
 // connectLandedView is what a deployment with no console origin answers instead of a
-// redirect. The note is this build's own words or the provider package's, never a vendor's.
+// redirect. Every field is this build's own: the outcome comes from the closed vocabulary
+// above and the note is what that vocabulary means, so nothing a provider said is rendered
+// here.
 type connectLandedView struct {
 	Outcome       string `json:"connect"`
 	IntegrationID string `json:"integrationId,omitempty"`
 	Note          string `json:"note,omitempty"`
-}
-
-func statusFor(outcome string) int {
-	if outcome == outcomeConnected {
-		return http.StatusOK
-	}
-	return http.StatusBadRequest
 }
 
 // callbackURL is the redirect URI registered with the provider. It is built from configured
