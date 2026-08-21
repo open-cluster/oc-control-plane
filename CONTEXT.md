@@ -51,8 +51,9 @@ configuration proves nothing and is not called verified. A verification records 
 OAuth scopes, plus the token's kind — and tool availability derives from them. It also
 records **facts**: non-secret, provider-shaped things it established about what is
 connected — GitHub: the account, its type, whether the installation selected repositories
-or granted all of them, and how far the grant reaches. Facts are for display and for
-support; no authorization decision reads them, which is what keeps them apart from grants.
+or granted all of them, how far the grant reaches, and where in the provider's own screens
+the customer changes it. Facts are for display and for support; no authorization decision
+reads them, which is what keeps them apart from grants.
 _Avoid:_ validation (the retired form-checking sense); metadata (for facts).
 
 **Connect flow** — one provider installation flow in progress: the customer presses Connect

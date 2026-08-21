@@ -22,9 +22,8 @@ const (
 	FactRepositoryCount        = "repositoryCount"
 	FactRepositoryCountAtLeast = "repositoryCountAtLeast"
 	// FactManageURL is where the customer changes which repositories the installation
-	// selected. Recorded rather than derived by whoever displays it, because the origin
-	// is this deployment's — a GitHub Enterprise host is not github.com — and a guessed
-	// link sends somebody to the wrong company's settings page.
+	// selected. Recorded rather than left to whoever displays it, because only the
+	// deployment knows which GitHub it talks to.
 	FactManageURL = "manageUrl"
 )
 
@@ -37,11 +36,30 @@ const (
 type deployment struct {
 	app    *App
 	client *Client
-	// webURL is where a browser reaches GitHub. Empty where this deployment registered no
-	// installation flow, and then no manage link is recorded at all: an operator who typed
-	// an installation id read it off that page and knows where it is, and a link guessed at
-	// github.com for an Enterprise host would be worse than none.
+	// webURL is where a browser reaches GitHub, and empty where this deployment has not
+	// said and cannot be guessed at. See browserOrigin.
 	webURL string
+}
+
+// browserOrigin resolves where a browser reaches this deployment's GitHub, from everything
+// the deployment said rather than from the installation flow alone — a deployment connected
+// through the configuration form has the same question answered for it.
+//
+// The last case is the one that matters: an overridden API origin with no browser origin
+// beside it is a GitHub Enterprise host whose web interface this build was never told
+// about. It answers empty, and nothing is recorded, because a link to github.com would send
+// somebody to a different company's settings page.
+func browserOrigin(configured string, installer *Installer, client *Client) string {
+	switch {
+	case configured != "":
+		return strings.TrimSuffix(configured, "/")
+	case installer != nil:
+		return installer.webURL
+	case client.reachesTheVendorsOwnAPI():
+		return defaultWebURL
+	default:
+		return ""
+	}
 }
 
 // judged is one verification plus the closed word the counter attributes it with. The
@@ -155,20 +173,18 @@ func identityOf(
 	return facts
 }
 
-// manageURL is where the customer changes what the installation selected — GitHub's own
-// settings page, not anything this product renders, because changing repositories is a
-// decision that belongs where the permissions live.
+// manageURL is where the customer changes what the installation selected: GitHub's own
+// settings page, because that decision belongs where the permissions live.
 //
-// GitHub puts an organization's installations under the organization and a personal one
+// GitHub files an organization's installations under the organization and a personal one
 // under the account, so the account type decides the shape. The login is a customer's own
-// text and is escaped as a path segment; an unrecognised account type produces no link
-// rather than a guessed one.
+// text and is escaped as a path segment; an unrecognised account type answers empty.
 func manageURL(webURL string, found Installation, installation int64) string {
 	if webURL == "" || found.Account == "" {
 		return ""
 	}
 	id := strconv.FormatInt(installation, 10)
-	origin := strings.TrimSuffix(webURL, "/")
+	origin := webURL
 	switch found.AccountType {
 	case "Organization":
 		return origin + "/organizations/" + url.PathEscape(found.Account) +

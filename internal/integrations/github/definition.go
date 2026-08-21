@@ -30,7 +30,12 @@ const (
 // The Installer may be nil too, and separately: a deployment holding an App credential but
 // no registered installation flow serves the configuration form below and no connect
 // button. That is the self-hosted path, and it stays supported.
-func Definition(installer *Installer, app *App, client *Client) integrations.Definition {
+func Definition(
+	installer *Installer, app *App, client *Client, webURL string,
+) integrations.Definition {
+	where := deployment{
+		app: app, client: client, webURL: browserOrigin(webURL, installer, client),
+	}
 	return integrations.Definition{
 		ID:   integrations.TypeGitHub,
 		Key:  "github",
@@ -72,9 +77,7 @@ func Definition(installer *Installer, app *App, client *Client) integrations.Def
 			// What the last run established travels in: an installation GitHub has
 			// stopped serving is a removal when this deployment verified it before,
 			// and an unknown id when it never did.
-			return probe(ctx, deployment{
-				app: app, client: client, webURL: installer.browserOrigin(),
-			}, installation, input.Integration.VerifyFacts)
+			return probe(ctx, where, installation, input.Integration.VerifyFacts)
 		},
 		Tools:   tools(app, client),
 		Connect: connect(installer, app, client),

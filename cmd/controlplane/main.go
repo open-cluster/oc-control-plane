@@ -188,7 +188,7 @@ func run(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
-		github.Definition(gitHubInstaller, gitHubApp, gitHubClient),
+		github.Definition(gitHubInstaller, gitHubApp, gitHubClient, cfg.GitHubWebURL),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)

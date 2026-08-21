@@ -73,9 +73,18 @@ private key, then set the deployment's App ID and private-key file as described 
 Server, also set the API and web URLs.
 
 To offer **Connect GitHub**, enable **Request user authorization (OAuth) during
-installation** on the App, set its callback URL to
-`https://YOUR-OPENCLUSTER/operator/v1/integrations/connect/callback`, and set the App's
+installation** on the App and set its callback URL to
+`https://YOUR-OPENCLUSTER/operator/v1/integrations/connect/callback`. Then set the App's
 slug, OAuth client ID, and client secret file in the deployment configuration.
+
+Two details matter:
+
+- The callback URL must match the deployment's public URL exactly, scheme included.
+- If the App registers several callback URLs, this one must be **first**. GitHub returns
+  the browser to the first callback URL when the authorization request does not name one.
+
+Enabling this option removes the App's setup URL field. That is expected: the callback URL
+replaces it, and the customer is returned there with everything OpenCluster needs.
 
 The private key and client secret stay on the deployment.
 

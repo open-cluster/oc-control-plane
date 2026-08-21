@@ -957,3 +957,39 @@ func TestDisconnectingGitHubRemovesReach(t *testing.T) {
 		t.Errorf("disconnecting left %d integrations behind", len(found))
 	}
 }
+
+// A deployment that registered an installation flow and never said where it is publicly
+// reachable cannot build the redirect URI GitHub returns to. It refuses at the start,
+// naming what is missing, rather than sending a customer to GitHub and losing them there.
+func TestStartingAFlowWithNoPublicURLRefusesWithTheReason(t *testing.T) {
+	vendor := newInstallFake(t, 77)
+
+	operatorAddress := freeAddress(t)
+	plane := startControlPlane(t, func(cfg *config.Config) {
+		cfg.OperatorAddress = operatorAddress
+		digest := sha256.Sum256([]byte(surfaceToken))
+		cfg.OperatorTokenDigest = digest[:]
+		cfg.OperatorTokenOrganization = surfaceOrg
+		cfg.GitHubAppID = "12345"
+		cfg.GitHubAppKey = appKeyPEM(t)
+		cfg.GitHubAPIURL = vendor.URL
+		cfg.GitHubWebURL = vendor.URL
+		cfg.GitHubAppSlug = "opencluster"
+		cfg.GitHubClientID = "Iv1.deployment"
+		cfg.GitHubClientSecret = "the-client-secret"
+		// Deliberately absent.
+		cfg.OperatorPublicURL = ""
+	})
+	surface := &integrationPlane{controlPlane: plane, operator: operatorAddress}
+
+	status, refused := surface.startConnect(t, surfaceOrg)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("starting a flow with no public url = %d, want 503: %s", status, refused)
+	}
+	if !strings.Contains(refused, "public URL") {
+		t.Errorf("the refusal %q does not name what the deployment lacks", refused)
+	}
+	if found := surface.integrations(t, surfaceOrg); len(found) != 0 {
+		t.Errorf("a refused start produced %d integrations", len(found))
+	}
+}

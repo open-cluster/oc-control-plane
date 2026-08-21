@@ -94,6 +94,11 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// reachesTheVendorsOwnAPI reports that nothing overrode where this client goes. It is what
+// lets a deployment that configured no origins at all be known to be talking to github.com,
+// and one that overrode the API origin be known NOT to be.
+func (c *Client) reachesTheVendorsOwnAPI() bool { return c != nil && c.baseURL == defaultBaseURL }
+
 // Installation is one App installation as GitHub reports it: whose account it is, whether
 // it is suspended, and whether it selected repositories or granted all of them.
 type Installation struct {

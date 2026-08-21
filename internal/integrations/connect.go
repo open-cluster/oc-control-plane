@@ -25,6 +25,20 @@ import (
 //
 // The provider supplies the two halves that differ between vendors, and nothing else. That
 // is what keeps this file free of any knowledge of GitHub.
+//
+// A SECOND PROVIDER ADDS NOTHING HERE. Everything below is shared, and the whole of what a
+// new one writes is a Connect value on its Definition:
+//
+//   - Authorize: build the vendor's own installation URL, carrying the state unchanged.
+//   - Redeem: prove that whoever authorized the flow can reach what the callback named,
+//     and return a ConnectBinding — a suggested name and the non-secret configuration.
+//     Refusing is the point of it; an unproven return must be an error.
+//
+// The route pair, the integration_connect_flow table, the single-use state, the principal
+// check, the live probe, and recognising a repeat connection as a re-verification are all
+// done for it. A provider that reaches for its own flow record, its own callback route, or
+// its own duplicate check is solving a problem this file already solved — and doing it
+// somewhere the security review would have to be repeated.
 
 // ErrConnectFlowUnknown reports a state that was never issued, has expired, or has already
 // been consumed. It is ONE error for all three: telling them apart is how a caller learns

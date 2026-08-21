@@ -189,80 +189,149 @@ func TestProbeTellsARemovedInstallationApartFromAnUnknownOne(t *testing.T) {
 // integration records where that page is. GitHub files an organization's installations
 // under the organization and a personal one under the account, and the origin is this
 // deployment's — a GitHub Enterprise host is not github.com.
+//
+// Asserted through the probe rather than against the URL builder: the probe is this
+// provider's seam, and the account type arrives the way it really does, in what GitHub
+// answered.
 func TestTheRecordedManageLinkPointsAtGitHubsOwnSettings(t *testing.T) {
 	t.Parallel()
 
 	for name, want := range map[string]struct {
 		accountType string
-		webURL      string
-		link        string
+		path        string
 	}{
 		"an organization": {
-			"Organization", "https://github.com",
-			"https://github.com/organizations/acme-corp/settings/installations/77",
+			"Organization", "/organizations/acme-corp/settings/installations/77",
 		},
-		"a personal account": {
-			"User", "https://github.com", "https://github.com/settings/installations/77",
-		},
-		"an enterprise host": {
-			"Organization", "https://github.acme.internal",
-			"https://github.acme.internal/organizations/acme-corp/settings/installations/77",
-		},
-		"a deployment that cannot know the origin": {"Organization", "", ""},
-		"an account type github has not shown us":  {"Enterprise", "https://github.com", ""},
+		"a personal account":                      {"User", "/settings/installations/77"},
+		"an account type github has not shown us": {"Enterprise", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			found := Installation{Account: "acme-corp", AccountType: want.accountType}
-			if link := manageURL(want.webURL, found, 77); link != want.link {
-				t.Errorf("manage link = %q, want %q", link, want.link)
+			fake := newFakeGitHub(t)
+			healthyInstallation(fake)
+			fake.answer("/app/installations/77", `{"id":77,
+				"account":{"login":"acme-corp","type":"`+want.accountType+`"},
+				"repository_selection":"selected","suspended_at":null}`)
+
+			verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
+			link, _ := verified.Facts[FactManageURL].(string)
+			if want.path == "" {
+				if link != "" {
+					t.Fatalf("a link was guessed for an unrecognised account type: %q", link)
+				}
+				return
+			}
+			if link != fake.URL+want.path {
+				t.Errorf("manage link = %q, want %q", link, fake.URL+want.path)
 			}
 		})
 	}
 }
 
-// A login is a customer's own text, so it is escaped rather than pasted into a URL.
+// A login is a customer's own text, so it cannot leave the path segment it is put in.
 func TestAManageLinkEscapesTheAccountItNames(t *testing.T) {
 	t.Parallel()
 
-	found := Installation{Account: "acme corp/../evil", AccountType: "Organization"}
-	link := manageURL("https://github.com", found, 77)
+	fake := newFakeGitHub(t)
+	healthyInstallation(fake)
+	fake.answer("/app/installations/77", `{"id":77,
+		"account":{"login":"acme corp/../evil","type":"Organization"},
+		"repository_selection":"selected","suspended_at":null}`)
+
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
+	link, _ := verified.Facts[FactManageURL].(string)
 	if strings.Contains(link, "/../") || strings.Contains(link, " ") {
 		t.Errorf("the link %q pastes the account in unescaped", link)
 	}
-	if !strings.HasSuffix(link, "/settings/installations/77") {
-		t.Errorf("the link %q no longer addresses the installation", link)
+	if !strings.HasPrefix(link, fake.URL) ||
+		!strings.HasSuffix(link, "/settings/installations/77") {
+		t.Errorf("the link %q no longer addresses this installation here", link)
 	}
 }
 
-func TestAVerifiedInstallationRecordsWhereToChangeIt(t *testing.T) {
+// WHERE A BROWSER REACHES THIS DEPLOYMENT'S GITHUB.
+//
+// The last case is the one that matters: an overridden API origin with no browser origin
+// beside it is an Enterprise host whose web interface nothing told this build about, and a
+// link to github.com would send somebody to a different company's settings page.
+func TestTheBrowserOriginIsResolvedFromWhatTheDeploymentSaid(t *testing.T) {
+	t.Parallel()
+
+	enterprise := NewClient("https://github.acme.internal/api/v3")
+	installer, err := NewInstaller("oc", "Iv1.x", "secret", "https://github.acme.internal")
+	if err != nil {
+		t.Fatalf("building the installer: %v", err)
+	}
+
+	for name, resolved := range map[string]struct {
+		configured string
+		installer  *Installer
+		client     *Client
+		want       string
+	}{
+		"configured outright": {
+			"https://github.acme.internal/", nil, enterprise, "https://github.acme.internal",
+		},
+		"from the installation flow": {
+			"", installer, enterprise, "https://github.acme.internal",
+		},
+		"nothing overridden at all": {"", nil, NewClient(""), "https://github.com"},
+		"an api origin overridden and no browser origin beside it": {
+			"", nil, enterprise, "",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := browserOrigin(resolved.configured, resolved.installer, resolved.client)
+			if got != resolved.want {
+				t.Errorf("browser origin = %q, want %q", got, resolved.want)
+			}
+		})
+	}
+}
+
+// A deployment connected through the configuration form gets the link too, as long as it
+// said which GitHub it talks to. The documentation promises it on that page without
+// qualification, and it has to be true there.
+func TestTheConfigurationFormPathAlsoRecordsAManageLink(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
-	link, recorded := verified.Facts[FactManageURL].(string)
-	if !recorded || link == "" {
-		t.Fatalf("no manage link was recorded: %v", verified.Facts)
+	// No installer: this deployment registered no installation flow, and named its
+	// origins instead.
+	definition := Definition(nil, appAgainst(t, fake), NewClient(fake.URL), fake.URL)
+	verified := definition.Probe(testContext(t), integrations.ProbeInput{
+		Integration: integrations.Integration{
+			Configuration: map[string]any{"installationId": float64(77)},
+		},
+	})
+	if verified.Status != integrations.StatusActive {
+		t.Fatalf("status = %s: %s", verified.Status, verified.Note)
 	}
+	link, _ := verified.Facts[FactManageURL].(string)
 	if !strings.HasPrefix(link, fake.URL) {
-		t.Errorf("the link %q does not point at this deployment's github", link)
+		t.Errorf("the form path recorded %q, and the documentation promises a link", link)
 	}
 }
 
-// A deployment that registered no installation flow says nothing rather than guessing an
-// origin it was never told.
+// And a deployment that cannot know says nothing rather than guessing.
 func TestADeploymentThatCannotKnowTheOriginRecordsNoManageLink(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	verified := probe(testContext(t), deployment{
-		app: appAgainst(t, fake), client: NewClient(fake.URL),
-	}, 77, nil)
+	definition := Definition(nil, appAgainst(t, fake), NewClient(fake.URL), "")
+	verified := definition.Probe(testContext(t), integrations.ProbeInput{
+		Integration: integrations.Integration{
+			Configuration: map[string]any{"installationId": float64(77)},
+		},
+	})
 	if _, recorded := verified.Facts[FactManageURL]; recorded {
 		t.Errorf("a link was guessed for a deployment with no browser origin: %v",
 			verified.Facts)

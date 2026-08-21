@@ -8,6 +8,10 @@
 -- stored, and the organization the Integration is bound to comes from the row rather than
 -- from the callback's query.
 --
+-- The table is SHARED by every Integration Type with a browser enrolment, not GitHub's:
+-- integration_type_id says whose flow a row is, and the Go side is internal/integrations
+-- (connect.go), which knows no provider. A second provider reuses this and adds no schema.
+--
 -- Migrations are forward-only and append-only. An applied migration is never edited.
 
 CREATE TABLE IF NOT EXISTS integration_connect_flow
