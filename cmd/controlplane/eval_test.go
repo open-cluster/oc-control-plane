@@ -22,7 +22,7 @@ import (
 
 // The evaluation harness's two entry points. The deterministic pipeline runs in every
 // suite: it proves the worlds serve, the plane investigates them, and the scorer scores
-// — with a scripted conversation, so CI never pays a provider. The capture run is gated:
+// — with a scripted exchange, so CI never pays a provider. The capture run is gated:
 // it drives the real model over every case and files the scores as an artifact, which is
 // how issue #5's baselines are taken.
 
@@ -31,7 +31,7 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 
 	t.Run("a scripted walk through the single-cause world scores as found", func(t *testing.T) {
 		one := evalCaseNamed(t, cases, "single-root-cause")
-		conversation := &scriptedConversationMain{moves: []investigation.Move{
+		exchange := &scriptedExchangeMain{moves: []investigation.Move{
 			{Calls: []investigation.AgentCall{
 				{ID: "c1", Tool: "slack.list_channels", Arguments: map[string]any{}},
 				{ID: "c2", Tool: "slack.get_channel_history",
@@ -52,7 +52,7 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 		}}
 
 		record := runEvalCase(t, one, evalModel{},
-			&scriptedInvestigatorMain{conversation: conversation})
+			&scriptedInvestigatorMain{exchange: exchange})
 		score := scoreEvalCase(one, record)
 
 		if score.Status != "concluded" {
@@ -73,8 +73,8 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 
 		// The world models what a granted bot token really delivers: history authors
 		// arrive as raw ids, users:read resolves them, and the workspace URL yields
-		// permalinks — so the transcript the conversation was fed carries all three.
-		transcript, err := json.Marshal(conversation.results)
+		// permalinks — so the transcript the exchange was fed carries all three.
+		transcript, err := json.Marshal(exchange.results)
 		if err != nil {
 			t.Fatalf("rendering the fed results: %v", err)
 		}
@@ -124,7 +124,7 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 
 	t.Run("the empty world scores honesty rather than fabrication", func(t *testing.T) {
 		one := evalCaseNamed(t, cases, "missing-data-unresolved")
-		conversation := &scriptedConversationMain{moves: []investigation.Move{
+		exchange := &scriptedExchangeMain{moves: []investigation.Move{
 			{Calls: []investigation.AgentCall{
 				{ID: "c1", Tool: "slack.get_channel_history",
 					Arguments: map[string]any{"channel": "C1"}},
@@ -134,7 +134,7 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 		}}
 
 		record := runEvalCase(t, one, evalModel{},
-			&scriptedInvestigatorMain{conversation: conversation})
+			&scriptedInvestigatorMain{exchange: exchange})
 		score := scoreEvalCase(one, record)
 
 		if score.Status != "concluded" {

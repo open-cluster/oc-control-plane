@@ -15,13 +15,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// The autonomous loop against an in-memory store, a scripted conversation and stub
+// The autonomous loop against an in-memory store, a scripted exchange and stub
 // tools: the branches the composition suite cannot cheaply reach — duplicate
 // suppression, stagnation, each ceiling's honest stop, refused citations, and the
 // orientation being platform-held context only.
 
-// scriptedConversation plays back moves in order and remembers what it was fed.
-type scriptedConversation struct {
+// scriptedExchange plays back moves in order and remembers what it was fed.
+type scriptedExchange struct {
 	mu      sync.Mutex
 	moves   []Move
 	failure error
@@ -35,7 +35,7 @@ type conversationTurn struct {
 	reason       string
 }
 
-func (s *scriptedConversation) Next(
+func (s *scriptedExchange) Next(
 	_ context.Context, results []CallResult, mustConclude bool, reason string,
 ) (Move, error) {
 	s.mu.Lock()
@@ -52,25 +52,25 @@ func (s *scriptedConversation) Next(
 	return next, nil
 }
 
-// scriptedInvestigator hands out one scripted conversation and remembers the
+// scriptedInvestigator hands out one scripted exchange and remembers the
 // orientation it was opened with.
 type scriptedInvestigator struct {
-	mu           sync.Mutex
-	conversation *scriptedConversation
-	orientation  Orientation
-	failure      error
+	mu          sync.Mutex
+	exchange    *scriptedExchange
+	orientation Orientation
+	failure     error
 }
 
-func (s *scriptedInvestigator) OpenConversation(
+func (s *scriptedInvestigator) OpenExchange(
 	_ context.Context, orientation Orientation,
-) (Conversation, error) {
+) (Exchange, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orientation = orientation
 	if s.failure != nil {
 		return nil, s.failure
 	}
-	return s.conversation, nil
+	return s.exchange, nil
 }
 
 func runAutonomous(
@@ -108,7 +108,7 @@ func TestTheAutonomousLoopRecordsOfferedSourcesRunsAndConclusion(t *testing.T) {
 			Content: []string{"found"}, Summary: "1 item", Sources: []string{"C1"},
 		}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read"}},
 			Spend: Spend{InputTokens: 10, MicroCents: 1}},
 		{Conclusion: &Conclusion{
@@ -122,7 +122,7 @@ func TestTheAutonomousLoopRecordsOfferedSourcesRunsAndConclusion(t *testing.T) {
 		}, Spend: Spend{InputTokens: 20, MicroCents: 2}},
 	}}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if store.status != StatusConcluded {
 		t.Fatalf("status = %s, reason %q", store.status, store.failReason)
@@ -151,11 +151,11 @@ func TestTheAutonomousLoopRecordsOfferedSourcesRunsAndConclusion(t *testing.T) {
 	if store.stoppedBy != "" {
 		t.Errorf("stopped_by = %q; a free conclusion carries no label", store.stoppedBy)
 	}
-	// The conversation was fed the executed run's result, matched to its call.
-	if len(conversation.fed) != 2 || len(conversation.fed[1].results) != 1 {
-		t.Fatalf("fed = %+v", conversation.fed)
+	// The exchange was fed the executed run's result, matched to its call.
+	if len(exchange.fed) != 2 || len(exchange.fed[1].results) != 1 {
+		t.Fatalf("fed = %+v", exchange.fed)
 	}
-	if result := conversation.fed[1].results[0]; result.CallID != "c1" ||
+	if result := exchange.fed[1].results[0]; result.CallID != "c1" ||
 		result.Run.Ordinal != 1 || result.Run.Outcome != RunSucceeded {
 		t.Errorf("result = %+v; the call's own identifier must come back with the run", result)
 	}
@@ -171,13 +171,13 @@ func TestADuplicateCallIsSuppressedVisibly(t *testing.T) {
 		return integrations.ToolResult{Content: []string{"found"}}, nil
 	})
 	same := map[string]any{"channel": "C1"}
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read", Arguments: same}}},
 		{Calls: []AgentCall{{ID: "c2", Tool: "stub.read", Arguments: same}}},
 		{Conclusion: &Conclusion{}},
 	}}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if executed != 1 {
 		t.Fatalf("executed = %d; an identical read must not run twice", executed)
@@ -188,7 +188,7 @@ func TestADuplicateCallIsSuppressedVisibly(t *testing.T) {
 			store.runs)
 	}
 	// The model reads an in-band note with its allowed next moves, not a bare failure.
-	suppressed := conversation.fed[2].results[0]
+	suppressed := exchange.fed[2].results[0]
 	if !strings.Contains(suppressed.Run.Error, "different") ||
 		!strings.Contains(suppressed.Run.Error, "conclude") {
 		t.Errorf("note = %q; the note names the allowed next moves", suppressed.Run.Error)
@@ -206,7 +206,7 @@ func TestStagnationForcesAnHonestStop(t *testing.T) {
 	repeat := func(id string) Move {
 		return Move{Calls: []AgentCall{{ID: id, Tool: "stub.read", Arguments: same}}}
 	}
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		repeat("c1"), repeat("c2"), repeat("c3"),
 		{Conclusion: &Conclusion{Findings: []Finding{{
 			Statement: "partial", Kind: FindingUnresolvedLead,
@@ -214,7 +214,7 @@ func TestStagnationForcesAnHonestStop(t *testing.T) {
 		}}}},
 	}}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if store.status != StatusConcluded {
 		t.Fatalf("status = %s reason %q; stagnation concludes, never fails",
@@ -224,8 +224,8 @@ func TestStagnationForcesAnHonestStop(t *testing.T) {
 		t.Errorf("stopped_by = %q, want %q", store.stoppedBy, StoppedByStagnation)
 	}
 	// Turn 1 executes; turns 2 and 3 are stagnant duplicates; the fourth call to the
-	// conversation must be the forced conclusion.
-	final := conversation.fed[len(conversation.fed)-1]
+	// exchange must be the forced conclusion.
+	final := exchange.fed[len(exchange.fed)-1]
 	if !final.mustConclude || !strings.Contains(final.reason, "new evidence") {
 		t.Errorf("final turn = %+v; the forced conclusion says why", final)
 	}
@@ -242,14 +242,14 @@ func TestTheTurnCeilingForcesAnHonestStop(t *testing.T) {
 		return Move{Calls: []AgentCall{{ID: id, Tool: "stub.read",
 			Arguments: map[string]any{"page": page}}}}
 	}
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		fresh("c1", 1), fresh("c2", 2), fresh("c3", 3),
 		{Conclusion: &Conclusion{}},
 	}}
 
 	runner := &Runner{
 		Store: store, Catalog: catalog,
-		Investigator: &scriptedInvestigator{conversation: conversation},
+		Investigator: &scriptedInvestigator{exchange: exchange},
 		MaxTurns:     3,
 		Logger:       slog.New(slog.DiscardHandler),
 	}
@@ -264,9 +264,9 @@ func TestTheTurnCeilingForcesAnHonestStop(t *testing.T) {
 		t.Fatalf("status=%s stopped_by=%q reason=%q", store.status, store.stoppedBy,
 			store.failReason)
 	}
-	if len(conversation.fed) != 4 {
+	if len(exchange.fed) != 4 {
 		t.Errorf("turns = %d; three reading turns and one forced conclusion",
-			len(conversation.fed))
+			len(exchange.fed))
 	}
 }
 
@@ -279,7 +279,7 @@ func TestTheRunCeilingDropsVisiblyAndForcesAnHonestStop(t *testing.T) {
 		executed++
 		return integrations.ToolResult{Content: []string{"x"}}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{
 			{ID: "c1", Tool: "stub.read", Arguments: map[string]any{"page": 1}},
 			{ID: "c2", Tool: "stub.read", Arguments: map[string]any{"page": 2}},
@@ -290,7 +290,7 @@ func TestTheRunCeilingDropsVisiblyAndForcesAnHonestStop(t *testing.T) {
 
 	runner := &Runner{
 		Store: store, Catalog: catalog,
-		Investigator: &scriptedInvestigator{conversation: conversation},
+		Investigator: &scriptedInvestigator{exchange: exchange},
 		MaxToolRuns:  2,
 		Logger:       slog.New(slog.DiscardHandler),
 	}
@@ -320,7 +320,7 @@ func TestTheSpendCeilingForcesAnHonestStopOnTheAutonomousPath(t *testing.T) {
 	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{Content: []string{"x"}}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read",
 			Arguments: map[string]any{"page": 1}}}, Spend: Spend{MicroCents: 7}},
 		{Calls: []AgentCall{{ID: "c2", Tool: "stub.read",
@@ -333,7 +333,7 @@ func TestTheSpendCeilingForcesAnHonestStopOnTheAutonomousPath(t *testing.T) {
 
 	runner := &Runner{
 		Store: store, Catalog: catalog,
-		Investigator:           &scriptedInvestigator{conversation: conversation},
+		Investigator:           &scriptedInvestigator{exchange: exchange},
 		SpendCeilingMicroCents: 10,
 		Logger:                 slog.New(slog.DiscardHandler),
 	}
@@ -360,14 +360,14 @@ func TestAutonomousCitationsAreCheckedAgainstRunsThatHappened(t *testing.T) {
 	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
 	})
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		{Conclusion: &Conclusion{Findings: []Finding{{
 			Statement: "invented", Kind: FindingProbableCause,
 			Confidence: ConfidenceConfirmed, Sources: []int{7},
 		}}}},
 	}}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if store.status != StatusFailed || !strings.Contains(store.failReason, "never ran") {
 		t.Errorf("status = %s reason %q; an untraceable finding must never be stored",
@@ -394,7 +394,7 @@ func TestTheOrientationCarriesHeldContextOnly(t *testing.T) {
 	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
 	})
-	investigator := &scriptedInvestigator{conversation: &scriptedConversation{}}
+	investigator := &scriptedInvestigator{exchange: &scriptedExchange{}}
 
 	runner := &Runner{
 		Store: store, Catalog: catalog, Investigator: investigator,
@@ -451,7 +451,7 @@ func TestAnIntegrationWhoseGrantsSupportNoToolIsNotOffered(t *testing.T) {
 	}
 	ungranted := stubIntegration("No Grants")
 	store := &memoryStore{candidates: []integrations.Integration{ungranted}}
-	investigator := &scriptedInvestigator{conversation: &scriptedConversation{}}
+	investigator := &scriptedInvestigator{exchange: &scriptedExchange{}}
 
 	runAutonomous(t, store, catalog, investigator)
 
@@ -476,13 +476,13 @@ func TestMustConcludeWithoutAConclusionFailsTheInvestigation(t *testing.T) {
 	stubborn := func(id string) Move {
 		return Move{Calls: []AgentCall{{ID: id, Tool: "stub.read", Arguments: same}}}
 	}
-	conversation := &scriptedConversation{moves: []Move{
+	exchange := &scriptedExchange{moves: []Move{
 		stubborn("c1"), stubborn("c2"), stubborn("c3"), stubborn("c4"), stubborn("c5"),
 	}}
 
 	runner := &Runner{
 		Store: store, Catalog: catalog,
-		Investigator: &scriptedInvestigator{conversation: conversation},
+		Investigator: &scriptedInvestigator{exchange: exchange},
 		MaxTurns:     3,
 		Logger:       slog.New(slog.DiscardHandler),
 	}
@@ -506,9 +506,9 @@ func TestAFailedConversationFailsTheInvestigation(t *testing.T) {
 	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
 	})
-	conversation := &scriptedConversation{failure: ErrReasonerUnavailable}
+	exchange := &scriptedExchange{failure: ErrReasonerUnavailable}
 
-	runAutonomous(t, store, catalog, &scriptedInvestigator{conversation: conversation})
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
 
 	if store.status != StatusFailed || store.failReason == "" {
 		t.Errorf("status = %s reason %q", store.status, store.failReason)

@@ -14,13 +14,13 @@ import (
 
 // The autonomous loop through the whole composed plane: a real database, real intake,
 // the real operator surface, a real Slack fake at the vendor seam — and a scripted
-// conversation at the model boundary. What is pinned is what an operator reads
+// exchange at the model boundary. What is pinned is what an operator reads
 // afterwards: the offer recorded as sources, every run in provenance, the §7 conclusion
 // with kinds, confidence and next steps, and an honest stopped-by label when a ceiling
 // forces the end.
 
-// scriptedConversationMain plays back moves and remembers what it was fed.
-type scriptedConversationMain struct {
+// scriptedExchangeMain plays back moves and remembers what it was fed.
+type scriptedExchangeMain struct {
 	mu      sync.Mutex
 	moves   []investigation.Move
 	failure error
@@ -29,7 +29,7 @@ type scriptedConversationMain struct {
 	results []investigation.CallResult
 }
 
-func (s *scriptedConversationMain) Next(
+func (s *scriptedExchangeMain) Next(
 	_ context.Context, results []investigation.CallResult, mustConclude bool, _ string,
 ) (investigation.Move, error) {
 	s.mu.Lock()
@@ -48,22 +48,22 @@ func (s *scriptedConversationMain) Next(
 }
 
 type scriptedInvestigatorMain struct {
-	mu           sync.Mutex
-	conversation *scriptedConversationMain
-	orientation  investigation.Orientation
+	mu          sync.Mutex
+	exchange    *scriptedExchangeMain
+	orientation investigation.Orientation
 }
 
-func (s *scriptedInvestigatorMain) OpenConversation(
+func (s *scriptedInvestigatorMain) OpenExchange(
 	_ context.Context, orientation investigation.Orientation,
-) (investigation.Conversation, error) {
+) (investigation.Exchange, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orientation = orientation
-	return s.conversation, nil
+	return s.exchange, nil
 }
 
 // autonomousPlaneWith starts a plane whose model boundary is the scripted
-// conversation, with any further config the case needs.
+// exchange, with any further config the case needs.
 func autonomousPlaneWith(
 	t *testing.T, investigator investigation.Investigator,
 	adjust func(cfg *config.Config),
@@ -92,7 +92,7 @@ func autonomousPlaneWith(
 func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 	t.Parallel()
 
-	conversation := &scriptedConversationMain{moves: []investigation.Move{
+	exchange := &scriptedExchangeMain{moves: []investigation.Move{
 		{Calls: []investigation.AgentCall{{
 			ID: "call-1", Tool: "slack.list_channels", Arguments: map[string]any{},
 		}}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
@@ -110,7 +110,7 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 			NextSteps: []string{"roll back the deploy", "watch the latency panel"},
 		}, Spend: investigation.Spend{InputTokens: 120, OutputTokens: 30, MicroCents: 7}},
 	}}
-	investigator := &scriptedInvestigatorMain{conversation: conversation}
+	investigator := &scriptedInvestigatorMain{exchange: exchange}
 	plane, vendor := autonomousPlaneWith(t, investigator, nil)
 	vendor.serveChannels(`{"ok":true,"channels":[
 		{"id":"C1","name":"incidents","topic":{"value":"live incident chat"}}],
@@ -188,17 +188,17 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 		t.Errorf("trigger = %+v; the alert's own labels are held context", orientation.Trigger)
 	}
 
-	// The conversation read the run's content, not a summary of one.
-	if len(conversation.results) != 1 || conversation.results[0].Run.Content == nil {
-		t.Errorf("the conversation was fed %+v; the next turn needs the run's content",
-			conversation.results)
+	// The exchange read the run's content, not a summary of one.
+	if len(exchange.results) != 1 || exchange.results[0].Run.Content == nil {
+		t.Errorf("the exchange was fed %+v; the next turn needs the run's content",
+			exchange.results)
 	}
 }
 
 func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 	t.Parallel()
 
-	conversation := &scriptedConversationMain{moves: []investigation.Move{
+	exchange := &scriptedExchangeMain{moves: []investigation.Move{
 		{Calls: []investigation.AgentCall{{
 			ID: "call-1", Tool: "slack.list_channels", Arguments: map[string]any{},
 		}}},
@@ -210,7 +210,7 @@ func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 		}}}},
 	}}
 	plane, vendor := autonomousPlaneWith(t, &scriptedInvestigatorMain{
-		conversation: conversation,
+		exchange: exchange,
 	}, func(cfg *config.Config) {
 		cfg.InvestigationMaxTurns = 1
 	})
@@ -243,7 +243,7 @@ func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 		t.Errorf("status=%q stoppedBy=%q; a configured ceiling ends in an honest stop: %s",
 			read.Status, read.StoppedBy, final)
 	}
-	if len(conversation.fed) != 2 || conversation.fed[0] || !conversation.fed[1] {
-		t.Errorf("fed = %v; one reading turn, then the forced conclusion", conversation.fed)
+	if len(exchange.fed) != 2 || exchange.fed[0] || !exchange.fed[1] {
+		t.Errorf("fed = %v; one reading turn, then the forced conclusion", exchange.fed)
 	}
 }

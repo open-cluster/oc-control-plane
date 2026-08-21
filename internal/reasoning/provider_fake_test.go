@@ -10,7 +10,7 @@ import (
 )
 
 // The fake provider every reasoning test converses against, and the construction and
-// telemetry properties that hold for any conversation: an unconsented or unpriced
+// telemetry properties that hold for any exchange: an unconsented or unpriced
 // deployment is refused before a single request exists, and every provider call lands
 // one structured telemetry line carrying the derived agent revision.
 
@@ -87,11 +87,11 @@ func TestEveryProviderCallEmitsItsTelemetry(t *testing.T) {
 	agent.Instrument(NewTelemetry(
 		slog.New(slog.NewJSONHandler(&lines, nil)), "abcdef0123456789"))
 
-	conversation, err := agent.OpenConversation(context.Background(), testOrientation())
+	exchange, err := agent.OpenExchange(context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
 

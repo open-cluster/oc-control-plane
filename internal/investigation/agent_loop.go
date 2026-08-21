@@ -14,10 +14,10 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// THE AUTONOMOUS LOOP — one conversational investigator behind the Runner shell. The
+// THE AUTONOMOUS LOOP — one autonomous investigator behind the Runner shell. The
 // shell guarantees concurrency and drain, provenance recorded as it happens, one
 // audited credential unseal per integration, the citation check, and the detached
-// write window for the final record. The loop drives one held conversation over the
+// write window for the final record. The loop drives one held Exchange over the
 // whole offered tool universe, under safety ceilings — every one an honest stopped-by
 // conclusion, never a silent cut and never resource exhaustion dressed up as a
 // diagnosis.
@@ -28,14 +28,14 @@ import (
 const (
 	// defaultMaxToolRuns bounds the whole investigation's reads.
 	defaultMaxToolRuns = 30
-	// defaultMaxTurns bounds the conversation's reading turns; the turn after the last
+	// defaultMaxTurns bounds the Exchange's reading turns; the turn after the last
 	// is the forced conclusion.
 	defaultMaxTurns = 20
 	// maxStagnantTurns is how many consecutive turns may produce no new evidence before
 	// the conclusion is forced. A turn with a fresh successful read resets the count.
 	maxStagnantTurns = 2
 	// wallClockReserve is how much of the investigation's deadline is kept back for the
-	// concluding turn: a conversation that would run into the deadline concludes with
+	// concluding turn: an Exchange that would run into the deadline concludes with
 	// what it has instead of dying mid-read as a failure.
 	wallClockReserve = 2 * time.Minute
 	// inventoryDigestLimit bounds the orientation's workload digest.
@@ -46,11 +46,11 @@ const (
 // wherever it surfaces — a read whose record failed must not inform a conclusion.
 var errProvenance = errors.New("a tool run could not be recorded")
 
-// errNoConclusion marks a conversation that would not conclude when its reads were
+// errNoConclusion marks an Exchange that would not conclude when its reads were
 // withdrawn.
 var errNoConclusion = errors.New("the reasoner did not conclude when required to")
 
-// run is one whole investigation: orientation from held context, then a conversation
+// run is one whole investigation: orientation from held context, then an Exchange
 // of moves and executions, then the conclusion or the failure.
 func (r *Runner) run(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
@@ -75,7 +75,7 @@ func (r *Runner) run(
 		}
 	}
 
-	conversation, err := r.Investigator.OpenConversation(ctx,
+	exchange, err := r.Investigator.OpenExchange(ctx,
 		r.orientation(ctx, organization, opened, offered))
 	if err != nil {
 		r.fail(ctx, organization, opened.ID, reasonerFailure(err), Spend{})
@@ -102,7 +102,7 @@ func (r *Runner) run(
 		loop.maxTurns = defaultMaxTurns
 	}
 
-	conclusion, stoppedBy, err := loop.converse(ctx, conversation)
+	conclusion, stoppedBy, err := loop.converse(ctx, exchange)
 	if err != nil {
 		r.fail(ctx, organization, opened.ID, failureReason(err), loop.spend)
 		return
@@ -129,10 +129,10 @@ type autonomousLoop struct {
 	spend              Spend
 }
 
-// converse drives the conversation to its conclusion: moves in, executions out, until
+// converse drives the Exchange to its conclusion: moves in, executions out, until
 // the model concludes or a ceiling forces it to.
 func (l *autonomousLoop) converse(
-	ctx context.Context, conversation Conversation,
+	ctx context.Context, exchange Exchange,
 ) (Conclusion, string, error) {
 	var results []CallResult
 	stagnant := 0
@@ -145,7 +145,7 @@ func (l *autonomousLoop) converse(
 		}
 		mustConclude := stoppedBy != "" || len(l.offered) == 0
 
-		move, moveErr := l.nextMove(ctx, conversation, results, mustConclude,
+		move, moveErr := l.nextMove(ctx, exchange, results, mustConclude,
 			concludeReason(stoppedBy, len(l.offered)))
 		l.spend = l.spend.Add(move.Spend)
 		if moveErr != nil {
@@ -159,7 +159,7 @@ func (l *autonomousLoop) converse(
 			return Conclusion{}, "", errNoConclusion
 		}
 
-		// A fresh slice per turn: the conversation may hold what it was fed.
+		// A fresh slice per turn: the Exchange may hold what it was fed.
 		results = make([]CallResult, 0, len(move.Calls))
 		freshRead := false
 		for _, call := range move.Calls {
@@ -254,17 +254,17 @@ func (l *autonomousLoop) firedCeiling(ctx context.Context, turn, stagnant int) s
 	}
 }
 
-// nextMove asks the conversation for its next move under the per-turn deadline.
+// nextMove asks the Exchange for its next move under the per-turn deadline.
 func (l *autonomousLoop) nextMove(
-	ctx context.Context, conversation Conversation, results []CallResult,
+	ctx context.Context, exchange Exchange, results []CallResult,
 	mustConclude bool, reason string,
 ) (Move, error) {
 	moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 	defer done()
-	return conversation.Next(moveCtx, results, mustConclude, reason)
+	return exchange.Next(moveCtx, results, mustConclude, reason)
 }
 
-// failureReason renders a conversation error as the recordable failure reason: the
+// failureReason renders an Exchange error as the recordable failure reason: the
 // loop's own sentinels speak for themselves, anything else came from the model boundary.
 func failureReason(err error) string {
 	if errors.Is(err, errProvenance) || errors.Is(err, errNoConclusion) {
@@ -274,7 +274,7 @@ func failureReason(err error) string {
 }
 
 // conclude checks the conclusion and writes it, with the ceiling that forced it —
-// empty when the model concluded freely. The scale of the conversation — turns taken,
+// empty when the model concluded freely. The scale of the Exchange — turns taken,
 // reads executed — is context-size instrumentation, emitted here because the loop is
 // the only place that knows both numbers.
 func (r *Runner) conclude(
@@ -288,8 +288,11 @@ func (r *Runner) conclude(
 	writeCtx, done := writeWindow(ctx)
 	defer done()
 	if err := r.Store.ConcludeInvestigation(writeCtx, organization, id,
-		conclusion.Findings, boundNextSteps(conclusion.NextSteps), stoppedBy,
-		spend); err != nil {
+		Conclusion{
+			Answer:    bounded(conclusion.Answer, MaxAnswerLength),
+			Findings:  conclusion.Findings,
+			NextSteps: boundNextSteps(conclusion.NextSteps),
+		}, stoppedBy, spend); err != nil {
 		r.Logger.Error("an investigation's conclusion could not be recorded",
 			slog.String("investigation_id", id.String()),
 			slog.String("error", err.Error()))

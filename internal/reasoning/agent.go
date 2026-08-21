@@ -9,15 +9,15 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// THE CONVERSATION DRIVER — the autonomous implementation of the investigation
-// domain's Investigator boundary. One conversation per investigation: the frozen preamble and
+// THE EXCHANGE DRIVER — the autonomous implementation of the investigation
+// domain's Investigator boundary. One Exchange per investigation: the frozen preamble and
 // the orientation render once and cache; each turn replays the transcript and appends
 // the newest results; the provider's native tool calling carries the calls, and the
 // conclude tool's call IS the conclusion. Every attempt is priced, a refusal is named
 // and never read as an answer, and a malformed document gets exactly one in-deployment
 // retry.
 
-// Agent builds conversations against one configured deployment. Validated at startup:
+// Agent builds Exchanges against one configured deployment. Validated at startup:
 // a deployment nobody consented to is a refusal whoever configured it reads, not a
 // 03:00 failure.
 type Agent struct {
@@ -48,28 +48,28 @@ func NewAgent(
 // emits nothing, which is only right for tests.
 func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
 
-// OpenConversation starts one investigation's conversation. The tool definitions are
+// OpenExchange starts one investigation's Exchange. The tool definitions are
 // generated here from the orientation's own sources — the one declarative contract,
 // never a second hand-written representation — deduplicated by name, since two
 // integrations of one type declare the same tools.
-func (a *Agent) OpenConversation(
+func (a *Agent) OpenExchange(
 	_ context.Context, orientation investigation.Orientation,
-) (investigation.Conversation, error) {
-	return &conversation{
+) (investigation.Exchange, error) {
+	return &exchange{
 		agent:       a,
 		orientation: renderOrientation(orientation),
-		tools:       conversationTools(orientation),
+		tools:       exchangeTools(orientation),
 	}, nil
 }
 
-// conversation is one investigation's running exchange. Not safe for concurrent use;
+// exchange is one investigation's running exchange with the model. Not safe for concurrent use;
 // one investigation runs its turns in sequence.
-type conversation struct {
+type exchange struct {
 	agent       *Agent
 	orientation string
 	tools       []integrations.ToolDefinition
 	turns       []Turn
-	// opening is an instruction that arrived before any turn existed — a conversation
+	// opening is an instruction that arrived before any turn existed — an Exchange
 	// forced to conclude from the start. It renders as a volatile block after the
 	// cached orientation, because a transcript cannot open with an empty assistant
 	// message.
@@ -78,14 +78,14 @@ type conversation struct {
 	// conclusion may cite. A maximum rather than a count, so a transcript whose
 	// ordinals are not dense still cites only runs that happened.
 	runs int
-	// spent accumulates this conversation's cost, for the spend-ceiling backstop. The
+	// spent accumulates this Exchange's cost, for the spend-ceiling backstop. The
 	// loop enforces the ceiling as product behavior; this refusal firing means a loop
 	// forgot its own check.
 	spent investigation.Spend
 }
 
 // Next feeds the previous move's results and asks for the next move.
-func (c *conversation) Next(
+func (e *exchange) Next(
 	ctx context.Context, results []investigation.CallResult, mustConclude bool,
 	reason string,
 ) (investigation.Move, error) {
@@ -94,36 +94,36 @@ func (c *conversation) Next(
 	// The spend-ceiling backstop: the concluding turn is always
 	// allowed, because a partial conclusion costs one more call and refusing it would
 	// turn every reached ceiling into a failure.
-	if ceiling := c.agent.deployment.SpendCeilingMicroCents; ceiling > 0 &&
-		c.spent.MicroCents >= ceiling && !mustConclude {
-		return move, Failed(OutcomeCeilingReached, c.agent.deployment.Provider,
-			c.agent.deployment.Model, fmt.Sprintf(
+	if ceiling := e.agent.deployment.SpendCeilingMicroCents; ceiling > 0 &&
+		e.spent.MicroCents >= ceiling && !mustConclude {
+		return move, Failed(OutcomeCeilingReached, e.agent.deployment.Provider,
+			e.agent.deployment.Model, fmt.Sprintf(
 				"the investigation has spent %d micro-cents against a ceiling of %d "+
-					"and may only conclude", c.spent.MicroCents, ceiling))
+					"and may only conclude", e.spent.MicroCents, ceiling))
 	}
 
-	c.appendResults(results)
+	e.appendResults(results)
 	forced := mustConclude
 	if forced {
-		c.instruct(concludeInstruction(reason))
+		e.instruct(concludeInstruction(reason))
 	}
 
 	// One in-deployment retry for an answer that broke its contract, plus one forced
 	// re-ask when a plain answer arrived instead of a call: the same model usually
 	// produces a well-formed move the second time.
 	for attempt := 0; attempt < 2; attempt++ {
-		completion, err := c.agent.telemetry.complete(
-			ctx, c.agent.provider, c.agent.deployment, c.agent.rate, c.prompt(forced))
-		turnSpend := spendOf(c.agent.rate, completion.Usage)
+		completion, err := e.agent.telemetry.complete(
+			ctx, e.agent.provider, e.agent.deployment, e.agent.rate, e.prompt(forced))
+		turnSpend := spendOf(e.agent.rate, completion.Usage)
 		move.Spend = move.Spend.Add(turnSpend)
-		c.spent = c.spent.Add(turnSpend)
+		e.spent = e.spent.Add(turnSpend)
 		if err != nil {
 			return move, err
 		}
 
 		switch completion.Stop {
 		case StopRefused:
-			return move, Failed(OutcomeRefused, c.agent.deployment.Provider,
+			return move, Failed(OutcomeRefused, e.agent.deployment.Provider,
 				completion.Model, "the provider's safeguards declined the investigation")
 		case StopTruncated:
 			continue
@@ -134,17 +134,17 @@ func (c *conversation) Next(
 		// findings the reads were meant to establish. The forced turn accepts only the
 		// conclusion.
 		if len(reads) > 0 && !mustConclude {
-			c.remember(completion)
+			e.remember(completion)
 			move.Calls = agentCalls(reads)
 			return move, nil
 		}
 		if conclude != nil {
-			conclusion, decodeErr := decodeConclusion(conclude.Arguments, c.runs)
+			conclusion, decodeErr := decodeConclusion(conclude.Arguments, e.runs)
 			if decodeErr != nil {
 				if attempt == 0 {
 					continue
 				}
-				return move, Failed(OutcomeMalformed, c.agent.deployment.Provider,
+				return move, Failed(OutcomeMalformed, e.agent.deployment.Provider,
 					completion.Model, decodeErr.Error())
 			}
 			move.Conclusion = &conclusion
@@ -154,52 +154,52 @@ func (c *conversation) Next(
 		// No usable call. A plain answer means the model is done reading: remember the
 		// turn and re-ask once with the conclude tool forced.
 		if attempt == 0 {
-			c.remember(completion)
-			c.instruct(concludeInstruction(reason))
+			e.remember(completion)
+			e.instruct(concludeInstruction(reason))
 			forced = true
 			continue
 		}
 	}
-	return move, Failed(OutcomeMalformed, c.agent.deployment.Provider,
-		c.agent.deployment.Model,
+	return move, Failed(OutcomeMalformed, e.agent.deployment.Provider,
+		e.agent.deployment.Model,
 		"the answer was truncated or carried no usable call twice")
 }
 
 // appendResults attaches the newest results to the turn that asked for them.
-func (c *conversation) appendResults(results []investigation.CallResult) {
+func (e *exchange) appendResults(results []investigation.CallResult) {
 	if len(results) == 0 {
 		return
 	}
 	rendered := make([]ToolResultTurn, 0, len(results))
 	for _, result := range results {
 		rendered = append(rendered, renderResult(result))
-		if result.Run.Ordinal > c.runs {
-			c.runs = result.Run.Ordinal
+		if result.Run.Ordinal > e.runs {
+			e.runs = result.Run.Ordinal
 		}
 	}
-	if len(c.turns) == 0 {
+	if len(e.turns) == 0 {
 		// Results with no assistant turn cannot happen through the loop; keeping them
 		// as a bare turn preserves the transcript's honesty anyway.
-		c.turns = append(c.turns, Turn{Results: rendered})
+		e.turns = append(e.turns, Turn{Results: rendered})
 		return
 	}
-	c.turns[len(c.turns)-1].Results = append(c.turns[len(c.turns)-1].Results, rendered...)
+	e.turns[len(e.turns)-1].Results = append(e.turns[len(e.turns)-1].Results, rendered...)
 }
 
 // instruct appends trailing user text to the newest turn — the forced-conclusion
 // reason, or the re-ask after a plain answer.
-func (c *conversation) instruct(instruction string) {
-	if len(c.turns) == 0 {
-		c.opening = instruction
+func (e *exchange) instruct(instruction string) {
+	if len(e.turns) == 0 {
+		e.opening = instruction
 		return
 	}
-	c.turns[len(c.turns)-1].Instruction = instruction
+	e.turns[len(e.turns)-1].Instruction = instruction
 }
 
 // remember appends the completion as an assistant turn, verbatim where the vendor
 // needs it verbatim.
-func (c *conversation) remember(completion Completion) {
-	c.turns = append(c.turns, Turn{Assistant: AssistantTurn{
+func (e *exchange) remember(completion Completion) {
+	e.turns = append(e.turns, Turn{Assistant: AssistantTurn{
 		Text:  string(completion.Document),
 		Calls: completion.ToolCalls,
 		Raw:   completion.Raw,
@@ -210,32 +210,32 @@ func (c *conversation) remember(completion Completion) {
 // transcript, and the tool set. The forced turn withdraws every tool but conclude —
 // the strongest form of "no further reads": a read is not discouraged, it is not
 // offered.
-func (c *conversation) prompt(forced bool) Prompt {
+func (e *exchange) prompt(forced bool) Prompt {
 	prompt := Prompt{
-		Model:           c.agent.deployment.Model,
+		Model:           e.agent.deployment.Model,
 		System:          []Block{{Text: agentPreamble, Cache: true}},
-		Content:         []Block{{Text: c.orientation, Cache: true}},
-		Tools:           c.tools,
-		Turns:           c.turns,
-		MaxOutputTokens: c.agent.deployment.MaxOutputTokens,
-		Effort:          c.agent.deployment.Effort,
+		Content:         []Block{{Text: e.orientation, Cache: true}},
+		Tools:           e.tools,
+		Turns:           e.turns,
+		MaxOutputTokens: e.agent.deployment.MaxOutputTokens,
+		Effort:          e.agent.deployment.Effort,
 	}
-	if c.opening != "" {
-		prompt.Content = append(prompt.Content, Block{Text: c.opening})
+	if e.opening != "" {
+		prompt.Content = append(prompt.Content, Block{Text: e.opening})
 	}
 	if forced {
-		// conversationTools puts conclude last, so the last definition IS conclude.
-		prompt.Tools = c.tools[len(c.tools)-1:]
+		// exchangeTools puts conclude last, so the last definition IS conclude.
+		prompt.Tools = e.tools[len(e.tools)-1:]
 		prompt.ForceTool = ConcludeToolName
 	}
 	return prompt
 }
 
-// conversationTools generates the native definitions: every offered tool once, then
+// exchangeTools generates the native definitions: every offered tool once, then
 // conclude last — the forced concluding turn depends on conclude's position. Definition
 // order follows the orientation's stable source order, so the definition set — and the
 // agent revision derived over it — is stable run to run.
-func conversationTools(
+func exchangeTools(
 	orientation investigation.Orientation,
 ) []integrations.ToolDefinition {
 	seen := map[string]bool{}
@@ -289,6 +289,7 @@ func agentCalls(calls []CompletionCall) []investigation.AgentCall {
 // record.
 func decodeConclusion(document []byte, runs int) (investigation.Conclusion, error) {
 	var decoded struct {
+		Answer   string `json:"answer"`
 		Findings []struct {
 			Statement  string `json:"statement"`
 			Kind       string `json:"kind"`
@@ -302,7 +303,11 @@ func decodeConclusion(document []byte, runs int) (investigation.Conclusion, erro
 			"the conclusion is not the declared document: %w", err)
 	}
 
-	conclusion := investigation.Conclusion{}
+	if len(decoded.Answer) > investigation.MaxAnswerLength {
+		return investigation.Conclusion{}, fmt.Errorf(
+			"the answer is past %d characters", investigation.MaxAnswerLength)
+	}
+	conclusion := investigation.Conclusion{Answer: decoded.Answer}
 	for _, finding := range decoded.Findings {
 		if finding.Statement == "" || len(finding.Statement) > maxStatementLength {
 			return investigation.Conclusion{}, fmt.Errorf(

@@ -1,6 +1,6 @@
 // Package investigation owns the investigation domain: opening one from an alert episode
 // or an operator's question, offering every grant-supported connected source to an
-// autonomous conversation, running bounded read tools against them, and persisting
+// autonomous Exchange, running bounded read tools against them, and persisting
 // OPERATIONAL PROVENANCE — what was triggered, which integrations were offered, which
 // tools ran over which window, what each returned or failed with, and the findings with
 // their sources.
@@ -44,6 +44,11 @@ const (
 	StoppedByReasonerTurns = "reasoner_turns"
 	StoppedByWallClock     = "wall_clock"
 	StoppedByStagnation    = "stagnation"
+	// StoppedByContext is the turn whose transcript alone would outgrow the model's
+	// working budget. It joins the others rather than becoming a failure for the same
+	// reason they are not failures: "we stopped reading" is a true thing to say about a
+	// partial answer, and "we found nothing" is not.
+	StoppedByContext = "context"
 )
 
 func (s Status) String() string {
@@ -109,6 +114,11 @@ const (
 	FindingPropagationEffect  = "propagation_effect"
 	FindingRuledOut           = "ruled_out"
 	FindingUnresolvedLead     = "unresolved_lead"
+	// FindingObservation is an established fact with no causal role — "the deployed
+	// revision is v2.14.1". Every other kind answers "what caused this"; a peacetime
+	// question has no cause to name, and without this the answer to one has to claim to
+	// be a symptom or a probable cause of an incident that is not happening.
+	FindingObservation = "observation"
 )
 
 // The categorical confidence vocabulary. Persisted, frozen.
@@ -123,7 +133,7 @@ var (
 	FindingKinds = []string{
 		FindingProbableCause, FindingContributingFactor, FindingSymptom,
 		FindingTriggeringChange, FindingPropagationEffect, FindingRuledOut,
-		FindingUnresolvedLead,
+		FindingUnresolvedLead, FindingObservation,
 	}
 	Confidences = []string{ConfidenceConfirmed, ConfidenceLikely, ConfidencePossible}
 )
@@ -162,7 +172,12 @@ type Investigation struct {
 	WindowFrom  time.Time
 	WindowUntil time.Time
 	Status      Status
-	Findings    []Finding
+	// Answer is the direct reply in the operator's own words. Required of a turn that
+	// came from a question and optional for one that came from an episode, because
+	// "which version is deployed" has an answer and an alert does not ask anything. The
+	// findings still carry the claims; this only summarises them.
+	Answer   string
+	Findings []Finding
 	// NextSteps are the conclusion's recommended actions, in the order the operator
 	// should consider them; empty when the conclusion carried none.
 	NextSteps []string
@@ -278,12 +293,12 @@ type Store interface {
 	// RecordToolRun writes one execution as it finished.
 	RecordToolRun(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		run ToolRun) error
-	// ConcludeInvestigation ends one with its findings and spend. stoppedBy names the
-	// ceiling that forced the concluding turn, empty when the model concluded freely;
-	// nextSteps are the conclusion's recommended actions, nil when the conclusion
-	// carries none.
+	// ConcludeInvestigation ends one with its concluding document and spend. stoppedBy
+	// names the ceiling that forced the concluding turn, empty when the model concluded
+	// freely. The document travels whole because its three parts are written together
+	// and mean nothing apart.
 	ConcludeInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		findings []Finding, nextSteps []string, stoppedBy string, spend Spend) error
+		conclusion Conclusion, stoppedBy string, spend Spend) error
 	// FailInvestigation ends one with the reason it could not conclude.
 	FailInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		reason string, spend Spend) error

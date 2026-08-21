@@ -14,7 +14,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The conversation driver against the fake provider: orientation rendered once and
+// The exchange driver against the fake provider: orientation rendered once and
 // cached, native tool calls decoded into moves, results fed back as tool-result turns,
 // the conclude call validated against the §7 contract, and the decider's guarantees —
 // refusals named, truncations retried, every attempt priced — kept on this path too.
@@ -169,18 +169,18 @@ func TestAConclusionMayCiteTheHighestOrdinalFedBack(t *testing.T) {
 			"next_steps": []string{},
 		}),
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// One result whose ordinal is 5: the transcript's ordinals are not dense.
 	report := succeededResult("call-1", 5)
-	move, err := conversation.Next(context.Background(), []investigation.CallResult{report},
+	move, err := exchange.Next(context.Background(), []investigation.CallResult{report},
 		false, "")
 	if err != nil {
 		t.Fatal(err)
@@ -215,12 +215,12 @@ func TestOpenConversationRendersHeldContextAndOffersNativeTools(t *testing.T) {
 		toolCallCompletion(t, "call-1", "slack.list_channels",
 			map[string]any{"filter": "incid"}),
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(), nil, false, "")
+	move, err := exchange.Next(context.Background(), nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,15 +287,15 @@ func TestResultsFeedBackAsToolResultTurns(t *testing.T) {
 			"next_steps": []string{"roll back"},
 		}),
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(),
+	move, err := exchange.Next(context.Background(),
 		[]investigation.CallResult{succeededResult("call-1", 1)}, false, "")
 	if err != nil {
 		t.Fatal(err)
@@ -342,12 +342,12 @@ func TestAFailedRunFeedsBackAsAnErrorResult(t *testing.T) {
 			"findings": []map[string]any{}, "next_steps": []string{},
 		}),
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	failed := investigation.CallResult{CallID: "call-1", Run: investigation.ToolRun{
@@ -355,7 +355,7 @@ func TestAFailedRunFeedsBackAsAnErrorResult(t *testing.T) {
 		Outcome: investigation.RunFailed,
 		Error:   "not executed: identical to run 1",
 	}}
-	if _, err := conversation.Next(context.Background(),
+	if _, err := exchange.Next(context.Background(),
 		[]investigation.CallResult{failed}, false, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -375,12 +375,12 @@ func TestReadsWinWhenBothArrive(t *testing.T) {
 		Arguments: []byte(`{"findings":[],"next_steps":[]}`),
 	})
 	provider := &fakeProvider{completions: []Completion{read}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(), nil, false, "")
+	move, err := exchange.Next(context.Background(), nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,15 +399,15 @@ func TestMustConcludeForcesTheConcludeToolAndSaysWhy(t *testing.T) {
 			"findings": []map[string]any{}, "next_steps": []string{},
 		}),
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(),
+	move, err := exchange.Next(context.Background(),
 		[]investigation.CallResult{succeededResult("call-1", 1)}, true,
 		"The investigation's read budget was exhausted.")
 	if err != nil {
@@ -431,7 +431,7 @@ func TestMustConcludeForcesTheConcludeToolAndSaysWhy(t *testing.T) {
 	}
 }
 
-// A conversation forced to conclude before any turn exists — nothing readable is
+// A exchange forced to conclude before any turn exists — nothing readable is
 // connected — must not open with an empty assistant turn: the instruction rides as a
 // volatile block after the cached orientation.
 func TestAFirstTurnForcedConclusionCarriesItsInstructionInTheContent(t *testing.T) {
@@ -444,12 +444,12 @@ func TestAFirstTurnForcedConclusionCarriesItsInstructionInTheContent(t *testing.
 	}}
 	orientation := testOrientation()
 	orientation.Sources = nil
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), orientation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(), nil, true,
+	move, err := exchange.Next(context.Background(), nil, true,
 		"No readable sources are connected.")
 	if err != nil {
 		t.Fatal(err)
@@ -481,12 +481,12 @@ func TestATextOnlyAnswerIsReaskedAsAConclusion(t *testing.T) {
 			"findings": []map[string]any{}, "next_steps": []string{},
 		}),
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(), nil, false, "")
+	move, err := exchange.Next(context.Background(), nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,15 +515,15 @@ func TestAMalformedConclusionIsRetriedOnceThenNamed(t *testing.T) {
 		toolCallCompletion(t, "call-1", "slack.list_channels", map[string]any{}),
 		bad, bad,
 	}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(),
+	move, err := exchange.Next(context.Background(),
 		[]investigation.CallResult{succeededResult("call-1", 1)}, true, "over")
 	if err == nil || !errors.Is(err, ErrMalformed) {
 		t.Fatalf("err = %v; an invented kind is a malformed answer", err)
@@ -547,12 +547,12 @@ func TestAConclusionCitingARunThatNeverRanIsMalformed(t *testing.T) {
 		"next_steps": []string{},
 	})
 	provider := &fakeProvider{completions: []Completion{bad, bad}}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(
+	if _, err := exchange.Next(
 		context.Background(), nil, true, "over"); err == nil || !errors.Is(err, ErrMalformed) {
 		t.Fatalf("err = %v; a citation of a read nobody made cannot decode", err)
 	}
@@ -570,15 +570,15 @@ func TestTheSpendCeilingBackstopRefusesANonConcludingTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversation, err := agent.OpenConversation(context.Background(), testOrientation())
+	exchange, err := agent.OpenExchange(context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The first turn's cost crosses the ceiling: 100 input at $1/M is 10000 microcents.
-	if _, err := conversation.Next(context.Background(), nil, false, ""); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.Next(context.Background(),
+	if _, err := exchange.Next(context.Background(),
 		[]investigation.CallResult{succeededResult("call-1", 1)}, false,
 		""); err == nil || !errors.Is(err, ErrCeilingReached) {
 		t.Fatalf("err = %v; the backstop refuses a non-concluding turn past the ceiling", err)
@@ -586,7 +586,7 @@ func TestTheSpendCeilingBackstopRefusesANonConcludingTurn(t *testing.T) {
 	// The concluding turn is always allowed.
 	provider.completions = append(provider.completions, concludeCompletion(t,
 		map[string]any{"findings": []map[string]any{}, "next_steps": []string{}}))
-	if _, err := conversation.Next(context.Background(), nil, true, "over"); err != nil {
+	if _, err := exchange.Next(context.Background(), nil, true, "over"); err != nil {
 		t.Fatalf("the concluding turn must pass the backstop: %v", err)
 	}
 }
@@ -599,12 +599,12 @@ func TestARefusalIsNamedNotConcluded(t *testing.T) {
 			Usage: TokenUsage{Input: Counted(10)}}},
 		failures: []error{Failed(OutcomeRefused, "fake", "fake-model", "declined")},
 	}
-	conversation, err := agentWith(t, provider).OpenConversation(
+	exchange, err := agentWith(t, provider).OpenExchange(
 		context.Background(), testOrientation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	move, err := conversation.Next(context.Background(), nil, false, "")
+	move, err := exchange.Next(context.Background(), nil, false, "")
 	if err == nil || !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v", err)
 	}

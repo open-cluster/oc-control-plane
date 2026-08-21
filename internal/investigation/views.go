@@ -38,20 +38,24 @@ type spendView struct {
 }
 
 type investigationView struct {
-	ID            string        `json:"id"`
-	Status        string        `json:"status"`
-	Subject       string        `json:"subject"`
-	Question      string        `json:"question,omitempty"`
-	EpisodeID     string        `json:"episodeId,omitempty"`
-	IntegrationID string        `json:"integrationId,omitempty"`
-	WindowFrom    string        `json:"windowFrom"`
-	WindowUntil   string        `json:"windowUntil"`
-	Findings      []findingView `json:"findings"`
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	Subject       string `json:"subject"`
+	Question      string `json:"question,omitempty"`
+	EpisodeID     string `json:"episodeId,omitempty"`
+	IntegrationID string `json:"integrationId,omitempty"`
+	WindowFrom    string `json:"windowFrom"`
+	WindowUntil   string `json:"windowUntil"`
+	// Answer is the direct reply in the operator's own words, absent when the
+	// conclusion carried none. The findings still carry the claims.
+	Answer   string        `json:"answer,omitempty"`
+	Findings []findingView `json:"findings"`
 	// NextSteps are the conclusion's recommended actions, absent when it carried none.
 	NextSteps []string `json:"nextSteps,omitempty"`
 	// StoppedBy labels a conclusion a ceiling forced — "spend", "tool_runs",
-	// "reasoner_turns", "wall_clock", "stagnation" — so a stopped investigation never
-	// renders as a free diagnosis. Absent when the model concluded freely.
+	// "reasoner_turns", "wall_clock", "stagnation", "context" — so a stopped
+	// investigation never renders as a free diagnosis. Absent when the model concluded
+	// freely.
 	StoppedBy   string    `json:"stoppedBy,omitempty"`
 	Error       string    `json:"error,omitempty"`
 	Spend       spendView `json:"spend"`
@@ -104,6 +108,7 @@ func investigationViewOf(found Investigation) investigationView {
 		Question:    found.Question,
 		WindowFrom:  stamp(found.WindowFrom),
 		WindowUntil: stamp(found.WindowUntil),
+		Answer:      found.Answer,
 		Findings:    findings,
 		NextSteps:   found.NextSteps,
 		StoppedBy:   found.StoppedBy,
