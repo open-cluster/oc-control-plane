@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -215,26 +217,84 @@ func (r *intakeRecorder) matching(alertname, status string) []forwarded {
 	return found
 }
 
+// The gate's waiting budgets. quiet is how long NOTHING may arrive before the wait is
+// given up; total is the backstop so a wait cannot run until the suite's own timeout.
+//
+// The budget is IDLE time rather than total time, and that distinction is the whole point.
+// A total budget cannot tell a configuration that does not work from a runner that is
+// merely busy: this gate takes about 37s alone and has taken over 114s inside a full suite
+// competing for one container runtime, and what it printed when it lost that race was "the
+// documented configuration did not reach intake" — a sentence about a configuration that
+// was fine. That is the mirror of the defect #16 closed: there, CI could report success
+// over a suite that never ran; here, it could report failure over a product that works.
+//
+// Resetting on ANY new delivery keeps the honest failure fast. A pipe that is moving keeps
+// its time; a pipe that is silent still fails in 90 seconds, which is the case that means
+// something.
+const (
+	awaitQuiet = 90 * time.Second
+	awaitTotal = 8 * time.Minute
+)
+
 // await blocks until at least count deliveries of one alert in one state have been
 // forwarded, and returns them.
 func (r *intakeRecorder) await(t *testing.T, alertname, status string, count int) []forwarded {
 	t.Helper()
 
-	deadline := time.Now().Add(90 * time.Second)
+	started := time.Now()
+	lastArrival := time.Now()
+	seen := r.count()
 	for {
 		if found := r.matching(alertname, status); len(found) >= count {
 			return found
 		}
-		if time.Now().After(deadline) {
-			r.mu.Lock()
-			seen := len(r.deliveries)
-			r.mu.Unlock()
-			t.Fatalf("alertmanager delivered %s %s fewer than %d times (%d deliveries in "+
-				"all); the documented configuration did not reach intake",
-				status, alertname, count, seen)
+		if now := r.count(); now != seen {
+			// Something arrived. The pipe is working and this runner is just slow.
+			seen, lastArrival = now, time.Now()
+		}
+		if verdict := awaitVerdict(seen, count, alertname, status,
+			time.Since(lastArrival), time.Since(started)); verdict != "" {
+			t.Fatal(verdict)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// awaitVerdict decides whether a wait has ended and says why, or returns empty while it
+// should carry on. It is a pure function so that all three endings can be tested without
+// waiting eight minutes for one of them — which matters here, because the WORDS are the
+// thing being fixed: the old budget's failure said "the documented configuration did not
+// reach intake" about configurations that were fine.
+func awaitVerdict(
+	seen, want int, alertname, status string, quiet, elapsed time.Duration,
+) string {
+	switch {
+	case quiet > awaitQuiet && seen == 0:
+		// Nothing has arrived at all. This is the failure that means something, and it
+		// is still prompt: a broken configuration does not get eight minutes.
+		return fmt.Sprintf("alertmanager delivered nothing at all in %s; the documented "+
+			"configuration did not reach intake", elapsed.Round(time.Second))
+	case quiet > awaitQuiet:
+		return fmt.Sprintf("alertmanager delivered %d times but %s %s fewer than %d, and "+
+			"nothing new arrived for %s; the configuration reaches intake and this state "+
+			"did not follow", seen, status, alertname, want, awaitQuiet)
+	case elapsed > awaitTotal:
+		// Deliveries kept arriving and the awaited one never did. Said as a give-up
+		// rather than as a verdict on the configuration, because a runner this slow has
+		// not proved anything about it either way.
+		return fmt.Sprintf("gave up after %s waiting for %s %s (%d deliveries arrived); "+
+			"this is a timeout on a loaded runner, not a configuration result",
+			awaitTotal, status, alertname, seen)
+	default:
+		return ""
+	}
+}
+
+// count reports how many deliveries have arrived in all.
+func (r *intakeRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.deliveries)
 }
 
 func (r *intakeRecorder) port(t *testing.T) int {
@@ -487,5 +547,47 @@ func (g *alertmanagerGate) setEnabled(t *testing.T, enabled bool) {
 		map[string]any{"enabled": enabled})
 	if status != http.StatusNoContent {
 		t.Fatalf("setting enabled=%v = %d: %s", enabled, status, body)
+	}
+}
+
+// The three endings, and which sentence each one says.
+//
+// The words are the fix. A gate that fails a working configuration is bad; a gate that
+// fails a working configuration while SAYING the configuration is broken sends whoever
+// reads it to the wrong place entirely, and on a release day that is expensive.
+func TestTheWaitSaysWhichKindOfFailureItIs(t *testing.T) {
+	t.Parallel()
+
+	// Nothing arrived: the honest product failure, and still prompt.
+	verdict := awaitVerdict(0, 1, "PoolExhausted", "resolved",
+		awaitQuiet+time.Second, awaitQuiet+time.Second)
+	if !strings.Contains(verdict, "did not reach intake") {
+		t.Errorf("a silent pipe must say the configuration did not reach intake: %q", verdict)
+	}
+
+	// Deliveries arrived, this state did not, and the pipe then went quiet. Still a
+	// failure, but not one that blames the configuration for being unreachable.
+	verdict = awaitVerdict(3, 1, "PoolExhausted", "resolved",
+		awaitQuiet+time.Second, awaitQuiet+time.Second)
+	if strings.Contains(verdict, "did not reach intake") {
+		t.Errorf("deliveries DID reach intake; the verdict must not say otherwise: %q", verdict)
+	}
+	if !strings.Contains(verdict, "reaches intake") {
+		t.Errorf("the verdict does not say what did work: %q", verdict)
+	}
+
+	// Still arriving after the backstop: a loaded runner, said as one.
+	verdict = awaitVerdict(9, 1, "PoolExhausted", "resolved",
+		time.Second, awaitTotal+time.Second)
+	if !strings.Contains(verdict, "not a configuration result") {
+		t.Errorf("a runner that never stopped delivering has proved nothing about the "+
+			"configuration, and the verdict must say so: %q", verdict)
+	}
+
+	// The case the flake produced: slow, but still moving, and well inside the backstop.
+	// This is the one that used to fail, and it must now say nothing at all.
+	if verdict = awaitVerdict(2, 1, "PoolExhausted", "resolved",
+		30*time.Second, 5*time.Minute); verdict != "" {
+		t.Errorf("a slow but moving pipe was failed: %q", verdict)
 	}
 }
