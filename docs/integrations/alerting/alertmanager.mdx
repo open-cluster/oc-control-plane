@@ -14,8 +14,9 @@ incident. The triggering alert becomes the starting context for an investigation
 
 ## Prerequisites
 
-- Prometheus Alertmanager 0.29.0 or later. Version 0.29.0 added the custom HTTP header
-  configuration used for the webhook secret.
+- Prometheus Alertmanager 0.28.0 or later. Version 0.28.0 added the `http_headers`
+  configuration used for the webhook secret; 0.27.0 and earlier reject it. OpenCluster
+  tests the configuration below against Alertmanager 0.34.0.
 - Network access from Alertmanager to the OpenCluster intake endpoint over HTTPS.
 - The **Admin** role in OpenCluster.
 
