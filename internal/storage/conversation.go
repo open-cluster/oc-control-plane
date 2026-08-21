@@ -97,16 +97,33 @@ func (p *Placements) QueryConversations(
 	}
 
 	arguments := []any{organization.String(), limit + 1}
-	cursor := ""
+	narrowing := ""
 	if cursorID != nil {
 		arguments = append(arguments, *cursorAt, *cursorID)
-		cursor = "AND (last_activity_at, conversation_id) < ($3, $4)"
+		narrowing = fmt.Sprintf(
+			" AND (last_activity_at, conversation_id) < ($%d, $%d)",
+			len(arguments)-1, len(arguments))
+	}
+	if page.Search != "" {
+		// Case-insensitive containment on the subject. Deliberately dumb: a caller who
+		// typed part of a subject wants the conversations whose subject contains it, and
+		// anything cleverer would be an ordering nobody could explain.
+		arguments = append(arguments, "%"+page.Search+"%")
+		narrowing += fmt.Sprintf(" AND subject ILIKE $%d", len(arguments))
+	}
+	if page.Episode != uuid.Nil {
+		arguments = append(arguments, page.Episode)
+		narrowing += fmt.Sprintf(" AND episode_id = $%d", len(arguments))
+	}
+	if page.State != 0 {
+		arguments = append(arguments, int16(page.State))
+		narrowing += fmt.Sprintf(" AND state = $%d", len(arguments))
 	}
 
 	rows, err := pool.Query(ctx, `
 		SELECT `+conversationColumns+`
 		  FROM conversation
-		 WHERE org_id = $1 `+cursor+`
+		 WHERE org_id = $1`+narrowing+`
 		 ORDER BY last_activity_at DESC, conversation_id DESC
 		 LIMIT $2`, arguments...)
 	if err != nil {

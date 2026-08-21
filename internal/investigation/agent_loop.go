@@ -55,7 +55,8 @@ var errNoConclusion = errors.New("the reasoner did not conclude when required to
 func (r *Runner) run(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
 ) {
-	events := newStream(r.Events, organization, opened.ID)
+	events := newStream(r.Events, r.Telemetry, organization, opened.ID)
+	startedAt := time.Now()
 
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
@@ -115,10 +116,12 @@ func (r *Runner) run(
 	conclusion, stoppedBy, err := loop.converse(ctx, exchange)
 	if err != nil {
 		r.fail(ctx, organization, opened.ID, events, failureReason(err), loop.spend)
+		r.Telemetry.ended(time.Since(startedAt), StatusFailed.String(), "")
 		return
 	}
 	r.conclude(ctx, organization, opened.ID, events, conclusion,
 		len(loop.runs), loop.turns, loop.executed, stoppedBy, loop.spend)
+	r.Telemetry.ended(time.Since(startedAt), StatusConcluded.String(), stoppedBy)
 }
 
 // autonomousLoop is one investigation's execution state: the ordinal space, the
@@ -234,6 +237,7 @@ func (l *autonomousLoop) executeCall(
 		run = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials,
 			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
 		l.runner.announce(ctx, l.events, EventToolCompleted, toolCompletedPayload(run))
+		l.runner.Telemetry.ranTool(run)
 		l.executed++
 		// An honest empty answer is still a fresh read — "nothing changed in the
 		// window" is information, and a loop that punished it as stagnation would rush

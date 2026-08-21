@@ -131,5 +131,6 @@ func (r *Runner) conversationBrief(
 	// that memory was consolidated and how much it saved, which is what tells them whether
 	// the layer is working.
 	r.announce(ctx, events, EventCompacted, compactedPayload(next.Version, before, after))
+	r.Telemetry.compacted(before, after)
 	return &compacted
 }

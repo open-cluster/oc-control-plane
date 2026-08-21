@@ -349,3 +349,73 @@ func TestWaitingTurnsCountsUnclaimedWork(t *testing.T) {
 		t.Errorf("%d waiting, want one: an unleased running turn IS the queue", waiting)
 	}
 }
+
+// The listing NARROWS IN THE DATABASE. A listing that answered everything and left a
+// console to filter it would be one whose paging lies: page one of a hundred conversations
+// filtered down to three is not three conversations.
+func TestTheConversationListingNarrowsServerSide(t *testing.T) {
+	t.Parallel()
+
+	placements, organization := migratedPlacement(t)
+	checkout := openConversation(t, placements, organization, "checkout is slow")
+	openConversation(t, placements, organization, "payments are failing")
+	openConversation(t, placements, organization, "checkout returns 500")
+
+	// By subject, case-insensitively.
+	listed, err := placements.QueryConversations(context.Background(),
+		ownerOf(t, organization), organization, conversation.Page{Search: "CHECKOUT"})
+	if err != nil {
+		t.Fatalf("searching: %v", err)
+	}
+	if len(listed.Conversations) != 2 {
+		t.Errorf("%d conversations matched %q, want 2", len(listed.Conversations),
+			"CHECKOUT")
+	}
+
+	// By state.
+	listed, err = placements.QueryConversations(context.Background(),
+		ownerOf(t, organization), organization,
+		conversation.Page{State: conversation.StateOpen})
+	if err != nil {
+		t.Fatalf("filtering by state: %v", err)
+	}
+	if len(listed.Conversations) != 3 {
+		t.Errorf("%d open conversations, want 3", len(listed.Conversations))
+	}
+	listed, err = placements.QueryConversations(context.Background(),
+		ownerOf(t, organization), organization,
+		conversation.Page{State: conversation.StateClosed})
+	if err != nil {
+		t.Fatalf("filtering by state: %v", err)
+	}
+	if len(listed.Conversations) != 0 {
+		t.Errorf("%d closed conversations, want none", len(listed.Conversations))
+	}
+
+	// Narrowing composes with paging, and the cursor resumes the NARROWED order rather
+	// than the unnarrowed one.
+	listed, err = placements.QueryConversations(context.Background(),
+		ownerOf(t, organization), organization,
+		conversation.Page{Search: "checkout", Limit: 1})
+	if err != nil {
+		t.Fatalf("searching one page: %v", err)
+	}
+	if len(listed.Conversations) != 1 || listed.Next == "" {
+		t.Fatalf("page one = %d conversations, next=%q", len(listed.Conversations),
+			listed.Next)
+	}
+	first := listed.Conversations[0].ID
+	listed, err = placements.QueryConversations(context.Background(),
+		ownerOf(t, organization), organization,
+		conversation.Page{Search: "checkout", Limit: 1, After: listed.Next})
+	if err != nil {
+		t.Fatalf("resuming: %v", err)
+	}
+	if len(listed.Conversations) != 1 || listed.Conversations[0].ID == first {
+		t.Errorf("page two = %+v; a cursor must resume the narrowed order",
+			listed.Conversations)
+	}
+	if listed.Conversations[0].ID != checkout.ID && first != checkout.ID {
+		t.Errorf("neither page carried the conversation the search was for")
+	}
+}

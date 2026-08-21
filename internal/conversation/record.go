@@ -207,10 +207,22 @@ type NewMessage struct {
 	Text         string
 }
 
-// Page is a position in a listing.
+// Page is a position in a listing, with what the caller narrowed it by.
+//
+// Narrowing happens in the DATABASE. A listing that answered everything and left a console
+// to filter it would be one whose paging lies — page one of a hundred conversations
+// filtered down to three is not three conversations, it is however many of the first
+// hundred matched.
 type Page struct {
 	Limit int
 	After string
+	// Search narrows by subject, case-insensitively. Empty means no narrowing.
+	Search string
+	// Episode narrows to the conversations about one incident episode, which is how two
+	// people looking at the same incident find each other's. Zero means no narrowing.
+	Episode uuid.UUID
+	// State narrows to open or closed conversations. Zero means either.
+	State State
 }
 
 // List is a page of an organization's conversations, most recently active first.

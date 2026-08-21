@@ -92,6 +92,10 @@ type Runner struct {
 	MaxToolRuns int
 	MaxTurns    int
 	Logger      *slog.Logger
+	// Telemetry measures the runtime: how long work waits, how long a reader waits, how
+	// long a run takes, and how often memory is consolidated or a worker died. Nil
+	// measures nothing and breaks nothing.
+	Telemetry *Telemetry
 	// SpendCeilingMicroCents is the hard spend ceiling per investigation. A reached
 	// ceiling forces the concluding turn and is recorded as stopped_by — an honest
 	// partial investigation, never a failure and never a diagnosis it did not reach.
@@ -247,6 +251,7 @@ func (r *Runner) Sweep(ctx context.Context) {
 				slog.String("error", err.Error()))
 		case recovered > 0:
 			// Counted rather than merely logged: a crash loop is only visible as a number.
+			r.Telemetry.RecoveredStale(recovered)
 			r.Logger.Warn("stale investigations were recovered",
 				slog.Int("recovered", recovered),
 				slog.String("reason", RecoveryReason))
@@ -263,6 +268,11 @@ func (r *Runner) runLeased(
 		r.run(ctx, organization, opened)
 		return
 	}
+	// The wait is measured from when the record was created, so it counts the whole
+	// distance between somebody asking and anybody starting — not just the part this
+	// process could see.
+	r.Telemetry.claimed(opened.CreatedAt)
+
 	beating, stop := context.WithCancel(ctx)
 	defer stop()
 	go r.heartbeat(beating, stop, organization, opened.ID)

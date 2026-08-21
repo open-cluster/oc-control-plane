@@ -490,7 +490,7 @@ func TestNothingIsWrittenAfterATerminalEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events := newStream(sink, organization, uuid.New())
+	events := newStream(sink, nil, organization, uuid.New())
 
 	for _, emitted := range []EventType{
 		EventStarted, EventProgress, EventConcluded, EventProgress, EventFailed,

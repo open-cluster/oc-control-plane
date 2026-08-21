@@ -220,6 +220,7 @@ func run(
 		ContextBudget: reasoning.ContextBudget(cfg.ModelName, cfg.ModelContextWindow,
 			cfg.ContextThresholdPercent),
 		ModelName:              cfg.ModelName,
+		Telemetry:              investigation.NewTelemetry(logger),
 		Logger:                 logger,
 		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}

@@ -3,11 +3,11 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -243,7 +243,10 @@ func (p *Placements) RecordConversationSummary(
 		tokensBefore, tokensAfter, boundedRunes(model, maxSummaryModelLength))
 	if err != nil {
 		if isForeignKeyViolation(err) {
-			return investigationConversationUnknown
+			// The only foreign key here is the conversation's, and it is org-composite:
+			// a conversation from another tenant is not distinguishable from one that
+			// does not exist, which is the same answer every other read gives.
+			return conversation.ErrUnknown
 		}
 		return fmt.Errorf("recording a conversation summary: %w", err)
 	}
@@ -252,7 +255,3 @@ func (p *Placements) RecordConversationSummary(
 
 // maxSummaryModelLength mirrors the column's own bound.
 const maxSummaryModelLength = 128
-
-// investigationConversationUnknown reports a summary written for a conversation this
-// organization does not have.
-var investigationConversationUnknown = errors.New("conversation unknown")

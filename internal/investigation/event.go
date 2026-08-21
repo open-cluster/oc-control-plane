@@ -124,9 +124,17 @@ type stream struct {
 	sink          EventSink
 	organization  tenancy.Organization
 	investigation uuid.UUID
+	telemetry     *Telemetry
+	// startedAt is when this stream began, which is when the run did. The two
+	// time-to-first measurements are taken from it.
+	startedAt time.Time
 
 	mu       sync.Mutex
 	sequence int64
+	// sawFirst and sawAnswer make the two time-to-first measurements happen once each,
+	// which is what "first" means.
+	sawFirst  bool
+	sawAnswer bool
 	// closed is set by the terminal event. After it, nothing more is written for this
 	// investigation — a reader that saw a terminal event may stop, and an event arriving
 	// afterwards would mean it stopped too early.
@@ -136,9 +144,13 @@ type stream struct {
 // newStream begins one investigation's event stream. A nil sink produces a stream that
 // silently discards, which is what a test with no interest in events should get.
 func newStream(
-	sink EventSink, organization tenancy.Organization, investigation uuid.UUID,
+	sink EventSink, telemetry *Telemetry, organization tenancy.Organization,
+	investigation uuid.UUID,
 ) *stream {
-	return &stream{sink: sink, organization: organization, investigation: investigation}
+	return &stream{
+		sink: sink, telemetry: telemetry, organization: organization,
+		investigation: investigation, startedAt: time.Now(),
+	}
 }
 
 // emit writes one event, returning whatever went wrong so the caller can log it.
@@ -163,7 +175,22 @@ func (s *stream) emit(
 	if eventType.Terminal() {
 		s.closed = true
 	}
+	// Measured inside the lock so "first" is decided once, and reported outside it so a
+	// meter cannot hold up the writer.
+	firstEvent := !s.sawFirst
+	s.sawFirst = true
+	firstAnswer := eventType == EventAnswerDelta && !s.sawAnswer
+	if firstAnswer {
+		s.sawAnswer = true
+	}
 	s.mu.Unlock()
+
+	if firstEvent {
+		s.telemetry.firstEvent(time.Since(s.startedAt))
+	}
+	if firstAnswer {
+		s.telemetry.firstAnswerText(time.Since(s.startedAt))
+	}
 
 	return s.sink.AppendEvent(ctx, s.organization, s.investigation, event)
 }

@@ -232,10 +232,14 @@ func (h Handlers) append(
 	return said, &rendered, false, nil
 }
 
-// listSpec is the shared table contract this listing speaks.
+// listSpec is the shared table contract this listing speaks. What is NOT declared here is
+// refused rather than ignored, which is what stops a caller narrowing by something the
+// query does not apply and reading the unnarrowed answer as though it had.
 var listSpec = table.Spec{
+	Searchable:  true,
 	Sortable:    []string{"lastActivityAt"},
 	DefaultSort: table.Sort{Field: "lastActivityAt", Descending: true},
+	Filters:     []string{"episodeId", "state"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -256,11 +260,32 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	page := Page{Limit: parsed.Limit, After: parsed.Cursor, Search: parsed.Search}
+	if episode := parsed.Filter("episodeId"); episode != "" {
+		id, parseErr := uuid.Parse(episode)
+		if parseErr != nil {
+			writeJSON(writer, http.StatusBadRequest,
+				errorView{Error: "episodeId is not an identity"})
+			return
+		}
+		page.Episode = id
+	}
+	switch parsed.Filter("state") {
+	case "":
+	case "open":
+		page.State = StateOpen
+	case "closed":
+		page.State = StateClosed
+	default:
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: "state is open or closed"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	listed, err := h.Store.QueryConversations(ctx, principal, organization,
-		Page{Limit: parsed.Limit, After: parsed.Cursor})
+	listed, err := h.Store.QueryConversations(ctx, principal, organization, page)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
