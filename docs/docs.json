@@ -33,6 +33,7 @@
         "group": "Investigations",
         "pages": [
           "investigations/investigate-an-incident",
+          "investigations/ask-follow-up-questions",
           "investigations/findings-and-citations"
         ]
       },
