@@ -187,9 +187,6 @@ type Turn struct {
 	ConcludedAt time.Time
 }
 
-// Running reports whether this turn has not ended.
-func (t Turn) Running() bool { return t.Status == "running" }
-
 // NewConversation is what an open records.
 type NewConversation struct {
 	EpisodeID uuid.UUID
@@ -205,6 +202,16 @@ type NewMessage struct {
 	ActorID      string
 	ActorDisplay string
 	Text         string
+}
+
+// boundedRunes cuts text at a rune boundary inside the limit. Runes rather than bytes,
+// because every bound in this package mirrors a column CHECK that counts characters.
+func boundedRunes(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
 }
 
 // Page is a position in a listing, with what the caller narrowed it by.

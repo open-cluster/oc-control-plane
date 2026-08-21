@@ -9,30 +9,28 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// THE LEASE — why an investigation is no longer a goroutine somebody hopes stays alive.
+// THE LEASE — an investigation is work somebody holds, not a goroutine somebody hopes for.
 //
-// An investigation used to be a background goroutine holding a record that said `running`.
-// If the process died, that record said `running` forever: nothing knew the work had
-// stopped, and nobody watching was ever told. Two replicas could also each start a turn for
-// one conversation, because neither could see the other.
+// Claiming a lease is how a worker says "I am doing this", the heartbeat is how it keeps
+// saying so, and an expiry the SERVER's clock decides is how everybody else learns it
+// stopped. Two things depend on it: a record that says `running` is always either claimable
+// or genuinely being worked on, and two replicas cannot both take one conversation's turn.
 //
-// A lease fixes both. Claiming one is how a worker says "I am doing this", the heartbeat is
-// how it keeps saying so, and an expiry the SERVER's clock decides is how everybody else
-// learns it stopped. The shape is relay_job's, deliberately: that is the one place in this
-// codebase where "never lost, never done twice" is already proven, and a reviewer reading
-// this will recognise it.
+// The shape is relay_job's, deliberately: that is the one place in this codebase where
+// "never lost, never done twice" is already proven under server-clock leases, and a
+// reviewer reading this will recognise it.
 //
 // NO NEW STATUS VALUE. An investigation with no lease is waiting to be claimed; one with a
 // live lease is executing. Both are `running`, because both are true, and the first stream
 // event says which.
 
 const (
+	// heartbeatInterval is how often a working claimer renews its lease. Short relative
+	// to the lease, so several heartbeats have to be missed before anything is swept.
+	heartbeatInterval = 2 * time.Minute
 	// leaseDuration is how long a claim survives without a heartbeat. Comfortably longer
 	// than one reasoner turn, because a worker thinking for six minutes has not stopped.
 	leaseDuration = 15 * time.Minute
-	// heartbeatInterval is how often a working claimer renews. Short relative to the
-	// lease, so several heartbeats have to be missed before anything is swept.
-	heartbeatInterval = 2 * time.Minute
 	// claimInterval is how often an idle worker looks for work. A turn opened by a
 	// message should start within a second of being asked for, and this is a
 	// primary-key-ordered index scan.

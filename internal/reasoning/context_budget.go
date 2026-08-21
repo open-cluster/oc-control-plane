@@ -4,9 +4,9 @@ import "strings"
 
 // THE CONTEXT BUDGET.
 //
-// A single-shot investigation never outgrew its own read budget, so overflow never
-// happened. A conversation of ten follow-ups over a hundred tool results will exceed any
-// model's window, and without a budget the turn would simply fail.
+// A single-shot investigation cannot outgrow its own read budget, so it needs none. A
+// conversation of ten follow-ups over a hundred tool results exceeds any model's window,
+// and without a budget that turn simply fails.
 //
 // There is NO SINGLE UNIVERSAL CONSTANT here, because there is no single universal window:
 // a deployment on a 200k model and one on a 1M model should not compact at the same point.

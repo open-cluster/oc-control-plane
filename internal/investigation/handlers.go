@@ -350,14 +350,6 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, detailViewOf(found, sources, runs))
 }
 
-// contextWithTimeout bounds one read inside a long-lived stream. The request's own
-// context still cancels it, so a reader that disconnects stops the read it was waiting on.
-func contextWithTimeout(
-	request *http.Request, limit time.Duration,
-) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(request.Context(), limit)
-}
-
 func (h Handlers) caller(
 	writer http.ResponseWriter, request *http.Request,
 ) (authz.Principal, bool) {

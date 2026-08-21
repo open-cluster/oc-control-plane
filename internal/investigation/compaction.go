@@ -58,6 +58,9 @@ func compact(brief Brief, throughSequence int64) Summary {
 	next.FailedReads = boundedStrings(
 		append(append([]string(nil), previous.FailedReads...), brief.FailedReads...),
 		BriefMaxConstraints)
+	next.Recommended = boundedStrings(
+		append(append([]string(nil), previous.Recommended...), brief.Recommended...),
+		BriefMaxConstraints)
 	next.Identifiers = boundedStrings(
 		append(append([]string(nil), previous.Identifiers...), brief.Identifiers...),
 		BriefMaxIdentifiers)

@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -61,13 +62,13 @@ type PriorFinding struct {
 // Reference renders the citation an operator or a model can follow: which turn, which runs.
 func (p PriorFinding) Reference() string {
 	if len(p.Runs) == 0 {
-		return "turn " + itoa(p.Turn)
+		return "turn " + strconv.Itoa(p.Turn)
 	}
 	ordinals := make([]string, 0, len(p.Runs))
 	for _, run := range p.Runs {
-		ordinals = append(ordinals, itoa(run))
+		ordinals = append(ordinals, strconv.Itoa(run))
 	}
-	return "turn " + itoa(p.Turn) + " run " + strings.Join(ordinals, ", ")
+	return "turn " + strconv.Itoa(p.Turn) + " run " + strings.Join(ordinals, ", ")
 }
 
 // Summary is the structured running summary older turns compact into.
@@ -97,16 +98,13 @@ type Summary struct {
 	// FailedReads are the reads that did not work, so a gap in an answer stays explained
 	// rather than becoming silent after compaction.
 	FailedReads []string
+	// Recommended is what earlier turns already told the operator to consider. It is the
+	// nearest thing this platform holds to "decisions already made", and it earns its
+	// place by stopping the tenth turn recommending the rollback the second one did.
+	Recommended []string
 	// Identifiers are the services and resources in play — the names the conversation has
 	// been about.
 	Identifiers []string
-}
-
-// Empty reports whether this summary would tell a turn nothing.
-func (s Summary) Empty() bool {
-	return s.Goal == "" && s.Problem == "" && len(s.Constraints) == 0 &&
-		len(s.Established) == 0 && len(s.RuledOut) == 0 && len(s.Open) == 0 &&
-		len(s.FailedReads) == 0 && len(s.Identifiers) == 0
 }
 
 // Brief is one conversation's contribution to a turn's Orientation.
@@ -126,30 +124,9 @@ type Brief struct {
 	Findings []PriorFinding
 	// FailedReads are the prior turns' reads that did not work, outside the summary.
 	FailedReads []string
+	// Recommended is what prior turns already advised, outside the summary.
+	Recommended []string
 	// Identifiers are what the prior turns actually read — channel ids, repository ids —
 	// outside the summary.
 	Identifiers []string
-}
-
-// itoa is strconv.Itoa without the import, for the two places this file needs it.
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	negative := value < 0
-	if negative {
-		value = -value
-	}
-	var digits [20]byte
-	position := len(digits)
-	for value > 0 {
-		position--
-		digits[position] = byte('0' + value%10)
-		value /= 10
-	}
-	if negative {
-		position--
-		digits[position] = '-'
-	}
-	return string(digits[position:])
 }

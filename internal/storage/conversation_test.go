@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -417,5 +418,152 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	}
 	if listed.Conversations[0].ID != checkout.ID && first != checkout.ID {
 		t.Errorf("neither page carried the conversation the search was for")
+	}
+}
+
+// EPISODE-LEVEL SHARING, AND ITS BOUNDARY.
+//
+// Two people narrowing one incident hold separate conversations. They share the incident's
+// durable fact — what its investigations ESTABLISHED, with the citations behind it — and
+// nothing else. What somebody else asked, and the prose they were answered with, is theirs.
+func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
+	t.Parallel()
+
+	placements, organization := migratedPlacement(t)
+	registration := enrolledRelay(t, placements, organization)
+	integration := kubernetesIntegration(t, placements, organization, registration)
+	episode := recordEpisode(t, placements, organization, integration, "group-shared")
+
+	// Ada's conversation about the incident, with one concluded turn.
+	ada := openConversationAbout(t, placements, organization, "checkout is slow", episode)
+	say(t, placements, organization, ada.ID, "ADA-PRIVATE-QUESTION: what changed?")
+	adaTurn, took, err := placements.OpenTurn(context.Background(), organization, ada.ID,
+		turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening Ada's turn: took=%v err=%v", took, err)
+	}
+	if err = placements.RecordToolRun(context.Background(), organization,
+		adaTurn.InvestigationID, investigation.ToolRun{
+			Ordinal: 1, Tool: "kubernetes.workload_runtime",
+			Outcome: investigation.RunSucceeded, Summary: "1 workload",
+			Sources:   []string{"checkout-api"},
+			StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(),
+		}); err != nil {
+		t.Fatalf("recording Ada's run: %v", err)
+	}
+	if err = placements.ConcludeInvestigation(context.Background(), organization,
+		adaTurn.InvestigationID, investigation.Conclusion{
+			Answer: "ADA-PRIVATE-ANSWER: the pool size changed",
+			Findings: []investigation.Finding{{
+				Statement:  "the deploy at 14:02 changed the pool size",
+				Kind:       investigation.FindingTriggeringChange,
+				Confidence: investigation.ConfidenceConfirmed, Sources: []int{1},
+			}},
+			NextSteps: []string{"roll back the 14:02 deploy"},
+		}, "", investigation.Spend{}); err != nil {
+		t.Fatalf("concluding Ada's turn: %v", err)
+	}
+
+	// Bo opens a separate conversation about the SAME incident.
+	bo := openConversationAbout(t, placements, organization, "why is checkout slow", episode)
+	say(t, placements, organization, bo.ID, "what do we know already?")
+
+	brief, err := placements.ConversationBrief(context.Background(), organization, bo.ID, 50)
+	if err != nil {
+		t.Fatalf("reading Bo's brief: %v", err)
+	}
+
+	// SHARED: the finding, with its citation intact.
+	shared := false
+	for _, finding := range brief.Findings {
+		if finding.Statement == "the deploy at 14:02 changed the pool size" {
+			shared = true
+			if len(finding.Runs) == 0 {
+				t.Errorf("the shared finding lost its citation: %+v", finding)
+			}
+			if finding.Turn != 0 {
+				t.Errorf("the shared finding claims to be turn %d of THIS conversation; a "+
+					"sibling turn has no ordinal here", finding.Turn)
+			}
+		}
+	}
+	if !shared {
+		t.Errorf("Bo's brief carries none of the incident's established findings: %+v",
+			brief.Findings)
+	}
+
+	// NOT SHARED: Ada's messages, and Ada's prose.
+	for _, message := range brief.Recent {
+		if strings.Contains(message.Text, "ADA-PRIVATE") {
+			t.Errorf("Bo's brief carries Ada's message %q; conversations about one "+
+				"incident share the incident, never each other", message.Text)
+		}
+	}
+	for _, constraint := range brief.Summary.Constraints {
+		if strings.Contains(constraint, "ADA-PRIVATE") {
+			t.Errorf("Bo's brief carries Ada's instruction %q", constraint)
+		}
+	}
+
+	// A conversation about a DIFFERENT incident shares nothing at all.
+	other := recordEpisode(t, placements, organization, integration, "group-unrelated")
+	cass := openConversationAbout(t, placements, organization, "payments are failing", other)
+	unrelated, err := placements.ConversationBrief(context.Background(), organization,
+		cass.ID, 50)
+	if err != nil {
+		t.Fatalf("reading the unrelated brief: %v", err)
+	}
+	if len(unrelated.Findings) != 0 {
+		t.Errorf("a conversation about another incident carries %d findings from this one",
+			len(unrelated.Findings))
+	}
+}
+
+// openConversationAbout records one tied to an incident episode.
+func openConversationAbout(
+	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	subject string, episode uuid.UUID,
+) conversation.Conversation {
+	t.Helper()
+
+	opened, err := placements.OpenConversation(context.Background(),
+		ownerOf(t, organization), organization, conversation.NewConversation{
+			Surface: conversation.SurfaceWeb, Subject: subject, EpisodeID: episode,
+			CreatedBy: "user-under-test",
+		})
+	if err != nil {
+		t.Fatalf("opening a conversation about an episode: %v", err)
+	}
+	return opened
+}
+
+// What earlier turns already recommended travels too, so the tenth turn stops advising the
+// rollback the second one did.
+func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
+	t.Parallel()
+
+	placements, organization := migratedPlacement(t)
+	opened := openConversation(t, placements, organization, "checkout is slow")
+	say(t, placements, organization, opened.ID, "what changed?")
+	turn, took, err := placements.OpenTurn(context.Background(), organization, opened.ID,
+		turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening a turn: took=%v err=%v", took, err)
+	}
+	if err = placements.ConcludeInvestigation(context.Background(), organization,
+		turn.InvestigationID, investigation.Conclusion{
+			Answer:    "the 14:02 deploy is the change",
+			NextSteps: []string{"roll back the 14:02 deploy", "watch the latency panel"},
+		}, "", investigation.Spend{}); err != nil {
+		t.Fatalf("concluding: %v", err)
+	}
+
+	brief, err := placements.ConversationBrief(context.Background(), organization,
+		opened.ID, 50)
+	if err != nil {
+		t.Fatalf("reading the brief: %v", err)
+	}
+	if len(brief.Recommended) != 2 || brief.Recommended[0] != "roll back the 14:02 deploy" {
+		t.Errorf("recommended = %+v; what was already advised must travel", brief.Recommended)
 	}
 }

@@ -35,6 +35,7 @@ type memoryStore struct {
 	drainOpens   bool
 	brief        Brief
 	briefFails   bool
+	endRefused   bool
 	summaries    []recordedSummary
 	findings     []Finding
 	nextSteps    []string
@@ -148,6 +149,11 @@ func (m *memoryStore) FailInvestigation(
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.endRefused {
+		// What the guarded update answers when the row is no longer running, which is
+		// what the sweeper having got there first looks like from here.
+		return ErrUnknown
+	}
 	m.status, m.failReason, m.spend = StatusFailed, reason, spend
 	return nil
 }

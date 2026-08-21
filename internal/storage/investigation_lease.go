@@ -269,8 +269,5 @@ type prefixedRow struct {
 }
 
 func (p prefixedRow) Scan(destination ...any) error {
-	if err := p.row.Scan(append([]any{p.first}, destination...)...); err != nil {
-		return err
-	}
-	return nil
+	return p.row.Scan(append([]any{p.first}, destination...)...)
 }

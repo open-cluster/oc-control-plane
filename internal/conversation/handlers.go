@@ -97,7 +97,10 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "give a subject for the conversation"})
 		return
-	case len(subject) > MaxSubjectLength:
+	// Counted in RUNES, because the column's own CHECK counts characters. Counting bytes
+	// here would refuse a subject written in any non-Latin script at a fraction of the
+	// length the schema actually allows.
+	case len([]rune(subject)) > MaxSubjectLength:
 		writeJSON(writer, http.StatusBadRequest, errorView{
 			Error: "the subject must be at most 512 characters"})
 		return
@@ -131,16 +134,11 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusCreated, struct {
-		conversationView
-		Message messageView `json:"message"`
-		Turn    *turnView   `json:"turn,omitempty"`
-		Queued  bool        `json:"queued"`
-	}{
+	writeJSON(writer, http.StatusCreated, openedView{
 		conversationView: conversationViewOf(opened),
-		Message:          messageViewOf(said),
-		Turn:             turn,
-		Queued:           queued,
+		messageAcceptedView: messageAcceptedView{
+			Message: messageViewOf(said), Turn: turn, Queued: queued,
+		},
 	})
 }
 
@@ -204,10 +202,14 @@ func (h Handlers) append(
 	}
 
 	said, err := h.Store.AppendMessage(ctx, principal, organization, id, NewMessage{
-		Role:         RolePerson,
-		ActorKind:    ActorPrincipal,
-		ActorID:      principal.ID(),
-		ActorDisplay: principal.Actor().DisplayName,
+		Role:      RolePerson,
+		ActorKind: ActorPrincipal,
+		// Both bounded here rather than left to the column. A principal's identifier and
+		// display name come from an identity provider, which has its own idea of how long
+		// a name may be; a message refused because somebody's name is long would be a
+		// message lost for a reason nobody could act on.
+		ActorID:      boundedRunes(principal.ID(), MaxActorIDLength),
+		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
 	})
 	if err != nil {

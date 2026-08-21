@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -180,7 +181,7 @@ func TestTheOldestConstraintSurvivesTheNewest(t *testing.T) {
 	brief := Brief{Subject: "checkout latency"}
 	for position := range BriefMaxConstraints + 5 {
 		brief.Recent = append(brief.Recent, BriefMessage{
-			FromPerson: true, Text: "constraint " + itoa(position),
+			FromPerson: true, Text: "constraint " + strconv.Itoa(position),
 		})
 	}
 

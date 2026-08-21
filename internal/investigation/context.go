@@ -37,6 +37,9 @@ func briefTokens(brief Brief) int {
 	for _, read := range brief.FailedReads {
 		total += EstimateTokens(read)
 	}
+	for _, step := range brief.Recommended {
+		total += EstimateTokens(step)
+	}
 	for _, identifier := range brief.Identifiers {
 		total += EstimateTokens(identifier)
 	}
@@ -58,6 +61,9 @@ func summaryTokens(summary Summary) int {
 	}
 	for _, read := range summary.FailedReads {
 		total += EstimateTokens(read)
+	}
+	for _, step := range summary.Recommended {
+		total += EstimateTokens(step)
 	}
 	for _, identifier := range summary.Identifiers {
 		total += EstimateTokens(identifier)

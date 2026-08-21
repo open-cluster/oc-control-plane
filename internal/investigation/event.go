@@ -14,9 +14,9 @@ import (
 
 // THE EVENT STREAM — what a reader sees while an investigation runs.
 //
-// An investigation used to be opaque until it ended: a surface could poll the running
-// record and whatever provenance had been written, and "OpenCluster is reading commits for
-// checkout-api" had nothing to travel on. These events are that thing.
+// Without it an investigation is opaque until it ends: a surface can poll the running
+// record and whatever provenance has been written, and "OpenCluster is reading commits for
+// checkout-api" has nothing to travel on. These events are what it travels on.
 //
 // NO MODEL CHAIN OF THOUGHT EVER ENTERS ONE. Every payload is composed HERE, from facts
 // the control plane already holds — which tool is about to run against which integration,
@@ -40,12 +40,6 @@ const (
 	EventFailed
 	EventCompacted
 )
-
-// EventTypes enumerates the legal values, for decoders and gates.
-var EventTypes = []EventType{
-	EventStarted, EventProgress, EventToolStarted, EventToolCompleted,
-	EventAnswerDelta, EventConcluded, EventFailed, EventCompacted,
-}
 
 func (t EventType) String() string {
 	switch t {

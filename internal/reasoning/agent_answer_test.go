@@ -160,3 +160,57 @@ func TestTheConcludeToolOffersTheAnswerAndTheObservationKind(t *testing.T) {
 	t.Errorf("the kind enum does not offer %q: %+v",
 		investigation.FindingObservation, allowed)
 }
+
+// A turn that came from a QUESTION owes a reply. An empty answer is malformed, which the
+// decode path retries once — the same model usually answers the second time. Tolerating
+// silence would hand somebody who asked a question a causal-findings document and no reply.
+func TestAQuestionTurnMustAnswer(t *testing.T) {
+	t.Parallel()
+
+	silent := concludeCompletion(t, map[string]any{
+		"answer":     "   ",
+		"findings":   []map[string]any{},
+		"next_steps": []string{},
+	})
+	provider := &fakeProvider{completions: []Completion{silent, silent}}
+
+	asked := testOrientation()
+	asked.Question = "which version is currently deployed?"
+	exchange, err := agentWith(t, provider).OpenExchange(context.Background(), asked)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = exchange.Next(
+		context.Background(), nil, true, "over"); err == nil || !errors.Is(err, ErrMalformed) {
+		t.Fatalf("err = %v; a question concluded with no answer is malformed", err)
+	}
+	if len(provider.prompts) != 2 {
+		t.Errorf("attempts = %d, want one retry before giving up", len(provider.prompts))
+	}
+}
+
+// The same conclusion is well-formed for an EPISODE, which asked nothing. Requiring prose
+// beside the findings there would be requiring the model to say the same thing twice.
+func TestAnEpisodeTurnNeedNotAnswer(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeProvider{completions: []Completion{
+		concludeCompletion(t, map[string]any{
+			"answer":     "",
+			"findings":   []map[string]any{},
+			"next_steps": []string{},
+		}),
+	}}
+
+	fromEpisode := testOrientation()
+	fromEpisode.Question = ""
+	exchange, err := agentWith(t, provider).OpenExchange(context.Background(), fromEpisode)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = exchange.Next(context.Background(), nil, true, "over"); err != nil {
+		t.Fatalf("err = %v; an episode owes no direct answer", err)
+	}
+}

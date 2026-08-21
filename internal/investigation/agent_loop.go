@@ -159,6 +159,14 @@ func (l *autonomousLoop) converse(
 	stoppedBy := ""
 
 	for turn := 1; ; turn++ {
+		// Cancellation is checked HERE rather than left to the model boundary to notice.
+		// The run is cancelled when this worker's lease is lost, and whether it actually
+		// stops must not depend on a vendor adapter honouring a context — a worker that
+		// kept reading for an investigation another worker now owns is the exact thing
+		// the fence exists to prevent.
+		if err := ctx.Err(); err != nil {
+			return Conclusion{}, "", err
+		}
 		l.turns++
 		if stoppedBy == "" {
 			if stoppedBy = l.firedCeiling(ctx, turn, stagnant); stoppedBy != "" {
@@ -223,14 +231,15 @@ func (l *autonomousLoop) executeCall(
 		// saying: somebody watching should see that the agent asked for something it
 		// already had, rather than a silent pause.
 		l.runner.announce(ctx, l.events, EventProgress, progressPayload(
-			"Skipped a repeat of "+call.Tool+"; the earlier read already answers it"))
+			"Skipped a repeat of "+l.offeredName(call.Tool)+
+				"; the earlier read already answers it"))
 	case l.executed >= l.maxRuns:
 		run = droppedRun(l.opened, ToolCall{Tool: call.Tool, Arguments: call.Arguments},
 			l.nextOrdinal(), fmt.Sprintf(
 				"not executed: the investigation's read budget of %d was exhausted",
 				l.maxRuns))
 		l.runner.announce(ctx, l.events, EventProgress, progressPayload(
-			"Did not run "+call.Tool+"; the read budget is exhausted"))
+			"Did not run "+l.offeredName(call.Tool)+"; the read budget is exhausted"))
 	default:
 		ordinal := l.nextOrdinal()
 		l.announceToolStarted(ctx, call, ordinal)
@@ -253,6 +262,20 @@ func (l *autonomousLoop) executeCall(
 		l.executedIdentities[identity] = run.Ordinal
 	}
 	return run, fresh, nil
+}
+
+// offeredName renders a tool name for a PROGRESS line, which is prose the platform writes.
+//
+// A tool name arrives from the model, and a model can invent one — the run then fails with
+// "not one of the tools the selected sources offer". Interpolating it would put a string
+// the model chose into a sentence the platform is supposed to have authored, which is the
+// one thing this stream promises never to carry. So a name is only spoken when it is one
+// this deployment actually offers; anything else is described rather than quoted.
+func (l *autonomousLoop) offeredName(tool string) string {
+	if _, _, offered := toolNamed(selections(l.offered), tool); offered {
+		return tool
+	}
+	return "a tool that is not offered"
 }
 
 // announceToolStarted says which read is about to happen and where it is going, resolving

@@ -73,6 +73,15 @@ type messageAcceptedView struct {
 	Queued bool `json:"queued"`
 }
 
+// openedView is the answer to opening a conversation WITH a first message: the
+// conversation, and the same message answer that posting one to an existing conversation
+// gives. One shape for one meaning, so a client that has learned the message answer has
+// already learned this one.
+type openedView struct {
+	conversationView
+	messageAcceptedView
+}
+
 func conversationViewOf(found Conversation) conversationView {
 	view := conversationView{
 		ID:             found.ID.String(),

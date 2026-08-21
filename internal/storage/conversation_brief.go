@@ -81,11 +81,29 @@ func readPriorTurns(
 	ctx context.Context, pool querier, organization tenancy.Organization, id uuid.UUID,
 	brief *investigation.Brief,
 ) error {
+	// This conversation's own concluded turns, and — when it is about an incident — the
+	// concluded investigations of every OTHER conversation on that same episode.
+	//
+	// That second half is the whole of what conversations about one incident share.
+	// FINDINGS ONLY: durable, cited, incident-level fact. Never another conversation's
+	// messages and never its summary, because what somebody else asked and was told is
+	// theirs. A sibling turn carries no ordinal in this conversation, so its citation
+	// references turn 0 — which reads as "established elsewhere on this incident" rather
+	// than as a turn of this conversation that nobody can find.
 	rows, err := pool.Query(ctx, `
-		SELECT turn, findings
-		  FROM investigation
-		 WHERE org_id = $1 AND conversation_id = $2 AND status = 2
-		 ORDER BY turn`, organization.String(), id)
+		SELECT CASE WHEN turn.conversation_id = $2 THEN turn.turn ELSE 0 END,
+		       turn.findings, turn.next_steps
+		  FROM investigation turn
+		 WHERE turn.org_id = $1
+		   AND turn.status = 2
+		   AND (turn.conversation_id = $2
+		        OR (turn.episode_id IS NOT NULL
+		            AND turn.episode_id = (SELECT episode_id
+		                                     FROM conversation
+		                                    WHERE org_id          = $1
+		                                      AND conversation_id = $2)))
+		 ORDER BY turn.conversation_id = $2 DESC, turn.turn, turn.created_at`,
+		organization.String(), id)
 	if err != nil {
 		return fmt.Errorf("reading a conversation's prior findings: %w", err)
 	}
@@ -93,11 +111,21 @@ func readPriorTurns(
 
 	for rows.Next() {
 		var (
-			turn     int
-			findings []byte
+			turn      int
+			findings  []byte
+			nextSteps []byte
 		)
-		if err = rows.Scan(&turn, &findings); err != nil {
+		if err = rows.Scan(&turn, &findings, &nextSteps); err != nil {
 			return fmt.Errorf("scanning a prior turn: %w", err)
+		}
+		advised, decodeErr := decodeStringArray(nextSteps)
+		if decodeErr != nil {
+			return fmt.Errorf("decoding a prior turn's next steps: %w", decodeErr)
+		}
+		for _, step := range advised {
+			if len(brief.Recommended) < investigation.BriefMaxConstraints {
+				brief.Recommended = append(brief.Recommended, step)
+			}
 		}
 		if len(findings) == 0 {
 			continue

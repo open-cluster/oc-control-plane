@@ -30,9 +30,8 @@ func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
 		"propagation_effect",
 		"ruled_out",
 		"unresolved_lead",
-		// observation arrived with Conversations: a peacetime question establishes facts
-		// with no causal role, and forcing one into "symptom" would be a lie about an
-		// incident that is not happening.
+		// A peacetime question establishes facts with no causal role, and forcing one
+		// into "symptom" would be a lie about an incident that is not happening.
 		"observation",
 	})
 
@@ -62,8 +61,8 @@ func TestTheHonestStopsAreFrozen(t *testing.T) {
 		"reasoner_turns",
 		"wall_clock",
 		"stagnation",
-		// context arrived with Conversations: a turn whose transcript alone outgrows the
-		// model's budget stops for a stated reason instead of failing.
+		// A turn whose transcript alone outgrows the model's budget stops for a stated
+		// reason instead of failing.
 		"context",
 	})
 }

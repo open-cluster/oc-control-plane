@@ -637,3 +637,59 @@ func (noLeases) Heartbeat(
 }
 
 func (noLeases) RecoverStale(context.Context, string, int) (int, error) { return 0, nil }
+
+// A tool name the model INVENTED is never quoted into a progress line. Progress is prose
+// the platform authored, and interpolating a string the model chose would put its words
+// into the platform's mouth — which is the one thing this stream promises never to carry.
+func TestAnInventedToolNameIsNeverQuotedIntoProgress(t *testing.T) {
+	t.Parallel()
+
+	const invented = "kubernetes.exec_INJECTED_BY_THE_MODEL"
+
+	store := &memoryStore{candidates: []integrations.Integration{
+		stubIntegration("Deploy Slack"),
+	}}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Summary: "1 deploy"}, nil
+	})
+
+	// Both calls in ONE move, with a budget of one read. The first executes and exhausts
+	// the budget; the second is dropped inside the same move, which is the branch that
+	// composes a progress line naming the tool. A ceiling checked between moves would
+	// force the conclusion before this branch was ever reached.
+	sink := &recordingSink{}
+	runner := &Runner{
+		Store: store, Catalog: catalog, Events: sink, MaxToolRuns: 1,
+		Investigator: &scriptedInvestigator{exchange: &scriptedExchange{moves: []Move{
+			{Calls: []AgentCall{
+				{ID: "call-1", Tool: "stub.read"},
+				{ID: "call-2", Tool: invented},
+			}},
+			{Conclusion: &Conclusion{Answer: "done"}},
+		}}},
+		Logger: slog.New(slog.DiscardHandler),
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), Subject: "payments latency",
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	said := false
+	for _, event := range sink.ofType(EventProgress) {
+		text, _ := event.Payload["text"].(string)
+		if strings.Contains(text, invented) {
+			t.Errorf("progress %d quotes a tool the model invented: %q", event.Sequence, text)
+		}
+		if strings.Contains(text, "not offered") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("nothing described the unavailable tool: %+v", sink.ofType(EventProgress))
+	}
+}

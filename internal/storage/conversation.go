@@ -12,6 +12,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
@@ -469,7 +470,7 @@ func openTurn(
 	return conversation.Turn{
 		InvestigationID: investigationID,
 		Ordinal:         ordinal,
-		Status:          investigationStatusWord(1),
+		Status:          investigationStatusWord(int16(investigation.StatusRunning)),
 		CreatedAt:       createdAt,
 	}, true, nil
 }
@@ -599,19 +600,11 @@ func boundedRunes(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// investigationStatusWord renders a status column the way the investigation surface does,
-// so a turn and the investigation it names never disagree about what it is doing.
+// investigationStatusWord renders a status column the way the investigation surface does.
+// It DEFERS to the capability that owns the vocabulary rather than re-spelling it: a second
+// copy of those words is exactly how a turn and the investigation it names come to disagree.
 func investigationStatusWord(status int16) string {
-	switch status {
-	case 1:
-		return "running"
-	case 2:
-		return "concluded"
-	case 3:
-		return "failed"
-	default:
-		return "unrecognised"
-	}
+	return investigation.Status(status).String()
 }
 
 func scanConversation(

@@ -72,6 +72,15 @@ func renderBrief(brief *investigation.Brief) string {
 		}
 	}
 
+	advised := append(append([]string(nil), summary.Recommended...), brief.Recommended...)
+	if len(advised) > 0 {
+		out.WriteString("\nALREADY RECOMMENDED — earlier turns advised these; do not " +
+			"repeat them as though they were new:\n")
+		for _, step := range bounded(advised, investigation.BriefMaxConstraints) {
+			out.WriteString("- " + oneLine(step) + "\n")
+		}
+	}
+
 	identifiers := append(append([]string(nil), summary.Identifiers...),
 		brief.Identifiers...)
 	if len(identifiers) > 0 {

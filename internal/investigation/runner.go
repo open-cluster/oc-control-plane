@@ -96,6 +96,11 @@ type Runner struct {
 	// long a run takes, and how often memory is consolidated or a worker died. Nil
 	// measures nothing and breaks nothing.
 	Telemetry *Telemetry
+	// HeartbeatEvery is how often a held lease is renewed. Zero means the default, which
+	// is what a deployment wants; a test sets its own so it can wait on a heartbeat
+	// instead of on two real minutes. It belongs to the runner rather than the package so
+	// that two runners in one process cannot reach into each other's timing.
+	HeartbeatEvery time.Duration
 	// SpendCeilingMicroCents is the hard spend ceiling per investigation. A reached
 	// ceiling forces the concluding turn and is recorded as stopped_by — an honest
 	// partial investigation, never a failure and never a diagnosis it did not reach.
@@ -273,10 +278,19 @@ func (r *Runner) runLeased(
 	// process could see.
 	r.Telemetry.claimed(opened.CreatedAt)
 
-	beating, stop := context.WithCancel(ctx)
-	defer stop()
-	go r.heartbeat(beating, stop, organization, opened.ID)
-	r.run(ctx, organization, opened)
+	// The run takes the HEARTBEAT's context, not the parent. That is the whole point of
+	// the heartbeat: when it discovers the lease is gone, cancelling this is what actually
+	// stops the work. Handing the run the parent context — as this did — left a worker
+	// that had lost its claim still reading, still spending, and still writing for an
+	// investigation another worker now owned.
+	held, lost := context.WithCancel(ctx)
+	defer lost()
+	go r.heartbeat(held, lost, organization, opened.ID)
+	r.run(held, organization, opened)
+
+	// The drain is deliberately given the PARENT context. It writes inside a detached
+	// window anyway, and a turn that ended — however it ended — must not leave its
+	// conversation holding messages nothing will pick up.
 	r.drain(ctx, organization, opened)
 }
 
@@ -327,7 +341,7 @@ func (r *Runner) heartbeat(
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(heartbeatInterval):
+		case <-time.After(r.heartbeatEvery()):
 		}
 		held, err := r.Leases.Heartbeat(ctx, organization, id, r.claim())
 		if err != nil {
@@ -348,6 +362,14 @@ func (r *Runner) heartbeat(
 			return
 		}
 	}
+}
+
+// heartbeatEvery is how often this runner renews a lease it holds.
+func (r *Runner) heartbeatEvery() time.Duration {
+	if r.HeartbeatEvery <= 0 {
+		return heartbeatInterval
+	}
+	return r.HeartbeatEvery
 }
 
 // claim is what this worker asks for, with the defaults filled in.
@@ -480,9 +502,14 @@ func (r *Runner) fail(
 	defer done()
 	reason = bounded(reason, maxRunErrorLength)
 	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, spend); err != nil {
+		// The ending was refused, and the reason that matters is that somebody else has
+		// already ended it — the sweeper, after this worker's lease lapsed. Its terminal
+		// event is already on the stream, and writing a second one would tell a reader
+		// the run finished twice. The event follows the record or it does not happen.
 		r.Logger.Error("a failed investigation could not be recorded as failed",
 			slog.String("investigation_id", id.String()),
 			slog.String("error", err.Error()))
+		return
 	}
 	r.announce(writeCtx, events, EventFailed, failedPayload(reason))
 }

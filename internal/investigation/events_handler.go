@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -66,7 +67,9 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	readCtx, cancelRead := contextWithTimeout(request, readTimeout)
+	// Bounded, and still cancelled by the request's own context, so a reader that
+	// disconnects stops the read it was waiting on.
+	readCtx, cancelRead := context.WithTimeout(request.Context(), readTimeout)
 	found, err := h.Store.Investigation(readCtx, organization, id)
 	cancelRead()
 	if err != nil {
@@ -107,7 +110,7 @@ func (h Handlers) follow(
 	lastHeartbeat := time.Now()
 
 	for {
-		readCtx, cancel := contextWithTimeout(request, readTimeout)
+		readCtx, cancel := context.WithTimeout(request.Context(), readTimeout)
 		events, err := h.Events.Events(readCtx, organization, found.ID, after, 0)
 		cancel()
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -59,6 +60,9 @@ func (a *Agent) OpenExchange(
 		agent:       a,
 		orientation: renderOrientation(orientation),
 		tools:       exchangeTools(orientation),
+		// A turn somebody asked in words owes them a reply in words. An episode asks
+		// nothing, so its findings are the answer and none is required.
+		answerRequired: orientation.Question != "",
 	}, nil
 }
 
@@ -74,6 +78,9 @@ type exchange struct {
 	// cached orientation, because a transcript cannot open with an empty assistant
 	// message.
 	opening string
+	// answerRequired is set when this investigation came from a question. The conclusion
+	// contract is otherwise identical; what changes is whether an empty answer decodes.
+	answerRequired bool
 	// runs is the highest run ordinal fed back so far: the ordinal universe a
 	// conclusion may cite. A maximum rather than a count, so a transcript whose
 	// ordinals are not dense still cites only runs that happened.
@@ -139,7 +146,8 @@ func (e *exchange) Next(
 			return move, nil
 		}
 		if conclude != nil {
-			conclusion, decodeErr := decodeConclusion(conclude.Arguments, e.runs)
+			conclusion, decodeErr := decodeConclusion(conclude.Arguments, e.runs,
+				e.answerRequired)
 			if decodeErr != nil {
 				if attempt == 0 {
 					continue
@@ -287,7 +295,9 @@ func agentCalls(calls []CompletionCall) []investigation.AgentCall {
 // enforces the bounds the schema deliberately does not: citations must name runs that happened,
 // kinds and confidences must be the declared vocabulary, and the texts must fit the
 // record.
-func decodeConclusion(document []byte, runs int) (investigation.Conclusion, error) {
+func decodeConclusion(
+	document []byte, runs int, answerRequired bool,
+) (investigation.Conclusion, error) {
 	var decoded struct {
 		Answer   string `json:"answer"`
 		Findings []struct {
@@ -306,6 +316,14 @@ func decodeConclusion(document []byte, runs int) (investigation.Conclusion, erro
 	if len(decoded.Answer) > investigation.MaxAnswerLength {
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the answer is past %d characters", investigation.MaxAnswerLength)
+	}
+	// Malformed rather than tolerated, because the decode path already retries once and
+	// the same model usually answers the second time. Accepting silence would hand
+	// somebody who asked a question a causal-findings document and no reply.
+	if answerRequired && strings.TrimSpace(decoded.Answer) == "" {
+		return investigation.Conclusion{}, fmt.Errorf(
+			"this investigation came from a question and the conclusion answered it with " +
+				"nothing; state the direct answer in the answer field")
 	}
 	conclusion := investigation.Conclusion{Answer: decoded.Answer}
 	for _, finding := range decoded.Findings {
