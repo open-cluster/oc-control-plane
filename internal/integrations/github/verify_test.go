@@ -22,6 +22,15 @@ func appAgainst(t *testing.T, fake *fakeGitHub) *App {
 	return app
 }
 
+// deployedAgainst is a deployment reaching the fake for both origins, which is what a
+// deployment offering the installation flow looks like.
+func deployedAgainst(t *testing.T, fake *fakeGitHub) deployment {
+	t.Helper()
+	return deployment{
+		app: appAgainst(t, fake), client: NewClient(fake.URL), webURL: fake.URL,
+	}
+}
+
 // healthyInstallation teaches the fake a working installation 77 with two repositories.
 func healthyInstallation(fake *fakeGitHub) {
 	fake.answer("/app/installations/77", `{"id":77,
@@ -43,7 +52,7 @@ func TestProbeAgainstAHealthyInstallationIsActive(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	verified := probe(testContext(t), appAgainst(t, fake), NewClient(fake.URL), 77, nil)
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
 	if verified.Status != integrations.StatusActive {
 		t.Fatalf("status = %s, want active; note: %s", verified.Status, verified.Note)
 	}
@@ -62,7 +71,7 @@ func TestProbeAgainstAnUnknownInstallationIsFailed(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
 	}
 
-	verified := probe(testContext(t), appAgainst(t, fake), NewClient(fake.URL), 77, nil)
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
 	if verified.Status != integrations.StatusFailed {
 		t.Fatalf("status = %s, want failed; note: %s", verified.Status, verified.Note)
 	}
@@ -79,7 +88,7 @@ func TestProbeAgainstASuspendedInstallationIsFailed(t *testing.T) {
 		"account":{"login":"acme-corp","type":"Organization"},
 		"repository_selection":"selected","suspended_at":"2026-08-01T00:00:00Z"}`)
 
-	verified := probe(testContext(t), appAgainst(t, fake), NewClient(fake.URL), 77, nil)
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
 	if verified.Status != integrations.StatusFailed {
 		t.Fatalf("status = %s, want failed; note: %s", verified.Status, verified.Note)
 	}
@@ -95,7 +104,7 @@ func TestProbeWithNoRepositoriesGrantedIsDegraded(t *testing.T) {
 	healthyInstallation(fake)
 	fake.answer("/installation/repositories", `{"total_count":0,"repositories":[]}`)
 
-	verified := probe(testContext(t), appAgainst(t, fake), NewClient(fake.URL), 77, nil)
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
 	if verified.Status != integrations.StatusDegraded {
 		t.Fatalf("status = %s, want degraded; note: %s", verified.Status, verified.Note)
 	}
@@ -107,7 +116,7 @@ func TestProbeWithNoRepositoriesGrantedIsDegraded(t *testing.T) {
 func TestProbeWithoutAConfiguredAppSaysSo(t *testing.T) {
 	t.Parallel()
 
-	verified := probe(testContext(t), nil, NewClient("http://127.0.0.1:1"), 77, nil)
+	verified := probe(testContext(t), deployment{client: NewClient("http://127.0.0.1:1")}, 77, nil)
 	if verified.Status != integrations.StatusFailed {
 		t.Fatalf("status = %s, want failed; note: %s", verified.Status, verified.Note)
 	}
@@ -125,7 +134,7 @@ func TestProbeAgainstAnUnreachableVendorIsFailedWithoutGuessing(t *testing.T) {
 		t.Fatalf("building the app: %v", err)
 	}
 
-	verified := probe(testContext(t), app, unreachable, 77, nil)
+	verified := probe(testContext(t), deployment{app: app, client: unreachable}, 77, nil)
 	if verified.Status != integrations.StatusFailed {
 		t.Fatalf("status = %s, want failed; note: %s", verified.Status, verified.Note)
 	}
@@ -140,7 +149,7 @@ func TestProbeRecordsWhichAccountAndHowFarItReaches(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	verified := probe(testContext(t), appAgainst(t, fake), NewClient(fake.URL), 77, nil)
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
 	facts := verified.Facts
 	if facts[FactAccount] != "acme-corp" || facts[FactAccountType] != "Organization" {
 		t.Errorf("the facts %v do not name the account that answered", facts)
@@ -167,11 +176,95 @@ func TestProbeTellsARemovedInstallationApartFromAnUnknownOne(t *testing.T) {
 	}
 	previously := map[string]any{FactAccount: "acme-corp", FactAccountType: "Organization"}
 
-	verified := probe(testContext(t), appAgainst(t, fake), NewClient(fake.URL), 77, previously)
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, previously)
 	if verified.Status != integrations.StatusFailed {
 		t.Fatalf("status = %s, want failed; note: %s", verified.Status, verified.Note)
 	}
 	if !strings.Contains(verified.Note, "no longer installed on acme-corp") {
 		t.Errorf("the note %q reads as an unknown id rather than a removal", verified.Note)
+	}
+}
+
+// Changing which repositories are selected is GitHub's decision to host, so a verified
+// integration records where that page is. GitHub files an organization's installations
+// under the organization and a personal one under the account, and the origin is this
+// deployment's — a GitHub Enterprise host is not github.com.
+func TestTheRecordedManageLinkPointsAtGitHubsOwnSettings(t *testing.T) {
+	t.Parallel()
+
+	for name, want := range map[string]struct {
+		accountType string
+		webURL      string
+		link        string
+	}{
+		"an organization": {
+			"Organization", "https://github.com",
+			"https://github.com/organizations/acme-corp/settings/installations/77",
+		},
+		"a personal account": {
+			"User", "https://github.com", "https://github.com/settings/installations/77",
+		},
+		"an enterprise host": {
+			"Organization", "https://github.acme.internal",
+			"https://github.acme.internal/organizations/acme-corp/settings/installations/77",
+		},
+		"a deployment that cannot know the origin": {"Organization", "", ""},
+		"an account type github has not shown us":  {"Enterprise", "https://github.com", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			found := Installation{Account: "acme-corp", AccountType: want.accountType}
+			if link := manageURL(want.webURL, found, 77); link != want.link {
+				t.Errorf("manage link = %q, want %q", link, want.link)
+			}
+		})
+	}
+}
+
+// A login is a customer's own text, so it is escaped rather than pasted into a URL.
+func TestAManageLinkEscapesTheAccountItNames(t *testing.T) {
+	t.Parallel()
+
+	found := Installation{Account: "acme corp/../evil", AccountType: "Organization"}
+	link := manageURL("https://github.com", found, 77)
+	if strings.Contains(link, "/../") || strings.Contains(link, " ") {
+		t.Errorf("the link %q pastes the account in unescaped", link)
+	}
+	if !strings.HasSuffix(link, "/settings/installations/77") {
+		t.Errorf("the link %q no longer addresses the installation", link)
+	}
+}
+
+func TestAVerifiedInstallationRecordsWhereToChangeIt(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeGitHub(t)
+	healthyInstallation(fake)
+
+	verified := probe(testContext(t), deployedAgainst(t, fake), 77, nil)
+	link, recorded := verified.Facts[FactManageURL].(string)
+	if !recorded || link == "" {
+		t.Fatalf("no manage link was recorded: %v", verified.Facts)
+	}
+	if !strings.HasPrefix(link, fake.URL) {
+		t.Errorf("the link %q does not point at this deployment's github", link)
+	}
+}
+
+// A deployment that registered no installation flow says nothing rather than guessing an
+// origin it was never told.
+func TestADeploymentThatCannotKnowTheOriginRecordsNoManageLink(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeGitHub(t)
+	healthyInstallation(fake)
+
+	verified := probe(testContext(t), deployment{
+		app: appAgainst(t, fake), client: NewClient(fake.URL),
+	}, 77, nil)
+	if _, recorded := verified.Facts[FactManageURL]; recorded {
+		t.Errorf("a link was guessed for a deployment with no browser origin: %v",
+			verified.Facts)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -19,7 +21,28 @@ const (
 	FactRepositorySelection    = "repositorySelection"
 	FactRepositoryCount        = "repositoryCount"
 	FactRepositoryCountAtLeast = "repositoryCountAtLeast"
+	// FactManageURL is where the customer changes which repositories the installation
+	// selected. Recorded rather than derived by whoever displays it, because the origin
+	// is this deployment's — a GitHub Enterprise host is not github.com — and a guessed
+	// link sends somebody to the wrong company's settings page.
+	FactManageURL = "manageUrl"
 )
+
+// deployment is what this provider was configured with: the App credential every read is
+// made under, the vendor client, and where a BROWSER reaches this deployment's GitHub.
+//
+// The three travel together because they are one decision — which GitHub this deployment
+// talks to — and threading them apart is how the API origin and the browser origin come to
+// disagree on a GitHub Enterprise host.
+type deployment struct {
+	app    *App
+	client *Client
+	// webURL is where a browser reaches GitHub. Empty where this deployment registered no
+	// installation flow, and then no manage link is recorded at all: an operator who typed
+	// an installation id read it off that page and knows where it is, and a link guessed at
+	// github.com for an Enterprise host would be worse than none.
+	webURL string
+}
 
 // judged is one verification plus the closed word the counter attributes it with. The
 // reason is this build's own vocabulary and never anything GitHub sent: a value an
@@ -40,16 +63,17 @@ type judged struct {
 // is what separates an installation that was removed from one that never existed: GitHub
 // answers 404 for both, and only the record can tell them apart.
 func probe(
-	ctx context.Context, app *App, client *Client, installation int64, known map[string]any,
+	ctx context.Context, where deployment, installation int64, known map[string]any,
 ) integrations.Verification {
-	outcome := judge(ctx, app, client, installation, known)
+	outcome := judge(ctx, where, installation, known)
 	countVerification(ctx, outcome)
 	return outcome.Verification
 }
 
 func judge(
-	ctx context.Context, app *App, client *Client, installation int64, known map[string]any,
+	ctx context.Context, where deployment, installation int64, known map[string]any,
 ) judged {
+	app, client := where.app, where.client
 	if !app.Configured() {
 		return judged{integrations.Verification{
 			Status: integrations.StatusFailed,
@@ -79,7 +103,7 @@ func judge(
 			Status: integrations.StatusFailed,
 			Note: "installation " + strconv.FormatInt(installation, 10) + " for " +
 				found.Account + " is suspended in github; unsuspend it and verify again",
-			Facts: identityOf(known, found),
+			Facts: identityOf(known, found, where, installation),
 		}, "suspended"}
 	}
 
@@ -91,7 +115,8 @@ func judge(
 	if err != nil {
 		return judgeFailure(err, installation, known)
 	}
-	facts := withReach(identityOf(known, found), len(granted.Repositories), granted.Truncated)
+	facts := withReach(identityOf(known, found, where, installation),
+		len(granted.Repositories), granted.Truncated)
 	if len(granted.Repositories) == 0 {
 		return judged{integrations.Verification{
 			Status: integrations.StatusDegraded,
@@ -117,12 +142,42 @@ func judge(
 // settings page. Nothing here is a credential or an authorization: it exists so a console
 // can say WHICH account is connected, and so support can answer that without asking for a
 // screenshot.
-func identityOf(known map[string]any, found Installation) map[string]any {
-	facts := copied(known, 3)
+func identityOf(
+	known map[string]any, found Installation, where deployment, installation int64,
+) map[string]any {
+	facts := copied(known, 4)
 	facts[FactAccount] = found.Account
 	facts[FactAccountType] = found.AccountType
 	facts[FactRepositorySelection] = found.RepositorySelection
+	if link := manageURL(where.webURL, found, installation); link != "" {
+		facts[FactManageURL] = link
+	}
 	return facts
+}
+
+// manageURL is where the customer changes what the installation selected — GitHub's own
+// settings page, not anything this product renders, because changing repositories is a
+// decision that belongs where the permissions live.
+//
+// GitHub puts an organization's installations under the organization and a personal one
+// under the account, so the account type decides the shape. The login is a customer's own
+// text and is escaped as a path segment; an unrecognised account type produces no link
+// rather than a guessed one.
+func manageURL(webURL string, found Installation, installation int64) string {
+	if webURL == "" || found.Account == "" {
+		return ""
+	}
+	id := strconv.FormatInt(installation, 10)
+	origin := strings.TrimSuffix(webURL, "/")
+	switch found.AccountType {
+	case "Organization":
+		return origin + "/organizations/" + url.PathEscape(found.Account) +
+			"/settings/installations/" + id
+	case "User":
+		return origin + "/settings/installations/" + id
+	default:
+		return ""
+	}
 }
 
 // withReach adds how far the installation's grant went.

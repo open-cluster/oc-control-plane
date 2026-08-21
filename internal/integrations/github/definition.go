@@ -72,7 +72,9 @@ func Definition(installer *Installer, app *App, client *Client) integrations.Def
 			// What the last run established travels in: an installation GitHub has
 			// stopped serving is a removal when this deployment verified it before,
 			// and an unknown id when it never did.
-			return probe(ctx, app, client, installation, input.Integration.VerifyFacts)
+			return probe(ctx, deployment{
+				app: app, client: client, webURL: installer.browserOrigin(),
+			}, installation, input.Integration.VerifyFacts)
 		},
 		Tools:   tools(app, client),
 		Connect: connect(installer, app, client),

@@ -86,6 +86,16 @@ func NewInstaller(slug, clientID, clientSecret, webURL string) (*Installer, erro
 	}, nil
 }
 
+// browserOrigin is where a browser reaches this deployment's GitHub, and empty for a
+// deployment that registered no installation flow — which is the honest answer, because
+// nothing else in the configuration says where a GitHub Enterprise host's web interface is.
+func (i *Installer) browserOrigin() string {
+	if i == nil {
+		return ""
+	}
+	return i.webURL
+}
+
 // connect is what this provider contributes to the shared installation flow: where to send
 // the browser, and how to prove what comes back.
 func connect(installer *Installer, app *App, client *Client) *integrations.Connect {

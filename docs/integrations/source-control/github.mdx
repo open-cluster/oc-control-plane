@@ -87,8 +87,15 @@ repositories is `degraded`. A suspended installation, one that was uninstalled o
 access revoked, and an ID GitHub does not recognise each fail with their own reason.
 
 A verified integration records the connected account, whether the installation covers all
-repositories or a selection, and how many it reaches — so you can tell one connected
-account from another.
+repositories or a selection, how many it reaches, and a link to the installation's settings
+in GitHub — so you can tell one connected account from another, and change what it may read
+without going through OpenCluster.
+
+## Change which repositories are read
+
+Repository selection lives in GitHub, not in OpenCluster. Open the installation's settings
+from the link on the integration, change the selection there, and the next investigation
+reads the new set. Nothing needs to be re-entered here.
 
 ## During investigations
 
@@ -106,7 +113,7 @@ incident; all repositories and data types are not read automatically.
 - GitHub's repository, file, diff, and API rate limits still apply.
 - Release reads include published releases, not every tag.
 - Changing the App's selected repositories changes what future investigations can
-  access.
+  access. That change is made in GitHub.
 
 ## Troubleshooting
 

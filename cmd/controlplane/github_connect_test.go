@@ -367,6 +367,18 @@ func TestConnectingGitHubBindsProbesAndRecordsWhatAnswered(t *testing.T) {
 		t.Errorf("the repository read presented %q rather than an installation token",
 			vendor.credentialFor("/installation/repositories"))
 	}
+
+	// Changing which repositories are selected does not go through OpenCluster, so the
+	// record says where in GitHub that is done.
+	facts := one.VerifyFacts
+	if facts["account"] != "acme-corp" || facts["repositorySelection"] != "selected" {
+		t.Errorf("the record does not say what is connected: %+v", facts)
+	}
+	link, _ := facts["manageUrl"].(string)
+	if !strings.HasPrefix(link, vendor.URL) ||
+		!strings.HasSuffix(link, "/settings/installations/77") {
+		t.Errorf("the manage link %q does not address this installation in github", link)
+	}
 }
 
 // The user access token proves the association and is then gone. This asserts on the stored
