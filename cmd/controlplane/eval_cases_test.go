@@ -43,6 +43,17 @@ type groundTruth struct {
 	RelevantTools []string
 	// ExpectFindings false means the honest conclusion is no findings at all.
 	ExpectFindings bool
+
+	// AnswerMarkers are what the direct reply must carry. A question's deliverable is
+	// its answer, so these are checked against the answer text and nothing else.
+	AnswerMarkers []string
+	// Survives are facts established early in a long conversation that must still be
+	// there at the end of it. Checked against the LAST turn only: finding them anywhere
+	// would find them in the turn that established them, which proves nothing.
+	Survives []string
+	// ExpectCompaction marks a world built to outgrow its context window. A case that
+	// expected one and did not get one says nothing about memory, and is reported so.
+	ExpectCompaction bool
 }
 
 // evalCase is one world, its trigger, and its truth.
@@ -61,7 +72,21 @@ type evalCase struct {
 	FailCommits int
 	MoreHistory bool
 	MoreCommits bool
-	Truth       groundTruth
+
+	// Question makes the case a CONVERSATION rather than an incident: it is asked
+	// through the operator surface instead of an alert being delivered, and there is no
+	// episode. Empty leaves the case alert-triggered.
+	Question string
+	// FollowUps are asked in order after the first turn ends, one turn each.
+	FollowUps []string
+	// ContextWindow is the model window this case's deployment declares, and
+	// ContextThresholdPercent is how full it may get before older turns are compacted.
+	// Together they are how a long conversation is made to compact on a modest transcript
+	// rather than on a bought one. Zero leaves the deployment default.
+	ContextWindow           int
+	ContextThresholdPercent int
+
+	Truth groundTruth
 }
 
 const (
@@ -419,10 +444,10 @@ func evalCases(now time.Time) []evalCase {
 		},
 	}
 
-	return []evalCase{
+	return append([]evalCase{
 		singleCause, multiCause, symptomVsCause, deceptive, distractors,
 		pivot, failedTool, truncated, missing, remediation,
-	}
+	}, evalConversationCases(now)...)
 }
 
 // deployMessage and incidentMessage tag fixtures for the channel split in

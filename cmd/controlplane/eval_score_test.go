@@ -43,6 +43,16 @@ type evalScore struct {
 	FalseClaims        int `json:"falseClaims"`
 	FabricatedFindings int `json:"fabricatedFindings"`
 
+	// A conversation-shaped case is scored on its REPLY. These are zero for an incident,
+	// which was asked nothing.
+	Turns              int  `json:"turns,omitempty"`
+	AnswerMarkersTotal int  `json:"answerMarkersTotal,omitempty"`
+	AnswerMarkersFound int  `json:"answerMarkersFound,omitempty"`
+	SurvivingTotal     int  `json:"survivingTotal,omitempty"`
+	SurvivingFound     int  `json:"survivingFound,omitempty"`
+	CompactionExpected bool `json:"compactionExpected,omitempty"`
+	CompactionHappened bool `json:"compactionHappened,omitempty"`
+
 	// Spend's input tokens are the only context measure Baseline 1 can report:
 	// per-call context decomposition arrives with the phase-4 telemetry, and the
 	// report gains it then rather than faking it now.
@@ -150,7 +160,44 @@ func scoreEvalCase(one evalCase, record evalRecord) evalScore {
 			}
 		}
 	}
+
+	scoreConversation(one, record, &score)
 	return score
+}
+
+// scoreConversation adds the metrics only a question has: whether the reply said what it
+// was asked for, and whether what the conversation established at the start was still
+// there at the end.
+func scoreConversation(one evalCase, record evalRecord, score *evalScore) {
+	score.Turns = len(record.Turns)
+	score.CompactionExpected = one.Truth.ExpectCompaction
+	score.CompactionHappened = record.Compactions > 0
+
+	score.AnswerMarkersTotal = len(one.Truth.AnswerMarkers)
+	answer := strings.ToLower(record.Answer)
+	for _, marker := range one.Truth.AnswerMarkers {
+		if strings.Contains(answer, strings.ToLower(marker)) {
+			score.AnswerMarkersFound++
+		}
+	}
+
+	// Survival is asked of the LAST turn alone. The union across turns would find every
+	// fact in the turn that established it, and score a conversation that forgot
+	// everything as one that remembered all of it.
+	score.SurvivingTotal = len(one.Truth.Survives)
+	if len(one.Truth.Survives) == 0 || len(record.Turns) == 0 {
+		return
+	}
+	last := record.Turns[len(record.Turns)-1]
+	recalled := strings.ToLower(last.Answer)
+	for _, finding := range last.Findings {
+		recalled += " " + strings.ToLower(finding.Statement)
+	}
+	for _, fact := range one.Truth.Survives {
+		if strings.Contains(recalled, strings.ToLower(fact)) {
+			score.SurvivingFound++
+		}
+	}
 }
 
 // assertsSomething reports whether a finding's kind claims a positive fact about the
