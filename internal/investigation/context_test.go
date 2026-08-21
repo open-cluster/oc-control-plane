@@ -41,8 +41,11 @@ func TestATurnPastItsContextBudgetIsStoppedNotFailed(t *testing.T) {
 
 	runner := &Runner{
 		Store: store, Catalog: catalog, Investigator: &scriptedInvestigator{exchange: exchange},
-		ContextBudget: 1_000,
-		Logger:        slog.New(slog.DiscardHandler),
+		// The CEILING, which is what ends a turn. The budget below it would only have
+		// compacted, and a turn with nothing to compact — this one has no conversation —
+		// would have carried on reading.
+		ContextCeiling: 1_000,
+		Logger:         slog.New(slog.DiscardHandler),
 	}
 	organization, err := tenancy.NewOrganization("org-test")
 	if err != nil {
@@ -227,4 +230,72 @@ func runAutonomousWith(
 ) {
 	t.Helper()
 	runAutonomous(t, store, catalog, investigator)
+}
+
+// THE GAP BETWEEN THE TWO NUMBERS is what a compaction buys.
+//
+// The budget and the ceiling were one number, and the consequence was structural: the
+// ceiling compares the whole carried context — the conversation AND the tool catalogue,
+// which is never zero — so it was always crossed first. Every turn that compacted was a
+// turn already told to conclude, and compaction could only ever help the NEXT turn. It
+// never bought the turn holding the transcript any room to carry on reading.
+//
+// This is that turn: carrying more than the compaction threshold and less than the
+// ceiling. It must read again, not conclude.
+func TestATurnOverTheCompactionThresholdKeepsReading(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{
+		stubIntegration("Deploy Slack"),
+	}}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{
+			Content: []string{strings.Repeat("x", 6_000)}, Summary: "a good deal",
+		}, nil
+	})
+
+	first := AgentCall{ID: "call-1", Tool: "stub.read",
+		Arguments: map[string]any{"channel": "deploys"}}
+	second := AgentCall{ID: "call-2", Tool: "stub.read",
+		Arguments: map[string]any{"channel": "incidents"}}
+	exchange := &scriptedExchange{moves: []Move{
+		{Calls: []AgentCall{first}},
+		{Calls: []AgentCall{second}},
+		{Conclusion: &Conclusion{Answer: "read twice, then concluded"}},
+	}}
+
+	runner := &Runner{
+		Store: store, Catalog: catalog,
+		Investigator: &scriptedInvestigator{exchange: exchange},
+		// The first read lands above the compaction threshold and below the ceiling.
+		ContextBudget:  1_000,
+		ContextCeiling: 100_000,
+		Logger:         slog.New(slog.DiscardHandler),
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), Subject: "payments latency",
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	if store.status != StatusConcluded {
+		t.Fatalf("status = %v", store.status)
+	}
+	if store.stoppedBy != "" {
+		t.Errorf("stoppedBy = %q, want none: a turn between the two numbers has room to "+
+			"work, and stopping it there is the defect", store.stoppedBy)
+	}
+	// Three turns: two reads and the conclusion. Two would mean the ceiling fired on the
+	// turn that should have carried on reading.
+	if len(exchange.fed) != 3 {
+		t.Fatalf("%d turns, want 3; the second read is the room the gap exists to buy",
+			len(exchange.fed))
+	}
+	if exchange.fed[1].mustConclude {
+		t.Error("the second turn was forced to conclude while still under the ceiling")
+	}
 }

@@ -100,6 +100,7 @@ func (r *Runner) run(
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
 		budget:             r.ContextBudget,
+		ceiling:            r.ContextCeiling,
 		executedIdentities: map[string]int{},
 	}
 	if loop.maxRuns <= 0 {
@@ -138,6 +139,10 @@ type autonomousLoop struct {
 	// budget is how many tokens of transcript this turn may accumulate before the
 	// concluding turn is forced. Zero means no budget.
 	budget int
+	// ceiling is the total this turn may carry before its conclusion is forced. It sits
+	// ABOVE budget on purpose: the difference between them is the room a compaction buys
+	// the turn that performed it, and when the two were one number that room was zero.
+	ceiling int
 	// carried is the running estimate of what this turn's transcript costs: the
 	// orientation it opened with, plus every result fed back since.
 	carried int
@@ -331,7 +336,7 @@ func (l *autonomousLoop) firedCeiling(ctx context.Context, turn, stagnant int) s
 	// there is no surgery: per-result caps already bound each read, and if the whole
 	// still crosses the line the conclusion is FORCED rather than the turn failing or
 	// being silently cut. One mechanism, at one level, is the whole design.
-	case l.budget > 0 && l.carried >= l.budget:
+	case l.ceiling > 0 && l.carried >= l.ceiling:
 		return StoppedByContext
 	default:
 		return ""
