@@ -30,8 +30,8 @@ fails.
 | `OC_OPERATOR_TOKEN_FILE` | With bootstrap access | File containing a token of at least 32 characters. |
 | `OC_OPERATOR_TOKEN_ORGANIZATION` | With bootstrap token | Organization the token can access. |
 | `OC_OPERATOR_TOKEN_ROLE` | No | Token role. Default: `admin`. |
-| `OC_OPERATOR_PUBLIC_URL` | With browser sign-in | Public HTTPS origin used for identity-provider redirects. |
-| `OC_OPERATOR_CONSOLE_URL` | With browser sign-in | Console URL used after sign-in. |
+| `OC_OPERATOR_PUBLIC_URL` | With browser sign-in | Public HTTPS origin used for identity-provider and integration-install redirects. |
+| `OC_OPERATOR_CONSOLE_URL` | With browser sign-in | Console URL used after sign-in and after connecting an integration. |
 | `OC_OPERATOR_ALLOWED_ORIGINS` | With browser console | Origins allowed for cookie-authenticated unsafe requests. |
 | `OC_SEALING_KEY_FILE` | With operator listener | File containing a 32-byte raw or base64 key for stored credentials. The operator surface can accept Slack credentials, so it refuses to start without this key. |
 
@@ -58,9 +58,18 @@ listener private even when a browser-facing proxy is configured.
 | `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
 | `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
 | `OC_GITHUB_API_URL` | No | GitHub API origin. Use `https://HOST/api/v3` for GitHub Enterprise Server. |
+| `OC_GITHUB_APP_SLUG` | For one-click install | The App's URL slug, from `https://github.com/apps/SLUG`. |
+| `OC_GITHUB_APP_CLIENT_ID` | For one-click install | The App's OAuth client ID. |
+| `OC_GITHUB_APP_CLIENT_SECRET_FILE` | For one-click install | File containing the App's OAuth client secret. |
+| `OC_GITHUB_WEB_URL` | No | GitHub browser origin. Use `https://HOST` for GitHub Enterprise Server. |
 
-The GitHub App ID and key file are required together. Slack requires
-`OC_SEALING_KEY_FILE` because its token is stored encrypted.
+The GitHub App ID and key file are required together. The slug, client ID, and client
+secret file are required together and enable **Connect GitHub**; without them, GitHub is
+connected by entering an installation ID. Enabling the one-click flow also requires
+`OC_OPERATOR_PUBLIC_URL`, because GitHub returns the browser to an absolute callback URL.
+
+Slack requires `OC_SEALING_KEY_FILE` because its token is stored encrypted. GitHub stores
+no credential at all.
 
 ## Investigations
 

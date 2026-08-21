@@ -29,6 +29,13 @@ type Store interface {
 	IntegrationByID(ctx context.Context, id uuid.UUID) (Integration, error)
 	// Integration reads one, scoped to the tenant.
 	Integration(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Integration, error)
+	// IntegrationConfiguredAs resolves the Integration of one type in this organization
+	// whose configuration is exactly the one given, and reports ErrUnknown when none is.
+	// It is what makes connecting the same installation twice a re-verification rather
+	// than a second record of the same thing — including the case where the customer
+	// changed an existing installation and the provider sent them back here.
+	IntegrationConfiguredAs(ctx context.Context, org tenancy.Organization, typeID TypeID,
+		configuration map[string]any) (Integration, error)
 	// QueryIntegrations reports a page of a tenant's Integrations, narrowed, ordered and
 	// paged by the database.
 	QueryIntegrations(ctx context.Context, who authz.Principal, org tenancy.Organization,
@@ -75,4 +82,15 @@ type Store interface {
 	// zero when it never has.
 	LastAcceptedDelivery(ctx context.Context, org tenancy.Organization,
 		id uuid.UUID) (time.Time, error)
+
+	// StartConnectFlow records an installation flow so the return trip can be checked.
+	// Only the state's digest is stored; the state itself travels through the browser.
+	// It also clears the flows nobody finished, which is the ordinary case.
+	StartConnectFlow(ctx context.Context, org tenancy.Organization, flow ConnectFlow,
+		state string) error
+	// RedeemConnectFlow consumes one exactly once and returns what it recorded. It takes
+	// no organization: the callback carries a state and nothing that names a tenant, and
+	// the row that is found is itself the authority for the organization. An unknown, an
+	// expired and an already-consumed state are one refusal.
+	RedeemConnectFlow(ctx context.Context, state string) (ConnectFlow, error)
 }

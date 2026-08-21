@@ -48,6 +48,16 @@ type Handlers struct {
 	// and not from the customer's alerting — the one place it has to work. Empty is served
 	// as an absence rather than a guess.
 	IntakeBaseURL string
+	// PublicURL is where this surface is reachable from a browser, and what the redirect
+	// URI a provider returns an installation to is built from. Configured for the reason
+	// IntakeBaseURL is: a redirect URI assembled from a request's own Host header is how
+	// an authorization code is delivered somewhere else. Empty means no installation flow
+	// can be started, and starting one says so.
+	PublicURL string
+	// ConsoleURL is where a browser is sent once an installation flow has finished. Empty
+	// means the callback answers the outcome rather than redirecting to a console this
+	// deployment has not been told about.
+	ConsoleURL string
 }
 
 // Routes is this capability's contribution to the operator API's index.
@@ -61,6 +71,15 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.list)),
 		authz.Privileged(http.MethodPost, base+"/integrations", authz.IntegrationCreate,
 			http.HandlerFunc(h.create)),
+		authz.Privileged(http.MethodPost, base+"/integration-types/{type}/connect",
+			authz.IntegrationCreate, http.HandlerFunc(h.startConnect)),
+		// The provider returns the browser HERE, to one path that names no tenant: a
+		// vendor registration holds a single redirect URI, and a tenant read out of a
+		// callback URL is a tenant the caller chose. What binds the return trip to an
+		// organization is the single-use state redeemed against the stored flow, and
+		// what binds it to a person is the credential this route still requires.
+		authz.Authenticated(http.MethodGet, CallbackPath,
+			http.HandlerFunc(h.completeConnect)),
 		authz.Privileged(http.MethodGet, base+"/integrations/{integration}",
 			authz.IntegrationRead, http.HandlerFunc(h.read)),
 		authz.Privileged(http.MethodPatch, base+"/integrations/{integration}",

@@ -48,8 +48,31 @@ definition from observed facts: a delivery that actually arrived, a Relay's live
 advertised capabilities. "Verified" always means the far end answered; a well-formed
 configuration proves nothing and is not called verified. A verification records the
 **grants** it observed about the credential, in the provider's own vocabulary — Slack: the
-OAuth scopes, plus the token's kind — and tool availability derives from them.
-_Avoid:_ validation (the retired form-checking sense).
+OAuth scopes, plus the token's kind — and tool availability derives from them. It also
+records **facts**: non-secret, provider-shaped things it established about what is
+connected — GitHub: the account, its type, whether the installation selected repositories
+or granted all of them, how far the grant reaches, and where in the provider's own screens
+the customer changes it. Facts are for display and for support; no authorization decision
+reads them, which is what keeps them apart from grants.
+_Avoid:_ validation (the retired form-checking sense); metadata (for facts).
+
+**Connect flow** — one provider installation flow in progress: the customer presses Connect
+and the provider — not OpenCluster — handles account selection, permission consent and the
+return trip. The record binds the attempt to an organization, the principal that started it
+and a return target; only a **state** travels through the browser, and only its digest is
+stored. Single-use and short-lived. The organization the resulting Integration belongs to
+comes from the flow record and never from the callback's query, and the provider is asked to
+PROVE that whoever authorized the flow can reach what the callback named — an identifier the
+browser carried back proves nothing on its own. A type whose deployment registered no such
+flow is connected through its configuration form instead, which is the self-hosted path.
+_Avoid:_ OAuth flow (only some are), onboarding, enrolment (that word is the Relay's),
+Connection (the retired record noun).
+
+**Connect binding** — what a proven return says to record: a suggested name and the
+non-secret configuration of the thing that was connected. The configuration is also its
+identity, so connecting the same installation again re-verifies the Integration that exists
+rather than adding a second record of it. It carries no credential.
+_Avoid:_ enrolment, registration, account link.
 
 **Webhook secret** — the shared secret an inbound source presents. Minted by the platform,
 shown to the operator exactly once, stored only as a SHA-256 digest, compared in constant

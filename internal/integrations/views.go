@@ -27,6 +27,11 @@ type typeView struct {
 	Capabilities     []string `json:"capabilities"`
 	RequiresRelay    bool     `json:"requiresRelay"`
 	ReceivesWebhooks bool     `json:"receivesWebhooks"`
+	// SupportsConnect says this deployment can connect the type through the provider's
+	// own installation flow, so a setup surface offers one button instead of a form.
+	// False is the self-hosted deployment that registered no application with the
+	// vendor, and the configuration form is what it renders.
+	SupportsConnect bool `json:"supportsConnect"`
 	// ConfigurationSchema is JSON Schema for the type's settings, rendered from the
 	// definition so it cannot drift from what the create operation accepts.
 	ConfigurationSchema json.RawMessage `json:"configurationSchema"`
@@ -99,6 +104,7 @@ func typeViewOf(definition Definition, configured int) typeView {
 		Capabilities:        capabilities,
 		RequiresRelay:       definition.RequiresRelay,
 		ReceivesWebhooks:    definition.ReceivesWebhooks,
+		SupportsConnect:     definition.Connectable(),
 		ConfigurationSchema: definition.ConfigurationSchema(),
 		Tools:               tools,
 		Configured:          configured,
@@ -141,9 +147,13 @@ type integrationView struct {
 	Credential     *credentialView   `json:"credential,omitempty"`
 	LastVerifiedAt string            `json:"lastVerifiedAt,omitempty"`
 	VerifyNote     string            `json:"verifyNote,omitempty"`
-	CreatedBy      string            `json:"createdBy,omitempty"`
-	CreatedAt      string            `json:"createdAt"`
-	UpdatedAt      string            `json:"updatedAt"`
+	// VerifyFacts is what the last verification established about what is connected —
+	// the account, its type, how far its grant reaches. Non-secret by construction: a
+	// provider records only what an operator would read off the provider's own screen.
+	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
+	CreatedBy   string         `json:"createdBy,omitempty"`
+	CreatedAt   string         `json:"createdAt"`
+	UpdatedAt   string         `json:"updatedAt"`
 }
 
 // createdView is the one response that carries the webhook secret, exactly once.
@@ -176,6 +186,7 @@ func (h Handlers) viewOf(found Integration) integrationView {
 		CreatedAt:     stamp(found.CreatedAt),
 		UpdatedAt:     stamp(found.UpdatedAt),
 		VerifyNote:    found.VerifyNote,
+		VerifyFacts:   found.VerifyFacts,
 	}
 	if found.RelayID != uuid.Nil {
 		view.RelayID = found.RelayID.String()

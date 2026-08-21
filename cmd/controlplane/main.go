@@ -169,6 +169,17 @@ func run(
 			return fmt.Errorf("%s: %w", config.EnvGitHubAppKeyFile, err)
 		}
 	}
+	// The installation flow is registered separately from the credential: a deployment may
+	// hold an App and offer no one-click install — which is the self-hosted case — and it
+	// then serves the configuration form exactly as it does today.
+	var gitHubInstaller *github.Installer
+	if cfg.GitHubAppSlug != "" {
+		gitHubInstaller, err = github.NewInstaller(cfg.GitHubAppSlug, cfg.GitHubClientID,
+			cfg.GitHubClientSecret, cfg.GitHubWebURL)
+		if err != nil {
+			return fmt.Errorf("%s: %w", config.EnvGitHubAppSlug, err)
+		}
+	}
 
 	// The catalog is assembled HERE, and this is the only place that knows every provider.
 	// A duplicate key or a definition missing its verification refuses startup, where the
@@ -177,7 +188,7 @@ func run(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
-		github.Definition(gitHubApp, gitHubClient),
+		github.Definition(gitHubInstaller, gitHubApp, gitHubClient, cfg.GitHubWebURL),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)
@@ -513,6 +524,8 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 		Investigations:          process.investigations,
 		InvestigationWindowLead: cfg.InvestigationWindowLead,
 		IntakeBaseURL:           cfg.IntakePublicURL,
+		PublicURL:               cfg.OperatorPublicURL,
+		ConsoleURL:              cfg.OperatorConsoleURL,
 		MinimumRelayVersion:     cfg.MinimumRelayVersion,
 	}.Router()
 	if err != nil {

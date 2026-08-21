@@ -87,6 +87,18 @@ const (
 	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 	EnvGitHubAPIURL     = "OC_GITHUB_API_URL"
 
+	// What the one-click installation flow needs beyond the App credential: the App's own
+	// URL slug, and the OAuth client the return trip is proven with. The three are set
+	// together or not at all; without them the connect button is not offered and the
+	// configuration form remains, which is the self-hosted path.
+	EnvGitHubAppSlug          = "OC_GITHUB_APP_SLUG"
+	EnvGitHubClientID         = "OC_GITHUB_APP_CLIENT_ID"
+	EnvGitHubClientSecretFile = "OC_GITHUB_APP_CLIENT_SECRET_FILE"
+	// EnvGitHubWebURL overrides GitHub's browser origin, where an installation is started
+	// and where an authorization code is exchanged. It is separate from the API origin
+	// because on GitHub Enterprise Server the two differ; empty means github.com.
+	EnvGitHubWebURL = "OC_GITHUB_WEB_URL"
+
 	// The model deployment investigations reason with: DEPLOYMENT-level settings, never a
 	// per-tenant concern. The key names a file; consent lists the providers evidence may
 	// be sent to, and nothing listed permits nothing.
@@ -236,6 +248,16 @@ type Config struct {
 	GitHubAppKey []byte
 	GitHubAPIURL string
 
+	// GitHubAppSlug, GitHubClientID and GitHubClientSecret are what the one-click
+	// installation flow needs: where to send a browser, and the OAuth client the return
+	// trip is proven with. All empty means this deployment offers no installation flow
+	// for GitHub and serves the configuration form instead. GitHubWebURL overrides
+	// GitHub's browser origin, for tests and GitHub Enterprise hosts.
+	GitHubAppSlug      string
+	GitHubClientID     string
+	GitHubClientSecret string
+	GitHubWebURL       string
+
 	// The model deployment. ModelProvider empty means this deployment cannot investigate,
 	// and opening one is refused with that reason. The credential travels as a file's
 	// contents, never as an environment value.
@@ -373,6 +395,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.GitHubAPIURL, err = optionalVendorURL(lookup, EnvGitHubAPIURL); err != nil {
+		return Config{}, err
+	}
+	if err = gitHubInstallFlow(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.GitHubWebURL, err = optionalVendorURL(lookup, EnvGitHubWebURL); err != nil {
 		return Config{}, err
 	}
 	if err = modelDeployment(lookup, &cfg); err != nil {
@@ -694,6 +722,43 @@ func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 		return "", nil, fmt.Errorf("%s: the key file is empty", EnvGitHubAppKeyFile)
 	}
 	return id, raw, nil
+}
+
+// gitHubInstallFlow reads what the one-click installation flow needs: all three of the
+// slug, the client id and the client secret, or none of them. Two of three would offer a
+// connect button that cannot complete, and the person who set two is still reading when
+// this refuses. The secret's contents never appear in an error.
+func gitHubInstallFlow(lookup func(string) (string, bool), cfg *Config) error {
+	slug, _ := lookup(EnvGitHubAppSlug)
+	slug = strings.TrimSpace(slug)
+	clientID, _ := lookup(EnvGitHubClientID)
+	clientID = strings.TrimSpace(clientID)
+	path, _ := lookup(EnvGitHubClientSecretFile)
+	path = strings.TrimSpace(path)
+
+	set := 0
+	for _, value := range []string{slug, clientID, path} {
+		if value != "" {
+			set++
+		}
+	}
+	switch {
+	case set == 0:
+		return nil
+	case set < 3:
+		return fmt.Errorf("%s, %s and %s are set together or not at all; a partial "+
+			"installation flow offers a button that cannot finish",
+			EnvGitHubAppSlug, EnvGitHubClientID, EnvGitHubClientSecretFile)
+	case cfg.GitHubAppID == "":
+		return fmt.Errorf("%s needs %s: an installation flow with no app credential "+
+			"cannot verify what it installed", EnvGitHubAppSlug, EnvGitHubAppID)
+	}
+	secret, err := readSecretFile(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvGitHubClientSecretFile, err)
+	}
+	cfg.GitHubAppSlug, cfg.GitHubClientID, cfg.GitHubClientSecret = slug, clientID, secret
+	return nil
 }
 
 // optionalVendorURL reads a base URL a provider reaches its vendor at. Unlike an origin,

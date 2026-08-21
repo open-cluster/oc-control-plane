@@ -87,6 +87,12 @@ type Verification struct {
 	// is absent from an investigation's set instead of failing at call time. Nil means
 	// nothing was recorded, and gated tools stay absent.
 	Grants []string
+	// Facts are non-secret, provider-shaped things this run established about what is
+	// connected — GitHub records the account, its type, and how far the installation's
+	// repository grant reaches. They are for display and for support and are never
+	// consulted by an authorization decision, which is what keeps them separate from
+	// Grants. Nil means the run established none.
+	Facts map[string]any
 }
 
 // VerifyInput is everything a Definition's Verify may consult. It is gathered by the
@@ -152,6 +158,11 @@ type Definition struct {
 	// Tools are the bounded reads connecting this type makes available, one per declared
 	// read capability, rendered in the catalog with the routing guidance each declares.
 	Tools []Tool
+	// Connect is the provider's own installation flow, when this deployment can offer
+	// one. Nil means the type is connected through its configuration form — which is
+	// what a self-hosted deployment that registered no application with the vendor has,
+	// and it stays supported.
+	Connect *Connect
 }
 
 // ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.

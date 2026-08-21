@@ -73,6 +73,13 @@ type Handlers struct {
 	// the customer's alerting — which is the one place it has to work. Empty is supported and is
 	// served as an absence rather than as a guess.
 	IntakeBaseURL string
+	// PublicURL is where this surface is reachable from a browser, and ConsoleURL is where
+	// a browser is sent afterwards. Both are configuration for the reason IntakeBaseURL is:
+	// a provider's redirect URI must be absolute and must not be assembled from a
+	// caller-controlled Host header. Empty PublicURL means no provider installation flow
+	// can be started, and starting one says so.
+	PublicURL  string
+	ConsoleURL string
 	// MinimumRelayVersion is the floor the fleet summary counts `outdated` against. Empty means
 	// this build states no floor, in which case nothing is counted outdated because nothing was
 	// compared — which the summary says, rather than reporting zero as though everything were
@@ -143,6 +150,8 @@ func (h Handlers) Routes() authz.Table {
 		Logger:        h.Logger,
 		Sealer:        h.Sealer,
 		IntakeBaseURL: h.IntakeBaseURL,
+		PublicURL:     h.PublicURL,
+		ConsoleURL:    h.ConsoleURL,
 	}.Routes()...)
 	routes = append(routes, incident.Handlers{
 		Store:  h.Placements,

@@ -258,3 +258,80 @@ func TestLoad_InvestigationKnobsDefaultAndValidate(t *testing.T) {
 		}
 	}
 }
+
+// The installation flow needs three values and cannot work with two. A deployment that set
+// only some of them would offer a Connect button that fails at the last step, in front of a
+// customer — so it is refused here, where whoever set them is still reading.
+func TestLoad_GitHubInstallationFlowIsAllThreeOrNone(t *testing.T) {
+	t.Parallel()
+
+	appKey := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(appKey, []byte("-----BEGIN RSA PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(secretFile, []byte("shhh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	withApp := func(t *testing.T) map[string]string {
+		environment := validEnvironment(t)
+		environment[config.EnvGitHubAppID] = "12345"
+		environment[config.EnvGitHubAppKeyFile] = appKey
+		return environment
+	}
+
+	whole := withApp(t)
+	whole[config.EnvGitHubAppSlug] = "opencluster"
+	whole[config.EnvGitHubClientID] = "Iv1.deployment"
+	whole[config.EnvGitHubClientSecretFile] = secretFile
+
+	cfg, err := config.Load(lookupFrom(whole))
+	if err != nil {
+		t.Fatalf("a whole installation flow must load: %v", err)
+	}
+	if cfg.GitHubAppSlug != "opencluster" || cfg.GitHubClientID != "Iv1.deployment" {
+		t.Errorf("the installation flow did not load: %+v", cfg.GitHubAppSlug)
+	}
+	if cfg.GitHubClientSecret != "shhh" {
+		t.Errorf("the client secret came from somewhere other than its file")
+	}
+
+	partial := withApp(t)
+	partial[config.EnvGitHubAppSlug] = "opencluster"
+	if _, err := config.Load(lookupFrom(partial)); err == nil {
+		t.Error("two of three configured a connect button that cannot finish")
+	}
+
+	// A deployment that registered none is the self-hosted path and must still load.
+	if cfg, err := config.Load(lookupFrom(withApp(t))); err != nil {
+		t.Errorf("a deployment with an app and no installation flow must load: %v", err)
+	} else if cfg.GitHubAppSlug != "" {
+		t.Error("an installation flow appeared from nowhere")
+	}
+}
+
+// The client secret is read from a file and never echoed, for the reason every credential
+// here is: an error that quotes the file's contents is a credential in a log.
+func TestLoad_GitHubClientSecretNeverAppearsInAnError(t *testing.T) {
+	t.Parallel()
+
+	appKey := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(appKey, []byte("-----BEGIN RSA PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment := validEnvironment(t)
+	environment[config.EnvGitHubAppID] = "12345"
+	environment[config.EnvGitHubAppKeyFile] = appKey
+	environment[config.EnvGitHubAppSlug] = "opencluster"
+	environment[config.EnvGitHubClientID] = "Iv1.deployment"
+	environment[config.EnvGitHubClientSecretFile] = filepath.Join(t.TempDir(), "absent")
+
+	_, err := config.Load(lookupFrom(environment))
+	if err == nil {
+		t.Fatal("a client secret file that does not exist must be refused")
+	}
+	if !strings.Contains(err.Error(), config.EnvGitHubClientSecretFile) {
+		t.Errorf("the error %q does not name the variable to fix", err)
+	}
+}

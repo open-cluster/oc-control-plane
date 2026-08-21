@@ -13,7 +13,7 @@ import (
 func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 	t.Parallel()
 
-	definition := Definition(nil, NewClient(""))
+	definition := Definition(nil, nil, NewClient(""), "")
 	if definition.ID != integrations.TypeGitHub || definition.Key != "github" {
 		t.Errorf("identity = %d %q", definition.ID, definition.Key)
 	}
@@ -39,7 +39,7 @@ func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 func TestTheOnlyConfigurationFieldIsTheInstallationID(t *testing.T) {
 	t.Parallel()
 
-	definition := Definition(nil, NewClient(""))
+	definition := Definition(nil, nil, NewClient(""), "")
 	if len(definition.Config) != 1 {
 		t.Fatalf("config declares %d fields, want the installation id alone", len(definition.Config))
 	}
@@ -53,7 +53,7 @@ func TestTheOnlyConfigurationFieldIsTheInstallationID(t *testing.T) {
 func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
 	t.Parallel()
 
-	definition := Definition(nil, NewClient(""))
+	definition := Definition(nil, nil, NewClient(""), "")
 
 	exercised := map[string]int{}
 	for _, tool := range definition.Tools {
@@ -74,7 +74,7 @@ func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
 func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	t.Parallel()
 
-	for _, tool := range Definition(nil, NewClient("")).Tools {
+	for _, tool := range Definition(nil, nil, NewClient(""), "").Tools {
 		if !strings.HasPrefix(tool.Name, "github.") {
 			t.Errorf("tool name %q does not carry the provider prefix", tool.Name)
 		}

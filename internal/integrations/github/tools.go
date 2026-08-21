@@ -87,7 +87,7 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 		WhenNotToUse: "Not for commit or pull-request content — it returns none. Never " +
 			"repeatedly inside one investigation; the selection does not change mid-incident.",
 		Arguments:   declared,
-		Permissions: "the app installation's own repository grant; nothing beyond it is visible",
+		Permissions: permissionProse("github.list_repositories"),
 		Output: "a bounded list of repositories, each with id, name, full name, privacy, " +
 			"archive state, default branch and description, plus a truncated flag when " +
 			"more matched than were returned or the walk stopped early",
@@ -187,7 +187,7 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		WhenNotToUse: "Not for a commit's actual diff — that is github.read_commit. Not " +
 			"unbounded: without a window it reads the recent tail only.",
 		Arguments:   declared,
-		Permissions: "the app installation's own repository grant",
+		Permissions: permissionProse("github.read_commits"),
 		Output: "a bounded list of commits, each with sha, message, author, authored " +
 			"time and permalink, plus a truncated flag when the window holds more; an " +
 			"empty repository answers an empty list; a message like \"Merge pull " +

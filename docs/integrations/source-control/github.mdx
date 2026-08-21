@@ -15,9 +15,9 @@ only sees repositories selected for the App installation.
 
 ## Prerequisites
 
-- A GitHub App configured for the OpenCluster deployment.
-- Permission to install that App on the target account or organization.
+- Permission to install apps on the GitHub account or organization you want to connect.
 - The **Admin** role in OpenCluster.
+- For self-hosted deployments: a GitHub App configured for the deployment.
 
 ## GitHub App permissions
 
@@ -31,41 +31,80 @@ only sees repositories selected for the App installation.
 
 No write permission is required.
 
-## Configure the App for a self-hosted deployment
-
-Create the App in GitHub with the permissions above. It needs no webhook. Generate a
-private key, then set the deployment's App ID, private-key file, and — for GitHub
-Enterprise Server — API URL as described in the
-[configuration reference](/self-hosted/configuration#integrations).
-
-The private key stays on the deployment. OpenCluster stores only an installation ID for
-each integration and creates short-lived installation tokens when needed.
-
 ## Connect
 
 <Steps>
-  <Step title="Install the App">
-    Install the OpenCluster GitHub App and select the repositories investigations may
-    read.
+  <Step title="Press Connect GitHub">
+    In **Integrations**, choose **GitHub**, then **Connect GitHub**. OpenCluster sends
+    you to GitHub.
   </Step>
-  <Step title="Copy the installation ID">
-    Open the installation settings. The numeric ID is the final segment of its URL,
-    such as `…/settings/installations/12345678`.
+  <Step title="Choose the account and repositories">
+    GitHub asks which account to install on, which repositories OpenCluster may read,
+    and shows the permissions above for approval. The choice is made in GitHub.
   </Step>
-  <Step title="Create the integration">
-    In **Integrations**, choose **GitHub**, enter a name and the installation ID, then
-    create the integration. OpenCluster checks the installation before storing it.
+  <Step title="Land back in OpenCluster">
+    GitHub returns you to OpenCluster, which confirms with GitHub that you can
+    administer the installation, checks it, and shows it as `active`. There is no
+    second step and no ID to copy.
   </Step>
 </Steps>
 
-Create one integration for each App installation.
+Connect once for each GitHub account or organization. Repeating the flow for an account
+that is already connected re-checks it instead of adding a duplicate — which is also what
+happens when you change an existing installation's repositories.
+
+OpenCluster stores no GitHub credential. During the connection it uses a short-lived
+GitHub token to confirm you can administer the installation, then discards it. Every later
+read uses a short-lived installation token created on demand from the deployment's App.
+
+### Connect without the one-click flow
+
+A self-hosted deployment that has not registered the App's OAuth client shows a form
+instead of the button. Install the App in GitHub, open the installation's settings, and
+enter the numeric ID from the end of its URL — such as
+`…/settings/installations/12345678` — with a name. OpenCluster checks the installation
+before storing it.
+
+## Configure the App for a self-hosted deployment
+
+Create the App in GitHub with the permissions above. It needs no webhook. Generate a
+private key, then set the deployment's App ID and private-key file as described in the
+[configuration reference](/self-hosted/configuration#integrations). For GitHub Enterprise
+Server, also set the API and web URLs.
+
+To offer **Connect GitHub**, enable **Request user authorization (OAuth) during
+installation** on the App and set its callback URL to
+`https://YOUR-OPENCLUSTER/operator/v1/integrations/connect/callback`. Then set the App's
+slug, OAuth client ID, and client secret file in the deployment configuration.
+
+Two details matter:
+
+- The callback URL must match the deployment's public URL exactly, scheme included.
+- If the App registers several callback URLs, this one must be **first**. GitHub returns
+  the browser to the first callback URL when the authorization request does not name one.
+
+Enabling this option removes the App's setup URL field. That is expected: the callback URL
+replaces it, and the customer is returned there with everything OpenCluster needs.
+
+The private key and client secret stay on the deployment.
 
 ## Verify
 
-Verification checks the App installation and its repository selection. `active` means
-the installation is available with at least one repository. A suspended, removed, or
-unknown installation fails verification. An installation with no repositories is
-degraded.
+Verification checks the App installation and its repository selection. `active` means the
+installation is available with at least one repository. An installation with no
+repositories is `degraded`. A suspended installation, one that was uninstalled or had its
+access revoked, and an ID GitHub does not recognise each fail with their own reason.
+
+A verified integration records the connected account, whether the installation covers all
+repositories or a selection, how many it reaches, and a link to the installation's settings
+in GitHub — so you can tell one connected account from another, and change what it may read
+without going through OpenCluster.
+
+## Change which repositories are read
+
+Repository selection lives in GitHub, not in OpenCluster. Open the installation's settings
+from the link on the integration, change the selection there, and the next investigation
+reads the new set. Nothing needs to be re-entered here.
 
 ## During investigations
 
@@ -76,24 +115,34 @@ incident; all repositories and data types are not read automatically.
 
 ## Limitations
 
-- No write operations and no code search.
+- No write operations and no code search. No write permission is requested at all.
+- Reads are limited to the repositories the installation selected. A read outside that
+  selection says so rather than failing silently.
 - Large files, logs, and diffs are bounded; truncation is marked.
 - GitHub's repository, file, diff, and API rate limits still apply.
 - Release reads include published releases, not every tag.
 - Changing the App's selected repositories changes what future investigations can
-  access.
+  access. That change is made in GitHub.
 
 ## Troubleshooting
 
 - **Deployment has no GitHub App:** configure the App ID and private-key file, then
   restart OpenCluster.
+- **The connection could not be completed:** the link expired or was already used. Press
+  **Connect GitHub** again.
+- **Could not confirm you administer this installation:** the GitHub account that
+  authorized the connection cannot administer the account being connected. Sign in to
+  GitHub as someone who can, then connect again.
 - **Installation not found:** confirm the ID belongs to this App and that the App is
   still installed.
+- **No longer installed:** the App was uninstalled or its access was revoked in GitHub.
+  Connect again.
 - **No repositories:** select at least one repository in the installation settings.
 - **Rate limited:** wait for GitHub's limit to reset, then verify or investigate again.
 
 ## Disconnect
 
 Disable the integration to remove GitHub from new investigations while retaining the
-record. Deletion is refused when investigation records depend on it. Uninstalling or
-suspending the App in GitHub takes effect independently.
+record. Deletion is refused when investigation records depend on it. Uninstalling the App
+in GitHub removes OpenCluster's access immediately and independently; the integration then
+reports that it is no longer installed.

@@ -135,25 +135,41 @@ func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
 	}
 }
 
-// The routes that need a credential and no permission are likewise a named list. Each is a
-// route whose subject is the caller themselves — requiring a permission would mean an Auditor
-// could not sign out.
-func TestTheAuthenticatedOnlyRoutesAreTheOnesAboutTheCallerThemselves(t *testing.T) {
+// The routes that need a credential and no permission are likewise a named list, recorded
+// here with the reason each one cannot declare a permission. Two describe the caller to
+// themselves — requiring a permission would mean an Auditor could not sign out. The third
+// is a vendor's return trip, which arrives before this surface knows which tenant it
+// concerns.
+func TestTheAuthenticatedOnlyRoutesAreTheOnesThatCannotNameATenant(t *testing.T) {
 	t.Parallel()
 
-	permitted := map[string]bool{
-		"GET /operator/v1/session":           true,
-		"POST /operator/v1/session/sign-out": true,
+	permitted := map[string]string{
+		"GET /operator/v1/session":           "its subject is the caller themselves",
+		"POST /operator/v1/session/sign-out": "an Auditor must be able to end their own session",
+		"GET /operator/v1/integrations/connect/callback": "a provider registration holds one " +
+			"redirect URI, so the path can name no organization and there is no tenant in " +
+			"it to check a membership against. The tenant comes from the single-use flow " +
+			"the state redeems, and the handler itself then refuses unless the returning " +
+			"caller is the principal that started it AND still holds integration.create in " +
+			"the organization that flow named",
 	}
 
+	found := make(map[string]bool)
 	for _, route := range operatorRoutes(t) {
 		if route.Access() != authz.AccessAuthenticated {
 			continue
 		}
-		if !permitted[route.Key()] {
-			t.Errorf("%s needs a credential and no permission; only the routes that describe "+
-				"the caller to themselves may be that, because every other one touches a "+
-				"tenant's data", route.Key())
+		found[route.Key()] = true
+		if _, allowed := permitted[route.Key()]; !allowed {
+			t.Errorf("%s needs a credential and no permission; only a route that cannot name "+
+				"a tenant in its path may be that, and it has to be recorded above with the "+
+				"reason", route.Key())
+		}
+	}
+	for pattern := range permitted {
+		if !found[pattern] {
+			t.Errorf("%s is recorded as authenticated-only and no longer exists; remove it "+
+				"from the list so the list keeps meaning something", pattern)
 		}
 	}
 }
