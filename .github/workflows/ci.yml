@@ -61,6 +61,12 @@ jobs:
         run: make build
 
       - name: Tests (race detector, real Postgres)
+        env:
+          # A runner whose container runtime never came up must FAIL this job, not empty it.
+          # Every composed-process test skips when it cannot start Postgres, which is right
+          # on a laptop and wrong here: without this the job would report success over a
+          # suite that never ran, and the output would not say so.
+          OC_REQUIRE_CONTAINERS: "1"
         run: make test
 
       # Both modules are scanned. The harness is not shipped, but it runs in CI against real
@@ -162,4 +168,7 @@ jobs:
           # repositories share no history and no file is copied between them.
           OC_E2E_RELAY_SOURCE: ${{ github.workspace }}/.relay
           GOPRIVATE: github.com/open-cluster/*
+          # As above: this job exists to run against real infrastructure, so a missing
+          # container runtime is a failure rather than a reason to prove nothing.
+          OC_REQUIRE_CONTAINERS: "1"
         run: cd test/e2e && go test -timeout 45m -count=1 ./...

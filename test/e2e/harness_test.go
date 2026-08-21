@@ -165,12 +165,12 @@ func requireDocker(t *testing.T) {
 
 	provider, err := testcontainers.NewDockerProvider()
 	if err != nil {
-		t.Skipf("end-to-end proof: no container runtime: %v", err)
+		noContainerRuntime(t, "no container runtime", err)
 	}
 	defer func() { _ = provider.Close() }()
 
 	if err = provider.Health(context.Background()); err != nil {
-		t.Skipf("end-to-end proof: the container runtime is not healthy: %v", err)
+		noContainerRuntime(t, "the container runtime is not healthy", err)
 	}
 }
 

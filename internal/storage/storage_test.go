@@ -40,7 +40,7 @@ func postgresDSN(t *testing.T) string {
 				WithStartupTimeout(2*time.Minute)),
 	)
 	if err != nil {
-		t.Skipf("cannot start postgres (is the Docker daemon reachable?): %v", err)
+		noContainerRuntime(t, err)
 	}
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
 

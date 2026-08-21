@@ -266,7 +266,7 @@ func freshDatabase(t *testing.T) string {
 
 	admin, err := postgresServer()
 	if err != nil {
-		t.Skipf("cannot start postgres (is the Docker daemon reachable?): %v", err)
+		noContainerRuntime(t, err)
 	}
 	return createDatabase(t, admin, "plane"+strconv.FormatInt(databases.Add(1), 10))
 }
