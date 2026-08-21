@@ -272,6 +272,20 @@ type Page struct {
 	After string
 }
 
+// Query is what the investigations listing accepts: a position, and what to narrow by.
+//
+// It is a struct rather than a widening Page because a position and a filter are
+// different things, and the listing that mixes them ends up with a cursor that means
+// something different depending on what was filtered.
+type Query struct {
+	Page Page
+	// EpisodeID narrows to the investigations one alert episode opened. Zero means every
+	// investigation the tenant has. An episode this tenant does not have is an empty
+	// page rather than a refusal: answering differently would let a caller probe for
+	// episode identifiers that are not theirs.
+	EpisodeID uuid.UUID
+}
+
 // List is a page of an organization's investigations, newest first.
 type List struct {
 	Investigations []Investigation
@@ -289,9 +303,9 @@ type Store interface {
 	// InvestigationProvenance reads the sources and runs beside one investigation.
 	InvestigationProvenance(ctx context.Context, org tenancy.Organization,
 		id uuid.UUID) ([]Source, []ToolRun, error)
-	// QueryInvestigations reports a page, newest first.
+	// QueryInvestigations reports a page, newest first, narrowed by the query.
 	QueryInvestigations(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		page Page) (List, error)
+		query Query) (List, error)
 	// RecordSource writes one offered source.
 	RecordSource(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		source Source) error

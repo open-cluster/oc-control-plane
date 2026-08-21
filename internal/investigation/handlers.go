@@ -285,6 +285,10 @@ func windowOf(trigger Trigger, lead time.Duration) window {
 var listSpec = table.Spec{
 	Sortable:    []string{"createdAt"},
 	DefaultSort: table.Sort{Field: "createdAt", Descending: true},
+	// "Everything opened from this incident" is the question an operator arrives holding
+	// after being paged. Serving it here rather than letting a client narrow a page keeps
+	// the answer the same on page one and page nine.
+	Filters: []string{"episodeId"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -312,8 +316,21 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	listed, err := h.Store.QueryInvestigations(ctx, principal, organization,
-		Page{Limit: parsed.Limit, After: parsed.Cursor})
+	query := Query{Page: Page{Limit: parsed.Limit, After: parsed.Cursor}}
+	if raw := parsed.Filter("episodeId"); raw != "" {
+		episode, parseErr := uuid.Parse(raw)
+		if parseErr != nil {
+			// Refused rather than passed to the database: a value that is not an
+			// identifier cannot match anything, and answering an empty page would tell a
+			// caller their typo was a real episode with nothing in it.
+			writeJSON(writer, http.StatusBadRequest, errorView{
+				Error: "episodeId is not an identifier"})
+			return
+		}
+		query.EpisodeID = episode
+	}
+
+	listed, err := h.Store.QueryInvestigations(ctx, principal, organization, query)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

@@ -119,7 +119,7 @@ func TestAnInvestigationWrittenBeforeConversationsStillReadsBack(t *testing.T) {
 		t.Fatalf("naming a principal: %v", err)
 	}
 	page, err := placements.QueryInvestigations(ctx, member, organization,
-		investigation.Page{Limit: 50})
+		investigation.Query{Page: investigation.Page{Limit: 50}})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
 	}

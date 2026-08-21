@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
 	"testing"
 	"time"
 
@@ -268,5 +270,80 @@ func TestAnotherTenantSeesNoInvestigations(t *testing.T) {
 	if status != http.StatusNotFound {
 		t.Errorf("a neighbour reading this tenant's investigation = %d, want 404: %s",
 			status, answer)
+	}
+}
+
+// openInvestigation opens one from an episode and reports its id.
+func (p *integrationPlane) openInvestigation(t *testing.T, base, episode string) string {
+	t.Helper()
+
+	status, body := p.call(t, http.MethodPost, base+"/investigations",
+		map[string]any{"episodeId": episode})
+	if status != http.StatusAccepted {
+		t.Fatalf("opening an investigation for %s = %d: %s", episode, status, body)
+	}
+	var opened struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, body, &opened)
+	return opened.ID
+}
+
+// "EVERYTHING OPENED FROM THIS INCIDENT" had no answer over the API.
+//
+// The column exists and is indexed, and the listing did not accept it — so a console
+// wanting the investigations for one episode had to read every investigation the tenant
+// has and narrow them in a browser. That is the shape the frontend spec forbids, and it
+// is forbidden for a reason: a filter applied after paging disagrees with itself on page
+// two.
+func TestInvestigationsCanBeListedByTheEpisodeTheyCameFrom(t *testing.T) {
+	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
+	plane, _ := autonomousPlaneWith(t, investigator, nil)
+	base := plane.base(surfaceOrg)
+
+	wanted := plane.openEpisode(t, "DiskFull", "finger-by-episode-1")
+	other := plane.openEpisode(t, "HighLatency", "finger-by-episode-2")
+
+	mine := plane.openInvestigation(t, base, wanted)
+	theirs := plane.openInvestigation(t, base, other)
+	plane.awaitInvestigation(t, mine)
+	plane.awaitInvestigation(t, theirs)
+
+	status, listing := plane.call(t, http.MethodGet,
+		base+"/investigations?episodeId="+wanted, nil)
+	if status != http.StatusOK {
+		t.Fatalf("filtered listing = %d: %s", status, listing)
+	}
+	if !strings.Contains(listing, mine) {
+		t.Errorf("the episode's own investigation is missing from its listing: %s", listing)
+	}
+	if strings.Contains(listing, theirs) {
+		t.Errorf("another episode's investigation is in the listing: %s", listing)
+	}
+
+	// An episode this tenant does not have is an empty page, not an error and not a
+	// disclosure: answering differently would let a caller probe for episode ids.
+	status, empty := plane.call(t, http.MethodGet,
+		base+"/investigations?episodeId="+uuid.NewString(), nil)
+	if status != http.StatusOK {
+		t.Fatalf("an unknown episode = %d, want an empty page: %s", status, empty)
+	}
+	if strings.Contains(empty, mine) || strings.Contains(empty, theirs) {
+		t.Errorf("an unknown episode returned rows: %s", empty)
+	}
+
+	// A filter this listing does not serve is REFUSED rather than ignored. An ignored
+	// filter returns everything while looking narrowed, which is the worse of the two.
+	status, refused := plane.call(t, http.MethodGet,
+		base+"/investigations?episode="+wanted, nil)
+	if status != http.StatusBadRequest {
+		t.Errorf("an unknown filter = %d, want 400: %s", status, refused)
+	}
+
+	// A value that is not an identifier is refused too, rather than reaching the database.
+	status, bad := plane.call(t, http.MethodGet,
+		base+"/investigations?episodeId=not-a-uuid", nil)
+	if status != http.StatusBadRequest {
+		t.Errorf("a malformed episode id = %d, want 400: %s", status, bad)
 	}
 }

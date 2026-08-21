@@ -66,7 +66,7 @@ func (m *memoryStore) InvestigationProvenance(
 }
 
 func (m *memoryStore) QueryInvestigations(
-	context.Context, authz.Principal, tenancy.Organization, Page,
+	context.Context, authz.Principal, tenancy.Organization, Query,
 ) (List, error) {
 	return List{}, errors.New("not used by the runner")
 }
