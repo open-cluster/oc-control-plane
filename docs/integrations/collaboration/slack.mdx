@@ -17,8 +17,10 @@ names, and—when a user token permits it—search messages.
 
 ## Prerequisites
 
-- Permission to create and install a Slack app.
 - The **Admin** role in OpenCluster.
+- Permission to install a Slack app in your workspace.
+- Permission to *create* a Slack app, only if your deployment has none registered and you
+  are using the pasted-token path below.
 
 ## Scopes
 
@@ -34,6 +36,16 @@ and thread reads but not workspace search. Connect a user token only if the broa
 search boundary is acceptable.
 
 ## Connect
+
+Select **Connect Slack**, authorize in Slack, and you are returned to an integration that
+is already verified and active. Nothing is pasted, and no token passes through your
+clipboard or your browser. This is the only path hosted OpenCluster offers, and a
+self-hosted deployment gets the identical experience once it registers its own Slack app
+and configures the app's client credentials.
+
+The steps below are the **advanced fallback**, offered only by a deployment that has no
+Slack app registered at all — an air-gapped install, typically. Integrations already
+connected this way keep working unchanged; there is nothing to migrate.
 
 <Steps>
   <Step title="Create the Slack app">

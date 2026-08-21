@@ -69,6 +69,16 @@ type ConnectFlow struct {
 // definition that does not declare one is connected through its configuration form, which
 // is the self-hosted path and stays supported.
 type Connect struct {
+	// SealsCredential declares that this flow comes back holding a runtime credential,
+	// which the deployment must therefore be able to seal.
+	//
+	// Declared rather than discovered, because the only useful moment to act on it is
+	// BEFORE the browser is sent to the vendor. A deployment with no sealing key that
+	// found out on the way back would have taken a customer through choosing a workspace
+	// and granting real permissions, and would then hold a live credential it can neither
+	// store nor un-issue. False is GitHub's case: its runtime credential is minted from
+	// the deployment's own App, so nothing here needs sealing.
+	SealsCredential bool
 	// Authorize is where the browser is sent to begin. The state is opaque to the
 	// provider and must travel back unchanged; the callback is where this deployment
 	// receives the return trip.
@@ -93,10 +103,16 @@ type ConnectReturn struct {
 	Callback string
 }
 
-// ConnectBinding is what a proven return says to record. It carries no credential: a type
-// runtime access needs one seals it through the ordinary create path, and GitHub's does not
-// need one at all.
+// ConnectBinding is what a proven return says to record.
 type ConnectBinding struct {
+	// Credential is the runtime credential the flow obtained, empty when it obtained
+	// none. It is sealed through the SAME path a pasted one takes — probed live first,
+	// then sealed bound to the row it will live on — so there is one story about how an
+	// outbound credential comes to rest, and a provider cannot invent a second.
+	//
+	// It exists only for the length of the callback. Nothing logs it, no view renders it,
+	// and it reaches durable state only as sealed bytes.
+	Credential string
 	// Name is what to call the Integration if it is new, in the operator's language —
 	// "GitHub — acme-corp". A name already taken is disambiguated by the handler.
 	Name string

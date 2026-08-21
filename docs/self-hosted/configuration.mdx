@@ -55,6 +55,9 @@ listener private even when a browser-facing proxy is configured.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `OC_SLACK_API_URL` | No | Slack API origin override. Empty uses Slack. |
+| `OC_SLACK_CLIENT_ID` | For one-click install | The Slack app's OAuth client ID. Set with `OC_SLACK_CLIENT_SECRET_FILE` or neither. |
+| `OC_SLACK_CLIENT_SECRET_FILE` | For one-click install | File containing the Slack app's OAuth client secret. Without both, Slack is connected with the pasted-token form. |
+| `OC_SLACK_SIGNING_SECRET_FILE` | For the Slack agent | File containing the Slack app's signing secret, which inbound events are verified against. Without it, no events endpoint is served and the integration reports its inbound capabilities as unavailable. Independent of the client credential. |
 | `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
 | `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
 | `OC_GITHUB_API_URL` | No | GitHub API origin. Use `https://HOST/api/v3` for GitHub Enterprise Server. |

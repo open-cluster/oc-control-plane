@@ -44,7 +44,15 @@ func (d Definition) CapabilityStatesFor(integration Integration) []CapabilitySta
 		// grant, and no join over Integration fields can see it.
 		return d.CapabilityStates(integration)
 	}
+	return d.GrantedCapabilityStates(integration)
+}
 
+// GrantedCapabilityStates is the generic join, ignoring any override.
+//
+// Exported so that a provider WITH an override can build on it instead of reimplementing
+// it: the deployment-shaped part is usually one or two capabilities, and the rest is the
+// ordinary grants join that should not be written twice and drift.
+func (d Definition) GrantedCapabilityStates(integration Integration) []CapabilityState {
 	held := make(map[string]bool, len(integration.VerifyGrants))
 	for _, grant := range integration.VerifyGrants {
 		held[grant] = true

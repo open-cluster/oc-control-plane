@@ -172,6 +172,11 @@ type integrationBody struct {
 		CreatedAt   string `json:"secretCreatedAt"`
 		RotatedAt   string `json:"secretRotatedAt"`
 	} `json:"webhook"`
+	Credential *struct {
+		Fingerprint string `json:"fingerprint"`
+		CreatedAt   string `json:"createdAt"`
+		RotatedAt   string `json:"rotatedAt"`
+	} `json:"credential"`
 	LastVerifiedAt string           `json:"lastVerifiedAt"`
 	VerifyNote     string           `json:"verifyNote"`
 	VerifyFacts    map[string]any   `json:"verifyFacts"`

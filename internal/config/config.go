@@ -89,6 +89,18 @@ const (
 	// EnvSlackAPIURL overrides where the Slack provider reaches its vendor. It exists for
 	// tests and for API-compatible proxies; empty means Slack's own origin.
 	EnvSlackAPIURL = "OC_SLACK_API_URL"
+	// The OpenCluster Slack app is DEPLOYMENT-level configuration, exactly as the GitHub
+	// App is: one app, installed by many customers. The variables name FILES for the two
+	// secrets, because no environment value in this product ever carries a credential.
+	//
+	// The client credential and the signing secret are INDEPENDENT. The first serves the
+	// one-click connect flow; the second serves the events endpoint. A deployment may
+	// hold either without the other — a self-hosted install that pasted a token can still
+	// receive events, and a deployment mid-registration may have a client before it has
+	// published a request URL.
+	EnvSlackClientID          = "OC_SLACK_CLIENT_ID"
+	EnvSlackClientSecretFile  = "OC_SLACK_CLIENT_SECRET_FILE"
+	EnvSlackSigningSecretFile = "OC_SLACK_SIGNING_SECRET_FILE"
 
 	// The GitHub App credential is DEPLOYMENT-level configuration: one app, installed by
 	// customers onto their own accounts. The id is public; the private key names a file,
@@ -268,6 +280,14 @@ type Config struct {
 	// SlackAPIURL is where the Slack provider reaches its vendor; empty means Slack's own
 	// origin. It exists so a test can stand a fake where slack.com would be.
 	SlackAPIURL string
+	// SlackClientID and SlackClientSecret are the OpenCluster Slack app's OAuth client.
+	// Both empty means this deployment offers no one-click Slack install and serves the
+	// pasted-token form instead. SlackSigningSecret is what inbound events are verified
+	// against; empty means the events endpoint is not served at all, and the integration
+	// truthfully reports its inbound capabilities as unavailable.
+	SlackClientID      string
+	SlackClientSecret  string
+	SlackSigningSecret string
 
 	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
 	// means this deployment cannot reach GitHub, and connecting it is refused live with
@@ -444,6 +464,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if err = gitHubInstallFlow(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err = slackApp(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 	if cfg.GitHubWebURL, err = optionalVendorURL(lookup, EnvGitHubWebURL); err != nil {
@@ -835,6 +858,48 @@ func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 		return "", nil, fmt.Errorf("%s: the key file is empty", EnvGitHubAppKeyFile)
 	}
 	return id, raw, nil
+}
+
+// slackApp reads the deployment's Slack app registration.
+//
+// Two independent halves. The OAuth client is both parts or neither, for the reason the
+// GitHub one is: half of it offers a connect button that cannot finish, and the person who
+// set one variable is still reading when this refuses. The signing secret stands alone —
+// it serves the events endpoint rather than the connect flow, and a deployment may
+// legitimately have one without the other in either direction.
+//
+// Neither secret's contents ever appear in an error.
+func slackApp(lookup func(string) (string, bool), cfg *Config) error {
+	clientID, _ := lookup(EnvSlackClientID)
+	clientID = strings.TrimSpace(clientID)
+	secretPath, _ := lookup(EnvSlackClientSecretFile)
+	secretPath = strings.TrimSpace(secretPath)
+
+	switch {
+	case clientID == "" && secretPath != "":
+		return fmt.Errorf("%s is required when %s is set",
+			EnvSlackClientID, EnvSlackClientSecretFile)
+	case clientID != "" && secretPath == "":
+		return fmt.Errorf("%s is required when %s is set",
+			EnvSlackClientSecretFile, EnvSlackClientID)
+	case clientID != "":
+		secret, err := readSecretFile(secretPath)
+		if err != nil {
+			return fmt.Errorf("%s: %w", EnvSlackClientSecretFile, err)
+		}
+		cfg.SlackClientID, cfg.SlackClientSecret = clientID, secret
+	}
+
+	signingPath, _ := lookup(EnvSlackSigningSecretFile)
+	if signingPath = strings.TrimSpace(signingPath); signingPath == "" {
+		return nil
+	}
+	signing, err := readSecretFile(signingPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvSlackSigningSecretFile, err)
+	}
+	cfg.SlackSigningSecret = signing
+	return nil
 }
 
 // gitHubInstallFlow reads what the one-click installation flow needs: all three of the

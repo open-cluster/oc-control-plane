@@ -181,13 +181,26 @@ func run(
 		}
 	}
 
+	// Slack's installation flow is registered separately from its credential, exactly as
+	// GitHub's is: a deployment that registered no Slack app offers no connect button and
+	// serves the pasted-token form, which is the air-gapped path and stays supported.
+	var slackInstaller *slack.Installer
+	if cfg.SlackClientID != "" {
+		slackInstaller, err = slack.NewInstaller(
+			cfg.SlackClientID, cfg.SlackClientSecret, cfg.SlackAPIURL)
+		if err != nil {
+			return fmt.Errorf("%s: %w", config.EnvSlackClientID, err)
+		}
+	}
+
 	// The catalog is assembled HERE, and this is the only place that knows every provider.
 	// A duplicate key or a definition missing its verification refuses startup, where the
 	// person who caused it is still the person reading the error.
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
-		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
+		slack.Definition(slack.NewClient(cfg.SlackAPIURL), slackInstaller,
+			cfg.SlackSigningSecret != ""),
 		github.Definition(gitHubInstaller, gitHubApp, gitHubClient, cfg.GitHubWebURL),
 	)
 	if err != nil {

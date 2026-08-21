@@ -13,7 +13,7 @@ import (
 func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 	t.Parallel()
 
-	definition := Definition(NewClient(""))
+	definition := Definition(NewClient(""), nil, false)
 	if definition.ID != integrations.TypeSlack || definition.Key != "slack" {
 		t.Errorf("identity = %d %q", definition.ID, definition.Key)
 	}
@@ -39,9 +39,17 @@ func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
 	t.Parallel()
 
-	definition := Definition(NewClient(""))
-	if len(definition.Config) != 1 {
-		t.Fatalf("config declares %d fields, want the bot token alone", len(definition.Config))
+	// One SECRET field and no more. The other declared fields are non-secret facts the
+	// connect flow records — which workspace, which app — and a second secret would be a
+	// second credential path to review.
+	definition := Definition(NewClient(""), nil, false)
+	for _, field := range definition.Config {
+		if field.Secret && field.Name != "botToken" {
+			t.Errorf("%s is a second secret configuration field", field.Name)
+		}
+		if field.Required && field.Name != "botToken" {
+			t.Errorf("%s is required, so the connect flow could not omit it", field.Name)
+		}
 	}
 	token := definition.Config[0]
 	if token.Name != "botToken" || !token.Secret || !token.Required {
@@ -61,20 +69,37 @@ func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
 	}
 }
 
-// Tools and capabilities agree one-to-one in both directions. A capability without a tool
-// is a promise the catalog makes and nothing keeps; a tool without a capability is
-// behavior the catalog never disclosed.
+// Tools and capabilities agree in both directions. A capability without a tool is normally
+// a promise the catalog makes and nothing keeps; a tool without a capability is behavior
+// the catalog never disclosed.
+//
+// The exceptions are named rather than tolerated. A surface capability — being spoken to
+// in Slack, or reaching a private channel the app was invited to — is not a read an
+// investigation performs, so no tool exercises it; each one is listed in
+// surfaceCapabilities, which is what makes adding another a decision rather than a guard
+// going quietly slack.
 func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
 	t.Parallel()
 
-	definition := Definition(NewClient(""))
+	definition := Definition(NewClient(""), nil, false)
 
+	surface := map[string]bool{}
+	for _, capability := range surfaceCapabilities {
+		surface[capability] = true
+	}
 	exercised := map[string]int{}
 	for _, tool := range definition.Tools {
 		exercised[tool.Capability]++
 	}
+
 	for _, capability := range definition.Capabilities {
-		if exercised[capability] != 1 {
+		switch {
+		case surface[capability]:
+			if exercised[capability] != 0 {
+				t.Errorf("surface capability %s is also exercised by a tool; it is one or "+
+					"the other", capability)
+			}
+		case exercised[capability] != 1:
 			t.Errorf("capability %s is exercised by %d tools, want exactly one",
 				capability, exercised[capability])
 		}
@@ -85,13 +110,29 @@ func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
 	}
 }
 
+// Every surface capability is one the definition actually declares. Without this, a
+// capability could be excused from needing a tool by a name nothing else mentions.
+func TestSurfaceCapabilitiesAreDeclared(t *testing.T) {
+	t.Parallel()
+
+	declared := map[string]bool{}
+	for _, capability := range Definition(NewClient(""), nil, false).Capabilities {
+		declared[capability] = true
+	}
+	for _, capability := range surfaceCapabilities {
+		if !declared[capability] {
+			t.Errorf("surface capability %s is not declared by the definition", capability)
+		}
+	}
+}
+
 // Every tool carries its full contract. The model chooses by this metadata, so
 // an empty field is not missing documentation — it is a tool that will be misrouted and
 // then patched with prompts.
 func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	t.Parallel()
 
-	for _, tool := range Definition(NewClient("")).Tools {
+	for _, tool := range Definition(NewClient(""), nil, false).Tools {
 		if tool.Name == "" || !strings.HasPrefix(tool.Name, "slack.") {
 			t.Errorf("tool name %q does not carry the provider prefix", tool.Name)
 		}
@@ -134,7 +175,7 @@ func TestVerifiedScopesMatchWhatTheToolsClaim(t *testing.T) {
 	}
 
 	claimed := map[string]bool{}
-	for _, tool := range Definition(NewClient("")).Tools {
+	for _, tool := range Definition(NewClient(""), nil, false).Tools {
 		for scope := range known {
 			if strings.Contains(tool.Permissions, scope) {
 				claimed[scope] = true

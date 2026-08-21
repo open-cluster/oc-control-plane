@@ -116,6 +116,13 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 			"form instead"})
 		return
 	}
+	if definition.Connect.SealsCredential && !h.holdsCredentials(writer) {
+		// Before the browser leaves. A deployment that cannot seal will not be able to
+		// store what this flow comes back with, and the customer would learn that only
+		// after granting permissions in somebody else's product — with a live credential
+		// in this process that it can neither keep nor withdraw.
+		return
+	}
 	if h.PublicURL == "" {
 		// The redirect URI is registered with the vendor and must be absolute. Assembling
 		// one from the request's own Host header would let a caller choose where an
@@ -254,15 +261,8 @@ func (h Handlers) record(
 		ctx, organization, definition.ID, bound.Configuration)
 	switch {
 	case err == nil:
-		// The customer changed an installation this tenant already has, and the provider
-		// sent them back here. Prove, then re-verify what exists.
-		verified, recordErr := h.Store.RecordIntegrationVerification(ctx, principal,
-			organization, existing.ID, h.probeExisting(ctx, organization, definition, existing))
-		if recordErr != nil {
-			h.fail(writer, request, recordErr)
-			return
-		}
-		h.landConnect(writer, request, returnTo, outcomeFor(verified), verified.ID.String())
+		h.reconnect(ctx, writer, request, principal, organization, definition, returnTo,
+			existing, bound)
 		return
 	case !errors.Is(err, ErrUnknown):
 		h.fail(writer, request, err)
@@ -276,11 +276,17 @@ func (h Handlers) record(
 		Configuration: bound.Configuration,
 		CreatedBy:     principal.ID(),
 	}
-	verification := definition.Probe(ctx, ProbeInput{Integration: Integration{
-		Type:          wanted.Type,
-		Name:          wanted.Name,
-		Configuration: wanted.Configuration,
-	}})
+	// The credential the flow obtained is presented to the probe, exactly as a pasted one
+	// is. A credential the provider refuses must not come to rest, and there is one rule
+	// about that rather than one per way a credential arrived.
+	verification := definition.Probe(ctx, ProbeInput{
+		Integration: Integration{
+			Type:          wanted.Type,
+			Name:          wanted.Name,
+			Configuration: wanted.Configuration,
+		},
+		Credential: bound.Credential,
+	})
 	if verification.Status == StatusFailed {
 		// Proven association, and the installation would not answer. Nothing is recorded:
 		// an Integration born failed is one an operator has to clean up.
@@ -292,6 +298,17 @@ func (h Handlers) record(
 		return
 	}
 	wanted.Verification = &verification
+
+	if bound.Credential != "" {
+		sealed, fingerprint, ok := h.sealCredential(writer, bound.Credential, wanted.ID)
+		if !ok {
+			// Answered by sealCredential. Nothing is created: an Integration recorded
+			// without the credential it needs would read as connected and never work.
+			return
+		}
+		wanted.CredentialSealed = sealed
+		wanted.CredentialFingerprint = fingerprint
+	}
 
 	created, err := h.Store.CreateIntegration(ctx, principal, organization, wanted)
 	if errors.Is(err, ErrNameTaken) {
@@ -311,6 +328,63 @@ func (h Handlers) record(
 		slog.String("type", definition.Key))
 
 	h.landConnect(writer, request, returnTo, outcomeFor(created), created.ID.String())
+}
+
+// reconnect is the customer connecting an installation this tenant already has. The
+// provider sent them back here, the association is proven, and what exists is re-verified
+// rather than duplicated.
+//
+// A flow that came back with a credential REPLACES the one on the record. Authorizing
+// again issues a new credential, and the old one being dead is a common reason to
+// reconnect at all — so re-verifying the stored one would report the failure the customer
+// just came here to fix, and would leave the working credential on the floor.
+func (h Handlers) reconnect(
+	ctx context.Context, writer http.ResponseWriter, request *http.Request,
+	principal authz.Principal, organization tenancy.Organization, definition Definition,
+	returnTo string, existing Integration, bound ConnectBinding,
+) {
+	if bound.Credential == "" {
+		verified, err := h.Store.RecordIntegrationVerification(ctx, principal, organization,
+			existing.ID, h.probeExisting(ctx, organization, definition, existing))
+		if err != nil {
+			h.fail(writer, request, err)
+			return
+		}
+		h.landConnect(writer, request, returnTo, outcomeFor(verified), verified.ID.String())
+		return
+	}
+
+	verification := definition.Probe(ctx, ProbeInput{
+		Integration: existing, Credential: bound.Credential,
+	})
+	if verification.Status == StatusFailed {
+		// The new credential does not work. The record keeps the one it had: replacing a
+		// working credential with a refused one because the customer pressed a button is
+		// how a connected integration becomes a disconnected one.
+		h.Logger.WarnContext(ctx, "a reconnected integration did not verify",
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", existing.ID.String()),
+			slog.String("type", definition.Key),
+			slog.String("note", verification.Note))
+		h.landConnect(writer, request, returnTo, outcomeUnverified, existing.ID.String())
+		return
+	}
+
+	sealed, fingerprint, ok := h.sealCredential(writer, bound.Credential, existing.ID)
+	if !ok {
+		return
+	}
+	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
+		existing.ID, Revision{}, sealed, fingerprint, verification)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	h.Logger.InfoContext(ctx, "integration reconnected",
+		slog.String("org_id", organization.String()),
+		slog.String("integration_id", verified.ID.String()),
+		slog.String("type", definition.Key))
+	h.landConnect(writer, request, returnTo, outcomeFor(verified), verified.ID.String())
 }
 
 // disambiguate names the second Integration for one account: reinstalling on the same
