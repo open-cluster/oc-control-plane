@@ -206,17 +206,35 @@ func run(
 	investigations := &investigation.Runner{
 		Events:                 placements,
 		Store:                  placements,
+		Leases:                 placements,
 		Catalog:                catalog,
 		Sealer:                 sealer,
 		Investigator:           investigator,
 		MaxToolRuns:            cfg.InvestigationMaxToolRuns,
 		MaxTurns:               cfg.InvestigationMaxTurns,
+		OrgConcurrent:          cfg.OrgConcurrentInvestigations,
+		WindowLead:             cfg.InvestigationWindowLead,
 		Logger:                 logger,
 		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
 	}
 	// Drained on the way out: an investigation mid-flight is failed with the reason
 	// recorded rather than orphaned into a record that says running forever.
 	defer investigations.Drain()
+
+	// The claiming and recovery loops. They live as long as the process: the claimer is
+	// what makes a Conversation turn actually happen — a message opens an investigation
+	// with no lease and answers the person immediately — and the sweeper is what turns a
+	// worker that died into a stated failure rather than a spinner nobody ever stops
+	// watching. Both end with the run context, so shutdown stops looking for work before
+	// Drain waits for what it already holds.
+	//
+	// Only a deployment with a model provider runs them. Claiming work this process could
+	// not investigate would take a lease, fail for the one reason the operator surface
+	// already reports per request, and do it again for every turn.
+	if investigator != nil {
+		go investigations.Claim(ctx)
+		go investigations.Sweep(ctx)
+	}
 
 	return serve(ctx, assembled{
 		config:         cfg,

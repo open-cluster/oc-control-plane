@@ -31,6 +31,8 @@ type memoryStore struct {
 	sources      []Source
 	runs         []ToolRun
 	answer       string
+	drained      []uuid.UUID
+	drainOpens   bool
 	findings     []Finding
 	nextSteps    []string
 	stoppedBy    string
@@ -93,6 +95,16 @@ func (m *memoryStore) ConcludeInvestigation(
 	m.answer, m.findings, m.nextSteps = conclusion.Answer, conclusion.Findings,
 		conclusion.NextSteps
 	return nil
+}
+
+// drained records every conversation the runner tried to take up at a terminal boundary.
+func (m *memoryStore) DrainConversation(
+	_ context.Context, _ tenancy.Organization, conversation uuid.UUID, _ time.Duration,
+) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.drained = append(m.drained, conversation)
+	return m.drainOpens, nil
 }
 
 func (m *memoryStore) FailInvestigation(

@@ -325,6 +325,15 @@ type Store interface {
 	// identities — a navigation index for the autonomous orientation, never evidence.
 	WorkloadInventory(ctx context.Context, org tenancy.Organization,
 		limit int) ([]string, error)
+	// DrainConversation opens the next turn of a conversation from whatever messages
+	// arrived while this one was running, and reports whether one opened. It is called at
+	// the terminal boundary — the "next safe point" — because that is the moment a second
+	// agent can start without two of them writing one context.
+	//
+	// Nothing queued means nothing opens, which is the ordinary end of every turn nobody
+	// interrupted. lead is how far back the new turn's window reaches.
+	DrainConversation(ctx context.Context, org tenancy.Organization,
+		conversation uuid.UUID, lead time.Duration) (bool, error)
 }
 
 // OfferedSource is one offered integration and what may be read from it.

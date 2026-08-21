@@ -189,6 +189,10 @@ var enumColumns = map[string]map[string][]int{
 	// open-episode listing filters on an EPISODE's status; the two enums share the file.
 	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),
 		episodeStatusValues...)},
+	// Claiming, renewing and sweeping all guard on the investigation still running, and
+	// the recovery sweep fails it — so the file writes an investigation status as a
+	// literal twice, in the two places that mean the most.
+	"investigation_lease.go": {"status": investigationStatusValues},
 	// Opening a turn counts INVESTIGATIONS that are still running and derives the window
 	// from whether the EPISODE is still open, so the same two enums share this file too.
 	// The queued-message reads filter on a MESSAGE's role, because only what a person

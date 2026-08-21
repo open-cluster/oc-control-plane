@@ -351,6 +351,21 @@ func (p *Placements) OpenTurn(
 	return turn, true, nil
 }
 
+// DrainConversation opens the next turn from whatever is queued, for the investigation
+// runtime, which knows conversations only as an identifier its record carries.
+//
+// It is OpenTurn under another name on purpose: the drain at a terminal boundary and a
+// message arriving to an idle conversation are the same act, and two implementations of
+// "start the next turn" would be two places for the single-writer invariant to be got
+// wrong.
+func (p *Placements) DrainConversation(
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	lead time.Duration,
+) (bool, error) {
+	_, opened, err := p.OpenTurn(ctx, organization, id, lead)
+	return opened, err
+}
+
 // openTurn is the whole of opening a turn, inside somebody else's transaction: the
 // conversation lock, the ordinal, the guarded insert, and the queued messages moving onto
 // it. The drain at a terminal boundary runs exactly this, which is why it is a function

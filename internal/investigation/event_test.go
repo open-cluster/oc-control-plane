@@ -544,3 +544,96 @@ func TestTheAnswerDeltaCarriesTheWholeAnswer(t *testing.T) {
 		t.Errorf("the only delta is not marked final: %+v", deltas[0].Payload)
 	}
 }
+
+// THE NEXT SAFE POINT. A turn that belongs to a conversation drains that conversation when
+// it ends, so messages sent while the agent was working become the next turn instead of a
+// second agent competing with the first.
+func TestATurnDrainsItsConversationWhenItEnds(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		candidates: []integrations.Integration{stubIntegration("Deploy Slack")},
+		drainOpens: true,
+	}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Summary: "1 deploy"}, nil
+	})
+
+	conversation := uuid.New()
+	runner := &Runner{
+		Store: store, Catalog: catalog, Leases: noLeases{},
+		Investigator: &scriptedInvestigator{exchange: oneRead()},
+		Logger:       slog.New(slog.DiscardHandler),
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), Subject: "checkout is slow", ConversationID: conversation, Turn: 1,
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	if len(store.drained) != 1 || store.drained[0] != conversation {
+		t.Errorf("drained = %v, want exactly the conversation this turn belonged to (%s)",
+			store.drained, conversation)
+	}
+}
+
+// A single-shot investigation belongs to no conversation, so there is nothing to drain and
+// nothing is asked for.
+func TestASingleShotInvestigationDrainsNothing(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{
+		stubIntegration("Deploy Slack"),
+	}}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Summary: "1 deploy"}, nil
+	})
+
+	runner := &Runner{
+		Store: store, Catalog: catalog, Leases: noLeases{},
+		Investigator: &scriptedInvestigator{exchange: oneRead()},
+		Logger:       slog.New(slog.DiscardHandler),
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), Subject: "payments latency",
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	if len(store.drained) != 0 {
+		t.Errorf("drained = %v for an investigation belonging to no conversation",
+			store.drained)
+	}
+}
+
+// noLeases grants every claim and never expires one. It stands in for durable leasing in
+// the tests that are about what the runner does once it holds one.
+type noLeases struct{}
+
+func (noLeases) ClaimInvestigation(context.Context, Claim) (
+	tenancy.Organization, Investigation, bool, error,
+) {
+	return tenancy.Organization{}, Investigation{}, false, nil
+}
+
+func (noLeases) TakeLease(
+	context.Context, tenancy.Organization, uuid.UUID, Claim,
+) (bool, error) {
+	return true, nil
+}
+
+func (noLeases) Heartbeat(
+	context.Context, tenancy.Organization, uuid.UUID, Claim,
+) (bool, error) {
+	return true, nil
+}
+
+func (noLeases) RecoverStale(context.Context, string, int) (int, error) { return 0, nil }

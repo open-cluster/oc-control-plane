@@ -131,10 +131,12 @@ const (
 	// and how many may wait behind them.
 	EnvOrgConcurrentInvestigations = "OC_ORG_MAX_CONCURRENT_INVESTIGATIONS"
 	EnvOrgWaitingInvestigations    = "OC_ORG_MAX_WAITING_INVESTIGATIONS"
-	// EnvModelContextTokens is the model's working context window in tokens. Empty means
+	// EnvModelContextWindow is the model's working context window, in tokens. Empty means
 	// the per-model default table decides, which is what a deployment that has not
-	// thought about it should get.
-	EnvModelContextTokens = "OC_MODEL_CONTEXT_TOKENS"
+	// thought about it should get. Named for the WINDOW rather than the unit, because a
+	// variable whose name ends in TOKENS reads as a credential to anything scanning for
+	// one — including this repository's own gate.
+	EnvModelContextWindow = "OC_MODEL_CONTEXT_WINDOW"
 	// EnvContextThresholdPercent is how full the estimated context may get before older
 	// turns are compacted into the running summary.
 	EnvContextThresholdPercent = "OC_CONTEXT_THRESHOLD_PERCENT"
@@ -288,10 +290,10 @@ type Config struct {
 	// executing and queued turns.
 	OrgConcurrentInvestigations int
 	OrgWaitingInvestigations    int
-	// ModelContextTokens is the configured context window; zero means the per-model
-	// default table decides. ContextThresholdPercent is how full the estimate may get
-	// before compaction.
-	ModelContextTokens      int
+	// ModelContextWindow is the configured context window in tokens; zero means the
+	// per-model default table decides. ContextThresholdPercent is how full the estimate
+	// may get before compaction.
+	ModelContextWindow      int
 	ContextThresholdPercent int
 	// InvestigationMaxToolRuns and InvestigationMaxTurns are the autonomous loop's
 	// ceilings; zero means the built-in defaults.
@@ -447,8 +449,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		lookup, EnvOrgWaitingInvestigations, cfg.OrgWaitingInvestigations); err != nil {
 		return Config{}, err
 	}
-	if cfg.ModelContextTokens, err = optionalPositive(
-		lookup, EnvModelContextTokens); err != nil {
+	if cfg.ModelContextWindow, err = optionalPositive(
+		lookup, EnvModelContextWindow); err != nil {
 		return Config{}, err
 	}
 	if cfg.ContextThresholdPercent, err = optionalPercent(

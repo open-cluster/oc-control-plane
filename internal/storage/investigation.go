@@ -325,7 +325,12 @@ func (p *Placements) endInvestigation(
 		       spend_input_tokens  = $9,
 		       spend_output_tokens = $10,
 		       spend_micro_cents   = $11,
-		       concluded_at        = now()
+		       concluded_at        = now(),
+		       -- The lease goes with the ending. A terminal investigation is nobody's to
+		       -- hold, and leaving one behind would make the sweeper reason about work
+		       -- that is already finished.
+		       lease_worker        = '',
+		       lease_expires_at    = NULL
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1`,
 		id, organization.String(), status, answer, findings, nextSteps, stoppedBy,
 		reason, spend.InputTokens, spend.OutputTokens, spend.MicroCents)

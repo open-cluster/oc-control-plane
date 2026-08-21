@@ -3,7 +3,9 @@ package investigation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -61,6 +63,21 @@ type Runner struct {
 	// nothing else: an investigation runs, concludes and records its provenance exactly
 	// the same, because the stream is how a run is WATCHED and not what it is.
 	Events EventSink
+	// Leases is how work is claimed, kept and recovered. Nil means this process runs
+	// investigations without claiming them — which is what a unit test wants, and what a
+	// deployment must never have, because an unclaimed investigation whose worker dies is
+	// the record that says `running` forever.
+	Leases Leases
+	// Worker identifies this process among the live ones. Empty means the leases are
+	// taken under a name derived at first use.
+	Worker string
+	// OrgConcurrent is the most investigations one organization may have executing at
+	// once, so one tenant cannot consume the whole deployment. Zero means the default.
+	OrgConcurrent int
+	// WindowLead is how far back a drained conversation turn's window reaches. It matches
+	// the operator surface's own, because a follow-up asks about the same period the
+	// question before it did.
+	WindowLead time.Duration
 	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
 	// tuning, so configuration rather than constants; zero means the defaults.
 	MaxToolRuns int
@@ -77,9 +94,11 @@ type Runner struct {
 	active  int
 	// base is the process-lifetime context every investigation runs under; cancelling it
 	// fails what is still running rather than orphaning it.
-	base   context.Context
-	cancel context.CancelFunc
-	once   sync.Once
+	base     context.Context
+	cancel   context.CancelFunc
+	once     sync.Once
+	identity sync.Once
+	worker   string
 }
 
 // AtCapacity reports whether starting another investigation now would exceed the
@@ -94,10 +113,14 @@ func (r *Runner) AtCapacity() bool {
 
 // Start launches one investigation in the background. The record already exists and is
 // running; this fills its provenance and ends it.
+//
+// It takes the LEASE first, in this process, rather than leaving the record for the claim
+// loop to find. Two reasons: the single-shot path answers a request that is waiting, and a
+// poll interval of latency on it would be latency added for nothing; and an investigation
+// with no lease at all is invisible to the sweeper, which is exactly the record that says
+// `running` forever after a crash.
 func (r *Runner) Start(organization tenancy.Organization, opened Investigation) {
-	r.once.Do(func() {
-		r.base, r.cancel = context.WithCancel(context.Background())
-	})
+	r.begin()
 	r.mu.Lock()
 	r.active++
 	r.mu.Unlock()
@@ -111,16 +134,244 @@ func (r *Runner) Start(organization tenancy.Organization, opened Investigation) 
 		}()
 		ctx, done := context.WithTimeout(r.base, investigationTimeout)
 		defer done()
-		r.run(ctx, organization, opened)
+
+		if r.Leases != nil {
+			held, err := r.Leases.TakeLease(ctx, organization, opened.ID, r.claim())
+			if err != nil {
+				r.Logger.Error("an investigation's lease could not be taken",
+					slog.String("investigation_id", opened.ID.String()),
+					slog.String("error", err.Error()))
+				return
+			}
+			if !held {
+				// Somebody else is running it. Not an error, and not something to log
+				// loudly: it is what the lease is for.
+				return
+			}
+		}
+		r.runLeased(ctx, organization, opened)
 	}()
+}
+
+// Claim runs the claiming loop until the context ends: take one waiting investigation,
+// run it, take the next.
+//
+// This is what makes a Conversation turn happen. A message opens an investigation with no
+// lease — the handler answers immediately and does not wait for a model — and a worker
+// picks it up here. It is also what lets a deployment add a replica: two claimers take
+// different work, because the claim is a row lock and not a decision either of them makes.
+func (r *Runner) Claim(ctx context.Context) {
+	r.begin()
+	for {
+		claimed := r.claimOne(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if claimed {
+			// Something was waiting; there may be more. Look again rather than sleeping
+			// through a queue.
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(claimInterval):
+		}
+	}
+}
+
+// claimOne takes and runs at most one investigation, reporting whether it found any.
+func (r *Runner) claimOne(ctx context.Context) bool {
+	if r.Leases == nil || r.AtCapacity() {
+		return false
+	}
+	organization, claimed, took, err := r.Leases.ClaimInvestigation(ctx, r.claim())
+	if err != nil {
+		if ctx.Err() == nil {
+			r.Logger.Error("investigations could not be claimed",
+				slog.String("error", err.Error()))
+		}
+		return false
+	}
+	if !took {
+		return false
+	}
+
+	r.mu.Lock()
+	r.active++
+	r.mu.Unlock()
+	r.running.Add(1)
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.active--
+			r.mu.Unlock()
+			r.running.Done()
+		}()
+		runCtx, done := context.WithTimeout(r.base, investigationTimeout)
+		defer done()
+		r.runLeased(runCtx, organization, claimed)
+	}()
+	return true
+}
+
+// Sweep runs the recovery loop until the context ends: any investigation whose lease
+// lapsed is FAILED with a stated reason and its stream is ended.
+//
+// It is not a resumption. Resuming would be a fiction — the model transcript is
+// deliberately not persisted, only semantic events are — and an honest failure the operator
+// can re-ask from is better than a fabricated continuation.
+func (r *Runner) Sweep(ctx context.Context) {
+	if r.Leases == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(sweepInterval):
+		}
+		recovered, err := r.Leases.RecoverStale(ctx, RecoveryReason, sweepBatch)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			r.Logger.Error("stale investigations could not be recovered",
+				slog.String("error", err.Error()))
+		case recovered > 0:
+			// Counted rather than merely logged: a crash loop is only visible as a number.
+			r.Logger.Warn("stale investigations were recovered",
+				slog.Int("recovered", recovered),
+				slog.String("reason", RecoveryReason))
+		}
+	}
+}
+
+// runLeased runs one investigation under a heartbeat, so a lease this process holds does
+// not lapse while it is genuinely working.
+func (r *Runner) runLeased(
+	ctx context.Context, organization tenancy.Organization, opened Investigation,
+) {
+	if r.Leases == nil {
+		r.run(ctx, organization, opened)
+		return
+	}
+	beating, stop := context.WithCancel(ctx)
+	defer stop()
+	go r.heartbeat(beating, stop, organization, opened.ID)
+	r.run(ctx, organization, opened)
+	r.drain(ctx, organization, opened)
+}
+
+// drain takes up whatever arrived while this turn was running.
+//
+// THIS is the "next safe point" the steering design turns on. A message sent mid-run is
+// accepted and left queued rather than starting a second agent against the same context;
+// here, once the turn has genuinely ended, everything queued becomes exactly ONE next turn.
+// The new turn is unleased, so whichever worker claims it next runs it — including a
+// different replica.
+//
+// It runs in a detached window for the same reason the final record write does: a
+// cancelled run has still ended, and the conversation must not be left holding messages
+// that nothing will ever pick up.
+func (r *Runner) drain(
+	ctx context.Context, organization tenancy.Organization, finished Investigation,
+) {
+	if finished.ConversationID == uuid.Nil {
+		return
+	}
+	writeCtx, done := writeWindow(ctx)
+	defer done()
+
+	opened, err := r.Store.DrainConversation(writeCtx, organization,
+		finished.ConversationID, r.WindowLead)
+	if err != nil {
+		// The messages stay queued and the next message or the next turn's end takes them
+		// up. Losing the drain delays an answer; it does not lose what was said.
+		r.Logger.Error("a conversation's queued messages could not be taken up",
+			slog.String("conversation_id", finished.ConversationID.String()),
+			slog.String("error", err.Error()))
+		return
+	}
+	if opened {
+		r.Logger.Info("a conversation turn was drained into a new investigation",
+			slog.String("conversation_id", finished.ConversationID.String()))
+	}
+}
+
+// heartbeat renews this worker's lease until the investigation ends. A renewal that
+// matches no row means the lease is gone — swept, or the investigation already terminal —
+// and the run is CANCELLED rather than left writing for work another worker now owns.
+func (r *Runner) heartbeat(
+	ctx context.Context, lost context.CancelFunc, organization tenancy.Organization,
+	id uuid.UUID,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(heartbeatInterval):
+		}
+		held, err := r.Leases.Heartbeat(ctx, organization, id, r.claim())
+		if err != nil {
+			// A database that could not be reached is not proof the lease is gone, and
+			// giving up on the first failure would abandon work over one blip. The lease's
+			// own expiry is the backstop.
+			if ctx.Err() == nil {
+				r.Logger.Warn("an investigation's lease could not be renewed",
+					slog.String("investigation_id", id.String()),
+					slog.String("error", err.Error()))
+			}
+			continue
+		}
+		if !held {
+			r.Logger.Warn("an investigation's lease was lost; stopping this worker's run",
+				slog.String("investigation_id", id.String()))
+			lost()
+			return
+		}
+	}
+}
+
+// claim is what this worker asks for, with the defaults filled in.
+func (r *Runner) claim() Claim {
+	concurrent := r.OrgConcurrent
+	if concurrent <= 0 {
+		concurrent = maxConcurrent
+	}
+	return Claim{Worker: r.workerName(), LeaseFor: leaseDuration, OrgConcurrent: concurrent}
+}
+
+// workerName identifies this process among the live ones. A configured name wins; a
+// derived one is the host and the process, which is enough to tell two replicas apart and
+// enough to find one in a log.
+func (r *Runner) workerName() string {
+	r.identity.Do(func() {
+		r.worker = r.Worker
+		if r.worker != "" {
+			return
+		}
+		host, err := os.Hostname()
+		if err != nil || host == "" {
+			host = "worker"
+		}
+		r.worker = fmt.Sprintf("%s/%d", host, os.Getpid())
+	})
+	return r.worker
+}
+
+// begin makes the process-lifetime context, once.
+func (r *Runner) begin() {
+	r.once.Do(func() {
+		r.base, r.cancel = context.WithCancel(context.Background())
+	})
 }
 
 // Drain stops taking the process down with investigations mid-flight: what is running is
 // cancelled — each fails with the reason recorded — and waited for.
+//
+// A deploy is therefore not a crash. What this cannot cover is the process that is killed
+// rather than asked to stop, and that is what the lease and its sweep are for.
 func (r *Runner) Drain() {
-	r.once.Do(func() {
-		r.base, r.cancel = context.WithCancel(context.Background())
-	})
+	r.begin()
 	r.cancel()
 	r.running.Wait()
 }

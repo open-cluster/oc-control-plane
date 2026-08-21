@@ -178,6 +178,20 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// question to resolve a placement from, and nothing selective enough to leak one.
 		"PruneChangeLedgerBefore": "age-bounded delete across every placement; reads no tenant " +
 			"data and takes no caller-supplied identifier",
+		// The investigation claimer asks for WORK, not for a tenant's work. Which
+		// organization has something waiting is the answer rather than the question, and a
+		// worker that had to name one could only serve tenants somebody had listed for it.
+		// It takes no caller-supplied identifier — a worker name and two numbers are the
+		// whole request — and the row it claims is itself the authority for the
+		// organization, which the caller is then told.
+		"ClaimInvestigation": "discovers which tenant has work waiting; takes no " +
+			"caller-supplied identifier, and the claimed row is the authority for the " +
+			"organization it belongs to",
+		// The lease sweeper recovers by EXPIRY across every placement, bounded per call. It
+		// reads no tenant data and takes nothing selective — a reason and a batch size —
+		// so there is no tenant in the question and nothing precise enough to leak one.
+		"RecoverStale": "expiry-bounded recovery across every placement; reads no tenant " +
+			"data and takes no caller-supplied identifier",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {
