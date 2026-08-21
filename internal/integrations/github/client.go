@@ -44,6 +44,14 @@ var ErrRateLimited = errors.New("github is rate limiting this app")
 var ErrAPIVersionRetired = errors.New(
 	"github no longer serves the API version this build pins; update the control plane")
 
+// ErrRepositoryNotSelected reports a repository outside what the installation selected.
+// A read that names one is answered with this and nothing else happens: no other
+// credential is tried, and no attempt is repeated. The reason is the whole answer, because
+// the gap in an investigation is explained by it.
+var ErrRepositoryNotSelected = errors.New(
+	"this repository is not among the ones the app installation selected; add it in the " +
+		"installation's settings in github")
+
 // ErrResponseTooLarge reports an answer past the read's bound: nothing of it is kept,
 // because a silently cut prefix of an unbounded answer is not an honest read. Callers
 // that can say something more useful than the raw refusal match on this.
@@ -384,10 +392,12 @@ func (c *Client) fullName(
 			break
 		}
 	}
-	return "", &APIError{
-		Status:  http.StatusNotFound,
-		Message: "repository " + strconv.FormatInt(repository, 10) + " is not in this installation's grant",
-	}
+	// The bounded, named answer to "the customer did not select this repository". It is a
+	// sentinel rather than a vendor refusal because it is not one: GitHub was never asked
+	// about the repository, and nothing about it is retryable. There is no second
+	// credential to fall back to and no second attempt to make — the fix is a person
+	// adding the repository to the installation.
+	return "", fmt.Errorf("%w (repository %d)", ErrRepositoryNotSelected, repository)
 }
 
 // call performs one JSON REST operation over rawCall and decodes the answer into out,

@@ -85,6 +85,7 @@ type Store interface {
 
 	// StartConnectFlow records an installation flow so the return trip can be checked.
 	// Only the state's digest is stored; the state itself travels through the browser.
+	// It also clears the flows nobody finished, which is the ordinary case.
 	StartConnectFlow(ctx context.Context, org tenancy.Organization, flow ConnectFlow,
 		state string) error
 	// RedeemConnectFlow consumes one exactly once and returns what it recorded. It takes
@@ -92,7 +93,4 @@ type Store interface {
 	// the row that is found is itself the authority for the organization. An unknown, an
 	// expired and an already-consumed state are one refusal.
 	RedeemConnectFlow(ctx context.Context, state string) (ConnectFlow, error)
-	// ExpireConnectFlows removes the flows nobody completed. Somebody closing the tab is
-	// the ordinary case, and without this the table grows by a row per abandoned attempt.
-	ExpireConnectFlows(ctx context.Context, org tenancy.Organization) (int64, error)
 }

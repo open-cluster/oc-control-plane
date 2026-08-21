@@ -55,6 +55,12 @@ func (p *Placements) IntegrationConfiguredAs(
 
 // StartConnectFlow records an installation flow so its state can be checked when the
 // browser comes back.
+//
+// It also clears the spent rows first. A started connect that nobody finishes is the
+// ordinary case — somebody closed the tab — and without this the table grows by a row per
+// abandoned attempt forever. It is done here rather than by a worker because the cheapest
+// honest moment to clear a table is while writing to it, and a background sweeper for a
+// handful of rows would be a process to operate for no gain.
 func (p *Placements) StartConnectFlow(
 	ctx context.Context, organization tenancy.Organization, flow integrations.ConnectFlow,
 	state string,
@@ -65,6 +71,11 @@ func (p *Placements) StartConnectFlow(
 	}
 	digest := sha256.Sum256([]byte(state))
 
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM integration_connect_flow
+		 WHERE expires_at <= now() OR consumed_at IS NOT NULL`); err != nil {
+		return fmt.Errorf("clearing spent connect flows: %w", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO integration_connect_flow (flow_id, org_id, integration_type_id,
 		                                      principal, state_digest, return_to, expires_at)
@@ -116,21 +127,4 @@ func (p *Placements) RedeemConnectFlow(
 		return flow, nil
 	}
 	return integrations.ConnectFlow{}, integrations.ErrConnectFlowUnknown
-}
-
-// ExpireConnectFlows removes the flows nobody completed.
-func (p *Placements) ExpireConnectFlows(
-	ctx context.Context, organization tenancy.Organization,
-) (int64, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return 0, err
-	}
-	tag, err := pool.Exec(ctx, `
-		DELETE FROM integration_connect_flow
-		 WHERE expires_at <= now() OR consumed_at IS NOT NULL`)
-	if err != nil {
-		return 0, fmt.Errorf("expiring connect flows: %w", err)
-	}
-	return tag.RowsAffected(), nil
 }
