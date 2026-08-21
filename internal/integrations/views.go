@@ -141,9 +141,13 @@ type integrationView struct {
 	Credential     *credentialView   `json:"credential,omitempty"`
 	LastVerifiedAt string            `json:"lastVerifiedAt,omitempty"`
 	VerifyNote     string            `json:"verifyNote,omitempty"`
-	CreatedBy      string            `json:"createdBy,omitempty"`
-	CreatedAt      string            `json:"createdAt"`
-	UpdatedAt      string            `json:"updatedAt"`
+	// VerifyFacts is what the last verification established about what is connected —
+	// the account, its type, how far its grant reaches. Non-secret by construction: a
+	// provider records only what an operator would read off the provider's own screen.
+	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
+	CreatedBy   string         `json:"createdBy,omitempty"`
+	CreatedAt   string         `json:"createdAt"`
+	UpdatedAt   string         `json:"updatedAt"`
 }
 
 // createdView is the one response that carries the webhook secret, exactly once.
@@ -176,6 +180,7 @@ func (h Handlers) viewOf(found Integration) integrationView {
 		CreatedAt:     stamp(found.CreatedAt),
 		UpdatedAt:     stamp(found.UpdatedAt),
 		VerifyNote:    found.VerifyNote,
+		VerifyFacts:   found.VerifyFacts,
 	}
 	if found.RelayID != uuid.Nil {
 		view.RelayID = found.RelayID.String()

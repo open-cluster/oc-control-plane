@@ -114,10 +114,15 @@ type Integration struct {
 	// (scopes, token kind); tool availability derives from them. Nil when none were
 	// recorded.
 	VerifyGrants []string
-	DisabledAt   time.Time
-	CreatedBy    string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// VerifyFacts are the non-secret, provider-shaped things the last verification
+	// established about what is connected — the account, its type, how far the grant
+	// reaches. For display and for support; never consulted by an authorization
+	// decision. Nil when none were recorded.
+	VerifyFacts map[string]any
+	DisabledAt  time.Time
+	CreatedBy   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Disabled reports whether this Integration has been turned off.

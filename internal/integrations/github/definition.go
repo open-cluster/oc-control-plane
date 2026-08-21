@@ -61,7 +61,10 @@ func Definition(app *App, client *Client) integrations.Definition {
 					Note:   "the integration carries no usable installation id; set installationId and verify again",
 				}
 			}
-			return probe(ctx, app, client, installation)
+			// What the last run established travels in: an installation GitHub has
+			// stopped serving is a removal when this deployment verified it before,
+			// and an unknown id when it never did.
+			return probe(ctx, app, client, installation, input.Integration.VerifyFacts)
 		},
 		Tools: tools(app, client),
 	}

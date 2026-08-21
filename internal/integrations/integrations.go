@@ -87,6 +87,12 @@ type Verification struct {
 	// is absent from an investigation's set instead of failing at call time. Nil means
 	// nothing was recorded, and gated tools stay absent.
 	Grants []string
+	// Facts are non-secret, provider-shaped things this run established about what is
+	// connected — GitHub records the account, its type, and how far the installation's
+	// repository grant reaches. They are for display and for support and are never
+	// consulted by an authorization decision, which is what keeps them separate from
+	// Grants. Nil means the run established none.
+	Facts map[string]any
 }
 
 // VerifyInput is everything a Definition's Verify may consult. It is gathered by the

@@ -28,8 +28,8 @@ const integrationColumns = `integration_id, integration_type_id, name, configura
 	       webhook_secret_digest, webhook_secret_fingerprint, webhook_secret_created_at,
 	       webhook_secret_rotated_at, credential_sealed, credential_fingerprint,
 	       credential_created_at, credential_rotated_at, labels, relay_id, status,
-	       last_verified_at, verify_note, verify_grants, disabled_at, created_by,
-	       created_at, updated_at`
+	       last_verified_at, verify_note, verify_grants, verify_facts, disabled_at,
+	       created_by, created_at, updated_at`
 
 // CreateIntegration records one configured installation.
 //
@@ -65,12 +65,16 @@ func (p *Placements) CreateIntegration(
 				verified = false
 				note     string
 				grants   []byte
+				facts    []byte
 			)
 			if wanted.Verification != nil {
 				status = int16(wanted.Verification.Status)
 				verified = true
 				note = wanted.Verification.Note
 				if grants, err = encodedGrants(wanted.Verification.Grants); err != nil {
+					return integrations.Integration{}, audit.Target{}, nil, err
+				}
+				if facts, err = encodedFacts(wanted.Verification.Facts); err != nil {
 					return integrations.Integration{}, audit.Target{}, nil, err
 				}
 			}
@@ -83,18 +87,18 @@ func (p *Placements) CreateIntegration(
 				                         credential_sealed, credential_fingerprint,
 				                         credential_created_at,
 				                         status, last_verified_at, verify_note,
-				                         verify_grants, created_by)
+				                         verify_grants, verify_facts, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 				        CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE now() END,
 				        $10, $11,
 				        CASE WHEN $10::BYTEA IS NULL THEN NULL ELSE now() END,
-				        $12, CASE WHEN $13 THEN now() END, $14, $15, $16)
+				        $12, CASE WHEN $13 THEN now() END, $14, $15, $16, $17)
 				RETURNING `+integrationColumns,
 				identityOrNew(wanted.ID), organization.String(), int16(wanted.Type), wanted.Name,
 				configuration, labels, nullableUUID(wanted.RelayID),
 				wanted.WebhookSecretDigest, nullableText(wanted.WebhookSecretFingerprint),
 				wanted.CredentialSealed, nullableText(wanted.CredentialFingerprint),
-				status, verified, note, grants, wanted.CreatedBy)
+				status, verified, note, grants, facts, wanted.CreatedBy)
 
 			created, err := scanIntegration(row, organization.String())
 			switch {
@@ -527,6 +531,10 @@ func (p *Placements) ReplaceIntegrationCredential(
 			if err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
+			facts, err := encodedFacts(verification.Facts)
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
@@ -540,6 +548,7 @@ func (p *Placements) ReplaceIntegrationCredential(
 				       last_verified_at       = now(),
 				       verify_note            = $9,
 				       verify_grants          = $10,
+				       verify_facts           = $11,
 				       updated_at             = now()
 				 WHERE integration_id = $1
 				   AND org_id = $2
@@ -547,7 +556,7 @@ func (p *Placements) ReplaceIntegrationCredential(
 				RETURNING `+integrationColumns,
 				id, organization.String(), revision.Name, configuration, labels,
 				sealed, fingerprint, int16(verification.Status), verification.Note,
-				grants)
+				grants, facts)
 
 			replaced, err := scanIntegration(row, organization.String())
 			switch {
@@ -581,17 +590,22 @@ func (p *Placements) RecordIntegrationVerification(
 			if err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
+			facts, err := encodedFacts(verification.Facts)
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
 				   SET status           = $3,
 				       last_verified_at = now(),
 				       verify_note      = $4,
 				       verify_grants    = $5,
+				       verify_facts     = $6,
 				       updated_at       = now()
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
 				id, organization.String(), int16(verification.Status), verification.Note,
-				grants)
+				grants, facts)
 
 			verified, err := scanIntegration(row, organization.String())
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -720,6 +734,7 @@ type nullableIntegration struct {
 	relay                 *uuid.UUID
 	lastVerifiedAt        *time.Time
 	verifyGrants          []byte
+	verifyFacts           []byte
 	disabledAt            *time.Time
 }
 
@@ -732,8 +747,8 @@ func (n *nullableIntegration) destinations(found *integrations.Integration) []an
 		&n.webhookRotatedAt, &found.CredentialSealed, &n.credentialFingerprint,
 		&n.credentialCreatedAt, &n.credentialRotatedAt, &n.labels, &n.relay,
 		&found.Status, &n.lastVerifiedAt,
-		&found.VerifyNote, &n.verifyGrants, &n.disabledAt, &found.CreatedBy,
-		&found.CreatedAt, &found.UpdatedAt,
+		&found.VerifyNote, &n.verifyGrants, &n.verifyFacts, &n.disabledAt,
+		&found.CreatedBy, &found.CreatedAt, &found.UpdatedAt,
 	}
 }
 
@@ -794,6 +809,11 @@ func finishIntegration(
 			return integrations.Integration{}, fmt.Errorf("decoding verification grants: %w", err)
 		}
 	}
+	if len(nullable.verifyFacts) > 0 {
+		if err := json.Unmarshal(nullable.verifyFacts, &found.VerifyFacts); err != nil {
+			return integrations.Integration{}, fmt.Errorf("decoding verification facts: %w", err)
+		}
+	}
 	if len(nullable.labels) > 0 {
 		if err := json.Unmarshal(nullable.labels, &found.Labels); err != nil {
 			return integrations.Integration{}, fmt.Errorf("decoding integration labels: %w", err)
@@ -837,6 +857,20 @@ func encodedGrants(grants []string) ([]byte, error) {
 	encoded, err := json.Marshal(grants)
 	if err != nil {
 		return nil, fmt.Errorf("encoding verification grants: %w", err)
+	}
+	return encoded, nil
+}
+
+// encodedFacts renders a verification's recorded facts the same way, and for the same
+// reason: an unverified integration and one verified against a provider that reported
+// nothing are two different rows.
+func encodedFacts(facts map[string]any) ([]byte, error) {
+	if facts == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(facts)
+	if err != nil {
+		return nil, fmt.Errorf("encoding verification facts: %w", err)
 	}
 	return encoded, nil
 }
