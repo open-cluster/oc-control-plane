@@ -62,8 +62,32 @@ func ContextWindow(model string) int {
 	return defaultContextWindow
 }
 
+// ContextCeiling is how much of a model's window a turn may fill in total before its
+// conclusion is forced, in tokens: the whole usable window, reserve already taken out.
+//
+// It is the HARD number, and ContextBudget below is the soft one. They are two because
+// they answer different questions — "is the conversation big enough to consolidate" and
+// "has this turn run out of room" — and when one number answered both, the answer to the
+// second was always yes first: the ceiling counts the tool catalogue as well as the
+// transcript, and the catalogue is never zero. Every turn that compacted was already
+// being told to conclude, so compaction could only ever help the next turn and never the
+// one performing it.
+//
+// The gap between the two is the room a compaction buys.
+func ContextCeiling(model string, configured int) int {
+	window := configured
+	if window <= 0 {
+		window = ContextWindow(model)
+	}
+	usable := window - responseHeadroom
+	if usable < responseHeadroom {
+		usable = responseHeadroom
+	}
+	return usable
+}
+
 // ContextBudget is how much of a model's window a conversation may fill before older turns
-// are compacted, in tokens.
+// are compacted, in tokens. The soft threshold; ContextCeiling is the hard one.
 //
 // configured of zero means the per-model table decides. thresholdPercent is the soft
 // threshold — compacting AT the ceiling would mean the very turn that triggered it has no

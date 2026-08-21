@@ -230,6 +230,10 @@ func run(
 		// and "how big is this model's window" is a vendor fact.
 		ContextBudget: reasoning.ContextBudget(cfg.ModelName, cfg.ModelContextWindow,
 			cfg.ContextThresholdPercent),
+		// The ceiling is the same window without the soft threshold applied, so it always
+		// sits above the budget. The distance between them is the room a compaction buys
+		// the turn that performed it.
+		ContextCeiling:         reasoning.ContextCeiling(cfg.ModelName, cfg.ModelContextWindow),
 		ModelName:              cfg.ModelName,
 		Telemetry:              investigation.NewTelemetry(logger),
 		Logger:                 logger,

@@ -78,6 +78,15 @@ type Runner struct {
 	// the operator surface's own, because a follow-up asks about the same period the
 	// question before it did.
 	WindowLead time.Duration
+	// ContextCeiling is how many tokens a turn may carry in total — the conversation it
+	// was handed AND the reads it has made — before its conclusion is forced.
+	//
+	// It is a SECOND number, deliberately above ContextBudget, and the gap between them
+	// is the room a compaction buys. They were one number, and that made compaction
+	// pointless for the turn doing it: the ceiling counts the tool catalogue too, which is
+	// never zero, so it was always crossed first and every compacting turn arrived already
+	// told to conclude. Zero means no ceiling, which only a test should mean.
+	ContextCeiling int
 	// ContextBudget is how many tokens of conversation context a turn may carry before
 	// older turns are compacted. Computed by the composition root from the model and the
 	// deployment's threshold, because THIS package must never learn what a vendor is.

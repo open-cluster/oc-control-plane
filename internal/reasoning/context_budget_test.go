@@ -87,3 +87,38 @@ func TestAWindowTooSmallToReserveFromStillProducesABudget(t *testing.T) {
 		t.Errorf("budget = %d for a tiny configured window; it must stay usable", budget)
 	}
 }
+
+// The two numbers must stay two, and in the right order.
+//
+// Their whole purpose is the gap between them. A change that made the ceiling equal to
+// the budget — or, worse, below it — would restore the defect silently: compaction would
+// go back to only ever helping the next turn, and nothing would fail.
+func TestTheCeilingSitsAboveTheCompactionBudget(t *testing.T) {
+	t.Parallel()
+
+	for _, model := range []string{"claude-sonnet-5", "glm-5", "gpt-5", "a-model-nobody-knows"} {
+		budget := ContextBudget(model, 0, 50)
+		ceiling := ContextCeiling(model, 0)
+		if ceiling <= budget {
+			t.Errorf("%s: ceiling %d is not above budget %d; the gap between them IS the "+
+				"room a compaction buys, and without it compaction cannot help the turn "+
+				"performing it", model, ceiling, budget)
+		}
+	}
+}
+
+// A configured window overrides the table for both, so a deployment tuning one cannot
+// accidentally leave the other on the model's default.
+func TestAConfiguredWindowMovesBothNumbers(t *testing.T) {
+	t.Parallel()
+
+	small := ContextCeiling("claude-sonnet-5", 40_000)
+	large := ContextCeiling("claude-sonnet-5", 400_000)
+	if small >= large {
+		t.Errorf("ceiling did not follow the configured window: %d then %d", small, large)
+	}
+	if ContextBudget("claude-sonnet-5", 40_000, 50) >=
+		ContextBudget("claude-sonnet-5", 400_000, 50) {
+		t.Error("budget did not follow the configured window")
+	}
+}
