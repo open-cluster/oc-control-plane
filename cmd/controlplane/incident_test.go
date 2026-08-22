@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
@@ -127,10 +128,14 @@ func (p *incidentPlane) call(
 // episodeBody mirrors what the surface answers with. It is written out rather than imported so a
 // field renamed in the view is a failure here rather than a client silently reading a zero.
 type episodeBody struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Status   string `json:"status"`
-	Grouping struct {
+	ID            string `json:"id"`
+	IntegrationID string `json:"integrationId"`
+	// IntegrationName is what a responder reads: which of this tenant's installations
+	// delivered the alerts. The identity beside it is what a link is built from.
+	IntegrationName string `json:"integrationName"`
+	Title           string `json:"title"`
+	Status          string `json:"status"`
+	Grouping        struct {
 		Basis       string `json:"basis"`
 		Explanation string `json:"explanation"`
 		Key         string `json:"key"`
@@ -560,4 +565,55 @@ func TestIncidents_AreReachableOnlyByTheTenantWhoseConnectionDeliveredThem(t *te
 	if status != http.StatusNotFound {
 		t.Errorf("reading another tenant's incident answered %d, want 404", status)
 	}
+}
+
+// A responder arriving from their own alerting wants to know whether to go and look at
+// Alertmanager or at something else. The view carried the identity alone, so the only field
+// a console could render restated its own label.
+func TestIncidents_AnEpisodeNamesTheIntegrationThatDeliveredIt(t *testing.T) {
+	plane := startIncidents(t)
+	began := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
+
+	if status := plane.deliver(t, grouped(
+		"{}:{alertname=\"PaymentsDown\"}", "f-named", "PaymentsDown", began),
+	); status != http.StatusAccepted {
+		t.Fatalf("delivering answered %d", status)
+	}
+
+	// The name the integration was configured with, read back off the same record the
+	// listing resolves it from, so this asserts the join rather than a literal.
+	want := integrationName(t, plane.dsn, plane.integration)
+
+	listed := plane.episodes(t, "")
+	if len(listed.Items) != 1 {
+		t.Fatalf("expected one episode, got %d", len(listed.Items))
+	}
+	for _, episode := range []episodeBody{listed.Items[0], plane.episode(t, listed.Items[0].ID)} {
+		if episode.IntegrationID != plane.integration.String() {
+			t.Errorf("integrationId = %q, want %s", episode.IntegrationID, plane.integration)
+		}
+		if episode.IntegrationName != want {
+			t.Errorf("integrationName = %q, want %q", episode.IntegrationName, want)
+		}
+	}
+}
+
+// integrationName reads what the integration is actually called, so the assertion above
+// compares the served name against the record rather than against a repeated literal.
+func integrationName(t *testing.T, dsn string, id uuid.UUID) string {
+	t.Helper()
+	ctx := context.Background()
+
+	database, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = database.Close(ctx) }()
+
+	var name string
+	if err := database.QueryRow(ctx,
+		`SELECT name FROM integration WHERE integration_id = $1`, id).Scan(&name); err != nil {
+		t.Fatalf("reading the integration's name: %v", err)
+	}
+	return name
 }

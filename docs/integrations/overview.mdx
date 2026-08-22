@@ -24,6 +24,36 @@ an investigation may call, so what you are shown and what the agent can do canno
 A capability an integration receives inbound, such as Alertmanager's alerts, is reported as
 available and says so, because nothing calls it as a read.
 
+## What a verification records
+
+Verifying an integration establishes two different kinds of thing, and the catalog keeps them
+apart on purpose.
+
+| | |
+| --- | --- |
+| **Grants** | What the credential is permitted to do. Every decision about which capabilities and tools an investigation is offered reads these, and nothing else. |
+| **Facts** | What the verification learned about the installation — which Slack workspace answered and as which bot, which GitHub account is connected and how far its repository grant reaches. |
+
+Facts are for display. They are non-secret by construction, no authorization decision reads
+one, and a credential never becomes one. They exist so a console can name the workspace or
+account an integration is connected to as an attribute you can read at a glance, rather than
+leaving you to find it in a status sentence — which matters the moment you have the same
+integration connected twice.
+
+A verification that could not reach the provider records no facts. A refused token, a rate
+limit and an unreachable vendor establish nothing about an installation, so what the last
+successful verification learned is what stays on the record.
+
+## Where the documentation is
+
+Each type in the catalog names two documentation pages, because they answer different
+questions:
+
+| | |
+| --- | --- |
+| `documentationUrl` | The vendor's own reference — Slack's token types, Prometheus's `webhook_config`, Kubernetes RBAC. |
+| `productDocumentationUrl` | This page's neighbours: how to set the integration up **for OpenCluster**, including the exact configuration to paste and any version floor. |
+
 ## How an integration is connected
 
 There are two ways, and which one you get is decided by the deployment, not by the vendor:

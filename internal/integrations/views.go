@@ -23,10 +23,15 @@ type typeView struct {
 	Logo        string `json:"logo,omitempty"`
 	Category    string `json:"category"`
 	// DocumentationURL points at the provider's own setup documentation.
-	DocumentationURL string   `json:"documentationUrl,omitempty"`
-	Capabilities     []string `json:"capabilities"`
-	RequiresRelay    bool     `json:"requiresRelay"`
-	ReceivesWebhooks bool     `json:"receivesWebhooks"`
+	DocumentationURL string `json:"documentationUrl,omitempty"`
+	// ProductDocumentationURL points at OURS: the page that carries the receiver
+	// configuration, the header this deployment expects and the version floor. Served
+	// beside the vendor's rather than instead of it, because they answer different
+	// questions and a caller labels them differently.
+	ProductDocumentationURL string   `json:"productDocumentationUrl,omitempty"`
+	Capabilities            []string `json:"capabilities"`
+	RequiresRelay           bool     `json:"requiresRelay"`
+	ReceivesWebhooks        bool     `json:"receivesWebhooks"`
 	// SupportsConnect says this deployment can connect the type through the provider's
 	// own installation flow, so a setup surface offers one button instead of a form.
 	// False is the self-hosted deployment that registered no application with the
@@ -95,19 +100,20 @@ func typeViewOf(definition Definition, configured int) typeView {
 		})
 	}
 	return typeView{
-		Key:                 definition.Key,
-		Name:                definition.Name,
-		Description:         definition.Description,
-		Logo:                definition.Logo,
-		Category:            string(definition.Category),
-		DocumentationURL:    definition.DocumentationURL,
-		Capabilities:        capabilities,
-		RequiresRelay:       definition.RequiresRelay,
-		ReceivesWebhooks:    definition.ReceivesWebhooks,
-		SupportsConnect:     definition.Connectable(),
-		ConfigurationSchema: definition.ConfigurationSchema(),
-		Tools:               tools,
-		Configured:          configured,
+		Key:                     definition.Key,
+		Name:                    definition.Name,
+		Description:             definition.Description,
+		Logo:                    definition.Logo,
+		Category:                string(definition.Category),
+		DocumentationURL:        definition.DocumentationURL,
+		ProductDocumentationURL: definition.ProductDocumentationURL(),
+		Capabilities:            capabilities,
+		RequiresRelay:           definition.RequiresRelay,
+		ReceivesWebhooks:        definition.ReceivesWebhooks,
+		SupportsConnect:         definition.Connectable(),
+		ConfigurationSchema:     definition.ConfigurationSchema(),
+		Tools:                   tools,
+		Configured:              configured,
 	}
 }
 

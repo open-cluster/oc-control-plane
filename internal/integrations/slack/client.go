@@ -106,6 +106,12 @@ type Identity struct {
 	// operator recognises an installation by.
 	Workspace string
 	Bot       string
+	// WorkspaceID and BotUserID are the same two things as Slack's own stable
+	// identifiers. The names are what a person recognises and are renamed by whoever
+	// administers the workspace; the ids are what survives that, which is what makes them
+	// worth recording beside the names rather than instead of them.
+	WorkspaceID string
+	BotUserID   string
 	// URL is the workspace's own address, which is what a message permalink is built
 	// from — scope-free, unlike everything else about a message.
 	URL string
@@ -190,16 +196,24 @@ type SearchResults struct {
 // "verified means the far end answered".
 func (c *Client) AuthTest(ctx context.Context, token string) (Identity, error) {
 	var decoded struct {
-		Team string `json:"team"`
-		User string `json:"user"`
-		URL  string `json:"url"`
+		Team   string `json:"team"`
+		TeamID string `json:"team_id"`
+		User   string `json:"user"`
+		UserID string `json:"user_id"`
+		URL    string `json:"url"`
 	}
 	header, err := c.call(ctx, token, "auth.test", nil, &decoded)
 	if err != nil {
 		return Identity{}, err
 	}
 
-	identity := Identity{Workspace: decoded.Team, Bot: decoded.User, URL: decoded.URL}
+	identity := Identity{
+		Workspace:   decoded.Team,
+		Bot:         decoded.User,
+		WorkspaceID: decoded.TeamID,
+		BotUserID:   decoded.UserID,
+		URL:         decoded.URL,
+	}
 	for scope := range strings.SplitSeq(header.Get("X-OAuth-Scopes"), ",") {
 		if trimmed := strings.TrimSpace(scope); trimmed != "" {
 			identity.Scopes = append(identity.Scopes, trimmed)

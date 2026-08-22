@@ -134,8 +134,14 @@ type Definition struct {
 	Description string
 	// Logo names an approved mark in the frontend's brand registry. Empty means the
 	// neutral category icon is drawn.
-	Logo             string
-	Category         Category
+	Logo     string
+	Category Category
+	// DocumentationURL points at the VENDOR's own setup documentation: Slack's token
+	// types, Prometheus's webhook_config reference, Kubernetes RBAC. Useful, and not the
+	// page an operator setting this up actually needs first.
+	//
+	// Ours is ProductDocumentationURL, and it is derived rather than declared here — see
+	// the method for why a hand-written second URL per provider was the wrong shape.
 	DocumentationURL string
 	// Capabilities are the named operations connecting this type makes available.
 	Capabilities []string
@@ -173,6 +179,27 @@ type Definition struct {
 }
 
 // ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
+// documentationSite is where this product's own documentation is published. One constant,
+// beside the schema $id's origin above, because the site is the product's and not a
+// deployment's: a self-hosted install reads the same published pages.
+const documentationSite = "https://docs.opencluster.dev"
+
+// ProductDocumentationURL is OUR page for this type — the one that carries the receiver
+// YAML, the header name and the version floor, rather than the vendor's reference.
+//
+// DERIVED, NEVER TYPED. The documentation gate already asserts that every shipped type has
+// a page at docs/integrations/<role>/<key>.mdx, and role is the Category and key is the
+// Key — so the definition already knows where its own page is, and asking each provider to
+// write the URL out again would be asking for the one copy that drifts. A page moved
+// without this being updated fails the gate; a type added without a page fails both the
+// gate and the catalog test.
+func (d Definition) ProductDocumentationURL() string {
+	if d.Key == "" || d.Category == "" {
+		return ""
+	}
+	return documentationSite + "/integrations/" + string(d.Category) + "/" + d.Key
+}
+
 func (d Definition) ConfigurationSchema() json.RawMessage {
 	properties := make(map[string]any, len(d.Config))
 	required := make([]string, 0, len(d.Config))
