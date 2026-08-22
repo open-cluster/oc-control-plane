@@ -80,6 +80,13 @@ func (r ToolRequest) ClampWindow(from, until time.Time) (time.Time, time.Time) {
 	if !r.WindowUntil.IsZero() && (until.IsZero() || until.After(r.WindowUntil)) {
 		until = r.WindowUntil
 	}
+	// An ask lying entirely outside the investigation's window intersects it in nothing,
+	// and the two clamps above express that as a window running backwards. Empty is the
+	// honest answer and a backwards window is not: it reads as nonsense to the vendor
+	// being queried, to the run record, and to the model now shown the window it got.
+	if !from.IsZero() && !until.IsZero() && from.After(until) {
+		from = until
+	}
 	return from, until
 }
 
@@ -96,6 +103,13 @@ type ToolResult struct {
 	// ids — so a finding built on this run can be followed to its origin.
 	Summary string
 	Sources []string
+	// WindowFrom and WindowUntil are the window this read ACTUALLY covered, which is not
+	// what was asked for whenever ClampWindow narrowed it — including the case of a read
+	// phrased with no window at all, which is silently the investigation's own. A read
+	// that covers no window leaves them zero and claims none. Without this an empty
+	// answer reads as a fact about the estate rather than about the bounds it was given.
+	WindowFrom  time.Time
+	WindowUntil time.Time
 }
 
 // ToolDefinition is the model-facing rendering of one Tool: the single declarative

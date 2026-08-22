@@ -543,7 +543,9 @@ func turnWindow(
 ) (time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	if episodeID == nil {
-		return now.Add(-lead), now, nil
+		// No incident to anchor to, so the lead has nothing to lead: a question reaches
+		// back its own documented span instead of borrowing an incident's.
+		return now.Add(-conversation.QuestionWindow(lead)), now, nil
 	}
 	var (
 		firstSeen time.Time

@@ -21,8 +21,13 @@ coverage.*
 .DS_Store
 Thumbs.db
 
-# Local environment (never committed; credentials never live in this repo)
+# Local environment (never committed; credentials never live in this repo).
+# The glob covers the copies an operator or a tool leaves behind — .env.backup-*, .env.local
+# — because one of those being untracked is how a local deployment's configuration reaches a
+# commit. .env.example is committed on purpose and is re-admitted below it.
 .env
+.env.*
+!.env.example
 *.local.yaml
 
 # Local credentials. Never committed: the model key is read from a file path so that it

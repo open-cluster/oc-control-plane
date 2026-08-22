@@ -108,7 +108,10 @@ func ConcludeDefinition() integrations.ToolDefinition {
 			"exactly once, when your reads are done: the direct answer in the " +
 			"operator's own words, findings with their kind, confidence and the run " +
 			"ordinals that support them, and the recommended next steps. Return no " +
-			"findings rather than a guess when nothing was established.",
+			"findings rather than a guess when nothing was established. Keep the answer " +
+			"under " + strconv.Itoa(investigation.MaxAnswerLength) + " characters — it " +
+			"is the reply an operator reads first, not the report; the detail belongs in " +
+			"the findings, which are not bounded by it. A longer answer is cut to fit.",
 		InputSchema: concludeSchema().Document,
 	}
 }
@@ -220,6 +223,14 @@ func renderResult(result investigation.CallResult) ToolResultTurn {
 	if run.Outcome == investigation.RunFailed {
 		out.WriteString("FAILED: " + run.Error + "\n")
 		return ToolResultTurn{CallID: result.CallID, Content: out.String(), IsError: true}
+	}
+	// The window the read ACTUALLY covered, beside the arguments it was asked with. Every
+	// windowed read is clamped into the investigation's own window, including one phrased
+	// with no window at all — and a model that is not told which window it got reads an
+	// empty result as a fact about the estate rather than about the bounds it was given.
+	if !run.WindowFrom.IsZero() && !run.WindowUntil.IsZero() {
+		out.WriteString("WINDOW: reads bounded to " + stamp(run.WindowFrom) + " to " +
+			stamp(run.WindowUntil) + "\n")
 	}
 	if run.Summary != "" {
 		out.WriteString("SUMMARY: " + run.Summary + "\n")

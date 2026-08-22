@@ -184,8 +184,10 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			"bounded and flagged when the window holds more.",
 		WhenToUse: "To answer \"what changed before this broke\": read the incident's " +
 			"own window on the repository that owns the failing service.",
-		WhenNotToUse: "Not for a commit's actual diff — that is github.read_commit. Not " +
-			"unbounded: without a window it reads the recent tail only.",
+		WhenNotToUse: "Not for a commit's actual diff — that is github.read_commit. " +
+			"Omitting the window does NOT widen the read to the repository's recent " +
+			"history: every read is clamped into the investigation's own window, which " +
+			"may be short, and the result states the window it actually covered.",
 		Arguments:   declared,
 		Permissions: permissionProse("github.read_commits"),
 		Output: "a bounded list of commits, each with sha, message, author, authored " +
@@ -233,10 +235,11 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 				})
 			}
 			return integrations.ToolResult{
-				Content:   content,
-				Truncated: read.Truncated,
-				Summary:   fmt.Sprintf("%d commits in the window", len(content)),
-				Sources:   []string{strconv.FormatInt(repository, 10)},
+				Content:    content,
+				Truncated:  read.Truncated,
+				Summary:    fmt.Sprintf("%d commits in the window", len(content)),
+				Sources:    []string{strconv.FormatInt(repository, 10)},
+				WindowFrom: since, WindowUntil: until,
 			}, nil
 		},
 	}

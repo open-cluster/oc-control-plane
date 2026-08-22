@@ -28,6 +28,12 @@ results are marked. Slack and GitHub access is read-only. The Kubernetes integra
 currently contributes a workload inventory derived from recorded changes; it does not
 provide live pod, event, or log reads.
 
+Every read is clamped into the investigation's window, and a read that asks for a wider
+one is narrowed rather than refused. The result states the window it actually covered, so
+an empty answer reads as "nothing in this window" rather than "nothing exists". A question
+asked outside any incident has no incident to bound it, so it looks back over the last 24
+hours; attach the conversation to an incident when you need its window instead.
+
 ## When the cause is not established
 
 OpenCluster does not turn an incomplete lead into a root cause. It may conclude with

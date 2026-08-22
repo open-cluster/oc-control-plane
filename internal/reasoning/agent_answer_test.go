@@ -66,10 +66,15 @@ func TestAConclusionCarriesTheDirectAnswer(t *testing.T) {
 	}
 }
 
-// An answer past the record's bound is malformed rather than silently cut. The schema
-// deliberately does not express bounds — several providers drop them — so this is the
-// only place the limit holds before the record's own CHECK would refuse the write.
-func TestAnAnswerPastItsBoundIsMalformed(t *testing.T) {
+// An answer past the bound is ACCEPTED here and bounded where it is persisted.
+//
+// This reverses a rule that used to hold. It was justified by the record's own CHECK
+// refusing the write — and the record has no such CHECK: question, subject and error each
+// carry a length constraint, the answer does not, because it sits inside the conclusion's
+// JSONB. So the bound was never the database's, and refusing the conclusion for it threw
+// away every read that had already succeeded. On 2026-08-22 that destroyed a live
+// investigation which had correctly read five sources, purely because its answer ran long.
+func TestAnAnswerPastItsBoundIsNotMalformed(t *testing.T) {
 	t.Parallel()
 
 	oversized := concludeCompletion(t, map[string]any{
@@ -84,9 +89,13 @@ func TestAnAnswerPastItsBoundIsMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = exchange.Next(
-		context.Background(), nil, true, "over"); err == nil || !errors.Is(err, ErrMalformed) {
-		t.Fatalf("err = %v; an answer the record cannot hold is malformed", err)
+	move, err := exchange.Next(context.Background(), nil, true, "over")
+	if err != nil {
+		t.Fatalf("err = %v; length is not malformation, and failing here discards "+
+			"every read that succeeded", err)
+	}
+	if move.Conclusion == nil {
+		t.Fatalf("move = %+v; the conclusion was discarded for being long", move)
 	}
 }
 
@@ -212,5 +221,50 @@ func TestAnEpisodeTurnNeedNotAnswer(t *testing.T) {
 
 	if _, err = exchange.Next(context.Background(), nil, true, "over"); err != nil {
 		t.Fatalf("err = %v; an episode owes no direct answer", err)
+	}
+}
+
+// THE OVERSIZED ANSWER.
+//
+// An answer past the bound is well formed and too long, which is not malformed output.
+// Failing the investigation for it discards every read that already succeeded — a run
+// that read five sources correctly is destroyed at the last step — so the decoder accepts
+// it and the single place that persists the answer is what bounds it.
+func TestAnAnswerPastTheBoundDoesNotFailTheInvestigation(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("a", investigation.MaxAnswerLength+1000)
+	provider := &fakeProvider{completions: []Completion{
+		toolCallCompletion(t, "call-1", "slack.list_channels", map[string]any{}),
+		concludeCompletion(t, map[string]any{
+			"answer": long,
+			"findings": []map[string]any{{
+				"statement":  "the deployed revision of checkout-api is v2.14.1",
+				"kind":       "observation",
+				"confidence": "confirmed",
+				"sources":    []int{1},
+			}},
+			"next_steps": []string{},
+		}),
+	}}
+	exchange, err := agentWith(t, provider).OpenExchange(
+		context.Background(), testOrientation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = exchange.Next(context.Background(), nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	move, err := exchange.Next(context.Background(),
+		[]investigation.CallResult{succeededResult("call-1", 1)}, false, "")
+	if err != nil {
+		t.Fatalf("an over-length answer failed the investigation: %v", err)
+	}
+	if move.Conclusion == nil {
+		t.Fatalf("move = %+v; the conclusion was discarded for being long", move)
+	}
+	if move.Conclusion.Answer != long {
+		t.Error("the decoder altered the answer; bounding belongs where it is persisted")
 	}
 }

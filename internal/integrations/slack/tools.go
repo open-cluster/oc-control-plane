@@ -223,7 +223,8 @@ func channelHistoryTool(client *Client) integrations.Tool {
 		{
 			Name: "oldest",
 			Description: "Start of the window, RFC 3339. Use the incident's own window; " +
-				"an unbounded read returns the channel's recent tail instead.",
+				"omitting the window does NOT widen the read: every read is clamped into the " +
+				"investigation's own window, and the result states what it covered.",
 			Type: integrations.FieldString,
 		},
 		{
@@ -286,10 +287,11 @@ func channelHistoryTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 			return integrations.ToolResult{
-				Content:   renderMessages(ctx, client, request, channel, read.Messages),
-				Truncated: read.Truncated,
-				Summary:   fmt.Sprintf("%d messages in %s", len(read.Messages), channel),
-				Sources:   []string{channel},
+				Content:    renderMessages(ctx, client, request, channel, read.Messages),
+				Truncated:  read.Truncated,
+				Summary:    fmt.Sprintf("%d messages in %s", len(read.Messages), channel),
+				Sources:    []string{channel},
+				WindowFrom: oldest, WindowUntil: latest,
 			}, nil
 		},
 	}
