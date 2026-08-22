@@ -100,7 +100,25 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" gitleaks
-          ./gitleaks git . --redact --exit-code 1 --log-opts="--all --full-history"
+          # The config is named explicitly rather than discovered, so a file that is not
+          # being picked up fails loudly here instead of looking like a scan that found
+          # something.
+          set +e
+          ./gitleaks git . --config .gitleaks.toml --redact --exit-code 1 \
+            --log-opts="--all --full-history" \
+            --report-format json --report-path gitleaks-report.json
+          scan=$?
+          set -e
+          # A gate that says only "leaks found: 1" cannot be acted on: it names neither the
+          # rule that fired nor the file it fired in, and the reader is left grepping
+          # history by hand. The secret itself stays redacted — this prints what was
+          # matched and where, never the value.
+          if [ "$scan" -ne 0 ] && [ -f gitleaks-report.json ]; then
+            echo "::group::gitleaks findings (secret values redacted)"
+            jq -r '.[] | "rule=\(.RuleID) file=\(.File) line=\(.StartLine) commit=\(.Commit[0:12]) date=\(.Date) author=\(.Author)"' gitleaks-report.json
+            echo "::endgroup::"
+          fi
+          exit "$scan"
 
   # The end-to-end proof runs the Relay and this control plane as real processes against a
   # real Kubernetes and a real Postgres. It is a separate job because it needs a second
