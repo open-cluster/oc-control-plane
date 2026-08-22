@@ -140,11 +140,12 @@ type Definition struct {
 	// Capabilities are the named operations connecting this type makes available.
 	Capabilities []string
 	// CapabilityStates overrides how this type's capabilities are judged against one
-	// Integration. Nil is the ordinary case and gets the generic join over verified
-	// grants; a provider declares one only when availability depends on something no
-	// Integration field carries, such as whether this deployment registered an
-	// application with the vendor.
-	CapabilityStates func(Integration) []CapabilityState
+	// Integration, and Availability dispatches to it. Nil is the ordinary case and gets
+	// the generic join over verified grants; a provider declares one only when
+	// availability depends on something no Integration field carries, such as whether
+	// this deployment registered an application with the vendor. An override builds on
+	// GrantedAvailability rather than reimplementing the join.
+	CapabilityStates func(Integration) []CapabilityAvailability
 	// Config is what an Integration of this type is configured with, and the source its
 	// JSON Schema is rendered from.
 	Config []Field

@@ -1,0 +1,31 @@
+# Secret scanning configuration.
+#
+# The default rule set is kept in full and NOTHING is disabled. The single entry below
+# accepts ONE historical commit's finding, and the reason it has to exist is structural:
+# the gate scans `--all --full-history`, so a value that ever entered a commit is found in
+# that commit's patch forever. Deleting it from the working tree does not help, and the
+# alternatives are rewriting published history or dropping the history scan.
+#
+# What was found: commit 67c5226e added a test fixture that wrote the literal text
+# "-----BEGIN RSA PRIVATE KEY-----" to a temporary file, to prove configuration refuses a
+# GitHub App key it cannot use. Configuration never parses that file — it checks the file
+# is non-empty and hands the bytes on — so the fixture never needed to resemble a key, and
+# it no longer does. No key material was ever present: the string was the header alone.
+#
+# Scoped to the COMMIT rather than to the rule, the file or a pattern. A rule allowlist
+# would stop private keys being detected; a path allowlist would let a real key hide in
+# that file; a regex allowlist would accept the same text anywhere, forever. A commit is
+# the one thing that cannot grow: this patch is written, and nothing new can enter it.
+
+title = "OpenCluster secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+A test fixture that wrote a bare PEM header — the header alone, never any key material —
+removed from the working tree in the commit that added this allowlist. Accepted here only
+for the historical patch that introduced it, which full-history scanning cannot forget.
+"""
+commits = ["67c5226e73a60a3f4ba5490acaa5738520d890d2"]

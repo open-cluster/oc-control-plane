@@ -112,7 +112,9 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 	// Assigned after the value exists so the closure can call the generic join on it. The
 	// closure captures the variable, so it sees this assignment — and it calls
 	// GrantedCapabilityStates, which ignores the override and therefore cannot recurse.
-	definition.CapabilityStates = func(found integrations.Integration) []integrations.CapabilityState {
+	definition.CapabilityStates = func(
+		found integrations.Integration,
+	) []integrations.CapabilityAvailability {
 		return capabilityStates(definition, found, servesEvents)
 	}
 	return definition
@@ -130,7 +132,7 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 // answer.
 func capabilityStates(
 	definition integrations.Definition, found integrations.Integration, servesEvents bool,
-) []integrations.CapabilityState {
+) []integrations.CapabilityAvailability {
 	installed, _ := found.Configuration[TeamIDField].(string)
 
 	granted := make(map[string]bool, len(found.VerifyGrants))
@@ -138,17 +140,24 @@ func capabilityStates(
 		granted[grant] = true
 	}
 
-	states := definition.GrantedCapabilityStates(found)
+	states := integrations.GrantedAvailability(definition, found)
 	for index, state := range states {
 		switch state.Capability {
 		case PrivateChannels:
-			// No tool of its own — it widens what the history tools may reach — so the
-			// generic join has nothing to gate it on and would call it available.
-			if !granted["groups:history"] {
-				states[index] = unavailable(PrivateChannels,
-					"this installation was not granted groups:history, so OpenCluster "+
-						"reads only public channels it has been invited to")
+			// No tool of its own — it widens what the history tools may reach rather than
+			// adding one — so the generic join reports it as a read this build ships no
+			// tool for. Its real gate is the grant.
+			if granted["groups:history"] {
+				states[index] = integrations.CapabilityAvailability{
+					Capability: PrivateChannels, Available: true,
+					Reason: "read through the channel history tools, which reach the " +
+						"private channels this installation was invited to",
+				}
+				continue
 			}
+			states[index] = unavailable(PrivateChannels,
+				"this installation was not granted groups:history, so OpenCluster "+
+					"reads only public channels it has been invited to")
 			continue
 		case SearchMessages:
 			// Available or not, the reason matters: absence here is a decision rather
@@ -176,8 +185,10 @@ func capabilityStates(
 					"workspace installation for Slack to deliver events to; connect Slack "+
 					"to make OpenCluster answerable in your workspace")
 		default:
-			states[index] = integrations.CapabilityState{
+			states[index] = integrations.CapabilityAvailability{
 				Capability: state.Capability, Available: true,
+				Reason: "delivered inbound from the workspace this integration is " +
+					"installed in, not called as a read",
 			}
 		}
 	}
@@ -193,6 +204,6 @@ func isInbound(capability string) bool {
 	return false
 }
 
-func unavailable(capability, because string) integrations.CapabilityState {
-	return integrations.CapabilityState{Capability: capability, Reason: because}
+func unavailable(capability, because string) integrations.CapabilityAvailability {
+	return integrations.CapabilityAvailability{Capability: capability, Reason: because}
 }

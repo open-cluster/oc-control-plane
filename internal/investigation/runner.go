@@ -492,6 +492,14 @@ func (r *Runner) execute(
 		return run
 	}
 	run.Outcome = RunSucceeded
+	// A windowed tool reports the window it ACTUALLY read, which is not what was asked
+	// for whenever the clamp narrowed it — including a call phrased with no window at
+	// all. A tool that reads no window leaves the investigation's own in place, so the
+	// record always names the bound in force.
+	if !result.WindowFrom.IsZero() && !result.WindowUntil.IsZero() {
+		run.WindowFrom, run.WindowUntil = result.WindowFrom, result.WindowUntil
+		run.WindowApplied = true
+	}
 	run.Truncated = result.Truncated
 	run.Summary = bounded(result.Summary, maxSummaryLength)
 	run.Sources = result.Sources
@@ -662,4 +670,21 @@ func (c *credentialCache) open(
 	}
 	c.opened[integration.ID] = credential
 	return credential, nil
+}
+
+// answerCutMark is what a truncated answer ends with. An answer that stops mid-sentence
+// with no mark is indistinguishable from one that finished, and an operator acting on
+// half a sentence is the failure this exists to prevent.
+const answerCutMark = "… [truncated: the full account is in the findings]"
+
+// boundedAnswer holds the direct answer inside its bound and says so when it cuts. The
+// mark is charged against the bound rather than appended past it, so the result is always
+// within the ceiling the record is written under.
+func boundedAnswer(text string) string {
+	runes := []rune(text)
+	if len(runes) <= MaxAnswerLength {
+		return text
+	}
+	mark := []rune(answerCutMark)
+	return string(runes[:MaxAnswerLength-len(mark)]) + answerCutMark
 }

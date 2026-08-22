@@ -155,22 +155,24 @@ type integrationView struct {
 	// declares, judged against the grants its last verification recorded, each with the
 	// reason it is unavailable when it is.
 	//
-	// Served rather than left to a client. The join needs the type's declarations, the
-	// integration's grants and — for some providers — deployment configuration a browser
-	// cannot see, so a console computing it would be a console computing it wrongly.
+	// Served rather than left to be joined by a caller. The same rule decides which tools
+	// an investigation is offered, so a second copy of it would be free to disagree; and
+	// the join needs the type's declarations, the integration's grants and — for some
+	// providers — deployment configuration a browser cannot see.
 	Capabilities []capabilityView `json:"capabilities"`
 	CreatedBy    string           `json:"createdBy,omitempty"`
 	CreatedAt    string           `json:"createdAt"`
 	UpdatedAt    string           `json:"updatedAt"`
 }
 
-// capabilityView is one capability's availability as an operator reads it.
+// capabilityView is one declared capability and whether this integration can exercise it.
+// Reason is present only when it cannot, and names what is missing — an unavailable
+// capability with no cause makes an operator guess whether they misconfigured it,
+// declined it, or hit a bug.
 type capabilityView struct {
 	Capability string `json:"capability"`
 	Available  bool   `json:"available"`
-	// Reason says why an unavailable capability is unavailable. Absent when it works:
-	// there is nothing to explain about a thing that does.
-	Reason string `json:"reason,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // createdView is the one response that carries the webhook secret, exactly once.
@@ -194,12 +196,12 @@ func (h Handlers) viewOf(found Integration) integrationView {
 	capabilities := []capabilityView{}
 	if definition, known := h.Catalog.ByID(found.Type); known {
 		typeKey = definition.Key
-		for _, state := range definition.CapabilityStatesFor(found) {
+		for _, one := range Availability(definition, found) {
 			// A conversion rather than a field-by-field copy, and it is the stricter of
 			// the two: it compiles only while the two shapes are identical, so a field
 			// added to the domain type stops the build here until somebody decides what
 			// the wire should say about it. A copy would have silently said nothing.
-			capabilities = append(capabilities, capabilityView(state))
+			capabilities = append(capabilities, capabilityView(one))
 		}
 	}
 	view := integrationView{

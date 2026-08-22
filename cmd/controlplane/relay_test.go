@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -182,19 +183,45 @@ func dialRelay(t *testing.T, address string) *grpc.ClientConn {
 	return connection
 }
 
-// freeAddress reserves a port and releases it, because the relay endpoint is configured by
-// address rather than discovered after binding. The gap is small and the alternative — a
-// fixed port — makes the suite fail whenever anything else on the machine holds it.
+// A port is reserved and released, rather than discovered after binding, because the relay
+// endpoint is configured by address. The alternative — a fixed port — makes the suite fail
+// whenever anything else on the machine holds it.
+//
+// handedOut remembers every address this process has already given a test, because the
+// reservation below releases the port before anyone binds it: a second call can be handed
+// the port the first one just let go, and the two surfaces of one control plane then race
+// for it. That is not hypothetical — on 2026-08-22 a full-suite run failed with the
+// operator surface holding 62970 and alert intake refused the same number.
+var handedOut = struct {
+	sync.Mutex
+	taken map[string]bool
+}{taken: map[string]bool{}}
+
+// freeAddress reserves a loopback port and releases it, returning an address nothing in
+// this process has been given before. It cannot defend against another process taking the
+// port in the gap; it does remove the collision this suite actually hits, which is one
+// test asking twice.
 func freeAddress(t *testing.T) string {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserving a port: %v", err)
+	for attempt := 0; attempt < 20; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserving a port: %v", err)
+		}
+		address := listener.Addr().String()
+		if err = listener.Close(); err != nil {
+			t.Fatalf("releasing the reserved port: %v", err)
+		}
+
+		handedOut.Lock()
+		fresh := !handedOut.taken[address]
+		handedOut.taken[address] = true
+		handedOut.Unlock()
+		if fresh {
+			return address
+		}
 	}
-	address := listener.Addr().String()
-	if err = listener.Close(); err != nil {
-		t.Fatalf("releasing the reserved port: %v", err)
-	}
-	return address
+	t.Fatal("no unused loopback port came back in twenty attempts")
+	return ""
 }

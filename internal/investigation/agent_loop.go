@@ -375,11 +375,16 @@ func (r *Runner) conclude(
 		r.fail(ctx, organization, id, events, citation, spend)
 		return
 	}
+	// Bounded ONCE, here, before anything reads it. The record, the streamed checkpoint and
+	// the terminal event all carry the answer, and bounding them separately is how a reader
+	// watching the stream sees a cut nobody marked while the stored answer says it was cut.
+	conclusion.Answer = boundedAnswer(conclusion.Answer)
+
 	writeCtx, done := writeWindow(ctx)
 	defer done()
 	if err := r.Store.ConcludeInvestigation(writeCtx, organization, id,
 		Conclusion{
-			Answer:    bounded(conclusion.Answer, MaxAnswerLength),
+			Answer:    conclusion.Answer,
 			Findings:  conclusion.Findings,
 			NextSteps: boundNextSteps(conclusion.NextSteps),
 		}, stoppedBy, spend); err != nil {

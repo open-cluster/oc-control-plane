@@ -349,10 +349,11 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 				})
 			}
 			return integrations.ToolResult{
-				Content:   runs,
-				Truncated: read.Truncated,
-				Summary:   fmt.Sprintf("%d workflow runs in the window", len(runs)),
-				Sources:   []string{strconv.FormatInt(repository, 10)},
+				Content:    runs,
+				Truncated:  read.Truncated,
+				Summary:    fmt.Sprintf("%d workflow runs in the window", len(runs)),
+				Sources:    []string{strconv.FormatInt(repository, 10)},
+				WindowFrom: since, WindowUntil: until,
 			}, nil
 		},
 	}

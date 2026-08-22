@@ -3,9 +3,11 @@ title: "How investigations work"
 description: "See how an incident becomes a bounded, adaptive investigation across connected systems."
 ---
 
-An investigation starts from an open incident. OpenCluster combines the triggering
-alert with a bounded time window and the connected sources available to that
-organization.
+An investigation starts either from an open incident or from a question you ask.
+An incident turn combines the triggering alert with a bounded time window and the
+connected sources available to that organization. A question turn carries your own words
+and no alert, and many such questions have no cause to name — which revision is deployed,
+what changed today — so their findings are recorded as observations rather than causes.
 
 ## Investigation flow
 
@@ -27,6 +29,12 @@ bounded around the incident, repeated identical reads are suppressed, and trunca
 results are marked. Slack and GitHub access is read-only. The Kubernetes integration
 currently contributes a workload inventory derived from recorded changes; it does not
 provide live pod, event, or log reads.
+
+Every read is clamped into the investigation's window, and a read that asks for a wider
+one is narrowed rather than refused. The result states the window it actually covered, so
+an empty answer reads as "nothing in this window" rather than "nothing exists". A question
+asked outside any incident has no incident to bound it, so it looks back over the last 24
+hours; attach the conversation to an incident when you need its window instead.
 
 ## When the cause is not established
 

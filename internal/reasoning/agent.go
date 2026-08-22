@@ -313,10 +313,11 @@ func decodeConclusion(
 			"the conclusion is not the declared document: %w", err)
 	}
 
-	if len(decoded.Answer) > investigation.MaxAnswerLength {
-		return investigation.Conclusion{}, fmt.Errorf(
-			"the answer is past %d characters", investigation.MaxAnswerLength)
-	}
+	// An over-length answer is deliberately NOT refused here. It is well formed and too
+	// long, which is not malformed output, and refusing it fails the whole investigation
+	// — discarding every read that already succeeded because the last step was verbose.
+	// The answer is bounded once, where it is persisted.
+	//
 	// Malformed rather than tolerated, because the decode path already retries once and
 	// the same model usually answers the second time. Accepting silence would hand
 	// somebody who asked a question a causal-findings document and no reply.

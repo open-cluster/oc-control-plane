@@ -259,6 +259,13 @@ func TestLoad_InvestigationKnobsDefaultAndValidate(t *testing.T) {
 	}
 }
 
+// appKeyBytes stands in for a GitHub App key wherever a test only needs the file to exist.
+// Configuration never parses it — it checks the file is non-empty and hands the bytes on —
+// so the content is arbitrary, and it is deliberately NOT a PEM header: a real one here is
+// indistinguishable to a secret scanner from a leaked key, and reading history is how that
+// gate works. One such line turned the whole build red for a day.
+const appKeyBytes = "an app key; configuration never parses this"
+
 // The installation flow needs three values and cannot work with two. A deployment that set
 // only some of them would offer a Connect button that fails at the last step, in front of a
 // customer — so it is refused here, where whoever set them is still reading.
@@ -266,7 +273,7 @@ func TestLoad_GitHubInstallationFlowIsAllThreeOrNone(t *testing.T) {
 	t.Parallel()
 
 	appKey := filepath.Join(t.TempDir(), "app.pem")
-	if err := os.WriteFile(appKey, []byte("-----BEGIN RSA PRIVATE KEY-----\n"), 0o600); err != nil {
+	if err := os.WriteFile(appKey, []byte(appKeyBytes), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	secretFile := filepath.Join(t.TempDir(), "client-secret")
@@ -317,7 +324,7 @@ func TestLoad_GitHubClientSecretNeverAppearsInAnError(t *testing.T) {
 	t.Parallel()
 
 	appKey := filepath.Join(t.TempDir(), "app.pem")
-	if err := os.WriteFile(appKey, []byte("-----BEGIN RSA PRIVATE KEY-----\n"), 0o600); err != nil {
+	if err := os.WriteFile(appKey, []byte(appKeyBytes), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	environment := validEnvironment(t)

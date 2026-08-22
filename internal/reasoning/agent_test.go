@@ -92,7 +92,7 @@ func succeededResult(callID string, ordinal int) investigation.CallResult {
 func TestTheAgentPreambleIsPinned(t *testing.T) {
 	t.Parallel()
 
-	const pinned = "f2216480ad5d85aa60094cdfcf7539823da83c7607dd9ecae5fe6fa83ca704f1"
+	const pinned = "1fad1fdebd129fcf31c63b1aa6becd674cbd683fe97040b370b2517a58ae9899"
 	digest := sha256.Sum256([]byte(agentPreamble))
 	if hex.EncodeToString(digest[:]) != pinned {
 		t.Fatalf("the agent preamble changed. If the change is deliberate, update this "+

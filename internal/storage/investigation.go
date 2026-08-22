@@ -166,8 +166,9 @@ func (p *Placements) InvestigationProvenance(
 // QueryInvestigations reports a page, newest first.
 func (p *Placements) QueryInvestigations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	page investigation.Page,
+	query investigation.Query,
 ) (investigation.List, error) {
+	page := query.Page
 	if !principal.MemberOf(organization) {
 		return investigation.List{}, ErrNotAMember
 	}
@@ -187,11 +188,18 @@ func (p *Placements) QueryInvestigations(
 		arguments = append(arguments, *cursorAt, *cursorID)
 		cursor = "AND (created_at, investigation_id) < ($3, $4)"
 	}
+	// The episode narrows the same org-scoped read. It is appended AFTER the cursor so
+	// the placeholder numbers do not depend on whether a page position was supplied.
+	episode := ""
+	if query.EpisodeID != uuid.Nil {
+		arguments = append(arguments, query.EpisodeID)
+		episode = fmt.Sprintf("AND episode_id = $%d", len(arguments))
+	}
 
 	rows, err := pool.Query(ctx, `
 		SELECT `+investigationColumns+`
 		  FROM investigation
-		 WHERE org_id = $1 `+cursor+`
+		 WHERE org_id = $1 `+cursor+` `+episode+`
 		 ORDER BY created_at DESC, investigation_id DESC
 		 LIMIT $2`, arguments...)
 	if err != nil {

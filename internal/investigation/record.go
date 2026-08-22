@@ -219,11 +219,18 @@ type ToolRun struct {
 	Capability string
 	Tool       string
 	// Arguments is the call's scope as it ran, never carrying a credential.
-	Arguments   map[string]any
-	WindowFrom  time.Time
-	WindowUntil time.Time
-	Outcome     RunOutcome
-	Truncated   bool
+	Arguments map[string]any
+	// WindowFrom and WindowUntil are the bound in force for this run. Every run carries
+	// them, because the bound is real whether or not a read used it and the column is not
+	// nullable. WindowApplied is what says the read actually FILTERED by that window —
+	// false for a repository listing, which is not bounded in time — and it is not
+	// persisted: it describes the read, and the reader who needs it is watching the
+	// stream, not auditing the row.
+	WindowFrom    time.Time
+	WindowUntil   time.Time
+	WindowApplied bool
+	Outcome       RunOutcome
+	Truncated     bool
 	// Summary is the provider's own one-line account of what came back; Sources are the
 	// identifiers of what was read — channel ids, repository ids — so a finding citing
 	// this run can be followed to its origin.
@@ -272,6 +279,20 @@ type Page struct {
 	After string
 }
 
+// Query is what the investigations listing accepts: a position, and what to narrow by.
+//
+// It is a struct rather than a widening Page because a position and a filter are
+// different things, and the listing that mixes them ends up with a cursor that means
+// something different depending on what was filtered.
+type Query struct {
+	Page Page
+	// EpisodeID narrows to the investigations one alert episode opened. Zero means every
+	// investigation the tenant has. An episode this tenant does not have is an empty
+	// page rather than a refusal: answering differently would let a caller probe for
+	// episode identifiers that are not theirs.
+	EpisodeID uuid.UUID
+}
+
 // List is a page of an organization's investigations, newest first.
 type List struct {
 	Investigations []Investigation
@@ -289,9 +310,9 @@ type Store interface {
 	// InvestigationProvenance reads the sources and runs beside one investigation.
 	InvestigationProvenance(ctx context.Context, org tenancy.Organization,
 		id uuid.UUID) ([]Source, []ToolRun, error)
-	// QueryInvestigations reports a page, newest first.
+	// QueryInvestigations reports a page, newest first, narrowed by the query.
 	QueryInvestigations(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		page Page) (List, error)
+		query Query) (List, error)
 	// RecordSource writes one offered source.
 	RecordSource(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		source Source) error
