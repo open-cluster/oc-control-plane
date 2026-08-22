@@ -110,6 +110,17 @@ func (p *Placements) CreateIntegration(
 				return integrations.Integration{}, audit.Target{}, nil,
 					fmt.Errorf("creating an integration: %w", err)
 			}
+			// The routing record lands in the SAME transaction, so an Integration that
+			// exists is one an inbound event can reach. A workspace another Integration
+			// already holds refuses the whole creation rather than leaving a connected
+			// integration whose events resolve somewhere else.
+			if wanted.Installation != nil {
+				if err := recordInstallation(ctx, transaction, organization, created.ID,
+					created.Type, *wanted.Installation); err != nil {
+					return integrations.Integration{}, audit.Target{}, nil, err
+				}
+			}
+
 			// The webhook secret is nowhere in the detail and could not be: audit.Detail
 			// drops anything named like a credential on the way in.
 			return created,

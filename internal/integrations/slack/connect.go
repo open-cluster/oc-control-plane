@@ -208,12 +208,30 @@ func (i *Installer) redeem(
 	if name == "" {
 		name = installed.TeamName
 	}
+	// The bot's own identity comes from auth.test rather than from the exchange, because
+	// auth.test is the far end answering as this bot right now. It is what stops the agent
+	// replying to its own messages, so a stale value would be a loop.
+	agent := identity.BotUserID
+	if agent == "" {
+		agent = installed.BotUserID
+	}
 	return integrations.ConnectBinding{
 		Name:       "Slack — " + name,
 		Credential: token,
 		Configuration: map[string]any{
 			TeamIDField: installed.TeamID,
 			AppIDField:  installed.AppID,
+		},
+		// The routing record, written in the same transaction as the Integration. Without
+		// it the integration exists and no event can reach it, which is a customer who
+		// pressed Connect, authorized, and has an agent that never answers.
+		Installation: &integrations.Installation{
+			Application: installed.AppID,
+			Enterprise:  installed.EnterpriseID,
+			Workspace:   installed.TeamID,
+			Agent:       agent,
+			Authorizer:  installed.AuthedUserID,
+			Grants:      installed.Scopes,
 		},
 	}, nil
 }

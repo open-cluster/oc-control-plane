@@ -55,6 +55,10 @@ const (
 	// answer. Nothing is created, and verifying the record again is what tells an operator
 	// more.
 	outcomeUnverified connectOutcome = "unverified"
+	// outcomeWorkspaceTaken is a vendor workspace another Integration in this deployment
+	// is already installed in. It says nothing about WHERE the other one is: an
+	// organization is not a fact a caller in a different one may learn.
+	outcomeWorkspaceTaken connectOutcome = "workspace-taken"
 )
 
 // status is the answer where there is no console to send the browser to.
@@ -76,6 +80,9 @@ func (o connectOutcome) note() string {
 	case outcomeUnverified:
 		return "the association was proven and the provider did not then answer, so " +
 			"nothing was connected; start again"
+	case outcomeWorkspaceTaken:
+		return "that workspace is already connected to OpenCluster, so nothing was " +
+			"connected; disconnect it there before connecting it here"
 	default:
 		return refusedConnect
 	}
@@ -274,7 +281,10 @@ func (h Handlers) record(
 		Type:          definition.ID,
 		Name:          bound.Name,
 		Configuration: bound.Configuration,
-		CreatedBy:     principal.ID(),
+		// Written in the same transaction as the row. A type that receives no events
+		// returns none, and this stays nil.
+		Installation: bound.Installation,
+		CreatedBy:    principal.ID(),
 	}
 	// The credential the flow obtained is presented to the probe, exactly as a pasted one
 	// is. A credential the provider refuses must not come to rest, and there is one rule
@@ -317,6 +327,21 @@ func (h Handlers) record(
 		// once, by something stable, rather than retried in a loop.
 		wanted.Name = disambiguate(bound.Name, wanted.ID)
 		created, err = h.Store.CreateIntegration(ctx, principal, organization, wanted)
+	}
+	if errors.Is(err, ErrWorkspaceTaken) {
+		// Another Integration — in this tenant or another — is already installed in that
+		// workspace. Refused rather than recorded, because the routing key is what decides
+		// whose event an inbound message is, and two claims on one workspace is that
+		// question having two answers.
+		//
+		// The message says nothing about WHERE the other one is. A caller learning that
+		// some other organization holds their workspace would be learning about a tenant
+		// they cannot see.
+		h.Logger.WarnContext(ctx, "a connect named a workspace already installed elsewhere",
+			slog.String("org_id", organization.String()),
+			slog.String("type", definition.Key))
+		h.landConnect(writer, request, returnTo, outcomeWorkspaceTaken, "")
+		return
 	}
 	if err != nil {
 		h.fail(writer, request, err)
@@ -379,6 +404,16 @@ func (h Handlers) reconnect(
 	if err != nil {
 		h.fail(writer, request, err)
 		return
+	}
+	// The routing record is refreshed with the credential, not left as it was. A reinstall
+	// issues a new agent identity, and the agent identity is what stops the agent
+	// answering its own messages — a stale one is a loop rather than a cosmetic drift.
+	if bound.Installation != nil {
+		if err := h.Store.RecordInstallation(ctx, organization, verified.ID,
+			definition.ID, *bound.Installation); err != nil {
+			h.fail(writer, request, err)
+			return
+		}
 	}
 	h.Logger.InfoContext(ctx, "integration reconnected",
 		slog.String("org_id", organization.String()),

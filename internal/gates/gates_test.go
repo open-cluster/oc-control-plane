@@ -153,6 +153,16 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// sent contributes to the tenant the answer belongs to.
 		"IntegrationByID": "resolves a tenant FROM an opaque integration identifier; " +
 			"the row found is the authority, and no caller-supplied value selects it",
+		// The same case, one hop earlier. An inbound event from a chat vendor names a
+		// workspace and not a tenant, so there is nothing in the request to resolve a
+		// placement from. The installation key is unique across the whole deployment —
+		// deliberately not per organization — so it resolves to at most one row, and that
+		// row is the authority for the organization. A vendor identifier from one tenant
+		// cannot reach another's records because the lookup never starts from a vendor
+		// identifier alone; it starts from the deployment-unique key.
+		"IntegrationByInstallation": "resolves a tenant FROM a deployment-unique vendor " +
+			"installation key; the row found is the authority, and no caller-supplied " +
+			"value selects which tenant is searched",
 		// The retention pruner asks which tenants declared a schedule for their own record.
 		// It cannot take an organization because finding out which organizations there are
 		// IS the question. It reads no tenant data — only which tenants declared a number —

@@ -57,6 +57,21 @@ var (
 	ErrInUse = errors.New("integration has records depending on it; disable it instead")
 	// ErrBadCursor reports a page position that did not come from a previous response.
 	ErrBadCursor = errors.New("after is not a page position from a previous response")
+	// ErrWorkspaceTaken refuses a connection to a vendor workspace another Integration is
+	// already installed in, anywhere in this deployment.
+	//
+	// It is a REFUSAL rather than a failure, and the deployment-wide scope is the point:
+	// an inbound event resolves workspace to Integration to organization, and a workspace
+	// two tenants could both claim would resolve to two answers at exactly the moment the
+	// product starts trusting that chain.
+	ErrWorkspaceTaken = errors.New(
+		"another integration in this deployment is already installed in that workspace")
+	// ErrInvalidInstallation reports a routing record that could not be written: a key
+	// naming no application or no workspace, or a type this build holds no installation
+	// table for. It is a programming error rather than a caller's, and it is refused
+	// loudly because the alternative is discovering it at the first inbound event, as
+	// silence.
+	ErrInvalidInstallation = errors.New("installation cannot be recorded")
 )
 
 // WebhookSecret is what a read may say about the inbound secret, which is never the secret:
@@ -158,7 +173,78 @@ type NewIntegration struct {
 	// Integration is born verified, in the same transaction that records it. Nil means it
 	// is born configured, with nothing having checked it.
 	Verification *Verification
+	// Installation, when non-nil, is the vendor-side identity an inbound event resolves
+	// through, written in the SAME transaction as the row. Nil for every type that
+	// receives no events and for a credential pasted into the configuration form, which
+	// names no installation to route to.
+	Installation *Installation
 	CreatedBy    string
+}
+
+// AN INSTALLATION IS ROUTING, AND ONLY ROUTING.
+//
+// It is how an event arriving from a vendor resolves to exactly one Integration and
+// therefore exactly one organization. Resolution always runs installation -> integration ->
+// organization; no vendor identifier ever looks anything up directly, which is the property
+// that stops an identifier from one tenant reaching another's records.
+//
+// What an operator READS about a connected installation is not here — it is on the
+// Integration's verify facts, recorded by the verification. The two are deliberately apart:
+// facts are what the last verification established and may go stale, and this is the key
+// that decides whose event this is, which may not.
+//
+// The vocabulary is neutral because the shared connect flow carries it and that flow knows
+// no provider. The persistence layer dispatches on the Integration's type to the table that
+// holds it.
+
+// Installation is one vendor-side installation, as the routing record holds it.
+type Installation struct {
+	// Application is the vendor application the installation was made under. It is part of
+	// the key because one deployment may serve more than one registration over its life,
+	// and a workspace identifier alone would collide across them.
+	Application string
+	// Enterprise is the vendor's enterprise or grid identity, empty where there is none.
+	// Empty rather than absent: two absent values must compare equal, or the same
+	// workspace could be installed twice under rows that look distinct.
+	Enterprise string
+	// Workspace is the vendor's own identity for the place the installation lives.
+	Workspace string
+	// Agent is the identity this product answers AS in that workspace.
+	//
+	// Load-bearing rather than informational: a message authored by this identity is
+	// discarded before anything else looks at it, which is what stops the agent answering
+	// itself and looping until a rate limit ends it.
+	Agent string
+	// Authorizer is who authorized the installation, in the vendor's own identifiers.
+	// Recorded for the trail; no decision reads it.
+	Authorizer string
+	// Grants is what the installation carried when it was made. The authoritative copy for
+	// tool availability is the verification's; this is what an operator needs when the two
+	// disagree.
+	Grants []string
+}
+
+// Key is what an inbound event resolves BY.
+func (i Installation) Key() InstallationKey {
+	return InstallationKey{
+		Application: i.Application, Enterprise: i.Enterprise, Workspace: i.Workspace,
+	}
+}
+
+// InstallationKey is the identity an inbound event is resolved through. It is unique across
+// the whole deployment and deliberately not scoped to an organization: the value of the
+// chain is that its first hop is single-valued, and a per-tenant uniqueness would let two
+// tenants claim one workspace and make it ambiguous exactly when an event arrives.
+type InstallationKey struct {
+	Application string
+	Enterprise  string
+	Workspace   string
+}
+
+// Complete reports whether this key names an installation at all. An event resolved through
+// a partial key would be an event resolved through a wildcard.
+func (k InstallationKey) Complete() bool {
+	return k.Application != "" && k.Workspace != ""
 }
 
 // Revision is what a PATCH may change. Nil means "leave it alone", which is different from

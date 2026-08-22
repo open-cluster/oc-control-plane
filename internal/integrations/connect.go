@@ -120,6 +120,11 @@ type ConnectBinding struct {
 	// schema. It is also the identity a repeat connection is recognised by: connecting
 	// the same installation again re-verifies what exists rather than duplicating it.
 	Configuration map[string]any
+	// Installation is the vendor-side identity an INBOUND event resolves through, nil for
+	// a type that receives none. It is written in the same transaction as the Integration,
+	// so an Integration that exists is one events can reach: a connected integration whose
+	// mentions silently never work has no answer to give the customer standing there.
+	Installation *Installation
 }
 
 // Connectable reports whether this definition offers a provider installation flow.
