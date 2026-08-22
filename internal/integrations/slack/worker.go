@@ -98,9 +98,9 @@ type Worker struct {
 	Client     *Client
 	Sealer     seal.Sealer
 	Logger     *slog.Logger
-	// Interval is how often the worker looks for due deliveries. It is a floor rather than
-	// a cadence: a pass that found work looks again immediately, because a turn that is
-	// streaming has more to say now rather than in a second.
+	// Interval is how often the worker looks when it found nothing to do. A pass that DID
+	// work looks again after the flush interval instead, which is what bounds how often
+	// one streaming turn calls Slack.
 	Interval time.Duration
 	// Batch bounds how many deliveries one pass takes.
 	Batch int
@@ -124,9 +124,12 @@ func (w Worker) Run(ctx context.Context) {
 		}
 		wait := interval
 		if worked {
-			// Something is streaming. Looking again immediately is the difference between
-			// an answer that appears and one that arrives a second at a time.
-			wait = 0
+			// Something is streaming, so look again soon — but not immediately. This IS
+			// the interval half of the flush boundary: it bounds how often any one
+			// delivery can call Slack, and a loop that looked again with no wait would
+			// call per batch as fast as the database could answer, which is how a client
+			// gets rate-limited into failure by its own enthusiasm.
+			wait = flushInterval
 		}
 		select {
 		case <-ctx.Done():
@@ -178,6 +181,15 @@ func (w Worker) deliver(ctx context.Context, delivery Delivery) bool {
 	}
 
 	rendered := Render(events)
+	if held(rendered) {
+		// The size half of the flush boundary. A few words with nothing else to say are
+		// held for the next pass rather than spent on a call: Slack is never called per
+		// token, and a turn that is still streaming will have more in a moment.
+		//
+		// Never held once the turn is done, and never when a read completed — those are
+		// the two things a person watching the thread is waiting to see.
+		return false
+	}
 	reply := Reply{
 		Channel: delivery.Channel, Thread: delivery.Thread,
 		TS: delivery.StreamTS, Streaming: delivery.Streaming,
@@ -249,6 +261,11 @@ func (w Worker) send(
 		return err
 	}
 	return w.Client.ReplaceReply(ctx, token, reply, visible(Render(all)))
+}
+
+// held reports a batch too small to be worth a call on its own.
+func held(rendered Rendered) bool {
+	return !rendered.Done && len(rendered.Progress) == 0 && len(rendered.Text) < flushBytes
 }
 
 // opening is what the message says when it is first posted.

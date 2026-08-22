@@ -182,10 +182,15 @@ func Parse(body []byte) (Envelope, error) {
 		}
 	}
 
-	// The authorizations block is what Slack says this event was delivered to. It is the
-	// more reliable source for a grid install, where the top-level team can be the
+	// The authorizations block is what Slack says this event was delivered to, and it is
+	// the more reliable source on a grid install, where the top-level team can be the
 	// enterprise rather than the workspace.
-	for _, authorized := range decoded.Authorizations {
+	//
+	// The FIRST entry and only the first. Slack sends the installation this event was
+	// delivered for; a payload carrying several would be one delivered to several, and
+	// resolving it through the last one read would be resolving it arbitrarily.
+	if len(decoded.Authorizations) > 0 {
+		authorized := decoded.Authorizations[0]
 		if authorized.TeamID != "" {
 			envelope.Workspace = authorized.TeamID
 		}
@@ -195,7 +200,6 @@ func Parse(body []byte) (Envelope, error) {
 		if authorized.IsBot && authorized.UserID != "" {
 			envelope.Event.BotUserID = authorized.UserID
 		}
-		break
 	}
 
 	if decoded.Type == "url_verification" {

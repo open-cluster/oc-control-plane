@@ -79,7 +79,9 @@ func decodeStrictly(field string) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(&sample{})
+	// The unexported field is set here and nowhere else: it exists to be a field the WIRE
+	// cannot reach, and the decoder refusing its name is the assertion above.
+	return decoder.Decode(&sample{hidden: "set by this process, never by a caller"})
 }
 
 func TestAnObjectIsClosedBecauseTheDecoderClosesIt(t *testing.T) {
