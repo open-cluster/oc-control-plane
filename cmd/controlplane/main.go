@@ -428,6 +428,11 @@ func serve(ctx context.Context, process assembled) error {
 	ledgerPruners := startChangeLedgerPruner(process)
 	defer ledgerPruners.stop()
 
+	// Answering back in Slack. Started only where this deployment receives events at all,
+	// because a worker sweeping for deliveries nobody can create is a query on a loop.
+	slackReplies := startSlackDelivery(process)
+	defer slackReplies.stop()
+
 	select {
 	case serveErr := <-failed:
 		return serveErr
@@ -898,4 +903,31 @@ func slackAgent(cfg config.Config) *intake.SlackAgent {
 		WindowLead:      cfg.InvestigationWindowLead,
 		MaxWaitingTurns: cfg.OrgWaitingInvestigations,
 	}
+}
+
+// startSlackDelivery runs the worker that answers in Slack threads, or nothing where this
+// deployment receives no Slack events.
+//
+// It is stopped with the process and nothing waits for it. A delivery in flight when the
+// process ends resumes from its own cursor in the next instance, which is the same property
+// that makes a crash mid-stream survivable — so there is nothing here worth draining for.
+func startSlackDelivery(process assembled) *backgroundWorker {
+	if process.config.SlackSigningSecret == "" {
+		return nil
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	worker := slack.Worker{
+		Deliveries: process.placements,
+		Client:     slack.NewClient(process.config.SlackAPIURL),
+		Sealer:     process.sealer,
+		Logger:     process.logger,
+	}
+
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		worker.Run(ctx)
+	}()
+	process.logger.Info("slack delivery worker started")
+	return running
 }

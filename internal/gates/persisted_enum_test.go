@@ -146,7 +146,14 @@ var (
 		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
 		int(storage.DeliveryRejected),
 	}
-	episodeStatusValues       = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	episodeStatusValues = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	// A Slack delivery's own lifecycle, which is NOT an investigation's: it is pending,
+	// delivering, delivered or failed, and a delivery that failed says nothing about the
+	// investigation behind it.
+	slackDeliveryValues = []int{
+		int(storage.SlackDeliveryPending), int(storage.SlackDeliveryDelivering),
+		int(storage.SlackDeliveryDelivered), int(storage.SlackDeliveryFailed),
+	}
 	investigationStatusValues = []int{
 		int(investigation.StatusRunning), int(investigation.StatusConcluded),
 		int(investigation.StatusFailed),
@@ -189,6 +196,8 @@ var enumColumns = map[string]map[string][]int{
 	// An inbound Slack message claims its delivery through the same idempotence key every
 	// other delivery uses, so it writes and compares the accepted outcome.
 	"slack_conversation.go": {"outcome": deliveryOutcomeValues},
+	// The outbound half: claiming compares a delivery's own lifecycle state.
+	"slack_delivery.go": {"status": slackDeliveryValues},
 	// The ending update is guarded on the investigation still running, and the
 	// open-episode listing filters on an EPISODE's status; the two enums share the file.
 	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),

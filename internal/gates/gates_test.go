@@ -163,6 +163,12 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"IntegrationByInstallation": "resolves a tenant FROM a deployment-unique vendor " +
 			"installation key; the row found is the authority, and no caller-supplied " +
 			"value selects which tenant is searched",
+		// The outbound delivery sweep, and the same case DeclaredRetentions is: finding
+		// out which tenants owe an answer IS the question, so there is no organization to
+		// be given. Every row it claims carries its own, and every write the worker then
+		// makes is scoped by the organization that row named.
+		"ClaimSlackDeliveries": "discovers which tenants owe a Slack answer; each row " +
+			"carries its own organization and every write it leads to is tenant-scoped",
 		// The retention pruner asks which tenants declared a schedule for their own record.
 		// It cannot take an organization because finding out which organizations there are
 		// IS the question. It reads no tenant data — only which tenants declared a number —
