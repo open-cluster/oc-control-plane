@@ -151,9 +151,24 @@ type integrationView struct {
 	// the account, its type, how far its grant reaches. Non-secret by construction: a
 	// provider records only what an operator would read off the provider's own screen.
 	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
-	CreatedBy   string         `json:"createdBy,omitempty"`
-	CreatedAt   string         `json:"createdAt"`
-	UpdatedAt   string         `json:"updatedAt"`
+	// Capabilities is every capability this integration's type declares, each with
+	// whether this integration can actually exercise it and why not when it cannot.
+	// Served rather than left to be joined by a caller: the same rule decides what an
+	// investigation is offered, and a second copy of it would be free to disagree.
+	Capabilities []capabilityView `json:"capabilities"`
+	CreatedBy    string           `json:"createdBy,omitempty"`
+	CreatedAt    string           `json:"createdAt"`
+	UpdatedAt    string           `json:"updatedAt"`
+}
+
+// capabilityView is one declared capability and whether this integration can exercise it.
+// Reason is present only when it cannot, and names what is missing — an unavailable
+// capability with no cause makes an operator guess whether they misconfigured it,
+// declined it, or hit a bug.
+type capabilityView struct {
+	Capability string `json:"capability"`
+	Available  bool   `json:"available"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // createdView is the one response that carries the webhook secret, exactly once.
@@ -171,8 +186,16 @@ type rotatedView struct {
 
 func (h Handlers) viewOf(found Integration) integrationView {
 	typeKey := ""
+	var capabilities []capabilityView
 	if definition, known := h.Catalog.ByID(found.Type); known {
 		typeKey = definition.Key
+		for _, one := range Availability(definition, found) {
+			capabilities = append(capabilities, capabilityView{
+				Capability: one.Capability,
+				Available:  one.Available,
+				Reason:     one.Reason,
+			})
+		}
 	}
 	view := integrationView{
 		ID:            found.ID.String(),
@@ -187,6 +210,7 @@ func (h Handlers) viewOf(found Integration) integrationView {
 		UpdatedAt:     stamp(found.UpdatedAt),
 		VerifyNote:    found.VerifyNote,
 		VerifyFacts:   found.VerifyFacts,
+		Capabilities:  capabilities,
 	}
 	if found.RelayID != uuid.Nil {
 		view.RelayID = found.RelayID.String()

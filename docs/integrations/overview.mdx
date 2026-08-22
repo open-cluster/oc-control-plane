@@ -17,6 +17,13 @@ connected system is not queried on every incident.
 Connecting an integration requires **Admin**. Verification records what the granted
 access supports. Investigations only receive capabilities that were verified.
 
+Each connected integration reports its capabilities one by one, saying for each whether it
+is available and, when it is not, why — a permission the credential never carried, or a
+verification that has not run yet. That answer comes from the same rule that decides what
+an investigation may call, so what you are shown and what the agent can do cannot disagree.
+A capability an integration receives inbound, such as Alertmanager's alerts, is reported as
+available and says so, because nothing calls it as a read.
+
 ## How an integration is connected
 
 There are two ways, and which one you get is decided by the deployment, not by the vendor:

@@ -23,24 +23,10 @@ type selection struct {
 func offeredTools(
 	definition integrations.Definition, candidate integrations.Integration,
 ) []integrations.Tool {
-	recorded := make(map[string]bool, len(candidate.VerifyGrants))
-	for _, grant := range candidate.VerifyGrants {
-		recorded[grant] = true
-	}
-	offered := make([]integrations.Tool, 0, len(definition.Tools))
-	for _, tool := range definition.Tools {
-		supported := true
-		for _, required := range tool.Requires {
-			if !recorded[required] {
-				supported = false
-				break
-			}
-		}
-		if supported {
-			offered = append(offered, tool)
-		}
-	}
-	return offered
+	// Delegated, never reimplemented. The same rule answers the operator surface's
+	// capability availability, and two copies of it would let what an operator is shown
+	// disagree with what the investigator may actually call.
+	return integrations.SupportedTools(definition, candidate)
 }
 
 // sortSourcesByName keeps the offer order stable run to run.
