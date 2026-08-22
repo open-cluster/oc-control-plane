@@ -13,6 +13,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/describe"
 	"github.com/open-cluster/oc-control-plane/internal/table"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -56,6 +57,48 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.read)),
 		authz.Privileged(http.MethodPost, base+"/{conversation}/messages",
 			authz.ConversationWrite, http.HandlerFunc(h.say)),
+	}
+}
+
+// SurfaceName is what this optional surface is called in the deployment's
+// self-description. Exported because a client keys off it and a name spelled twice is a
+// surface a console silently stops finding.
+const SurfaceName = "conversations"
+
+// Describe is this capability's contribution to the deployment's self-description.
+//
+// The SURFACE is the point. Conversations are off by default and answer 404 when off,
+// which is right — a deployment with them off does not have this surface, and answering
+// "not implemented" would advertise one that is coming. But a console deciding whether
+// "Investigate this incident" opens a Conversation or a single-shot Investigation could
+// only probe and read a 404, which cannot be told from a wrong identifier or an older
+// build. Saying so plainly is what stops a 404 being the discovery mechanism.
+//
+// The listing and the bodies are declared whether or not this deployment serves them, for
+// the same reason the ROUTES are: the contract of a surface does not change with the
+// switch, only whether it is reachable, and a document that changed shape with
+// configuration would be one nobody could review.
+func (h Handlers) Describe() describe.Contribution {
+	const base = "/operator/v1/organizations/{organization}/conversations"
+
+	return describe.Contribution{
+		Surfaces: []describe.Surface{{
+			Name:    SurfaceName,
+			Enabled: h.Enabled,
+			Note: "A Conversation is a durable thread a person talks to, holding its own " +
+				"messages and the investigations opened from them. Where it is off, the " +
+				"conversation routes answer 404 and an investigation is opened directly.",
+		}},
+		Listings: []describe.Listing{
+			{Route: http.MethodGet + " " + base, Spec: listSpec},
+		},
+		Bodies: []describe.Body{
+			{Route: http.MethodPost + " " + base, Example: openRequest{}},
+			{
+				Route:   http.MethodPost + " " + base + "/{conversation}/messages",
+				Example: sayRequest{},
+			},
+		},
 	}
 }
 

@@ -144,6 +144,12 @@ func TestTheAuthenticatedOnlyRoutesAreTheOnesThatCannotNameATenant(t *testing.T)
 	t.Parallel()
 
 	permitted := map[string]string{
+		"GET /operator/v1": "it describes the DEPLOYMENT rather than a tenant, so there is " +
+			"no organization in its path to check a membership against. It is not public " +
+			"either: a browser that has not signed in discovers the sign-in providers " +
+			"through the public identity listing, so nothing needs this document without a " +
+			"credential, and publishing the route table to unauthenticated callers would " +
+			"widen the anonymous surface for no gain",
 		"GET /operator/v1/session":           "its subject is the caller themselves",
 		"POST /operator/v1/session/sign-out": "an Auditor must be able to end their own session",
 		"GET /operator/v1/integrations/connect/callback": "a provider registration holds one " +
@@ -338,7 +344,12 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	for _, route := range operatorRoutes(t) {
 		matched := ""
 		for prefix := range prefixes {
-			if strings.HasPrefix(route.Pattern(), prefix) {
+			// A prefix's own root counts as under it. /operator/v1 is the operator
+			// surface's index — the document saying what this deployment serves — and a
+			// gate that refused an API's base path would be refusing the one route whose
+			// whole job is to describe the prefix it sits at.
+			if route.Pattern() == strings.TrimSuffix(prefix, "/") ||
+				strings.HasPrefix(route.Pattern(), prefix) {
 				matched = prefix
 			}
 		}

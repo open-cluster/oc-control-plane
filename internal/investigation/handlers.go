@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/describe"
 	"github.com/open-cluster/oc-control-plane/internal/table"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -60,6 +61,23 @@ func (h Handlers) Routes() authz.Table {
 		// while there is still something to watch.
 		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/events",
 			authz.InvestigationRead, http.HandlerFunc(h.streamEvents)),
+	}
+}
+
+// Describe is this capability's contribution to the deployment's self-description.
+//
+// The event stream carries no body and is not a listing: it is one investigation's own
+// events as they happen, not a page of rows a caller narrows.
+func (h Handlers) Describe() describe.Contribution {
+	const base = "/operator/v1/organizations/{organization}/investigations"
+
+	return describe.Contribution{
+		Listings: []describe.Listing{
+			{Route: http.MethodGet + " " + base, Spec: listSpec},
+		},
+		Bodies: []describe.Body{
+			{Route: http.MethodPost + " " + base, Example: openRequest{}},
+		},
 	}
 }
 

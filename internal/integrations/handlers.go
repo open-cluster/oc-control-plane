@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/describe"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/table"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
@@ -92,6 +93,29 @@ func (h Handlers) Routes() authz.Table {
 			authz.IntegrationVerify, http.HandlerFunc(h.verify)),
 		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/webhook/rotate-secret",
 			authz.IntegrationSecretRotate, http.HandlerFunc(h.rotateSecret)),
+	}
+}
+
+// Describe is this capability's contribution to the deployment's self-description.
+//
+// The connect callback carries no body and no listing: the browser arrives on it with a
+// query the flow redeems, and describing a query as a body would document a shape nobody
+// sends.
+func (h Handlers) Describe() describe.Contribution {
+	const base = "/operator/v1/organizations/{organization}/integrations"
+
+	return describe.Contribution{
+		Listings: []describe.Listing{
+			{Route: http.MethodGet + " " + base, Spec: listSpec},
+		},
+		Bodies: []describe.Body{
+			{Route: http.MethodPost + " " + base, Example: createRequest{}},
+			{Route: http.MethodPatch + " " + base + "/{integration}", Example: reviseRequest{}},
+			{
+				Route:   http.MethodPost + " " + base + "/{integration}/enabled",
+				Example: enabledRequest{},
+			},
+		},
 	}
 }
 

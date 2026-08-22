@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -171,6 +172,26 @@ func Refused(err error) bool {
 
 // reserved are the parameters every listing takes, whatever it is a listing of.
 var reserved = map[string]bool{"search": true, "sort": true, "cursor": true, "limit": true}
+
+// Reserved reports those names, sorted, so a caller can be TOLD the convention instead of
+// discovering it one refusal at a time.
+//
+// It reads the same map Parse checks against. A restatement would be a second copy of the
+// convention, and a listing accepting a parameter the published convention denies is the
+// exact confusion this exists to end.
+func Reserved() []string {
+	names := make([]string, 0, len(reserved))
+	for name := range reserved {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// SortPrefixes reports the signs a sort field may carry, in the order sortFrom tests them.
+// Published for the same reason Reserved is: a caller who has to guess that `-name` means
+// descending has to guess.
+func SortPrefixes() []string { return []string{"-", "+"} }
 
 func sortFrom(asked string, spec Spec) (Sort, error) {
 	sort := Sort{Field: asked}
