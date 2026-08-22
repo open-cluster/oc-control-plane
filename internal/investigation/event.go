@@ -325,7 +325,7 @@ func toolCompletedPayload(run ToolRun) map[string]any {
 	// empty estate. Absent on a read that covers none, because claiming a window a
 	// repository listing never applied would answer the question wrongly rather than not
 	// at all.
-	if !run.WindowFrom.IsZero() && !run.WindowUntil.IsZero() {
+	if run.WindowApplied {
 		payload["windowFrom"] = run.WindowFrom.UTC().Format(time.RFC3339)
 		payload["windowUntil"] = run.WindowUntil.UTC().Format(time.RFC3339)
 	}

@@ -26,14 +26,15 @@ func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
 	turn := renderResult(investigation.CallResult{
 		CallID: "call-1",
 		Run: investigation.ToolRun{
-			Ordinal:     1,
-			Tool:        "github.read_commits",
-			Arguments:   map[string]any{"repositoryId": 42},
-			Outcome:     investigation.RunSucceeded,
-			Summary:     "0 commits",
-			WindowFrom:  from,
-			WindowUntil: until,
-			Content:     []any{},
+			Ordinal:       1,
+			Tool:          "github.read_commits",
+			Arguments:     map[string]any{"repositoryId": 42},
+			Outcome:       investigation.RunSucceeded,
+			Summary:       "0 commits",
+			WindowFrom:    from,
+			WindowUntil:   until,
+			WindowApplied: true,
+			Content:       []any{},
 		},
 	})
 

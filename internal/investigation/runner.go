@@ -498,6 +498,7 @@ func (r *Runner) execute(
 	// record always names the bound in force.
 	if !result.WindowFrom.IsZero() && !result.WindowUntil.IsZero() {
 		run.WindowFrom, run.WindowUntil = result.WindowFrom, result.WindowUntil
+		run.WindowApplied = true
 	}
 	run.Truncated = result.Truncated
 	run.Summary = bounded(result.Summary, maxSummaryLength)

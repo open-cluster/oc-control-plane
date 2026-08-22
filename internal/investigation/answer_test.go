@@ -63,41 +63,44 @@ func tail(text string) string {
 	return string(runes[len(runes)-80:])
 }
 
-// THE WINDOW IN THE EVENT STREAM.
+// A READ REPORTS A WINDOW ONLY WHEN IT USED ONE.
 //
-// An operator reading the stream is asking the same question the model is: did this read
-// cover the period I care about? Answering it from the stream alone is what makes an empty
-// result auditable without opening the transcript. The payload is free-form, so this costs
-// no migration.
+// Every run carries the window in force, because the record's column is NOT NULL and the
+// bound is real. But a repository listing is not filtered by time, and an event that hands
+// a reader a window beside it answers "did this read cover my period?" wrongly rather than
+// not at all. Only a read that actually filtered by the window reports one.
 
-func TestAToolCompletedEventNamesTheWindowTheReadCovered(t *testing.T) {
-	t.Parallel()
-
-	from := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
-	until := time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC)
-	payload := toolCompletedPayload(ToolRun{
-		Ordinal: 1, Tool: "github.read_commits", Outcome: RunSucceeded,
-		Summary: "0 commits in the window", WindowFrom: from, WindowUntil: until,
-	})
-
-	if payload["windowFrom"] != from.Format(time.RFC3339) {
-		t.Errorf("windowFrom = %v; a reader cannot tell an empty window from an empty "+
-			"estate without it", payload["windowFrom"])
-	}
-	if payload["windowUntil"] != until.Format(time.RFC3339) {
-		t.Errorf("windowUntil = %v", payload["windowUntil"])
-	}
-}
-
-func TestAToolCompletedEventForAnUnwindowedReadClaimsNoWindow(t *testing.T) {
+func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
 	t.Parallel()
 
 	payload := toolCompletedPayload(ToolRun{
 		Ordinal: 1, Tool: "github.list_repositories", Outcome: RunSucceeded,
 		Summary: "1 repositories matched",
+		// The bound in force, as every run carries — but this read did not filter by it.
+		WindowFrom:    time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC),
+		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
+		WindowApplied: false,
 	})
 
 	if _, present := payload["windowFrom"]; present {
-		t.Errorf("a read that covered no window reports one: %v", payload["windowFrom"])
+		t.Errorf("a listing that filtered by no window reports one: %v",
+			payload["windowFrom"])
+	}
+}
+
+func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
+	payload := toolCompletedPayload(ToolRun{
+		Ordinal: 1, Tool: "github.read_commits", Outcome: RunSucceeded,
+		Summary: "0 commits in the window", WindowFrom: from,
+		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
+		WindowApplied: true,
+	})
+
+	if payload["windowFrom"] != from.Format(time.RFC3339) {
+		t.Errorf("windowFrom = %v; a windowed read must say what it covered",
+			payload["windowFrom"])
 	}
 }

@@ -219,11 +219,18 @@ type ToolRun struct {
 	Capability string
 	Tool       string
 	// Arguments is the call's scope as it ran, never carrying a credential.
-	Arguments   map[string]any
-	WindowFrom  time.Time
-	WindowUntil time.Time
-	Outcome     RunOutcome
-	Truncated   bool
+	Arguments map[string]any
+	// WindowFrom and WindowUntil are the bound in force for this run. Every run carries
+	// them, because the bound is real whether or not a read used it and the column is not
+	// nullable. WindowApplied is what says the read actually FILTERED by that window —
+	// false for a repository listing, which is not bounded in time — and it is not
+	// persisted: it describes the read, and the reader who needs it is watching the
+	// stream, not auditing the row.
+	WindowFrom    time.Time
+	WindowUntil   time.Time
+	WindowApplied bool
+	Outcome       RunOutcome
+	Truncated     bool
 	// Summary is the provider's own one-line account of what came back; Sources are the
 	// identifiers of what was read — channel ids, repository ids — so a finding citing
 	// this run can be followed to its origin.

@@ -1,0 +1,30 @@
+# Secret scanning configuration.
+#
+# The default rule set is kept in full and NOTHING is disabled. The only entry here allows
+# one exact literal, and the reason it has to exist is worth stating: the scan runs over
+# `--all --full-history`, so a value that ever entered a commit keeps the gate red forever.
+# Deleting it from the working tree does not help. The alternatives are rewriting published
+# history or dropping the history scan, and both cost more than they buy.
+#
+# The consequence of a red gate is the part that matters. This one has failed on every
+# commit since 2026-08-01, which means nobody has been reading it, which means a REAL leak
+# would land unnoticed behind the noise. A scanner that always fails detects nothing.
+
+title = "OpenCluster secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+AWS's own published example access key id, from their documentation. It cannot authenticate
+anything. It is used deliberately in the end-to-end harness as the payload proving that log
+redaction stands between a container's output and durable state — the harness picks a value
+the redaction rule recognises with near-certainty, and the secret scanner recognises it for
+exactly the same reason. Allowing this ONE literal keeps both safeguards.
+
+Scoped to the literal rather than to the file, so the same string cannot be smuggled past
+this gate under another path, and so any other AWS key shape anywhere still fails.
+"""
+regexes = ['''AKIAIOSFODNN7EXAMPLE''']
+regexTarget = "match"
