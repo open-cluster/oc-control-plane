@@ -101,6 +101,22 @@ const (
 	EnvSlackClientID          = "OC_SLACK_CLIENT_ID"
 	EnvSlackClientSecretFile  = "OC_SLACK_CLIENT_SECRET_FILE"
 	EnvSlackSigningSecretFile = "OC_SLACK_SIGNING_SECRET_FILE"
+	// EnvSlackAgentOrganizations is the STAGED ROLLOUT gate for the Slack agent surface:
+	// a comma-separated list of the organizations it is live for, empty or unset meaning
+	// none.
+	//
+	// Deployment configuration on purpose, and not a tenant policy column. The two
+	// readings of "ships behind a per-organization switch" differ by a migration and a
+	// permanent customer-facing API field: a policy column would put an internal rollout
+	// decision on a customer's settings page and leave it there as a vestigial setting
+	// long after the rollout ended. When the surface is generally available this variable
+	// and the code reading it are deleted, and nothing is left behind.
+	//
+	// It is also not the only switch and does not pretend to be. An organization that has
+	// not connected Slack does not have Slack, and an integration an operator disabled
+	// stops reading and stops answering. This is the one that says "we are not offering
+	// this yet".
+	EnvSlackAgentOrganizations = "OC_SLACK_AGENT_ORGANIZATIONS"
 
 	// The GitHub App credential is DEPLOYMENT-level configuration: one app, installed by
 	// customers onto their own accounts. The id is public; the private key names a file,
@@ -288,6 +304,11 @@ type Config struct {
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
+	// SlackAgentOrganizations are the organizations the Slack agent surface is live for.
+	// Empty means none, which is the default: an inbound event for an organization outside
+	// it is acknowledged and dropped, and reads through the existing Slack tools are
+	// untouched either way.
+	SlackAgentOrganizations []string
 
 	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
 	// means this deployment cannot reach GitHub, and connecting it is refused live with
@@ -469,6 +490,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = slackApp(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
+	slackAgentRollout(lookup, &cfg)
 	if cfg.GitHubWebURL, err = optionalVendorURL(lookup, EnvGitHubWebURL); err != nil {
 		return Config{}, err
 	}
@@ -900,6 +922,35 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	}
 	cfg.SlackSigningSecret = signing
 	return nil
+}
+
+// slackAgentRollout reads which organizations the Slack agent surface is live for.
+//
+// Names are carried as text, exactly as every other organization name this package reads is.
+// This package deliberately depends on nothing else in the product, so what a valid
+// organization name is stays the tenancy package's answer and is not restated here — and a
+// name that is not one simply matches nothing, which is the same outcome as leaving it out.
+func slackAgentRollout(lookup func(string) (string, bool), cfg *Config) {
+	raw, _ := lookup(EnvSlackAgentOrganizations)
+	for entry := range strings.SplitSeq(raw, ",") {
+		if name := strings.TrimSpace(entry); name != "" {
+			cfg.SlackAgentOrganizations = append(cfg.SlackAgentOrganizations, name)
+		}
+	}
+}
+
+// SlackAgentLiveFor reports whether the Slack agent surface is live for one organization.
+//
+// A method rather than a bare list, so the surfaces consulting it cannot each invent their
+// own idea of what an empty list means. It means NO organization, which is the safe reading
+// of an unset rollout gate and the default this ships with.
+func (c Config) SlackAgentLiveFor(organization string) bool {
+	for _, name := range c.SlackAgentOrganizations {
+		if name == organization {
+			return true
+		}
+	}
+	return false
 }
 
 // gitHubInstallFlow reads what the one-click installation flow needs: all three of the

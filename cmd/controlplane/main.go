@@ -688,6 +688,12 @@ func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoin
 			Adapters: intake.Adapters{
 				integrations.TypeAlertmanager: alertmanager.Adapter{},
 			},
+			// The Slack agent surface, served only where this deployment holds a signing
+			// secret. A deployment with none serves no events endpoint at all rather than
+			// one that refuses everything: an endpoint that exists and refuses is a
+			// configuration to check, and one that does not exist is a deployment nobody
+			// asked to receive events.
+			Slack: slackAgent(cfg),
 		}.Router(),
 		// Bounded at every stage. This is the one surface a customer's infrastructure reaches
 		// inbound, and its connections are unauthenticated until a request has been read, so a
@@ -871,5 +877,25 @@ func (e *relayEndpoint) drain(budget time.Duration, logger *slog.Logger) {
 			slog.Duration("budget", budget))
 		e.server.Stop()
 		<-stopped
+	}
+}
+
+// slackAgent is what the intake listener needs to receive Slack events, or nil where this
+// deployment receives none.
+//
+// The rollout gate is a closure over deployment configuration rather than a list handed
+// down, so intake consults ONE answer to "is this live here" and cannot grow a second
+// reading of an empty list.
+func slackAgent(cfg config.Config) *intake.SlackAgent {
+	if cfg.SlackSigningSecret == "" {
+		return nil
+	}
+	return &intake.SlackAgent{
+		SigningSecret: cfg.SlackSigningSecret,
+		Enabled: func(organization tenancy.Organization) bool {
+			return cfg.SlackAgentLiveFor(organization.String())
+		},
+		WindowLead:      cfg.InvestigationWindowLead,
+		MaxWaitingTurns: cfg.OrgWaitingInvestigations,
 	}
 }

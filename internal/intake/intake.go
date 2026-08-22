@@ -69,6 +69,12 @@ type Handlers struct {
 	// Adapters routes a payload to its type's parser. Supplied by the composition root,
 	// which is the only place that knows every provider.
 	Adapters Adapters
+	// Slack is what this listener needs to receive Slack events, and nil where the
+	// deployment holds no signing secret. A deployment with none does not serve the
+	// endpoint at all rather than serving one that refuses everything: an endpoint that
+	// exists and refuses is a configuration to check, and one that does not exist is a
+	// deployment nobody asked to receive events.
+	Slack *SlackAgent
 }
 
 // surface is one running intake listener: its dependencies plus the state that belongs to a
@@ -97,6 +103,9 @@ func (h Handlers) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /intake/v1/integrations/{integration}/signals",
 		http.HandlerFunc(running.deliver))
+	if h.Slack.Serves() {
+		mux.Handle("POST "+SlackEventsPath, http.HandlerFunc(running.slackEvents))
+	}
 	return mux
 }
 

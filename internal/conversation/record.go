@@ -31,13 +31,21 @@ type Surface int16
 
 const (
 	SurfaceWeb Surface = iota + 1
+	// SurfaceSlack is a thread in a customer's own workspace. The Conversation is the
+	// same record either way: OpenCluster is not a second AI system inside Slack, it is
+	// the same one reached from somewhere else.
+	SurfaceSlack
 )
 
 func (s Surface) String() string {
-	if s == SurfaceWeb {
+	switch s {
+	case SurfaceWeb:
 		return "web"
+	case SurfaceSlack:
+		return "slack"
+	default:
+		return "unrecognised"
 	}
-	return "unrecognised"
 }
 
 // State is whether a conversation still takes messages. Persisted; frozen.
@@ -283,3 +291,12 @@ type Store interface {
 	// ceiling is refused with a plain reason rather than queued without bound.
 	WaitingTurns(ctx context.Context, org tenancy.Organization) (int, error)
 }
+
+// Bounded cuts text to what a column will hold, at a rune boundary.
+//
+// Exported for the surfaces that receive text they did not ask a person to type. The console
+// refuses an over-long message, which is right there: somebody typed it, they are standing at
+// the keyboard, and telling them is better than silently truncating what they wrote. A chat
+// surface has nobody to tell — the message is already sent, refusing it would drop a question
+// somebody asked in good faith, and the vendor's own limits differ from ours.
+func Bounded(text string, limit int) string { return boundedRunes(text, limit) }

@@ -1,0 +1,227 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+)
+
+// A SLACK THREAD BECOMES A CONVERSATION, IN ONE TRANSACTION.
+//
+// The three things that must commit together are the delivery's idempotence claim, the
+// thread-to-Conversation binding, and the message itself. Any two of them without the third
+// is a state a customer can see: a claimed delivery with no message is a question OpenCluster
+// silently dropped and the retry cannot recover, because the source has already been told it
+// succeeded; a message without the claim is one answered twice on the next redelivery.
+//
+// Deduplication reuses the DELIVERY record the product already has rather than a Slack event
+// table, so there is one idempotence story and one place to look when a customer says "it
+// answered twice". A Slack retry carries the same body and is therefore already covered.
+//
+// Nothing here waits on a model, a repository, a cluster or an investigation. The turn is
+// opened as an unclaimed record and the ordinary claiming worker takes it, which is what keeps
+// acknowledgement inside Slack's timeout however long the investigation then takes.
+
+// SlackMessage is one agent-directed message from a workspace, already authenticated,
+// already resolved to its Integration and already judged to be something to answer.
+type SlackMessage struct {
+	// Integration is the installation the event resolved through, and the only authority
+	// for the tenant everything in it belongs to.
+	Integration uuid.UUID
+	// BodyDigest is SHA-256 over the raw body as received. It is the idempotence identity,
+	// and nothing else from the payload is stored on the delivery.
+	BodyDigest []byte
+	// Channel and Thread are Slack's identity for where this was said. Thread is the
+	// message's own timestamp when it started no thread, which is the thread OpenCluster's
+	// reply then creates.
+	Channel string
+	Thread  string
+	// Subject names the Conversation when this message opens one. It is derived from the
+	// message rather than asked for, because nobody types a subject into a chat box.
+	Subject string
+	// Actor is who said it, in Slack's identifiers and in their display name. Recorded on
+	// every message so that a shared thread stays attributable.
+	ActorID      string
+	ActorDisplay string
+	// Text is what they said. UNTRUSTED for its whole life: it reaches a model as evidence
+	// about what somebody typed, never as an instruction.
+	Text string
+}
+
+// SlackMessageOutcome is what happened to one inbound message.
+type SlackMessageOutcome struct {
+	// Duplicate reports that this exact body was already accepted through this Integration,
+	// so nothing was written a second time. It is a SUCCESS: a workspace retrying because
+	// it never saw our answer has done nothing wrong, and the answer must let it stop.
+	Duplicate bool
+	// Conversation is the thread's conversation, whether this message opened it or joined
+	// it.
+	Conversation uuid.UUID
+	// Opened reports that this message started the conversation rather than continuing one.
+	Opened bool
+}
+
+// RecordSlackMessage claims the delivery, resolves the thread to its Conversation, and
+// appends the message — all or nothing.
+func (p *Placements) RecordSlackMessage(
+	ctx context.Context, organization tenancy.Organization, said SlackMessage,
+) (SlackMessageOutcome, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return SlackMessageOutcome{}, err
+	}
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		return SlackMessageOutcome{}, fmt.Errorf("beginning a slack message: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	// The idempotence claim comes FIRST, so a redelivery that arrives while the first is
+	// still committing loses the race at the database rather than at a read-then-write both
+	// could pass.
+	tag, err := transaction.Exec(ctx, `
+		INSERT INTO integration_delivery
+			(delivery_id, org_id, integration_id, outcome, body_digest, signal_count)
+		VALUES ($1, $2, $3, 1, $4, 0)
+		ON CONFLICT (integration_id, body_digest) WHERE outcome = 1 DO NOTHING`,
+		uuid.New(), organization.String(), said.Integration, said.BodyDigest)
+	if err != nil {
+		return SlackMessageOutcome{}, fmt.Errorf("recording a slack delivery: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return SlackMessageOutcome{Duplicate: true}, nil
+	}
+
+	conversationID, opened, err := bindThread(ctx, transaction, organization, said)
+	if err != nil {
+		return SlackMessageOutcome{}, err
+	}
+	if err := appendSlackMessage(ctx, transaction, organization, conversationID, said); err != nil {
+		return SlackMessageOutcome{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return SlackMessageOutcome{}, fmt.Errorf("committing a slack message: %w", err)
+	}
+	return SlackMessageOutcome{Conversation: conversationID, Opened: opened}, nil
+}
+
+// bindThread resolves this thread to its Conversation, opening one the first time.
+//
+// DETERMINISTIC. The binding is a lookup on the integration, the channel and the thread, and
+// there is no inference anywhere near it: no similarity matching, no guessing which incident
+// a thread is about. A Conversation is associated with an episode only when it was opened
+// from one, and this path opens it from a mention, so it has none — which is the honest state
+// rather than a guess that reads like knowledge.
+func bindThread(
+	ctx context.Context, transaction pgx.Tx,
+	organization tenancy.Organization, said SlackMessage,
+) (uuid.UUID, bool, error) {
+	var existing uuid.UUID
+	err := transaction.QueryRow(ctx, `
+		SELECT conversation_id
+		  FROM slack_conversation
+		 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3`,
+		said.Integration, said.Channel, said.Thread).Scan(&existing)
+	switch {
+	case err == nil:
+		return existing, false, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return uuid.Nil, false, fmt.Errorf("resolving a slack thread: %w", err)
+	}
+
+	opened := uuid.New()
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO conversation (conversation_id, org_id, surface, subject, created_by)
+		VALUES ($1, $2, $3, $4, $5)`,
+		opened, organization.String(), int16(conversation.SurfaceSlack),
+		said.Subject, said.ActorID); err != nil {
+		return uuid.Nil, false, fmt.Errorf("opening a slack conversation: %w", err)
+	}
+	tag, err := transaction.Exec(ctx, `
+		INSERT INTO slack_conversation
+			(conversation_id, org_id, integration_id, channel_id, thread_ts)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (integration_id, channel_id, thread_ts) DO NOTHING`,
+		opened, organization.String(), said.Integration, said.Channel, said.Thread)
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("binding a slack thread: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		// Two messages in one thread arriving at once, and the other one won. Read the
+		// binding it wrote rather than failing: both messages belong in one conversation,
+		// which is the whole point of the binding being unique.
+		if err := transaction.QueryRow(ctx, `
+			SELECT conversation_id
+			  FROM slack_conversation
+			 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3`,
+			said.Integration, said.Channel, said.Thread).Scan(&existing); err != nil {
+			return uuid.Nil, false, fmt.Errorf("resolving a raced slack thread: %w", err)
+		}
+		return existing, false, nil
+	}
+	return opened, true, nil
+}
+
+// appendSlackMessage writes the message at the next sequence and stamps the conversation.
+//
+// The author is an EXTERNAL actor rather than a principal. A person speaking in a workspace
+// may hold no OpenCluster account at all, and recording their Slack identity as though it
+// were one would be inventing a principal — while dropping the identity would lose attribution
+// in exactly the case it matters, a thread several people are working in.
+func appendSlackMessage(
+	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	conversationID uuid.UUID, said SlackMessage,
+) error {
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
+		                                  actor_kind, actor_id, actor_display, text)
+		SELECT $1, $2,
+		       coalesce((SELECT max(sequence)
+		                   FROM conversation_message
+		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
+		       $3, $4, $5, $6, $7`,
+		conversationID, organization.String(),
+		int16(conversation.RolePerson), int16(conversation.ActorExternal),
+		said.ActorID, said.ActorDisplay, said.Text); err != nil {
+		return fmt.Errorf("appending a slack message: %w", err)
+	}
+	if _, err := transaction.Exec(ctx, `
+		UPDATE conversation
+		   SET last_activity_at = now()
+		 WHERE conversation_id = $1 AND org_id = $2`,
+		conversationID, organization.String()); err != nil {
+		return fmt.Errorf("stamping a slack conversation: %w", err)
+	}
+	return nil
+}
+
+// SlackThreadOf reports where a conversation's replies belong, so a delivery worker can
+// answer in the thread the question was asked in. It answers false for a conversation that
+// did not come from Slack.
+func (p *Placements) SlackThreadOf(
+	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+) (channel string, thread string, integration uuid.UUID, found bool, err error) {
+	pool, poolErr := p.Pool(organization)
+	if poolErr != nil {
+		return "", "", uuid.Nil, false, poolErr
+	}
+	scanErr := pool.QueryRow(ctx, `
+		SELECT channel_id, thread_ts, integration_id
+		  FROM slack_conversation
+		 WHERE conversation_id = $1 AND org_id = $2`,
+		conversationID, organization.String()).Scan(&channel, &thread, &integration)
+	switch {
+	case errors.Is(scanErr, pgx.ErrNoRows):
+		return "", "", uuid.Nil, false, nil
+	case scanErr != nil:
+		return "", "", uuid.Nil, false,
+			fmt.Errorf("reading a slack thread binding: %w", scanErr)
+	}
+	return channel, thread, integration, true, nil
+}
