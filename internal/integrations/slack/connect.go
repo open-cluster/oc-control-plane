@@ -172,10 +172,11 @@ type installation struct {
 	TeamID       string
 	TeamName     string
 	EnterpriseID string
-	Enterprise   bool
-	BotUserID    string
-	AuthedUserID string
-	Scopes       []string
+	// EnterpriseWide is the vendor's own flag, not a value derived from the enterprise id.
+	EnterpriseWide bool
+	BotUserID      string
+	AuthedUserID   string
+	Scopes         []string
 }
 
 // redeem exchanges the code for the workspace's bot token and reports what to record.
@@ -226,12 +227,13 @@ func (i *Installer) redeem(
 		// it the integration exists and no event can reach it, which is a customer who
 		// pressed Connect, authorized, and has an agent that never answers.
 		Installation: &integrations.Installation{
-			Application: installed.AppID,
-			Enterprise:  installed.EnterpriseID,
-			Workspace:   installed.TeamID,
-			Agent:       agent,
-			Authorizer:  installed.AuthedUserID,
-			Grants:      installed.Scopes,
+			Application:    installed.AppID,
+			Enterprise:     installed.EnterpriseID,
+			EnterpriseWide: installed.EnterpriseWide,
+			Workspace:      installed.TeamID,
+			Agent:          agent,
+			Authorizer:     installed.AuthedUserID,
+			Grants:         installed.Scopes,
 		},
 	}, nil
 }
@@ -294,12 +296,12 @@ func (i *Installer) exchange(
 	}
 
 	installed := installation{
-		AppID:        decoded.AppID,
-		TeamID:       decoded.Team.ID,
-		TeamName:     decoded.Team.Name,
-		Enterprise:   decoded.IsEnterpriseInstall,
-		BotUserID:    decoded.BotUserID,
-		AuthedUserID: decoded.AuthedUser.ID,
+		AppID:          decoded.AppID,
+		TeamID:         decoded.Team.ID,
+		TeamName:       decoded.Team.Name,
+		EnterpriseWide: decoded.IsEnterpriseInstall,
+		BotUserID:      decoded.BotUserID,
+		AuthedUserID:   decoded.AuthedUser.ID,
 	}
 	if decoded.Enterprise != nil {
 		installed.EnterpriseID = decoded.Enterprise.ID

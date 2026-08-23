@@ -207,6 +207,12 @@ type Installation struct {
 	// Empty rather than absent: two absent values must compare equal, or the same
 	// workspace could be installed twice under rows that look distinct.
 	Enterprise string
+	// EnterpriseWide reports an installation made across a whole enterprise rather than
+	// into one workspace inside it. It is NOT derivable from Enterprise being set: a
+	// workspace-scoped install inside a grid carries an enterprise identity and is not
+	// enterprise-wide, and treating the two as one would mislabel exactly the case the
+	// enterprise fields exist to identify correctly.
+	EnterpriseWide bool
 	// Workspace is the vendor's own identity for the place the installation lives.
 	Workspace string
 	// Agent is the identity this product answers AS in that workspace.

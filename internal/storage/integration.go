@@ -515,7 +515,7 @@ func (p *Placements) RotateIntegrationWebhookSecret(
 func (p *Placements) ReplaceIntegrationCredential(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, revision integrations.Revision, sealed []byte, fingerprint string,
-	verification integrations.Verification,
+	verification integrations.Verification, installed *integrations.Installation,
 ) (integrations.Integration, error) {
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationCredentialReplaced,
 		func(ctx context.Context, transaction pgx.Tx) (
@@ -578,6 +578,17 @@ func (p *Placements) ReplaceIntegrationCredential(
 			case err != nil:
 				return integrations.Integration{}, audit.Target{}, nil,
 					fmt.Errorf("replacing a credential: %w", err)
+			}
+
+			// The routing record moves WITH the credential, in this transaction.
+			// Authorizing again can issue a new agent identity, and a credential replaced
+			// without its routing refreshed is a live credential answering as an identity
+			// it no longer holds — which is how an agent starts replying to itself.
+			if installed != nil {
+				if err := recordInstallationIn(ctx, transaction, organization, id,
+					replaced.Type, *installed); err != nil {
+					return integrations.Integration{}, audit.Target{}, nil, err
+				}
 			}
 			return replaced,
 				audit.Target{Kind: audit.TargetIntegration, ID: id.String()},

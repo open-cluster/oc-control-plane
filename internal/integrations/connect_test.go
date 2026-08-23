@@ -165,8 +165,12 @@ type capturingStore struct {
 	created             NewIntegration
 	replaced            []byte
 	replacedFingerprint string
-	reVerified          bool
-	existing            bool
+	// reinstalled is the routing record the reconnect carried into the SAME write as the
+	// credential. A reconnect that replaced one and not the other would be a live
+	// credential with stale routing.
+	reinstalled *Installation
+	reVerified  bool
+	existing    bool
 }
 
 func (s *capturingStore) RedeemConnectFlow(context.Context, string) (ConnectFlow, error) {
@@ -274,8 +278,10 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 func (s *capturingStore) ReplaceIntegrationCredential(
 	_ context.Context, _ authz.Principal, _ tenancy.Organization, id uuid.UUID,
 	_ Revision, sealed []byte, fingerprint string, verification Verification,
+	installed *Installation,
 ) (Integration, error) {
 	s.replaced, s.replacedFingerprint = sealed, fingerprint
+	s.reinstalled = installed
 	return Integration{ID: id, Type: 99, Status: verification.Status}, nil
 }
 

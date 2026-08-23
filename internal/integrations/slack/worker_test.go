@@ -40,12 +40,19 @@ type slackCallLog struct {
 	streaming bool
 	// failFor makes the next n calls to a method fail transiently.
 	failFor map[string]int
+	// names are the display names this workspace will resolve. An id absent from it is an
+	// account the token cannot see, which is a case the worker must survive.
+	names map[string]string
 }
 
 func newSlackCallLog(t *testing.T, streaming bool) *slackCallLog {
 	t.Helper()
 
-	fake := &slackCallLog{streaming: streaming, failFor: map[string]int{}}
+	fake := &slackCallLog{
+		streaming: streaming,
+		failFor:   map[string]int{},
+		names:     map[string]string{},
+	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(
 		func(writer http.ResponseWriter, request *http.Request) {
 			method := strings.TrimPrefix(request.URL.Path, "/")
@@ -64,6 +71,19 @@ func newSlackCallLog(t *testing.T, streaming bool) *slackCallLog {
 			if fake.failFor[method] > 0 {
 				fake.failFor[method]--
 				writer.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			if method == "users.info" {
+				fake.calls = append(fake.calls, method)
+				fake.text = append(fake.text, "")
+				name, known := fake.names[request.FormValue("user")]
+				if !known {
+					_, _ = writer.Write([]byte(`{"ok":false,"error":"user_not_found"}`))
+					return
+				}
+				_, _ = writer.Write([]byte(`{"ok":true,"user":{"id":"x","name":"` + name +
+					`","profile":{"display_name":"` + name + `","real_name":"` + name + `"}}}`))
 				return
 			}
 
@@ -91,20 +111,33 @@ func (f *slackCallLog) carried() []string {
 	return append([]string(nil), f.text...)
 }
 
+// name teaches the fake what one user id is called.
+func (f *slackCallLog) name(id, display string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.names[id] = display
+}
+
 func (f *slackCallLog) failNext(method string, times int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failFor[method] = times
 }
 
-// deliveriesInMemory is the durable state the worker reads and writes, in memory.
-type deliveriesInMemory struct {
-	mu       sync.Mutex
-	delivery Delivery
-	events   []investigation.Event
+// repliesInMemory is the durable state the worker reads and writes, in memory.
+type repliesInMemory struct {
+	mu     sync.Mutex
+	reply  Reply
+	events []investigation.Event
 	// retries records every reschedule, which is what says a failure was recorded against
 	// the DELIVERY.
-	retries   []string
+	retries []string
+	// audited is every channel a collaboration write was recorded against.
+	audited []string
+	// unnamed are the authors still recorded under a raw identifier, and named is what the
+	// worker resolved them to.
+	unnamed   []string
+	named     map[string]string
 	completed bool
 	gaveUp    bool
 	// sealed is the bot token as it rests. The worker opens it the way every other read
@@ -112,34 +145,45 @@ type deliveriesInMemory struct {
 	sealed []byte
 }
 
-func (d *deliveriesInMemory) ClaimSlackDeliveries(
+func (d *repliesInMemory) ClaimSlackReplies(
 	context.Context, int, time.Duration,
-) ([]Delivery, error) {
+) ([]Reply, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.completed || d.gaveUp {
 		return nil, nil
 	}
-	return []Delivery{d.delivery}, nil
+	return []Reply{d.reply}, nil
 }
 
-func (d *deliveriesInMemory) AdvanceSlackDelivery(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID,
-	streamTS string, streaming bool, sequence int64,
+func (d *repliesInMemory) AdvanceSlackReply(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, made Progress,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.delivery.StreamTS == "" {
-		d.delivery.StreamTS, d.delivery.Streaming = streamTS, streaming
+	if !d.reply.Stream.Held() {
+		d.reply.Stream = made.Stream
 	}
-	if sequence > d.delivery.LastSequence {
-		d.delivery.LastSequence = sequence
+	if made.Sequence > d.reply.LastSequence {
+		d.reply.LastSequence = made.Sequence
 	}
-	d.delivery.Attempts = 0
+	d.reply.Attempts = 0
 	return nil
 }
 
-func (d *deliveriesInMemory) CompleteSlackDelivery(
+// RecordCollaborationWrite counts the audit record the worker owes for putting a message in
+// somebody's workspace. It is the only write this product makes into a system it does not own,
+// so the test asserts it happens rather than trusting that it does.
+func (d *repliesInMemory) RecordCollaborationWrite(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, where string,
+) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.audited = append(d.audited, where)
+	return nil
+}
+
+func (d *repliesInMemory) CompleteSlackReply(
 	context.Context, tenancy.Organization, uuid.UUID,
 ) error {
 	d.mu.Lock()
@@ -148,27 +192,27 @@ func (d *deliveriesInMemory) CompleteSlackDelivery(
 	return nil
 }
 
-func (d *deliveriesInMemory) RetrySlackDelivery(
+func (d *repliesInMemory) RetrySlackReply(
 	_ context.Context, _ tenancy.Organization, _ uuid.UUID,
 	_ time.Time, note string, giveUp bool,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.retries = append(d.retries, note)
-	d.delivery.Attempts++
+	d.reply.Attempts++
 	d.gaveUp = giveUp
 	return nil
 }
 
-func (d *deliveriesInMemory) Integration(
+func (d *repliesInMemory) Integration(
 	context.Context, tenancy.Organization, uuid.UUID,
 ) (integrations.Integration, error) {
 	return integrations.Integration{
-		ID: d.delivery.Integration, CredentialSealed: d.sealed,
+		ID: d.reply.Integration, CredentialSealed: d.sealed,
 	}, nil
 }
 
-func (d *deliveriesInMemory) Events(
+func (d *repliesInMemory) Events(
 	_ context.Context, _ tenancy.Organization, _ uuid.UUID, after int64, limit int,
 ) ([]investigation.Event, error) {
 	d.mu.Lock()
@@ -182,13 +226,13 @@ func (d *deliveriesInMemory) Events(
 	return found, nil
 }
 
-// answering builds a worker over a fake Slack and an in-memory delivery.
+// answering builds a worker over a fake Slack and an in-memory reply.
 //
-// The credential is really sealed and really opened, because a delivery that could not open
-// its token is a delivery that answers nothing — and stubbing past that would leave the one
+// The credential is really sealed and really opened, because a reply that could not open
+// its token is a reply that answers nothing — and stubbing past that would leave the one
 // failure most likely to happen in production untested.
 func answering(t *testing.T, fake *slackCallLog, events []investigation.Event) (
-	Worker, *deliveriesInMemory,
+	Worker, *repliesInMemory,
 ) {
 	t.Helper()
 
@@ -206,19 +250,20 @@ func answering(t *testing.T, fake *slackCallLog, events []investigation.Event) (
 		t.Fatalf("sealing the bot token: %v", err)
 	}
 
-	state := &deliveriesInMemory{
-		delivery: Delivery{
+	state := &repliesInMemory{
+		reply: Reply{
 			Investigation: uuid.New(), Organization: organization,
-			Integration: integration, Channel: "C0INCIDENTS", Thread: "1700000001.1",
+			Integration: integration,
+			Stream:      Stream{Channel: "C0INCIDENTS", Thread: "1700000001.1"},
 		},
 		events: events,
 		sealed: sealed,
 	}
 	return Worker{
-		Deliveries: state,
-		Client:     NewClient(fake.URL),
-		Sealer:     sealer,
-		Logger:     testLogger(t),
+		Replies: state,
+		Client:  NewClient(fake.URL),
+		Sealer:  sealer,
+		Logger:  testLogger(t),
 	}, state
 }
 
@@ -243,7 +288,7 @@ func TestOneTurnIsOneStreamOpenedOnceAndClosedOnce(t *testing.T) {
 
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn())
-	worker.deliver(context.Background(), state.delivery)
+	worker.answer(context.Background(), state.reply)
 
 	calls := fake.made()
 	if len(calls) == 0 {
@@ -275,7 +320,7 @@ func TestAnAnswerIsCoalescedRatherThanSentPerToken(t *testing.T) {
 	// delta would be rate-limited into failure by its own enthusiasm.
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn())
-	worker.deliver(context.Background(), state.delivery)
+	worker.answer(context.Background(), state.reply)
 
 	if appends := count(fake.made(), "chat.appendStream"); appends > 1 {
 		t.Errorf("one batch produced %d appends; text must be coalesced", appends)
@@ -293,21 +338,21 @@ func TestAWorkerKilledMidStreamResumesRatherThanReposting(t *testing.T) {
 	t.Parallel()
 
 	// The first pass takes the first three events; the process then "dies" and a second
-	// worker picks the delivery up with the cursor where the first left it.
+	// worker picks the reply up with the cursor where the first left it.
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn()[:3])
-	worker.deliver(context.Background(), state.delivery)
+	worker.answer(context.Background(), state.reply)
 
 	first := strings.Join(fake.carried(), "")
 	state.mu.Lock()
 	state.events = aTurn()
-	resumed := state.delivery
+	resumed := state.reply
 	state.mu.Unlock()
 
-	worker.deliver(context.Background(), resumed)
+	worker.answer(context.Background(), resumed)
 
 	if starts := count(fake.made(), "chat.startStream"); starts != 1 {
-		t.Errorf("a resumed delivery opened %d streams; it must continue the one that "+
+		t.Errorf("a resumed reply opened %d streams; it must continue the one that "+
 			"exists, or the thread holds the answer twice", starts)
 	}
 	// What the second pass sent must be what was MISSED, not what was already seen.
@@ -326,7 +371,7 @@ func TestATransientFailureIsRetriedAndAddsNothingTwice(t *testing.T) {
 	worker, state := answering(t, fake, aTurn())
 
 	// The first pass fails before anything visible exists.
-	worker.deliver(context.Background(), state.delivery)
+	worker.answer(context.Background(), state.reply)
 	if len(fake.made()) != 0 {
 		t.Fatalf("a failed open still made visible calls: %v", fake.made())
 	}
@@ -334,13 +379,13 @@ func TestATransientFailureIsRetriedAndAddsNothingTwice(t *testing.T) {
 	if len(state.retries) != 1 {
 		t.Errorf("a transient failure recorded %d retries, want one", len(state.retries))
 	}
-	retry := state.delivery
+	retry := state.reply
 	state.mu.Unlock()
 
 	// The second pass succeeds and produces exactly one stream.
-	worker.deliver(context.Background(), retry)
+	worker.answer(context.Background(), retry)
 	if starts := count(fake.made(), "chat.startStream"); starts != 1 {
-		t.Errorf("a retried delivery opened %d streams, want one", starts)
+		t.Errorf("a retried reply opened %d streams, want one", starts)
 	}
 }
 
@@ -351,17 +396,17 @@ func TestWithoutStreamingOnePlaceholderIsEditedInPlace(t *testing.T) {
 	// channel unreadable and is the reason the stream design exists.
 	fake := newSlackCallLog(t, false)
 	worker, state := answering(t, fake, aTurn()[:3])
-	worker.deliver(context.Background(), state.delivery)
+	worker.answer(context.Background(), state.reply)
 
 	state.mu.Lock()
 	state.events = aTurn()
-	resumed := state.delivery
+	resumed := state.reply
 	state.mu.Unlock()
-	worker.deliver(context.Background(), resumed)
+	worker.answer(context.Background(), resumed)
 
 	calls := fake.made()
 	if posts := count(calls, "chat.postMessage"); posts != 1 {
-		t.Errorf("%d messages were posted; delivery must use ONE placeholder", posts)
+		t.Errorf("%d messages were posted; reply must use ONE placeholder", posts)
 	}
 	if updates := count(calls, "chat.update"); updates == 0 {
 		t.Errorf("the placeholder was never updated: %v", calls)
@@ -379,29 +424,29 @@ func TestWithoutStreamingOnePlaceholderIsEditedInPlace(t *testing.T) {
 func TestGivingUpIsRecordedAgainstTheDeliveryAndNotTheInvestigation(t *testing.T) {
 	t.Parallel()
 
-	// A Slack outage that never clears. The delivery gives up; nothing here can touch the
+	// A Slack outage that never clears. The reply gives up; nothing here can touch the
 	// investigation, which concludes on its own terms and stays complete in the console.
 	fake := newSlackCallLog(t, true)
 	fake.failNext("chat.startStream", 100)
 	worker, state := answering(t, fake, aTurn())
 
 	state.mu.Lock()
-	state.delivery.Attempts = maxAttempts - 1
-	attempt := state.delivery
+	state.reply.Attempts = maxAttempts - 1
+	attempt := state.reply
 	state.mu.Unlock()
 
-	worker.deliver(context.Background(), attempt)
+	worker.answer(context.Background(), attempt)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if !state.gaveUp {
-		t.Error("a delivery past its attempt ceiling did not give up, so it retries forever")
+		t.Error("a reply past its attempt ceiling did not give up, so it retries forever")
 	}
 	if len(state.retries) == 0 || state.retries[0] == "" {
 		t.Error("giving up recorded no reason an operator could read")
 	}
 	if state.completed {
-		t.Error("a failed delivery was marked delivered")
+		t.Error("a failed reply was marked delivered")
 	}
 }
 
@@ -415,7 +460,7 @@ func TestAFailedTurnSaysSoInTheThreadRatherThanGoingQuiet(t *testing.T) {
 		progressed(2, investigation.EventFailed,
 			map[string]any{"reason": "no integration could be read"}),
 	})
-	worker.deliver(context.Background(), state.delivery)
+	worker.answer(context.Background(), state.reply)
 
 	whole := strings.Join(fake.carried(), "")
 	if !strings.Contains(whole, "no integration could be read") {
@@ -448,9 +493,158 @@ func count(values []string, wanted string) int {
 	return found
 }
 
-// testLogger discards, so a failing delivery does not fill the test output with the log
+// testLogger discards, so a failing reply does not fill the test output with the log
 // lines it is supposed to write.
 func testLogger(t *testing.T) *slog.Logger {
 	t.Helper()
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// The author names the worker resolved. A shared thread whose participants all read as U0…
+// has attribution that technically survives and practically does not.
+func (d *repliesInMemory) UnnamedSlackAuthors(
+	context.Context, tenancy.Organization, uuid.UUID,
+) ([]string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.unnamed...), nil
+}
+
+func (d *repliesInMemory) NameSlackAuthor(
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, actor, display string,
+) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.named == nil {
+		d.named = map[string]string{}
+	}
+	d.named[actor] = display
+	return nil
+}
+
+// The window a crash could repost through, closed.
+//
+// The visible message is opened EMPTY and its identity recorded before any content is sent. A
+// process that dies between the two resumes into the message it already opened; one that had
+// posted content with the opening would have content outside the identity's protection, and the
+// resumed pass would say it all again.
+func TestAProcessThatDiesAfterOpeningTheMessageDoesNotRepost(t *testing.T) {
+	t.Parallel()
+
+	fake := newSlackCallLog(t, true)
+	worker, state := answering(t, fake, aTurn())
+
+	// The first pass opens the message and then everything after that fails, which stands
+	// in for the process ending there.
+	fake.failNext("chat.appendStream", 100)
+	worker.answer(context.Background(), state.reply)
+
+	state.mu.Lock()
+	held := state.reply
+	state.mu.Unlock()
+	if !held.Stream.Held() {
+		t.Fatal("the message's identity was not recorded before content was sent, so a " +
+			"crash here would repost")
+	}
+	// Nothing visible was said yet: opening it carried no content.
+	for _, carried := range fake.carried() {
+		if carried != "" {
+			t.Errorf("opening the message carried content: %q", carried)
+		}
+	}
+
+	// The resumed pass opens nothing new and says everything once.
+	fake.failNext("chat.appendStream", 0)
+	worker.answer(context.Background(), held)
+	if starts := count(fake.made(), "chat.startStream"); starts != 1 {
+		t.Errorf("a resumed reply opened %d messages, want the one that exists", starts)
+	}
+}
+
+// Putting a message in somebody else's workspace is on the record.
+func TestAReplyIntoAWorkspaceIsAuditedAsACollaborationWrite(t *testing.T) {
+	t.Parallel()
+
+	fake := newSlackCallLog(t, true)
+	worker, state := answering(t, fake, aTurn())
+	worker.answer(context.Background(), state.reply)
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.audited) != 1 || state.audited[0] != "C0INCIDENTS" {
+		t.Errorf("collaboration writes recorded = %v, want one naming the channel",
+			state.audited)
+	}
+}
+
+// The plan and the reads as they happen, not only the answer at the end.
+func TestTheThreadShowsTheWorkAsItHappens(t *testing.T) {
+	t.Parallel()
+
+	// A turn that has read something and is still working. What a person watching wants is
+	// evidence it is doing something, and one completed read with what it found is that.
+	fake := newSlackCallLog(t, false)
+	worker, state := answering(t, fake, []investigation.Event{
+		progressed(1, investigation.EventStarted, nil),
+		progressed(2, investigation.EventToolStarted, map[string]any{"tool": "github.commits"}),
+		progressed(3, investigation.EventToolCompleted,
+			map[string]any{"summary": "read 40 commits on checkout-api"}),
+	})
+	worker.answer(context.Background(), state.reply)
+
+	shown := strings.Join(fake.carried(), "\n")
+	if !strings.Contains(shown, "read 40 commits on checkout-api") {
+		t.Errorf("a completed read is not in the thread: %q", shown)
+	}
+	if !strings.Contains(shown, "Reading github.commits") {
+		t.Errorf("what it is doing now is not in the thread: %q", shown)
+	}
+}
+
+// A shared thread stays readable: the people in it are named, not numbered.
+func TestTheAuthorsOfAThreadAreNamedRatherThanNumbered(t *testing.T) {
+	t.Parallel()
+
+	fake := newSlackCallLog(t, true)
+	fake.name("U9SRE", "priya")
+	worker, state := answering(t, fake, aTurn())
+	state.mu.Lock()
+	state.reply.Conversation = uuid.New()
+	state.unnamed = []string{"U9SRE"}
+	claimedReply := state.reply
+	state.mu.Unlock()
+
+	worker.answer(context.Background(), claimedReply)
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.named["U9SRE"] != "priya" {
+		t.Errorf("author names resolved to %v, want the workspace's own name for them",
+			state.named)
+	}
+}
+
+// A name that cannot be resolved leaves the identity in place, which still attributes the
+// message. The answer matters more than the label on the question.
+func TestAnUnresolvableNameDoesNotStopTheAnswer(t *testing.T) {
+	t.Parallel()
+
+	fake := newSlackCallLog(t, true)
+	worker, state := answering(t, fake, aTurn())
+	state.mu.Lock()
+	state.reply.Conversation = uuid.New()
+	state.unnamed = []string{"U9GHOST"}
+	claimedReply := state.reply
+	state.mu.Unlock()
+
+	worker.answer(context.Background(), claimedReply)
+
+	if stops := count(fake.made(), "chat.stopStream"); stops != 1 {
+		t.Errorf("an unresolvable author name stopped the answer: %v", fake.made())
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.named) != 0 {
+		t.Errorf("a name that could not be resolved was recorded anyway: %v", state.named)
+	}
 }

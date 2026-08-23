@@ -59,6 +59,13 @@ listener private even when a browser-facing proxy is configured.
 | `OC_SLACK_CLIENT_SECRET_FILE` | For one-click install | File containing the Slack app's OAuth client secret. Without both, Slack is connected with the pasted-token form. |
 | `OC_SLACK_SIGNING_SECRET_FILE` | For the Slack agent | File containing the Slack app's signing secret, which inbound events are verified against. Without it, no events endpoint is served and the integration reports its inbound capabilities as unavailable. Independent of the client credential. |
 | `OC_SLACK_AGENT_ORGANIZATIONS` | No | Comma-separated organizations the Slack agent surface is live for. Unset means none, which is the default. An inbound event for an organization outside it is acknowledged and dropped; reads through the Slack tools are unaffected either way. |
+| `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
+| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
+| `OC_GITHUB_API_URL` | No | GitHub API origin. Use `https://HOST/api/v3` for GitHub Enterprise Server. |
+| `OC_GITHUB_APP_SLUG` | For one-click install | The App's URL slug, from `https://github.com/apps/SLUG`. |
+| `OC_GITHUB_APP_CLIENT_ID` | For one-click install | The App's OAuth client ID. |
+| `OC_GITHUB_APP_CLIENT_SECRET_FILE` | For one-click install | File containing the App's OAuth client secret. |
+| `OC_GITHUB_WEB_URL` | No | GitHub browser origin. Use `https://HOST` for GitHub Enterprise Server. |
 
 The Slack app's request URL is `POST {intake origin}/intake/v1/slack/events`. It is served only
 where `OC_SLACK_SIGNING_SECRET_FILE` is set — a deployment without one serves no events endpoint
@@ -68,13 +75,6 @@ at all rather than one that refuses everything.
 the agent surface can be enabled for one workspace at a time, and it is removed when the surface
 is generally available. It is not the only switch. An organization that has not connected Slack
 does not have Slack, and disabling a Slack integration stops both reading and answering.
-| `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
-| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
-| `OC_GITHUB_API_URL` | No | GitHub API origin. Use `https://HOST/api/v3` for GitHub Enterprise Server. |
-| `OC_GITHUB_APP_SLUG` | For one-click install | The App's URL slug, from `https://github.com/apps/SLUG`. |
-| `OC_GITHUB_APP_CLIENT_ID` | For one-click install | The App's OAuth client ID. |
-| `OC_GITHUB_APP_CLIENT_SECRET_FILE` | For one-click install | File containing the App's OAuth client secret. |
-| `OC_GITHUB_WEB_URL` | No | GitHub browser origin. Use `https://HOST` for GitHub Enterprise Server. |
 
 The GitHub App ID and key file are required together. The slug, client ID, and client
 secret file are required together and enable **Connect GitHub**; without them, GitHub is

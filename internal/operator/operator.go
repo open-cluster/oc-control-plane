@@ -126,6 +126,14 @@ func (h Handlers) Router() (http.Handler, error) {
 // capability that knows what its routes mean, which is what keeps the permission a route needs
 // next to the code that implements it rather than in a list somebody has to remember to edit.
 func (h Handlers) Routes() authz.Table {
+	return h.routesOver(h.capabilities())
+}
+
+// routesOver assembles the table from capabilities that have ALREADY been built, so the
+// route table and the self-description can be produced from one construction of them. See
+// surface: a description assembled from different handler values than the ones being served
+// is the drift the description exists to end, and building them twice is how that happens.
+func (h Handlers) routesOver(built []contributor) authz.Table {
 	const relays = "/operator/v1/organizations/{organization}/relays"
 
 	routes := authz.Table{
@@ -154,7 +162,7 @@ func (h Handlers) Routes() authz.Table {
 
 	routes = append(routes, h.selfDescriptionRoute())
 	routes = append(routes, h.Identity.Routes()...)
-	for _, capability := range h.capabilities() {
+	for _, capability := range built {
 		routes = append(routes, capability.Routes()...)
 	}
 	return routes
@@ -205,7 +213,11 @@ func (h Handlers) capabilities() []contributor {
 }
 
 // surface reports the whole route table together with what each capability said about
-// itself, from one assembly.
+// itself, from ONE construction of the capabilities.
+//
+// That is the enforcement rather than the claim: both halves are read off the same `built`
+// slice, so a description assembled from different handler values than the ones being served
+// is not a state this function can produce.
 func (h Handlers) surface() (authz.Table, []describe.Contribution) {
 	built := h.capabilities()
 	contributions := make([]describe.Contribution, 0, len(built)+2)
@@ -213,7 +225,7 @@ func (h Handlers) surface() (authz.Table, []describe.Contribution) {
 	for _, capability := range built {
 		contributions = append(contributions, capability.Describe())
 	}
-	return h.Routes(), contributions
+	return h.routesOver(built), contributions
 }
 
 // correlated mints a request identifier and binds it to the response and the context.

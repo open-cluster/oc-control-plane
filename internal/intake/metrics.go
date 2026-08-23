@@ -3,6 +3,7 @@ package intake
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -41,6 +42,10 @@ type instruments struct {
 	// or an app registration that has been rotated; a rising duplicate count is Slack
 	// retrying, which means our answer is not reaching it.
 	slackEvents metric.Int64Counter
+	// slackLatency is how long acknowledgement took. Slack retries anything it is not
+	// answered inside three seconds, so a deployment drifting towards that ceiling is a
+	// retry storm it is asking for — and no counter of outcomes would show it coming.
+	slackLatency metric.Float64Histogram
 }
 
 // The attribute keys, declared once so a typo is a compile error rather than a second time series
@@ -84,7 +89,22 @@ func newInstruments(logger *slog.Logger) instruments {
 		metric.WithUnit("{event}")); err != nil {
 		logger.Warn("intake slack metric unavailable", slog.String("error", err.Error()))
 	}
+	if built.slackLatency, err = meter.Float64Histogram("oc.intake.slack_acknowledgement",
+		metric.WithDescription(
+			"How long acknowledging one Slack event took, against the vendor's own timeout."),
+		metric.WithUnit("s")); err != nil {
+		logger.Warn("intake slack latency metric unavailable",
+			slog.String("error", err.Error()))
+	}
 	return built
+}
+
+// observeSlackLatency records how long acknowledgement took.
+func (i instruments) observeSlackLatency(ctx context.Context, took time.Duration) {
+	if i.slackLatency == nil {
+		return
+	}
+	i.slackLatency.Record(ctx, took.Seconds())
 }
 
 // countSlackEvent records what happened to one inbound Slack event. The disposition is one
@@ -175,4 +195,10 @@ const (
 	slackOutsideRollout = "outside_rollout"
 	slackDisabled       = "disabled"
 	slackUnavailable    = "unavailable"
+	// slackRateLimited is a workspace shedding load, and slackQueued is a message
+	// persisted behind an organization's own ceiling on unclaimed turns. Neither is a
+	// failure, and both are counted so that "we are deliberately slowing down" can be told
+	// from "we are broken".
+	slackRateLimited = "rate_limited"
+	slackQueued      = "queued"
 )

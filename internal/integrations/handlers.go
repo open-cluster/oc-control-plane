@@ -466,9 +466,11 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				return
 			}
 
+			// nil installation: a credential typed into the configuration form names no
+			// vendor installation, so there is no routing record to refresh.
 			revised, err := h.Store.ReplaceIntegrationCredential(
 				ctx, principal, organization, id, Revision(asked), sealed, fingerprint,
-				verification)
+				verification, nil)
 			if err != nil {
 				h.fail(writer, request, err)
 				return
@@ -737,6 +739,12 @@ func checkConfiguration(
 		if !declared {
 			return nil, "", "configuration field " + strconv.Quote(name) +
 				" is not one " + definition.Name + " declares"
+		}
+		if field.Recorded {
+			// Written by the installation flow and never by a caller. Refused rather than
+			// ignored: a value silently dropped is a caller who believes they set it.
+			return nil, "", "configuration field " + strconv.Quote(name) +
+				" is recorded by the connect flow and cannot be set"
 		}
 		if field.Secret {
 			pasted, isText := value.(string)

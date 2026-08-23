@@ -29,13 +29,6 @@ type Store interface {
 	IntegrationByID(ctx context.Context, id uuid.UUID) (Integration, error)
 	// Integration reads one, scoped to the tenant.
 	Integration(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Integration, error)
-	// RecordInstallation writes or refreshes the routing record an inbound event resolves
-	// through, for an Integration that already exists. The create path writes it in the
-	// transaction that writes the row; this is the reconnect path's half, because
-	// authorizing again can issue a new agent identity and change what was granted — and
-	// the agent identity is what stops the agent answering itself.
-	RecordInstallation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		typeID TypeID, installed Installation) error
 	// IntegrationConfiguredAs resolves the Integration of one type in this organization
 	// whose configuration is exactly the one given, and reports ErrUnknown when none is.
 	// It is what makes connecting the same installation twice a re-verification rather
@@ -71,13 +64,16 @@ type Store interface {
 	RecordCredentialUnseal(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		purpose string) error
 	// ReplaceIntegrationCredential swaps the sealed outbound credential, applies the
-	// revision it travelled with, and records what the probe of the new one established —
-	// all in one transaction, so a refusal anywhere leaves nothing half-applied. Only an
-	// Integration already holding a credential accepts one: a replacement, never an
-	// acquisition.
+	// revision it travelled with, records what the probe of the new one established, and
+	// refreshes the routing record when the flow brought one — all in one transaction, so
+	// a refusal anywhere leaves nothing half-applied. Only an Integration already holding
+	// a credential accepts one: a replacement, never an acquisition.
+	//
+	// installed is nil for a type that routes no inbound events, and for a credential
+	// pasted into the configuration form, which names no installation.
 	ReplaceIntegrationCredential(ctx context.Context, who authz.Principal,
 		org tenancy.Organization, id uuid.UUID, revision Revision, sealed []byte,
-		fingerprint string, verification Verification) (Integration, error)
+		fingerprint string, verification Verification, installed *Installation) (Integration, error)
 	// RecordIntegrationVerification writes what a verify run established onto the record.
 	RecordIntegrationVerification(ctx context.Context, who authz.Principal,
 		org tenancy.Organization, id uuid.UUID, verification Verification) (Integration, error)

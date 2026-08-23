@@ -225,3 +225,74 @@ func (p *Placements) SlackThreadOf(
 	}
 	return channel, thread, integration, true, nil
 }
+
+// UnnamedSlackAuthors reports the Slack identities in one conversation that are still recorded
+// under their raw identifier.
+//
+// It exists because resolving a name costs a call to the vendor, and the ONE place that must
+// not make one is the endpoint that acknowledges an event: Slack retries anything it is not
+// answered inside three seconds, and a users.info on that path is a vendor outage becoming a
+// retry storm. So the message is recorded under the identity it arrived with, and the worker
+// that answers — which already holds the credential and is under no deadline anybody sees —
+// resolves it afterwards.
+func (p *Placements) UnnamedSlackAuthors(
+	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+) ([]string, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT DISTINCT actor_id
+		  FROM conversation_message
+		 WHERE org_id = $1 AND conversation_id = $2
+		   AND actor_kind = $3 AND actor_id <> '' AND actor_display = actor_id`,
+		organization.String(), conversationID, int16(conversation.ActorExternal))
+	if err != nil {
+		return nil, fmt.Errorf("reading unnamed slack authors: %w", err)
+	}
+	defer rows.Close()
+
+	var unnamed []string
+	for rows.Next() {
+		var actor string
+		if err := rows.Scan(&actor); err != nil {
+			return nil, fmt.Errorf("scanning an unnamed slack author: %w", err)
+		}
+		unnamed = append(unnamed, actor)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading unnamed slack authors: %w", err)
+	}
+	return unnamed, nil
+}
+
+// NameSlackAuthor records what one Slack identity is called, on every message they wrote in
+// this conversation.
+//
+// The identity is never replaced, only named beside itself. Attribution has to survive a
+// display name changing or a name that cannot be resolved at all, and the identifier is the
+// half that does.
+func (p *Placements) NameSlackAuthor(
+	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+	actor, display string,
+) error {
+	if display == "" || display == actor {
+		return nil
+	}
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return err
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_message
+		   SET actor_display = $4
+		 WHERE org_id = $1 AND conversation_id = $2
+		   AND actor_kind = $5 AND actor_id = $3`,
+		organization.String(), conversationID, actor,
+		conversation.Bounded(display, conversation.MaxActorDisplayLength),
+		int16(conversation.ActorExternal)); err != nil {
+		return fmt.Errorf("naming a slack author: %w", err)
+	}
+	return nil
+}

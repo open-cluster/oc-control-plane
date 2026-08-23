@@ -12,11 +12,15 @@
 --
 -- Migrations are forward-only and append-only. An applied migration is never edited.
 
-CREATE TABLE IF NOT EXISTS slack_delivery
+CREATE TABLE IF NOT EXISTS slack_reply
 (
     investigation_id UUID        NOT NULL PRIMARY KEY,
     org_id           TEXT        NOT NULL CHECK (length(org_id) BETWEEN 1 AND 128),
     integration_id   UUID        NOT NULL,
+
+    -- The thread's conversation. Carried so the worker can name the people in it without a
+    -- second lookup, and because a reply belongs to a conversation as much as to a thread.
+    conversation_id  UUID        NOT NULL,
 
     channel_id       TEXT        NOT NULL CHECK (length(channel_id) BETWEEN 1 AND 64),
     thread_ts        TEXT        NOT NULL CHECK (length(thread_ts) BETWEEN 1 AND 64),
@@ -30,7 +34,7 @@ CREATE TABLE IF NOT EXISTS slack_delivery
     -- a placeholder that is REPLACED. A resumed delivery must not guess — appending to a
     -- placeholder would erase the answer, and replacing a stream would repeat it — so it is
     -- recorded at the same moment the message's identity is.
-    streaming        BOOLEAN     NOT NULL DEFAULT FALSE,
+    native        BOOLEAN     NOT NULL DEFAULT FALSE,
 
     -- 1 pending, 2 delivering, 3 delivered, 4 failed. Failed is TERMINAL for the delivery and
     -- says nothing about the investigation, which has its own status.
@@ -56,11 +60,11 @@ CREATE TABLE IF NOT EXISTS slack_delivery
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT slack_delivery_investigation_is_in_the_same_org
+    CONSTRAINT slack_reply_investigation_is_in_the_same_org
         FOREIGN KEY (org_id, investigation_id)
             REFERENCES investigation (org_id, investigation_id) ON DELETE CASCADE,
 
-    CONSTRAINT slack_delivery_integration_is_in_the_same_org
+    CONSTRAINT slack_reply_integration_is_in_the_same_org
         FOREIGN KEY (org_id, integration_id)
             REFERENCES integration (org_id, integration_id) ON DELETE CASCADE
 );
@@ -68,9 +72,9 @@ CREATE TABLE IF NOT EXISTS slack_delivery
 -- What the worker asks for: deliveries that are due, oldest first. Partial, because a
 -- delivered or permanently failed one is never claimed again and has no business in the index
 -- a hot loop scans.
-CREATE INDEX IF NOT EXISTS slack_delivery_due
-    ON slack_delivery (next_attempt_at, investigation_id)
+CREATE INDEX IF NOT EXISTS slack_reply_due
+    ON slack_reply (next_attempt_at, investigation_id)
     WHERE status IN (1, 2);
 
-COMMENT ON TABLE slack_delivery IS
+COMMENT ON TABLE slack_reply IS
     'Outbound delivery of one investigation into one Slack thread. Its cursor only moves forward, so a retry appends what was missed rather than reposting what was seen. A failure here is never a failure of the investigation.';

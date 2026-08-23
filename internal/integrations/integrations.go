@@ -70,6 +70,14 @@ type Field struct {
 	// declaring one must declare a Probe, because the only honest check of a credential is
 	// presenting it to the provider.
 	Secret bool
+	// Recorded marks a value the INSTALLATION FLOW writes and a caller never may. It is
+	// declared so that an operator reading the record can see it and a schema can describe
+	// it, and it is refused on the way in — a field that only a proven connect can set
+	// must not be typeable, or a claim the flow established becomes a claim anybody with
+	// update permission can assert.
+	//
+	// The rendered schema says readOnly, which is exactly what it means.
+	Recorded bool
 	// Enum closes a field to a named set.
 	Enum []string
 	// Default is what the field means when it is left out.
@@ -178,7 +186,6 @@ type Definition struct {
 	Connect *Connect
 }
 
-// ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
 // documentationSite is where this product's own documentation is published. One constant,
 // beside the schema $id's origin above, because the site is the product's and not a
 // deployment's: a self-hosted install reads the same published pages.
@@ -200,6 +207,7 @@ func (d Definition) ProductDocumentationURL() string {
 	return documentationSite + "/integrations/" + string(d.Category) + "/" + d.Key
 }
 
+// ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
 func (d Definition) ConfigurationSchema() json.RawMessage {
 	properties := make(map[string]any, len(d.Config))
 	required := make([]string, 0, len(d.Config))
@@ -221,6 +229,9 @@ func (d Definition) ConfigurationSchema() json.RawMessage {
 		}
 		if field.Secret {
 			property["writeOnly"] = true
+		}
+		if field.Recorded {
+			property["readOnly"] = true
 		}
 		properties[field.Name] = property
 		if field.Required {

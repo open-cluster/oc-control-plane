@@ -161,7 +161,7 @@ func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 	}
 	var rows int
 	if err := pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM slack_installation WHERE integration_id = $1`,
+		`SELECT count(*) FROM integration_installation WHERE integration_id = $1`,
 		created.ID).Scan(&rows); err != nil {
 		t.Fatalf("counting installations: %v", err)
 	}

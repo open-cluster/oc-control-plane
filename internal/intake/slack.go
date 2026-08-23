@@ -89,6 +89,13 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
+	// Acknowledgement latency is MEASURED rather than reasoned about. Slack retries
+	// anything it is not answered inside three seconds, so a deployment drifting towards
+	// that ceiling is a retry storm this product would be asking for — and nobody would
+	// see it coming from a counter of outcomes.
+	began := time.Now()
+	defer func() { h.counters.observeSlackLatency(ctx, time.Since(began)) }()
+
 	// The raw body, exactly as received and under the same bound every other delivery is
 	// read under. It must not be re-encoded before the signature is checked: a body round
 	// -tripped through a decoder is a different body, and verifying that one would be
@@ -164,6 +171,21 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
+	// The same per-source limit every other inbound delivery is held to, applied once the
+	// SOURCE is known. It is after resolution rather than before because the work worth
+	// bounding is the writes, and because there is no source to attribute a request to
+	// until its signature has been checked against an installation this deployment knows.
+	if !h.deliveries.allow(integration.ID) {
+		// Shed rather than refused. Slack is told to slow down, not to stop, because the
+		// questions behind this one are real and it should still send them. Nothing is
+		// written to the delivery history, exactly as the alert path writes nothing: a
+		// limiter that cost a row per shed request would be a limiter that amplifies.
+		h.counters.countSlackEvent(ctx, slackRateLimited)
+		writer.Header().Set("Retry-After", "1")
+		writeStatus(writer, http.StatusTooManyRequests, "slow down")
+		return
+	}
+
 	// Everything from here is ACKNOWLEDGED whatever happens to it. Slack retries anything it
 	// is not told succeeded, and retrying an event this build deliberately ignores would be
 	// a storm this deployment asked for.
@@ -227,6 +249,10 @@ func (h *surface) acceptSlackMessage(
 		// retrying because it never saw our answer — which has done nothing wrong and whose
 		// answer must let it stop — and a body replayed by somebody who captured it, which
 		// is applied to nothing for the same reason.
+		//
+		// Recorded in the delivery history, so a source that is delivering and being turned
+		// away stays distinguishable from one that has gone quiet.
+		h.recordAttempt(ctx, organization, integration, storage.DeliveryDuplicate)
 		h.counters.countSlackEvent(ctx, slackDuplicate)
 		writeStatus(writer, http.StatusOK, "already accepted")
 		return
@@ -240,6 +266,18 @@ func (h *surface) acceptSlackMessage(
 	// queued, and the drain at the running turn's terminal boundary takes it up — which is
 	// exactly what should happen to somebody who asks a second question while the first is
 	// still being worked on.
+	if h.atCapacity(ctx, organization) {
+		// This organization already holds its limit of unclaimed turns. The message is
+		// PERSISTED and queued rather than refused — somebody asked it in good faith — and
+		// the drain takes it up when there is room. Overload is a queue that stops growing,
+		// not one that grows without bound.
+		h.counters.countSlackEvent(ctx, slackQueued)
+		h.Logger.InfoContext(ctx, "a slack message is queued behind this organization's limit",
+			slog.String("org_id", organization.String()),
+			slog.String("conversation_id", outcome.Conversation.String()))
+		writeStatus(writer, http.StatusOK, "accepted")
+		return
+	}
 	if _, opened, err := h.Placements.OpenTurn(ctx, organization, outcome.Conversation,
 		h.Slack.WindowLead); err != nil {
 		h.Logger.ErrorContext(ctx, "opening a turn for a slack message failed",
@@ -259,4 +297,24 @@ func (h *surface) acceptSlackMessage(
 		slog.String("conversation_id", outcome.Conversation.String()),
 		slog.Bool("opened_conversation", outcome.Opened))
 	writeStatus(writer, http.StatusOK, "accepted")
+}
+
+// atCapacity reports that this organization already holds its limit of unclaimed turns.
+//
+// A read that fails is answered as NOT at capacity. The alternative — treating an unreadable
+// count as full — would turn a transient database hiccup into a workspace whose questions stop
+// being worked on, which is a worse failure than briefly exceeding a ceiling that exists to
+// bound a queue.
+func (h *surface) atCapacity(ctx context.Context, organization tenancy.Organization) bool {
+	if h.Slack.MaxWaitingTurns <= 0 {
+		return false
+	}
+	waiting, err := h.Placements.WaitingTurns(ctx, organization)
+	if err != nil {
+		h.Logger.ErrorContext(ctx, "counting this organization's waiting turns failed",
+			slog.String("org_id", organization.String()),
+			slog.String("error", err.Error()))
+		return false
+	}
+	return waiting >= h.Slack.MaxWaitingTurns
 }

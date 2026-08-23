@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -67,7 +68,7 @@ func claimed(
 ) {
 	t.Helper()
 
-	held, err := placements.ClaimSlackDeliveries(context.Background(), 10, lease)
+	held, err := placements.ClaimSlackReplies(context.Background(), 10, lease)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	investigation, integration := aSlackTurn(t, placements, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 
-	claimed, err := placements.ClaimSlackDeliveries(context.Background(), 10, time.Minute)
+	claimed, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -101,11 +102,11 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 		t.Errorf("the delivery names %s through %s, want %s through %s",
 			one.Investigation, one.Integration, investigation, integration)
 	}
-	if one.Channel != "C0INCIDENTS" || one.Thread != "1700000001.1" {
+	if one.Stream.Channel != "C0INCIDENTS" || one.Stream.Thread != "1700000001.1" {
 		t.Errorf("the delivery answers into %s/%s, want the thread the question was asked in",
-			one.Channel, one.Thread)
+			one.Stream.Channel, one.Stream.Thread)
 	}
-	if one.StreamTS != "" || one.LastSequence != 0 {
+	if one.Stream.TS != "" || one.LastSequence != 0 {
 		t.Errorf("a fresh delivery already claims progress: %+v", one)
 	}
 }
@@ -136,7 +137,7 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 		t.Fatalf("opening its turn: %v", err)
 	}
 
-	claimed, err := placements.ClaimSlackDeliveries(context.Background(), 10, time.Minute)
+	claimed, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -153,11 +154,11 @@ func TestAClaimedDeliveryIsNotClaimedTwice(t *testing.T) {
 	placements, organization := migratedPlacement(t)
 	aSlackTurn(t, placements, organization, "T0ACME", "C0INCIDENTS", "1700000001.1")
 
-	first, err := placements.ClaimSlackDeliveries(context.Background(), 10, time.Minute)
+	first, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("the first claim = %+v, %v", first, err)
 	}
-	second, err := placements.ClaimSlackDeliveries(context.Background(), 10, time.Minute)
+	second, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil {
 		t.Fatalf("the second claim: %v", err)
 	}
@@ -177,17 +178,17 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	ctx := context.Background()
 	claimed(t, placements, investigation, time.Minute)
 
-	if err := placements.AdvanceSlackDelivery(ctx, organization, investigation,
-		"1700000100.100", true, 12); err != nil {
+	if err := placements.AdvanceSlackReply(ctx, organization, investigation,
+		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 12}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
 	// A later pass that somehow read an older batch must not undo it.
-	if err := placements.AdvanceSlackDelivery(ctx, organization, investigation,
-		"1700000100.100", true, 4); err != nil {
+	if err := placements.AdvanceSlackReply(ctx, organization, investigation,
+		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 4}); err != nil {
 		t.Fatalf("advancing backwards: %v", err)
 	}
 
-	_, sequence, streamTS, _, found, err := placements.SlackDeliveryState(ctx,
+	_, sequence, streamTS, _, found, err := placements.SlackReplyState(ctx,
 		organization, investigation)
 	if err != nil || !found {
 		t.Fatalf("reading the delivery = %v, found=%v", err, found)
@@ -197,11 +198,11 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	}
 	// And the visible message's identity is written once. A second identity would be a
 	// second message in the thread.
-	if err := placements.AdvanceSlackDelivery(ctx, organization, investigation,
-		"1700000999.999", true, 13); err != nil {
+	if err := placements.AdvanceSlackReply(ctx, organization, investigation,
+		slack.Progress{Stream: slack.Stream{TS: "1700000999.999", Native: true}, Sequence: 13}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
-	_, _, again, _, _, err := placements.SlackDeliveryState(ctx, organization, investigation)
+	_, _, again, _, _, err := placements.SlackReplyState(ctx, organization, investigation)
 	if err != nil {
 		t.Fatalf("reading the delivery: %v", err)
 	}
@@ -219,23 +220,23 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 	ctx := context.Background()
 	claimed(t, placements, investigation, time.Minute)
 
-	if err := placements.RetrySlackDelivery(ctx, organization, investigation,
+	if err := placements.RetrySlackReply(ctx, organization, investigation,
 		time.Now(), "slack would not open the reply", true); err != nil {
 		t.Fatalf("giving up: %v", err)
 	}
 
-	status, _, _, note, found, err := placements.SlackDeliveryState(ctx, organization, investigation)
+	status, _, _, note, found, err := placements.SlackReplyState(ctx, organization, investigation)
 	if err != nil || !found {
 		t.Fatalf("reading the delivery = %v, found=%v", err, found)
 	}
-	if status != storage.SlackDeliveryFailed {
+	if status != storage.SlackReplyFailed {
 		t.Errorf("status = %d, want failed", status)
 	}
 	if note == "" {
 		t.Error("giving up recorded no reason an operator could read")
 	}
 	// And it is never claimed again, because there is nothing left to try.
-	claimed, err := placements.ClaimSlackDeliveries(ctx, 10, time.Minute)
+	claimed, err := placements.ClaimSlackReplies(ctx, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -267,10 +268,10 @@ func TestADeliveredAnswerIsNeverClaimedAgain(t *testing.T) {
 	// again is its STATE rather than a lease that has not run out yet.
 	claimed(t, placements, investigation, -time.Second)
 
-	if err := placements.CompleteSlackDelivery(ctx, organization, investigation); err != nil {
+	if err := placements.CompleteSlackReply(ctx, organization, investigation); err != nil {
 		t.Fatalf("completing: %v", err)
 	}
-	claimed, err := placements.ClaimSlackDeliveries(ctx, 10, time.Minute)
+	claimed, err := placements.ClaimSlackReplies(ctx, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}

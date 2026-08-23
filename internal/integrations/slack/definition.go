@@ -43,8 +43,11 @@ var surfaceCapabilities = []string{
 }
 
 // inboundCapabilities are the ones that need an app installation to route events to and a
-// deployment that serves the events endpoint.
-var inboundCapabilities = []string{AgentConversations, Mentions, ThreadReplies}
+// deployment that serves the events endpoint. A set rather than a list, because the only
+// question ever asked of it is membership.
+var inboundCapabilities = map[string]bool{
+	AgentConversations: true, Mentions: true, ThreadReplies: true,
+}
 
 // Definition is what this provider exports to the catalog. Metadata mirrors the seeded
 // integration_type row; a test proves the two agree.
@@ -91,13 +94,19 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 					"recorded by the connect flow. Not a secret, and not something to " +
 					"fill in by hand.",
 				Type: integrations.FieldString,
+				// Its PRESENCE is what says this integration is an app installation
+				// rather than a pasted credential, and the capability report reads it.
+				// If it could be typed, an operator could make a pasted token claim an
+				// agent that will never answer.
+				Recorded: true,
 			},
 			{
 				Name:  AppIDField,
 				Title: "Slack app ID",
 				Description: "The Slack app the workspace installed, recorded by the " +
 					"connect flow.",
-				Type: integrations.FieldString,
+				Type:     integrations.FieldString,
+				Recorded: true,
 			},
 		},
 		RequiresRelay:    false,
@@ -111,7 +120,7 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 
 	// Assigned after the value exists so the closure can call the generic join on it. The
 	// closure captures the variable, so it sees this assignment — and it calls
-	// GrantedCapabilityStates, which ignores the override and therefore cannot recurse.
+	// GrantedAvailability, which ignores the override and therefore cannot recurse.
 	definition.CapabilityStates = func(
 		found integrations.Integration,
 	) []integrations.CapabilityAvailability {
@@ -171,7 +180,7 @@ func capabilityStates(
 			}
 			continue
 		}
-		if !isInbound(state.Capability) {
+		if !inboundCapabilities[state.Capability] {
 			continue
 		}
 		switch {
@@ -193,15 +202,6 @@ func capabilityStates(
 		}
 	}
 	return states
-}
-
-func isInbound(capability string) bool {
-	for _, inbound := range inboundCapabilities {
-		if inbound == capability {
-			return true
-		}
-	}
-	return false
 }
 
 func unavailable(capability, because string) integrations.CapabilityAvailability {
