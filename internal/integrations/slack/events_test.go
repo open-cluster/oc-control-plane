@@ -17,7 +17,10 @@ import (
 // exist for: a body mutated after signing, a wrong secret, a missing signature and a stale
 // timestamp are each refused, and none of them is refused in a way that says which.
 
-const testSigningSecret = "8f742231b10e8888abcd99yyyzzz85a5"
+// Wordy on purpose, and never a hex-looking literal. Nothing here parses the secret — it is
+// HMAC key material and any bytes work — so a fixture that RESEMBLES a credential buys
+// nothing and costs a red secret-scanning gate, which is how a real leak comes to be ignored.
+const testSigningSecret = "a-signing-secret-that-is-not-one"
 
 func signed(t *testing.T, secret string, at time.Time, body string) (string, string) {
 	t.Helper()
