@@ -342,3 +342,90 @@ func TestLoad_GitHubClientSecretNeverAppearsInAnError(t *testing.T) {
 		t.Errorf("the error %q does not name the variable to fix", err)
 	}
 }
+
+// The Slack app is deployment configuration and follows the same rule the GitHub one
+// does: variables name FILES, never secret values, and a half-configured flow is refused
+// at startup rather than offered as a button that cannot finish.
+func TestLoad_SlackInstallationFlowIsBothHalvesOrNeither(t *testing.T) {
+	t.Parallel()
+
+	secretFile := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(secretFile, []byte("slack-client-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signingFile := filepath.Join(t.TempDir(), "signing-secret")
+	if err := os.WriteFile(signingFile, []byte("slack-signing-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	whole := validEnvironment(t)
+	whole[config.EnvSlackClientID] = "4444.5555"
+	whole[config.EnvSlackClientSecretFile] = secretFile
+	whole[config.EnvSlackSigningSecretFile] = signingFile
+
+	cfg, err := config.Load(lookupFrom(whole))
+	if err != nil {
+		t.Fatalf("a whole slack app must load: %v", err)
+	}
+	if cfg.SlackClientID != "4444.5555" {
+		t.Errorf("the client id did not load: %q", cfg.SlackClientID)
+	}
+	if cfg.SlackClientSecret != "slack-client-secret" {
+		t.Error("the client secret came from somewhere other than its file")
+	}
+	if cfg.SlackSigningSecret != "slack-signing-secret" {
+		t.Error("the signing secret came from somewhere other than its file")
+	}
+
+	partial := validEnvironment(t)
+	partial[config.EnvSlackClientID] = "4444.5555"
+	if _, err := config.Load(lookupFrom(partial)); err == nil {
+		t.Error("half a client credential configured a connect button that cannot finish")
+	}
+
+	// A deployment that registered no Slack app is the self-hosted path: it must load,
+	// and it keeps the pasted-token form.
+	if cfg, err := config.Load(lookupFrom(validEnvironment(t))); err != nil {
+		t.Errorf("a deployment with no slack app must load: %v", err)
+	} else if cfg.SlackClientID != "" || cfg.SlackSigningSecret != "" {
+		t.Error("a slack app appeared from nowhere")
+	}
+}
+
+// The signing secret stands alone. It serves the events endpoint, not the connect flow, so
+// a deployment may hold one without a client credential — and an air-gapped install that
+// pasted a token can still receive events.
+func TestLoad_SlackSigningSecretIsIndependentOfTheConnectFlow(t *testing.T) {
+	t.Parallel()
+
+	signingFile := filepath.Join(t.TempDir(), "signing-secret")
+	if err := os.WriteFile(signingFile, []byte("only-the-signing-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment := validEnvironment(t)
+	environment[config.EnvSlackSigningSecretFile] = signingFile
+
+	cfg, err := config.Load(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("a signing secret without a connect flow must load: %v", err)
+	}
+	if cfg.SlackSigningSecret != "only-the-signing-secret" {
+		t.Errorf("the signing secret did not load: %q", cfg.SlackSigningSecret)
+	}
+}
+
+func TestLoad_SlackSecretsNeverAppearInAnError(t *testing.T) {
+	t.Parallel()
+
+	environment := validEnvironment(t)
+	environment[config.EnvSlackClientID] = "4444.5555"
+	environment[config.EnvSlackClientSecretFile] = filepath.Join(t.TempDir(), "absent")
+
+	_, err := config.Load(lookupFrom(environment))
+	if err == nil {
+		t.Fatal("a client secret file that does not exist must be refused")
+	}
+	if !strings.Contains(err.Error(), config.EnvSlackClientSecretFile) {
+		t.Errorf("the error %q does not name the variable to fix", err)
+	}
+}

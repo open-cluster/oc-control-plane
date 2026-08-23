@@ -278,6 +278,16 @@ func (h Handlers) deleteSCIMGroup(writer http.ResponseWriter, request *http.Requ
 // mapSCIMGroupToRole is the administrator's decision, and it is NOT a SCIM route: it is on the
 // operator surface behind identity.configure, because it is the one thing here a directory must
 // not be able to do.
+// groupRoleRequest is what a directory group is mapped to. Named rather than anonymous so
+// the deployment's self-description can publish its shape: an anonymous struct has nothing
+// for a document to point at, and a client would be left to discover the field by being
+// refused.
+type groupRoleRequest struct {
+	// Role is what membership of this group grants here. Empty UNMAPS the group, which is
+	// how an administrator withdraws what it grants.
+	Role string `json:"role"`
+}
+
 func (h Handlers) mapSCIMGroupToRole(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -291,9 +301,7 @@ func (h Handlers) mapSCIMGroupToRole(writer http.ResponseWriter, request *http.R
 	if !ok {
 		return
 	}
-	var body struct {
-		Role string `json:"role"`
-	}
+	var body groupRoleRequest
 	if !decode(writer, request, &body) {
 		return
 	}

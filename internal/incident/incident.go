@@ -128,6 +128,15 @@ type Episode struct {
 	Organization string
 	// Integration is the installation the Signals arrived through.
 	Integration uuid.UUID
+	// IntegrationName is what that installation is called, resolved by the read that
+	// returned this episode. The identity is what a link is built from and this is what a
+	// person reads, so both travel: a responder arriving from their own alerting wants to
+	// know whether to go and look at Alertmanager or at something else.
+	//
+	// Empty where the name could not be resolved, which is the honest rendering of that
+	// case rather than a placeholder. Unreachable through the API today, because deleting
+	// an integration an episode references is refused.
+	IntegrationName string
 	// GroupingKey is the source's own identity for what belongs together. It is shown to an
 	// operator because it is the answer to "why are these one incident", and it is untrusted text
 	// like everything else a customer's system produced.

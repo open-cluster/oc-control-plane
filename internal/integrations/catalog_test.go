@@ -76,3 +76,39 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 		t.Fatalf("a duplicate argument name must fail assembly by name, got %v", err)
 	}
 }
+
+// OUR DOCUMENTATION PAGE, DERIVED FROM WHAT THE DEFINITION ALREADY KNOWS.
+//
+// Every type named the vendor's documentation and none named ours, so the page carrying the
+// receiver YAML, the header name and the version floor existed, was accurate, and was
+// unreachable from the product.
+
+func TestTheProductDocumentationURLIsDerivedFromTheDefinition(t *testing.T) {
+	t.Parallel()
+
+	// The path the documentation gate already asserts a page exists at: the role
+	// directory is the Category and the page is the Key. Derived rather than declared, so
+	// a hand-written URL cannot drift away from the page it names.
+	definition := Definition{Key: "slack", Category: CategoryCollaboration}
+	const want = "https://docs.opencluster.dev/integrations/collaboration/slack"
+	if got := definition.ProductDocumentationURL(); got != want {
+		t.Errorf("ProductDocumentationURL() = %q, want %q", got, want)
+	}
+}
+
+func TestAnIncompleteDefinitionNamesNoDocumentationPage(t *testing.T) {
+	t.Parallel()
+
+	// A URL composed from a missing half would point at a page that cannot exist, and
+	// sending an operator to a 404 is worse than sending them nowhere. Unreachable
+	// through the catalog, which refuses an assembly missing either, and answered here so
+	// the composition is total.
+	for name, definition := range map[string]Definition{
+		"no key":      {Category: CategoryCollaboration},
+		"no category": {Key: "slack"},
+	} {
+		if got := (definition).ProductDocumentationURL(); got != "" {
+			t.Errorf("%s composed %q", name, got)
+		}
+	}
+}

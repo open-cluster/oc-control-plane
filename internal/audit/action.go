@@ -74,4 +74,10 @@ const (
 	// Authorization itself. A refusal is on the record because credential probing is only
 	// visible if the attempts that failed are visible too.
 	ActionAuthorizationRefused Action = "authorization.refused"
+
+	// A COLLABORATION WRITE: OpenCluster answering in a customer's own chat surface. It is
+	// the only thing this product writes into a system it does not own, so it is recorded
+	// under a word of its own — deliberately distinct from an external read, and firmly
+	// distinct from a production or remediation write, which remain unsupported.
+	ActionCollaborationReplied Action = "collaboration.replied"
 )

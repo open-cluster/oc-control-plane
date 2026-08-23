@@ -34,7 +34,28 @@ type CapabilityAvailability struct {
 // Availability reports every capability the definition declares, with whether this
 // integration's recorded grants support it. Every declared capability is reported, present
 // or absent — a caller rendering only what came back would silently omit one.
+//
+// A provider that declares its own judgement gets it. That is not an escape hatch: some
+// availability genuinely cannot be seen from the integration row — whether this deployment
+// registered an application with the vendor is deployment configuration, not a grant — and
+// the alternative is a capability reported as working that will never answer.
 func Availability(
+	definition Definition, integration Integration,
+) []CapabilityAvailability {
+	if definition.CapabilityStates != nil {
+		return definition.CapabilityStates(integration)
+	}
+	return GrantedAvailability(definition, integration)
+}
+
+// GrantedAvailability is the same rule with any provider override ignored: the join over
+// verified grants and nothing else.
+//
+// Exported so a provider WITH an override builds on it rather than reimplementing it. The
+// deployment-shaped part is usually one or two capabilities and the rest is this ordinary
+// join, which must not be written twice and left to drift. It does not dispatch, so an
+// override calling it cannot recurse.
+func GrantedAvailability(
 	definition Definition, integration Integration,
 ) []CapabilityAvailability {
 	recorded := recordedGrants(integration)

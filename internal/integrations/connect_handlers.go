@@ -55,6 +55,10 @@ const (
 	// answer. Nothing is created, and verifying the record again is what tells an operator
 	// more.
 	outcomeUnverified connectOutcome = "unverified"
+	// outcomeWorkspaceTaken is a vendor workspace another Integration in this deployment
+	// is already installed in. It says nothing about WHERE the other one is: an
+	// organization is not a fact a caller in a different one may learn.
+	outcomeWorkspaceTaken connectOutcome = "workspace-taken"
 )
 
 // status is the answer where there is no console to send the browser to.
@@ -76,6 +80,9 @@ func (o connectOutcome) note() string {
 	case outcomeUnverified:
 		return "the association was proven and the provider did not then answer, so " +
 			"nothing was connected; start again"
+	case outcomeWorkspaceTaken:
+		return "that workspace is already connected to OpenCluster, so nothing was " +
+			"connected; disconnect it there before connecting it here"
 	default:
 		return refusedConnect
 	}
@@ -114,6 +121,13 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: definition.Name +
 			" has no installation flow on this deployment; configure it with its settings " +
 			"form instead"})
+		return
+	}
+	if definition.Connect.SealsCredential && !h.holdsCredentials(writer) {
+		// Before the browser leaves. A deployment that cannot seal will not be able to
+		// store what this flow comes back with, and the customer would learn that only
+		// after granting permissions in somebody else's product — with a live credential
+		// in this process that it can neither keep nor withdraw.
 		return
 	}
 	if h.PublicURL == "" {
@@ -235,7 +249,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 			slog.String("org_id", organization.String()),
 			slog.String("type", definition.Key),
 			slog.String("reason", err.Error()))
-		h.landConnect(writer, request, flow.ReturnTo, outcomeUnproven, "")
+		h.landConnect(writer, request, flow.ReturnTo, definition.Key, outcomeUnproven, "")
 		return
 	}
 
@@ -254,15 +268,8 @@ func (h Handlers) record(
 		ctx, organization, definition.ID, bound.Configuration)
 	switch {
 	case err == nil:
-		// The customer changed an installation this tenant already has, and the provider
-		// sent them back here. Prove, then re-verify what exists.
-		verified, recordErr := h.Store.RecordIntegrationVerification(ctx, principal,
-			organization, existing.ID, h.probeExisting(ctx, organization, definition, existing))
-		if recordErr != nil {
-			h.fail(writer, request, recordErr)
-			return
-		}
-		h.landConnect(writer, request, returnTo, outcomeFor(verified), verified.ID.String())
+		h.reconnect(ctx, writer, request, principal, organization, definition, returnTo,
+			existing, bound)
 		return
 	case !errors.Is(err, ErrUnknown):
 		h.fail(writer, request, err)
@@ -274,13 +281,22 @@ func (h Handlers) record(
 		Type:          definition.ID,
 		Name:          bound.Name,
 		Configuration: bound.Configuration,
-		CreatedBy:     principal.ID(),
+		// Written in the same transaction as the row. A type that receives no events
+		// returns none, and this stays nil.
+		Installation: bound.Installation,
+		CreatedBy:    principal.ID(),
 	}
-	verification := definition.Probe(ctx, ProbeInput{Integration: Integration{
-		Type:          wanted.Type,
-		Name:          wanted.Name,
-		Configuration: wanted.Configuration,
-	}})
+	// The credential the flow obtained is presented to the probe, exactly as a pasted one
+	// is. A credential the provider refuses must not come to rest, and there is one rule
+	// about that rather than one per way a credential arrived.
+	verification := definition.Probe(ctx, ProbeInput{
+		Integration: Integration{
+			Type:          wanted.Type,
+			Name:          wanted.Name,
+			Configuration: wanted.Configuration,
+		},
+		Credential: bound.Credential,
+	})
 	if verification.Status == StatusFailed {
 		// Proven association, and the installation would not answer. Nothing is recorded:
 		// an Integration born failed is one an operator has to clean up.
@@ -288,10 +304,21 @@ func (h Handlers) record(
 			slog.String("org_id", organization.String()),
 			slog.String("type", definition.Key),
 			slog.String("note", verification.Note))
-		h.landConnect(writer, request, returnTo, outcomeUnverified, "")
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeUnverified, "")
 		return
 	}
 	wanted.Verification = &verification
+
+	if bound.Credential != "" {
+		sealed, fingerprint, ok := h.sealCredential(writer, bound.Credential, wanted.ID)
+		if !ok {
+			// Answered by sealCredential. Nothing is created: an Integration recorded
+			// without the credential it needs would read as connected and never work.
+			return
+		}
+		wanted.CredentialSealed = sealed
+		wanted.CredentialFingerprint = fingerprint
+	}
 
 	created, err := h.Store.CreateIntegration(ctx, principal, organization, wanted)
 	if errors.Is(err, ErrNameTaken) {
@@ -300,6 +327,21 @@ func (h Handlers) record(
 		// once, by something stable, rather than retried in a loop.
 		wanted.Name = disambiguate(bound.Name, wanted.ID)
 		created, err = h.Store.CreateIntegration(ctx, principal, organization, wanted)
+	}
+	if errors.Is(err, ErrWorkspaceTaken) {
+		// Another Integration — in this tenant or another — is already installed in that
+		// workspace. Refused rather than recorded, because the routing key is what decides
+		// whose event an inbound message is, and two claims on one workspace is that
+		// question having two answers.
+		//
+		// The message says nothing about WHERE the other one is. A caller learning that
+		// some other organization holds their workspace would be learning about a tenant
+		// they cannot see.
+		h.Logger.WarnContext(ctx, "a connect named a workspace already installed elsewhere",
+			slog.String("org_id", organization.String()),
+			slog.String("type", definition.Key))
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, "")
+		return
 	}
 	if err != nil {
 		h.fail(writer, request, err)
@@ -310,7 +352,74 @@ func (h Handlers) record(
 		slog.String("integration_id", created.ID.String()),
 		slog.String("type", definition.Key))
 
-	h.landConnect(writer, request, returnTo, outcomeFor(created), created.ID.String())
+	h.landConnect(writer, request, returnTo, definition.Key, outcomeFor(created), created.ID.String())
+}
+
+// reconnect is the customer connecting an installation this tenant already has. The
+// provider sent them back here, the association is proven, and what exists is re-verified
+// rather than duplicated.
+//
+// A flow that came back with a credential REPLACES the one on the record. Authorizing
+// again issues a new credential, and the old one being dead is a common reason to
+// reconnect at all — so re-verifying the stored one would report the failure the customer
+// just came here to fix, and would leave the working credential on the floor.
+func (h Handlers) reconnect(
+	ctx context.Context, writer http.ResponseWriter, request *http.Request,
+	principal authz.Principal, organization tenancy.Organization, definition Definition,
+	returnTo string, existing Integration, bound ConnectBinding,
+) {
+	if bound.Credential == "" {
+		verified, err := h.Store.RecordIntegrationVerification(ctx, principal, organization,
+			existing.ID, h.probeExisting(ctx, organization, definition, existing))
+		if err != nil {
+			h.fail(writer, request, err)
+			return
+		}
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeFor(verified), verified.ID.String())
+		return
+	}
+
+	verification := definition.Probe(ctx, ProbeInput{
+		Integration: existing, Credential: bound.Credential,
+	})
+	if verification.Status == StatusFailed {
+		// The new credential does not work. The record keeps the one it had: replacing a
+		// working credential with a refused one because the customer pressed a button is
+		// how a connected integration becomes a disconnected one.
+		h.Logger.WarnContext(ctx, "a reconnected integration did not verify",
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", existing.ID.String()),
+			slog.String("type", definition.Key),
+			slog.String("note", verification.Note))
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeUnverified, existing.ID.String())
+		return
+	}
+
+	sealed, fingerprint, ok := h.sealCredential(writer, bound.Credential, existing.ID)
+	if !ok {
+		return
+	}
+	// The routing record is refreshed WITH the credential, in one transaction. A reinstall
+	// issues a new agent identity, and a credential replaced without its routing refreshed
+	// is a live credential answering as an identity it no longer holds.
+	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
+		existing.ID, Revision{}, sealed, fingerprint, verification, bound.Installation)
+	if errors.Is(err, ErrWorkspaceTaken) {
+		h.Logger.WarnContext(ctx, "a reconnect named a workspace already installed elsewhere",
+			slog.String("org_id", organization.String()),
+			slog.String("type", definition.Key))
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, existing.ID.String())
+		return
+	}
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	h.Logger.InfoContext(ctx, "integration reconnected",
+		slog.String("org_id", organization.String()),
+		slog.String("integration_id", verified.ID.String()),
+		slog.String("type", definition.Key))
+	h.landConnect(writer, request, returnTo, definition.Key, outcomeFor(verified), verified.ID.String())
 }
 
 // disambiguate names the second Integration for one account: reinstalling on the same
@@ -348,7 +457,7 @@ func (h Handlers) refuseConnect(
 ) {
 	h.Logger.WarnContext(request.Context(), "an integration connect callback was refused",
 		slog.String("reason", because))
-	h.landConnect(writer, request, returnTo, outcomeRefused, "")
+	h.landConnect(writer, request, returnTo, "", outcomeRefused, "")
 }
 
 // landConnect puts the browser back where it started.
@@ -357,10 +466,17 @@ func (h Handlers) refuseConnect(
 // point of the flow is that the customer lands back in OpenCluster with the integration
 // already connected. A deployment that has not said where its console is answers the same
 // facts as JSON rather than guessing an origin.
+// landConnect is where every return trip ends, which is why the counter lives here: one call
+// site cannot forget to count, and nine could.
+//
+// typeKey is empty for a callback refused before its flow was resolved — at that point this
+// deployment genuinely does not know which type the browser was trying to connect.
 func (h Handlers) landConnect(
-	writer http.ResponseWriter, request *http.Request, returnTo string,
+	writer http.ResponseWriter, request *http.Request, returnTo, typeKey string,
 	outcome connectOutcome, id string,
 ) {
+	countConnect(request.Context(), typeKey, outcome)
+
 	target, sendable := h.consoleTarget(returnTo, outcome, id)
 	if !sendable {
 		writeJSON(writer, outcome.status(), connectLandedView{

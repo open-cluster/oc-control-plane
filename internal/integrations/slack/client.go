@@ -106,6 +106,12 @@ type Identity struct {
 	// operator recognises an installation by.
 	Workspace string
 	Bot       string
+	// WorkspaceID and BotUserID are the same two things as Slack's own stable
+	// identifiers. The names are what a person recognises and are renamed by whoever
+	// administers the workspace; the ids are what survives that, which is what makes them
+	// worth recording beside the names rather than instead of them.
+	WorkspaceID string
+	BotUserID   string
 	// URL is the workspace's own address, which is what a message permalink is built
 	// from — scope-free, unlike everything else about a message.
 	URL string
@@ -190,16 +196,24 @@ type SearchResults struct {
 // "verified means the far end answered".
 func (c *Client) AuthTest(ctx context.Context, token string) (Identity, error) {
 	var decoded struct {
-		Team string `json:"team"`
-		User string `json:"user"`
-		URL  string `json:"url"`
+		Team   string `json:"team"`
+		TeamID string `json:"team_id"`
+		User   string `json:"user"`
+		UserID string `json:"user_id"`
+		URL    string `json:"url"`
 	}
 	header, err := c.call(ctx, token, "auth.test", nil, &decoded)
 	if err != nil {
 		return Identity{}, err
 	}
 
-	identity := Identity{Workspace: decoded.Team, Bot: decoded.User, URL: decoded.URL}
+	identity := Identity{
+		Workspace:   decoded.Team,
+		Bot:         decoded.User,
+		WorkspaceID: decoded.TeamID,
+		BotUserID:   decoded.UserID,
+		URL:         decoded.URL,
+	}
 	for scope := range strings.SplitSeq(header.Get("X-OAuth-Scopes"), ",") {
 		if trimmed := strings.TrimSpace(scope); trimmed != "" {
 			identity.Scopes = append(identity.Scopes, trimmed)
@@ -515,8 +529,29 @@ func (c *Client) messages(
 func (c *Client) call(
 	ctx context.Context, token, method string, parameters url.Values, out any,
 ) (http.Header, error) {
+	return c.exchange(ctx, token, method, parameters, nil, out)
+}
+
+// exchange is the transport every Web API call goes through, read or write.
+//
+// One place, because the retry policy, the body bound, the envelope check and the refusal
+// shape are the same question whatever the method does — and two copies of them is two
+// answers to "what does a 429 mean here" that drift the first time one is corrected.
+//
+// form decides the SHAPE: nil is a read, sent as a GET with its parameters in the query;
+// non-nil is a write, sent as a POST with its parameters in the body, because a write sent
+// as a query string is a message body in somebody's access log.
+//
+// A 429 is retried exactly once, after the interval the vendor asked for and only when that
+// wait fits the caller's own deadline. A second 429 is answered as ErrRateLimited rather
+// than by queueing behind a vendor that has said no twice. That policy is safe for a read
+// because a read cannot double an effect, and it is safe for the writes this client makes
+// because each names the message it is writing into — a repeat appends nothing new.
+func (c *Client) exchange(
+	ctx context.Context, token, method string, parameters, form url.Values, out any,
+) (http.Header, error) {
 	for attempt := 0; ; attempt++ {
-		header, wait, err := c.once(ctx, token, method, parameters, out)
+		header, wait, err := c.once(ctx, token, method, parameters, form, out)
 		if wait == 0 || attempt == 1 {
 			if wait != 0 {
 				return nil, fmt.Errorf("%w: %s answered 429 twice", ErrRateLimited, method)
@@ -541,20 +576,44 @@ func (c *Client) call(
 	}
 }
 
+// request builds one attempt: a GET carrying its parameters in the query, or a POST carrying
+// them in a form body.
+func (c *Client) request(
+	ctx context.Context, token, method string, parameters, form url.Values,
+) (*http.Request, error) {
+	address := c.baseURL + "/" + method
+	var (
+		request *http.Request
+		err     error
+	)
+	if form == nil {
+		if len(parameters) > 0 {
+			address += "?" + parameters.Encode()
+		}
+		request, err = http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	} else {
+		request, err = http.NewRequestWithContext(ctx, http.MethodPost, address,
+			strings.NewReader(form.Encode()))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("building the %s request: %w", method, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	if form != nil {
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	}
+	return request, nil
+}
+
 // once performs one attempt. A non-zero wait reports a 429 and how long the vendor asked
 // for; everything else is the final answer.
 func (c *Client) once(
-	ctx context.Context, token, method string, parameters url.Values, out any,
+	ctx context.Context, token, method string, parameters, form url.Values, out any,
 ) (http.Header, time.Duration, error) {
-	address := c.baseURL + "/" + method
-	if len(parameters) > 0 {
-		address += "?" + parameters.Encode()
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	request, err := c.request(ctx, token, method, parameters, form)
 	if err != nil {
-		return nil, 0, fmt.Errorf("building the %s request: %w", method, err)
+		return nil, 0, err
 	}
-	request.Header.Set("Authorization", "Bearer "+token)
 
 	response, err := c.http.Do(request)
 	if err != nil {

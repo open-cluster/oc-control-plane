@@ -70,6 +70,14 @@ type Field struct {
 	// declaring one must declare a Probe, because the only honest check of a credential is
 	// presenting it to the provider.
 	Secret bool
+	// Recorded marks a value the INSTALLATION FLOW writes and a caller never may. It is
+	// declared so that an operator reading the record can see it and a schema can describe
+	// it, and it is refused on the way in — a field that only a proven connect can set
+	// must not be typeable, or a claim the flow established becomes a claim anybody with
+	// update permission can assert.
+	//
+	// The rendered schema says readOnly, which is exactly what it means.
+	Recorded bool
 	// Enum closes a field to a named set.
 	Enum []string
 	// Default is what the field means when it is left out.
@@ -134,11 +142,24 @@ type Definition struct {
 	Description string
 	// Logo names an approved mark in the frontend's brand registry. Empty means the
 	// neutral category icon is drawn.
-	Logo             string
-	Category         Category
+	Logo     string
+	Category Category
+	// DocumentationURL points at the VENDOR's own setup documentation: Slack's token
+	// types, Prometheus's webhook_config reference, Kubernetes RBAC. Useful, and not the
+	// page an operator setting this up actually needs first.
+	//
+	// Ours is ProductDocumentationURL, and it is derived rather than declared here — see
+	// the method for why a hand-written second URL per provider was the wrong shape.
 	DocumentationURL string
 	// Capabilities are the named operations connecting this type makes available.
 	Capabilities []string
+	// CapabilityStates overrides how this type's capabilities are judged against one
+	// Integration, and Availability dispatches to it. Nil is the ordinary case and gets
+	// the generic join over verified grants; a provider declares one only when
+	// availability depends on something no Integration field carries, such as whether
+	// this deployment registered an application with the vendor. An override builds on
+	// GrantedAvailability rather than reimplementing the join.
+	CapabilityStates func(Integration) []CapabilityAvailability
 	// Config is what an Integration of this type is configured with, and the source its
 	// JSON Schema is rendered from.
 	Config []Field
@@ -165,6 +186,27 @@ type Definition struct {
 	Connect *Connect
 }
 
+// documentationSite is where this product's own documentation is published. One constant,
+// beside the schema $id's origin above, because the site is the product's and not a
+// deployment's: a self-hosted install reads the same published pages.
+const documentationSite = "https://docs.opencluster.dev"
+
+// ProductDocumentationURL is OUR page for this type — the one that carries the receiver
+// YAML, the header name and the version floor, rather than the vendor's reference.
+//
+// DERIVED, NEVER TYPED. The documentation gate already asserts that every shipped type has
+// a page at docs/integrations/<role>/<key>.mdx, and role is the Category and key is the
+// Key — so the definition already knows where its own page is, and asking each provider to
+// write the URL out again would be asking for the one copy that drifts. A page moved
+// without this being updated fails the gate; a type added without a page fails both the
+// gate and the catalog test.
+func (d Definition) ProductDocumentationURL() string {
+	if d.Key == "" || d.Category == "" {
+		return ""
+	}
+	return documentationSite + "/integrations/" + string(d.Category) + "/" + d.Key
+}
+
 // ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
 func (d Definition) ConfigurationSchema() json.RawMessage {
 	properties := make(map[string]any, len(d.Config))
@@ -187,6 +229,9 @@ func (d Definition) ConfigurationSchema() json.RawMessage {
 		}
 		if field.Secret {
 			property["writeOnly"] = true
+		}
+		if field.Recorded {
+			property["readOnly"] = true
 		}
 		properties[field.Name] = property
 		if field.Required {

@@ -23,10 +23,15 @@ type typeView struct {
 	Logo        string `json:"logo,omitempty"`
 	Category    string `json:"category"`
 	// DocumentationURL points at the provider's own setup documentation.
-	DocumentationURL string   `json:"documentationUrl,omitempty"`
-	Capabilities     []string `json:"capabilities"`
-	RequiresRelay    bool     `json:"requiresRelay"`
-	ReceivesWebhooks bool     `json:"receivesWebhooks"`
+	DocumentationURL string `json:"documentationUrl,omitempty"`
+	// ProductDocumentationURL points at OURS: the page that carries the receiver
+	// configuration, the header this deployment expects and the version floor. Served
+	// beside the vendor's rather than instead of it, because they answer different
+	// questions and a caller labels them differently.
+	ProductDocumentationURL string   `json:"productDocumentationUrl,omitempty"`
+	Capabilities            []string `json:"capabilities"`
+	RequiresRelay           bool     `json:"requiresRelay"`
+	ReceivesWebhooks        bool     `json:"receivesWebhooks"`
 	// SupportsConnect says this deployment can connect the type through the provider's
 	// own installation flow, so a setup surface offers one button instead of a form.
 	// False is the self-hosted deployment that registered no application with the
@@ -95,19 +100,20 @@ func typeViewOf(definition Definition, configured int) typeView {
 		})
 	}
 	return typeView{
-		Key:                 definition.Key,
-		Name:                definition.Name,
-		Description:         definition.Description,
-		Logo:                definition.Logo,
-		Category:            string(definition.Category),
-		DocumentationURL:    definition.DocumentationURL,
-		Capabilities:        capabilities,
-		RequiresRelay:       definition.RequiresRelay,
-		ReceivesWebhooks:    definition.ReceivesWebhooks,
-		SupportsConnect:     definition.Connectable(),
-		ConfigurationSchema: definition.ConfigurationSchema(),
-		Tools:               tools,
-		Configured:          configured,
+		Key:                     definition.Key,
+		Name:                    definition.Name,
+		Description:             definition.Description,
+		Logo:                    definition.Logo,
+		Category:                string(definition.Category),
+		DocumentationURL:        definition.DocumentationURL,
+		ProductDocumentationURL: definition.ProductDocumentationURL(),
+		Capabilities:            capabilities,
+		RequiresRelay:           definition.RequiresRelay,
+		ReceivesWebhooks:        definition.ReceivesWebhooks,
+		SupportsConnect:         definition.Connectable(),
+		ConfigurationSchema:     definition.ConfigurationSchema(),
+		Tools:                   tools,
+		Configured:              configured,
 	}
 }
 
@@ -151,10 +157,14 @@ type integrationView struct {
 	// the account, its type, how far its grant reaches. Non-secret by construction: a
 	// provider records only what an operator would read off the provider's own screen.
 	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
-	// Capabilities is every capability this integration's type declares, each with
-	// whether this integration can actually exercise it and why not when it cannot.
-	// Served rather than left to be joined by a caller: the same rule decides what an
-	// investigation is offered, and a second copy of it would be free to disagree.
+	// Capabilities is what this Integration can actually do: every capability its type
+	// declares, judged against the grants its last verification recorded, each with the
+	// reason it is unavailable when it is.
+	//
+	// Served rather than left to be joined by a caller. The same rule decides which tools
+	// an investigation is offered, so a second copy of it would be free to disagree; and
+	// the join needs the type's declarations, the integration's grants and — for some
+	// providers — deployment configuration a browser cannot see.
 	Capabilities []capabilityView `json:"capabilities"`
 	CreatedBy    string           `json:"createdBy,omitempty"`
 	CreatedAt    string           `json:"createdAt"`
@@ -186,15 +196,18 @@ type rotatedView struct {
 
 func (h Handlers) viewOf(found Integration) integrationView {
 	typeKey := ""
-	var capabilities []capabilityView
+	// An empty list rather than null, for the reason the catalog's is: "this integration
+	// offers nothing" is a fact worth rendering, and a client should not have to handle
+	// two spellings of it.
+	capabilities := []capabilityView{}
 	if definition, known := h.Catalog.ByID(found.Type); known {
 		typeKey = definition.Key
 		for _, one := range Availability(definition, found) {
-			capabilities = append(capabilities, capabilityView{
-				Capability: one.Capability,
-				Available:  one.Available,
-				Reason:     one.Reason,
-			})
+			// A conversion rather than a field-by-field copy, and it is the stricter of
+			// the two: it compiles only while the two shapes are identical, so a field
+			// added to the domain type stops the build here until somebody decides what
+			// the wire should say about it. A copy would have silently said nothing.
+			capabilities = append(capabilities, capabilityView(one))
 		}
 	}
 	view := integrationView{

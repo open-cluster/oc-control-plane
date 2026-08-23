@@ -32,6 +32,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/describe"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
@@ -125,6 +126,14 @@ func (h Handlers) Router() (http.Handler, error) {
 // capability that knows what its routes mean, which is what keeps the permission a route needs
 // next to the code that implements it rather than in a list somebody has to remember to edit.
 func (h Handlers) Routes() authz.Table {
+	return h.routesOver(h.capabilities())
+}
+
+// routesOver assembles the table from capabilities that have ALREADY been built, so the
+// route table and the self-description can be produced from one construction of them. See
+// surface: a description assembled from different handler values than the ones being served
+// is the drift the description exists to end, and building them twice is how that happens.
+func (h Handlers) routesOver(built []contributor) authz.Table {
 	const relays = "/operator/v1/organizations/{organization}/relays"
 
 	routes := authz.Table{
@@ -151,40 +160,72 @@ func (h Handlers) Routes() authz.Table {
 			authz.RelayBootstrapIssue, http.HandlerFunc(h.issueBootstrapToken)),
 	}
 
+	routes = append(routes, h.selfDescriptionRoute())
 	routes = append(routes, h.Identity.Routes()...)
-	routes = append(routes, integrations.Handlers{
-		Store:         h.Placements,
-		Catalog:       h.Catalog,
-		Logger:        h.Logger,
-		Sealer:        h.Sealer,
-		IntakeBaseURL: h.IntakeBaseURL,
-		PublicURL:     h.PublicURL,
-		ConsoleURL:    h.ConsoleURL,
-	}.Routes()...)
-	routes = append(routes, incident.Handlers{
-		Store:  h.Placements,
-		Logger: h.Logger,
-	}.Routes()...)
-	routes = append(routes, investigation.Handlers{
-		Store:      h.Placements,
-		Runner:     h.Investigations,
-		Logger:     h.Logger,
-		Events:     h.Placements,
-		WindowLead: h.InvestigationWindowLead,
-	}.Routes()...)
-	// The conversation routes are DECLARED whether or not this deployment serves them, so
-	// the route table — which is the API's index and what the gates validate — is the same
-	// table in every build. The switch lives in the handlers, which answer 404 while it is
-	// off; a table that changed shape with configuration would be a permission matrix
-	// nobody could review.
-	routes = append(routes, conversation.Handlers{
-		Store:           h.Placements,
-		Logger:          h.Logger,
-		Enabled:         h.ConversationsEnabled,
-		WindowLead:      h.InvestigationWindowLead,
-		MaxWaitingTurns: h.MaxWaitingTurns,
-	}.Routes()...)
+	for _, capability := range built {
+		routes = append(routes, capability.Routes()...)
+	}
 	return routes
+}
+
+// capabilities builds every capability this surface composes, ONCE.
+//
+// It exists so that the route table and the deployment's self-description are assembled from
+// the same handler values. Building them twice would let the document describe a listing the
+// served handler does not have — which is precisely the drift the document exists to end.
+//
+// The conversation handlers are built and their routes DECLARED whether or not this
+// deployment serves them, so the route table — which is the API's index and what the gates
+// validate — is the same table in every build. The switch lives in the handlers, which
+// answer 404 while it is off; a table that changed shape with configuration would be a
+// permission matrix nobody could review. What DOES change with the switch is one line of the
+// self-description, which is the honest place for it.
+func (h Handlers) capabilities() []contributor {
+	return []contributor{
+		integrations.Handlers{
+			Store:         h.Placements,
+			Catalog:       h.Catalog,
+			Logger:        h.Logger,
+			Sealer:        h.Sealer,
+			IntakeBaseURL: h.IntakeBaseURL,
+			PublicURL:     h.PublicURL,
+			ConsoleURL:    h.ConsoleURL,
+		},
+		incident.Handlers{
+			Store:  h.Placements,
+			Logger: h.Logger,
+		},
+		investigation.Handlers{
+			Store:      h.Placements,
+			Runner:     h.Investigations,
+			Logger:     h.Logger,
+			Events:     h.Placements,
+			WindowLead: h.InvestigationWindowLead,
+		},
+		conversation.Handlers{
+			Store:           h.Placements,
+			Logger:          h.Logger,
+			Enabled:         h.ConversationsEnabled,
+			WindowLead:      h.InvestigationWindowLead,
+			MaxWaitingTurns: h.MaxWaitingTurns,
+		},
+	}
+}
+
+// surface reports the whole route table together with what each capability said about
+// itself, from ONE construction of the capabilities.
+//
+// That is the enforcement rather than the claim: both halves are read off the same `built`
+// slice, so a description assembled from different handler values than the ones being served
+// is not a state this function can produce.
+func (h Handlers) surface() (authz.Table, []describe.Contribution) {
+	built := h.capabilities()
+	contributions := make([]describe.Contribution, 0, len(built)+2)
+	contributions = append(contributions, h.Describe(), h.Identity.Describe())
+	for _, capability := range built {
+		contributions = append(contributions, capability.Describe())
+	}
+	return h.routesOver(built), contributions
 }
 
 // correlated mints a request identifier and binds it to the response and the context.

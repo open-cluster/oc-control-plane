@@ -181,13 +181,26 @@ func run(
 		}
 	}
 
+	// Slack's installation flow is registered separately from its credential, exactly as
+	// GitHub's is: a deployment that registered no Slack app offers no connect button and
+	// serves the pasted-token form, which is the air-gapped path and stays supported.
+	var slackInstaller *slack.Installer
+	if cfg.SlackClientID != "" {
+		slackInstaller, err = slack.NewInstaller(
+			cfg.SlackClientID, cfg.SlackClientSecret, cfg.SlackAPIURL)
+		if err != nil {
+			return fmt.Errorf("%s: %w", config.EnvSlackClientID, err)
+		}
+	}
+
 	// The catalog is assembled HERE, and this is the only place that knows every provider.
 	// A duplicate key or a definition missing its verification refuses startup, where the
 	// person who caused it is still the person reading the error.
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
-		slack.Definition(slack.NewClient(cfg.SlackAPIURL)),
+		slack.Definition(slack.NewClient(cfg.SlackAPIURL), slackInstaller,
+			cfg.SlackSigningSecret != ""),
 		github.Definition(gitHubInstaller, gitHubApp, gitHubClient, cfg.GitHubWebURL),
 	)
 	if err != nil {
@@ -414,6 +427,11 @@ func serve(ctx context.Context, process assembled) error {
 	// rather than a tenant's declaration.
 	ledgerPruners := startChangeLedgerPruner(process)
 	defer ledgerPruners.stop()
+
+	// Answering back in Slack. Started only where this deployment receives events at all,
+	// because a worker sweeping for deliveries nobody can create is a query on a loop.
+	slackReplies := startSlackReplies(process)
+	defer slackReplies.stop()
 
 	select {
 	case serveErr := <-failed:
@@ -675,6 +693,12 @@ func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoin
 			Adapters: intake.Adapters{
 				integrations.TypeAlertmanager: alertmanager.Adapter{},
 			},
+			// The Slack agent surface, served only where this deployment holds a signing
+			// secret. A deployment with none serves no events endpoint at all rather than
+			// one that refuses everything: an endpoint that exists and refuses is a
+			// configuration to check, and one that does not exist is a deployment nobody
+			// asked to receive events.
+			Slack: slackAgent(cfg),
 		}.Router(),
 		// Bounded at every stage. This is the one surface a customer's infrastructure reaches
 		// inbound, and its connections are unauthenticated until a request has been read, so a
@@ -859,4 +883,52 @@ func (e *relayEndpoint) drain(budget time.Duration, logger *slog.Logger) {
 		e.server.Stop()
 		<-stopped
 	}
+}
+
+// slackAgent is what the intake listener needs to receive Slack events, or nil where this
+// deployment receives none.
+//
+// The rollout gate is a closure over deployment configuration rather than a list handed
+// down, so intake consults ONE answer to "is this live here" and cannot grow a second
+// reading of an empty list.
+func slackAgent(cfg config.Config) *intake.SlackAgent {
+	if cfg.SlackSigningSecret == "" {
+		return nil
+	}
+	return &intake.SlackAgent{
+		SigningSecret: cfg.SlackSigningSecret,
+		Enabled: func(organization tenancy.Organization) bool {
+			return cfg.SlackAgentLiveFor(organization.String())
+		},
+		WindowLead:      cfg.InvestigationWindowLead,
+		MaxWaitingTurns: cfg.OrgWaitingInvestigations,
+	}
+}
+
+// startSlackReplies runs the worker that answers in Slack threads, or nothing where this
+// deployment receives no Slack events.
+//
+// It is stopped with the process and nothing waits for it. A delivery in flight when the
+// process ends resumes from its own cursor in the next instance, which is the same property
+// that makes a crash mid-stream survivable — so there is nothing here worth draining for.
+func startSlackReplies(process assembled) *backgroundWorker {
+	if process.config.SlackSigningSecret == "" {
+		return nil
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	worker := slack.Worker{
+		Replies:  process.placements,
+		Client:   slack.NewClient(process.config.SlackAPIURL),
+		Sealer:   process.sealer,
+		Logger:   process.logger,
+		Counters: slack.NewInstruments(process.logger),
+	}
+
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		worker.Run(ctx)
+	}()
+	process.logger.Info("slack delivery worker started")
+	return running
 }

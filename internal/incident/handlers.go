@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/describe"
 	"github.com/open-cluster/oc-control-plane/internal/table"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
@@ -52,6 +53,23 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.signals)),
 		authz.Privileged(http.MethodPost, base+"/{episode}/merge", authz.IncidentMerge,
 			http.HandlerFunc(h.merge)),
+	}
+}
+
+// Describe is this capability's contribution to the deployment's self-description.
+//
+// The listing carries the SAME spec value the handler parses with, and the body names the
+// type the handler decodes into, so neither can drift from what is actually served.
+func (h Handlers) Describe() describe.Contribution {
+	const base = "/operator/v1/organizations/{organization}/incidents"
+
+	return describe.Contribution{
+		Listings: []describe.Listing{
+			{Route: http.MethodGet + " " + base, Spec: episodesSpec},
+		},
+		Bodies: []describe.Body{
+			{Route: http.MethodPost + " " + base + "/{episode}/merge", Example: mergeRequest{}},
+		},
 	}
 }
 

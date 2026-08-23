@@ -15,7 +15,25 @@ listeners on separate network policies.
 Alert on sustained readiness failures, failed or degraded integration verification,
 disconnected or outdated Relays, and failed investigations.
 
+## What this deployment serves
+
+`GET /operator/v1` answers a description of the running deployment. Any signed-in caller may
+read it; it describes the deployment rather than a tenant, so it needs no permission and is not
+public.
+
+| It says | Which answers |
+| --- | --- |
+| Optional surfaces, each with whether this deployment serves it | "Are conversations on here?" without reading configuration or interpreting a `404` |
+| Every route served, with the access and permission each requires | "Which sign-in routes exist?", "What does this role reach?" |
+| Each listing's filters, sortable fields, default sort and searchability, and the shared paging rules | "How may I query this list?" |
+| Each write's accepted body, as JSON Schema | "Why was my request refused?" — every write rejects a field it does not declare |
+
+It is derived from the running route table and each capability's own declarations, so it cannot
+describe a deployment other than the one answering. A console reads it instead of guessing; when
+troubleshooting, it is the fastest way to confirm what a deployment is actually serving.
+
 ## Background work
+
 
 | Work | Schedule or trigger |
 | --- | --- |

@@ -149,3 +149,44 @@ func TestADeclaredReadWithNoToolIsReportedUnavailable(t *testing.T) {
 		t.Error("no reason given for a capability nothing implements")
 	}
 }
+
+// A provider may judge its own capabilities, and the generic join stays available to it.
+//
+// The case this exists for: whether OpenCluster can be spoken to in a Slack workspace
+// depends on this deployment having registered an application with the vendor, which is
+// deployment configuration and appears in no Integration field. A join that could only see
+// the row would report such a capability as working, and it would never answer.
+func TestAProviderMayJudgeItsOwnCapabilities(t *testing.T) {
+	t.Parallel()
+
+	definition := definitionWithTools()
+	definition.CapabilityStates = func(Integration) []CapabilityAvailability {
+		return []CapabilityAvailability{{
+			Capability: "slack.list_channels",
+			Reason:     "this deployment registered no application with the vendor",
+		}}
+	}
+
+	found := Availability(definition, Integration{VerifyGrants: []string{"search:read"}})
+	if len(found) != 1 || found[0].Available {
+		t.Fatalf("the provider's own judgement was not used: %+v", found)
+	}
+}
+
+// The generic join ignores the override, which is what lets an override call it without
+// recursing and without reimplementing the rule it is only adjusting.
+func TestTheGenericJoinIgnoresTheOverride(t *testing.T) {
+	t.Parallel()
+
+	definition := definitionWithTools()
+	definition.CapabilityStates = func(Integration) []CapabilityAvailability {
+		t.Error("the generic join dispatched to the override")
+		return nil
+	}
+
+	found := GrantedAvailability(definition, Integration{})
+	if len(found) != 2 {
+		t.Fatalf("the generic join reported %d capabilities, want both: %+v",
+			len(found), found)
+	}
+}

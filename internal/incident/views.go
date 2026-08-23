@@ -18,8 +18,16 @@ const maxRequestBytes = 8 << 10
 type episodeView struct {
 	ID            string `json:"id"`
 	IntegrationID string `json:"integrationId"`
-	Title         string `json:"title"`
-	Status        string `json:"status"`
+	// IntegrationName is what the delivering installation is called. Served beside the
+	// identity rather than instead of it: a console that had only the identity could
+	// render nothing but a field restating its own label, and assembling a name in the
+	// browser would be a value this service never sent.
+	//
+	// Absent, rather than empty, where it could not be resolved. A console renders what
+	// it was given and an absent name is the one thing it can tell from a blank one.
+	IntegrationName string `json:"integrationName,omitempty"`
+	Title           string `json:"title"`
+	Status          string `json:"status"`
 
 	// Grouping is why these Signals are one incident. It is on every episode rather than offered
 	// as a separate lookup, because a grouping an operator cannot immediately explain is one they
@@ -90,10 +98,11 @@ type errorView struct {
 
 func viewOf(episode Episode) episodeView {
 	view := episodeView{
-		ID:            episode.ID.String(),
-		IntegrationID: episode.Integration.String(),
-		Title:         episode.Title,
-		Status:        episode.Status.String(),
+		ID:              episode.ID.String(),
+		IntegrationID:   episode.Integration.String(),
+		IntegrationName: episode.IntegrationName,
+		Title:           episode.Title,
+		Status:          episode.Status.String(),
 		Grouping: groupingView{
 			Basis:       episode.Basis.String(),
 			Explanation: episode.Basis.Explain(),

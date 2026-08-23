@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -172,9 +174,35 @@ type integrationBody struct {
 		CreatedAt   string `json:"secretCreatedAt"`
 		RotatedAt   string `json:"secretRotatedAt"`
 	} `json:"webhook"`
-	LastVerifiedAt string         `json:"lastVerifiedAt"`
-	VerifyNote     string         `json:"verifyNote"`
-	VerifyFacts    map[string]any `json:"verifyFacts"`
+	Credential *struct {
+		Fingerprint string `json:"fingerprint"`
+		CreatedAt   string `json:"createdAt"`
+		RotatedAt   string `json:"rotatedAt"`
+	} `json:"credential"`
+	LastVerifiedAt string           `json:"lastVerifiedAt"`
+	VerifyNote     string           `json:"verifyNote"`
+	VerifyFacts    map[string]any   `json:"verifyFacts"`
+	Capabilities   []capabilityBody `json:"capabilities"`
+}
+
+// capabilityBody is one capability as the integration read reports it: available or not,
+// and why not. Served rather than joined in a console, so every client reads one answer.
+type capabilityBody struct {
+	Capability string `json:"capability"`
+	Available  bool   `json:"available"`
+	Reason     string `json:"reason"`
+}
+
+// capability finds one reported capability by name.
+func (b integrationBody) capability(t *testing.T, name string) capabilityBody {
+	t.Helper()
+	for _, reported := range b.Capabilities {
+		if reported.Capability == name {
+			return reported
+		}
+	}
+	t.Fatalf("no capability %q is reported at all; reported: %+v", name, b.Capabilities)
+	return capabilityBody{}
 }
 
 type createdBody struct {
@@ -232,6 +260,12 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		ReceivesWebhooks    bool            `json:"receivesWebhooks"`
 		ConfigurationSchema json.RawMessage `json:"configurationSchema"`
 		Configured          int             `json:"configured"`
+		// DocumentationURL is the VENDOR's page and ProductDocumentationURL is ours. Both
+		// are served because an operator setting up Alertmanager needs both: Prometheus's
+		// webhook_config reference, and our receiver YAML with the header name and the
+		// version floor.
+		DocumentationURL        string `json:"documentationUrl"`
+		ProductDocumentationURL string `json:"productDocumentationUrl"`
 	}
 	var catalog struct {
 		Types []catalogType `json:"types"`
@@ -263,6 +297,37 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	if !strings.Contains(string(kubernetes.ConfigurationSchema), "additionalProperties") {
 		t.Error("the configuration schema is not the closed JSON Schema the create operation enforces")
 	}
+
+	t.Run("every type reaches our own documentation as well as the vendor's", func(t *testing.T) {
+		// The operator on an Integration page needs OUR page — the receiver YAML, the
+		// header name, the version floor — and every type named only the vendor's. The
+		// page exists and was unreachable from the product.
+		//
+		// The path is derived from the definition rather than typed per provider, so this
+		// asserts what the docs gate asserts from the other side: the URL a customer is
+		// given resolves to a page that is really in this repository. A type added
+		// without one fails here as well as in the gate.
+		for _, entry := range catalog.Types {
+			if entry.DocumentationURL == "" {
+				t.Errorf("%s names no vendor documentation", entry.Key)
+			}
+			if entry.ProductDocumentationURL == "" {
+				t.Errorf("%s names no OpenCluster documentation page", entry.Key)
+				continue
+			}
+			want := "integrations/" + entry.Category + "/" + entry.Key
+			if !strings.HasSuffix(entry.ProductDocumentationURL, want) {
+				t.Errorf("%s documents at %q, want a page under %q",
+					entry.Key, entry.ProductDocumentationURL, want)
+				continue
+			}
+			page := filepath.Join("..", "..", "docs", filepath.FromSlash(want)+".mdx")
+			if _, err := os.Stat(page); err != nil {
+				t.Errorf("%s documents at %q, and %s does not exist",
+					entry.Key, entry.ProductDocumentationURL, page)
+			}
+		}
+	})
 
 	t.Run("the seeded reference rows and the compiled catalog agree", func(t *testing.T) {
 		// Reference-data drift is a test failure, not a runtime concern: the rows are

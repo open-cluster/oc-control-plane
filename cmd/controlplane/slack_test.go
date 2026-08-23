@@ -35,12 +35,58 @@ type vendorFake struct {
 	channels string
 	// authCalls counts auth.test calls, so a test can prove the probe happened.
 	authCalls int
+
+	// knownCode is the one authorization code the fake will exchange; anything else is
+	// refused, which is how a replayed or invented code is exercised.
+	knownCode string
+	// team is the workspace the exchange reports installing into. Two tests need two
+	// workspaces to prove that reconnecting one re-verifies rather than duplicating.
+	team string
+	// exchanged records every code the fake was asked to exchange, so a test can prove
+	// the exchange happened server-side and happened once.
+	exchanged []string
+	// exchangeSecret records the client secret the exchange was presented with, so a test
+	// can prove it went in the body rather than through a browser.
+	exchangeSecret string
+}
+
+// exchange answers oauth.v2.access: the authorization code for the workspace's bot token.
+func (f *vendorFake) exchange(writer http.ResponseWriter, request *http.Request) {
+	if err := request.ParseForm(); err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	f.mu.Lock()
+	code, known, team := request.PostFormValue("code"), f.knownCode, f.team
+	f.exchanged = append(f.exchanged, code)
+	f.exchangeSecret = request.PostFormValue("client_secret")
+	accepts, scopes := f.accepts, f.scopes
+	f.mu.Unlock()
+
+	if code == "" || code != known {
+		_, _ = writer.Write([]byte(`{"ok":false,"error":"invalid_code"}`))
+		return
+	}
+	_, _ = writer.Write([]byte(`{"ok":true,"access_token":"` + accepts +
+		`","token_type":"bot","scope":"` + scopes +
+		`","app_id":"A0OPENCLUSTER","bot_user_id":"U0BOT","team":{"id":"` + team +
+		`","name":"Acme"},"is_enterprise_install":false,` +
+		`"authed_user":{"id":"U0ADMIN"}}`))
+}
+
+// codesExchanged reports every code the fake was asked to exchange.
+func (f *vendorFake) codesExchanged() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.exchanged...)
 }
 
 func newVendorFake(t *testing.T, accepts string) *vendorFake {
 	t.Helper()
 	fake := &vendorFake{accepts: accepts,
-		scopes: "channels:read,channels:history,search:read,users:read"}
+		scopes:    "channels:read,channels:history,search:read,users:read",
+		knownCode: "the-authorization-code",
+		team:      "T0ACME"}
 	fake.Server = httptest.NewServer(http.HandlerFunc(
 		func(writer http.ResponseWriter, request *http.Request) {
 			fake.mu.Lock()
@@ -53,6 +99,10 @@ func newVendorFake(t *testing.T, accepts string) *vendorFake {
 
 			writer.Header().Set("Content-Type", "application/json")
 			switch {
+			case request.URL.Path == "/oauth.v2.access":
+				// Before the bearer check: an authorization code exchange presents the
+				// app's client credential in the body, not a workspace token.
+				fake.exchange(writer, request)
 			case !accepted:
 				_, _ = writer.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
 			case request.URL.Path == "/auth.test":
@@ -257,11 +307,16 @@ func TestSlackMissingScopesSurfaceAsDegraded(t *testing.T) {
 		t.Errorf("status = %q, want degraded; note: %s",
 			created.Integration.Status, created.Integration.VerifyNote)
 	}
-	for _, missing := range []string{"search:read", "users:read"} {
-		if !strings.Contains(created.Integration.VerifyNote, missing) {
-			t.Errorf("the note %q does not name the missing scope %s",
-				created.Integration.VerifyNote, missing)
-		}
+	if !strings.Contains(created.Integration.VerifyNote, "users:read") {
+		t.Errorf("the note %q does not name the missing scope users:read",
+			created.Integration.VerifyNote)
+	}
+	// search:read is NOT named. Degraded means a capability this integration was
+	// configured to provide is failing, and workspace-wide search was never asked for —
+	// listing it here is what made every correct installation look broken.
+	if strings.Contains(created.Integration.VerifyNote, "search:read") {
+		t.Errorf("the note %q holds a scope this product never requests",
+			created.Integration.VerifyNote)
 	}
 }
 
@@ -349,9 +404,29 @@ func TestSlackCatalogEntryRendersTheToolsAndTheWriteOnlySchema(t *testing.T) {
 		if entry.Key != "slack" {
 			continue
 		}
-		if len(entry.Capabilities) != 4 || len(entry.Tools) != 4 {
-			t.Errorf("slack serves %d capabilities and %d tools, want 4 and 4",
-				len(entry.Capabilities), len(entry.Tools))
+		// Four tools, and more capabilities than tools: the surface capabilities — being
+		// spoken to in Slack, and reaching an invited private channel — are kept by the
+		// events endpoint and by the reach of the history tools rather than by a tool of
+		// their own. Every tool still has exactly one capability behind it.
+		if len(entry.Tools) != 4 {
+			t.Errorf("slack serves %d tools, want 4", len(entry.Tools))
+		}
+		served := map[string]bool{}
+		for _, capability := range entry.Capabilities {
+			served[capability] = true
+		}
+		for _, wanted := range []string{
+			"slack.list_channels", "slack.read_channel_history", "slack.read_threads",
+			"slack.search_messages", "slack.agent_conversations", "slack.mentions",
+			"slack.thread_replies", "slack.private_channels",
+		} {
+			if !served[wanted] {
+				t.Errorf("the catalog does not serve capability %s", wanted)
+			}
+		}
+		if len(entry.Capabilities) != 8 {
+			t.Errorf("slack serves %d capabilities, want the 8 declared",
+				len(entry.Capabilities))
 		}
 		for _, tool := range entry.Tools {
 			if tool.WhenToUse == "" || tool.WhenNotToUse == "" {
@@ -436,4 +511,46 @@ func credentialFingerprint(t *testing.T, body string) string {
 		return shapes.Integration.Credential.Fingerprint
 	}
 	return ""
+}
+
+// The correction this release exists for. A bot token holding every scope OpenCluster asks
+// for is a CORRECT installation, and it used to report degraded because it lacked
+// workspace-wide search — a permission this product deliberately declines to request. The
+// customer was being told to fix something that was not broken.
+func TestSlackRecommendedBotInstallationIsActiveWithSearchUnavailable(t *testing.T) {
+	vendor := newVendorFake(t, "xoxb-good-token-1234")
+	vendor.grant("channels:read,channels:history,users:read")
+	plane := startSlackPlane(t, vendor)
+
+	status, body := plane.createSlack(t, "Acme Slack", "xoxb-good-token-1234")
+	if status != http.StatusCreated {
+		t.Fatalf("creating with the recommended scopes = %d: %s", status, body)
+	}
+	var created createdBody
+	decodeInto(t, body, &created)
+
+	if created.Integration.Status != "active" {
+		t.Fatalf("status = %q, want active — a correct installation must not report "+
+			"itself broken; note: %s",
+			created.Integration.Status, created.Integration.VerifyNote)
+	}
+
+	// Unavailable, not missing. Its absence is a stated choice, and saying so is what
+	// stops an operator going looking for a permission to grant.
+	search := created.Integration.capability(t, "slack.search_messages")
+	if search.Available {
+		t.Error("workspace-wide search reads as available on a token that was never " +
+			"granted it")
+	}
+	if search.Reason == "" {
+		t.Error("search is unavailable and says nothing about why")
+	}
+
+	// The capabilities the installation does have are reported as working, individually,
+	// so an operator can see what OpenCluster can and cannot read.
+	for _, working := range []string{"slack.list_channels", "slack.read_channel_history"} {
+		if reported := created.Integration.capability(t, working); !reported.Available {
+			t.Errorf("%s has its scope and reads as unavailable: %+v", working, reported)
+		}
+	}
 }

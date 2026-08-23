@@ -17,8 +17,10 @@ names, and—when a user token permits it—search messages.
 
 ## Prerequisites
 
-- Permission to create and install a Slack app.
 - The **Admin** role in OpenCluster.
+- Permission to install a Slack app in your workspace.
+- Permission to *create* a Slack app, only if your deployment has none registered and you
+  are using the pasted-token path below.
 
 ## Scopes
 
@@ -34,6 +36,16 @@ and thread reads but not workspace search. Connect a user token only if the broa
 search boundary is acceptable.
 
 ## Connect
+
+Select **Connect Slack**, authorize in Slack, and you are returned to an integration that
+is already verified and active. Nothing is pasted, and no token passes through your
+clipboard or your browser. This is the only path hosted OpenCluster offers, and a
+self-hosted deployment gets the identical experience once it registers its own Slack app
+and configures the app's client credentials.
+
+The steps below are the **advanced fallback**, offered only by a deployment that has no
+Slack app registered at all — an air-gapped install, typically. Integrations already
+connected this way keep working unchanged; there is nothing to migrate.
 
 <Steps>
   <Step title="Create the Slack app">
@@ -62,9 +74,15 @@ search boundary is acceptable.
 Select **Verify** on the integration. Verification records the workspace, identity,
 token type, and granted scopes.
 
-A bot token normally reports `degraded` because it lacks `search:read`. This does not
-disable channel history or thread reads. A token with none of the usable scopes cannot
-be offered to investigations.
+A bot token holding the scopes OpenCluster asks for reports `active`. Workspace-wide
+search is listed as an unavailable capability rather than a missing scope, because
+OpenCluster does not request `search:read` — its absence is a deliberate boundary, not a
+gap to close.
+
+`degraded` means a capability this integration was configured to provide has stopped
+working: a scope was revoked, or Slack is refusing the token. The integration read reports
+each capability individually, with the reason when one is unavailable. A token with none
+of the usable scopes cannot be offered to investigations.
 
 ## During investigations
 
@@ -74,6 +92,29 @@ thread, or search by keyword when a user token has `search:read`. Search covers
 conversations visible to that user, not only channels joined by the app. Messages are
 treated as leads; a responder's statement alone does not establish a cause.
 
+## Talking to OpenCluster in Slack
+
+Where this deployment serves the Slack agent surface, OpenCluster can be spoken to as well as
+read from.
+
+| | |
+| --- | --- |
+| **Mention it in a channel** | `@OpenCluster why is checkout failing?` in a channel the app is in. It answers in a thread on your message. |
+| **Continue in the thread** | A further mention in that thread continues the same conversation, and a colleague joining the thread joins the same one. Everyone's messages are attributed to them. |
+| **Ask privately** | Open OpenCluster's agent and ask in a direct message. |
+
+The reply is one message that fills in as the work happens: what is being read, what each read
+found, and then the answer. OpenCluster never posts its internal reasoning, and it never answers
+its own messages.
+
+What it can see is unchanged by any of this. It reads the channels it has been invited to, at
+investigation time, and keeps only the summaries and references its provenance model already
+keeps — connecting Slack does not create a second archive of your workspace. Everything anyone
+types is treated as evidence about what was said, never as an instruction to OpenCluster.
+
+If OpenCluster cannot finish answering, it says so in the thread. The investigation behind it is
+unaffected and stays readable in the console.
+
 ## Limitations
 
 - Bot-token channel and thread reads are limited to public channels available to the
@@ -82,6 +123,13 @@ treated as leads; a responder's statement alone does not establish a cause.
 - Search uses Slack's day-level date filters. A result can fall outside the exact
   investigation window on either boundary day.
 - Text only. Files, attachments, reactions, and edit history are not read.
+- OpenCluster's only writes are its own replies in the thread it was addressed in. It does not
+  react, join channels, post into channels it was not spoken to in, or edit anyone's message.
+- Workspace-wide search is not requested. OpenCluster reasons over conversations it has been
+  invited into, not everything an employee can see, and the integration reports that capability
+  as unavailable with that reason rather than as a gap.
+- A message sent while OpenCluster is still working is picked up at the end of the current turn
+  rather than starting a second one. A running turn cannot be interrupted from Slack.
 - Reads are bounded. Truncated channel, history, and thread results are marked.
 - Slack rate limits are honored and surfaced in the investigation record.
 

@@ -137,6 +137,24 @@ func refreshEpisode(ctx context.Context, transaction pgx.Tx, episodeID uuid.UUID
 	return nil
 }
 
+// episodeColumns is what every read of an episode selects, written once because there are four
+// of them and a column added to three is a field that is populated in a listing and empty in the
+// read of one row.
+//
+// The delivering integration's NAME comes through a scalar subquery rather than a join, for two
+// reasons that both matter. A LEFT JOIN would widen what `FOR UPDATE` locks, and lockEpisode uses
+// this same list to read an episode for a merge — locking an unrelated integration row there
+// would be a lock nobody asked for. And a subquery answers NULL where a join would drop the row
+// entirely, which is the difference between an episode whose name could not be resolved and an
+// episode that vanished from a listing.
+const episodeColumns = `episode_id, integration_id,
+		       (SELECT name FROM integration i
+		         WHERE i.integration_id = e.integration_id
+		           AND i.org_id = e.org_id) AS integration_name,
+		       grouping_key, grouping_basis, title,
+		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
+		       superseded_by, superseded_at, supersede_reason, created_at, updated_at`
+
 // QueryEpisodes reports a page of a tenant's episodes.
 func (p *Placements) QueryEpisodes(
 	ctx context.Context, organization tenancy.Organization, query incident.Query,
@@ -195,10 +213,8 @@ func (p *Placements) QueryEpisodes(
 	// One row past the limit is fetched so the cursor is issued only when there genuinely is a
 	// next page. A listing that always offered one would let a caller page forever.
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
-		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
-		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
-		  FROM incident_episode
+		SELECT `+episodeColumns+`
+		  FROM incident_episode e
 		 WHERE %s
 		 ORDER BY %s %s, episode_id %s
 		 LIMIT $%d`,
@@ -260,10 +276,8 @@ func (p *Placements) Episode(
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
-		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
-		  FROM incident_episode
+		SELECT `+episodeColumns+`
+		  FROM incident_episode e
 		 WHERE episode_id = $1 AND org_id = $2`, id, organization.String())
 	if err != nil {
 		return incident.Episode{}, fmt.Errorf("reading an incident episode: %w", err)
@@ -431,10 +445,8 @@ func lockEpisode(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, id uuid.UUID,
 ) (incident.Episode, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
-		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
-		  FROM incident_episode
+		SELECT `+episodeColumns+`
+		  FROM incident_episode e
 		 WHERE episode_id = $1 AND org_id = $2
 		   FOR UPDATE`, id, organization.String())
 	if err != nil {
@@ -455,10 +467,8 @@ func readEpisode(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, id uuid.UUID,
 ) (incident.Episode, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT episode_id, integration_id, grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, signal_count,
-		       superseded_by, superseded_at, supersede_reason, created_at, updated_at
-		  FROM incident_episode
+		SELECT `+episodeColumns+`
+		  FROM incident_episode e
 		 WHERE episode_id = $1 AND org_id = $2`, id, organization.String())
 	if err != nil {
 		return incident.Episode{}, fmt.Errorf("reading an incident episode: %w", err)
@@ -478,13 +488,20 @@ func scanEpisode(rows pgx.Rows, organization tenancy.Organization) (incident.Epi
 		status       int16
 		resolvedAt   *time.Time
 		supersededAt *time.Time
+		// Nullable because the subquery that resolves it can answer nothing. Scanned into
+		// a pointer rather than a string so "no name was resolved" cannot be mistaken for
+		// an integration named the empty string, which the table's own check forbids.
+		integrationName *string
 	)
-	if err := rows.Scan(&episode.ID, &episode.Integration,
+	if err := rows.Scan(&episode.ID, &episode.Integration, &integrationName,
 		&episode.GroupingKey, &basis, &episode.Title, &status, &episode.FirstSeenAt,
 		&episode.LastSeenAt, &resolvedAt, &episode.SignalCount,
 		&episode.SupersededBy, &supersededAt, &episode.SupersedeReason,
 		&episode.CreatedAt, &episode.UpdatedAt); err != nil {
 		return incident.Episode{}, fmt.Errorf("scanning an incident episode: %w", err)
+	}
+	if integrationName != nil {
+		episode.IntegrationName = *integrationName
 	}
 	episode.Organization = organization.String()
 	episode.Basis = incident.Basis(basis)

@@ -194,7 +194,7 @@ func evalAgentRevision(t *testing.T) string {
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
-		slack.Definition(slack.NewClient("")),
+		slack.Definition(slack.NewClient(""), nil, false),
 		github.Definition(nil, nil, github.NewClient(""), ""),
 	)
 	if err != nil {

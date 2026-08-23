@@ -3,6 +3,7 @@ package intake
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,6 +35,17 @@ type instruments struct {
 	deliveries metric.Int64Counter
 	signals    metric.Int64Counter
 	episodes   metric.Int64Counter
+	// slackEvents is the chat surface's own arrivals. Counted apart from deliveries
+	// because they answer different questions: a delivery is a customer's alerting
+	// reaching us, and this is a person speaking to OpenCluster — and the dispositions that
+	// matter are different ones. A rising invalid-signature count here is somebody probing
+	// or an app registration that has been rotated; a rising duplicate count is Slack
+	// retrying, which means our answer is not reaching it.
+	slackEvents metric.Int64Counter
+	// slackLatency is how long acknowledgement took. Slack retries anything it is not
+	// answered inside three seconds, so a deployment drifting towards that ceiling is a
+	// retry storm it is asking for — and no counter of outcomes would show it coming.
+	slackLatency metric.Float64Histogram
 }
 
 // The attribute keys, declared once so a typo is a compile error rather than a second time series
@@ -71,7 +83,38 @@ func newInstruments(logger *slog.Logger) instruments {
 		metric.WithUnit("{signal}")); err != nil {
 		logger.Warn("intake grouping metric unavailable", slog.String("error", err.Error()))
 	}
+	if built.slackEvents, err = meter.Int64Counter("oc.intake.slack_events",
+		metric.WithDescription(
+			"Slack events reaching intake, by what was done with them."),
+		metric.WithUnit("{event}")); err != nil {
+		logger.Warn("intake slack metric unavailable", slog.String("error", err.Error()))
+	}
+	if built.slackLatency, err = meter.Float64Histogram("oc.intake.slack_acknowledgement",
+		metric.WithDescription(
+			"How long acknowledging one Slack event took, against the vendor's own timeout."),
+		metric.WithUnit("s")); err != nil {
+		logger.Warn("intake slack latency metric unavailable",
+			slog.String("error", err.Error()))
+	}
 	return built
+}
+
+// observeSlackLatency records how long acknowledgement took.
+func (i instruments) observeSlackLatency(ctx context.Context, took time.Duration) {
+	if i.slackLatency == nil {
+		return
+	}
+	i.slackLatency.Record(ctx, took.Seconds())
+}
+
+// countSlackEvent records what happened to one inbound Slack event. The disposition is one
+// of this build's own words, for the reason countDelivery's is.
+func (i instruments) countSlackEvent(ctx context.Context, disposition string) {
+	if i.slackEvents == nil {
+		return
+	}
+	i.slackEvents.Add(ctx, 1,
+		metric.WithAttributes(attribute.String(dispositionKey, disposition)))
 }
 
 // countDelivery records what happened to one delivery.
@@ -123,4 +166,39 @@ const (
 	// separately because it is the one disposition that pages somebody here rather than somebody
 	// at the far end.
 	dispositionUnavailable = "unavailable"
+)
+
+// The dispositions an inbound Slack event is counted under. They are apart from the delivery
+// words above because they answer different questions, and each of these is a distinct
+// operational story rather than a shade of "refused".
+const (
+	slackAccepted  = "accepted"
+	slackDuplicate = "duplicate"
+	// slackRefused is a request that failed authenticity: no signature, a wrong one, a body
+	// mutated after signing, or a stale timestamp. Rising means somebody is probing, or the
+	// app's signing secret was rotated and this deployment was not told.
+	slackRefused = "refused"
+	// slackUnknownWorkspace is a correctly signed request naming a workspace this
+	// deployment has no installation for. It is answered exactly as a refusal, and counted
+	// apart because it means something entirely different: a workspace that uninstalled, or
+	// an app registration pointed at the wrong deployment.
+	slackUnknownWorkspace = "unknown_workspace"
+	slackMalformed        = "malformed"
+	slackChallenge        = "challenge"
+	// slackNotAddressed is an event this build deliberately ignores: a channel join, an
+	// edit, another app posting, or OpenCluster's own message.
+	slackNotAddressed = "not_addressed"
+	// slackOutsideRollout is an organization the staged rollout has not reached, and
+	// slackDisabled is an integration an operator turned off. Both are acknowledged and
+	// dropped, and they are counted apart so "we are not answering" can be told from "we
+	// are failing to answer".
+	slackOutsideRollout = "outside_rollout"
+	slackDisabled       = "disabled"
+	slackUnavailable    = "unavailable"
+	// slackRateLimited is a workspace shedding load, and slackQueued is a message
+	// persisted behind an organization's own ceiling on unclaimed turns. Neither is a
+	// failure, and both are counted so that "we are deliberately slowing down" can be told
+	// from "we are broken".
+	slackRateLimited = "rate_limited"
+	slackQueued      = "queued"
 )

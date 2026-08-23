@@ -24,8 +24,26 @@ useDefault = true
 
 [allowlist]
 description = """
-A test fixture that wrote a bare PEM header — the header alone, never any key material —
-removed from the working tree in the commit that added this allowlist. Accepted here only
-for the historical patch that introduced it, which full-history scanning cannot forget.
+Two test fixtures, each accepted only for the one historical patch that carries it.
+
+The first wrote a bare PEM header — the header alone, never any key material — to prove
+configuration refuses a GitHub App key it cannot use.
+
+The second was a thirty-two character hex-looking literal standing in for a Slack signing
+secret. It was never a credential either: nothing parses it, it is HMAC key material and any
+bytes serve, and the workspace it would have belonged to does not exist.
+
+Neither resembles a credential in the working tree any more, which is the actual fix. These
+entries exist because the gate scans --all --full-history, so a value that ever entered a
+commit is found in that commit's patch forever, and a gate that is permanently red is a gate
+nobody reads — which is how a REAL leak comes to be ignored.
+
+Scoped to COMMITS rather than to a rule, a file or a pattern. A rule allowlist would stop
+these secret kinds being detected anywhere; a path allowlist would let a real secret hide in
+those files; a regex allowlist would accept the same text everywhere, forever. A commit is the
+one thing that cannot grow: those patches are written, and nothing new can enter them.
 """
-commits = ["67c5226e73a60a3f4ba5490acaa5738520d890d2"]
+commits = [
+    "67c5226e73a60a3f4ba5490acaa5738520d890d2",
+    "ac84de66d70be95301602e12b4328193d1c8e71e",
+]
