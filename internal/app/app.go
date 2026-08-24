@@ -28,21 +28,12 @@ import (
 // cheapest defence against a slow-loris holding connections open.
 const readHeaderTimeout = 10 * time.Second
 
-// Bounds on the operator surface's connections. They are longer than a request needs and
-// shorter than an idle connection may be held, which is the whole job.
+// Bounds on connections to the shared HTTP surface. Route owners retain their own body and
+// request limits inside these server-wide bounds.
 const (
 	operatorReadTimeout  = 30 * time.Second
 	operatorWriteTimeout = 30 * time.Second
 	operatorIdleTimeout  = 60 * time.Second
-)
-
-// Bounds on intake's connections. Shorter than the operator surface's, because a webhook
-// delivery is one bounded body from a machine rather than a person reading a page, and this is
-// the surface reachable from outside.
-const (
-	intakeReadTimeout  = 20 * time.Second
-	intakeWriteTimeout = 20 * time.Second
-	intakeIdleTimeout  = 30 * time.Second
 )
 
 // Options carries the process facts and boundary replacements supplied by the command or a
@@ -90,20 +81,15 @@ func Run(
 	logger := telemetry.Logger
 	logger.Info("control plane starting",
 		slog.String("version", version),
-		slog.String("service", cfg.ServiceName),
-		slog.Int("placements", len(cfg.Placements)))
+		slog.String("service", cfg.ServiceName))
 
-	placements, err := storage.OpenPlacements(ctx, storage.Layout{
-		Placements:       cfg.Placements,
-		Assignments:      cfg.Assignments,
-		DefaultPlacement: cfg.DefaultPlacement,
-	})
+	database, err := storage.OpenDatabase(ctx, cfg.DatabaseDSN)
 	if err != nil {
 		return err
 	}
-	defer placements.Close()
+	defer database.Close()
 
-	applied, err := placements.Migrate(ctx)
+	applied, err := database.Migrate(ctx)
 	if err != nil {
 		return fmt.Errorf("applying migrations: %w", err)
 	}
@@ -180,9 +166,9 @@ func Run(
 	}
 
 	investigations := &investigation.Runner{
-		Events:        placements,
-		Store:         placements,
-		Leases:        placements,
+		Events:        database,
+		Store:         database,
+		Leases:        database,
 		Catalog:       catalog,
 		Sealer:        sealer,
 		Investigator:  investigator,
@@ -227,7 +213,7 @@ func Run(
 		config:         cfg,
 		logger:         logger,
 		telemetry:      telemetry,
-		placements:     placements,
+		database:       database,
 		catalog:        catalog,
 		sealer:         sealer,
 		investigations: investigations,
@@ -280,7 +266,7 @@ type assembled struct {
 	config         config.Config
 	logger         *slog.Logger
 	telemetry      *observability.Telemetry
-	placements     *storage.Placements
+	database       *storage.Database
 	catalog        integrations.Catalog
 	sealer         seal.Sealer
 	investigations *investigation.Runner

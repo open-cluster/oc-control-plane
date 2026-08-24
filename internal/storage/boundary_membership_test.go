@@ -28,7 +28,7 @@ import (
 // that one forgotten call site removes.
 func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 
 	stranger := aStranger(t)
 	ctx := context.Background()
@@ -37,16 +37,16 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 
 	refusals := map[string]func() error{
 		"QueryIntegrations": func() error {
-			_, err := placements.QueryIntegrations(
+			_, err := database.QueryIntegrations(
 				ctx, stranger, organization, integrations.Query{})
 			return err
 		},
 		"CountIntegrationsByType": func() error {
-			_, err := placements.CountIntegrationsByType(ctx, stranger, organization)
+			_, err := database.CountIntegrationsByType(ctx, stranger, organization)
 			return err
 		},
 		"CreateIntegration": func() error {
-			_, err := placements.CreateIntegration(ctx, stranger, organization,
+			_, err := database.CreateIntegration(ctx, stranger, organization,
 				integrations.NewIntegration{
 					Type: integrations.TypeAlertmanager, Name: "trespass",
 					WebhookSecretDigest:      randomDigest(t),
@@ -55,64 +55,64 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			return err
 		},
 		"ReviseIntegration": func() error {
-			_, err := placements.ReviseIntegration(
+			_, err := database.ReviseIntegration(
 				ctx, stranger, organization, somebody, integrations.Revision{})
 			return err
 		},
 		"SetIntegrationDisabled": func() error {
-			return placements.SetIntegrationDisabled(ctx, stranger, organization, somebody, true)
+			return database.SetIntegrationDisabled(ctx, stranger, organization, somebody, true)
 		},
 		"DeleteIntegration": func() error {
-			return placements.DeleteIntegration(ctx, stranger, organization, somebody)
+			return database.DeleteIntegration(ctx, stranger, organization, somebody)
 		},
 		"RotateIntegrationWebhookSecret": func() error {
-			return placements.RotateIntegrationWebhookSecret(
+			return database.RotateIntegrationWebhookSecret(
 				ctx, stranger, organization, somebody, randomDigest(t), "fingerprint")
 		},
 		"RecordIntegrationVerification": func() error {
-			_, err := placements.RecordIntegrationVerification(ctx, stranger, organization,
+			_, err := database.RecordIntegrationVerification(ctx, stranger, organization,
 				somebody, integrations.Verification{Status: integrations.StatusActive})
 			return err
 		},
 		"ListRelays": func() error {
-			_, err := placements.ListRelays(ctx, stranger, organization, storage.RelayQuery{})
+			_, err := database.ListRelays(ctx, stranger, organization, storage.RelayQuery{})
 			return err
 		},
 		"FleetSummary": func() error {
-			_, err := placements.FleetSummary(ctx, stranger, organization, time.Minute, "")
+			_, err := database.FleetSummary(ctx, stranger, organization, time.Minute, "")
 			return err
 		},
 		"IssueOperatorBootstrapToken": func() error {
-			return placements.IssueOperatorBootstrapToken(ctx, stranger, organization,
+			return database.IssueOperatorBootstrapToken(ctx, stranger, organization,
 				randomDigest(t), time.Now().Add(time.Hour))
 		},
 		"SessionConflictTrail": func() error {
-			_, err := placements.SessionConflictTrail(
+			_, err := database.SessionConflictTrail(
 				ctx, stranger, organization, somebody, storage.Page{})
 			return err
 		},
 		"ClearSessionConflict": func() error {
-			_, err := placements.ClearSessionConflict(ctx, stranger, organization, somebody)
+			_, err := database.ClearSessionConflict(ctx, stranger, organization, somebody)
 			return err
 		},
 		"ListMembers": func() error {
-			_, err := placements.ListMembers(ctx, stranger, organization, storage.Page{})
+			_, err := database.ListMembers(ctx, stranger, organization, storage.Page{})
 			return err
 		},
 		"SetMembership": func() error {
-			_, err := placements.SetMembership(
+			_, err := database.SetMembership(
 				ctx, stranger, organization, somebody, authz.Viewer)
 			return err
 		},
 		"RemoveMembership": func() error {
-			return placements.RemoveMembership(ctx, stranger, organization, somebody)
+			return database.RemoveMembership(ctx, stranger, organization, somebody)
 		},
 		"ListIdentityProviders": func() error {
-			_, err := placements.ListIdentityProviders(ctx, stranger, organization)
+			_, err := database.ListIdentityProviders(ctx, stranger, organization)
 			return err
 		},
 		"ConfigureIdentityProvider": func() error {
-			_, err := placements.ConfigureIdentityProvider(ctx, stranger, organization,
+			_, err := database.ConfigureIdentityProvider(ctx, stranger, organization,
 				storage.NewIdentityProvider{
 					Name: "trespass", Protocol: storage.ProtocolOIDC,
 					Issuer: "https://idp.example.test", ClientID: "trespass",
@@ -121,51 +121,51 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			return err
 		},
 		"UpdateIdentityProvider": func() error {
-			_, err := placements.UpdateIdentityProvider(ctx, stranger, organization, somebody,
+			_, err := database.UpdateIdentityProvider(ctx, stranger, organization, somebody,
 				storage.NewIdentityProvider{Name: "trespass"})
 			return err
 		},
 		"RemoveIdentityProvider": func() error {
-			return placements.RemoveIdentityProvider(ctx, stranger, organization, somebody)
+			return database.RemoveIdentityProvider(ctx, stranger, organization, somebody)
 		},
 		"ListSessions": func() error {
-			_, err := placements.ListSessions(ctx, stranger, organization)
+			_, err := database.ListSessions(ctx, stranger, organization)
 			return err
 		},
 		"RevokeSessionsOf": func() error {
-			_, err := placements.RevokeSessionsOf(ctx, stranger, organization, somebody)
+			_, err := database.RevokeSessionsOf(ctx, stranger, organization, somebody)
 			return err
 		},
 		"SetSessionPolicy": func() error {
-			return placements.SetSessionPolicy(ctx, stranger, organization, time.Hour, 30)
+			return database.SetSessionPolicy(ctx, stranger, organization, time.Hour, 30)
 		},
 		"ListServiceAccounts": func() error {
-			_, err := placements.ListServiceAccounts(ctx, stranger, organization)
+			_, err := database.ListServiceAccounts(ctx, stranger, organization)
 			return err
 		},
 		"CreateServiceAccount": func() error {
-			_, err := placements.CreateServiceAccount(ctx, stranger, organization, "trespass", "")
+			_, err := database.CreateServiceAccount(ctx, stranger, organization, "trespass", "")
 			return err
 		},
 		"RemoveServiceAccount": func() error {
-			return placements.RemoveServiceAccount(ctx, stranger, organization, somebody)
+			return database.RemoveServiceAccount(ctx, stranger, organization, somebody)
 		},
 		"ListAPITokens": func() error {
-			_, err := placements.ListAPITokens(ctx, stranger, organization)
+			_, err := database.ListAPITokens(ctx, stranger, organization)
 			return err
 		},
 		"IssueAPIToken": func() error {
-			_, err := placements.IssueAPIToken(ctx, stranger, organization, storage.NewAPIToken{
+			_, err := database.IssueAPIToken(ctx, stranger, organization, storage.NewAPIToken{
 				ServiceAccountID: somebody, Digest: randomDigest(t), Prefix: "occp_ab",
 				Role: authz.Viewer, ExpiresAt: time.Now().Add(time.Hour),
 			})
 			return err
 		},
 		"RevokeAPIToken": func() error {
-			return placements.RevokeAPIToken(ctx, stranger, organization, somebody)
+			return database.RevokeAPIToken(ctx, stranger, organization, somebody)
 		},
 		"AuditEvents": func() error {
-			_, err := placements.AuditEvents(ctx, stranger, organization, audit.Page{})
+			_, err := database.AuditEvents(ctx, stranger, organization, audit.Page{})
 			return err
 		},
 		// The provisioning surface. A directory's credential is bound to one organization by
@@ -173,62 +173,62 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		// not — which matters more here than anywhere else on this surface, because this
 		// credential lives in a customer's identity vendor.
 		"ProvisionedUsers": func() error {
-			_, err := placements.ProvisionedUsers(
+			_, err := database.ProvisionedUsers(
 				ctx, stranger, organization, storage.ProvisionedUserFilter{}, 1, 10)
 			return err
 		},
 		"ProvisionedUser": func() error {
-			_, err := placements.ProvisionedUser(ctx, stranger, organization, somebody)
+			_, err := database.ProvisionedUser(ctx, stranger, organization, somebody)
 			return err
 		},
 		"ProvisionUser": func() error {
-			_, err := placements.ProvisionUser(ctx, stranger, organization,
+			_, err := database.ProvisionUser(ctx, stranger, organization,
 				storage.NewProvisionedUser{UserName: "trespass@example.test", Active: true})
 			return err
 		},
 		"ReplaceProvisionedUser": func() error {
-			_, err := placements.ReplaceProvisionedUser(ctx, stranger, organization, somebody,
+			_, err := database.ReplaceProvisionedUser(ctx, stranger, organization, somebody,
 				storage.NewProvisionedUser{UserName: "trespass@example.test", Active: true})
 			return err
 		},
 		"SetProvisionedUserActive": func() error {
-			_, err := placements.SetProvisionedUserActive(
+			_, err := database.SetProvisionedUserActive(
 				ctx, stranger, organization, somebody, false)
 			return err
 		},
 		"DeprovisionUser": func() error {
-			return placements.DeprovisionUser(ctx, stranger, organization, somebody)
+			return database.DeprovisionUser(ctx, stranger, organization, somebody)
 		},
 		"DirectoryGroups": func() error {
-			_, err := placements.DirectoryGroups(ctx, stranger, organization, "", 1, 10)
+			_, err := database.DirectoryGroups(ctx, stranger, organization, "", 1, 10)
 			return err
 		},
 		"DirectoryGroup": func() error {
-			_, err := placements.DirectoryGroup(ctx, stranger, organization, somebody)
+			_, err := database.DirectoryGroup(ctx, stranger, organization, somebody)
 			return err
 		},
 		"CreateDirectoryGroup": func() error {
-			_, err := placements.CreateDirectoryGroup(
+			_, err := database.CreateDirectoryGroup(
 				ctx, stranger, organization, "trespass", "", nil)
 			return err
 		},
 		"ReplaceDirectoryGroup": func() error {
-			_, err := placements.ReplaceDirectoryGroup(
+			_, err := database.ReplaceDirectoryGroup(
 				ctx, stranger, organization, somebody, "trespass", "", nil)
 			return err
 		},
 		"ChangeDirectoryGroupMembers": func() error {
-			_, err := placements.ChangeDirectoryGroupMembers(
+			_, err := database.ChangeDirectoryGroupMembers(
 				ctx, stranger, organization, somebody, nil, nil)
 			return err
 		},
 		"MapDirectoryGroupToRole": func() error {
-			_, err := placements.MapDirectoryGroupToRole(
+			_, err := database.MapDirectoryGroupToRole(
 				ctx, stranger, organization, somebody, authz.Viewer)
 			return err
 		},
 		"DeleteDirectoryGroup": func() error {
-			return placements.DeleteDirectoryGroup(ctx, stranger, organization, somebody)
+			return database.DeleteDirectoryGroup(ctx, stranger, organization, somebody)
 		},
 	}
 

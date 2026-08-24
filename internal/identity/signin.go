@@ -38,7 +38,7 @@ func (h Handlers) signInProviders(writer http.ResponseWriter, request *http.Requ
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	providers, err := h.Placements.SignInProviders(ctx, organization)
+	providers, err := h.Database.SignInProviders(ctx, organization)
 	if err != nil {
 		if errors.Is(err, storage.ErrUnknownOrganization) {
 			writeJSON(writer, http.StatusNotFound, errorView{Error: noWayIn})
@@ -87,7 +87,7 @@ func (h Handlers) startSignIn(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
 
-	provider, err := h.Placements.IdentityProviderForSignIn(ctx, organization, providerID)
+	provider, err := h.Database.IdentityProviderForSignIn(ctx, organization, providerID)
 	if err != nil || provider.Disabled() {
 		// One answer for every way this can fail to name a live provider. See noWayIn.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: noWayIn})
@@ -117,7 +117,7 @@ func (h Handlers) startSignIn(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	if err := h.Placements.StartSignIn(ctx, organization, storage.SignInFlow{
+	if err := h.Database.StartSignIn(ctx, organization, storage.SignInFlow{
 		ID:           newFlowID(),
 		Organization: organization.String(),
 		ProviderID:   provider.ID,
@@ -187,7 +187,7 @@ func (h Handlers) completeSignIn(writer http.ResponseWriter, request *http.Reque
 	// The redemption is atomic, so two presentations of the same authorization code cannot
 	// both pass here — which is the replay defence that does not depend on the provider having
 	// one.
-	flow, err := h.Placements.RedeemSignIn(ctx, state)
+	flow, err := h.Database.RedeemSignIn(ctx, state)
 	if err != nil {
 		h.Logger.WarnContext(ctx, "a sign-in callback presented an unusable state",
 			slog.String("caller", request.RemoteAddr))
@@ -200,7 +200,7 @@ func (h Handlers) completeSignIn(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
-	provider, err := h.Placements.IdentityProviderForSignIn(ctx, organization, flow.ProviderID)
+	provider, err := h.Database.IdentityProviderForSignIn(ctx, organization, flow.ProviderID)
 	if err != nil {
 		h.refuseSignIn(writer, request, organization, flow.ProviderID, "the provider is gone")
 		return
@@ -247,7 +247,7 @@ func (h Handlers) admitAndIssue(
 		return
 	}
 
-	user, memberships, err := h.Placements.ResolveUser(ctx, organization, storage.Identity{
+	user, memberships, err := h.Database.ResolveUser(ctx, organization, storage.Identity{
 		Issuer:        issuer,
 		Subject:       subject,
 		Email:         asserted.Email,
@@ -278,7 +278,7 @@ func (h Handlers) issueSession(
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	configured, _, err := h.Placements.SessionPolicy(ctx, organization)
+	configured, _, err := h.Database.SessionPolicy(ctx, organization)
 	if err != nil {
 		return err
 	}
@@ -312,7 +312,7 @@ func (h Handlers) issueSession(
 	// The row and the event commit together. A session that exists with nothing saying who it
 	// belongs to is the failure the same-transaction rule exists to prevent, and this is the
 	// one path where the actor is established for the first time.
-	if err := h.Placements.IssueSession(ctx, organization, issued, digest, audit.Actor{
+	if err := h.Database.IssueSession(ctx, organization, issued, digest, audit.Actor{
 		Kind:        audit.ActorUser,
 		ID:          user.ID.String(),
 		DisplayName: displayNameOf(user),
@@ -363,7 +363,7 @@ func (h Handlers) record(
 	request *http.Request, organization tenancy.Organization, event audit.Event,
 ) {
 	event.RequestID = authz.RequestIDFrom(request.Context())
-	if err := h.Placements.RecordEvent(request.Context(), organization, event); err != nil {
+	if err := h.Database.RecordEvent(request.Context(), organization, event); err != nil {
 		h.Logger.ErrorContext(request.Context(), "an audit event could not be written",
 			slog.String("action", string(event.Action)),
 			slog.String("error", err.Error()))

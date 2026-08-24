@@ -27,7 +27,7 @@ type JobClaim struct {
 //
 // Expired leases are claimable again, and every claim raises the generation, so a result
 // from the execution that lost its lease is refused rather than recorded.
-func (p *Placements) ClaimJobs(
+func (p *Database) ClaimJobs(
 	ctx context.Context,
 	organization tenancy.Organization,
 	claim JobClaim,
@@ -112,7 +112,7 @@ type LeaseAdoption struct {
 //
 // The generation is deliberately not raised. Raising it would invalidate the very result the
 // relay is holding, which is the thing this exists to preserve.
-func (p *Placements) AdoptInFlightLeases(
+func (p *Database) AdoptInFlightLeases(
 	ctx context.Context, organization tenancy.Organization, adoption LeaseAdoption,
 ) ([]uuid.UUID, error) {
 	if len(adoption.InFlight) == 0 {
@@ -170,7 +170,7 @@ func (p *Placements) AdoptInFlightLeases(
 // The caller must only use this when it knows the relay's account was complete. Releasing work
 // a relay is in fact still executing does not corrupt anything — the fence still decides who
 // may record — but it does mean that execution's result is refused and the work is done twice.
-func (p *Placements) ReleaseStrandedLeases(
+func (p *Database) ReleaseStrandedLeases(
 	ctx context.Context,
 	organization tenancy.Organization,
 	registrationID, holder uuid.UUID,
@@ -205,7 +205,7 @@ func (p *Placements) ReleaseStrandedLeases(
 // disappeared mid-job does not strand it forever. Terminal jobs are never touched: their
 // outcome is already recorded, and re-running them would be the duplicate execution the
 // fence exists to prevent.
-func (p *Placements) SweepExpiredLeases(
+func (p *Database) SweepExpiredLeases(
 	ctx context.Context, organization tenancy.Organization,
 ) (int64, error) {
 	pool, err := p.Pool(organization)

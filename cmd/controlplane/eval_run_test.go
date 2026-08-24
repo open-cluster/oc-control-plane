@@ -120,7 +120,7 @@ func startEvalWorld(
 	githubFake.moreCommits = one.MoreCommits
 
 	operatorAddress := freeAddress(t)
-	intakeAddress := freeAddress(t)
+	intakeAddress := operatorAddress
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.OperatorAddress = operatorAddress
 		cfg.IntakeAddress = intakeAddress

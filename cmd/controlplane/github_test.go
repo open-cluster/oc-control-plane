@@ -99,7 +99,6 @@ func startGitHubPlane(t *testing.T, vendor *githubFake) *integrationPlane {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.Assignments[neighbourOrg] = "shared"
 		cfg.GitHubAppID = "12345"
 		cfg.GitHubAppKey = appKeyPEM(t)
 		cfg.GitHubAPIURL = vendor.URL

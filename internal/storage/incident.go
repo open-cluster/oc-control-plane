@@ -51,10 +51,11 @@ func groupSignal(
 		return false, err
 	}
 	if _, err = transaction.Exec(ctx,
-		`UPDATE signal SET episode_id = $1 WHERE signal_id = $2`, episodeID, signalID); err != nil {
+		`UPDATE signal SET episode_id = $1 WHERE signal_id = $2 AND org_id = $3`,
+		episodeID, signalID, organization.String()); err != nil {
 		return false, fmt.Errorf("grouping a signal: %w", err)
 	}
-	return opened, refreshEpisode(ctx, transaction, episodeID)
+	return opened, refreshEpisode(ctx, transaction, organization, episodeID)
 }
 
 // openEpisode returns the open episode for a grouping key, creating it when there is none.
@@ -111,7 +112,10 @@ func openEpisode(
 // happening — a record that says an incident recovered when it did not is the worst thing this
 // table could say. The cost is one aggregate over an episode's own Signals, which is a handful of
 // rows.
-func refreshEpisode(ctx context.Context, transaction pgx.Tx, episodeID uuid.UUID) error {
+func refreshEpisode(
+	ctx context.Context, transaction pgx.Tx,
+	organization tenancy.Organization, episodeID uuid.UUID,
+) error {
 	// An episode is resolved when NO Signal in it is still firing. The resolution time is the last
 	// one to stop, because that is when the failure ended rather than when the first part of it
 	// did.
@@ -129,9 +133,10 @@ func refreshEpisode(ctx context.Context, transaction pgx.Tx, episodeID uuid.UUID
 		              max(greatest(started_at, coalesce(resolved_at, started_at))) AS last_seen,
 		              count(*) FILTER (WHERE status = 1)              AS firing,
 		              max(resolved_at)                                AS resolved
-		         FROM signal WHERE episode_id = $1
+		         FROM signal WHERE episode_id = $1 AND org_id = $2
 		       ) AS counted
-		 WHERE episode.episode_id = $1 AND counted.total > 0`, episodeID); err != nil {
+		 WHERE episode.episode_id = $1 AND episode.org_id = $2 AND counted.total > 0`,
+		episodeID, organization.String()); err != nil {
 		return fmt.Errorf("recomputing an incident episode: %w", err)
 	}
 	return nil
@@ -156,7 +161,7 @@ const episodeColumns = `episode_id, integration_id,
 		       superseded_by, superseded_at, supersede_reason, created_at, updated_at`
 
 // QueryEpisodes reports a page of a tenant's episodes.
-func (p *Placements) QueryEpisodes(
+func (p *Database) QueryEpisodes(
 	ctx context.Context, organization tenancy.Organization, query incident.Query,
 ) (incident.Page, error) {
 	pool, err := p.Pool(organization)
@@ -267,7 +272,7 @@ var episodeOrderings = map[string]struct {
 }
 
 // Episode reads one, scoped to the tenant.
-func (p *Placements) Episode(
+func (p *Database) Episode(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) (incident.Episode, error) {
 	pool, err := p.Pool(organization)
@@ -298,7 +303,7 @@ func (p *Placements) Episode(
 // Oldest first because a reader following an incident follows it forwards: what fired, then what
 // fired next. Every other listing on this surface is newest first, and the difference is the point
 // rather than an inconsistency.
-func (p *Placements) EpisodeSignals(
+func (p *Database) EpisodeSignals(
 	ctx context.Context, organization tenancy.Organization,
 	id uuid.UUID, page incident.SignalPage,
 ) (incident.SignalList, error) {
@@ -372,7 +377,7 @@ func (p *Placements) EpisodeSignals(
 // its key. That is deliberate: a reader follows the pointer and sees them under the survivor, and
 // freeing the key would mean the next delivery opened a third episode and the operator's decision
 // quietly stopped applying.
-func (p *Placements) MergeEpisodes(
+func (p *Database) MergeEpisodes(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	merge incident.Merge,
 ) (incident.Episode, error) {

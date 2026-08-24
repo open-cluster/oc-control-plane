@@ -45,7 +45,7 @@ type DirectoryGroupList struct {
 }
 
 // CreateDirectoryGroup records a group the directory reported.
-func (p *Placements) CreateDirectoryGroup(
+func (p *Database) CreateDirectoryGroup(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	displayName, externalID string, members []uuid.UUID,
 ) (DirectoryGroup, error) {
@@ -89,7 +89,7 @@ func (p *Placements) CreateDirectoryGroup(
 }
 
 // ReplaceDirectoryGroup applies the directory's whole picture of a group, members included.
-func (p *Placements) ReplaceDirectoryGroup(
+func (p *Database) ReplaceDirectoryGroup(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, displayName, externalID string, members []uuid.UUID,
 ) (DirectoryGroup, error) {
@@ -134,7 +134,7 @@ func (p *Placements) ReplaceDirectoryGroup(
 
 // ChangeDirectoryGroupMembers adds and removes people, which is what a directory sends far more
 // often than a whole replacement.
-func (p *Placements) ChangeDirectoryGroupMembers(
+func (p *Database) ChangeDirectoryGroupMembers(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, added, removed []uuid.UUID,
 ) (DirectoryGroup, error) {
@@ -195,7 +195,7 @@ func (p *Placements) ChangeDirectoryGroupMembers(
 // It is deliberately not something the directory can set. A directory reports who is in the
 // company; if it could also decide what they may do, a change in somebody else's system would
 // be a privilege grant in this one.
-func (p *Placements) MapDirectoryGroupToRole(
+func (p *Database) MapDirectoryGroupToRole(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, role authz.Role,
 ) (DirectoryGroup, error) {
@@ -236,7 +236,7 @@ func (p *Placements) MapDirectoryGroupToRole(
 }
 
 // DeleteDirectoryGroup removes a group and recomputes what its members are left holding.
-func (p *Placements) DeleteDirectoryGroup(
+func (p *Database) DeleteDirectoryGroup(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -267,7 +267,7 @@ func (p *Placements) DeleteDirectoryGroup(
 }
 
 // DirectoryGroups lists what the directory has synchronised.
-func (p *Placements) DirectoryGroups(
+func (p *Database) DirectoryGroups(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	displayName string, startIndex, count int,
 ) (DirectoryGroupList, error) {
@@ -324,7 +324,7 @@ func (p *Placements) DirectoryGroups(
 }
 
 // DirectoryGroup reads one.
-func (p *Placements) DirectoryGroup(
+func (p *Database) DirectoryGroup(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) (DirectoryGroup, error) {

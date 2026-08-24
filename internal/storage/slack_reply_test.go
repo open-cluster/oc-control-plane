@@ -24,19 +24,19 @@ import (
 // aSlackTurn connects a workspace, binds a thread to a conversation and opens a turn on it,
 // returning the investigation that now owes an answer.
 func aSlackTurn(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	workspace, channel, thread string,
 ) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
-	integration, err := connectSlack(t, placements, organization,
+	integration, err := connectSlack(t, database, organization,
 		"Slack — "+workspace, slackInstallation(workspace))
 	if err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
 
-	outcome, err := placements.RecordSlackMessage(ctx, organization, storage.SlackMessage{
+	outcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration:  integration.ID,
 		BodyDigest:   randomDigest(t),
 		Channel:      channel,
@@ -50,7 +50,7 @@ func aSlackTurn(
 		t.Fatalf("recording a slack message: %v", err)
 	}
 
-	turn, opened, err := placements.OpenTurn(ctx, organization, outcome.Conversation, time.Hour)
+	turn, opened, err := database.OpenTurn(ctx, organization, outcome.Conversation, time.Hour)
 	if err != nil {
 		t.Fatalf("opening a turn: %v", err)
 	}
@@ -64,11 +64,11 @@ func aSlackTurn(
 // the worker that claimed it, so acting on one that was never claimed would be testing a state
 // the product does not reach.
 func claimed(
-	t *testing.T, placements *storage.Placements, investigation uuid.UUID, lease time.Duration,
+	t *testing.T, database *storage.Database, investigation uuid.UUID, lease time.Duration,
 ) {
 	t.Helper()
 
-	held, err := placements.ClaimSlackReplies(context.Background(), 10, lease)
+	held, err := database.ClaimSlackReplies(context.Background(), 10, lease)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -86,11 +86,11 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	// Nothing hooked this: the delivery is derived from the investigation and the thread
 	// binding, both of which already exist. That is what makes it impossible for a turn
 	// opened by the drain behind a running one to be silently missed.
-	placements, organization := migratedPlacement(t)
-	investigation, integration := aSlackTurn(t, placements, organization,
+	database, organization := migratedDatabase(t)
+	investigation, integration := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 
-	claimed, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
+	claimed, err := database.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -111,14 +111,51 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	}
 }
 
+func TestSlackMessageCannotBindAnotherOrganizationsIntegration(t *testing.T) {
+	database, first := migratedDatabase(t)
+	second := organization(t, "org-second")
+	integration, err := connectSlack(t, database, first,
+		"Slack — first", slackInstallation("T-FIRST"))
+	if err != nil {
+		t.Fatalf("connecting slack: %v", err)
+	}
+
+	_, err = database.RecordSlackMessage(context.Background(), second, storage.SlackMessage{
+		Integration: integration.ID,
+		BodyDigest:  randomDigest(t),
+		Channel:     "C-SECOND",
+		Thread:      "1700000002.1",
+		Subject:     "must not cross the organization boundary",
+		ActorID:     "U-SECOND",
+		Text:        "investigate",
+	})
+	if err == nil {
+		t.Fatal("another Organization's Integration was accepted")
+	}
+
+	pool, poolErr := database.Pool(second)
+	if poolErr != nil {
+		t.Fatal(poolErr)
+	}
+	var conversations int
+	if queryErr := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM conversation WHERE org_id = $1`, second.String()).
+		Scan(&conversations); queryErr != nil {
+		t.Fatal(queryErr)
+	}
+	if conversations != 0 {
+		t.Fatalf("another Organization's Integration opened %d conversations", conversations)
+	}
+}
+
 func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	t.Parallel()
 
 	// A console conversation has no thread to answer in, and nothing about it should look
 	// like an answer owed.
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 	ctx := context.Background()
-	opened, err := placements.OpenConversation(ctx, ownerOf(t, organization), organization,
+	opened, err := database.OpenConversation(ctx, ownerOf(t, organization), organization,
 		conversation.NewConversation{
 			Surface: conversation.SurfaceWeb, Subject: "asked in the console",
 			CreatedBy: "user-under-test",
@@ -126,18 +163,18 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening a console conversation: %v", err)
 	}
-	if _, err := placements.AppendMessage(ctx, ownerOf(t, organization), organization,
+	if _, err := database.AppendMessage(ctx, ownerOf(t, organization), organization,
 		opened.ID, conversation.NewMessage{
 			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 			ActorID: "user-under-test", Text: "why is checkout failing?",
 		}); err != nil {
 		t.Fatalf("saying something: %v", err)
 	}
-	if _, _, err := placements.OpenTurn(ctx, organization, opened.ID, time.Hour); err != nil {
+	if _, _, err := database.OpenTurn(ctx, organization, opened.ID, time.Hour); err != nil {
 		t.Fatalf("opening its turn: %v", err)
 	}
 
-	claimed, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
+	claimed, err := database.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -151,14 +188,14 @@ func TestAClaimedDeliveryIsNotClaimedTwice(t *testing.T) {
 
 	// The lease is what stops two workers writing into one visible message, which is the
 	// one failure a reader in the thread could not make sense of.
-	placements, organization := migratedPlacement(t)
-	aSlackTurn(t, placements, organization, "T0ACME", "C0INCIDENTS", "1700000001.1")
+	database, organization := migratedDatabase(t)
+	aSlackTurn(t, database, organization, "T0ACME", "C0INCIDENTS", "1700000001.1")
 
-	first, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
+	first, err := database.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("the first claim = %+v, %v", first, err)
 	}
-	second, err := placements.ClaimSlackReplies(context.Background(), 10, time.Minute)
+	second, err := database.ClaimSlackReplies(context.Background(), 10, time.Minute)
 	if err != nil {
 		t.Fatalf("the second claim: %v", err)
 	}
@@ -172,23 +209,23 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 
 	// The property a retry depends on. A cursor that could go backwards would make a
 	// retry repost what the thread has already seen.
-	placements, organization := migratedPlacement(t)
-	investigation, _ := aSlackTurn(t, placements, organization,
+	database, organization := migratedDatabase(t)
+	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 	ctx := context.Background()
-	claimed(t, placements, investigation, time.Minute)
+	claimed(t, database, investigation, time.Minute)
 
-	if err := placements.AdvanceSlackReply(ctx, organization, investigation,
+	if err := database.AdvanceSlackReply(ctx, organization, investigation,
 		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 12}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
 	// A later pass that somehow read an older batch must not undo it.
-	if err := placements.AdvanceSlackReply(ctx, organization, investigation,
+	if err := database.AdvanceSlackReply(ctx, organization, investigation,
 		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 4}); err != nil {
 		t.Fatalf("advancing backwards: %v", err)
 	}
 
-	_, sequence, streamTS, _, found, err := placements.SlackReplyState(ctx,
+	_, sequence, streamTS, _, found, err := database.SlackReplyState(ctx,
 		organization, investigation)
 	if err != nil || !found {
 		t.Fatalf("reading the delivery = %v, found=%v", err, found)
@@ -198,11 +235,11 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	}
 	// And the visible message's identity is written once. A second identity would be a
 	// second message in the thread.
-	if err := placements.AdvanceSlackReply(ctx, organization, investigation,
+	if err := database.AdvanceSlackReply(ctx, organization, investigation,
 		slack.Progress{Stream: slack.Stream{TS: "1700000999.999", Native: true}, Sequence: 13}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
-	_, _, again, _, _, err := placements.SlackReplyState(ctx, organization, investigation)
+	_, _, again, _, _, err := database.SlackReplyState(ctx, organization, investigation)
 	if err != nil {
 		t.Fatalf("reading the delivery: %v", err)
 	}
@@ -214,18 +251,18 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	investigation, _ := aSlackTurn(t, placements, organization,
+	database, organization := migratedDatabase(t)
+	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 	ctx := context.Background()
-	claimed(t, placements, investigation, time.Minute)
+	claimed(t, database, investigation, time.Minute)
 
-	if err := placements.RetrySlackReply(ctx, organization, investigation,
+	if err := database.RetrySlackReply(ctx, organization, investigation,
 		time.Now(), "slack would not open the reply", true); err != nil {
 		t.Fatalf("giving up: %v", err)
 	}
 
-	status, _, _, note, found, err := placements.SlackReplyState(ctx, organization, investigation)
+	status, _, _, note, found, err := database.SlackReplyState(ctx, organization, investigation)
 	if err != nil || !found {
 		t.Fatalf("reading the delivery = %v, found=%v", err, found)
 	}
@@ -236,7 +273,7 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 		t.Error("giving up recorded no reason an operator could read")
 	}
 	// And it is never claimed again, because there is nothing left to try.
-	claimed, err := placements.ClaimSlackReplies(ctx, 10, time.Minute)
+	claimed, err := database.ClaimSlackReplies(ctx, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -248,7 +285,7 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 
 	// The INVESTIGATION is untouched. A chat outage must not be able to make completed
 	// work look failed.
-	record, err := placements.Investigation(ctx, organization, investigation)
+	record, err := database.Investigation(ctx, organization, investigation)
 	if err != nil {
 		t.Fatalf("reading the investigation: %v", err)
 	}
@@ -260,18 +297,18 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 func TestADeliveredAnswerIsNeverClaimedAgain(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	investigation, _ := aSlackTurn(t, placements, organization,
+	database, organization := migratedDatabase(t)
+	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 	ctx := context.Background()
 	// A lease that has already expired, so what keeps this delivery from being claimed
 	// again is its STATE rather than a lease that has not run out yet.
-	claimed(t, placements, investigation, -time.Second)
+	claimed(t, database, investigation, -time.Second)
 
-	if err := placements.CompleteSlackReply(ctx, organization, investigation); err != nil {
+	if err := database.CompleteSlackReply(ctx, organization, investigation); err != nil {
 		t.Fatalf("completing: %v", err)
 	}
-	claimed, err := placements.ClaimSlackReplies(ctx, 10, time.Minute)
+	claimed, err := database.ClaimSlackReplies(ctx, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -287,13 +324,13 @@ func TestADeliveredAnswerIsNeverClaimedAgain(t *testing.T) {
 func TestTheThreadBindingIsReadableForDelivery(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	integration, err := connectSlack(t, placements, organization, "Slack — Acme",
+	database, organization := migratedDatabase(t)
+	integration, err := connectSlack(t, database, organization, "Slack — Acme",
 		slackInstallation("T0ACME"))
 	if err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
-	outcome, err := placements.RecordSlackMessage(context.Background(), organization,
+	outcome, err := database.RecordSlackMessage(context.Background(), organization,
 		storage.SlackMessage{
 			Integration: integration.ID, BodyDigest: randomDigest(t),
 			Channel: "C0INCIDENTS", Thread: "1700000001.1",
@@ -303,7 +340,7 @@ func TestTheThreadBindingIsReadableForDelivery(t *testing.T) {
 		t.Fatalf("recording a slack message: %v", err)
 	}
 
-	channel, thread, through, bound, err := placements.SlackThreadOf(context.Background(),
+	channel, thread, through, bound, err := database.SlackThreadOf(context.Background(),
 		organization, outcome.Conversation)
 	if err != nil || !bound {
 		t.Fatalf("reading the binding = %v, bound=%v", err, bound)

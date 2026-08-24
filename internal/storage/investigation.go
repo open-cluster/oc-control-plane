@@ -19,7 +19,7 @@ import (
 )
 
 // The investigation capability owns its vocabulary; this file is its persistence.
-var _ investigation.Store = (*Placements)(nil)
+var _ investigation.Store = (*Database)(nil)
 
 const investigationColumns = `investigation_id, episode_id, integration_id, question,
 	       conversation_id, turn, subject, window_from, window_until, status, answer,
@@ -29,7 +29,7 @@ const investigationColumns = `investigation_id, episode_id, integration_id, ques
 // CreateInvestigation records one, born running. Opening is an operator act and lands in
 // the audit record; everything the runner writes afterwards is the investigation's own
 // provenance, which is a record of its own.
-func (p *Placements) CreateInvestigation(
+func (p *Database) CreateInvestigation(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	wanted investigation.NewInvestigation,
 ) (investigation.Investigation, error) {
@@ -63,7 +63,7 @@ func (p *Placements) CreateInvestigation(
 }
 
 // Investigation reads one, scoped to the tenant.
-func (p *Placements) Investigation(
+func (p *Database) Investigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) (investigation.Investigation, error) {
 	pool, err := p.Pool(organization)
@@ -85,7 +85,7 @@ func (p *Placements) Investigation(
 }
 
 // InvestigationProvenance reads the sources and runs beside one investigation.
-func (p *Placements) InvestigationProvenance(
+func (p *Database) InvestigationProvenance(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) ([]investigation.Source, []investigation.ToolRun, error) {
 	pool, err := p.Pool(organization)
@@ -164,7 +164,7 @@ func (p *Placements) InvestigationProvenance(
 }
 
 // QueryInvestigations reports a page, newest first.
-func (p *Placements) QueryInvestigations(
+func (p *Database) QueryInvestigations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query investigation.Query,
 ) (investigation.List, error) {
@@ -229,7 +229,7 @@ func (p *Placements) QueryInvestigations(
 }
 
 // RecordSource writes one offered source.
-func (p *Placements) RecordSource(
+func (p *Database) RecordSource(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	source investigation.Source,
 ) error {
@@ -250,7 +250,7 @@ func (p *Placements) RecordSource(
 }
 
 // RecordToolRun writes one execution as it finished.
-func (p *Placements) RecordToolRun(
+func (p *Database) RecordToolRun(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	run investigation.ToolRun,
 ) error {
@@ -286,7 +286,7 @@ func (p *Placements) RecordToolRun(
 // ConcludeInvestigation ends one with its concluding document and spend. stoppedBy
 // names the ceiling that forced the concluding turn, empty when the model concluded
 // freely.
-func (p *Placements) ConcludeInvestigation(
+func (p *Database) ConcludeInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	conclusion investigation.Conclusion, stoppedBy string, spend investigation.Spend,
 ) error {
@@ -303,7 +303,7 @@ func (p *Placements) ConcludeInvestigation(
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
-func (p *Placements) FailInvestigation(
+func (p *Database) FailInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	reason string, spend investigation.Spend,
 ) error {
@@ -313,7 +313,7 @@ func (p *Placements) FailInvestigation(
 
 // endInvestigation is the one write both endings share. Guarded on the row still
 // running, so an investigation cannot be ended twice.
-func (p *Placements) endInvestigation(
+func (p *Database) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	status int16, answer string, findings, nextSteps []byte, stoppedBy, reason string,
 	spend investigation.Spend,
@@ -367,7 +367,7 @@ const triggerColumns = `e.episode_id, e.integration_id, e.title, e.status,
 	  ) s ON true`
 
 // TriggerEpisode reads what an episode contributes to the investigation it starts.
-func (p *Placements) TriggerEpisode(
+func (p *Database) TriggerEpisode(
 	ctx context.Context, organization tenancy.Organization, episode uuid.UUID,
 ) (investigation.Trigger, error) {
 	pool, err := p.Pool(organization)
@@ -389,7 +389,7 @@ func (p *Placements) TriggerEpisode(
 
 // OpenTriggers reports the organization's open episodes, newest activity first, for
 // inferring a question's subject.
-func (p *Placements) OpenTriggers(
+func (p *Database) OpenTriggers(
 	ctx context.Context, organization tenancy.Organization, limit int,
 ) ([]investigation.Trigger, error) {
 	pool, err := p.Pool(organization)
@@ -421,7 +421,7 @@ func (p *Placements) OpenTriggers(
 }
 
 // InvestigationCandidates reports the enabled integrations an investigation may be offered.
-func (p *Placements) InvestigationCandidates(
+func (p *Database) InvestigationCandidates(
 	ctx context.Context, organization tenancy.Organization,
 ) ([]integrations.Integration, error) {
 	pool, err := p.Pool(organization)

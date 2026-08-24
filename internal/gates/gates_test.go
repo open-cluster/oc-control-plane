@@ -55,9 +55,9 @@ func internalPackagePath(packagePath string) string {
 	return strings.TrimPrefix(trimmed, "/")
 }
 
-// Database access belongs to internal/storage, which owns placement resolution. A pool
-// built anywhere else is a pool that bypasses it, and therefore a tenant-isolation defect
-// rather than a style violation.
+// Database access belongs to internal/storage. A pool built anywhere else bypasses its
+// organization-scoped methods and is therefore a tenant-isolation defect rather than a
+// style violation.
 func TestOnlyStorageImportsTheDatabaseDriver(t *testing.T) {
 	t.Parallel()
 
@@ -136,26 +136,24 @@ func TestTenancyDependsOnNothingInternal(t *testing.T) {
 func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 	t.Parallel()
 
-	// Functions whose contract is deliberately placement-wide rather than tenant-scoped.
+	// Functions whose contract is deliberately database-wide rather than tenant-scoped.
 	// Each is listed with the reason it is safe, so adding to this list is a decision.
-	placementWide := map[string]string{
-		"OpenPlacements": "constructs pools; performs no tenant read",
-		"Migrate":        "applies schema to every placement; touches no tenant row",
-		"Ping":           "reachability of every placement; reads no data",
-		"Close":          "releases pools",
+	databaseWide := map[string]string{
+		"OpenDatabase":   "constructs the deployment pool; performs no tenant read",
+		"Migrate":        "applies schema to the deployment database; touches no tenant row",
+		"Ping":           "reports deployment database reachability; reads no tenant data",
+		"Close":          "releases the deployment pool",
 		"MigrationCount": "reports how many migrations the binary carries",
 		// The one read that DISCOVERS a tenant instead of being given one. An inbound
 		// delivery names its Integration and nothing else, because a path is chosen by the
 		// caller and a caller who could name a tenant could try every tenant — so there is
-		// no organization in the request to resolve a placement from. Each placement is
-		// asked for the identifier and the row that is found is itself the authority for
+		// no organization in the request. The row found by the identifier is itself the authority for
 		// the organization. It is safe for the same reason it exists: nothing the caller
 		// sent contributes to the tenant the answer belongs to.
 		"IntegrationByID": "resolves a tenant FROM an opaque integration identifier; " +
 			"the row found is the authority, and no caller-supplied value selects it",
 		// The same case, one hop earlier. An inbound event from a chat vendor names a
-		// workspace and not a tenant, so there is nothing in the request to resolve a
-		// placement from. The installation key is unique across the whole deployment —
+		// workspace and not a tenant. The installation key is unique across the whole deployment —
 		// deliberately not per organization — so it resolves to at most one row, and that
 		// row is the authority for the organization. A vendor identifier from one tenant
 		// cannot reach another's records because the lookup never starts from a vendor
@@ -177,9 +175,8 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			"reads no tenant data, and every prune it leads to is tenant-scoped",
 		// The three credential lookups, and they are the same case ConnectionByID is. A session
 		// cookie, an API token and an OAuth state parameter name no tenant — a caller who could
-		// name one could try every one — so there is nothing in the request to resolve a
-		// placement from. Each placement is asked for the DIGEST in a fixed order and the row
-		// that is found is itself the authority for the organization. Nothing the caller sent
+		// name one could try every one. The row found by the digest is itself the authority
+		// for the organization. Nothing the caller sent
 		// contributes to the tenant the answer belongs to, which is why they are safe and why
 		// they have to exist.
 		"SessionByToken": "resolves a tenant FROM an opaque session digest; the row found is " +
@@ -191,11 +188,11 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"RedeemConnectFlow": "consumes an installation state that names no tenant; the flow " +
 			"row found is the authority for the organization the integration binds to, and " +
 			"an organization named in the provider's callback is never read",
-		// The change ledger's pruner deletes by AGE across every placement, bounded per
+		// The change ledger's pruner deletes by AGE across the database, bounded per
 		// statement. It reads no tenant data and takes no caller-supplied value at all — a
 		// horizon and a batch size are the whole request — so there is no tenant in the
-		// question to resolve a placement from, and nothing selective enough to leak one.
-		"PruneChangeLedgerBefore": "age-bounded delete across every placement; reads no tenant " +
+		// question, and nothing selective enough to leak one.
+		"PruneChangeLedgerBefore": "age-bounded delete across the database; reads no tenant " +
 			"data and takes no caller-supplied identifier",
 		// The investigation claimer asks for WORK, not for a tenant's work. Which
 		// organization has something waiting is the answer rather than the question, and a
@@ -206,10 +203,10 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"ClaimInvestigation": "discovers which tenant has work waiting; takes no " +
 			"caller-supplied identifier, and the claimed row is the authority for the " +
 			"organization it belongs to",
-		// The lease sweeper recovers by EXPIRY across every placement, bounded per call. It
+		// The lease sweeper recovers by EXPIRY across the database, bounded per call. It
 		// reads no tenant data and takes nothing selective — a reason and a batch size —
 		// so there is no tenant in the question and nothing precise enough to leak one.
-		"RecoverStale": "expiry-bounded recovery across every placement; reads no tenant " +
+		"RecoverStale": "expiry-bounded recovery across the database; reads no tenant " +
 			"data and takes no caller-supplied identifier",
 	}
 
@@ -219,20 +216,20 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			if !ok || !function.Name.IsExported() {
 				continue
 			}
-			// Tenant data is reached only through the placement handle, so a method on any
+			// Tenant data is reached only through the database handle, so a method on any
 			// other receiver — a refusal reason rendering itself, say — cannot reach a row
 			// and has no organization to take. Plain functions are still checked, because a
 			// new one could take a pool directly.
-			if receiver := receiverType(function); receiver != "" && receiver != "Placements" {
+			if receiver := receiverType(function); receiver != "" && receiver != "Database" {
 				continue
 			}
-			if _, exempt := placementWide[function.Name.Name]; exempt {
+			if _, exempt := databaseWide[function.Name.Name]; exempt {
 				continue
 			}
 			if !takesOrganization(function) {
 				t.Errorf("storage.%s is exported and tenant-scoped but takes no "+
 					"tenancy.Organization; add the parameter or record it as "+
-					"placement-wide with a reason", function.Name.Name)
+					"database-wide with a reason", function.Name.Name)
 			}
 		}
 	}

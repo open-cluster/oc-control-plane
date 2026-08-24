@@ -41,7 +41,7 @@ func (s *SessionService) recordPresence(session *sessionState) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(session.ctx), presenceTimeout)
 	defer cancel()
 
-	if err := s.placements.RelaySessionOpened(ctx, session.organization,
+	if err := s.database.RelaySessionOpened(ctx, session.organization,
 		session.registrationID, session.id, session.peer); err != nil {
 		session.logger.ErrorContext(ctx, "a relay session could not be recorded as present",
 			slog.String("error", err.Error()))
@@ -72,7 +72,7 @@ func (s *SessionService) watchPresence(session *sessionState) {
 			}
 			ctx, cancel := context.WithTimeout(
 				context.WithoutCancel(session.ctx), presenceTimeout)
-			err := s.placements.RelaySessionHeard(ctx, session.organization,
+			err := s.database.RelaySessionHeard(ctx, session.organization,
 				session.registrationID, session.id)
 			cancel()
 			if err != nil {
@@ -93,7 +93,7 @@ func (s *SessionService) releasePresence(session *sessionState) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(session.ctx), presenceTimeout)
 	defer cancel()
 
-	if err := s.placements.RelaySessionClosed(ctx, session.organization,
+	if err := s.database.RelaySessionClosed(ctx, session.organization,
 		session.registrationID, session.id); err != nil {
 		session.logger.ErrorContext(ctx, "the end of a relay session could not be recorded",
 			slog.String("error", err.Error()))

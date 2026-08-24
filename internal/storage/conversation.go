@@ -17,13 +17,13 @@ import (
 )
 
 // The conversation capability owns its vocabulary; this file is its persistence.
-var _ conversation.Store = (*Placements)(nil)
+var _ conversation.Store = (*Database)(nil)
 
 const conversationColumns = `conversation_id, episode_id, surface, subject, state,
 	       created_by, created_at, last_activity_at`
 
 // OpenConversation records one and audits the act.
-func (p *Placements) OpenConversation(
+func (p *Database) OpenConversation(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	wanted conversation.NewConversation,
 ) (conversation.Conversation, error) {
@@ -58,7 +58,7 @@ func (p *Placements) OpenConversation(
 }
 
 // Conversation reads one, scoped to the tenant.
-func (p *Placements) Conversation(
+func (p *Database) Conversation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) (conversation.Conversation, error) {
 	pool, err := p.Pool(organization)
@@ -80,7 +80,7 @@ func (p *Placements) Conversation(
 }
 
 // QueryConversations reports a page, most recently active first.
-func (p *Placements) QueryConversations(
+func (p *Database) QueryConversations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	page conversation.Page,
 ) (conversation.List, error) {
@@ -156,7 +156,7 @@ func (p *Placements) QueryConversations(
 // ConversationDetail reads one with its messages and the turns it opened. The message
 // read is bounded and returns the NEWEST, in order — a conversation of a thousand
 // messages is read from its end, and the whole transcript is not what a surface renders.
-func (p *Placements) ConversationDetail(
+func (p *Database) ConversationDetail(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID, messages int,
 ) (conversation.Detail, error) {
 	found, err := p.Conversation(ctx, organization, id)
@@ -255,7 +255,7 @@ func conversationMessages(
 // rather than racing for one. The message is written with NO investigation — opening a
 // turn is a separate decision, because whether one can be opened depends on whether
 // another is running.
-func (p *Placements) AppendMessage(
+func (p *Database) AppendMessage(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, said conversation.NewMessage,
 ) (conversation.Message, error) {
@@ -311,7 +311,7 @@ func (p *Placements) AppendMessage(
 
 // WaitingTurns counts this organization's investigations that are running and unleased —
 // the queue, as the claimer sees it.
-func (p *Placements) WaitingTurns(
+func (p *Database) WaitingTurns(
 	ctx context.Context, organization tenancy.Organization,
 ) (int, error) {
 	pool, err := p.Pool(organization)
@@ -339,7 +339,7 @@ func (p *Placements) WaitingTurns(
 // lead is how far before the episode began the turn's window reaches back; a conversation
 // naming no episode gets a window of that length ending now, because a follow-up question
 // asked at three in the morning is about the last few hours and not about all of history.
-func (p *Placements) OpenTurn(
+func (p *Database) OpenTurn(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	lead time.Duration,
 ) (conversation.Turn, bool, error) {
@@ -376,7 +376,7 @@ func (p *Placements) OpenTurn(
 // message arriving to an idle conversation are the same act, and two implementations of
 // "start the next turn" would be two places for the single-writer invariant to be got
 // wrong.
-func (p *Placements) DrainConversation(
+func (p *Database) DrainConversation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	lead time.Duration,
 ) (bool, error) {

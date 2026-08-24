@@ -34,7 +34,7 @@ var (
 // refusal — a denial has no operation to be inside the transaction of — and nothing else
 // should reach for it: a state change records itself through audited, in the transaction that
 // made it.
-func (p *Placements) RecordEvent(
+func (p *Database) RecordEvent(
 	ctx context.Context, organization tenancy.Organization, event audit.Event,
 ) error {
 	pool, err := p.Pool(organization)
@@ -95,7 +95,7 @@ func orEmptyDetail(detail audit.Detail) audit.Detail {
 // exist until the insert has run and an event written beforehand would have to guess it.
 func audited[T any](
 	ctx context.Context,
-	p *Placements,
+	p *Database,
 	principal authz.Principal,
 	organization tenancy.Organization,
 	action audit.Action,
@@ -148,7 +148,7 @@ func audited[T any](
 //
 // It takes the principal for the same reason every operator-facing read does: the middleware
 // has already decided, and this is the layer that cannot be reached around.
-func (p *Placements) AuditEvents(
+func (p *Database) AuditEvents(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	page audit.Page,
 ) (audit.List, error) {
@@ -236,52 +236,38 @@ func (p *Placements) AuditEvents(
 //
 // It names no organization, for the same reason InvestigationsAwaitingWork does not: its job is
 // to discover which tenants there are, so there is no tenant in the question to resolve a
-// placement from. It reads no tenant data — only which tenants declared a number.
+// database from. It reads no tenant data — only which tenants declared a number.
 //
 // A tenant whose declared period is zero is NOT reported. Zero is the product's default, which is
 // to keep everything, and treating it as a horizon of "now" would delete an entire record because
 // somebody had never set a policy.
-//
-// A placement that cannot be read fails the whole scan rather than being skipped. Continuing would
-// apply some tenants' schedules and silently not others, which is worse than applying none: an
-// operator reading a successful sweep would believe the schedule was kept everywhere.
-func (p *Placements) DeclaredRetentions(ctx context.Context) ([]audit.Retention, error) {
-	seen := make(map[string]struct{})
+func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, error) {
 	var declared []audit.Retention
-
-	// A fixed order, so two deployments of the same configuration behave alike.
-	for _, name := range p.names() {
-		rows, err := p.pools[name].Query(ctx, `
+	rows, err := p.pool.Query(ctx, `
 			SELECT org_id, audit_retention_days
 			  FROM organization_policy
 			 WHERE audit_retention_days > 0
 			 ORDER BY org_id`)
-		if err != nil {
-			return nil, fmt.Errorf("reading retention schedules in placement %q: %w", name, err)
+	if err != nil {
+		return nil, fmt.Errorf("reading retention schedules: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var days int
+		if err = rows.Scan(&id, &days); err != nil {
+			return nil, fmt.Errorf("reading a retention schedule: %w", err)
 		}
-		for rows.Next() {
-			var id string
-			var days int
-			if err = rows.Scan(&id, &days); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("reading a retention schedule: %w", err)
-			}
-			if _, already := seen[id]; already {
-				continue
-			}
-			organization, parseErr := tenancy.NewOrganization(id)
-			if parseErr != nil {
-				// Unreachable while every write validates the organization first, and not a
-				// fallback: a policy row whose tenant cannot be named is not one to delete by.
-				continue
-			}
-			seen[id] = struct{}{}
-			declared = append(declared, audit.Retention{Organization: organization, Days: days})
+		organization, parseErr := tenancy.NewOrganization(id)
+		if parseErr != nil {
+			// Unreachable while every write validates the organization first, and not a
+			// fallback: a policy row whose tenant cannot be named is not one to delete by.
+			continue
 		}
-		rows.Close()
-		if err = rows.Err(); err != nil {
-			return nil, fmt.Errorf("reading retention schedules in placement %q: %w", name, err)
-		}
+		declared = append(declared, audit.Retention{Organization: organization, Days: days})
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading retention schedules: %w", err)
 	}
 	return declared, nil
 }
@@ -296,7 +282,7 @@ func (p *Placements) DeclaredRetentions(ctx context.Context) ([]audit.Retention,
 // The delete is bounded by an inner select rather than by the horizon alone, so one statement
 // cannot take a lock proportional to a backlog. The order is oldest first, so a backlog worked
 // through over several sweeps always removes what aged out longest ago.
-func (p *Placements) PruneEventsBefore(
+func (p *Database) PruneEventsBefore(
 	ctx context.Context, organization tenancy.Organization, before time.Time, limit int,
 ) (int64, error) {
 	pool, err := p.Pool(organization)

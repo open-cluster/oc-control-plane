@@ -79,6 +79,7 @@ type fileServer struct {
 }
 
 type fileDatabase struct {
+	DSNFile          string                   `yaml:"dsn_file"`
 	Placements       map[string]filePlacement `yaml:"placements"`
 	Assignments      map[string]string        `yaml:"assignments"`
 	DefaultPlacement string                   `yaml:"default_placement"`
@@ -197,6 +198,7 @@ func (document fileDocument) environment() map[string]string {
 	set(values, EnvServiceName, document.Telemetry.ServiceName)
 	set(values, EnvOTLPEndpoint, document.Telemetry.OTLPEndpoint)
 	set(values, EnvDefaultPlacement, document.Database.DefaultPlacement)
+	set(values, EnvDatabaseDSNFile, document.Database.DSNFile)
 	set(values, EnvOperatorTokenFile, document.Authentication.BootstrapTokenFile)
 	set(values, EnvOperatorTokenOrganization, document.Authentication.BootstrapOrganization)
 	set(values, EnvOperatorTokenRole, document.Authentication.BootstrapRole)

@@ -247,11 +247,10 @@ func startIdentityPlane(t *testing.T) *identityPlane {
 		for index := range cfg.SealingKey {
 			cfg.SealingKey[index] = byte(index + 1)
 		}
-		// The neighbour shares this placement deliberately. An organization with no placement
+		// The neighbour shares this database deliberately. An organization with no database
 		// fails before any query runs, which would leave the cross-tenant assertions passing
 		// against an implementation with no scoping at all.
-		cfg.Assignments[identityNeighbour] = "shared"
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 	identity := &identityPlane{controlPlane: plane, operator: operatorAddress, dsn: dsn}
 	identity.waitForOperatorSurface(t)

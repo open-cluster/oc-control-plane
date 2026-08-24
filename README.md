@@ -33,10 +33,7 @@ cat > opencluster.yaml <<'YAML'
 server:
   address: "127.0.0.1:8080"
 database:
-  placements:
-    shared:
-      dsn_file: "/tmp/opencluster.dsn"
-  default_placement: "shared"
+  dsn_file: "/tmp/opencluster.dsn"
 YAML
 
 go run ./cmd/controlplane --config opencluster.yaml

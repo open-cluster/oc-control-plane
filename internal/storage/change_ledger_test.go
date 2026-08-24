@@ -18,12 +18,12 @@ import (
 // a change.
 
 func ledgerScope(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 ) (registration, integration uuid.UUID) {
 	t.Helper()
-	registration = enrolledRelay(t, placements, organization)
-	integration = kubernetesIntegration(t, placements, organization, registration)
-	scopes, err := placements.OpenInventoryScopes(
+	registration = enrolledRelay(t, database, organization)
+	integration = kubernetesIntegration(t, database, organization, registration)
+	scopes, err := database.OpenInventoryScopes(
 		context.Background(), organization, registration, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("opening inventory scopes: %v", err)
@@ -51,21 +51,21 @@ func imageChange(uid, revision, before, after string) changeledger.Change {
 }
 
 func TestChangeLedger_ARedeliveredDeltaRecordsNothingTwice(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	registration, integration := ledgerScope(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	registration, integration := ledgerScope(t, database, organization)
 
 	delta := changeledger.Delta{
 		IntegrationID: integration,
 		ObservedAt:    time.Now().UTC(),
 		Changes:       []changeledger.Change{imageChange("uid-1", "g4.aaa", "app:v1", "app:v2")},
 	}
-	first, err := placements.RecordInventoryDelta(
+	first, err := database.RecordInventoryDelta(
 		context.Background(), organization, registration, delta)
 	if err != nil || first.Inserted != 1 {
 		t.Fatalf("the first delivery must record one entry, got %+v, %v", first, err)
 	}
-	second, err := placements.RecordInventoryDelta(
+	second, err := database.RecordInventoryDelta(
 		context.Background(), organization, registration, delta)
 	if err != nil || second.Inserted != 0 {
 		t.Fatalf("a redelivery must collapse, got %+v, %v", second, err)
@@ -73,12 +73,12 @@ func TestChangeLedger_ARedeliveredDeltaRecordsNothingTwice(t *testing.T) {
 }
 
 func TestChangeLedger_ADeltaNamingAConnectionAnotherRelayServesIsRefused(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	_, integration := ledgerScope(t, placements, organization)
-	stranger := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	_, integration := ledgerScope(t, database, organization)
+	stranger := enrolledRelay(t, database, organization)
 
-	recorded, err := placements.RecordInventoryDelta(
+	recorded, err := database.RecordInventoryDelta(
 		context.Background(), organization, stranger, changeledger.Delta{
 			IntegrationID: integration,
 			ObservedAt:    time.Now().UTC(),
@@ -94,9 +94,9 @@ func TestChangeLedger_ADeltaNamingAConnectionAnotherRelayServesIsRefused(t *test
 }
 
 func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	registration, integration := ledgerScope(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	registration, integration := ledgerScope(t, database, organization)
 	ctx := context.Background()
 
 	// Postgres keeps microseconds; a nanosecond-precise instant would fail an equality it
@@ -112,7 +112,7 @@ func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 			}},
 		}},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, baseline); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, baseline); err != nil {
 		t.Fatalf("recording the baseline: %v", err)
 	}
 	change := changeledger.Delta{
@@ -125,11 +125,11 @@ func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 			},
 		},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, change); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, change); err != nil {
 		t.Fatalf("recording the change: %v", err)
 	}
 
-	answer, err := placements.RecentLedgerChanges(ctx, organization, integration, "shop",
+	answer, err := database.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start.Add(-time.Minute), time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("reading the window: %v", err)
@@ -156,9 +156,9 @@ func TestChangeLedger_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 }
 
 func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	registration, integration := ledgerScope(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	registration, integration := ledgerScope(t, database, organization)
 	ctx := context.Background()
 
 	start := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
@@ -170,7 +170,7 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 		IntegrationID: integration, Baseline: true, ObservedAt: start,
 		Changes: []changeledger.Change{object},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, first); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, first); err != nil {
 		t.Fatalf("recording the first baseline: %v", err)
 	}
 
@@ -182,10 +182,10 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(8 * time.Minute),
 		Changes: []changeledger.Change{object},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, quiet); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, quiet); err != nil {
 		t.Fatalf("recording the quiet re-baseline: %v", err)
 	}
-	answer, err := placements.RecentLedgerChanges(ctx, organization, integration, "shop",
+	answer, err := database.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start, time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("reading the scope: %v", err)
@@ -202,10 +202,10 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(time.Hour),
 		Changes: []changeledger.Change{object},
 	}
-	if _, err = placements.RecordInventoryDelta(ctx, organization, registration, longGap); err != nil {
+	if _, err = database.RecordInventoryDelta(ctx, organization, registration, longGap); err != nil {
 		t.Fatalf("recording the long-gap re-baseline: %v", err)
 	}
-	answer, err = placements.RecentLedgerChanges(ctx, organization, integration, "shop",
+	answer, err = database.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start, time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("re-reading the scope: %v", err)
@@ -224,10 +224,10 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 			ObservedRevision: "g4.bbb", Change: changeledger.ChangeCreated,
 		}},
 	}
-	if _, err = placements.RecordInventoryDelta(ctx, organization, registration, moved); err != nil {
+	if _, err = database.RecordInventoryDelta(ctx, organization, registration, moved); err != nil {
 		t.Fatalf("recording the discontinuous re-baseline: %v", err)
 	}
-	answer, err = placements.RecentLedgerChanges(ctx, organization, integration, "shop",
+	answer, err = database.RecentLedgerChanges(ctx, organization, integration, "shop",
 		start, time.Now().UTC(), 10)
 	if err != nil {
 		t.Fatalf("re-reading the scope: %v", err)
@@ -239,20 +239,20 @@ func TestChangeLedger_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testin
 }
 
 func TestChangeLedger_FreshnessStampsAdvanceTheScope(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	registration, integration := ledgerScope(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	registration, integration := ledgerScope(t, database, organization)
 	ctx := context.Background()
 
 	confirmed := time.Now().UTC().Truncate(time.Second)
-	err := placements.RecordInventoryFreshness(ctx, organization, registration,
+	err := database.RecordInventoryFreshness(ctx, organization, registration,
 		[]changeledger.Freshness{{
 			IntegrationID: integration, CompletedAt: &confirmed, Faulted: false, Truncated: true,
 		}})
 	if err != nil {
 		t.Fatalf("recording freshness: %v", err)
 	}
-	answer, err := placements.RecentLedgerChanges(ctx, organization, integration, "shop",
+	answer, err := database.RecentLedgerChanges(ctx, organization, integration, "shop",
 		confirmed.Add(-time.Hour), confirmed, 10)
 	if err != nil {
 		t.Fatalf("reading the scope: %v", err)
@@ -266,14 +266,14 @@ func TestChangeLedger_FreshnessStampsAdvanceTheScope(t *testing.T) {
 
 	// A stranger's stamp for this integration changes nothing: the guard is the same one
 	// deltas pass through.
-	stranger := enrolledRelay(t, placements, organization)
+	stranger := enrolledRelay(t, database, organization)
 	later := confirmed.Add(time.Hour)
-	err = placements.RecordInventoryFreshness(ctx, organization, stranger,
+	err = database.RecordInventoryFreshness(ctx, organization, stranger,
 		[]changeledger.Freshness{{IntegrationID: integration, CompletedAt: &later}})
 	if err != nil {
 		t.Fatalf("recording a stranger's freshness: %v", err)
 	}
-	answer, err = placements.RecentLedgerChanges(ctx, organization, integration, "shop",
+	answer, err = database.RecentLedgerChanges(ctx, organization, integration, "shop",
 		confirmed.Add(-time.Hour), confirmed, 10)
 	if err != nil {
 		t.Fatalf("re-reading the scope: %v", err)
@@ -285,35 +285,35 @@ func TestChangeLedger_FreshnessStampsAdvanceTheScope(t *testing.T) {
 }
 
 func TestChangeLedger_RetentionPrunesByAgeAndOnlyByAge(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	registration, integration := ledgerScope(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	registration, integration := ledgerScope(t, database, organization)
 	ctx := context.Background()
 
 	old := changeledger.Delta{
 		IntegrationID: integration, ObservedAt: time.Now().UTC().Add(-time.Hour),
 		Changes: []changeledger.Change{imageChange("uid-1", "g4.aaa", "a", "b")},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, old); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, old); err != nil {
 		t.Fatalf("recording: %v", err)
 	}
 
 	// received_at is the transaction clock, so "older than now" ages the row out and
 	// "older than an hour ago" does not.
-	removed, err := placements.PruneChangeLedgerBefore(ctx, time.Now().UTC().Add(-time.Minute), 100)
+	removed, err := database.PruneChangeLedgerBefore(ctx, time.Now().UTC().Add(-time.Minute), 100)
 	if err != nil || removed != 0 {
 		t.Fatalf("nothing has aged out yet, got %d, %v", removed, err)
 	}
-	removed, err = placements.PruneChangeLedgerBefore(ctx, time.Now().UTC().Add(time.Minute), 100)
+	removed, err = database.PruneChangeLedgerBefore(ctx, time.Now().UTC().Add(time.Minute), 100)
 	if err != nil || removed != 1 {
 		t.Fatalf("the aged entry must go, got %d, %v", removed, err)
 	}
 }
 
 func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
-	placements, organization := migratedPlacement(t)
-	defer placements.Close()
-	registration, integration := ledgerScope(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	defer database.Close()
+	registration, integration := ledgerScope(t, database, organization)
 	ctx := context.Background()
 
 	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
@@ -328,7 +328,7 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 				UID: "uid-3", ObservedRevision: "g1.c", Change: changeledger.ChangeCreated},
 		},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, delta); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, delta); err != nil {
 		t.Fatalf("recording the baseline: %v", err)
 	}
 	gone := changeledger.Delta{
@@ -338,11 +338,11 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 			UID: "uid-2", ObservedRevision: "", Change: changeledger.ChangeDeleted,
 		}},
 	}
-	if _, err := placements.RecordInventoryDelta(ctx, organization, registration, gone); err != nil {
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, gone); err != nil {
 		t.Fatalf("recording the deletion: %v", err)
 	}
 
-	digest, err := placements.WorkloadInventory(ctx, organization, 10)
+	digest, err := database.WorkloadInventory(ctx, organization, 10)
 	if err != nil {
 		t.Fatalf("reading the inventory: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 		t.Fatalf("digest = %v; deletions drop out and only workload kinds appear", digest)
 	}
 
-	if bounded, err := placements.WorkloadInventory(ctx, organization, 0); err != nil ||
+	if bounded, err := database.WorkloadInventory(ctx, organization, 0); err != nil ||
 		len(bounded) != 0 {
 		t.Fatalf("a zero bound reads nothing: %v %v", bounded, err)
 	}

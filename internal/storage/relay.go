@@ -71,7 +71,7 @@ type RelayEnrolment struct {
 // simultaneous presentations of one token serialise on its row, so exactly one observes it
 // unspent and the other is refused. An application-level guard would be a second source of
 // truth for something the row already decides.
-func (p *Placements) EnrolRelay(
+func (p *Database) EnrolRelay(
 	ctx context.Context,
 	organization tenancy.Organization,
 	enrolment RelayEnrolment,
@@ -204,7 +204,7 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 // IssueBootstrapToken records a single-use enrolment token for an organization. Only the
 // digest is stored, so this is the one moment the token exists here; the caller shows it to
 // the operator once and keeps no copy either.
-func (p *Placements) IssueBootstrapToken(
+func (p *Database) IssueBootstrapToken(
 	ctx context.Context,
 	organization tenancy.Organization,
 	tokenDigest []byte,
@@ -227,7 +227,7 @@ func (p *Placements) IssueBootstrapToken(
 // VerifyRelayCredential reports whether a credential digest matches a live registration.
 // It fails closed: a revoked registration authenticates nothing, and an unknown one is
 // indistinguishable from a wrong credential.
-func (p *Placements) VerifyRelayCredential(
+func (p *Database) VerifyRelayCredential(
 	ctx context.Context,
 	organization tenancy.Organization,
 	registrationID uuid.UUID,

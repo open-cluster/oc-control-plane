@@ -51,10 +51,10 @@ const refusalMessage = "registration refused"
 type RegistrationService struct {
 	relayv1.UnimplementedRelayRegistrationServiceServer
 
-	placements *storage.Placements
-	spkiPins   []string
-	logger     *slog.Logger
-	flood      *floodLimiter
+	database *storage.Database
+	spkiPins []string
+	logger   *slog.Logger
+	flood    *floodLimiter
 }
 
 // DefaultFloodLimits bound enrolment for a deployment that has not tuned them. Registration
@@ -71,15 +71,15 @@ var DefaultFloodLimits = FloodLimits{
 // key digests, handed to a Relay at enrolment so every later connection is key-pinned rather
 // than trusting a certificate authority.
 func NewRegistrationService(
-	placements *storage.Placements,
+	database *storage.Database,
 	spkiPins []string,
 	logger *slog.Logger,
 ) *RegistrationService {
 	return &RegistrationService{
-		placements: placements,
-		spkiPins:   spkiPins,
-		logger:     logger,
-		flood:      newFloodLimiter(DefaultFloodLimits, time.Now),
+		database: database,
+		spkiPins: spkiPins,
+		logger:   logger,
+		flood:    newFloodLimiter(DefaultFloodLimits, time.Now),
 	}
 }
 
@@ -115,7 +115,7 @@ func (s *RegistrationService) Register(
 		return nil, status.Error(codes.FailedPrecondition, refusalMessage)
 	}
 
-	registrationID, refusal, err := s.placements.EnrolRelay(ctx, organization, storage.RelayEnrolment{
+	registrationID, refusal, err := s.database.EnrolRelay(ctx, organization, storage.RelayEnrolment{
 		TokenDigest:        digestOf(token),
 		CredentialDigest:   digest,
 		ClusterFingerprint: request.GetClusterFingerprint(),
@@ -129,7 +129,7 @@ func (s *RegistrationService) Register(
 	case errors.Is(err, storage.ErrUnknownOrganization):
 		// Indistinguishable from a bad token on purpose: an unassigned organization would
 		// otherwise reveal which organizations exist.
-		s.audit(ctx, organization.String(), "organization has no placement")
+		s.audit(ctx, organization.String(), "organization has no database")
 		return nil, status.Error(codes.FailedPrecondition, refusalMessage)
 	case err != nil:
 		s.logger.ErrorContext(ctx, "relay enrolment failed",

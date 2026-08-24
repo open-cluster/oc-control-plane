@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"sync"
 	"time"
 
@@ -32,7 +31,7 @@ const auditPruneInterval = time.Hour
 func startAuditPruner(process assembled) *backgroundWorker {
 	ctx, stop := context.WithCancel(context.Background())
 	pruner := audit.Pruner{
-		Retentions: process.placements,
+		Retentions: process.database,
 		Logger:     process.logger,
 		Interval:   auditPruneInterval,
 	}
@@ -52,7 +51,7 @@ func startAuditPruner(process assembled) *backgroundWorker {
 func startChangeLedgerPruner(process assembled) *backgroundWorker {
 	ctx, stop := context.WithCancel(context.Background())
 	pruner := changeledger.Pruner{
-		Retention: process.placements,
+		Retention: process.database,
 		Logger:    process.logger,
 		Days:      process.config.ChangeLedgerRetentionDays,
 		Interval:  auditPruneInterval,
@@ -83,54 +82,6 @@ func (w *backgroundWorker) stop() {
 	w.once.Do(func() {
 		w.stopping()
 		<-w.done
-	})
-}
-
-// intakeEndpoint is the alert-intake listener.
-type intakeEndpoint struct {
-	server   *http.Server
-	stopping sync.Once
-}
-
-// stop drains intake within the budget. The nil receiver is the configured-without-intake
-// case, so the caller can defer this unconditionally.
-func (e *intakeEndpoint) stop(budget time.Duration, logger *slog.Logger) {
-	if e == nil {
-		return
-	}
-	e.stopping.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), budget)
-		defer cancel()
-
-		if err := e.server.Shutdown(ctx); err != nil {
-			logger.Warn("alert intake did not drain within the budget; closing it",
-				slog.Duration("budget", budget))
-			_ = e.server.Close()
-		}
-	})
-}
-
-// operatorEndpoint is the operator-facing listener.
-type operatorEndpoint struct {
-	server   *http.Server
-	stopping sync.Once
-}
-
-// stop drains the operator surface within the budget. The nil receiver is the
-// configured-without-an-operator-surface case, so the caller can defer this unconditionally.
-func (e *operatorEndpoint) stop(budget time.Duration, logger *slog.Logger) {
-	if e == nil {
-		return
-	}
-	e.stopping.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), budget)
-		defer cancel()
-
-		if err := e.server.Shutdown(ctx); err != nil {
-			logger.Warn("operator surface did not drain within the budget; closing it",
-				slog.Duration("budget", budget))
-			_ = e.server.Close()
-		}
 	})
 }
 
@@ -214,7 +165,7 @@ func startSlackReplies(process assembled) *backgroundWorker {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	worker := slack.Worker{
-		Replies:  process.placements,
+		Replies:  process.database,
 		Client:   slack.NewClient(process.config.SlackAPIURL),
 		Sealer:   process.sealer,
 		Logger:   process.logger,

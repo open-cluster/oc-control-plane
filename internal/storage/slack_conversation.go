@@ -69,7 +69,7 @@ type SlackMessageOutcome struct {
 
 // RecordSlackMessage claims the delivery, resolves the thread to its Conversation, and
 // appends the message — all or nothing.
-func (p *Placements) RecordSlackMessage(
+func (p *Database) RecordSlackMessage(
 	ctx context.Context, organization tenancy.Organization, said SlackMessage,
 ) (SlackMessageOutcome, error) {
 	pool, err := p.Pool(organization)
@@ -126,8 +126,9 @@ func bindThread(
 	err := transaction.QueryRow(ctx, `
 		SELECT conversation_id
 		  FROM slack_conversation
-		 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3`,
-		said.Integration, said.Channel, said.Thread).Scan(&existing)
+		 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3
+		   AND org_id = $4`,
+		said.Integration, said.Channel, said.Thread, organization.String()).Scan(&existing)
 	switch {
 	case err == nil:
 		return existing, false, nil
@@ -159,8 +160,9 @@ func bindThread(
 		if err := transaction.QueryRow(ctx, `
 			SELECT conversation_id
 			  FROM slack_conversation
-			 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3`,
-			said.Integration, said.Channel, said.Thread).Scan(&existing); err != nil {
+			 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3
+			   AND org_id = $4`,
+			said.Integration, said.Channel, said.Thread, organization.String()).Scan(&existing); err != nil {
 			return uuid.Nil, false, fmt.Errorf("resolving a raced slack thread: %w", err)
 		}
 		return existing, false, nil
@@ -204,7 +206,7 @@ func appendSlackMessage(
 // SlackThreadOf reports where a conversation's replies belong, so a delivery worker can
 // answer in the thread the question was asked in. It answers false for a conversation that
 // did not come from Slack.
-func (p *Placements) SlackThreadOf(
+func (p *Database) SlackThreadOf(
 	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
 ) (channel string, thread string, integration uuid.UUID, found bool, err error) {
 	pool, poolErr := p.Pool(organization)
@@ -235,7 +237,7 @@ func (p *Placements) SlackThreadOf(
 // retry storm. So the message is recorded under the identity it arrived with, and the worker
 // that answers — which already holds the credential and is under no deadline anybody sees —
 // resolves it afterwards.
-func (p *Placements) UnnamedSlackAuthors(
+func (p *Database) UnnamedSlackAuthors(
 	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
 ) ([]string, error) {
 	pool, err := p.Pool(organization)
@@ -273,7 +275,7 @@ func (p *Placements) UnnamedSlackAuthors(
 // The identity is never replaced, only named beside itself. Attribution has to survive a
 // display name changing or a name that cannot be resolved at all, and the identifier is the
 // half that does.
-func (p *Placements) NameSlackAuthor(
+func (p *Database) NameSlackAuthor(
 	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
 	actor, display string,
 ) error {

@@ -23,21 +23,19 @@ import (
 
 const turnWindowLead = time.Hour
 
-// twoOrganizationsOnOnePlacement is the shape the tenant boundary has to hold in: one
+// twoOrganizationsInOneDatabase is the shape the tenant boundary has to hold in: one
 // database, two tenants, the organization a column rather than a connection. Two separate
-// placements would prove nothing — the pools could not reach each other's rows anyway.
-func twoOrganizationsOnOnePlacement(
+// database would prove nothing — the pools could not reach each other's rows anyway.
+func twoOrganizationsInOneDatabase(
 	t *testing.T,
-) (*storage.Placements, tenancy.Organization, tenancy.Organization) {
+) (*storage.Database, tenancy.Organization, tenancy.Organization) {
 	t.Helper()
 
-	placements := openPlacements(t,
-		map[string]string{"shared": postgresDSN(t)},
-		map[string]string{"org-a": "shared", "org-b": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, postgresDSN(t))
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
-	return placements, organization(t, "org-a"), organization(t, "org-b")
+	return database, organization(t, "org-a"), organization(t, "org-b")
 }
 
 // conclusionSaying is a minimal concluding document: an answer and no findings, which is
@@ -48,12 +46,12 @@ func conclusionSaying(answer string) investigation.Conclusion {
 
 // openConversation records one for a test, with no episode.
 func openConversation(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	subject string,
 ) conversation.Conversation {
 	t.Helper()
 
-	opened, err := placements.OpenConversation(context.Background(),
+	opened, err := database.OpenConversation(context.Background(),
 		ownerOf(t, organization), organization, conversation.NewConversation{
 			Surface: conversation.SurfaceWeb, Subject: subject,
 			CreatedBy: "user-under-test",
@@ -66,12 +64,12 @@ func openConversation(
 
 // say appends one person message.
 func say(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	id uuid.UUID, text string,
 ) conversation.Message {
 	t.Helper()
 
-	said, err := placements.AppendMessage(context.Background(),
+	said, err := database.AppendMessage(context.Background(),
 		ownerOf(t, organization), organization, id, conversation.NewMessage{
 			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 			ActorID: "user-under-test", ActorDisplay: "Test Operator", Text: text,
@@ -88,12 +86,12 @@ func say(
 func TestAConversationsMessagesTakeConsecutiveSequences(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	opened := openConversation(t, placements, organization, "checkout is slow")
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "checkout is slow")
 
 	for position, text := range []string{"what changed?", "ignore the database",
 		"check deployments instead"} {
-		said := say(t, placements, organization, opened.ID, text)
+		said := say(t, database, organization, opened.ID, text)
 		if said.Sequence != int64(position+1) {
 			t.Errorf("message %d took sequence %d, want %d", position, said.Sequence,
 				position+1)
@@ -111,8 +109,8 @@ func TestAConversationsMessagesTakeConsecutiveSequences(t *testing.T) {
 func TestTwoMessagesRacingOpenExactlyOneTurn(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	opened := openConversation(t, placements, organization, "checkout is slow")
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "checkout is slow")
 
 	const racers = 6
 	var (
@@ -132,13 +130,13 @@ func TestTwoMessagesRacingOpenExactlyOneTurn(t *testing.T) {
 			// Both calls run OUTSIDE the mutex. The mutex guards the result slices and
 			// nothing else: serialising the opens would test the invariant against one
 			// caller at a time, which is the case that was never in doubt.
-			_, appendErr := placements.AppendMessage(context.Background(),
+			_, appendErr := database.AppendMessage(context.Background(),
 				ownerOf(t, organization), organization, opened.ID,
 				conversation.NewMessage{
 					Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 					ActorID: "user-under-test", Text: "question " + string(rune('a'+racer)),
 				})
-			turn, took, openErr := placements.OpenTurn(context.Background(), organization,
+			turn, took, openErr := database.OpenTurn(context.Background(), organization,
 				opened.ID, turnWindowLead)
 
 			mutex.Lock()
@@ -167,7 +165,7 @@ func TestTwoMessagesRacingOpenExactlyOneTurn(t *testing.T) {
 			"single-writer invariant and it must refuse the rest", len(turns))
 	}
 
-	detail, err := placements.ConversationDetail(context.Background(), organization,
+	detail, err := database.ConversationDetail(context.Background(), organization,
 		opened.ID, 50)
 	if err != nil {
 		t.Fatalf("reading the conversation: %v", err)
@@ -215,33 +213,33 @@ func countAttached(messages []conversation.Message) int {
 func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	opened := openConversation(t, placements, organization, "checkout is slow")
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "checkout is slow")
 
-	say(t, placements, organization, opened.ID, "what changed?")
-	first, took, err := placements.OpenTurn(context.Background(), organization, opened.ID,
+	say(t, database, organization, opened.ID, "what changed?")
+	first, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening the first turn: took=%v err=%v", took, err)
 	}
 
-	say(t, placements, organization, opened.ID, "ignore the database")
-	say(t, placements, organization, opened.ID, "check deployments instead")
+	say(t, database, organization, opened.ID, "ignore the database")
+	say(t, database, organization, opened.ID, "check deployments instead")
 
 	// While the first turn runs, no second turn may open.
-	if _, took, err = placements.OpenTurn(context.Background(), organization, opened.ID,
+	if _, took, err = database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead); err != nil || took {
 		t.Fatalf("a second turn opened while the first was running: took=%v err=%v",
 			took, err)
 	}
 
-	if err = placements.ConcludeInvestigation(context.Background(), organization,
+	if err = database.ConcludeInvestigation(context.Background(), organization,
 		first.InvestigationID, conclusionSaying("nothing changed"), "",
 		investigation.Spend{}); err != nil {
 		t.Fatalf("concluding the first turn: %v", err)
 	}
 
-	second, took, err := placements.OpenTurn(context.Background(), organization, opened.ID,
+	second, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("draining into the next turn: took=%v err=%v", took, err)
@@ -250,7 +248,7 @@ func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 		t.Errorf("the drained turn is ordinal %d, want 2", second.Ordinal)
 	}
 
-	detail, err := placements.ConversationDetail(context.Background(), organization,
+	detail, err := database.ConversationDetail(context.Background(), organization,
 		opened.ID, 50)
 	if err != nil {
 		t.Fatalf("reading the conversation: %v", err)
@@ -276,10 +274,10 @@ func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 func TestDrainingAnEmptyQueueOpensNothing(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	opened := openConversation(t, placements, organization, "checkout is slow")
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "checkout is slow")
 
-	turn, took, err := placements.OpenTurn(context.Background(), organization, opened.ID,
+	turn, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead)
 	if err != nil {
 		t.Fatalf("draining an empty queue: %v", err)
@@ -295,24 +293,24 @@ func TestDrainingAnEmptyQueueOpensNothing(t *testing.T) {
 func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 	t.Parallel()
 
-	placements, mine, theirs := twoOrganizationsOnOnePlacement(t)
-	opened := openConversation(t, placements, mine, "checkout is slow")
+	database, mine, theirs := twoOrganizationsInOneDatabase(t)
+	opened := openConversation(t, database, mine, "checkout is slow")
 
-	if _, err := placements.Conversation(context.Background(), theirs,
+	if _, err := database.Conversation(context.Background(), theirs,
 		opened.ID); !errors.Is(err, conversation.ErrUnknown) {
 		t.Errorf("reading %s as %s answered %v, want conversation unknown; a caller must "+
 			"not learn that an identifier exists somewhere they cannot reach",
 			opened.ID, theirs, err)
 	}
-	if _, err := placements.ConversationDetail(context.Background(), theirs, opened.ID,
+	if _, err := database.ConversationDetail(context.Background(), theirs, opened.ID,
 		50); !errors.Is(err, conversation.ErrUnknown) {
 		t.Errorf("reading the detail across tenants answered %v", err)
 	}
-	if _, _, err := placements.OpenTurn(context.Background(), theirs, opened.ID,
+	if _, _, err := database.OpenTurn(context.Background(), theirs, opened.ID,
 		turnWindowLead); !errors.Is(err, conversation.ErrUnknown) {
 		t.Errorf("opening a turn across tenants answered %v", err)
 	}
-	if _, err := placements.AppendMessage(context.Background(), ownerOf(t, theirs), theirs,
+	if _, err := database.AppendMessage(context.Background(), ownerOf(t, theirs), theirs,
 		opened.ID, conversation.NewMessage{
 			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 			ActorID: "somebody-else", Text: "what is this about?",
@@ -325,10 +323,10 @@ func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 func TestWaitingTurnsCountsUnclaimedWork(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	opened := openConversation(t, placements, organization, "checkout is slow")
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "checkout is slow")
 
-	waiting, err := placements.WaitingTurns(context.Background(), organization)
+	waiting, err := database.WaitingTurns(context.Background(), organization)
 	if err != nil {
 		t.Fatalf("counting waiting turns: %v", err)
 	}
@@ -336,13 +334,13 @@ func TestWaitingTurnsCountsUnclaimedWork(t *testing.T) {
 		t.Fatalf("%d waiting before anything was asked", waiting)
 	}
 
-	say(t, placements, organization, opened.ID, "what changed?")
-	if _, took, openErr := placements.OpenTurn(context.Background(), organization,
+	say(t, database, organization, opened.ID, "what changed?")
+	if _, took, openErr := database.OpenTurn(context.Background(), organization,
 		opened.ID, turnWindowLead); openErr != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, openErr)
 	}
 
-	if waiting, err = placements.WaitingTurns(
+	if waiting, err = database.WaitingTurns(
 		context.Background(), organization); err != nil {
 		t.Fatalf("counting waiting turns: %v", err)
 	}
@@ -357,13 +355,13 @@ func TestWaitingTurnsCountsUnclaimedWork(t *testing.T) {
 func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	checkout := openConversation(t, placements, organization, "checkout is slow")
-	openConversation(t, placements, organization, "payments are failing")
-	openConversation(t, placements, organization, "checkout returns 500")
+	database, organization := migratedDatabase(t)
+	checkout := openConversation(t, database, organization, "checkout is slow")
+	openConversation(t, database, organization, "payments are failing")
+	openConversation(t, database, organization, "checkout returns 500")
 
 	// By subject, case-insensitively.
-	listed, err := placements.QueryConversations(context.Background(),
+	listed, err := database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization, conversation.Page{Search: "CHECKOUT"})
 	if err != nil {
 		t.Fatalf("searching: %v", err)
@@ -374,7 +372,7 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	}
 
 	// By state.
-	listed, err = placements.QueryConversations(context.Background(),
+	listed, err = database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization,
 		conversation.Page{State: conversation.StateOpen})
 	if err != nil {
@@ -383,7 +381,7 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	if len(listed.Conversations) != 3 {
 		t.Errorf("%d open conversations, want 3", len(listed.Conversations))
 	}
-	listed, err = placements.QueryConversations(context.Background(),
+	listed, err = database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization,
 		conversation.Page{State: conversation.StateClosed})
 	if err != nil {
@@ -395,7 +393,7 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 
 	// Narrowing composes with paging, and the cursor resumes the NARROWED order rather
 	// than the unnarrowed one.
-	listed, err = placements.QueryConversations(context.Background(),
+	listed, err = database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization,
 		conversation.Page{Search: "checkout", Limit: 1})
 	if err != nil {
@@ -406,7 +404,7 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 			listed.Next)
 	}
 	first := listed.Conversations[0].ID
-	listed, err = placements.QueryConversations(context.Background(),
+	listed, err = database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization,
 		conversation.Page{Search: "checkout", Limit: 1, After: listed.Next})
 	if err != nil {
@@ -429,20 +427,20 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
-	integration := kubernetesIntegration(t, placements, organization, registration)
-	episode := recordEpisode(t, placements, organization, integration, "group-shared")
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
+	integration := kubernetesIntegration(t, database, organization, registration)
+	episode := recordEpisode(t, database, organization, integration, "group-shared")
 
 	// Ada's conversation about the incident, with one concluded turn.
-	ada := openConversationAbout(t, placements, organization, "checkout is slow", episode)
-	say(t, placements, organization, ada.ID, "ADA-PRIVATE-QUESTION: what changed?")
-	adaTurn, took, err := placements.OpenTurn(context.Background(), organization, ada.ID,
+	ada := openConversationAbout(t, database, organization, "checkout is slow", episode)
+	say(t, database, organization, ada.ID, "ADA-PRIVATE-QUESTION: what changed?")
+	adaTurn, took, err := database.OpenTurn(context.Background(), organization, ada.ID,
 		turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening Ada's turn: took=%v err=%v", took, err)
 	}
-	if err = placements.RecordToolRun(context.Background(), organization,
+	if err = database.RecordToolRun(context.Background(), organization,
 		adaTurn.InvestigationID, investigation.ToolRun{
 			Ordinal: 1, Tool: "kubernetes.workload_runtime",
 			Outcome: investigation.RunSucceeded, Summary: "1 workload",
@@ -451,7 +449,7 @@ func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("recording Ada's run: %v", err)
 	}
-	if err = placements.ConcludeInvestigation(context.Background(), organization,
+	if err = database.ConcludeInvestigation(context.Background(), organization,
 		adaTurn.InvestigationID, investigation.Conclusion{
 			Answer: "ADA-PRIVATE-ANSWER: the pool size changed",
 			Findings: []investigation.Finding{{
@@ -465,10 +463,10 @@ func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
 	}
 
 	// Bo opens a separate conversation about the SAME incident.
-	bo := openConversationAbout(t, placements, organization, "why is checkout slow", episode)
-	say(t, placements, organization, bo.ID, "what do we know already?")
+	bo := openConversationAbout(t, database, organization, "why is checkout slow", episode)
+	say(t, database, organization, bo.ID, "what do we know already?")
 
-	brief, err := placements.ConversationBrief(context.Background(), organization, bo.ID, 50)
+	brief, err := database.ConversationBrief(context.Background(), organization, bo.ID, 50)
 	if err != nil {
 		t.Fatalf("reading Bo's brief: %v", err)
 	}
@@ -506,9 +504,9 @@ func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
 	}
 
 	// A conversation about a DIFFERENT incident shares nothing at all.
-	other := recordEpisode(t, placements, organization, integration, "group-unrelated")
-	cass := openConversationAbout(t, placements, organization, "payments are failing", other)
-	unrelated, err := placements.ConversationBrief(context.Background(), organization,
+	other := recordEpisode(t, database, organization, integration, "group-unrelated")
+	cass := openConversationAbout(t, database, organization, "payments are failing", other)
+	unrelated, err := database.ConversationBrief(context.Background(), organization,
 		cass.ID, 50)
 	if err != nil {
 		t.Fatalf("reading the unrelated brief: %v", err)
@@ -521,12 +519,12 @@ func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
 
 // openConversationAbout records one tied to an incident episode.
 func openConversationAbout(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	subject string, episode uuid.UUID,
 ) conversation.Conversation {
 	t.Helper()
 
-	opened, err := placements.OpenConversation(context.Background(),
+	opened, err := database.OpenConversation(context.Background(),
 		ownerOf(t, organization), organization, conversation.NewConversation{
 			Surface: conversation.SurfaceWeb, Subject: subject, EpisodeID: episode,
 			CreatedBy: "user-under-test",
@@ -542,15 +540,15 @@ func openConversationAbout(
 func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	opened := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, opened.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization, opened.ID,
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, opened.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
-	if err = placements.ConcludeInvestigation(context.Background(), organization,
+	if err = database.ConcludeInvestigation(context.Background(), organization,
 		turn.InvestigationID, investigation.Conclusion{
 			Answer:    "the 14:02 deploy is the change",
 			NextSteps: []string{"roll back the 14:02 deploy", "watch the latency panel"},
@@ -558,7 +556,7 @@ func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
 		t.Fatalf("concluding: %v", err)
 	}
 
-	brief, err := placements.ConversationBrief(context.Background(), organization,
+	brief, err := database.ConversationBrief(context.Background(), organization,
 		opened.ID, 50)
 	if err != nil {
 		t.Fatalf("reading the brief: %v", err)

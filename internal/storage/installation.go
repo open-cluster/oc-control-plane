@@ -106,8 +106,8 @@ func installationError(err error) error {
 	return nil
 }
 
-// IntegrationByInstallation resolves an inbound event's workspace to exactly one Integration,
-// across every placement this deployment serves, and reports the organization it belongs to.
+// IntegrationByInstallation resolves an inbound event's workspace to exactly one Integration
+// and reports the organization it belongs to.
 //
 // It is the FIRST HOP and the only one that starts from a vendor's identifier. Everything after
 // it is scoped by the organization this returns, which is what makes a vendor identifier from
@@ -116,56 +116,53 @@ func installationError(err error) error {
 //
 // Like IntegrationByID, it takes no organization, and for the same reason: an inbound caller
 // names no tenant, because a caller who could name one could try every one.
-func (p *Placements) IntegrationByInstallation(
+func (p *Database) IntegrationByInstallation(
 	ctx context.Context, typeID integrations.TypeID, key integrations.InstallationKey,
 ) (integrations.Integration, integrations.Installation, error) {
 	if !key.Complete() {
 		return integrations.Integration{}, integrations.Installation{}, integrations.ErrUnknown
 	}
 
-	for _, name := range p.names() {
-		var (
-			organization  string
-			installed     integrations.Installation
-			integrationID uuid.UUID
-		)
-		row := p.pools[name].QueryRow(ctx, `
+	var (
+		organization  string
+		installed     integrations.Installation
+		integrationID uuid.UUID
+	)
+	row := p.pool.QueryRow(ctx, `
 			SELECT org_id, integration_id, application, enterprise, workspace,
 			       enterprise_wide, agent, authorizer, grants
 			  FROM integration_installation
 			 WHERE integration_type_id = $1
 			   AND application = $2 AND enterprise = $3 AND workspace = $4`,
-			int16(typeID), key.Application, key.Enterprise, key.Workspace)
-		err := row.Scan(&organization, &integrationID,
-			&installed.Application, &installed.Enterprise, &installed.Workspace,
-			&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer,
-			&installed.Grants)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			continue
-		case err != nil:
-			return integrations.Integration{}, integrations.Installation{},
-				fmt.Errorf("resolving an integration installation: %w", err)
-		}
-
-		organizationName, err := tenancy.NewOrganization(organization)
-		if err != nil {
-			return integrations.Integration{}, integrations.Installation{},
-				fmt.Errorf("an installation names an organization that is not a name: %w", err)
-		}
-		integration, err := p.Integration(ctx, organizationName, integrationID)
-		if err != nil {
-			return integrations.Integration{}, integrations.Installation{}, err
-		}
-		return integration, installed, nil
+		int16(typeID), key.Application, key.Enterprise, key.Workspace)
+	err := row.Scan(&organization, &integrationID,
+		&installed.Application, &installed.Enterprise, &installed.Workspace,
+		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer,
+		&installed.Grants)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return integrations.Integration{}, integrations.Installation{}, integrations.ErrUnknown
+	case err != nil:
+		return integrations.Integration{}, integrations.Installation{},
+			fmt.Errorf("resolving an integration installation: %w", err)
 	}
-	return integrations.Integration{}, integrations.Installation{}, integrations.ErrUnknown
+
+	organizationName, err := tenancy.NewOrganization(organization)
+	if err != nil {
+		return integrations.Integration{}, integrations.Installation{},
+			fmt.Errorf("an installation names an organization that is not a name: %w", err)
+	}
+	integration, err := p.Integration(ctx, organizationName, integrationID)
+	if err != nil {
+		return integrations.Integration{}, integrations.Installation{}, err
+	}
+	return integration, installed, nil
 }
 
 // InstallationOf reports the routing record an Integration was connected with, and false where
 // it has none. A pasted credential names no installation, which is exactly what tells an
 // integration that can be spoken to from one that can only be read.
-func (p *Placements) InstallationOf(
+func (p *Database) InstallationOf(
 	ctx context.Context, organization tenancy.Organization, integration uuid.UUID,
 ) (integrations.Installation, bool, error) {
 	pool, err := p.Pool(organization)

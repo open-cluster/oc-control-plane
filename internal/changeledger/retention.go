@@ -18,7 +18,7 @@ const (
 // needs no database.
 type Retention interface {
 	// PruneChangeLedgerBefore removes at most limit entries older than the horizon,
-	// across every placement, reporting how many went.
+	// across every database, reporting how many went.
 	PruneChangeLedgerBefore(ctx context.Context, before time.Time, limit int) (int64, error)
 }
 

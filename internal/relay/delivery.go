@@ -97,7 +97,7 @@ func (s *SessionService) dispatchWork(session *sessionState) error {
 	// Capacity is a ceiling on what the relay holds at once, not a batch size. Claiming a
 	// batch every round regardless would lease a whole backlog to one relay within minutes,
 	// stranding all of it behind whatever that relay can actually run.
-	claimed, err := s.placements.ClaimJobs(ctx, session.organization, storage.JobClaim{
+	claimed, err := s.database.ClaimJobs(ctx, session.organization, storage.JobClaim{
 		RegistrationID: session.registrationID,
 		SessionID:      session.id,
 		LeaseFor:       leaseDuration,
@@ -125,7 +125,7 @@ func (s *SessionService) dispatchWork(session *sessionState) error {
 func (s *SessionService) dispatchCancellations(
 	session *sessionState, told map[storage.InFlightJob]bool,
 ) error {
-	pending, err := s.placements.PendingCancellations(
+	pending, err := s.database.PendingCancellations(
 		session.ctx, session.organization, session.id)
 	if err != nil {
 		return err
@@ -190,7 +190,7 @@ func (s *SessionService) failUndeliverable(session *sessionState, job storage.Jo
 		// customer data and is worth saying: without it the operator sees a job that failed
 		// and no reason it could not have succeeded.
 		slog.String("error", cause.Error()))
-	if _, err := s.placements.RecordResult(ctx, session.organization, fence, outcome); err != nil {
+	if _, err := s.database.RecordResult(ctx, session.organization, fence, outcome); err != nil {
 		session.logger.ErrorContext(ctx, "failing an undeliverable job",
 			slog.String("job_id", job.ID.String()),
 			slog.String("error", err.Error()))

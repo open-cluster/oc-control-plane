@@ -55,6 +55,17 @@ func TestConfigurationDocumentationMatchesYAMLSchema(t *testing.T) {
 	if !bytes.Contains(content, []byte("Settings ending in `_file` name a")) {
 		t.Error("documentation must state that secret settings name mounted files")
 	}
+	for _, contract := range []string{
+		EnvDatabaseDSNFile,
+		"split them into one control-plane deployment",
+		"restart the prior binary",
+		"30 seconds to read a request",
+	} {
+		if !bytes.Contains(content, []byte(contract)) {
+			t.Errorf("Phase 2 migration contract %q is absent from the configuration reference",
+				contract)
+		}
+	}
 
 	for _, documentedDefault := range []string{
 		defaultShutdownTimeout.String(),

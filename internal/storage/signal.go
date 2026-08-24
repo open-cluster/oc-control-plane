@@ -111,7 +111,7 @@ type DeliveryAttempt struct {
 // RecordDeliveryAttempt puts a duplicate or a rejection in the history, so a source that
 // is delivering and being turned away is distinguishable from a source that has gone
 // quiet. Those two call for opposite actions at three in the morning.
-func (p *Placements) RecordDeliveryAttempt(
+func (p *Database) RecordDeliveryAttempt(
 	ctx context.Context, organization tenancy.Organization, attempt DeliveryAttempt,
 ) error {
 	pool, err := p.Pool(organization)
@@ -135,7 +135,7 @@ func (p *Placements) RecordDeliveryAttempt(
 // be told it succeeded; signals written without the delivery recorded would be applied
 // again on the next retry. The unique constraint on the body digest is what resolves two
 // concurrent retries — the database decides, rather than a read-then-write both could pass.
-func (p *Placements) RecordDelivery(
+func (p *Database) RecordDelivery(
 	ctx context.Context, organization tenancy.Organization, delivery Delivery,
 ) (DeliveryOutcome, error) {
 	pool, err := p.Pool(organization)
@@ -192,7 +192,7 @@ func (p *Placements) RecordDelivery(
 		}
 		// An update to a Signal already in an episode — most often its resolution, which is
 		// what decides whether the episode as a whole has recovered.
-		if err = regroupUpdatedSignal(ctx, transaction, signalID); err != nil {
+		if err = regroupUpdatedSignal(ctx, transaction, organization, signalID); err != nil {
 			return DeliveryOutcome{}, err
 		}
 	}
@@ -310,15 +310,17 @@ func upsertSignal(
 // belongs to. What is recomputed is the episode's own state, most importantly whether
 // every Signal in it has now stopped firing.
 func regroupUpdatedSignal(
-	ctx context.Context, transaction pgx.Tx, signalID uuid.UUID,
+	ctx context.Context, transaction pgx.Tx,
+	organization tenancy.Organization, signalID uuid.UUID,
 ) error {
 	var episodeID *uuid.UUID
 	if err := transaction.QueryRow(ctx,
-		`SELECT episode_id FROM signal WHERE signal_id = $1`, signalID).Scan(&episodeID); err != nil {
+		`SELECT episode_id FROM signal WHERE signal_id = $1 AND org_id = $2`,
+		signalID, organization.String()).Scan(&episodeID); err != nil {
 		return fmt.Errorf("reading a signal's episode: %w", err)
 	}
 	if episodeID == nil {
 		return nil
 	}
-	return refreshEpisode(ctx, transaction, *episodeID)
+	return refreshEpisode(ctx, transaction, organization, *episodeID)
 }

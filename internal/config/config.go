@@ -51,6 +51,7 @@ const (
 // Environment variable names, listed once so errors and documentation cannot drift.
 const (
 	EnvHTTPAddress      = "OC_HTTP_ADDRESS"
+	EnvDatabaseDSNFile  = "OC_DATABASE_DSN_FILE"
 	EnvPlacements       = "OC_PLACEMENTS"
 	EnvAssignments      = "OC_PLACEMENT_ASSIGNMENTS"
 	EnvDefaultPlacement = "OC_DEFAULT_PLACEMENT"
@@ -205,27 +206,12 @@ const (
 
 // Config is the validated process configuration.
 type Config struct {
-	// HTTPAddress is the listen address for health, readiness, and metrics.
+	// HTTPAddress is the shared listen address for every HTTP route group.
 	HTTPAddress string
 
-	// Placements maps a placement name to its resolved connection string. The DSN is read
-	// from the file the operator named; it is never carried in an environment value.
-	Placements map[string]string
-
-	// Assignments maps an organization to its placement name. An organization listed here
-	// overrides the default, which is how the Business and Enterprise tiers put a tenant on
-	// a dedicated database.
-	Assignments map[string]string
-
-	// DefaultPlacement serves organizations with no explicit assignment. It is the shared
-	// tier: enumerating five thousand organizations in an environment variable, and
-	// restarting every instance to onboard one, is not a deployment.
-	//
-	// It is OPTIONAL and, when set, is an explicit operator declaration — not an implicit
-	// fallback. With no default configured an unassigned organization is a hard error,
-	// because silently serving an unrecognised caller from someone else's connection is the
-	// failure this design exists to prevent.
-	DefaultPlacement string
+	// DatabaseDSN is the single deployment database connection string, resolved from
+	// the file named by configuration. It never appears in an environment value.
+	DatabaseDSN string
 
 	// ShutdownTimeout bounds the drain of in-flight requests on SIGTERM.
 	ShutdownTimeout time.Duration
@@ -248,10 +234,8 @@ type Config struct {
 	// certificate authority. More than one exists so a rotation can overlap.
 	RelaySPKIPins []string
 
-	// OperatorAddress is the listen address for the operator surface, separate from the health
-	// surface because it reads across tenants and belongs on an interface that health and
-	// metrics do not. Empty disables it, which is correct for a deployment that has nowhere
-	// private to put it.
+	// OperatorAddress is the compatibility switch for operator routes. Empty disables them;
+	// a non-empty value must equal HTTPAddress.
 	OperatorAddress string
 
 	// OperatorTokenDigest is the SHA-256 of the bootstrap token. The token is read from the file
@@ -363,10 +347,8 @@ type Config struct {
 	InvestigationMaxToolRuns int
 	InvestigationMaxTurns    int
 
-	// IntakeAddress is the listen address for alert intake. It is separate from every other
-	// surface because it is the only one a customer's own infrastructure connects to inbound,
-	// so a deployment can expose it and expose nothing else. Empty disables it, which is
-	// correct for an instance that serves relays but takes no alerts.
+	// IntakeAddress is the compatibility switch for alert-intake routes. Empty disables them;
+	// a non-empty value must equal HTTPAddress.
 	//
 	// It carries no credential of its own: each configured source authenticates with its own
 	// secret, so there is nothing here that would be shared across tenants.
@@ -416,14 +398,31 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.HTTPAddress, err = requiredListenAddress(lookup, EnvHTTPAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.Placements, err = placements(lookup); err != nil {
+	if cfg.DatabaseDSN, err = databaseDSN(lookup); err != nil {
 		return Config{}, err
 	}
-	if cfg.Assignments, err = assignments(lookup, cfg.Placements); err != nil {
-		return Config{}, err
-	}
-	if cfg.DefaultPlacement, err = defaultPlacement(lookup, cfg.Placements); err != nil {
-		return Config{}, err
+	if cfg.DatabaseDSN == "" {
+		legacy, legacyErr := placements(lookup)
+		if legacyErr != nil {
+			return Config{}, legacyErr
+		}
+		legacyAssignments, assignmentErr := assignments(lookup, legacy)
+		if assignmentErr != nil {
+			return Config{}, assignmentErr
+		}
+		legacyDefault, defaultErr := defaultPlacement(lookup, legacy)
+		if defaultErr != nil {
+			return Config{}, defaultErr
+		}
+		if len(legacyAssignments) == 0 && legacyDefault == "" {
+			return Config{}, fmt.Errorf(
+				"%s or %s is required while using the legacy database settings",
+				EnvAssignments, EnvDefaultPlacement)
+		}
+		cfg.DatabaseDSN, err = oneDatabase(legacy)
+		if err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.ShutdownTimeout, err = optionalDuration(lookup, EnvShutdownTimeout, cfg.ShutdownTimeout); err != nil {
 		return Config{}, err
@@ -451,6 +450,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.OperatorAddress, err = optionalHostPort(lookup, EnvOperatorAddress); err != nil {
 		return Config{}, err
 	}
+	if err = oneHTTPAddress(EnvOperatorAddress, cfg.OperatorAddress, cfg.HTTPAddress); err != nil {
+		return Config{}, err
+	}
 	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.OperatorAddress); err != nil {
 		return Config{}, err
 	}
@@ -470,6 +472,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
+		return Config{}, err
+	}
+	if err = oneHTTPAddress(EnvIntakeAddress, cfg.IntakeAddress, cfg.HTTPAddress); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakePublicURL, err = optionalIntakeURL(lookup, EnvIntakePublicURL); err != nil {
@@ -539,14 +544,50 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
 	cfg.MinimumRelayVersion = strings.TrimSpace(minimumRelay)
 
-	// A deployment with neither explicit assignments nor a default could resolve no
-	// organization at all, which is a misconfiguration rather than a strict posture.
-	if len(cfg.Assignments) == 0 && cfg.DefaultPlacement == "" {
-		return Config{}, fmt.Errorf(
-			"%s or %s is required: with neither, no organization can be resolved",
-			EnvAssignments, EnvDefaultPlacement)
-	}
 	return cfg, nil
+}
+
+func oneHTTPAddress(legacyKey, legacyAddress, serverAddress string) error {
+	if legacyAddress == "" || legacyAddress == serverAddress {
+		return nil
+	}
+	return fmt.Errorf("%s conflicts with %s; all HTTP routes now use one server address",
+		legacyKey, EnvHTTPAddress)
+}
+
+func oneDatabase(legacy map[string]string) (string, error) {
+	var selected string
+	for _, dsn := range legacy {
+		if selected == "" {
+			selected = dsn
+			continue
+		}
+		if dsn != selected {
+			return "", fmt.Errorf(
+				"%s configures several databases; consolidate them before using one database per deployment",
+				EnvPlacements)
+		}
+	}
+	return selected, nil
+}
+
+func databaseDSN(lookup func(string) (string, bool)) (string, error) {
+	path, _ := lookup(EnvDatabaseDSNFile)
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	for _, legacy := range []string{EnvPlacements, EnvAssignments, EnvDefaultPlacement} {
+		if value, ok := lookup(legacy); ok && strings.TrimSpace(value) != "" {
+			return "", fmt.Errorf("%s conflicts with compatibility setting %s; configure only one database input",
+				EnvDatabaseDSNFile, legacy)
+		}
+	}
+	dsn, err := readSecretFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", EnvDatabaseDSNFile, err)
+	}
+	return dsn, nil
 }
 
 // placements parses "name=/path/to/dsn" pairs and resolves each DSN from its file. The

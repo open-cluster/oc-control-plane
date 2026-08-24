@@ -210,8 +210,7 @@ func startInstallPlaneAs(
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.Assignments[neighbourOrg] = "shared"
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 		cfg.GitHubAppID = "12345"
 		cfg.GitHubAppKey = appKeyPEM(t)
 		cfg.GitHubAPIURL = vendor.URL

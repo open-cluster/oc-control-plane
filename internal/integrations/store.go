@@ -23,7 +23,7 @@ type Store interface {
 	CreateIntegration(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		wanted NewIntegration) (Integration, error)
 	// IntegrationByID resolves an Integration from its opaque identifier alone, across
-	// every placement, and returns the organization it belongs to. It is the ONE read that
+	// every database, and returns the organization it belongs to. It is the ONE read that
 	// takes no organization: an inbound delivery names its Integration and nothing else,
 	// and the row that is found is itself the authority for the tenant.
 	IntegrationByID(ctx context.Context, id uuid.UUID) (Integration, error)

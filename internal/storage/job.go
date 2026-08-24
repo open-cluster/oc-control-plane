@@ -94,7 +94,7 @@ func (r JobRefusal) String() string {
 // path rather than left to whichever query happened to scope itself correctly. Deciding it
 // inside the insert also means an Integration disabled between a check and a write cannot
 // leave work queued against it.
-func (p *Placements) EnqueueJob(
+func (p *Database) EnqueueJob(
 	ctx context.Context, organization tenancy.Organization, job Job,
 ) (JobRefusal, error) {
 	pool, err := p.Pool(organization)
@@ -131,7 +131,7 @@ func (p *Placements) EnqueueJob(
 // moment later. Under a concurrent change the diagnosis can name the wrong reason; what it
 // cannot do is be wrong about the refusal itself, because the row was already not written.
 // The explanation is for whoever planned the job, not a decision anything acts on.
-func (p *Placements) explainRefusedJob(
+func (p *Database) explainRefusedJob(
 	ctx context.Context, organization tenancy.Organization, job Job,
 ) (JobRefusal, error) {
 	integration, err := p.Integration(ctx, organization, job.IntegrationID)

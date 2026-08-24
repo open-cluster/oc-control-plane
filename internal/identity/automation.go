@@ -55,7 +55,7 @@ func (h Handlers) listServiceAccounts(writer http.ResponseWriter, request *http.
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	accounts, err := h.Placements.ListServiceAccounts(ctx, principal, organization)
+	accounts, err := h.Database.ListServiceAccounts(ctx, principal, organization)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -88,7 +88,7 @@ func (h Handlers) createServiceAccount(writer http.ResponseWriter, request *http
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	created, err := h.Placements.CreateServiceAccount(
+	created, err := h.Database.CreateServiceAccount(
 		ctx, principal, organization, name, strings.TrimSpace(body.Description))
 	if err != nil {
 		h.fail(writer, request, err)
@@ -113,7 +113,7 @@ func (h Handlers) removeServiceAccount(writer http.ResponseWriter, request *http
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.RemoveServiceAccount(ctx, principal, organization, id); err != nil {
+	if err := h.Database.RemoveServiceAccount(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
@@ -132,7 +132,7 @@ func (h Handlers) listTokens(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	tokens, err := h.Placements.ListAPITokens(ctx, principal, organization)
+	tokens, err := h.Database.ListAPITokens(ctx, principal, organization)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -196,7 +196,7 @@ func (h Handlers) issueToken(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	issued, err := h.Placements.IssueAPIToken(ctx, principal, organization, storage.NewAPIToken{
+	issued, err := h.Database.IssueAPIToken(ctx, principal, organization, storage.NewAPIToken{
 		ServiceAccountID: account,
 		Digest:           digest,
 		Prefix:           secret[:len(tokenLabel)+tokenPrefixLength],
@@ -232,7 +232,7 @@ func (h Handlers) revokeToken(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.RevokeAPIToken(ctx, principal, organization, id); err != nil {
+	if err := h.Database.RevokeAPIToken(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}

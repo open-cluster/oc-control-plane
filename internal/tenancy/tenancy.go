@@ -1,7 +1,7 @@
 // Package tenancy holds the vocabulary of the tenant boundary. An Organization is that
 // boundary: every durable record belongs to exactly one, and every store function takes
 // one explicitly rather than reading it from ambient context. The package deliberately
-// performs no I/O — where an organization's data physically lives is a placement, which
+// performs no I/O — where an organization's data physically lives is a database, which
 // internal/storage resolves.
 package tenancy
 

@@ -17,7 +17,7 @@ import (
 
 // Refusals the identity tables can produce.
 var (
-	// ErrUserUnknown reports a user this placement does not have.
+	// ErrUserUnknown reports a user this database does not have.
 	ErrUserUnknown = errors.New("user unknown")
 	// ErrUserDisabled reports a user who exists and may sign in to nothing.
 	ErrUserDisabled = errors.New("user disabled")
@@ -110,16 +110,14 @@ type MemberList struct {
 // ResolveUser finds or creates the person an identity provider just asserted, and returns them
 // with the memberships that decide what they may reach.
 //
-// It is placement-wide in the same sense ConnectionByID is, and for the same reason: the
-// caller is completing a sign-in against a provider configured by one organization, so the
-// organization IS known — it is passed in, and the placement resolves from it. Nothing about
-// the identity selects the tenant.
+// The caller is completing a sign-in against a provider configured by one organization,
+// so the organization is explicit and nothing about the identity selects the tenant.
 //
 // grant, when non-zero, is the role a first-time signer-in is provisioned with. Zero means
 // just-in-time provisioning is off for this provider: an unknown person is then created as a
 // user with no membership, which signs them in to nothing and lets an administrator find them
 // rather than making them invisible.
-func (p *Placements) ResolveUser(
+func (p *Database) ResolveUser(
 	ctx context.Context, organization tenancy.Organization,
 	identity Identity, grant authz.Role,
 ) (User, []authz.Membership, error) {
@@ -267,10 +265,9 @@ func adoptProvisionedUser(
 	return nil
 }
 
-// MembershipsOf reports every organization a user holds a role in, as served from one
-// placement. It is placement-wide because a user is: the row is not tenant-scoped, and the
-// memberships it carries are the answer rather than the question.
-func (p *Placements) MembershipsOf(
+// MembershipsOf reports every organization a user holds a role in. A user is deployment-wide;
+// the memberships it carries are the answer rather than the question.
+func (p *Database) MembershipsOf(
 	ctx context.Context, organization tenancy.Organization, user uuid.UUID,
 ) ([]authz.Membership, error) {
 	pool, err := p.Pool(organization)
@@ -333,7 +330,7 @@ func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Mem
 }
 
 // ListMembers reports who may reach an organization and as what.
-func (p *Placements) ListMembers(
+func (p *Database) ListMembers(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization, page Page,
 ) (MemberList, error) {
 	if !principal.MemberOf(organization) {
@@ -402,7 +399,7 @@ func (p *Placements) ListMembers(
 // It refuses the change that would leave the tenant with no owner. That check and the write
 // share one transaction, so two administrators demoting the last two owners at once cannot
 // both pass it.
-func (p *Placements) SetMembership(
+func (p *Database) SetMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	user uuid.UUID, role authz.Role,
 ) (Member, error) {
@@ -461,7 +458,7 @@ func (p *Placements) SetMembership(
 // RemoveMembership ends a person's access to one organization. Their user row and their place
 // in the record survive: deleting the person would leave every event they produced naming an
 // identifier nothing resolves.
-func (p *Placements) RemoveMembership(
+func (p *Database) RemoveMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	user uuid.UUID,
 ) error {

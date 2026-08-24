@@ -342,7 +342,7 @@ func (h Handlers) startSAMLSignIn(
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
 
-	if err := h.Placements.StartSignIn(ctx, organization, storage.SignInFlow{
+	if err := h.Database.StartSignIn(ctx, organization, storage.SignInFlow{
 		ID:           newFlowID(),
 		Organization: organization.String(),
 		ProviderID:   provider.ID,
@@ -385,7 +385,7 @@ func (h Handlers) completeSAMLSignIn(writer http.ResponseWriter, request *http.R
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
 
-	flow, err := h.Placements.RedeemSignIn(ctx, relay)
+	flow, err := h.Database.RedeemSignIn(ctx, relay)
 	if err != nil {
 		h.Logger.WarnContext(ctx, "a saml callback presented an unusable relay state",
 			slog.String("caller", request.RemoteAddr))
@@ -399,7 +399,7 @@ func (h Handlers) completeSAMLSignIn(writer http.ResponseWriter, request *http.R
 		return
 	}
 
-	provider, err := h.Placements.IdentityProviderForSignIn(ctx, organization, flow.ProviderID)
+	provider, err := h.Database.IdentityProviderForSignIn(ctx, organization, flow.ProviderID)
 	if err != nil || provider.Protocol != storage.ProtocolSAML {
 		h.refuseSignIn(writer, request, organization, flow.ProviderID, "the provider is gone")
 		return
@@ -470,7 +470,7 @@ func (h Handlers) samlMetadata(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	provider, err := h.Placements.IdentityProviderForSignIn(ctx, organization, id)
+	provider, err := h.Database.IdentityProviderForSignIn(ctx, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

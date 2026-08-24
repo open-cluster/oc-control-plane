@@ -97,7 +97,7 @@ var relayOrderings = map[string]struct {
 // authorization middleware has already decided, and this is the layer that cannot be reached
 // around. A principal with no membership is refused here even if it arrived from a path
 // nobody routed through the middleware.
-func (p *Placements) ListRelays(
+func (p *Database) ListRelays(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query RelayQuery,
 ) (RelayRoster, error) {

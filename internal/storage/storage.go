@@ -1,12 +1,9 @@
-// Package storage owns every database connection the control plane makes. It resolves an
-// organization to its placement — where a tenant's data lives is looked up from the
-// organization and is never ambient — holds one pool per placement, and applies the
-// embedded migrations under a lock so concurrently starting instances cannot race the
-// schema.
+// Package storage owns the control plane's single PostgreSQL connection pool and every
+// query made through it. Organization remains an explicit argument and predicate on
+// tenant-owned data; one database does not weaken tenant isolation.
 //
-// No other package constructs a database connection. That is enforced by the import gates
-// in internal/gates, not by convention, because a connection built elsewhere is a
-// connection that bypasses placement resolution.
+// No other package constructs a database connection. The import gates enforce that
+// boundary so a caller cannot bypass Organization-scoped storage behavior.
 package storage
 
 import (
@@ -15,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"sort"
 	"strings"
 
@@ -29,178 +25,70 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationLockKey is the advisory-lock key the migration runner serialises on. It is an
-// arbitrary constant; it only has to be stable across releases and unused elsewhere.
+// migrationLockKey serializes schema migration across concurrently starting instances.
 const migrationLockKey int64 = 7_263_041_998_120_001
 
-// ErrUnknownOrganization reports an organization with no placement assignment. It is
-// deliberately a hard error: serving such a caller from a default connection is how one
-// tenant is handed another tenant's data.
-var ErrUnknownOrganization = errors.New("organization has no placement assignment")
+// ErrUnknownOrganization reports an empty Organization at the storage boundary.
+var ErrUnknownOrganization = errors.New("organization names no tenant")
 
-// Layout describes where organizations live. It travels as one value because the three
-// fields are meaningless apart: an assignment names a placement, and a default must be one.
-type Layout struct {
-	// Placements maps a placement name to its connection string.
-	Placements map[string]string
-	// Assignments maps an organization to a placement, overriding the default.
-	Assignments map[string]string
-	// DefaultPlacement serves unassigned organizations. Empty means there is none.
-	DefaultPlacement string
+// Database is the one durable PostgreSQL store owned by a deployment.
+type Database struct {
+	pool *pgxpool.Pool
 }
 
-// Placements holds one connection pool per placement and resolves organizations to them.
-type Placements struct {
-	pools       map[string]*pgxpool.Pool
-	assignments map[string]string
-	// defaultPlacement serves organizations with no explicit assignment. Empty means there
-	// is none, and an unassigned organization is then a hard error.
-	defaultPlacement string
+// OpenDatabase opens the deployment database. The pool dials lazily; reachability is a
+// readiness concern so a transient outage does not prevent the process from explaining it.
+func OpenDatabase(ctx context.Context, dsn string) (*Database, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return nil, errors.New("storage: database connection string is required")
+	}
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		// The DSN may contain a password, so the parser's cause is deliberately omitted.
+		return nil, errors.New("storage: database has an unusable connection string")
+	}
+	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer(
+		otelpgx.WithTrimSQLInSpanName(),
+		otelpgx.WithDisableQuerySpanNamePrefix(),
+	)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, errors.New("storage: database could not be opened")
+	}
+	return &Database{pool: pool}, nil
 }
 
-// OpenPlacements builds a pool for every placement and validates that every assignment
-// names a placement that exists. A typo in an assignment fails here, at startup, rather
-// than becoming an unresolvable organization at request time.
-//
-// Opening a pool does not connect; pgxpool dials lazily. Reachability is a readiness
-// question, answered by Ping, not a startup question — a control plane that refuses to
-// start because a database is briefly unavailable cannot report why.
-func OpenPlacements(ctx context.Context, layout Layout) (*Placements, error) {
-	if len(layout.Placements) == 0 {
-		return nil, errors.New("storage: at least one placement is required")
-	}
-
-	for organization, placement := range layout.Assignments {
-		if _, ok := layout.Placements[placement]; !ok {
-			return nil, fmt.Errorf(
-				"storage: organization %q is assigned to undefined placement %q",
-				organization, placement)
-		}
-	}
-	if layout.DefaultPlacement != "" {
-		if _, ok := layout.Placements[layout.DefaultPlacement]; !ok {
-			return nil, fmt.Errorf("storage: default placement %q is not defined",
-				layout.DefaultPlacement)
-		}
-	}
-
-	placements, assignments := layout.Placements, layout.Assignments
-	opened := &Placements{
-		pools:            make(map[string]*pgxpool.Pool, len(placements)),
-		assignments:      make(map[string]string, len(assignments)),
-		defaultPlacement: layout.DefaultPlacement,
-	}
-	for name, dsn := range placements {
-		poolConfig, err := pgxpool.ParseConfig(dsn)
-		if err != nil {
-			opened.Close()
-			// The DSN carries a password, and pgx quotes it on parse failure. Report the
-			// placement by name and drop the cause.
-			return nil, fmt.Errorf("storage: placement %q has an unusable connection string", name)
-		}
-		// Every query becomes a span, so a request trace reaches the database rather than
-		// stopping at the handler. Statement text is recorded; arguments are not, because
-		// they carry tenant data.
-		poolConfig.ConnConfig.Tracer = otelpgx.NewTracer(
-			otelpgx.WithTrimSQLInSpanName(),
-			otelpgx.WithDisableQuerySpanNamePrefix(),
-		)
-
-		pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-		if err != nil {
-			opened.Close()
-			return nil, fmt.Errorf("storage: placement %q could not be opened", name)
-		}
-		opened.pools[name] = pool
-	}
-	maps.Copy(opened.assignments, assignments)
-	return opened, nil
-}
-
-// Pool returns the connection pool for the organization's placement: its explicit
-// assignment if it has one, otherwise the configured default. With no assignment and no
-// default the organization is unresolvable, and that is an error rather than a guess.
-func (p *Placements) Pool(organization tenancy.Organization) (*pgxpool.Pool, error) {
+// Pool returns the deployment pool after rejecting an empty Organization. Store methods
+// still receive the Organization and include it in every tenant-owned query.
+func (d *Database) Pool(organization tenancy.Organization) (*pgxpool.Pool, error) {
 	if organization.IsEmpty() {
 		return nil, fmt.Errorf("%w: the empty organization names no tenant", ErrUnknownOrganization)
 	}
-	placement, assigned := p.assignments[organization.String()]
-	if !assigned {
-		if p.defaultPlacement == "" {
-			return nil, fmt.Errorf("%w: %s", ErrUnknownOrganization, organization)
-		}
-		placement = p.defaultPlacement
-	}
-	pool, ok := p.pools[placement]
-	if !ok {
-		// Unreachable while OpenPlacements validates assignments, and still not a fallback.
-		return nil, fmt.Errorf("%w: placement %q is not open", ErrUnknownOrganization, placement)
-	}
-	return pool, nil
+	return d.pool, nil
 }
 
-// Ping reports whether this instance can serve at all, and is what readiness consults.
-//
-// It deliberately does NOT require every placement to be reachable. Once a Business or
-// Enterprise tenant has a dedicated database, an all-must-be-up check would let that one
-// tenant's outage mark the instance unready and withdraw it from service for every other
-// tenant — converting one customer's incident into everyone's. A dedicated placement being
-// down degrades that tenant, which surfaces as their request failing, not as this
-// instance's removal.
-//
-// With a default placement configured, that placement is what the instance must have: it
-// serves every unassigned organization. With no default, every organization is named
-// explicitly, the deployment is small by construction, and all placements are required.
-func (p *Placements) Ping(ctx context.Context) error {
-	required := p.names()
-	if p.defaultPlacement != "" {
-		required = []string{p.defaultPlacement}
-	}
-	for _, name := range required {
-		if err := p.pools[name].Ping(ctx); err != nil {
-			return fmt.Errorf("placement %q is unreachable: %w", name, err)
-		}
+// Ping reports whether the deployment database is reachable.
+func (d *Database) Ping(ctx context.Context) error {
+	if err := d.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("database is unreachable: %w", err)
 	}
 	return nil
 }
 
-// Close releases every pool. It is safe to call on a partially opened Placements.
-func (p *Placements) Close() {
-	for _, pool := range p.pools {
-		if pool != nil {
-			pool.Close()
-		}
+// Close releases the deployment pool.
+func (d *Database) Close() {
+	if d != nil && d.pool != nil {
+		d.pool.Close()
 	}
 }
 
-// Migrate applies pending migrations to every placement and reports, per placement, the
-// versions this call applied. An already-current placement reports none.
-func (p *Placements) Migrate(ctx context.Context) (map[string][]string, error) {
+// Migrate applies every pending embedded migration under one advisory lock.
+func (d *Database) Migrate(ctx context.Context) ([]string, error) {
 	pending, err := loadMigrations()
 	if err != nil {
 		return nil, err
 	}
-
-	applied := make(map[string][]string, len(p.pools))
-	for _, name := range p.names() {
-		versions, migrateErr := migratePlacement(ctx, p.pools[name], pending)
-		if migrateErr != nil {
-			return nil, fmt.Errorf("placement %q: %w", name, migrateErr)
-		}
-		applied[name] = versions
-	}
-	return applied, nil
-}
-
-// names returns placement names in a stable order so migration and ping order is
-// deterministic across runs and across instances.
-func (p *Placements) names() []string {
-	names := make([]string, 0, len(p.pools))
-	for name := range p.pools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return migrateDatabase(ctx, d.pool, pending)
 }
 
 // MigrationCount reports how many migrations this binary carries.
@@ -247,12 +135,12 @@ func loadMigrations() ([]migration, error) {
 	return migrations, nil
 }
 
-// migratePlacement applies pending migrations inside ONE transaction holding a
+// migrateDatabase applies pending migrations inside one transaction holding a
 // transaction-scoped advisory lock. Postgres has transactional DDL, so either every
 // pending migration and its ledger row commit together or none do — a half-applied schema
 // is not reachable. Concurrent instances serialise on the lock and the loser observes the
 // winner's ledger rather than racing it.
-func migratePlacement(
+func migrateDatabase(
 	ctx context.Context, pool *pgxpool.Pool, migrations []migration,
 ) (applied []string, err error) {
 	transaction, err := pool.Begin(ctx)

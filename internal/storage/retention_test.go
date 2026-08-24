@@ -86,9 +86,8 @@ func TestPruneEventsBefore_RemovesWhatAgedOutAndKeepsWhatDidNot(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn}, map[string]string{"org-a": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	org := organization(t, "org-a")
@@ -102,7 +101,7 @@ func TestPruneEventsBefore_RemovesWhatAgedOutAndKeepsWhatDidNot(t *testing.T) {
 	recordAuditEvent(t, dsn, org, now)
 
 	horizon := now.AddDate(0, 0, -30)
-	removed, err := placements.PruneEventsBefore(context.Background(), org, horizon, 1000)
+	removed, err := database.PruneEventsBefore(context.Background(), org, horizon, 1000)
 	if err != nil {
 		t.Fatalf("PruneEventsBefore: %v", err)
 	}
@@ -121,9 +120,8 @@ func TestPruneEventsBefore_RemovesNoMoreThanItWasAskedFor(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn}, map[string]string{"org-a": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	org := organization(t, "org-a")
@@ -134,7 +132,7 @@ func TestPruneEventsBefore_RemovesNoMoreThanItWasAskedFor(t *testing.T) {
 	}
 
 	horizon := now.AddDate(0, 0, -30)
-	removed, err := placements.PruneEventsBefore(context.Background(), org, horizon, 2)
+	removed, err := database.PruneEventsBefore(context.Background(), org, horizon, 2)
 	if err != nil {
 		t.Fatalf("PruneEventsBefore: %v", err)
 	}
@@ -146,14 +144,13 @@ func TestPruneEventsBefore_RemovesNoMoreThanItWasAskedFor(t *testing.T) {
 	}
 }
 
-// One tenant's schedule never reaches another tenant's record, even on the same placement.
+// One tenant's schedule never reaches another tenant's record, even on the same database.
 func TestPruneEventsBefore_TouchesNoOtherTenantsRecord(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t, map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared", "org-b": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	mine, theirs := organization(t, "org-a"), organization(t, "org-b")
@@ -162,7 +159,7 @@ func TestPruneEventsBefore_TouchesNoOtherTenantsRecord(t *testing.T) {
 	recordAuditEvent(t, dsn, mine, now.Add(-90*24*time.Hour))
 	recordAuditEvent(t, dsn, theirs, now.Add(-90*24*time.Hour))
 
-	if _, err := placements.PruneEventsBefore(
+	if _, err := database.PruneEventsBefore(
 		context.Background(), mine, now.AddDate(0, 0, -30), 1000); err != nil {
 		t.Fatalf("PruneEventsBefore: %v", err)
 	}
@@ -183,9 +180,8 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn}, map[string]string{"org-a": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	org := organization(t, "org-a")
@@ -194,7 +190,7 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	recordAuditEvent(t, dsn, org, now.Add(-90*24*time.Hour))
 	recordAuditEvent(t, dsn, org, now.Add(-91*24*time.Hour))
 
-	pool, err := placements.Pool(org)
+	pool, err := database.Pool(org)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -211,7 +207,7 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	// The pool is small and reused deliberately: the assertion below is only meaningful if the
 	// connection the pruner declared on can come back to a later caller, which is exactly the
 	// leak a session-level setting would produce.
-	removed, err := placements.PruneEventsBefore(
+	removed, err := database.PruneEventsBefore(
 		context.Background(), org, now.AddDate(0, 0, -30), 1000)
 	if err != nil {
 		t.Fatalf("PruneEventsBefore: %v", err)
@@ -235,20 +231,17 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 func TestDeclaredRetentions_ReportsOnlyTheTenantsThatDeclaredASchedule(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
-	second := databaseNamed(t, dsn, "retention_second")
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn, "other": second},
-		map[string]string{"org-a": "shared", "org-quiet": "shared", "org-far": "other"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
 	declareRetention(t, dsn, organization(t, "org-a"), 30)
 	declareRetention(t, dsn, organization(t, "org-quiet"), 0)
-	declareRetention(t, second, organization(t, "org-far"), 7)
+	declareRetention(t, dsn, organization(t, "org-far"), 7)
 
-	declared, err := placements.DeclaredRetentions(context.Background())
+	declared, err := database.DeclaredRetentions(context.Background())
 	if err != nil {
 		t.Fatalf("DeclaredRetentions: %v", err)
 	}
@@ -260,11 +253,9 @@ func TestDeclaredRetentions_ReportsOnlyTheTenantsThatDeclaredASchedule(t *testin
 	if days["org-a"] != 30 {
 		t.Errorf("org-a declared 30 days and is reported as %d", days["org-a"])
 	}
-	// Every placement is scanned, not only the default one. A deployment serving a tenant on a
-	// dedicated database would otherwise keep that tenant's record forever while reporting that
-	// the schedule was enforced.
+	// Every Organization in the deployment database is scanned.
 	if days["org-far"] != 7 {
-		t.Errorf("a tenant on a second placement declared 7 days and is reported as %d",
+		t.Errorf("a second tenant declared 7 days and is reported as %d",
 			days["org-far"])
 	}
 	if _, reported := days["org-quiet"]; reported {

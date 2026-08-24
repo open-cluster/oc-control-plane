@@ -25,14 +25,14 @@ import (
 // installation sitting in another.
 func TestBoundary_AJobNamingARelayThatDoesNotServeItsIntegrationIsRefused(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 
 	// Two relays, and an Integration served by the first.
-	served := enrolledRelay(t, placements, organization)
-	other := enrolledRelay(t, placements, organization)
-	integration := kubernetesIntegration(t, placements, organization, served)
+	served := enrolledRelay(t, database, organization)
+	other := enrolledRelay(t, database, organization)
+	integration := kubernetesIntegration(t, database, organization, served)
 
-	refusal, err := placements.EnqueueJob(context.Background(), organization, storage.Job{
+	refusal, err := database.EnqueueJob(context.Background(), organization, storage.Job{
 		ID:                uuid.New(),
 		IntegrationID:     integration,
 		RegistrationID:    other,
@@ -52,17 +52,17 @@ func TestBoundary_AJobNamingARelayThatDoesNotServeItsIntegrationIsRefused(t *tes
 // the record survives — but nothing new is dispatched against it.
 func TestBoundary_AJobAgainstADisabledIntegrationIsRefused(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 
-	relay := enrolledRelay(t, placements, organization)
-	integration := kubernetesIntegration(t, placements, organization, relay)
+	relay := enrolledRelay(t, database, organization)
+	integration := kubernetesIntegration(t, database, organization, relay)
 
-	if err := placements.SetIntegrationDisabled(
+	if err := database.SetIntegrationDisabled(
 		context.Background(), ownerOf(t, organization), organization, integration, true); err != nil {
 		t.Fatalf("disabling the integration: %v", err)
 	}
 
-	refusal, err := placements.EnqueueJob(context.Background(), organization, storage.Job{
+	refusal, err := database.EnqueueJob(context.Background(), organization, storage.Job{
 		ID:                uuid.New(),
 		IntegrationID:     integration,
 		RegistrationID:    relay,
@@ -84,21 +84,19 @@ func TestBoundary_AJobAgainstADisabledIntegrationIsRefused(t *testing.T) {
 func TestBoundary_AJobCannotNameAnotherOrganizationsIntegration(t *testing.T) {
 	t.Parallel()
 
-	placements := openPlacements(t,
-		map[string]string{"shared": postgresDSN(t)},
-		map[string]string{"boundary-one": "shared", "boundary-two": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, postgresDSN(t))
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
 	one, two := named(t, "boundary-one"), named(t, "boundary-two")
 
 	// An Integration and its Relay both belong to the second organization.
-	myRelay := enrolledRelay(t, placements, one)
+	myRelay := enrolledRelay(t, database, one)
 	_ = myRelay
-	theirRelay := enrolledRelay(t, placements, two)
-	theirIntegration := kubernetesIntegration(t, placements, two, theirRelay)
+	theirRelay := enrolledRelay(t, database, two)
+	theirIntegration := kubernetesIntegration(t, database, two, theirRelay)
 
-	refusal, err := placements.EnqueueJob(context.Background(), one, storage.Job{
+	refusal, err := database.EnqueueJob(context.Background(), one, storage.Job{
 		ID:                uuid.New(),
 		IntegrationID:     theirIntegration,
 		RegistrationID:    theirRelay,
@@ -119,13 +117,13 @@ func TestBoundary_AJobCannotNameAnotherOrganizationsIntegration(t *testing.T) {
 // installation it was read from rather than to the Relay that read it.
 func TestBoundary_AClaimedJobCarriesTheIntegrationItReaches(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 
-	relay := enrolledRelay(t, placements, organization)
-	integration := kubernetesIntegration(t, placements, organization, relay)
-	enqueueThrough(t, placements, organization, relay, integration)
+	relay := enrolledRelay(t, database, organization)
+	integration := kubernetesIntegration(t, database, organization, relay)
+	enqueueThrough(t, database, organization, relay, integration)
 
-	claimed := claimableFor(t, placements, organization, relay)
+	claimed := claimableFor(t, database, organization, relay)
 	if len(claimed) != 1 {
 		t.Fatalf("claimed %d jobs, want 1", len(claimed))
 	}
@@ -136,12 +134,12 @@ func TestBoundary_AClaimedJobCarriesTheIntegrationItReaches(t *testing.T) {
 }
 
 func claimableFor(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, registration uuid.UUID,
 ) []storage.Job {
 	t.Helper()
 
-	claimed, err := placements.ClaimJobs(context.Background(), organization, storage.JobClaim{
+	claimed, err := database.ClaimJobs(context.Background(), organization, storage.JobClaim{
 		RegistrationID: registration,
 		SessionID:      uuid.New(),
 		LeaseFor:       time.Minute,

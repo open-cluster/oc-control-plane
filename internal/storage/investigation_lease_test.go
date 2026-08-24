@@ -30,12 +30,12 @@ func aClaim(worker string, concurrent int) investigation.Claim {
 // that stopped heartbeating because it stopped existing. Expiry is induced rather than
 // waited for: a suite that depends on winning a timing race is a suite that gets disabled.
 func expireInvestigationLease(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	id uuid.UUID,
 ) {
 	t.Helper()
 
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -52,14 +52,14 @@ func expireInvestigationLease(
 func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 
 	const turns = 8
 	opened := make(map[uuid.UUID]bool, turns)
 	for range turns {
-		conversation := openConversation(t, placements, organization, "checkout is slow")
-		say(t, placements, organization, conversation.ID, "what changed?")
-		turn, took, err := placements.OpenTurn(context.Background(), organization,
+		conversation := openConversation(t, database, organization, "checkout is slow")
+		say(t, database, organization, conversation.ID, "what changed?")
+		turn, took, err := database.OpenTurn(context.Background(), organization,
 			conversation.ID, turnWindowLead)
 		if err != nil || !took {
 			t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -80,7 +80,7 @@ func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 			for {
 				// A ceiling above the whole set, so what is being tested is the claim and
 				// not the backpressure beside it.
-				_, investigationRecord, took, err := placements.ClaimInvestigation(
+				_, investigationRecord, took, err := database.ClaimInvestigation(
 					context.Background(), aClaim(name, turns+1))
 				if err != nil {
 					t.Errorf("%s: claiming: %v", name, err)
@@ -119,13 +119,13 @@ func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 func TestAnOrganizationsConcurrencyCeilingHoldsBackTheRest(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 
 	var turns []uuid.UUID
 	for range 4 {
-		conversation := openConversation(t, placements, organization, "checkout is slow")
-		say(t, placements, organization, conversation.ID, "what changed?")
-		turn, took, err := placements.OpenTurn(context.Background(), organization,
+		conversation := openConversation(t, database, organization, "checkout is slow")
+		say(t, database, organization, conversation.ID, "what changed?")
+		turn, took, err := database.OpenTurn(context.Background(), organization,
 			conversation.ID, turnWindowLead)
 		if err != nil || !took {
 			t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -135,7 +135,7 @@ func TestAnOrganizationsConcurrencyCeilingHoldsBackTheRest(t *testing.T) {
 
 	const ceiling = 2
 	for taken := range ceiling {
-		if _, _, took, err := placements.ClaimInvestigation(context.Background(),
+		if _, _, took, err := database.ClaimInvestigation(context.Background(),
 			aClaim("worker-a", ceiling)); err != nil || !took {
 			t.Fatalf("claim %d: took=%v err=%v", taken, took, err)
 		}
@@ -143,12 +143,12 @@ func TestAnOrganizationsConcurrencyCeilingHoldsBackTheRest(t *testing.T) {
 
 	// The ceiling is now reached, so nothing more may be claimed for this tenant even
 	// though two turns are still waiting.
-	if _, _, took, err := placements.ClaimInvestigation(context.Background(),
+	if _, _, took, err := database.ClaimInvestigation(context.Background(),
 		aClaim("worker-b", ceiling)); err != nil || took {
 		t.Fatalf("a claim past the ceiling was allowed: took=%v err=%v", took, err)
 	}
 
-	waiting, err := placements.WaitingTurns(context.Background(), organization)
+	waiting, err := database.WaitingTurns(context.Background(), organization)
 	if err != nil {
 		t.Fatalf("counting: %v", err)
 	}
@@ -158,11 +158,11 @@ func TestAnOrganizationsConcurrencyCeilingHoldsBackTheRest(t *testing.T) {
 	}
 
 	// When room appears, the queue moves.
-	if err = placements.ConcludeInvestigation(context.Background(), organization, turns[0],
+	if err = database.ConcludeInvestigation(context.Background(), organization, turns[0],
 		conclusionSaying("done"), "", investigation.Spend{}); err != nil {
 		t.Fatalf("concluding: %v", err)
 	}
-	if _, _, took, claimErr := placements.ClaimInvestigation(context.Background(),
+	if _, _, took, claimErr := database.ClaimInvestigation(context.Background(),
 		aClaim("worker-b", ceiling)); claimErr != nil || !took {
 		t.Errorf("nothing was claimable after room appeared: took=%v err=%v", took, claimErr)
 	}
@@ -174,30 +174,30 @@ func TestAnOrganizationsConcurrencyCeilingHoldsBackTheRest(t *testing.T) {
 func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	conversation := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, conversation.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization,
+	database, organization := migratedDatabase(t)
+	conversation := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, conversation.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
 
-	if _, _, took, err = placements.ClaimInvestigation(context.Background(),
+	if _, _, took, err = database.ClaimInvestigation(context.Background(),
 		aClaim("worker-that-dies", 4)); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
 	// The worker got as far as saying it had started, and then stopped existing.
-	if err = placements.AppendEvent(context.Background(), organization,
+	if err = database.AppendEvent(context.Background(), organization,
 		turn.InvestigationID, investigation.Event{
 			Sequence: 1, At: time.Now().UTC(), Type: investigation.EventStarted,
 			Payload: map[string]any{"state": "executing"},
 		}); err != nil {
 		t.Fatalf("appending: %v", err)
 	}
-	expireInvestigationLease(t, placements, organization, turn.InvestigationID)
+	expireInvestigationLease(t, database, organization, turn.InvestigationID)
 
-	recovered, err := placements.RecoverStale(context.Background(),
+	recovered, err := database.RecoverStale(context.Background(),
 		investigation.RecoveryReason, 10)
 	if err != nil {
 		t.Fatalf("recovering: %v", err)
@@ -206,7 +206,7 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 		t.Fatalf("%d recovered, want one", recovered)
 	}
 
-	found, err := placements.Investigation(context.Background(), organization,
+	found, err := database.Investigation(context.Background(), organization,
 		turn.InvestigationID)
 	if err != nil {
 		t.Fatalf("reading: %v", err)
@@ -219,7 +219,7 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 		t.Errorf("error = %q, want the stated recovery reason", found.Error)
 	}
 
-	events, err := placements.Events(context.Background(), organization,
+	events, err := database.Events(context.Background(), organization,
 		turn.InvestigationID, 0, 0)
 	if err != nil {
 		t.Fatalf("reading events: %v", err)
@@ -249,25 +249,25 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	conversation := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, conversation.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization,
+	database, organization := migratedDatabase(t)
+	conversation := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, conversation.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
-	if _, _, took, err = placements.ClaimInvestigation(context.Background(),
+	if _, _, took, err = database.ClaimInvestigation(context.Background(),
 		aClaim("worker-that-dies", 4)); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
-	expireInvestigationLease(t, placements, organization, turn.InvestigationID)
-	if _, err = placements.RecoverStale(context.Background(),
+	expireInvestigationLease(t, database, organization, turn.InvestigationID)
+	if _, err = database.RecoverStale(context.Background(),
 		investigation.RecoveryReason, 10); err != nil {
 		t.Fatalf("recovering: %v", err)
 	}
 
-	if _, _, took, err = placements.ClaimInvestigation(context.Background(),
+	if _, _, took, err = database.ClaimInvestigation(context.Background(),
 		aClaim("worker-b", 4)); err != nil || took {
 		t.Errorf("a recovered investigation was claimed again: took=%v err=%v", took, err)
 	}
@@ -279,32 +279,32 @@ func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 func TestAWorkerThatLostItsLeaseCannotRenewIt(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	conversation := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, conversation.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization,
+	database, organization := migratedDatabase(t)
+	conversation := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, conversation.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
 
-	if _, _, took, err = placements.ClaimInvestigation(context.Background(),
+	if _, _, took, err = database.ClaimInvestigation(context.Background(),
 		aClaim("worker-a", 4)); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
-	if held, heartbeatErr := placements.Heartbeat(context.Background(), organization,
+	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-a", 4)); heartbeatErr != nil || !held {
 		t.Fatalf("the holder could not renew: held=%v err=%v", held, heartbeatErr)
 	}
 
 	// worker-a stalls; its lease lapses and worker-b takes over.
-	expireInvestigationLease(t, placements, organization, turn.InvestigationID)
-	if taken, takeErr := placements.TakeLease(context.Background(), organization,
+	expireInvestigationLease(t, database, organization, turn.InvestigationID)
+	if taken, takeErr := database.TakeLease(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-b", 4)); takeErr != nil || !taken {
 		t.Fatalf("the lapsed lease could not be taken over: taken=%v err=%v", taken, takeErr)
 	}
 
-	if held, heartbeatErr := placements.Heartbeat(context.Background(), organization,
+	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-a", 4)); heartbeatErr != nil || held {
 		t.Errorf("the worker that lost the lease renewed it anyway: held=%v err=%v",
 			held, heartbeatErr)
@@ -316,20 +316,20 @@ func TestAWorkerThatLostItsLeaseCannotRenewIt(t *testing.T) {
 func TestALiveLeaseCannotBeTakenFromItsHolder(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	conversation := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, conversation.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization,
+	database, organization := migratedDatabase(t)
+	conversation := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, conversation.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
-	if taken, takeErr := placements.TakeLease(context.Background(), organization,
+	if taken, takeErr := database.TakeLease(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-a", 4)); takeErr != nil || !taken {
 		t.Fatalf("the first take failed: taken=%v err=%v", taken, takeErr)
 	}
 
-	if taken, takeErr := placements.TakeLease(context.Background(), organization,
+	if taken, takeErr := database.TakeLease(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-b", 4)); takeErr != nil || taken {
 		t.Errorf("a live lease was taken from its holder: taken=%v err=%v", taken, takeErr)
 	}
@@ -340,27 +340,27 @@ func TestALiveLeaseCannotBeTakenFromItsHolder(t *testing.T) {
 func TestConcludingReleasesTheLease(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	conversation := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, conversation.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization,
+	database, organization := migratedDatabase(t)
+	conversation := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, conversation.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
-	if _, _, took, err = placements.ClaimInvestigation(context.Background(),
+	if _, _, took, err = database.ClaimInvestigation(context.Background(),
 		aClaim("worker-a", 4)); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
 
-	if err = placements.ConcludeInvestigation(context.Background(), organization,
+	if err = database.ConcludeInvestigation(context.Background(), organization,
 		turn.InvestigationID, conclusionSaying("done"), "",
 		investigation.Spend{}); err != nil {
 		t.Fatalf("concluding: %v", err)
 	}
 
 	// Nothing to renew, and nothing for the sweeper to find.
-	if held, heartbeatErr := placements.Heartbeat(context.Background(), organization,
+	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-a", 4)); heartbeatErr != nil || held {
 		t.Errorf("a concluded investigation still holds a lease: held=%v err=%v",
 			held, heartbeatErr)
@@ -369,7 +369,7 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 	// own "a lease is a worker and an expiry together" constraint refuses a half lease, so
 	// a concluded investigation with a lapsing lease is not a row that can exist. The
 	// sweep is guarded on the status as well, and finds nothing here either way.
-	recovered, err := placements.RecoverStale(context.Background(),
+	recovered, err := database.RecoverStale(context.Background(),
 		investigation.RecoveryReason, 10)
 	if err != nil {
 		t.Fatalf("recovering: %v", err)

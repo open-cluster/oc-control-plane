@@ -142,7 +142,7 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	integration, routing, err := h.Placements.IntegrationByInstallation(ctx,
+	integration, routing, err := h.Database.IntegrationByInstallation(ctx,
 		integrations.TypeSlack, integrations.InstallationKey(envelope.Key()))
 	if err != nil {
 		if errors.Is(err, integrations.ErrUnknown) {
@@ -222,7 +222,7 @@ func (h *surface) acceptSlackMessage(
 	integration uuid.UUID, body []byte, envelope slack.Envelope,
 ) {
 	digest := sha256.Sum256(body)
-	outcome, err := h.Placements.RecordSlackMessage(ctx, organization, storage.SlackMessage{
+	outcome, err := h.Database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: integration,
 		BodyDigest:  digest[:],
 		Channel:     envelope.Event.Channel,
@@ -278,7 +278,7 @@ func (h *surface) acceptSlackMessage(
 		writeStatus(writer, http.StatusOK, "accepted")
 		return
 	}
-	if _, opened, err := h.Placements.OpenTurn(ctx, organization, outcome.Conversation,
+	if _, opened, err := h.Database.OpenTurn(ctx, organization, outcome.Conversation,
 		h.Slack.WindowLead); err != nil {
 		h.Logger.ErrorContext(ctx, "opening a turn for a slack message failed",
 			slog.String("org_id", organization.String()),
@@ -309,7 +309,7 @@ func (h *surface) atCapacity(ctx context.Context, organization tenancy.Organizat
 	if h.Slack.MaxWaitingTurns <= 0 {
 		return false
 	}
-	waiting, err := h.Placements.WaitingTurns(ctx, organization)
+	waiting, err := h.Database.WaitingTurns(ctx, organization)
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "counting this organization's waiting turns failed",
 			slog.String("org_id", organization.String()),

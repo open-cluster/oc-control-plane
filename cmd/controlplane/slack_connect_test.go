@@ -28,7 +28,6 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.Assignments[neighbourOrg] = "shared"
 		cfg.SlackAPIURL = vendor.URL
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"

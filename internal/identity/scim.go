@@ -240,7 +240,7 @@ func (h Handlers) listSCIMUsers(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.ProvisionedUsers(ctx, principal, organization, filter, start, count)
+	list, err := h.Database.ProvisionedUsers(ctx, principal, organization, filter, start, count)
 	if err != nil {
 		h.failSCIM(writer, request, err)
 		return
@@ -272,7 +272,7 @@ func (h Handlers) readSCIMUser(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	user, err := h.Placements.ProvisionedUser(ctx, principal, organization, id)
+	user, err := h.Database.ProvisionedUser(ctx, principal, organization, id)
 	if err != nil {
 		h.failSCIM(writer, request, err)
 		return
@@ -297,7 +297,7 @@ func (h Handlers) createSCIMUser(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	created, err := h.Placements.ProvisionUser(ctx, principal, organization, body.toStorage())
+	created, err := h.Database.ProvisionUser(ctx, principal, organization, body.toStorage())
 	if err != nil {
 		h.failSCIM(writer, request, err)
 		return
@@ -322,7 +322,7 @@ func (h Handlers) replaceSCIMUser(writer http.ResponseWriter, request *http.Requ
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	replaced, err := h.Placements.ReplaceProvisionedUser(
+	replaced, err := h.Database.ReplaceProvisionedUser(
 		ctx, principal, organization, id, body.toStorage())
 	if err != nil {
 		h.failSCIM(writer, request, err)
@@ -370,7 +370,7 @@ func (h Handlers) patchSCIMUser(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	user, err := h.Placements.ProvisionedUser(ctx, principal, organization, id)
+	user, err := h.Database.ProvisionedUser(ctx, principal, organization, id)
 	if err != nil {
 		h.failSCIM(writer, request, err)
 		return
@@ -384,7 +384,7 @@ func (h Handlers) patchSCIMUser(writer http.ResponseWriter, request *http.Reques
 					"everything else as a replacement", "invalidPath")
 			return
 		}
-		user, err = h.Placements.SetProvisionedUserActive(
+		user, err = h.Database.SetProvisionedUserActive(
 			ctx, principal, organization, id, active)
 		if err != nil {
 			h.failSCIM(writer, request, err)
@@ -441,7 +441,7 @@ func (h Handlers) deleteSCIMUser(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.DeprovisionUser(ctx, principal, organization, id); err != nil {
+	if err := h.Database.DeprovisionUser(ctx, principal, organization, id); err != nil {
 		h.failSCIM(writer, request, err)
 		return
 	}

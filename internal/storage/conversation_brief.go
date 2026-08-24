@@ -21,7 +21,7 @@ import (
 // something the citation already says.
 
 // ConversationBrief reads what a conversation contributes to its next turn.
-func (p *Placements) ConversationBrief(
+func (p *Database) ConversationBrief(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID, tail int,
 ) (investigation.Brief, error) {
 	found, err := p.Conversation(ctx, organization, id)
@@ -250,7 +250,7 @@ func newestSummary(
 // thing to be able to read afterwards, and the row is small. The authoritative transcript
 // in conversation_message is not touched at all — this is the model's working memory of
 // what was said, never the record of it.
-func (p *Placements) RecordConversationSummary(
+func (p *Database) RecordConversationSummary(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	summary investigation.Summary, tokensBefore, tokensAfter int, model string,
 ) error {

@@ -158,7 +158,7 @@ type Event struct {
 	// RequestID ties this event to the log lines for the same request.
 	RequestID string
 	// OccurredAt is when. Zero means the database's own clock, which is what an ordinary write
-	// uses so that ordering within a placement is that placement's clock throughout.
+	// uses so that ordering within a database is that database's clock throughout.
 	OccurredAt time.Time
 	// Detail is structured context — the previous and new value of a changed setting, the
 	// reason a request was denied. Never a credential and never evidence content.

@@ -55,22 +55,20 @@ func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 	return nil
 }
 
-// ClaimSlackReplies leases the replies that are due, across every placement.
+// ClaimSlackReplies leases the replies that are due.
 //
 // The LEASE is what stops two workers writing into one visible message, which would be the one
 // failure a reader in the thread could not make sense of. It takes no organization for the
 // reason every other sweep does not: finding out which tenants owe an answer IS the question.
-func (p *Placements) ClaimSlackReplies(
+func (p *Database) ClaimSlackReplies(
 	ctx context.Context, limit int, lease time.Duration,
 ) ([]slack.Reply, error) {
-	var claimed []slack.Reply
-	for _, name := range p.names() {
-		// Every turn of a Slack conversation owes an answer, whether it was opened by
-		// somebody speaking or by the drain behind a running turn.
-		if err := oweSlackReplies(ctx, p.pools[name], limit); err != nil {
-			return nil, err
-		}
-		rows, err := p.pools[name].Query(ctx, `
+	// Every turn of a Slack conversation owes an answer, whether it was opened by
+	// somebody speaking or by the drain behind a running turn.
+	if err := oweSlackReplies(ctx, p.pool, limit); err != nil {
+		return nil, err
+	}
+	rows, err := p.pool.Query(ctx, `
 			UPDATE slack_reply
 			   SET status       = $1,
 			       leased_until = now() + $2::interval,
@@ -86,43 +84,40 @@ func (p *Placements) ClaimSlackReplies(
 			          FOR UPDATE SKIP LOCKED)
 			RETURNING investigation_id, org_id, integration_id, conversation_id,
 			          channel_id, thread_ts, stream_ts, native, last_sequence, attempts`,
-			SlackReplyDelivering, lease.String(), SlackReplyPending, limit)
+		SlackReplyDelivering, lease.String(), SlackReplyPending, limit)
+	if err != nil {
+		return nil, fmt.Errorf("claiming slack replies: %w", err)
+	}
+	defer rows.Close()
+	var claimed []slack.Reply
+	for rows.Next() {
+		var (
+			one          slack.Reply
+			organization string
+		)
+		if err := rows.Scan(&one.Investigation, &organization, &one.Integration,
+			&one.Conversation, &one.Stream.Channel, &one.Stream.Thread,
+			&one.Stream.TS, &one.Stream.Native,
+			&one.LastSequence, &one.Attempts); err != nil {
+			return nil, fmt.Errorf("scanning a slack reply: %w", err)
+		}
+		named, err := tenancy.NewOrganization(organization)
 		if err != nil {
-			return nil, fmt.Errorf("claiming slack replies: %w", err)
+			return nil, fmt.Errorf(
+				"a slack reply names an organization that is not a name: %w", err)
 		}
-		for rows.Next() {
-			var (
-				one          slack.Reply
-				organization string
-			)
-			if err := rows.Scan(&one.Investigation, &organization, &one.Integration,
-				&one.Conversation, &one.Stream.Channel, &one.Stream.Thread,
-				&one.Stream.TS, &one.Stream.Native,
-				&one.LastSequence, &one.Attempts); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scanning a slack reply: %w", err)
-			}
-			named, err := tenancy.NewOrganization(organization)
-			if err != nil {
-				rows.Close()
-				return nil, fmt.Errorf(
-					"a slack reply names an organization that is not a name: %w", err)
-			}
-			one.Organization = named
-			claimed = append(claimed, one)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return nil, fmt.Errorf("claiming slack replies: %w", err)
-		}
+		one.Organization = named
+		claimed = append(claimed, one)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("claiming slack replies: %w", err)
 	}
 	return claimed, nil
 }
 
 // AdvanceSlackReply records progress. The cursor only ever moves forward, which is the
 // property that makes a retry append what was missed rather than repost what was seen.
-func (p *Placements) AdvanceSlackReply(
+func (p *Database) AdvanceSlackReply(
 	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
 	made slack.Progress,
 ) error {
@@ -157,7 +152,7 @@ func (p *Placements) AdvanceSlackReply(
 // The actor is the SYSTEM. Nobody pressed a button: a turn the worker picked up is the product
 // answering a question somebody asked, and attributing it to that person would say they wrote
 // what OpenCluster wrote.
-func (p *Placements) RecordCollaborationWrite(
+func (p *Database) RecordCollaborationWrite(
 	ctx context.Context, organization tenancy.Organization,
 	integration uuid.UUID, where string,
 ) error {
@@ -175,7 +170,7 @@ func (p *Placements) RecordCollaborationWrite(
 }
 
 // CompleteSlackReply marks one delivered. Nothing claims it again.
-func (p *Placements) CompleteSlackReply(
+func (p *Database) CompleteSlackReply(
 	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
 ) error {
 	pool, err := p.Pool(organization)
@@ -197,7 +192,7 @@ func (p *Placements) CompleteSlackReply(
 // Giving up is TERMINAL for the reply and says nothing about the investigation, which has
 // its own status and its own record. That separation is the point: a Slack outage must not be
 // able to make a completed investigation look failed.
-func (p *Placements) RetrySlackReply(
+func (p *Database) RetrySlackReply(
 	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
 	at time.Time, note string, giveUp bool,
 ) error {
@@ -226,7 +221,7 @@ func (p *Placements) RetrySlackReply(
 
 // SlackReplyState reports what one reply looks like, for the tests and for support. It
 // answers false where the investigation owes no Slack answer.
-func (p *Placements) SlackReplyState(
+func (p *Database) SlackReplyState(
 	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
 ) (status int, sequence int64, streamTS string, note string, found bool, err error) {
 	pool, poolErr := p.Pool(organization)

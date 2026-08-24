@@ -15,9 +15,9 @@
 // the same alert firing twice. Every one of those differences is confined to the type's
 // provider package; past normalisation nothing can tell which system delivered a Signal.
 //
-// The surface is deliberately its own listener. It is the only part of the control plane a
-// customer's infrastructure connects to inbound, so a deployment can expose it and nothing
-// else — health, metrics, the operator surface and the relay endpoint all stay where they are.
+// Intake owns its authenticated, bounded route tree. The application mounts that tree on the
+// shared HTTP listener; a reverse proxy may apply path-specific exposure without bypassing
+// provider authentication or body limits.
 package intake
 
 import (
@@ -64,8 +64,8 @@ const readTimeout = 15 * time.Second
 
 // Handlers is the intake surface's dependencies.
 type Handlers struct {
-	Placements *storage.Placements
-	Logger     *slog.Logger
+	Database *storage.Database
+	Logger   *slog.Logger
 	// Adapters routes a payload to its type's parser. Supplied by the composition root,
 	// which is the only place that knows every provider.
 	Adapters Adapters
@@ -235,7 +235,7 @@ func (h *surface) record(
 	ctx context.Context, writer http.ResponseWriter,
 	organization tenancy.Organization, delivery storage.Delivery,
 ) {
-	outcome, err := h.Placements.RecordDelivery(ctx, organization, delivery)
+	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery)
 	if err != nil {
 		// Nothing was written, and the source should try again — this is the one failure that
 		// is genuinely ours and genuinely transient.
@@ -293,14 +293,14 @@ var errNotAuthenticated = errors.New("not authenticated")
 // authenticate resolves the Integration from its opaque identifier and checks the secret
 // it was configured with.
 //
-// The identifier is looked up across the placements this deployment serves, and the row
+// The identifier is looked up across the database this deployment serves, and the row
 // that is found is the authority for the organization. The comparison is constant-time and
 // happens whether or not a secret is held, so the answer says nothing about which
 // identifiers exist.
 func (h *surface) authenticate(
 	ctx context.Context, integrationID uuid.UUID, request *http.Request,
 ) (integrations.Integration, error) {
-	integration, err := h.Placements.IntegrationByID(ctx, integrationID)
+	integration, err := h.Database.IntegrationByID(ctx, integrationID)
 	switch {
 	case errors.Is(err, integrations.ErrUnknown):
 		return integrations.Integration{}, fmt.Errorf("%w: no such integration", errNotAuthenticated)
@@ -412,7 +412,7 @@ func (h *surface) recordRefusal(
 	if err != nil {
 		return
 	}
-	if err := h.Placements.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
+	if err := h.Database.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
 		Integration: found.ID,
 		Disposition: storage.DeliveryRejected,
 		Reason:      reason,
@@ -431,7 +431,7 @@ func (h *surface) recordAttempt(
 	ctx context.Context, organization tenancy.Organization, integrationID uuid.UUID,
 	disposition storage.DeliveryDisposition,
 ) {
-	if err := h.Placements.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
+	if err := h.Database.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
 		Integration: integrationID,
 		Disposition: disposition,
 	}); err != nil {

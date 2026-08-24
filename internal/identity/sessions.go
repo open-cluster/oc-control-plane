@@ -33,7 +33,7 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 		ctx, cancel := contextWithTimeout(request, readTimeout)
 		defer cancel()
 
-		if signedIn, err := h.Placements.SessionByToken(ctx, session.Digest(token)); err == nil {
+		if signedIn, err := h.Database.SessionByToken(ctx, session.Digest(token)); err == nil {
 			expires = signedIn.Session.ExpiresAt
 			email = signedIn.User.Email
 		}
@@ -72,7 +72,7 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		// A signed-in person with no membership anywhere has a session and no tenant to record
 		// the sign-out against. Deleting the row still has to happen, and it happens through
-		// the placement the session was issued in — which is the one their memberships would
+		// the database the session was issued in — which is the one their memberships would
 		// have named. With none, the row expires on its own and the cookie is already cleared.
 		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 		return
@@ -81,17 +81,17 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.DeleteSession(ctx, principal, organization, id); err != nil {
+	if err := h.Database.DeleteSession(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 }
 
-// callersOrganization picks a tenant to resolve the caller's placement from.
+// callersOrganization picks a tenant to resolve the caller's database from.
 //
-// Any membership will do: the placement is a property of the organization, and a person with
-// memberships in two placements holds a session row in the one they signed in through. The
+// Any membership will do: the database is a property of the organization, and a person with
+// memberships in two database holds a session row in the one they signed in through. The
 // first is taken because Memberships is sorted, so the choice is the same on every request.
 func (h Handlers) callersOrganization(principal authz.Principal) (tenancy.Organization, bool) {
 	memberships := principal.Memberships()
@@ -115,7 +115,7 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	live, err := h.Placements.ListSessions(ctx, principal, organization)
+	live, err := h.Database.ListSessions(ctx, principal, organization)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -148,7 +148,7 @@ func (h Handlers) revokeSessions(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	ended, err := h.Placements.RevokeSessionsOf(ctx, principal, organization, user)
+	ended, err := h.Database.RevokeSessionsOf(ctx, principal, organization, user)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

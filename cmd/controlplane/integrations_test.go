@@ -51,7 +51,7 @@ func startIntegrationPlane(t *testing.T) *integrationPlane {
 
 	operatorAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
-	intakeAddress := freeAddress(t)
+	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.OperatorAddress = operatorAddress
@@ -64,11 +64,10 @@ func startIntegrationPlane(t *testing.T) *integrationPlane {
 		// neighbour below is refused by the authorization middleware before it reaches a
 		// query — the cross-tenant assertions assert that refusal.
 		cfg.OperatorTokenOrganization = surfaceOrg
-		// The neighbour shares this placement deliberately. An organization with no
-		// placement fails before any query runs, which would leave the cross-tenant
+		// The neighbour shares this database deliberately. An organization with no
+		// database fails before any query runs, which would leave the cross-tenant
 		// assertions passing against an implementation with no scoping at all.
-		cfg.Assignments[neighbourOrg] = "shared"
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)

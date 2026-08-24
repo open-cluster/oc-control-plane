@@ -30,12 +30,12 @@ func slackInstallation(workspace string) *integrations.Installation {
 }
 
 func connectSlack(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	name string, installed *integrations.Installation,
 ) (integrations.Integration, error) {
 	t.Helper()
 
-	return placements.CreateIntegration(context.Background(), ownerOf(t, organization),
+	return database.CreateIntegration(context.Background(), ownerOf(t, organization),
 		organization, integrations.NewIntegration{
 			Type:          integrations.TypeSlack,
 			Name:          name,
@@ -47,14 +47,14 @@ func connectSlack(
 func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 	installed := slackInstallation("T0ACME")
-	created, err := connectSlack(t, placements, organization, "Slack — Acme", installed)
+	created, err := connectSlack(t, database, organization, "Slack — Acme", installed)
 	if err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
 
-	found, routing, err := placements.IntegrationByInstallation(context.Background(),
+	found, routing, err := database.IntegrationByInstallation(context.Background(),
 		integrations.TypeSlack, installed.Key())
 	if err != nil {
 		t.Fatalf("resolving the installation: %v", err)
@@ -79,8 +79,8 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 func TestAWorkspaceNobodyInstalledResolvesToNothing(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	if _, err := connectSlack(t, placements, organization, "Slack — Acme",
+	database, organization := migratedDatabase(t)
+	if _, err := connectSlack(t, database, organization, "Slack — Acme",
 		slackInstallation("T0ACME")); err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestAWorkspaceNobodyInstalledResolvesToNothing(t *testing.T) {
 		"no workspace":      {Application: "A0OPENCLUSTER"},
 		"nothing at all":    {},
 	} {
-		_, _, err := placements.IntegrationByInstallation(context.Background(),
+		_, _, err := database.IntegrationByInstallation(context.Background(),
 			integrations.TypeSlack, key)
 		if !errors.Is(err, integrations.ErrUnknown) {
 			t.Errorf("%s resolved to %v, want unknown", name, err)
@@ -110,13 +110,13 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 	// reads it with its own token and sees only what its own token can see. It stops being
 	// harmless the instant an event arrives, because resolution would have two answers at
 	// exactly the moment the product starts trusting it has one.
-	placements, organization := migratedPlacement(t)
-	if _, err := connectSlack(t, placements, organization, "Slack — first",
+	database, organization := migratedDatabase(t)
+	if _, err := connectSlack(t, database, organization, "Slack — first",
 		slackInstallation("T0ACME")); err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
 
-	_, err := connectSlack(t, placements, organization, "Slack — second",
+	_, err := connectSlack(t, database, organization, "Slack — second",
 		slackInstallation("T0ACME"))
 	if !errors.Is(err, integrations.ErrWorkspaceTaken) {
 		t.Fatalf("a second claim on one workspace = %v, want ErrWorkspaceTaken", err)
@@ -124,7 +124,7 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 
 	// And nothing was left behind. The refusal has to take the Integration with it, or the
 	// customer holds a connected integration whose events reach the first one.
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -145,8 +145,8 @@ func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 	// The pasted-token path: a credential for READING, which names no installation for a
 	// vendor to deliver events to. It is a supported way to connect and it is not an agent
 	// installation, and nothing about it should look like one.
-	placements, organization := migratedPlacement(t)
-	created, err := placements.CreateIntegration(context.Background(),
+	database, organization := migratedDatabase(t)
+	created, err := database.CreateIntegration(context.Background(),
 		ownerOf(t, organization), organization, integrations.NewIntegration{
 			Type: integrations.TypeSlack,
 			Name: "Slack — pasted",
@@ -155,7 +155,7 @@ func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 		t.Fatalf("creating a pasted-token slack integration: %v", err)
 	}
 
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -176,8 +176,8 @@ func TestAnInstallationCannotNameNothing(t *testing.T) {
 	// A provider returning a key that routes nothing is a programming error, and it is
 	// refused loudly rather than written. The alternative is discovering it at the first
 	// inbound event, as silence.
-	placements, organization := migratedPlacement(t)
-	_, err := placements.CreateIntegration(context.Background(), ownerOf(t, organization),
+	database, organization := migratedDatabase(t)
+	_, err := database.CreateIntegration(context.Background(), ownerOf(t, organization),
 		organization, integrations.NewIntegration{
 			Type:         integrations.TypeSlack,
 			Name:         "Slack — nowhere",
@@ -194,25 +194,25 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 	// The routing record is part of the Integration rather than a dependent of it.
 	// Leaving one behind would leave a workspace claimed by a row that is gone, and the
 	// customer could not reconnect.
-	placements, organization := migratedPlacement(t)
+	database, organization := migratedDatabase(t)
 	installed := slackInstallation("T0ACME")
-	created, err := connectSlack(t, placements, organization, "Slack — Acme", installed)
+	created, err := connectSlack(t, database, organization, "Slack — Acme", installed)
 	if err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
-	if err := placements.DeleteIntegration(context.Background(), ownerOf(t, organization),
+	if err := database.DeleteIntegration(context.Background(), ownerOf(t, organization),
 		organization, created.ID); err != nil {
 		t.Fatalf("disconnecting: %v", err)
 	}
 
-	_, _, err = placements.IntegrationByInstallation(context.Background(),
+	_, _, err = database.IntegrationByInstallation(context.Background(),
 		integrations.TypeSlack, installed.Key())
 	if !errors.Is(err, integrations.ErrUnknown) {
 		t.Errorf("a disconnected workspace still resolves: %v", err)
 	}
 
 	// And the workspace can be connected again, which is the point of removing it.
-	if _, err := connectSlack(t, placements, organization, "Slack — again",
+	if _, err := connectSlack(t, database, organization, "Slack — again",
 		slackInstallation("T0ACME")); err != nil {
 		t.Errorf("reconnecting a disconnected workspace: %v", err)
 	}
@@ -223,13 +223,13 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 func TestAnotherTenantCannotTakeAConnectedWorkspace(t *testing.T) {
 	t.Parallel()
 
-	placements, first, second := twoOrganizationsOnOnePlacement(t)
+	database, first, second := twoOrganizationsInOneDatabase(t)
 
 	installed := slackInstallation("T0SHARED-" + uuid.NewString()[:8])
-	if _, err := connectSlack(t, placements, first, "Slack — first", installed); err != nil {
+	if _, err := connectSlack(t, database, first, "Slack — first", installed); err != nil {
 		t.Fatalf("connecting slack in the first tenant: %v", err)
 	}
-	_, err := connectSlack(t, placements, second, "Slack — second",
+	_, err := connectSlack(t, database, second, "Slack — second",
 		slackInstallation(installed.Workspace))
 	if !errors.Is(err, integrations.ErrWorkspaceTaken) {
 		t.Fatalf("a neighbour claiming the same workspace = %v, want ErrWorkspaceTaken", err)

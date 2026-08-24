@@ -17,7 +17,7 @@ import (
 // The investigation lease. Every timestamp here is the SERVER's clock — now() in the
 // statement, never a value a worker computed — so a worker with a skewed clock cannot hold
 // a lease longer than it was given or lose one it still has.
-var _ investigation.Leases = (*Placements)(nil)
+var _ investigation.Leases = (*Database)(nil)
 
 // ClaimInvestigation leases the oldest waiting investigation this worker may take.
 //
@@ -26,12 +26,10 @@ var _ investigation.Leases = (*Placements)(nil)
 // process can see the others. Two claimers racing can still overshoot it by one — each
 // counts before the other commits — which is the same bounded race the process-wide
 // ceiling has always had, and is bounded again by every investigation's own budgets.
-func (p *Placements) ClaimInvestigation(
+func (p *Database) ClaimInvestigation(
 	ctx context.Context, claim investigation.Claim,
 ) (tenancy.Organization, investigation.Investigation, bool, error) {
-	// A fixed placement order, so two deployments of the same configuration behave alike.
-	for _, name := range p.names() {
-		row := p.pools[name].QueryRow(ctx, `
+	row := p.pool.QueryRow(ctx, `
 			UPDATE investigation
 			   SET lease_worker       = $1,
 			       lease_expires_at   = now() + $2::interval,
@@ -54,33 +52,29 @@ func (p *Placements) ClaimInvestigation(
 			        -- other, which is what lets a deployment add a replica and go faster.
 			        FOR UPDATE SKIP LOCKED)
 			RETURNING org_id, `+investigationColumns,
-			claim.Worker, claim.LeaseFor.String(), claim.OrgConcurrent)
+		claim.Worker, claim.LeaseFor.String(), claim.OrgConcurrent)
 
-		var organization string
-		claimed, err := scanClaimedInvestigation(row, &organization)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return tenancy.Organization{}, investigation.Investigation{}, false,
-				fmt.Errorf("claiming an investigation in placement %q: %w", name, err)
-		}
-		named, err := tenancy.NewOrganization(organization)
-		if err != nil {
-			// Unreachable while every write validates the organization first, and not a
-			// fallback: an investigation whose tenant cannot be named is not one to run.
-			return tenancy.Organization{}, investigation.Investigation{}, false,
-				fmt.Errorf("a claimed investigation names an unusable organization: %w", err)
-		}
-		claimed.OrgID = organization
-		return named, claimed, true, nil
+	var organization string
+	claimed, err := scanClaimedInvestigation(row, &organization)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tenancy.Organization{}, investigation.Investigation{}, false, nil
 	}
-	return tenancy.Organization{}, investigation.Investigation{}, false, nil
+	if err != nil {
+		return tenancy.Organization{}, investigation.Investigation{}, false,
+			fmt.Errorf("claiming an investigation: %w", err)
+	}
+	named, err := tenancy.NewOrganization(organization)
+	if err != nil {
+		return tenancy.Organization{}, investigation.Investigation{}, false,
+			fmt.Errorf("a claimed investigation names an unusable organization: %w", err)
+	}
+	claimed.OrgID = organization
+	return named, claimed, true, nil
 }
 
 // TakeLease claims one named investigation for the path that already holds the record it
 // just created. It refuses one somebody else holds, and one that has already ended.
-func (p *Placements) TakeLease(
+func (p *Database) TakeLease(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	claim investigation.Claim,
 ) (bool, error) {
@@ -113,7 +107,7 @@ func (p *Placements) TakeLease(
 // somebody else cannot be renewed by the process that lost it. That is the fence: the
 // holder learns it is no longer the holder, from the database, rather than continuing to
 // write for an investigation another worker is now running.
-func (p *Placements) Heartbeat(
+func (p *Database) Heartbeat(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	claim investigation.Claim,
 ) (bool, error) {
@@ -145,28 +139,20 @@ func (p *Placements) Heartbeat(
 //
 // The event's sequence is read from the table rather than held in memory, because the
 // process that held the in-memory counter is the process that died.
-func (p *Placements) RecoverStale(
+func (p *Database) RecoverStale(
 	ctx context.Context, reason string, limit int,
 ) (int, error) {
 	if limit <= 0 {
 		limit = 1
 	}
-	recovered := 0
-	for _, name := range p.names() {
-		count, err := recoverStaleIn(ctx, p.pools[name], reason, limit-recovered)
-		if err != nil {
-			return recovered, fmt.Errorf(
-				"recovering stale investigations in placement %q: %w", name, err)
-		}
-		recovered += count
-		if recovered >= limit {
-			break
-		}
+	recovered, err := recoverStaleIn(ctx, p.pool, reason, limit)
+	if err != nil {
+		return 0, fmt.Errorf("recovering stale investigations: %w", err)
 	}
 	return recovered, nil
 }
 
-// recoverStaleIn recovers up to limit stale investigations on one placement.
+// recoverStaleIn recovers up to limit stale investigations.
 func recoverStaleIn(
 	ctx context.Context, pool *pgxpool.Pool, reason string, limit int,
 ) (int, error) {

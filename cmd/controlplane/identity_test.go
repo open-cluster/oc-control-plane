@@ -794,11 +794,11 @@ func TestOperatorIdentity_TheRecordRefusesAnUpdateAndADelete(t *testing.T) {
 		t.Fatalf("creating an integration = %d: %s", created.status, created.body)
 	}
 
-	pool := openPlacement(t, plane.dsn)
+	pool := openDatabase(t, plane.dsn)
 	organization := namedOrganization(t, identityOrg)
 	connection, err := pool.Pool(organization)
 	if err != nil {
-		t.Fatalf("reaching the placement: %v", err)
+		t.Fatalf("reaching the database: %v", err)
 	}
 
 	for name, statement := range map[string]string{

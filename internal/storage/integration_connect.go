@@ -22,7 +22,7 @@ import (
 // exactly this one. JSONB equality is the comparison rather than a key-by-key check in Go:
 // Postgres normalises both sides, so "the same installation" is one predicate the database
 // can answer instead of a page walk this process would have to bound.
-func (p *Placements) IntegrationConfiguredAs(
+func (p *Database) IntegrationConfiguredAs(
 	ctx context.Context, organization tenancy.Organization, typeID integrations.TypeID,
 	configuration map[string]any,
 ) (integrations.Integration, error) {
@@ -61,7 +61,7 @@ func (p *Placements) IntegrationConfiguredAs(
 // abandoned attempt forever. It is done here rather than by a worker because the cheapest
 // honest moment to clear a table is while writing to it, and a background sweeper for a
 // handful of rows would be a process to operate for no gain.
-func (p *Placements) StartConnectFlow(
+func (p *Database) StartConnectFlow(
 	ctx context.Context, organization tenancy.Organization, flow integrations.ConnectFlow,
 	state string,
 ) error {
@@ -94,37 +94,30 @@ func (p *Placements) StartConnectFlow(
 // both win. An unknown state, an expired one and one already redeemed are the same refusal:
 // telling them apart is how a caller learns which half of a guess landed.
 //
-// It is placement-wide in the same sense the sign-in redemption is: the callback carries a
-// state and nothing that names a tenant, so every placement is asked in a fixed order.
-func (p *Placements) RedeemConnectFlow(
+// The callback carries state and nothing that names a tenant. The consumed row supplies
+// the organization boundary for the remaining work.
+func (p *Database) RedeemConnectFlow(
 	ctx context.Context, state string,
 ) (integrations.ConnectFlow, error) {
 	digest := sha256.Sum256([]byte(state))
 
-	for _, name := range p.names() {
-		var (
-			flow   integrations.ConnectFlow
-			typeID int16
-		)
-		err := p.pools[name].QueryRow(ctx, `
+	var (
+		flow   integrations.ConnectFlow
+		typeID int16
+	)
+	err := p.pool.QueryRow(ctx, `
 			UPDATE integration_connect_flow
 			   SET consumed_at = now()
 			 WHERE state_digest = $1 AND consumed_at IS NULL AND expires_at > now()
 			RETURNING flow_id, org_id, integration_type_id, principal, return_to, expires_at`,
-			digest[:]).Scan(&flow.ID, &flow.Organization, &typeID, &flow.Principal,
-			&flow.ReturnTo, &flow.ExpiresAt)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			// A placement that cannot be read is reported rather than skipped. Continuing
-			// would turn one database's outage into "this connect was never started",
-			// which an operator would answer by trying again forever.
-			return integrations.ConnectFlow{},
-				fmt.Errorf("redeeming a connect flow in placement %q: %w", name, err)
-		}
-		flow.Type = integrations.TypeID(typeID)
-		return flow, nil
+		digest[:]).Scan(&flow.ID, &flow.Organization, &typeID, &flow.Principal,
+		&flow.ReturnTo, &flow.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return integrations.ConnectFlow{}, integrations.ErrConnectFlowUnknown
 	}
-	return integrations.ConnectFlow{}, integrations.ErrConnectFlowUnknown
+	if err != nil {
+		return integrations.ConnectFlow{}, fmt.Errorf("redeeming a connect flow: %w", err)
+	}
+	flow.Type = integrations.TypeID(typeID)
+	return flow, nil
 }

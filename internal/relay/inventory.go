@@ -43,7 +43,7 @@ func (s *SessionService) refreshInventoryPolicies(session *sessionState) {
 // logged and not fatal to the session: a relay that received no policy synchronizes
 // nothing, which the scope's freshness surface reports, and the refresh retries.
 func (s *SessionService) sendInventoryPolicies(session *sessionState) {
-	scopes, err := s.placements.OpenInventoryScopes(
+	scopes, err := s.database.OpenInventoryScopes(
 		session.ctx, session.organization, session.registrationID, s.inventoryInterval)
 	if err != nil {
 		session.logger.ErrorContext(session.ctx, "opening inventory scopes",
@@ -90,7 +90,7 @@ func (s *SessionService) recordInventoryDelta(
 			slog.Int("skipped", skipped))
 	}
 
-	recorded, err := s.placements.RecordInventoryDelta(
+	recorded, err := s.database.RecordInventoryDelta(
 		ctx, session.organization, session.registrationID, reduced)
 	if err != nil {
 		// Nothing acknowledged, so the relay resends and the redelivery collapses
@@ -133,7 +133,7 @@ func (s *SessionService) recordInventoryFreshness(
 		}
 		stamps = append(stamps, stamp)
 	}
-	if err := s.placements.RecordInventoryFreshness(
+	if err := s.database.RecordInventoryFreshness(
 		session.ctx, session.organization, session.registrationID, stamps); err != nil {
 		session.logger.WarnContext(session.ctx, "recording inventory freshness",
 			slog.String("error", err.Error()))

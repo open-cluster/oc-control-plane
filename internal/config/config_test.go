@@ -23,7 +23,7 @@ func lookupFrom(values map[string]string) func(string) (string, bool) {
 	}
 }
 
-// dsnFile writes a DSN to a temp file and returns its path. Placement DSNs carry a
+// dsnFile writes a DSN to a temp file and returns its path. Database DSNs carry a
 // password, so they are referenced by path and never by environment value.
 func dsnFile(t *testing.T, dsn string) string {
 	t.Helper()
@@ -82,11 +82,107 @@ func TestLoadProcess_YAMLThenEnvironmentThenCLI(t *testing.T) {
 	if cfg.ShutdownTimeout != 45*time.Second {
 		t.Errorf("shutdown timeout = %v, want the YAML value", cfg.ShutdownTimeout)
 	}
-	if cfg.Placements["shared"] != "postgres://user:pw@localhost:5432/shared" {
-		t.Error("the YAML placement DSN was not resolved from its file")
+	if cfg.DatabaseDSN != "postgres://user:pw@localhost:5432/shared" {
+		t.Error("the compatibility DSN was not resolved from its file")
 	}
-	if cfg.Assignments["org-a"] != "shared" {
-		t.Errorf("assignments = %v", cfg.Assignments)
+}
+
+func TestLoadProcess_SingleDatabaseFile(t *testing.T) {
+	t.Parallel()
+
+	dsnPath := dsnFile(t, "postgres://database.example/opencluster")
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := fmt.Sprintf(`
+server:
+  address: ":8080"
+database:
+  dsn_file: %q
+`, dsnPath)
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err != nil {
+		t.Fatalf("LoadProcess() error = %v", err)
+	}
+	if cfg.DatabaseDSN != "postgres://database.example/opencluster" {
+		t.Errorf("DatabaseDSN = %q", cfg.DatabaseDSN)
+	}
+}
+
+func TestLoad_LegacySinglePlacementBecomesDatabase(t *testing.T) {
+	t.Parallel()
+
+	environment := validEnvironment(t)
+	cfg, err := config.Load(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DatabaseDSN != "postgres://user:pw@localhost:5432/shared" {
+		t.Errorf("DatabaseDSN = %q", cfg.DatabaseDSN)
+	}
+}
+
+func TestLoad_LegacySeveralDatabasesRequireConsolidation(t *testing.T) {
+	t.Parallel()
+
+	environment := validEnvironment(t)
+	environment[config.EnvPlacements] = "first=" +
+		dsnFile(t, "postgres://database.example/first") + ",second=" +
+		dsnFile(t, "postgres://database.example/second")
+	environment[config.EnvAssignments] = "org-a=first,org-b=second"
+
+	_, err := config.Load(lookupFrom(environment))
+	if err == nil {
+		t.Fatal("Load() error = nil")
+	}
+	if !strings.Contains(err.Error(), "consolidate") ||
+		!strings.Contains(err.Error(), config.EnvPlacements) {
+		t.Fatalf("Load() error = %q, want a consolidation instruction", err)
+	}
+}
+
+func TestLoad_NewAndLegacyDatabaseInputsConflict(t *testing.T) {
+	t.Parallel()
+
+	environment := validEnvironment(t)
+	environment[config.EnvDatabaseDSNFile] =
+		dsnFile(t, "postgres://database.example/new")
+
+	_, err := config.Load(lookupFrom(environment))
+	if err == nil {
+		t.Fatal("Load() error = nil")
+	}
+	if !strings.Contains(err.Error(), config.EnvDatabaseDSNFile) ||
+		!strings.Contains(err.Error(), config.EnvPlacements) {
+		t.Fatalf("Load() error = %q, want both conflicting setting names", err)
+	}
+}
+
+func TestLoadProcess_RefusesASecondHTTPAddress(t *testing.T) {
+	t.Parallel()
+
+	dsnPath := dsnFile(t, "postgres://database.example/opencluster")
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := fmt.Sprintf(`
+server:
+  address: ":8080"
+  operator_address: ":8081"
+database:
+  dsn_file: %q
+`, dsnPath)
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err == nil {
+		t.Fatal("LoadProcess() error = nil")
+	}
+	if !strings.Contains(err.Error(), config.EnvOperatorAddress) ||
+		!strings.Contains(err.Error(), config.EnvHTTPAddress) {
+		t.Fatalf("LoadProcess() error = %q, want both conflicting address names", err)
 	}
 }
 
@@ -164,8 +260,8 @@ func TestLoadProcess_NestedYAMLCoversCurrentConfiguration(t *testing.T) {
 	).Replace(strings.TrimSpace(`
 server:
   address: 127.0.0.1:8080
-  operator_address: 127.0.0.1:8081
-  intake_address: 127.0.0.1:8082
+  operator_address: 127.0.0.1:8080
+  intake_address: 127.0.0.1:8080
   public_url: http://localhost:8081
   console_url: http://localhost:3000
   intake_public_url: http://localhost:8082
@@ -234,7 +330,7 @@ change_ledger:
 		t.Fatalf("load process configuration: %v", err)
 	}
 
-	if cfg.OperatorAddress != "127.0.0.1:8081" || cfg.IntakeAddress != "127.0.0.1:8082" {
+	if cfg.OperatorAddress != "127.0.0.1:8080" || cfg.IntakeAddress != "127.0.0.1:8080" {
 		t.Errorf("server surfaces = operator %q intake %q", cfg.OperatorAddress, cfg.IntakeAddress)
 	}
 	if cfg.OperatorPublicURL != "http://localhost:8081" ||
@@ -309,11 +405,8 @@ providers:
 	if err != nil {
 		t.Fatalf("LoadProcess() error = %v", err)
 	}
-	if got := cfg.Placements["shared"]; got != "postgres://database.example/opencluster" {
-		t.Errorf("Placements[shared] = %q", got)
-	}
-	if got := cfg.Assignments["org,west"]; got != "shared" {
-		t.Errorf("Assignments[org,west] = %q", got)
+	if got := cfg.DatabaseDSN; got != "postgres://database.example/opencluster" {
+		t.Errorf("DatabaseDSN = %q", got)
 	}
 	if got := cfg.SlackAgentOrganizations; !reflect.DeepEqual(got, []string{"org,west"}) {
 		t.Errorf("SlackAgentOrganizations = %#v", got)
@@ -359,7 +452,7 @@ func TestLoad_ValidEnvironmentAppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestLoad_ResolvesPlacementDSNFromFile(t *testing.T) {
+func TestLoad_ResolvesCompatibilityDSNFromFile(t *testing.T) {
 	t.Parallel()
 
 	const dsn = "postgres://user:secret@localhost:5432/shared"
@@ -371,12 +464,12 @@ func TestLoad_ResolvesPlacementDSNFromFile(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if got := cfg.Placements["shared"]; got != dsn {
-		t.Errorf("placement DSN = %q, want the file's trimmed contents", got)
+	if got := cfg.DatabaseDSN; got != dsn {
+		t.Errorf("database DSN = %q, want the file's trimmed contents", got)
 	}
 }
 
-func TestLoad_AssignmentsMapOrganizationsToPlacements(t *testing.T) {
+func TestLoad_ValidatesLegacyAssignmentsBeforeContractingThem(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := config.Load(lookupFrom(validEnvironment(t)))
@@ -384,11 +477,8 @@ func TestLoad_AssignmentsMapOrganizationsToPlacements(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if cfg.Assignments["org-a"] != "shared" || cfg.Assignments["org-b"] != "shared" {
-		t.Errorf("assignments = %v", cfg.Assignments)
-	}
-	if len(cfg.Assignments) != 2 {
-		t.Errorf("assignments must contain exactly the configured entries, got %v", cfg.Assignments)
+	if cfg.DatabaseDSN != "postgres://user:pw@localhost:5432/shared" {
+		t.Errorf("DatabaseDSN = %q", cfg.DatabaseDSN)
 	}
 }
 

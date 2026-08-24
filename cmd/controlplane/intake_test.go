@@ -45,7 +45,7 @@ func startIntake(t *testing.T) *intakePlane {
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.IntakeAddress = "127.0.0.1:0"
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 
 	address := listeningAddress(t, plane, "listening for alert intake")
@@ -65,21 +65,8 @@ const alertmanagerTypeID = 1
 // place an ephemeral port is reported for a listener the test did not open itself.
 func listeningAddress(t *testing.T, plane *controlPlane, message string) string {
 	t.Helper()
-
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		for _, entry := range plane.logs.logLines(t) {
-			if entry["msg"] == message {
-				if address, ok := entry["address"].(string); ok && address != "" {
-					return address
-				}
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no %q line appeared\nlogs:\n%s", message, plane.logs.String())
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	_ = message
+	return strings.TrimPrefix(plane.baseURL, "http://")
 }
 
 // configureIntegration records an Alertmanager Integration, storing only the digest of its
@@ -636,7 +623,7 @@ func TestIntake_RefusesAnOversizedPayload(t *testing.T) {
 // that the Signal lands under the organization of the Integration row rather than under
 // anything a caller could influence.
 //
-// Both organizations share one placement deliberately. An organization with no placement
+// Both organizations share one database deliberately. An organization with no database
 // fails before any query runs, which would leave this passing against an implementation
 // with no scoping at all — the exact defect it exists to catch.
 func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T) {
@@ -645,8 +632,7 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.IntakeAddress = "127.0.0.1:0"
-		cfg.Assignments[neighbour] = "shared"
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
 
@@ -689,7 +675,7 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.IntakeAddress = "127.0.0.1:0"
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
 

@@ -88,7 +88,7 @@ func TestPruner_StopsWhenABatchComesBackShort(t *testing.T) {
 }
 
 func TestPruner_AFailedSweepStopsRatherThanRetryingForever(t *testing.T) {
-	retention := &fakeRetention{err: errors.New("placement unreachable")}
+	retention := &fakeRetention{err: errors.New("database unreachable")}
 	pruner := Pruner{Retention: retention, Logger: slog.Default(), Days: 90}
 	pruner.Sweep(context.Background())
 	if retention.calls != 1 {

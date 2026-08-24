@@ -86,7 +86,7 @@ type ProvisionedUserList struct {
 // groups this person is in, and a directory usually creates the person before it adds them to
 // anything. Somebody in no mapped group holds no role and reaches nothing, which is the correct
 // answer rather than a default.
-func (p *Placements) ProvisionUser(
+func (p *Database) ProvisionUser(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	wanted NewProvisionedUser,
 ) (ProvisionedUser, error) {
@@ -219,7 +219,7 @@ func writeProvisionedMembership(
 
 // ReplaceProvisionedUser applies a directory's whole picture of a person. It is what a SCIM PUT
 // asks for: whatever is not sent is not kept.
-func (p *Placements) ReplaceProvisionedUser(
+func (p *Database) ReplaceProvisionedUser(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, wanted NewProvisionedUser,
 ) (ProvisionedUser, error) {
@@ -270,7 +270,7 @@ func (p *Placements) ReplaceProvisionedUser(
 
 // SetProvisionedUserActive is story 14: a person a directory deactivates loses access without a
 // manual step, and does so on their next request rather than at their next sign-in.
-func (p *Placements) SetProvisionedUserActive(
+func (p *Database) SetProvisionedUserActive(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, active bool,
 ) (ProvisionedUser, error) {
@@ -328,7 +328,7 @@ func setProvisionedActive(
 // trail's meaning with it — every event they produced would name an identifier nothing
 // resolves — and a directory that deletes somebody is saying they may not reach this tenant,
 // not that they never did.
-func (p *Placements) DeprovisionUser(
+func (p *Database) DeprovisionUser(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -370,7 +370,7 @@ func (p *Placements) DeprovisionUser(
 }
 
 // ProvisionedUsers lists what the directory has put here.
-func (p *Placements) ProvisionedUsers(
+func (p *Database) ProvisionedUsers(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	filter ProvisionedUserFilter, startIndex, count int,
 ) (ProvisionedUserList, error) {
@@ -424,7 +424,7 @@ func (p *Placements) ProvisionedUsers(
 }
 
 // ProvisionedUser reads one person the directory addressed.
-func (p *Placements) ProvisionedUser(
+func (p *Database) ProvisionedUser(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) (ProvisionedUser, error) {

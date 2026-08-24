@@ -216,11 +216,13 @@ func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 		// through it, which is exactly what this gate enforces.
 		"internal/authz": "Router builds the mux from the table; it is the registration every " +
 			"other package is required to go through",
-		"internal/health": "its own listener, deliberately: liveness, readiness and metrics " +
-			"are exposed to whatever scrapes them and carry no tenant data",
-		"internal/intake": "its own listener, deliberately: the one surface a customer's own " +
-			"infrastructure reaches inbound, where each Connection authenticates with its own " +
-			"secret rather than with a principal",
+		"internal/health": "owns the liveness, readiness, and metrics route tree that the " +
+			"application mounts on the shared HTTP listener; the routes carry no tenant data",
+		"internal/intake": "owns the inbound route tree that the application mounts on the " +
+			"shared HTTP listener; each Integration authenticates with its own secret rather " +
+			"than with a principal",
+		"internal/app": "mounts the already-assembled health, intake, and permission-table " +
+			"routers on the deployment's one HTTP server; it declares no application route",
 	}
 
 	inspected := 0

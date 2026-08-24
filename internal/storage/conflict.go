@@ -35,7 +35,7 @@ type SessionConflict struct {
 // Nothing here clears the mark. Whether a contested identity has been dealt with is a judgement
 // about the world outside this system, so it is left for an operator to make rather than
 // erased by the next quiet hour.
-func (p *Placements) RecordSessionConflict(
+func (p *Database) RecordSessionConflict(
 	ctx context.Context,
 	organization tenancy.Organization,
 	registrationID uuid.UUID,
@@ -136,7 +136,7 @@ func appendConflictEvent(ctx context.Context, transaction pgx.Tx, event conflict
 }
 
 // SessionConflict reports what has been seen of a contested relay identity.
-func (p *Placements) SessionConflict(
+func (p *Database) SessionConflict(
 	ctx context.Context, organization tenancy.Organization, registrationID uuid.UUID,
 ) (SessionConflict, error) {
 	pool, err := p.Pool(organization)
@@ -188,7 +188,7 @@ const (
 //
 // The act destroys the current finding, which is what makes recording it the point rather than
 // a formality: without the trail, the second occurrence would look like the first.
-func (p *Placements) ClearSessionConflict(
+func (p *Database) ClearSessionConflict(
 	ctx context.Context,
 	principal authz.Principal,
 	organization tenancy.Organization,
@@ -261,7 +261,7 @@ func (p *Placements) ClearSessionConflict(
 
 // explainUnwithdrawn reads why the guarded update matched nothing: a relay that is not here at
 // all, or one that was carrying no finding to begin with.
-func (p *Placements) explainUnwithdrawn(
+func (p *Database) explainUnwithdrawn(
 	ctx context.Context, organization tenancy.Organization, registrationID uuid.UUID,
 ) (ConflictWithdrawal, error) {
 	pool, err := p.Pool(organization)
@@ -300,7 +300,7 @@ type ConflictTrail struct {
 }
 
 // SessionConflictTrail returns what has happened to a relay identity, newest first.
-func (p *Placements) SessionConflictTrail(
+func (p *Database) SessionConflictTrail(
 	ctx context.Context,
 	principal authz.Principal,
 	organization tenancy.Organization,
@@ -374,7 +374,7 @@ func scanConflictEvent(rows pgx.Rows) (int64, ConflictEvent, error) {
 }
 
 // encodeEventCursor renders a position in the trail. It is opaque so that a caller cannot read
-// a row count out of it: the identity is assigned across every organization on the placement,
+// a row count out of it: the identity is assigned across every organization in the database,
 // and its value is nobody's business but this table's.
 func encodeEventCursor(identifier int64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(identifier, 10)))

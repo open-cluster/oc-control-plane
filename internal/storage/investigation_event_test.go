@@ -19,13 +19,13 @@ import (
 // aTurn opens a conversation, asks something, and returns the investigation the turn
 // created — an event stream needs an investigation to hang off.
 func aTurn(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 ) uuid.UUID {
 	t.Helper()
 
-	opened := openConversation(t, placements, organization, "checkout is slow")
-	say(t, placements, organization, opened.ID, "what changed?")
-	turn, took, err := placements.OpenTurn(context.Background(), organization, opened.ID,
+	opened := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, opened.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -35,13 +35,13 @@ func aTurn(
 
 // appendEvents writes a scripted run's worth of events.
 func appendEvents(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	id uuid.UUID, types ...investigation.EventType,
 ) {
 	t.Helper()
 
 	for position, eventType := range types {
-		if err := placements.AppendEvent(context.Background(), organization, id,
+		if err := database.AppendEvent(context.Background(), organization, id,
 			investigation.Event{
 				Sequence: int64(position + 1),
 				At:       time.Now().UTC(),
@@ -58,8 +58,8 @@ func appendEvents(
 func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	id := aTurn(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	id := aTurn(t, database, organization)
 
 	written := []investigation.EventType{
 		investigation.EventStarted,
@@ -69,10 +69,10 @@ func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 		investigation.EventAnswerDelta,
 		investigation.EventConcluded,
 	}
-	appendEvents(t, placements, organization, id, written...)
+	appendEvents(t, database, organization, id, written...)
 
 	for after := range len(written) + 1 {
-		read, err := placements.Events(context.Background(), organization, id,
+		read, err := database.Events(context.Background(), organization, id,
 			int64(after), 0)
 		if err != nil {
 			t.Fatalf("reading after %d: %v", after, err)
@@ -100,8 +100,8 @@ func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	id := aTurn(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	id := aTurn(t, database, organization)
 
 	payload := map[string]any{
 		"tool":      "slack.get_channel_history",
@@ -109,7 +109,7 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 		"truncated": true,
 		"arguments": map[string]any{"channel": "deploys"},
 	}
-	if err := placements.AppendEvent(context.Background(), organization, id,
+	if err := database.AppendEvent(context.Background(), organization, id,
 		investigation.Event{
 			Sequence: 1, At: time.Now().UTC(),
 			Type: investigation.EventToolStarted, Payload: payload,
@@ -117,7 +117,7 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 		t.Fatalf("appending: %v", err)
 	}
 
-	read, err := placements.Events(context.Background(), organization, id, 0, 0)
+	read, err := database.Events(context.Background(), organization, id, 0, 0)
 	if err != nil {
 		t.Fatalf("reading: %v", err)
 	}
@@ -142,27 +142,27 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 func TestASecondWriterAtTheSameSequenceIsRefused(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	id := aTurn(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	id := aTurn(t, database, organization)
 
 	first := investigation.Event{
 		Sequence: 1, At: time.Now().UTC(), Type: investigation.EventStarted,
 		Payload: map[string]any{"writer": "the lease holder"},
 	}
-	if err := placements.AppendEvent(
+	if err := database.AppendEvent(
 		context.Background(), organization, id, first); err != nil {
 		t.Fatalf("the first write failed: %v", err)
 	}
 
 	second := first
 	second.Payload = map[string]any{"writer": "somebody who should not be here"}
-	if err := placements.AppendEvent(
+	if err := database.AppendEvent(
 		context.Background(), organization, id, second); err == nil {
 		t.Fatal("a second event at sequence 1 was accepted; the primary key is the " +
 			"backstop against a double-claim and it must refuse")
 	}
 
-	read, err := placements.Events(context.Background(), organization, id, 0, 0)
+	read, err := database.Events(context.Background(), organization, id, 0, 0)
 	if err != nil {
 		t.Fatalf("reading: %v", err)
 	}
@@ -176,12 +176,12 @@ func TestASecondWriterAtTheSameSequenceIsRefused(t *testing.T) {
 func TestEventsAreDeletedWithTheirInvestigation(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	id := aTurn(t, placements, organization)
-	appendEvents(t, placements, organization, id, investigation.EventStarted,
+	database, organization := migratedDatabase(t)
+	id := aTurn(t, database, organization)
+	appendEvents(t, database, organization, id, investigation.EventStarted,
 		investigation.EventConcluded)
 
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestEventsAreDeletedWithTheirInvestigation(t *testing.T) {
 		t.Fatalf("deleting the investigation: %v", err)
 	}
 
-	read, err := placements.Events(context.Background(), organization, id, 0, 0)
+	read, err := database.Events(context.Background(), organization, id, 0, 0)
 	if err != nil {
 		t.Fatalf("reading: %v", err)
 	}
@@ -209,12 +209,12 @@ func TestEventsAreDeletedWithTheirInvestigation(t *testing.T) {
 func TestAnotherOrganizationsEventsAreNotReadable(t *testing.T) {
 	t.Parallel()
 
-	placements, mine, theirs := twoOrganizationsOnOnePlacement(t)
-	id := aTurn(t, placements, mine)
-	appendEvents(t, placements, mine, id, investigation.EventStarted,
+	database, mine, theirs := twoOrganizationsInOneDatabase(t)
+	id := aTurn(t, database, mine)
+	appendEvents(t, database, mine, id, investigation.EventStarted,
 		investigation.EventConcluded)
 
-	read, err := placements.Events(context.Background(), theirs, id, 0, 0)
+	read, err := database.Events(context.Background(), theirs, id, 0, 0)
 	if err != nil {
 		t.Fatalf("reading across tenants: %v", err)
 	}

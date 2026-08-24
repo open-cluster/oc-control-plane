@@ -81,10 +81,10 @@ const (
 type SessionService struct {
 	relayv1.UnimplementedRelaySessionServiceServer
 
-	placements *storage.Placements
-	logger     *slog.Logger
-	live       *liveSessions
-	churn      *churnWatch
+	database *storage.Database
+	logger   *slog.Logger
+	live     *liveSessions
+	churn    *churnWatch
 	// inventoryInterval is what this deployment ASKS each relay to synchronize at; the
 	// relay floors it locally, so this can only slow a fleet down.
 	inventoryInterval time.Duration
@@ -92,10 +92,10 @@ type SessionService struct {
 
 // NewSessionService returns the service.
 func NewSessionService(
-	placements *storage.Placements, logger *slog.Logger, inventoryInterval time.Duration,
+	database *storage.Database, logger *slog.Logger, inventoryInterval time.Duration,
 ) *SessionService {
 	return &SessionService{
-		placements:        placements,
+		database:          database,
 		logger:            logger,
 		live:              newLiveSessions(),
 		churn:             newChurnWatch(time.Now),
@@ -248,7 +248,7 @@ func (s *SessionService) escalate(session *sessionState, verdict churnVerdict) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(session.ctx), recordConflictTimeout)
 	defer cancel()
 
-	if err := s.placements.RecordSessionConflict(ctx, session.organization,
+	if err := s.database.RecordSessionConflict(ctx, session.organization,
 		session.registrationID, verdict.distinctHosts); err != nil {
 		session.logger.ErrorContext(ctx, "recording a contested relay identity",
 			slog.String("error", err.Error()))
@@ -297,7 +297,7 @@ func (s *SessionService) authenticate(ctx context.Context) (relayIdentity, error
 	}
 
 	digest := sha256.Sum256([]byte(credential))
-	valid, err := s.placements.VerifyRelayCredential(ctx, organization, registrationID, digest[:])
+	valid, err := s.database.VerifyRelayCredential(ctx, organization, registrationID, digest[:])
 	if err != nil {
 		return relayIdentity{}, status.Error(codes.Unavailable, "session unavailable")
 	}
@@ -477,7 +477,7 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) erro
 // nothing is executing it and nothing is going to report on it. Waiting out the lease anyway
 // would add ten minutes of nothing to the far side of every network blip.
 func (s *SessionService) releaseWhatTheRelayIsNotRunning(session *sessionState) {
-	released, err := s.placements.ReleaseStrandedLeases(
+	released, err := s.database.ReleaseStrandedLeases(
 		session.ctx, session.organization, session.registrationID, session.id)
 	if err != nil {
 		// The leases stay where they are and expire on their own clock, which is the behaviour
@@ -520,7 +520,7 @@ func (s *SessionService) adopt(session *sessionState, declared []*relayv1.InFlig
 		return complete
 	}
 
-	adopted, err := s.placements.AdoptInFlightLeases(session.ctx, session.organization,
+	adopted, err := s.database.AdoptInFlightLeases(session.ctx, session.organization,
 		storage.LeaseAdoption{
 			RegistrationID: session.registrationID,
 			SessionID:      session.id,
@@ -616,7 +616,7 @@ func (s *SessionService) recordAndAcknowledge(
 		LeaseEpoch:   int64(result.GetLeaseEpoch()),
 	}
 
-	refusal, err := s.placements.RecordResult(ctx, session.organization, fence, outcome)
+	refusal, err := s.database.RecordResult(ctx, session.organization, fence, outcome)
 	return s.acknowledge(session, result, refusal, err)
 }
 

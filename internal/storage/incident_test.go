@@ -24,12 +24,12 @@ import (
 // created it. Intake is not involved here deliberately: delivering an alert to produce one
 // would make every assertion below depend on the adapter as well.
 func recordEpisode(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 	integration uuid.UUID, key string,
 ) uuid.UUID {
 	t.Helper()
 
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -52,14 +52,14 @@ func recordEpisode(
 func TestAMerge_LeavesBothRecordsIntact(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
-	integration := kubernetesIntegration(t, placements, organization, registration)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
+	integration := kubernetesIntegration(t, database, organization, registration)
 
-	absorbed := recordEpisode(t, placements, organization, integration, "group-a")
-	surviving := recordEpisode(t, placements, organization, integration, "group-b")
+	absorbed := recordEpisode(t, database, organization, integration, "group-a")
+	surviving := recordEpisode(t, database, organization, integration, "group-b")
 
-	after, err := placements.MergeEpisodes(
+	after, err := database.MergeEpisodes(
 		context.Background(), ownerOf(t, organization), organization, incident.Merge{
 			Absorbed: absorbed, Into: surviving, Reason: "one rollout, two alerts",
 		})
@@ -70,7 +70,7 @@ func TestAMerge_LeavesBothRecordsIntact(t *testing.T) {
 		t.Errorf("the merge returned %s, want the surviving episode %s", after.ID, surviving)
 	}
 
-	gone, err := placements.Episode(context.Background(), organization, absorbed)
+	gone, err := database.Episode(context.Background(), organization, absorbed)
 	if err != nil {
 		t.Fatalf("the absorbed episode is unreadable after a merge: %v", err)
 	}
@@ -82,19 +82,19 @@ func TestAMerge_LeavesBothRecordsIntact(t *testing.T) {
 			gone.GroupingKey)
 	}
 	// The merge is on the record, and the record is append-only, so it is there for good.
-	if !recordedIncidentMerge(t, placements, organization, absorbed) {
+	if !recordedIncidentMerge(t, database, organization, absorbed) {
 		t.Error("no audit event names the merged episode; a grouping correction nobody can " +
 			"attribute is one an auditor cannot answer for")
 	}
 }
 
 func recordedIncidentMerge(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, episode uuid.UUID,
 ) bool {
 	t.Helper()
 
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -111,11 +111,11 @@ func recordedIncidentMerge(
 
 // alertmanagerIntegration is an Alertmanager Integration deliveries arrive through.
 func alertmanagerIntegration(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 ) uuid.UUID {
 	t.Helper()
 
-	created, err := placements.CreateIntegration(
+	created, err := database.CreateIntegration(
 		context.Background(), ownerOf(t, organization), organization,
 		integrations.NewIntegration{
 			Type:                     integrations.TypeAlertmanager,
@@ -140,8 +140,8 @@ func alertmanagerIntegration(
 func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneEpisodeAndBothSucceed(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	integration := alertmanagerIntegration(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	integration := alertmanagerIntegration(t, database, organization)
 
 	const key = "{}:{alertname=KubePodCrashLooping}"
 	began := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -171,7 +171,7 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneEpisodeAndBothSucceed(t *
 	for index, fingerprint := range []string{"fp-one", "fp-two"} {
 		go func() {
 			<-start
-			outcome, err := placements.RecordDelivery(
+			outcome, err := database.RecordDelivery(
 				context.Background(), organization, delivery(fingerprint, byte(index+1)))
 			answers <- answer{outcome, err}
 		}()
@@ -192,7 +192,7 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneEpisodeAndBothSucceed(t *
 			"want one of each", opened, joined)
 	}
 
-	page, err := placements.QueryEpisodes(context.Background(), organization, incident.Query{
+	page, err := database.QueryEpisodes(context.Background(), organization, incident.Query{
 		Sort: "lastSeenAt", Descending: true, Limit: 50,
 	})
 	if err != nil {

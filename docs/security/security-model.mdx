@@ -23,8 +23,8 @@ credentials, scopes, and model-provider data.
 ## Tenant isolation
 
 Every request is evaluated in one organization. Durable records and references remain
-within that organization. An organization is resolved to an explicit PostgreSQL
-placement; resolution failure is an error, not a fallback to another placement.
+within that organization. The deployment uses one PostgreSQL database, and every
+tenant-owned query predicates on the explicit organization identifier.
 
 Membership and role checks protect operator actions. Requests cannot use existence
 errors to enumerate organizations the caller cannot access.
@@ -65,7 +65,7 @@ investigations, and their provenance remain part of the operational record.
 
 ## Self-hosted trust boundaries
 
-In a self-hosted deployment, you control the binary, PostgreSQL placements, TLS edge,
+In a self-hosted deployment, you control the binary, PostgreSQL database, TLS edge,
 sealing key, GitHub App key, model-provider key, and Relay endpoint. The control plane
 must be allowed to reach configured vendors and the selected model provider.
 

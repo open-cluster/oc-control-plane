@@ -2,12 +2,10 @@ package storage_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -51,59 +49,11 @@ func postgresDSN(t *testing.T) string {
 	return dsn
 }
 
-// databaseNamed creates a fresh database on the same server and returns its DSN, so one
-// container can back several independent placements.
-func databaseNamed(t *testing.T, adminDSN, name string) string {
+func openDatabaseForTest(t *testing.T, dsn string) *storage.Database {
 	t.Helper()
-	ctx := context.Background()
-
-	connection, err := pgx.Connect(ctx, adminDSN)
+	opened, err := storage.OpenDatabase(context.Background(), dsn)
 	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = connection.Close(ctx) }()
-
-	if _, err := connection.Exec(ctx, `CREATE DATABASE "`+name+`"`); err != nil {
-		t.Fatalf("create database %s: %v", name, err)
-	}
-	return replaceDatabase(adminDSN, name)
-}
-
-// replaceDatabase swaps the database segment of a DSN of the form
-// postgres://user:pw@host:port/db?params.
-func replaceDatabase(dsn, name string) string {
-	config, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		panic(err)
-	}
-	config.Database = name
-	return "postgres://" + config.User + ":" + config.Password +
-		"@" + config.Host + ":" + itoa(int(config.Port)) + "/" + name + "?sslmode=disable"
-}
-
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	var digits []byte
-	for value > 0 {
-		digits = append([]byte{byte('0' + value%10)}, digits...)
-		value /= 10
-	}
-	return string(digits)
-}
-
-func openPlacements(t *testing.T, placements, assignments map[string]string) *storage.Placements {
-	t.Helper()
-	return openLayout(t, storage.Layout{Placements: placements, Assignments: assignments})
-}
-
-func openLayout(t *testing.T, layout storage.Layout) *storage.Placements {
-	t.Helper()
-
-	opened, err := storage.OpenPlacements(context.Background(), layout)
-	if err != nil {
-		t.Fatalf("OpenPlacements: %v", err)
+		t.Fatalf("OpenDatabase: %v", err)
 	}
 	t.Cleanup(opened.Close)
 	return opened
@@ -118,28 +68,55 @@ func organization(t *testing.T, id string) tenancy.Organization {
 	return value
 }
 
+func TestOpenDatabase_MigratesOnceAndBecomesReady(t *testing.T) {
+	t.Parallel()
+	dsn := postgresDSN(t)
+
+	database, err := storage.OpenDatabase(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("OpenDatabase: %v", err)
+	}
+	t.Cleanup(database.Close)
+
+	applied, err := database.Migrate(context.Background())
+	if err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	if len(applied) == 0 {
+		t.Fatal("the first run must apply at least one migration")
+	}
+	again, err := database.Migrate(context.Background())
+	if err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	if len(again) != 0 {
+		t.Errorf("the second run must apply nothing, applied %v", again)
+	}
+	if err := database.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
 func TestMigrate_AppliesEveryMigrationThenIsIdempotent(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared"})
+	database := openDatabaseForTest(t, dsn)
 
-	applied, err := placements.Migrate(context.Background())
+	applied, err := database.Migrate(context.Background())
 	if err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
-	if len(applied["shared"]) == 0 {
+	if len(applied) == 0 {
 		t.Fatal("the first run must apply at least one migration")
 	}
 
-	again, err := placements.Migrate(context.Background())
+	again, err := database.Migrate(context.Background())
 	if err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if len(again["shared"]) != 0 {
-		t.Errorf("the second run must apply nothing, applied %v", again["shared"])
+	if len(again) != 0 {
+		t.Errorf("the second run must apply nothing, applied %v", again)
 	}
 }
 
@@ -149,14 +126,12 @@ func TestMigrate_SchemaIsUsableAfterwards(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	pool, err := placements.Pool(organization(t, "org-a"))
+	pool, err := database.Pool(organization(t, "org-a"))
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -195,16 +170,14 @@ func TestMigrate_ConcurrentInstancesApplyExactlyOnce(t *testing.T) {
 	start.Add(1)
 
 	for index := range instances {
-		placements := openPlacements(t,
-			map[string]string{"shared": dsn},
-			map[string]string{"org-a": "shared"})
+		database := openDatabaseForTest(t, dsn)
 
 		finished.Add(1)
 		go func() {
 			defer finished.Done()
 			start.Wait()
-			applied, err := placements.Migrate(context.Background())
-			appliedCounts[index] = len(applied["shared"])
+			applied, err := database.Migrate(context.Background())
+			appliedCounts[index] = len(applied)
 			failures[index] = err
 		}()
 	}
@@ -230,15 +203,13 @@ func TestMigrate_ConcurrentInstancesApplyExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestPool_ResolvesAnAssignedOrganization(t *testing.T) {
+func TestPool_ReturnsTheDatabaseForAnOrganization(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared"})
+	database := openDatabaseForTest(t, dsn)
 
-	pool, err := placements.Pool(organization(t, "org-a"))
+	pool, err := database.Pool(organization(t, "org-a"))
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -250,192 +221,18 @@ func TestPool_ResolvesAnAssignedOrganization(t *testing.T) {
 	}
 }
 
-// The core isolation property: two organizations on different placements reach different
-// databases.
-func TestPool_DifferentPlacementsReachDifferentDatabases(t *testing.T) {
-	t.Parallel()
-	adminDSN := postgresDSN(t)
-	dedicatedDSN := databaseNamed(t, adminDSN, "acme")
-
-	placements := openPlacements(t,
-		map[string]string{"shared": adminDSN, "dedicated": dedicatedDSN},
-		map[string]string{"org-shared": "shared", "org-acme": "dedicated"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-
-	ctx := context.Background()
-	sharedPool, err := placements.Pool(organization(t, "org-shared"))
-	if err != nil {
-		t.Fatalf("Pool(org-shared): %v", err)
-	}
-	acmePool, err := placements.Pool(organization(t, "org-acme"))
-	if err != nil {
-		t.Fatalf("Pool(org-acme): %v", err)
-	}
-
-	if _, err := sharedPool.Exec(ctx,
-		`INSERT INTO organization_policy (org_id, audit_retention_days) VALUES ($1, $2)`,
-		"org-shared", 30); err != nil {
-		t.Fatalf("write to shared: %v", err)
-	}
-
-	// The row written to the shared placement must not be visible from the dedicated one.
-	var visible int
-	if err := acmePool.QueryRow(ctx,
-		`SELECT count(*) FROM organization_policy WHERE org_id = $1`,
-		"org-shared").Scan(&visible); err != nil {
-		t.Fatalf("read from dedicated: %v", err)
-	}
-	if visible != 0 {
-		t.Error("a row written to one placement must not be readable from another")
-	}
-
-	var databaseName string
-	if err := acmePool.QueryRow(ctx, `SELECT current_database()`).Scan(&databaseName); err != nil {
-		t.Fatalf("current_database: %v", err)
-	}
-	if databaseName != "acme" {
-		t.Errorf("the dedicated placement resolved to database %q, want acme", databaseName)
-	}
-}
-
-// An organization with no assignment must be a typed error. Falling back to a default
-// connection is how one tenant is served another tenant's data.
-func TestPool_UnassignedOrganizationIsATypedErrorNotAFallback(t *testing.T) {
-	t.Parallel()
-	dsn := postgresDSN(t)
-
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared"})
-
-	pool, err := placements.Pool(organization(t, "org-unknown"))
-	if !errors.Is(err, storage.ErrUnknownOrganization) {
-		t.Fatalf("error = %v, want ErrUnknownOrganization", err)
-	}
-	if pool != nil {
-		t.Fatal("no pool may be returned for an unresolvable organization")
-	}
-}
-
 func TestPool_ZeroOrganizationIsRefused(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
 
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared"})
+	database := openDatabaseForTest(t, dsn)
 
 	var zero tenancy.Organization
-	if _, err := placements.Pool(zero); err == nil {
+	if _, err := database.Pool(zero); err == nil {
 		t.Fatal("the zero Organization must never resolve to a pool")
 	}
 }
 
-func TestOpenPlacements_RefusesAnAssignmentToAnUndefinedPlacement(t *testing.T) {
-	t.Parallel()
-	dsn := postgresDSN(t)
-
-	_, err := storage.OpenPlacements(context.Background(), storage.Layout{
-		Placements:  map[string]string{"shared": dsn},
-		Assignments: map[string]string{"org-a": "nowhere"},
-	})
-	if err == nil {
-		t.Fatal("an assignment naming an undefined placement must fail at open")
-	}
-}
-
-func TestOpenPlacements_RefusesAnUndefinedDefaultPlacement(t *testing.T) {
-	t.Parallel()
-	dsn := postgresDSN(t)
-
-	_, err := storage.OpenPlacements(context.Background(), storage.Layout{
-		Placements:       map[string]string{"shared": dsn},
-		DefaultPlacement: "nowhere",
-	})
-	if err == nil {
-		t.Fatal("a default naming an undefined placement must fail at open")
-	}
-}
-
-// The shared tier: an organization nobody enumerated still resolves, because enumerating
-// five thousand of them in configuration is not a deployment.
-func TestPool_UnassignedOrganizationUsesTheDefaultPlacement(t *testing.T) {
-	t.Parallel()
-	dsn := postgresDSN(t)
-
-	placements := openLayout(t, storage.Layout{
-		Placements:       map[string]string{"shared": dsn},
-		DefaultPlacement: "shared",
-	})
-
-	pool, err := placements.Pool(organization(t, "never-heard-of-this-org"))
-	if err != nil {
-		t.Fatalf("an unassigned organization must reach the default placement: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		t.Errorf("the default pool must be usable: %v", err)
-	}
-}
-
-// An explicit assignment beats the default; that is how a Business or Enterprise tenant
-// gets a dedicated database while everyone else shares one.
-func TestPool_AssignmentOverridesTheDefault(t *testing.T) {
-	t.Parallel()
-	adminDSN := postgresDSN(t)
-	dedicatedDSN := databaseNamed(t, adminDSN, "acme")
-
-	placements := openLayout(t, storage.Layout{
-		Placements:       map[string]string{"shared": adminDSN, "dedicated": dedicatedDSN},
-		Assignments:      map[string]string{"org-acme": "dedicated"},
-		DefaultPlacement: "shared",
-	})
-
-	acmePool, err := placements.Pool(organization(t, "org-acme"))
-	if err != nil {
-		t.Fatalf("Pool(org-acme): %v", err)
-	}
-
-	var databaseName string
-	if err := acmePool.QueryRow(context.Background(),
-		`SELECT current_database()`).Scan(&databaseName); err != nil {
-		t.Fatalf("current_database: %v", err)
-	}
-	if databaseName != "acme" {
-		t.Errorf("the assigned organization reached %q, want its dedicated database", databaseName)
-	}
-}
-
-// One dedicated tenant's database being unreachable must NOT withdraw the instance from
-// service for every other tenant. Readiness asks whether this instance can serve at all,
-// not whether every tenant is currently healthy.
-func TestPing_OneDedicatedPlacementDownDoesNotMakeTheInstanceUnready(t *testing.T) {
-	t.Parallel()
-	adminDSN := postgresDSN(t)
-
-	placements := openLayout(t, storage.Layout{
-		Placements: map[string]string{
-			"shared":    adminDSN,
-			"dedicated": replaceDatabase(adminDSN, "does-not-exist"),
-		},
-		Assignments:      map[string]string{"org-acme": "dedicated"},
-		DefaultPlacement: "shared",
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	if err := placements.Ping(ctx); err != nil {
-		t.Errorf("one dedicated placement being down must not make the instance unready: %v", err)
-	}
-}
-
-// A query must produce a span descending from the caller's, or a request trace stops at
-// the handler and the database is invisible in it.
-// Not parallel: the pgx instrumentation resolves its tracer from the GLOBAL provider, which
-// is what production does (observability.Start installs it), so this test must install one
-// too rather than pass a local provider in through a seam that would exist only for tests.
 func TestPool_QueriesProduceASpanBeneathTheCaller(t *testing.T) {
 	dsn := postgresDSN(t)
 
@@ -449,11 +246,8 @@ func TestPool_QueriesProduceASpanBeneathTheCaller(t *testing.T) {
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previous) })
 
-	placements := openLayout(t, storage.Layout{
-		Placements:       map[string]string{"shared": dsn},
-		DefaultPlacement: "shared",
-	})
-	pool, err := placements.Pool(organization(t, "org-a"))
+	database := openDatabaseForTest(t, dsn)
+	pool, err := database.Pool(organization(t, "org-a"))
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -477,46 +271,13 @@ func TestPool_QueriesProduceASpanBeneathTheCaller(t *testing.T) {
 	}
 }
 
-func TestPing_ReportsReachabilityOfEveryPlacement(t *testing.T) {
-	t.Parallel()
-	dsn := postgresDSN(t)
-
-	placements := openPlacements(t,
-		map[string]string{"shared": dsn},
-		map[string]string{"org-a": "shared"})
-
-	if err := placements.Ping(context.Background()); err != nil {
-		t.Fatalf("a reachable placement must ping: %v", err)
-	}
-
-	unreachable, err := storage.OpenPlacements(context.Background(), storage.Layout{
-		Placements:  map[string]string{"gone": replaceDatabase(dsn, "does-not-exist")},
-		Assignments: map[string]string{"org-a": "gone"},
-	})
-	if err != nil {
-		// Refusing at open is an acceptable stricter behaviour.
-		return
-	}
-	t.Cleanup(unreachable.Close)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := unreachable.Ping(ctx); err == nil {
-		t.Error("an unreachable placement must fail Ping so readiness reports unready")
-	}
-}
-
-// ownerOf is the principal these tests act as: an owner of the organization under test.
-//
-// Every operator-facing store function takes one, because the tenancy boundary is checked here
-// as well as in the authorization middleware. That duplication is what the boundary tests below
-// exercise: a call made from a path nobody routed through the middleware is still refused.
+// ownerOf is the principal these tests act as: an Admin of the Organization under test.
 func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
 	t.Helper()
 	return memberOf(t, organization, authz.Admin)
 }
 
-// memberOf builds a principal holding one role in one organization.
+// memberOf builds a principal holding one role in one Organization.
 func memberOf(
 	t *testing.T, organization tenancy.Organization, role authz.Role,
 ) authz.Principal {
@@ -530,9 +291,7 @@ func memberOf(
 	return principal
 }
 
-// aStranger is a principal who holds a role somewhere else entirely. It is what the boundary
-// tests present to prove that a store function refuses a caller with no membership, rather than
-// proving only that a caller with one is served.
+// aStranger is a principal who holds a role in another Organization.
 func aStranger(t *testing.T) authz.Principal {
 	t.Helper()
 

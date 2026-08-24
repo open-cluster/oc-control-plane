@@ -25,11 +25,11 @@ const testOrganization = "org-a"
 
 func TestJob_ClaimingLeasesTheWorkAndFencesIt(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
-	job := enqueue(t, placements, organization, registration)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
+	job := enqueue(t, database, organization, registration)
 
-	claimed := claim(t, placements, organization, registration, uuid.New())
+	claimed := claim(t, database, organization, registration, uuid.New())
 
 	if len(claimed) != 1 || claimed[0].ID != job {
 		t.Fatalf("claimed %d jobs, want the one enqueued", len(claimed))
@@ -41,24 +41,24 @@ func TestJob_ClaimingLeasesTheWorkAndFencesIt(t *testing.T) {
 
 func TestJob_ResultIsRecordedOnceAndResendsAreAnsweredDefinitively(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
-	enqueue(t, placements, organization, registration)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
+	enqueue(t, database, organization, registration)
 	session := uuid.New()
-	leased := claim(t, placements, organization, registration, session)[0]
+	leased := claim(t, database, organization, registration, session)[0]
 
 	fence := storage.JobFence{
 		JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
 	}
 	outcome := storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("the-result")}
 
-	if _, err := placements.RecordResult(context.Background(), organization, fence, outcome); err != nil {
+	if _, err := database.RecordResult(context.Background(), organization, fence, outcome); err != nil {
 		t.Fatalf("recording the result: %v", err)
 	}
 
 	// A relay that never saw the acknowledgement resends. It must be told the outcome is
 	// already recorded, so its buffer drains rather than growing.
-	refusal, err := placements.RecordResult(context.Background(), organization, fence, outcome)
+	refusal, err := database.RecordResult(context.Background(), organization, fence, outcome)
 	if !errors.Is(err, storage.ErrResultRefused) {
 		t.Fatalf("a resend returned %v, want a refusal", err)
 	}
@@ -72,13 +72,13 @@ func TestJob_ResultIsRecordedOnceAndResendsAreAnsweredDefinitively(t *testing.T)
 // produces and the reason the fence exists.
 func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
-	enqueue(t, placements, organization, registration)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
+	enqueue(t, database, organization, registration)
 
-	first := claim(t, placements, organization, registration, uuid.New())[0]
-	expireLease(t, placements, organization, first.ID)
-	second := claim(t, placements, organization, registration, uuid.New())[0]
+	first := claim(t, database, organization, registration, uuid.New())[0]
+	expireLease(t, database, organization, first.ID)
+	second := claim(t, database, organization, registration, uuid.New())[0]
 
 	if second.LeaseEpoch <= first.LeaseEpoch {
 		t.Fatalf("reclaiming produced generation %d, which does not supersede %d",
@@ -88,7 +88,7 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	stale := storage.JobFence{
 		JobID: first.ID, LeaseSession: first.LeaseSession, LeaseEpoch: first.LeaseEpoch,
 	}
-	refusal, err := placements.RecordResult(context.Background(), organization, stale,
+	refusal, err := database.RecordResult(context.Background(), organization, stale,
 		storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("stale")})
 	if !errors.Is(err, storage.ErrResultRefused) {
 		t.Fatalf("a superseded result returned %v, want a refusal", err)
@@ -102,7 +102,7 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	current := storage.JobFence{
 		JobID: second.ID, LeaseSession: second.LeaseSession, LeaseEpoch: second.LeaseEpoch,
 	}
-	if _, err = placements.RecordResult(context.Background(), organization, current,
+	if _, err = database.RecordResult(context.Background(), organization, current,
 		storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("current")}); err != nil {
 		t.Fatalf("the owning execution could not record: %v", err)
 	}
@@ -114,17 +114,17 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 // execution is going to redo.
 func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
-	enqueue(t, placements, organization, registration)
-	leased := claim(t, placements, organization, registration, uuid.New())[0]
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
+	enqueue(t, database, organization, registration)
+	leased := claim(t, database, organization, registration, uuid.New())[0]
 
 	// The job is still at the generation this execution was given; only the session holding it
 	// differs, which is what a reconnection without adoption looks like.
 	elsewhere := storage.JobFence{
 		JobID: leased.ID, LeaseSession: uuid.New(), LeaseEpoch: leased.LeaseEpoch,
 	}
-	refusal, err := placements.RecordResult(context.Background(), organization, elsewhere,
+	refusal, err := database.RecordResult(context.Background(), organization, elsewhere,
 		storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("finished anyway")})
 	if !errors.Is(err, storage.ErrResultRefused) {
 		t.Fatalf("recording under a lease held elsewhere returned %v, want a refusal", err)
@@ -138,28 +138,28 @@ func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 
 func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
 
 	// Both jobs are claimed together, then one is finished and the other abandoned. Claiming
 	// them separately would not work: a claim reclaims expired leases itself, so the second
 	// call would take the abandoned job back before the sweep could see it.
-	enqueue(t, placements, organization, registration)
-	enqueue(t, placements, organization, registration)
-	leased := claim(t, placements, organization, registration, uuid.New())
+	enqueue(t, database, organization, registration)
+	enqueue(t, database, organization, registration)
+	leased := claim(t, database, organization, registration, uuid.New())
 	if len(leased) != 2 {
 		t.Fatalf("claimed %d jobs, want both", len(leased))
 	}
 	abandoned, done := leased[0], leased[1]
 
-	if _, err := placements.RecordResult(context.Background(), organization,
+	if _, err := database.RecordResult(context.Background(), organization,
 		storage.JobFence{JobID: done.ID, LeaseSession: done.LeaseSession, LeaseEpoch: done.LeaseEpoch},
 		storage.JobOutcome{Status: storage.JobSucceeded}); err != nil {
 		t.Fatalf("recording the finished job: %v", err)
 	}
-	expireLease(t, placements, organization, abandoned.ID)
+	expireLease(t, database, organization, abandoned.ID)
 
-	swept, err := placements.SweepExpiredLeases(context.Background(), organization)
+	swept, err := database.SweepExpiredLeases(context.Background(), organization)
 	if err != nil {
 		t.Fatalf("sweeping: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.
 			"the duplicate execution the fence exists to prevent", swept)
 	}
 
-	reclaimed := claim(t, placements, organization, registration, uuid.New())
+	reclaimed := claim(t, database, organization, registration, uuid.New())
 	if len(reclaimed) != 1 || reclaimed[0].ID != abandoned.ID {
 		t.Fatalf("after sweeping, claimed %d jobs, want the abandoned one back", len(reclaimed))
 	}
@@ -178,13 +178,13 @@ func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.
 // outage delays investigation; it must not lose it.
 func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
 
-	first := enqueue(t, placements, organization, registration)
-	second := enqueue(t, placements, organization, registration)
+	first := enqueue(t, database, organization, registration)
+	second := enqueue(t, database, organization, registration)
 
-	claimed := claim(t, placements, organization, registration, uuid.New())
+	claimed := claim(t, database, organization, registration, uuid.New())
 	if len(claimed) != 2 {
 		t.Fatalf("claimed %d jobs, want both %v and %v", len(claimed), first, second)
 	}
@@ -195,13 +195,13 @@ func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 // nothing will ever finish.
 func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
 
 	t.Run("a job that has not started is cancelled outright", func(t *testing.T) {
-		job := enqueue(t, placements, organization, registration)
+		job := enqueue(t, database, organization, registration)
 
-		outcome, err := placements.RequestJobCancellation(context.Background(), organization, job)
+		outcome, err := database.RequestJobCancellation(context.Background(), organization, job)
 		if err != nil {
 			t.Fatalf("cancelling: %v", err)
 		}
@@ -211,7 +211,7 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 		}
 
 		// It must not then be handed to a relay: it is already over.
-		claimed, err := placements.ClaimJobs(context.Background(), organization, storage.JobClaim{
+		claimed, err := database.ClaimJobs(context.Background(), organization, storage.JobClaim{
 			RegistrationID: registration, SessionID: uuid.New(),
 			LeaseFor: time.Minute, Capacity: 10,
 		})
@@ -224,10 +224,10 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 	})
 
 	t.Run("a job that is executing is asked to stop and stays live", func(t *testing.T) {
-		enqueue(t, placements, organization, registration)
-		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		enqueue(t, database, organization, registration)
+		leased := claim(t, database, organization, registration, uuid.New())[0]
 
-		outcome, err := placements.RequestJobCancellation(
+		outcome, err := database.RequestJobCancellation(
 			context.Background(), organization, leased.ID)
 		if err != nil {
 			t.Fatalf("cancelling: %v", err)
@@ -241,24 +241,24 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 		fence := storage.JobFence{
 			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
 		}
-		if _, err = placements.RecordResult(context.Background(), organization, fence,
+		if _, err = database.RecordResult(context.Background(), organization, fence,
 			storage.JobOutcome{Status: storage.JobFailed}); err != nil {
 			t.Fatalf("the executing relay could not record its outcome: %v", err)
 		}
 	})
 
 	t.Run("a job that has finished cannot be cancelled", func(t *testing.T) {
-		enqueue(t, placements, organization, registration)
-		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		enqueue(t, database, organization, registration)
+		leased := claim(t, database, organization, registration, uuid.New())[0]
 		fence := storage.JobFence{
 			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
 		}
-		if _, err := placements.RecordResult(context.Background(), organization, fence,
+		if _, err := database.RecordResult(context.Background(), organization, fence,
 			storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("done")}); err != nil {
 			t.Fatalf("recording: %v", err)
 		}
 
-		outcome, err := placements.RequestJobCancellation(
+		outcome, err := database.RequestJobCancellation(
 			context.Background(), organization, leased.ID)
 		if err != nil {
 			t.Fatalf("cancelling: %v", err)
@@ -274,21 +274,21 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 // findable from the session that holds the lease.
 func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
 
-	enqueue(t, placements, organization, registration)
-	enqueue(t, placements, organization, registration)
+	enqueue(t, database, organization, registration)
+	enqueue(t, database, organization, registration)
 	session := uuid.New()
-	leased := claim(t, placements, organization, registration, session)
+	leased := claim(t, database, organization, registration, session)
 	asked, untouched := leased[0], leased[1]
 
-	if _, err := placements.RequestJobCancellation(
+	if _, err := database.RequestJobCancellation(
 		context.Background(), organization, asked.ID); err != nil {
 		t.Fatalf("cancelling: %v", err)
 	}
 
-	pending, err := placements.PendingCancellations(context.Background(), organization, session)
+	pending, err := database.PendingCancellations(context.Background(), organization, session)
 	if err != nil {
 		t.Fatalf("reading pending cancellations: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 	}
 
 	// Another session must not be told to stop work it is not executing.
-	other, err := placements.PendingCancellations(context.Background(), organization, uuid.New())
+	other, err := database.PendingCancellations(context.Background(), organization, uuid.New())
 	if err != nil {
 		t.Fatalf("reading pending cancellations: %v", err)
 	}
@@ -317,15 +317,15 @@ func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 // matters more than what it can.
 func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
 
 	t.Run("work still executing moves to the new session and can still be recorded", func(t *testing.T) {
-		enqueue(t, placements, organization, registration)
-		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		enqueue(t, database, organization, registration)
+		leased := claim(t, database, organization, registration, uuid.New())[0]
 
 		reconnected := uuid.New()
-		adopt(t, placements, organization, storage.LeaseAdoption{
+		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: registration,
 			SessionID:      reconnected,
 			LeaseFor:       time.Minute,
@@ -339,7 +339,7 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 		fence := storage.JobFence{
 			JobID: leased.ID, LeaseSession: reconnected, LeaseEpoch: leased.LeaseEpoch,
 		}
-		if _, err := placements.RecordResult(context.Background(), organization, fence,
+		if _, err := database.RecordResult(context.Background(), organization, fence,
 			storage.JobOutcome{Status: storage.JobSucceeded, Result: []byte("carried over")},
 		); err != nil {
 			t.Fatalf("the reconnected relay could not record work it never stopped executing: %v", err)
@@ -347,12 +347,12 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	})
 
 	t.Run("a generation the relay does not hold adopts nothing", func(t *testing.T) {
-		enqueue(t, placements, organization, registration)
-		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		enqueue(t, database, organization, registration)
+		leased := claim(t, database, organization, registration, uuid.New())[0]
 
 		// Naming a later generation is how a relay would claim an execution that superseded
 		// its own. The fence decides, not the declaration.
-		adopt(t, placements, organization, storage.LeaseAdoption{
+		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: registration,
 			SessionID:      uuid.New(),
 			LeaseFor:       time.Minute,
@@ -363,10 +363,10 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	})
 
 	t.Run("another registration's work is untouchable", func(t *testing.T) {
-		enqueue(t, placements, organization, registration)
-		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		enqueue(t, database, organization, registration)
+		leased := claim(t, database, organization, registration, uuid.New())[0]
 
-		adopt(t, placements, organization, storage.LeaseAdoption{
+		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: uuid.New(),
 			SessionID:      uuid.New(),
 			LeaseFor:       time.Minute,
@@ -377,19 +377,19 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	})
 
 	t.Run("finished work is not revived", func(t *testing.T) {
-		enqueue(t, placements, organization, registration)
-		leased := claim(t, placements, organization, registration, uuid.New())[0]
+		enqueue(t, database, organization, registration)
+		leased := claim(t, database, organization, registration, uuid.New())[0]
 		fence := storage.JobFence{
 			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
 		}
-		if _, err := placements.RecordResult(context.Background(), organization, fence,
+		if _, err := database.RecordResult(context.Background(), organization, fence,
 			storage.JobOutcome{Status: storage.JobSucceeded}); err != nil {
 			t.Fatalf("recording: %v", err)
 		}
 
 		// A job whose outcome exists must not be reopened by a relay that still thinks it is
 		// running it — that would put a finished job back on the wire.
-		adopt(t, placements, organization, storage.LeaseAdoption{
+		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: registration,
 			SessionID:      uuid.New(),
 			LeaseFor:       time.Minute,
@@ -400,7 +400,7 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	})
 
 	t.Run("work that was never enqueued cannot be invented", func(t *testing.T) {
-		adopt(t, placements, organization, storage.LeaseAdoption{
+		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: registration,
 			SessionID:      uuid.New(),
 			LeaseFor:       time.Minute,
@@ -414,19 +414,19 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 // far side of every network blip.
 func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	t.Parallel()
-	placements, organization := migratedPlacement(t)
-	registration := enrolledRelay(t, placements, organization)
+	database, organization := migratedDatabase(t)
+	registration := enrolledRelay(t, database, organization)
 
-	enqueue(t, placements, organization, registration)
-	enqueue(t, placements, organization, registration)
-	enqueue(t, placements, organization, registration)
-	leased := claim(t, placements, organization, registration, uuid.New())
+	enqueue(t, database, organization, registration)
+	enqueue(t, database, organization, registration)
+	enqueue(t, database, organization, registration)
+	leased := claim(t, database, organization, registration, uuid.New())
 	if len(leased) != 3 {
 		t.Fatalf("claimed %d jobs, want three", len(leased))
 	}
 	stillRunning, abandoned, finished := leased[0], leased[1], leased[2]
 
-	if _, err := placements.RecordResult(context.Background(), organization,
+	if _, err := database.RecordResult(context.Background(), organization,
 		storage.JobFence{
 			JobID:        finished.ID,
 			LeaseSession: finished.LeaseSession,
@@ -437,7 +437,7 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	}
 
 	reconnected := uuid.New()
-	adopt(t, placements, organization, storage.LeaseAdoption{
+	adopt(t, database, organization, storage.LeaseAdoption{
 		RegistrationID: registration,
 		SessionID:      reconnected,
 		LeaseFor:       time.Minute,
@@ -446,7 +446,7 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 		},
 	}, 1)
 
-	released, err := placements.ReleaseStrandedLeases(
+	released, err := database.ReleaseStrandedLeases(
 		context.Background(), organization, registration, reconnected)
 	if err != nil {
 		t.Fatalf("releasing stranded leases: %v", err)
@@ -457,7 +457,7 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	}
 
 	// The abandoned job comes straight back; the adopted one stays with the relay running it.
-	reclaimed := claim(t, placements, organization, registration, reconnected)
+	reclaimed := claim(t, database, organization, registration, reconnected)
 	if len(reclaimed) != 1 || reclaimed[0].ID != abandoned.ID {
 		t.Fatalf("reclaimed %d jobs, want the abandoned one back at once", len(reclaimed))
 	}
@@ -466,14 +466,14 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 // adopt runs an adoption and asserts how much of it was accepted.
 func adopt(
 	t *testing.T,
-	placements *storage.Placements,
+	database *storage.Database,
 	organization tenancy.Organization,
 	adoption storage.LeaseAdoption,
 	want int,
 ) {
 	t.Helper()
 
-	adopted, err := placements.AdoptInFlightLeases(context.Background(), organization, adoption)
+	adopted, err := database.AdoptInFlightLeases(context.Background(), organization, adoption)
 	if err != nil {
 		t.Fatalf("adopting in-flight leases: %v", err)
 	}
@@ -483,34 +483,32 @@ func adopt(
 	}
 }
 
-func migratedPlacement(t *testing.T) (*storage.Placements, tenancy.Organization) {
+func migratedDatabase(t *testing.T) (*storage.Database, tenancy.Organization) {
 	t.Helper()
 
-	placements := openPlacements(t,
-		map[string]string{"shared": postgresDSN(t)},
-		map[string]string{testOrganization: "shared"})
-	if _, err := placements.Migrate(context.Background()); err != nil {
+	database := openDatabaseForTest(t, postgresDSN(t))
+	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
 	organization, err := tenancy.NewOrganization(testOrganization)
 	if err != nil {
 		t.Fatalf("naming the organization: %v", err)
 	}
-	return placements, organization
+	return database, organization
 }
 
 func enqueue(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
-	return enqueueThrough(t, placements, organization, registration,
-		kubernetesIntegration(t, placements, organization, registration))
+	return enqueueThrough(t, database, organization, registration,
+		kubernetesIntegration(t, database, organization, registration))
 }
 
 // enqueueThrough records work against a named Integration, for the tests that care which one.
 func enqueueThrough(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, registration, integration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
@@ -523,7 +521,7 @@ func enqueueThrough(
 		CapabilityVersion: 1,
 		Arguments:         []byte("arguments"),
 	}
-	refusal, err := placements.EnqueueJob(context.Background(), organization, job)
+	refusal, err := database.EnqueueJob(context.Background(), organization, job)
 	if err != nil {
 		t.Fatalf("enqueueing: %v (%s)", err, refusal)
 	}
@@ -536,17 +534,17 @@ func enqueueThrough(
 // Integration names the installation that serves it. That is the boundary being enforced
 // rather than a friction to work around, so these tests enrol rather than inventing a UUID.
 func enrolledRelay(
-	t *testing.T, placements *storage.Placements, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
 ) uuid.UUID {
 	t.Helper()
 
 	token := randomDigest(t)
 	ctx := context.Background()
-	if err := placements.IssueBootstrapToken(
+	if err := database.IssueBootstrapToken(
 		ctx, organization, token, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("issuing a bootstrap token: %v", err)
 	}
-	registration, refusal, err := placements.EnrolRelay(ctx, organization, storage.RelayEnrolment{
+	registration, refusal, err := database.EnrolRelay(ctx, organization, storage.RelayEnrolment{
 		TokenDigest:        token,
 		CredentialDigest:   randomDigest(t),
 		ClusterFingerprint: uuid.NewString(),
@@ -562,12 +560,12 @@ func enrolledRelay(
 // kubernetesIntegration creates a Kubernetes Integration served by the given relay. It is
 // what a job reaches; the relay is where the job runs.
 func kubernetesIntegration(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
-	created, err := placements.CreateIntegration(context.Background(), ownerOf(t, organization),
+	created, err := database.CreateIntegration(context.Background(), ownerOf(t, organization),
 		organization, integrations.NewIntegration{
 			Type:    integrations.TypeKubernetes,
 			Name:    "cluster " + uuid.NewString(),
@@ -589,12 +587,12 @@ func randomDigest(t *testing.T) []byte {
 }
 
 func claim(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, registration, session uuid.UUID,
 ) []storage.Job {
 	t.Helper()
 
-	claimed, err := placements.ClaimJobs(context.Background(), organization, storage.JobClaim{
+	claimed, err := database.ClaimJobs(context.Background(), organization, storage.JobClaim{
 		RegistrationID: registration,
 		SessionID:      session,
 		LeaseFor:       time.Minute,
@@ -612,14 +610,14 @@ func claim(
 // expireLease moves a lease's deadline into the past. Expiry is induced rather than waited
 // for: a suite that depends on winning a timing race is a suite that gets disabled.
 func expireLease(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, job uuid.UUID,
 ) {
 	t.Helper()
 
-	pool, err := placements.Pool(organization)
+	pool, err := database.Pool(organization)
 	if err != nil {
-		t.Fatalf("resolving the placement: %v", err)
+		t.Fatalf("resolving the database: %v", err)
 	}
 	if _, err = pool.Exec(context.Background(),
 		`UPDATE relay_job SET lease_expires_at = now() - interval '1 minute' WHERE job_id = $1`,

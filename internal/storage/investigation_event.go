@@ -16,8 +16,8 @@ import (
 // reader that lost its connection and one that landed on a different process both ask for
 // what comes after a sequence, and both are answered from here.
 var (
-	_ investigation.EventSink   = (*Placements)(nil)
-	_ investigation.EventReader = (*Placements)(nil)
+	_ investigation.EventSink   = (*Database)(nil)
+	_ investigation.EventReader = (*Database)(nil)
 )
 
 // maxEventPage bounds one replay read, so a long investigation is drained in pages rather
@@ -29,7 +29,7 @@ const maxEventPage = 500
 // The insert is unguarded on purpose: the primary key (investigation, sequence) IS the
 // guard. The lease makes one writer, so a second row at the same position means two
 // processes believed they held it, and refusing the write is how that stops being silent.
-func (p *Placements) AppendEvent(
+func (p *Database) AppendEvent(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	event investigation.Event,
 ) error {
@@ -58,7 +58,7 @@ func (p *Placements) AppendEvent(
 // identifier from another tenant returns nothing rather than somebody else's stream. The
 // caller turns an empty answer for an investigation it could not read into not-found; this
 // read does not distinguish "no events yet" from "not yours", and does not need to.
-func (p *Placements) Events(
+func (p *Database) Events(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	after int64, limit int,
 ) ([]investigation.Event, error) {

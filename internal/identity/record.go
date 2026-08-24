@@ -26,7 +26,7 @@ func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.AuditEvents(ctx, principal, organization, audit.Page{
+	list, err := h.Database.AuditEvents(ctx, principal, organization, audit.Page{
 		Limit: pageSize(request),
 		After: request.URL.Query().Get("after"),
 	})

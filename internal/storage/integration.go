@@ -19,7 +19,7 @@ import (
 
 // The integrations capability owns its vocabulary; this file is its persistence. The
 // contract is asserted here so a drifted method signature is a compile error.
-var _ integrations.Store = (*Placements)(nil)
+var _ integrations.Store = (*Database)(nil)
 
 // integrationColumns is every column an Integration is read from, named once. One list
 // rather than five copies, because a column added to one query and forgotten in another is
@@ -37,7 +37,7 @@ const integrationColumns = `integration_id, integration_type_id, name, configura
 // the insert itself fails when it belongs to another organization, so a request naming
 // another tenant's Relay is refused by the database rather than by a check that has to be
 // remembered at every call site.
-func (p *Placements) CreateIntegration(
+func (p *Database) CreateIntegration(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	wanted integrations.NewIntegration,
 ) (integrations.Integration, error) {
@@ -132,41 +132,35 @@ func (p *Placements) CreateIntegration(
 		})
 }
 
-// IntegrationByID resolves an Integration from its opaque identifier alone, across every
-// placement this deployment serves, and returns the organization it belongs to.
+// IntegrationByID resolves an Integration from its opaque identifier alone and returns
+// the organization it belongs to.
 //
 // This is the ONE integration read that does not take an organization, and it is
 // deliberate. An inbound delivery names its Integration and nothing else, because a path
 // is chosen by the caller and a caller who could name a tenant could try every tenant.
 // The row that is found is itself the authority for the organization: it discovers a
 // tenant rather than trusting one.
-func (p *Placements) IntegrationByID(
+func (p *Database) IntegrationByID(
 	ctx context.Context, id uuid.UUID,
 ) (integrations.Integration, error) {
-	for _, name := range p.names() {
-		var organization string
-		row := p.pools[name].QueryRow(ctx, `
+	var organization string
+	row := p.pool.QueryRow(ctx, `
 			SELECT org_id, `+integrationColumns+`
 			  FROM integration
 			 WHERE integration_id = $1`, id)
-		found, err := scanIntegrationWithOrganization(row, &organization)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			// A placement that cannot be read is reported rather than skipped. Continuing
-			// would turn one database's outage into "this integration does not exist".
-			return integrations.Integration{},
-				fmt.Errorf("resolving an integration in placement %q: %w", name, err)
-		}
-		found.OrgID = organization
-		return found, nil
+	found, err := scanIntegrationWithOrganization(row, &organization)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return integrations.Integration{}, integrations.ErrUnknown
 	}
-	return integrations.Integration{}, integrations.ErrUnknown
+	if err != nil {
+		return integrations.Integration{}, fmt.Errorf("resolving an integration: %w", err)
+	}
+	found.OrgID = organization
+	return found, nil
 }
 
 // Integration reads one, scoped to the tenant.
-func (p *Placements) Integration(
+func (p *Database) Integration(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) (integrations.Integration, error) {
 	pool, err := p.Pool(organization)
@@ -191,7 +185,7 @@ func (p *Placements) Integration(
 
 // QueryIntegrations returns an organization's Integrations, narrowed and paged by the
 // database, newest first.
-func (p *Placements) QueryIntegrations(
+func (p *Database) QueryIntegrations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query integrations.Query,
 ) (integrations.List, error) {
@@ -272,7 +266,7 @@ func (p *Placements) QueryIntegrations(
 // CountIntegrationsByType reports how many Integrations of each type a tenant has, for
 // the catalog's "3 configured" column. Counted by the database rather than by walking a
 // bounded page, so the number cannot be silently short.
-func (p *Placements) CountIntegrationsByType(
+func (p *Database) CountIntegrationsByType(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) ([]integrations.TypeCount, error) {
 	if !principal.MemberOf(organization) {
@@ -313,7 +307,7 @@ func (p *Placements) CountIntegrationsByType(
 
 // ReviseIntegration changes what a PATCH may change: the name, the configuration, the
 // labels. Identity, type, relay binding and secrets are left alone by construction.
-func (p *Placements) ReviseIntegration(
+func (p *Database) ReviseIntegration(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, revision integrations.Revision,
 ) (integrations.Integration, error) {
@@ -373,7 +367,7 @@ func (p *Placements) ReviseIntegration(
 
 // SetIntegrationDisabled turns an Integration off or back on without deleting it, so an
 // operator can stop using a source without losing the record of what it produced.
-func (p *Placements) SetIntegrationDisabled(
+func (p *Database) SetIntegrationDisabled(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, disabled bool,
 ) error {
@@ -408,7 +402,7 @@ func (p *Placements) SetIntegrationDisabled(
 // the check and the delete serialises on the row rather than racing it. Deliveries are
 // deliberately NOT a dependent: they cascade with the Integration, because a delivery
 // record's whole subject is the Integration it belongs to.
-func (p *Placements) DeleteIntegration(
+func (p *Database) DeleteIntegration(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -465,7 +459,7 @@ func (p *Placements) DeleteIntegration(
 // suspected disclosure does not mean recreating the Integration and reconfiguring the
 // source. One digest is live at a time; a rotation is a brief outage the operator
 // schedules.
-func (p *Placements) RotateIntegrationWebhookSecret(
+func (p *Database) RotateIntegrationWebhookSecret(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, digest []byte, fingerprint string,
 ) error {
@@ -512,7 +506,7 @@ func (p *Placements) RotateIntegrationWebhookSecret(
 //
 // Guarded on the Integration already holding one: a credential can be replaced, never
 // acquired, because a type that takes one requires it at creation.
-func (p *Placements) ReplaceIntegrationCredential(
+func (p *Database) ReplaceIntegrationCredential(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, revision integrations.Revision, sealed []byte, fingerprint string,
 	verification integrations.Verification, installed *integrations.Installation,
@@ -600,7 +594,7 @@ func (p *Placements) ReplaceIntegrationCredential(
 }
 
 // RecordIntegrationVerification writes what a verify run established onto the record.
-func (p *Placements) RecordIntegrationVerification(
+func (p *Database) RecordIntegrationVerification(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, verification integrations.Verification,
 ) (integrations.Integration, error) {
@@ -647,7 +641,7 @@ func (p *Placements) RecordIntegrationVerification(
 // verification. A relay that does not exist in this tenant answers as unbound rather than
 // as an error: the verify run's job is to report, and "the relay this names is gone" is a
 // report.
-func (p *Placements) IntegrationRelayStatus(
+func (p *Database) IntegrationRelayStatus(
 	ctx context.Context, organization tenancy.Organization, relayID uuid.UUID,
 ) (integrations.RelayStatus, error) {
 	if relayID == uuid.Nil {
@@ -717,7 +711,7 @@ func decodeCapabilityNames(raw []byte) ([]string, error) {
 
 // LastAcceptedDelivery reports when an integration last accepted a webhook delivery, zero
 // when it never has.
-func (p *Placements) LastAcceptedDelivery(
+func (p *Database) LastAcceptedDelivery(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) (time.Time, error) {
 	pool, err := p.Pool(organization)
@@ -919,7 +913,7 @@ func nullableUUID(id uuid.UUID) *uuid.UUID {
 // naming the integration whose credential was opened and the path that opened it. It is
 // recorded BEFORE the credential is used — a use that cannot be recorded does not
 // happen, for the same reason audited operations roll back with their record.
-func (p *Placements) RecordCredentialUnseal(
+func (p *Database) RecordCredentialUnseal(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID, purpose string,
 ) error {
 	return p.RecordEvent(ctx, organization, audit.Event{

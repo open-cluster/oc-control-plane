@@ -36,7 +36,7 @@ var ErrNoKey = errors.New("no sealing key is configured")
 // a one-way digest suffices.
 //
 // That makes the key the thing that matters. It is read from a file the deployment names, in
-// the same shape a placement's DSN is, and never from an environment value.
+// the same shape a database's DSN is, and never from an environment value.
 type Sealer struct {
 	block cipher.AEAD
 }

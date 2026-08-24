@@ -30,29 +30,27 @@ import (
 // "already recorded" can only come from a committed row, so it is stronger evidence than
 // reading the database from the test would be, and it uses nothing a relay cannot see.
 func TestRelaySession(t *testing.T) {
-	// The organization the harness assigns a placement to. An unassigned one is refused
+	// The organization the harness assigns a database to. An unassigned one is refused
 	// exactly like a bad credential, which makes a wrong name here look like a session defect.
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
-	placements := openPlacement(t, placementDSN)
+	relay := registerRelay(t, connection, databaseDSN, organization)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
 	// Enqueued before anything is connected. An outage must delay an investigation, never
 	// lose it, so this job has to be waiting when the session arrives.
-	waiting := enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
-	fenced := enqueueJob(t, placements, owner, relay.registration, workloadArguments("checkout"))
+	waiting := enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
+	fenced := enqueueJob(t, database, owner, relay.registration, workloadArguments("checkout"))
 
 	stream := connectSession(t, connection, organization, relay)
 
@@ -175,7 +173,7 @@ func TestRelaySession(t *testing.T) {
 	})
 
 	t.Run("work enqueued during a session is delivered without reconnecting", func(t *testing.T) {
-		later := enqueueJob(t, placements, owner, relay.registration, workloadArguments("search"))
+		later := enqueueJob(t, database, owner, relay.registration, workloadArguments("search"))
 
 		assignment := awaitAssignment(t, stream)
 		if assignment.GetJobId() != later.String() {
@@ -188,9 +186,9 @@ func TestRelaySession(t *testing.T) {
 		// The arguments were written by the control plane, so this can only happen through a
 		// defect here — but one undeliverable job holding up every job behind it turns a
 		// defect into an outage, which is the part that must not happen.
-		unexpressable := enqueueJob(t, placements, owner, relay.registration,
+		unexpressable := enqueueJob(t, database, owner, relay.registration,
 			[]byte{0x0a, 0x05}) // A length-delimited field claiming five bytes that follow nothing.
-		behind := enqueueJob(t, placements, owner, relay.registration, workloadArguments("billing"))
+		behind := enqueueJob(t, database, owner, relay.registration, workloadArguments("billing"))
 
 		assignment := awaitAssignment(t, stream)
 		if assignment.GetJobId() != behind.String() {
@@ -200,13 +198,13 @@ func TestRelaySession(t *testing.T) {
 	})
 
 	t.Run("a job asked to stop is told once and still reports its own outcome", func(t *testing.T) {
-		job := enqueueJob(t, placements, owner, relay.registration, workloadArguments("ledger"))
+		job := enqueueJob(t, database, owner, relay.registration, workloadArguments("ledger"))
 		assignment := awaitAssignment(t, stream)
 		if assignment.GetJobId() != job.String() {
 			t.Fatalf("delivered job %q, want %v", assignment.GetJobId(), job)
 		}
 
-		asked, err := placements.RequestJobCancellation(context.Background(), owner, job)
+		asked, err := database.RequestJobCancellation(context.Background(), owner, job)
 		if err != nil {
 			t.Fatalf("asking the job to stop: %v", err)
 		}
@@ -261,7 +259,7 @@ func TestRelaySession(t *testing.T) {
 	// purpose and would otherwise take the one the assertions above depend on with them.
 
 	t.Run("a reconnection ends the session it replaces", func(t *testing.T) {
-		reconnecting := registerRelay(t, connection, placementDSN, organization)
+		reconnecting := registerRelay(t, connection, databaseDSN, organization)
 
 		replaced := connectSession(t, connection, organization, reconnecting)
 		awaitSessionAccepted(t, replaced)
@@ -299,7 +297,7 @@ func TestRelaySession(t *testing.T) {
 	})
 
 	t.Run("a session that stops proving it is alive is ended", func(t *testing.T) {
-		silent := registerRelay(t, connection, placementDSN, organization)
+		silent := registerRelay(t, connection, databaseDSN, organization)
 
 		stream := connectSession(t, connection, organization, silent)
 		awaitSessionAccepted(t, stream)
@@ -341,22 +339,20 @@ func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	placements := openPlacement(t, placementDSN)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
 	t.Run("a relay that speaks a newer version is negotiated down", func(t *testing.T) {
-		relay := registerRelay(t, connection, placementDSN, organization)
-		job := enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+		relay := registerRelay(t, connection, databaseDSN, organization)
+		job := enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
 
 		stream := openStream(t, connection, organization, relay)
 		awaitSessionAccepted(t, stream)
@@ -371,7 +367,7 @@ func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 	})
 
 	t.Run("a relay that cannot reach this version is refused", func(t *testing.T) {
-		relay := registerRelay(t, connection, placementDSN, organization)
+		relay := registerRelay(t, connection, databaseDSN, organization)
 
 		stream := openStream(t, connection, organization, relay)
 		awaitSessionAccepted(t, stream)
@@ -398,13 +394,11 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 	// Reconciling a reconnection is the one thing here the relay cannot see the reasoning for,
 	// so a failure that reports only "nothing arrived" would say nothing about why.
@@ -415,13 +409,13 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
-	placements := openPlacement(t, placementDSN)
+	relay := registerRelay(t, connection, databaseDSN, organization)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
 	// Two jobs, so the reconnection has something to carry over and something to give up.
-	enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
-	enqueueJob(t, placements, owner, relay.registration, workloadArguments("checkout"))
+	enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
+	enqueueJob(t, database, owner, relay.registration, workloadArguments("checkout"))
 
 	before := connectSession(t, connection, organization, relay)
 	awaitSessionAccepted(t, before)
@@ -486,23 +480,21 @@ func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
-	placements := openPlacement(t, placementDSN)
+	relay := registerRelay(t, connection, databaseDSN, organization)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
 	conflict := func(t *testing.T) storage.SessionConflict {
 		t.Helper()
-		seen, err := placements.SessionConflict(context.Background(), owner, relay.registration)
+		seen, err := database.SessionConflict(context.Background(), owner, relay.registration)
 		if err != nil {
 			t.Fatalf("reading the session conflict: %v", err)
 		}
@@ -553,21 +545,19 @@ func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
-	placements := openPlacement(t, placementDSN)
+	relay := registerRelay(t, connection, databaseDSN, organization)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+	enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
 
 	before := connectSession(t, connection, organization, relay)
 	awaitSessionAccepted(t, before)
@@ -647,23 +637,21 @@ func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
-	placements := openPlacement(t, placementDSN)
+	relay := registerRelay(t, connection, databaseDSN, organization)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
 	// More work than the outbound queue holds, so delivery fills it and blocks.
 	for range 40 {
-		enqueueJob(t, placements, owner, relay.registration, workloadArguments("payments"))
+		enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
 	}
 
 	stream := connectSession(t, connection, organization, relay)
@@ -703,18 +691,16 @@ func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		cfg.ShutdownTimeout = 5 * time.Second
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	unresponsive := registerRelay(t, connection, placementDSN, organization)
+	unresponsive := registerRelay(t, connection, databaseDSN, organization)
 	stream := connectSession(t, connection, organization, unresponsive)
 	awaitSessionAccepted(t, stream)
 	// Nothing reads or writes on that stream again. It is established, idle, and holding a
@@ -740,17 +726,15 @@ func TestRelaySessionRefusesUnprovenIdentity(t *testing.T) {
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
+	relay := registerRelay(t, connection, databaseDSN, organization)
 
 	unknown := refuseSession(t, connection, organization, relayCredentials{
 		registration: uuid.New(), credential: relay.credential,

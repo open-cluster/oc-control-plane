@@ -9,7 +9,7 @@ import (
 //
 // The list is deliberately broad. A false positive costs an auditor one field of context; a
 // false negative writes a live credential into a table the database will not let anyone delete
-// from, on every placement, forever.
+// from, on every database, forever.
 var credentialWords = []string{
 	"secret", "token", "password", "passwd", "credential",
 	"apikey", "api_key", "privatekey", "private_key", "authorization", "cookie",

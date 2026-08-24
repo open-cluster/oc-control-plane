@@ -3,9 +3,9 @@ title: "Self-host OpenCluster"
 description: "Run the OpenCluster control plane with PostgreSQL and expose only the listeners you need."
 ---
 
-OpenCluster runs as one static control-plane binary backed by PostgreSQL. Database
-migrations run at startup. Alert intake, operator access, and Relay traffic use separate
-listeners so you can expose each on the appropriate network.
+OpenCluster runs as one static control-plane binary backed by one PostgreSQL database.
+Database migrations run at startup. Health, metrics, alert intake, and operator access
+share one HTTP listener; Relay traffic uses a separate gRPC listener.
 
 ## Requirements
 
@@ -33,10 +33,7 @@ cat > opencluster.yaml <<'YAML'
 server:
   address: "0.0.0.0:8080"
 database:
-  placements:
-    shared:
-      dsn_file: "/tmp/opencluster-dsn"
-  default_placement: "shared"
+  dsn_file: "/tmp/opencluster-dsn"
 YAML
 
 ./oc-controlplane --config opencluster.yaml
@@ -57,9 +54,9 @@ using the product workflow.
 
 | YAML setting | Purpose | Recommended exposure |
 | --- | --- | --- |
-| `server.address` | `/healthz`, `/readyz`, and `/metrics` | Internal monitoring network |
-| `server.operator_address` | Operator API and browser sign-in | Private network, behind TLS |
-| `server.intake_address` | Alertmanager webhooks | Publicly reachable where needed, behind TLS |
+| `server.address` | Health, metrics, operator API, browser sign-in, and alert webhooks | Behind TLS; restrict operator routes at the proxy |
+| `server.operator_address` | Compatibility switch that enables operator routes; must equal `server.address` | Same HTTP listener |
+| `server.intake_address` | Compatibility switch that enables intake routes; must equal `server.address` | Same HTTP listener |
 | `relay.address` | Outbound Relay sessions | Publicly reachable from clusters, behind the pinned TLS endpoint |
 
 Next: [Configuration](/self-hosted/configuration) and

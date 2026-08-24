@@ -38,7 +38,7 @@ func TestOperatorSurface(t *testing.T) {
 
 	operatorAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
@@ -49,14 +49,12 @@ func TestOperatorSurface(t *testing.T) {
 		// between it and the shared token it replaces, and the last case in this test asserts
 		// that a second organization is not reachable with it.
 		cfg.OperatorTokenOrganization = organization
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	connection := dialRelay(t, relayAddress)
-	relay := registerRelay(t, connection, placementDSN, organization)
-	placements := openPlacement(t, placementDSN)
+	relay := registerRelay(t, connection, databaseDSN, organization)
+	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
 	base := "http://" + operatorAddress + "/operator/v1/organizations/" + organization
@@ -107,7 +105,7 @@ func TestOperatorSurface(t *testing.T) {
 		registered := []string{relay.registration.String()}
 		for range 3 {
 			registered = append(registered,
-				registerRelay(t, connection, placementDSN, organization).registration.String())
+				registerRelay(t, connection, databaseDSN, organization).registration.String())
 		}
 
 		roster := readRoster(t, base+"/relays", token)
@@ -161,7 +159,7 @@ func TestOperatorSurface(t *testing.T) {
 		// Recorded through the same storage function the session service uses, rather than by
 		// writing the row: what is under test here is that the finding surfaces, not how it
 		// comes to be — that is covered where the detection lives.
-		if err := placements.RecordSessionConflict(
+		if err := database.RecordSessionConflict(
 			context.Background(), owner, relay.registration, 2); err != nil {
 			t.Fatalf("recording a session conflict: %v", err)
 		}
@@ -250,7 +248,7 @@ func TestOperatorSurface(t *testing.T) {
 		// Enough entries that a page cannot hold them. Off-by-one is the whole failure mode of
 		// a keyset cursor, and it shows up as an entry that is skipped rather than as an error.
 		for range 3 {
-			if err := placements.RecordSessionConflict(
+			if err := database.RecordSessionConflict(
 				context.Background(), owner, relay.registration, 2); err != nil {
 				t.Fatalf("recording a session conflict: %v", err)
 			}
@@ -323,7 +321,7 @@ func TestOperatorSurface(t *testing.T) {
 func TestOperatorTokenComesFromAFile(t *testing.T) {
 	t.Parallel()
 
-	address := "127.0.0.1:9999"
+	address := "127.0.0.1:8080"
 
 	t.Run("a token file is required when the surface is enabled", func(t *testing.T) {
 		t.Parallel()
@@ -396,7 +394,7 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 }
 
 // environment builds a lookup over a minimal valid configuration plus the overrides under
-// test, so each case fails for the reason it is about rather than for a missing placement.
+// test, so each case fails for the reason it is about rather than for a missing database.
 func environment(t *testing.T, overrides map[string]string) func(string) (string, bool) {
 	t.Helper()
 	dsn := secretFile(t, "dsn", "postgres://user:password@127.0.0.1:5432/controlplane")

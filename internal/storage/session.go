@@ -37,7 +37,7 @@ type SignedIn struct {
 // This is the one path where the actor is established for the first time, so it cannot go
 // through audited — there is no principal yet to check a membership for. The actor is
 // therefore passed explicitly, and it is the person the identity provider just asserted.
-func (p *Placements) IssueSession(
+func (p *Database) IssueSession(
 	ctx context.Context, organization tenancy.Organization,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
 ) error {
@@ -86,30 +86,16 @@ func (p *Placements) IssueSession(
 
 // SessionByToken resolves the cookie a request presented.
 //
-// It is placement-wide for the reason ConnectionByID is: a session cookie names no tenant, and
-// a caller who could name one could try every one. Each placement is asked for the digest in a
-// fixed order, and the row that is found is itself the authority for the organization.
+// A session cookie names no tenant. The row that is found is itself the authority for the
+// organization.
 //
 // The refusal says WHY — unknown, expired, revoked — because story 5 asks that a session which
 // has run out returns the operator to sign-in with an explanation rather than a screen of
 // error states. The distinction is safe here in a way it is not for a credential guess: the
 // three answers are all "you are not signed in", and none of them says anything about a
 // session the caller does not already hold.
-func (p *Placements) SessionByToken(ctx context.Context, digest []byte) (SignedIn, error) {
-	for _, name := range p.names() {
-		found, err := signedInFrom(ctx, p.pools[name], digest)
-		if errors.Is(err, session.ErrUnknown) {
-			continue
-		}
-		if err != nil && !errors.Is(err, session.ErrExpired) && !errors.Is(err, session.ErrRevoked) {
-			// A placement that cannot be read is reported rather than skipped. Continuing would
-			// turn one database's outage into "you are not signed in", which every operator
-			// served from it would answer by signing in again, at the same broken database.
-			return SignedIn{}, fmt.Errorf("resolving a session in placement %q: %w", name, err)
-		}
-		return found, err
-	}
-	return SignedIn{}, session.ErrUnknown
+func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn, error) {
+	return signedInFrom(ctx, p.pool, digest)
 }
 
 func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, error) {
@@ -170,7 +156,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 // DeleteSession ends the caller's own session. It deletes the row rather than marking it, so
 // the credential is gone before the response is written — a row that still exists is a row a
 // bug can read.
-func (p *Placements) DeleteSession(
+func (p *Database) DeleteSession(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -220,7 +206,7 @@ func (p *Placements) DeleteSession(
 // deletes, because an administrator who ended somebody's session should be able to see that
 // they did, and because the person deserves to be told they were signed out rather than that
 // their session timed out.
-func (p *Placements) RevokeSessionsOf(
+func (p *Database) RevokeSessionsOf(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	user uuid.UUID,
 ) (int64, error) {
@@ -242,7 +228,7 @@ func (p *Placements) RevokeSessionsOf(
 
 // ListSessions reports the live sessions in an organization, so an administrator can see what
 // they would be ending before they end it.
-func (p *Placements) ListSessions(
+func (p *Database) ListSessions(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) ([]session.Session, error) {
 	if !principal.MemberOf(organization) {
@@ -289,7 +275,7 @@ func (p *Placements) ListSessions(
 
 // SweepExpiredSessions removes sessions nobody can use. Expired rows authenticate nothing, so
 // keeping them buys an administrator a longer list and nothing else.
-func (p *Placements) SweepExpiredSessions(
+func (p *Database) SweepExpiredSessions(
 	ctx context.Context, organization tenancy.Organization, keepRevokedFor time.Duration,
 ) (int64, error) {
 	pool, err := p.Pool(organization)
@@ -311,7 +297,7 @@ func (p *Placements) SweepExpiredSessions(
 // SessionPolicy reports how long a tenant's sessions live and how long it says it keeps its
 // record. Both are the organization's own settings; the application holds the lifetime inside
 // the bounds this build serves.
-func (p *Placements) SessionPolicy(
+func (p *Database) SessionPolicy(
 	ctx context.Context, organization tenancy.Organization,
 ) (time.Duration, int, error) {
 	pool, err := p.Pool(organization)
@@ -336,7 +322,7 @@ func (p *Placements) SessionPolicy(
 }
 
 // SetSessionPolicy records a tenant's own security policy, and what it was before.
-func (p *Placements) SetSessionPolicy(
+func (p *Database) SetSessionPolicy(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	lifetime time.Duration, retentionDays int,
 ) error {

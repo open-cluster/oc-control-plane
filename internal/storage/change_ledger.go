@@ -21,7 +21,7 @@ import (
 
 // OpenInventoryScopes upserts one synchronization scope per Kubernetes Integration
 // served by this registration and reports them, so the session can send one policy each.
-func (p *Placements) OpenInventoryScopes(
+func (p *Database) OpenInventoryScopes(
 	ctx context.Context, organization tenancy.Organization,
 	registrationID uuid.UUID, requestedInterval time.Duration,
 ) ([]changeledger.Scope, error) {
@@ -91,7 +91,7 @@ func (p *Placements) OpenInventoryScopes(
 //
 // A redelivery collapses row by row against the dedup key, so recording is idempotent
 // without any notion of a delta having been seen before.
-func (p *Placements) RecordInventoryDelta(
+func (p *Database) RecordInventoryDelta(
 	ctx context.Context, organization tenancy.Organization,
 	registrationID uuid.UUID, delta changeledger.Delta,
 ) (changeledger.Recorded, error) {
@@ -150,6 +150,23 @@ func (p *Placements) RecordInventoryDelta(
 		inserted += int(tag.RowsAffected())
 	}
 
+	if err = advanceChangeLedgerScope(
+		ctx, transaction, organization, delta, inserted,
+	); err != nil {
+		return changeledger.Recorded{}, err
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		return changeledger.Recorded{}, fmt.Errorf("committing a ledger delta: %w", err)
+	}
+	return changeledger.Recorded{Inserted: inserted}, nil
+}
+
+func advanceChangeLedgerScope(
+	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	delta changeledger.Delta, inserted int,
+) error {
+	var err error
 	if delta.Baseline {
 		// Continuity is decided by what the baseline changed AND by how long nobody was
 		// watching. A re-baseline that collapsed entirely proved no watched field moved —
@@ -173,30 +190,27 @@ func (p *Placements) RecordInventoryDelta(
 			       last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), $2),
 			       policy_revision = GREATEST(policy_revision, $4),
 			       updated_at = now()
-			 WHERE integration_id = $1`,
-			delta.IntegrationID, delta.ObservedAt, inserted, delta.PolicyRevision)
+			 WHERE integration_id = $1 AND org_id = $5`,
+			delta.IntegrationID, delta.ObservedAt, inserted, delta.PolicyRevision,
+			organization.String())
 	} else {
 		_, err = transaction.Exec(ctx, `
 			UPDATE change_ledger_scope
 			   SET last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), $2),
 			       updated_at = now()
-			 WHERE integration_id = $1`,
-			delta.IntegrationID, delta.ObservedAt)
+			 WHERE integration_id = $1 AND org_id = $3`,
+			delta.IntegrationID, delta.ObservedAt, organization.String())
 	}
 	if err != nil {
-		return changeledger.Recorded{}, fmt.Errorf("advancing the scope's coverage: %w", err)
+		return fmt.Errorf("advancing the scope's coverage: %w", err)
 	}
-
-	if err = transaction.Commit(ctx); err != nil {
-		return changeledger.Recorded{}, fmt.Errorf("committing a ledger delta: %w", err)
-	}
-	return changeledger.Recorded{Inserted: inserted}, nil
+	return nil
 }
 
 // RecordInventoryFreshness applies a heartbeat's per-scope stamps. The guard subquery
 // is the tenancy and serving check: a stamp naming an Integration this registration
 // does not serve updates nothing.
-func (p *Placements) RecordInventoryFreshness(
+func (p *Database) RecordInventoryFreshness(
 	ctx context.Context, organization tenancy.Organization,
 	registrationID uuid.UUID, stamps []changeledger.Freshness,
 ) error {
@@ -236,7 +250,7 @@ func (p *Placements) RecordInventoryFreshness(
 // watching began, not something changing — and the scope's boundaries travel with the
 // answer so an empty list is readable as "nothing changed" only where that is actually
 // knowable.
-func (p *Placements) RecentLedgerChanges(
+func (p *Database) RecentLedgerChanges(
 	ctx context.Context, organization tenancy.Organization,
 	integrationID uuid.UUID, namespace string, from, to time.Time, limit int,
 ) (changeledger.WindowChanges, error) {
@@ -311,19 +325,17 @@ func (p *Placements) RecentLedgerChanges(
 	return answer, nil
 }
 
-// PruneChangeLedgerBefore removes at most limit entries older than the horizon, across
-// every placement, oldest first. Purely by age: the ledger is derived operational
+// PruneChangeLedgerBefore removes at most limit entries older than the horizon, oldest
+// first. Purely by age: the ledger is derived operational
 // context on its own retention schedule, and a pruned entry is recoverable as a fresh
 // baseline the next time a Relay observes the object.
-func (p *Placements) PruneChangeLedgerBefore(
+func (p *Database) PruneChangeLedgerBefore(
 	ctx context.Context, before time.Time, limit int,
 ) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
-	var removed int64
-	for _, name := range p.names() {
-		tag, err := p.pools[name].Exec(ctx, `
+	tag, err := p.pool.Exec(ctx, `
 			DELETE FROM change_ledger
 			 WHERE entry_id IN (
 			       SELECT entry_id
@@ -332,12 +344,10 @@ func (p *Placements) PruneChangeLedgerBefore(
 			        ORDER BY received_at, entry_id
 			        LIMIT $2
 			       )`, before, limit)
-		if err != nil {
-			return removed, fmt.Errorf("pruning the change ledger in placement %q: %w", name, err)
-		}
-		removed += tag.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("pruning the change ledger: %w", err)
 	}
-	return removed, nil
+	return tag.RowsAffected(), nil
 }
 
 // compareChanges orders two changes by the identity they are written under — the dedup
@@ -377,7 +387,7 @@ func (s *scanSeconds) Scan(value any) error {
 // identities — each rendered "namespace/kind name" — for the autonomous
 // orientation. A navigation index, never evidence: deletions drop out, and only the
 // watched workload kinds appear. Empty when no Relay has synchronized anything.
-func (p *Placements) WorkloadInventory(
+func (p *Database) WorkloadInventory(
 	ctx context.Context, organization tenancy.Organization, limit int,
 ) ([]string, error) {
 	pool, err := p.Pool(organization)

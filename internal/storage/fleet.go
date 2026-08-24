@@ -51,7 +51,7 @@ type Fleet struct {
 // Every number comes from ONE query, so the counts cannot disagree with each other the way
 // separate reads at separate moments would — a summary saying eleven connected out of ten is
 // worse than no summary.
-func (p *Placements) FleetSummary(
+func (p *Database) FleetSummary(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	liveness time.Duration, minimumVersion string,
 ) (Fleet, error) {
@@ -101,7 +101,7 @@ func (p *Placements) FleetSummary(
 //
 // Only the digest is stored, so this is the one moment the token exists here. The caller shows
 // it once and keeps no copy either.
-func (p *Placements) IssueOperatorBootstrapToken(
+func (p *Database) IssueOperatorBootstrapToken(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	tokenDigest []byte, expiresAt time.Time,
 ) error {
@@ -139,7 +139,7 @@ func (p *Placements) IssueOperatorBootstrapToken(
 // That is the same rule the in-memory registry follows, made durable — and it has to be durable,
 // because the registry is per process and a fleet summary built from one process's view would
 // report a fraction of the fleet as the fleet.
-func (p *Placements) RelaySessionOpened(
+func (p *Database) RelaySessionOpened(
 	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
 	peer string,
 ) error {
@@ -166,7 +166,7 @@ func (p *Placements) RelaySessionOpened(
 // Guarded on the session identifier: a heartbeat from a session that has been displaced must not
 // refresh the presence of the registration its successor now holds, or a dying session would
 // keep a relay looking connected through whichever process was slowest to notice.
-func (p *Placements) RelaySessionHeard(
+func (p *Database) RelaySessionHeard(
 	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
 ) error {
 	pool, err := p.Pool(organization)
@@ -189,7 +189,7 @@ func (p *Placements) RelaySessionHeard(
 // successor. A session that dies without reaching this leaves last_seen_at behind, and the
 // liveness window is what bounds how long that looks connected — which is the same allowance
 // the in-memory watch uses, so the durable answer and the live one agree.
-func (p *Placements) RelaySessionClosed(
+func (p *Database) RelaySessionClosed(
 	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
 ) error {
 	pool, err := p.Pool(organization)
@@ -243,7 +243,7 @@ type RelayFailureList struct {
 
 // RelayFailures reads what a Relay has recently failed to complete, so an intermittent one can be
 // diagnosed from the record rather than from whoever happened to be watching.
-func (p *Placements) RelayFailures(
+func (p *Database) RelayFailures(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	registration uuid.UUID, page Page,
 ) (RelayFailureList, error) {

@@ -8,7 +8,7 @@
 //
 // The package deliberately does not import internal/storage. It depends on the BEHAVIOUR
 // it needs (can the databases be reached?) rather than on the type that provides it, which
-// keeps database access inside the package that owns placement resolution. The import gate
+// keeps database access inside the package that owns database resolution. The import gate
 // in internal/gates enforces this.
 package health
 

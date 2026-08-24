@@ -3,13 +3,14 @@ title: "Operations"
 description: "Monitor health, deploy safely, manage retention, and understand background work."
 ---
 
-Use the health listener for probes and metrics. Keep operator, intake, and Relay
-listeners on separate network policies.
+Use the shared HTTP listener for probes, metrics, operator access, and intake. Apply
+path-based proxy policy where these routes need different exposure. Keep Relay on its
+separate network policy.
 
 ## Health and metrics
 
 - `/healthz` reports process liveness without checking dependencies.
-- `/readyz` reports whether this instance can reach its required PostgreSQL placement.
+- `/readyz` reports whether this instance can reach its PostgreSQL database.
 - `/metrics` exposes Prometheus metrics without organization labels.
 
 Alert on sustained readiness failures, failed or degraded integration verification,
@@ -45,12 +46,17 @@ troubleshooting, it is the fastest way to confirm what a deployment is actually 
 ## Deploy and stop
 
 Migrations are forward-only and run under a database lock at startup. Multiple new
-instances can start without racing the schema. Review release notes and back up each
-placement before upgrading.
+instances can start without racing the schema. Review release notes and back up the
+database before upgrading.
 
 On `SIGTERM`, OpenCluster stops accepting new work and drains requests within
 `OC_SHUTDOWN_TIMEOUT`. Investigations still running when shutdown completes are marked
 failed rather than left running.
+
+For a Phase 2 rollback, stop the new binary, restore the legacy database and listener inputs,
+and restart the prior binary. No row or table shape is removed by this phase. Follow the
+[single-database migration procedure](/self-hosted/configuration#migrate-an-existing-deployment)
+before upgrading a deployment that currently reaches several databases.
 
 ## Integration health
 

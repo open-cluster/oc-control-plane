@@ -50,15 +50,15 @@ func (r Retention) Horizon(now time.Time) time.Time {
 //
 // It is declared here rather than in the persistence package because the capability owns its
 // vocabulary and persistence depends on it (ADR-017). The direction is what makes a second
-// implementation — a test's, or a placement layout this build does not have — possible without
+// implementation — a test's, or a database layout this build does not have — possible without
 // this package learning that a database exists.
 type Retentions interface {
 	// DeclaredRetentions reports every tenant that has declared a schedule, across every
-	// placement this deployment serves.
+	// database this deployment serves.
 	//
 	// It is one of the few reads that names no organization, for the same reason the
 	// investigator's work scan is: its whole job is to discover which tenants there are, so
-	// there is no tenant in the question to resolve a placement from. It reads no tenant data —
+	// there is no tenant in the question to resolve a database from. It reads no tenant data —
 	// only which tenants declared a number — and every delete it leads to is tenant-scoped.
 	DeclaredRetentions(ctx context.Context) ([]Retention, error)
 	// PruneEventsBefore removes at most limit events older than the horizon, reporting how many
@@ -107,7 +107,7 @@ func (p Pruner) Run(ctx context.Context) {
 
 // Sweep applies every declared schedule once.
 //
-// A failure for one tenant does not stop the others. Retention is per tenant and one placement
+// A failure for one tenant does not stop the others. Retention is per tenant and one database
 // being unreachable is not a reason another tenant's stated schedule goes unapplied — which is the
 // difference between a degraded sweep and a silently suspended one, and the log says which.
 func (p Pruner) Sweep(ctx context.Context) {

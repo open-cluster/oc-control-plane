@@ -344,7 +344,7 @@ func workloadArguments(workload string) []byte {
 
 func enqueueJob(
 	t *testing.T,
-	placements *storage.Placements,
+	database *storage.Database,
 	organization tenancy.Organization,
 	registration uuid.UUID,
 	arguments []byte,
@@ -356,13 +356,13 @@ func enqueueJob(
 
 	job := storage.Job{
 		ID:                uuid.New(),
-		IntegrationID:     kubernetesIntegration(t, placements, organization, registration),
+		IntegrationID:     kubernetesIntegration(t, database, organization, registration),
 		RegistrationID:    registration,
 		CapabilityID:      capabilityUnderTest,
 		CapabilityVersion: capabilityVersionUnderTest,
 		Arguments:         arguments,
 	}
-	refusal, err := placements.EnqueueJob(ctx, organization, job)
+	refusal, err := database.EnqueueJob(ctx, organization, job)
 	if err != nil {
 		t.Fatalf("enqueueing a job: %v (%s)", err, refusal)
 	}
@@ -372,7 +372,7 @@ func enqueueJob(
 // kubernetesIntegration creates a Kubernetes Integration served by this relay. Every job
 // names one: the Integration is what the job reaches, and the relay is where it runs.
 func kubernetesIntegration(
-	t *testing.T, placements *storage.Placements,
+	t *testing.T, database *storage.Database,
 	organization tenancy.Organization, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
@@ -381,7 +381,7 @@ func kubernetesIntegration(
 	defer cancel()
 
 	acting := ownerOf(t, organization)
-	created, err := placements.CreateIntegration(ctx, acting, organization, integrations.NewIntegration{
+	created, err := database.CreateIntegration(ctx, acting, organization, integrations.NewIntegration{
 		Type:    integrations.TypeKubernetes,
 		Name:    "cluster " + uuid.NewString(),
 		RelayID: registration,

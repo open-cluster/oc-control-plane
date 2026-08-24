@@ -18,19 +18,15 @@ client.
 
 ## YAML configuration
 
-This is the smallest configuration that starts OpenCluster. Define at least one database
-entry and select the default used for Organizations without an explicit assignment.
+This is the smallest configuration that starts OpenCluster. Every Organization uses this
+database, while `org_id` remains the tenant boundary for every durable record.
 
 ```yaml
 server:
   address: ":8080"
 
 database:
-  placements:
-    shared:
-      dsn_file: "/run/secrets/postgres-dsn"
-  assignments: {}
-  default_placement: "shared"
+  dsn_file: "/run/secrets/postgres-dsn"
 
 telemetry:
   service_name: "oc-control-plane"
@@ -41,8 +37,8 @@ Optional settings use the same nested structure:
 
 ```yaml
 server:
-  operator_address: ":8081"
-  intake_address: ":8082"
+  operator_address: ":8080"
+  intake_address: ":8080"
   public_url: "https://opencluster.example.com"
   console_url: "https://console.opencluster.example.com"
   intake_public_url: "https://intake.opencluster.example.com"
@@ -115,6 +111,63 @@ the environment value wins. `--server-address` overrides both for local developm
 Existing deployments may continue to use environment variables during the compatibility
 window. Variables that refer to credentials contain file paths, never secret values.
 
+Legacy YAML remains accepted during this window. It must resolve every entry to the same
+DSN file; multiple distinct databases refuse startup and must be consolidated first:
+
+```yaml
+database:
+  placements:
+    shared:
+      dsn_file: "/run/secrets/postgres-dsn"
+  assignments: {}
+  default_placement: "shared"
+```
+
+Do not mix `database.dsn_file` with legacy database settings. A legacy operator or intake
+address enables that route group on the shared HTTP listener and therefore must equal
+`server.address`. Relay traffic remains on its separate gRPC listener.
+
+### Migrate an existing deployment
+
+Back up every configured database and keep a copy of the current binary and configuration.
+Then inspect the DSN files named by the legacy settings:
+
+- If every legacy entry reaches the same PostgreSQL database, replace the legacy database
+  block with `database.dsn_file` pointing at that DSN file. Start one instance and require
+  `/readyz` to return `200` before replacing the remaining instances.
+- If the entries reach distinct databases, split them into one control-plane deployment per
+  database. Give each deployment its former DSN file, the Organizations formerly assigned to
+  that database, its existing sealing key, and unique HTTP and Relay addresses. Repoint every
+  Alertmanager Integration webhook and Relay endpoint to the deployment that owns it. Register
+  separate Slack, GitHub, and OIDC applications or callback URLs for each deployment when a
+  provider cannot route callbacks by their authenticated Integration identity. Never select a
+  deployment from an unauthenticated request body or opaque callback state. Validate webhooks,
+  signed Slack events, OAuth and OIDC callbacks, and Relay connections before cutover, then verify
+  incidents and Investigations before removing the old multi-database instance. If provider-side
+  registrations cannot be split safely, remain on the prior binary until they can.
+
+Do not combine data-only PostgreSQL dumps. User identities, installation keys, UUIDs, and
+other deployment-wide unique values can collide even when Organization identifiers do not.
+This release deliberately refuses an automatic merge instead of choosing which record wins.
+Where one deployment is mandatory, remain on the prior binary until an application-aware
+export/import workflow has resolved those collisions and validation shows every Organization's
+record counts and Integrations in the destination.
+
+Rollback is non-destructive: stop the new binary, restore the three legacy database settings
+and the former listener addresses, then restart the prior binary. Phase 2 deletes no rows and
+changes no table shape; the added database comment is safe for the prior binary to ignore. If
+an operator-driven export/import changed data, restore the pre-migration backups instead.
+
+Legacy inputs have no scheduled removal in the current release line. Removing one requires a
+separately reviewed change that names the last compatible tag in this page at least one tagged
+release before removal. Until that notice exists, the aliases and the rollback above remain
+supported.
+
+The shared HTTP server allows 10 seconds for headers, 30 seconds to read a request, 30 seconds
+to write a response, and 60 seconds for an idle connection. Intake authentication, payload
+size limits, and operator authorization remain enforced by their route owners inside those
+connection bounds.
+
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `OC_CONFIG_FILE` | No | YAML configuration file. Overridden by `--config`. |
@@ -123,23 +176,23 @@ window. Variables that refer to credentials contain file paths, never secret val
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `OC_HTTP_ADDRESS` | Yes | Health, readiness, and metrics listen address. |
-| `OC_PLACEMENTS` | Yes | Comma-separated `name=dsn-file-path` entries. |
-| `OC_DEFAULT_PLACEMENT` | One placement rule required | Placement for organizations without an explicit assignment. |
-| `OC_PLACEMENT_ASSIGNMENTS` | One placement rule required | Comma-separated `organization=placement` entries. |
+| `OC_HTTP_ADDRESS` | Yes | Shared health, metrics, operator, and intake listen address. |
+| `OC_DATABASE_DSN_FILE` | Yes | File containing the deployment PostgreSQL DSN. |
+| `OC_PLACEMENTS` | Legacy only | Comma-separated `name=dsn-file-path` entries. Every entry must name the same DSN file. |
+| `OC_DEFAULT_PLACEMENT` | Legacy only | Accepted only with the legacy database settings. |
+| `OC_PLACEMENT_ASSIGNMENTS` | Legacy only | Accepted only with the legacy database settings. |
 | `OC_SHUTDOWN_TIMEOUT` | No | Graceful shutdown budget. Default: `15s`. |
 | `OC_SERVICE_NAME` | No | Telemetry service name. Default: `oc-control-plane`. |
 | `OC_OTLP_ENDPOINT` | No | OTLP trace collector as `host:port`. Empty disables trace export. |
 
-`OC_DEFAULT_PLACEMENT` or `OC_PLACEMENT_ASSIGNMENTS` must resolve every served
-organization. OpenCluster does not fall back to another placement after resolution
-fails.
+Do not set `OC_DATABASE_DSN_FILE` together with any legacy database variable. If the legacy
+configuration names multiple distinct databases, consolidate them before upgrading.
 
 ## Operator access
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `OC_OPERATOR_ADDRESS` | No | Operator listener. Empty disables it. |
+| `OC_OPERATOR_ADDRESS` | No | Enables operator routes on `OC_HTTP_ADDRESS`; when set, it must equal that address. |
 | `OC_OPERATOR_TOKEN_FILE` | With bootstrap access | File containing a token of at least 32 characters. |
 | `OC_OPERATOR_TOKEN_ORGANIZATION` | With bootstrap token | Organization the token can access. |
 | `OC_OPERATOR_TOKEN_ROLE` | No | Token role. Default: `admin`. |
@@ -155,7 +208,7 @@ listener private even when a browser-facing proxy is configured.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `OC_INTAKE_ADDRESS` | No | Alert intake listener. Empty disables intake. |
+| `OC_INTAKE_ADDRESS` | No | Enables intake routes on `OC_HTTP_ADDRESS`; when set, it must equal that address. |
 | `OC_INTAKE_PUBLIC_URL` | With intake | Public HTTPS origin used to generate webhook URLs. |
 | `OC_RELAY_ADDRESS` | No | Relay listener. Empty disables Relay access. |
 | `OC_RELAY_SPKI_PINS` | With Relay | Comma-separated public-key digests given to Relays at enrolment. Keep overlapping pins during rotation. |

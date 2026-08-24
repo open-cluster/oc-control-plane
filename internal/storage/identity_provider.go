@@ -134,7 +134,7 @@ type SignInFlow struct {
 }
 
 // ConfigureIdentityProvider records a tenant's way in.
-func (p *Placements) ConfigureIdentityProvider(
+func (p *Database) ConfigureIdentityProvider(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	wanted NewIdentityProvider,
 ) (IdentityProvider, error) {
@@ -188,7 +188,7 @@ func (p *Placements) ConfigureIdentityProvider(
 //
 // A nil ClientSecretSealed leaves the stored credential alone, so an administrator changing a
 // domain policy does not have to re-enter a secret they may not have.
-func (p *Placements) UpdateIdentityProvider(
+func (p *Database) UpdateIdentityProvider(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, wanted NewIdentityProvider,
 ) (IdentityProvider, error) {
@@ -249,7 +249,7 @@ func (p *Placements) UpdateIdentityProvider(
 // RemoveIdentityProvider deletes a tenant's way in. Users provisioned through it keep their
 // memberships: removing a provider is a statement about how people arrive, not about who is
 // already inside.
-func (p *Placements) RemoveIdentityProvider(
+func (p *Database) RemoveIdentityProvider(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -273,7 +273,7 @@ func (p *Placements) RemoveIdentityProvider(
 }
 
 // ListIdentityProviders reports how a tenant's people sign in.
-func (p *Placements) ListIdentityProviders(
+func (p *Database) ListIdentityProviders(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) ([]IdentityProvider, error) {
 	if !principal.MemberOf(organization) {
@@ -292,7 +292,7 @@ func (p *Placements) ListIdentityProviders(
 // signed in yet, which is what they are trying to fix. It returns only what a chooser needs —
 // the identifier and the name — and nothing that would tell an unauthenticated caller whether
 // a tenant exists beyond what the sign-in redirect already has to.
-func (p *Placements) SignInProviders(
+func (p *Database) SignInProviders(
 	ctx context.Context, organization tenancy.Organization,
 ) ([]IdentityProvider, error) {
 	pool, err := p.Pool(organization)
@@ -349,7 +349,7 @@ func readProvider(
 // route. It is the same read as the authenticated one and is named separately so that the two
 // call sites are visible in the route table rather than sharing a function whose caller decides
 // whether it is public.
-func (p *Placements) IdentityProviderForSignIn(
+func (p *Database) IdentityProviderForSignIn(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 ) (IdentityProvider, error) {
 	pool, err := p.Pool(organization)
@@ -361,7 +361,7 @@ func (p *Placements) IdentityProviderForSignIn(
 
 // StartSignIn records an authorization request so its state, verifier and nonce can be checked
 // when the browser comes back.
-func (p *Placements) StartSignIn(
+func (p *Database) StartSignIn(
 	ctx context.Context, organization tenancy.Organization, flow SignInFlow, state string,
 ) error {
 	pool, err := p.Pool(organization)
@@ -389,46 +389,38 @@ func (p *Placements) StartSignIn(
 // expired one and one already redeemed are the same refusal: telling them apart is how a
 // caller learns which half of a guess landed.
 //
-// It is placement-wide in the same sense the connection lookup is: the callback carries the
-// state and nothing that names a tenant, so every placement is asked in a fixed order and the
-// row that is found is itself the authority for the organization.
-func (p *Placements) RedeemSignIn(ctx context.Context, state string) (SignInFlow, error) {
+// The callback carries state and nothing that names a tenant. The consumed row is itself
+// the authority for the organization.
+func (p *Database) RedeemSignIn(ctx context.Context, state string) (SignInFlow, error) {
 	digest := sha256.Sum256([]byte(state))
-
-	for _, name := range p.names() {
-		var (
-			flow     SignInFlow
-			verifier *string
-			nonce    *string
-			request  *string
-		)
-		err := p.pools[name].QueryRow(ctx, `
+	var (
+		flow     SignInFlow
+		verifier *string
+		nonce    *string
+		request  *string
+	)
+	err := p.pool.QueryRow(ctx, `
 			UPDATE sign_in_flow
 			   SET consumed_at = now()
 			 WHERE state_digest = $1 AND consumed_at IS NULL AND expires_at > now()
 			RETURNING flow_id, org_id, provider_id, code_verifier, nonce, request_id,
 			          return_to, expires_at`, digest[:]).Scan(&flow.ID, &flow.Organization,
-			&flow.ProviderID, &verifier, &nonce, &request, &flow.ReturnTo, &flow.ExpiresAt)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			// A placement that cannot be read is reported rather than skipped. Continuing would
-			// turn one database's outage into "this sign-in was never started", which the
-			// operator would answer by trying again forever.
-			return SignInFlow{}, fmt.Errorf("redeeming a sign-in in placement %q: %w", name, err)
-		}
-		flow.CodeVerifier, flow.Nonce, flow.RequestID = orEmptyText(verifier),
-			orEmptyText(nonce), orEmptyText(request)
-		return flow, nil
+		&flow.ProviderID, &verifier, &nonce, &request, &flow.ReturnTo, &flow.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SignInFlow{}, ErrFlowUnknown
 	}
-	return SignInFlow{}, ErrFlowUnknown
+	if err != nil {
+		return SignInFlow{}, fmt.Errorf("redeeming a sign-in: %w", err)
+	}
+	flow.CodeVerifier, flow.Nonce, flow.RequestID = orEmptyText(verifier),
+		orEmptyText(nonce), orEmptyText(request)
+	return flow, nil
 }
 
 // ExpireSignInFlows removes the flows nobody completed. A started sign-in that is never
 // finished is the ordinary case — somebody closed the tab — and without this the table grows
 // by one row per abandoned attempt forever.
-func (p *Placements) ExpireSignInFlows(
+func (p *Database) ExpireSignInFlows(
 	ctx context.Context, organization tenancy.Organization,
 ) (int64, error) {
 	pool, err := p.Pool(organization)

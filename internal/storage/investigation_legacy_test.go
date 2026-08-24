@@ -25,8 +25,8 @@ import (
 func TestAnInvestigationWrittenBeforeConversationsStillReadsBack(t *testing.T) {
 	t.Parallel()
 
-	placements, organization := migratedPlacement(t)
-	pool, err := placements.Pool(organization)
+	database, organization := migratedDatabase(t)
+	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestAnInvestigationWrittenBeforeConversationsStillReadsBack(t *testing.T) {
 		t.Fatalf("writing an investigation in the pre-conversation shape: %v", err)
 	}
 
-	read, err := placements.Investigation(ctx, organization, id)
+	read, err := database.Investigation(ctx, organization, id)
 	if err != nil {
 		t.Fatalf("reading an investigation written before conversations existed: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAnInvestigationWrittenBeforeConversationsStillReadsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("naming a principal: %v", err)
 	}
-	page, err := placements.QueryInvestigations(ctx, member, organization,
+	page, err := database.QueryInvestigations(ctx, member, organization,
 		investigation.Query{Page: investigation.Page{Limit: 50}})
 	if err != nil {
 		t.Fatalf("listing: %v", err)

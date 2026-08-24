@@ -14,8 +14,9 @@ never a name. Any display name is `org_name`, presentation metadata only, and pa
 in nothing.
 _Avoid:_ tenant (as an identifier), customer (as an identifier), organization name as a key.
 
-**Placement** — where an organization's data physically lives. Resolved from the
-organization at startup, never ambient. A placement is a database today.
+**Database** — the deployment's single PostgreSQL store. Every tenant-owned query still
+includes `org_id`; sharing one physical database does not make the Organization boundary
+ambient or optional.
 
 **Label** — optional metadata on an Integration, for grouping and filtering. Never an
 authorization, a credential, a tenant boundary, or a scope.
@@ -226,7 +227,7 @@ every call including refused and truncated ones.
 
 ## Retired vocabulary
 
-These terms named the previous architecture and must not reappear: Connection, Connection
+These terms named the previous architecture and must not reappear: Placement, Connection, Connection
 role, Environment, Evidence Scope (a change-ledger scope and a tool run's scope are
 different, current concepts), Execution locality, EvidenceCandidate, EvidenceItem,
 EvidenceValidation, Evidence plan, CoverageGap (as a persisted record), Completeness

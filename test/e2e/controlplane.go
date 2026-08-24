@@ -40,16 +40,12 @@ type controlPlane struct {
 // it. The relay address is needed before the process exists, because the TLS terminator that
 // fronts it — and therefore the pin the process must advertise — has to be built first.
 func newControlPlane(workDir, dsn string) (*controlPlane, error) {
-	dsnPath := filepath.Join(workDir, "placement.dsn")
+	dsnPath := filepath.Join(workDir, "database.dsn")
 	if err := os.WriteFile(dsnPath, []byte(dsn), 0o600); err != nil {
-		return nil, fmt.Errorf("writing the placement dsn: %w", err)
+		return nil, fmt.Errorf("writing the database dsn: %w", err)
 	}
 
-	httpPort, err := reservePort()
-	if err != nil {
-		return nil, err
-	}
-	relayPort, err := reservePort()
+	httpPort, relayPort, err := reservePorts()
 	if err != nil {
 		return nil, err
 	}
@@ -77,8 +73,7 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 
 	environment := map[string]string{
 		"OC_HTTP_ADDRESS":      c.httpAddress,
-		"OC_PLACEMENTS":        "shared=" + c.dsnPath,
-		"OC_DEFAULT_PLACEMENT": "shared",
+		"OC_DATABASE_DSN_FILE": c.dsnPath,
 		"OC_RELAY_ADDRESS":     c.relayAddress,
 		"OC_RELAY_SPKI_PINS":   spkiPin,
 		"OC_SHUTDOWN_TIMEOUT":  "10s",
@@ -169,17 +164,23 @@ func ready(ctx context.Context, client *http.Client, url string) bool {
 	return response.StatusCode == http.StatusOK
 }
 
-// reservePort finds a port nothing is listening on and releases it again.
+// reservePorts finds two distinct ports nothing is listening on and releases them together.
 //
 // There is a window between releasing and binding in which something else could take it. It
 // is accepted rather than closed because the alternative — handing an already-bound listener
 // to a child process — is platform-specific work for a race that has one loser: a start that
 // fails loudly with an address already in use.
-func reservePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func reservePorts() (int, int, error) {
+	httpListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, fmt.Errorf("reserving a port: %w", err)
+		return 0, 0, fmt.Errorf("reserving an HTTP port: %w", err)
 	}
-	defer func() { _ = listener.Close() }()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	defer func() { _ = httpListener.Close() }()
+	relayListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, 0, fmt.Errorf("reserving a Relay port: %w", err)
+	}
+	defer func() { _ = relayListener.Close() }()
+	return httpListener.Addr().(*net.TCPAddr).Port,
+		relayListener.Addr().(*net.TCPAddr).Port, nil
 }

@@ -303,8 +303,7 @@ func startControlPlaneRunning(
 
 	cfg := config.Config{
 		HTTPAddress:     "127.0.0.1:0",
-		Placements:      map[string]string{"shared": gatedDSN},
-		Assignments:     map[string]string{"org-a": "shared"},
+		DatabaseDSN:     gatedDSN,
 		ShutdownTimeout: 10 * time.Second,
 		ServiceName:     "oc-control-plane-test",
 		// A default sealing key, because the catalog serves a credential-bearing type and
@@ -314,6 +313,17 @@ func startControlPlaneRunning(
 	}
 	if adjust != nil {
 		adjust(&cfg)
+	}
+	if cfg.OperatorAddress != "" {
+		cfg.HTTPAddress = cfg.OperatorAddress
+	} else if cfg.IntakeAddress != "" {
+		cfg.HTTPAddress = cfg.IntakeAddress
+	}
+	if cfg.OperatorAddress != "" {
+		cfg.OperatorAddress = cfg.HTTPAddress
+	}
+	if cfg.IntakeAddress != "" {
+		cfg.IntakeAddress = cfg.HTTPAddress
 	}
 
 	runCtx, stop := context.WithCancel(context.Background())
@@ -379,7 +389,7 @@ func (c *controlPlane) get(t *testing.T, path string) (int, string) {
 }
 
 // createDatabase creates another database on the same server and returns its DSN, so one
-// container can back several independent placements.
+// container can back several independent database.
 func createDatabase(t *testing.T, adminDSN, name string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -455,6 +465,34 @@ func TestControlPlane_StartsAppliesMigrationsAndServes(t *testing.T) {
 	// The schema effect of this start must be visible without querying the database.
 	if !strings.Contains(plane.logs.String(), "migrations applied") {
 		t.Errorf("startup must report the migrations it applied\nlogs:\n%s", plane.logs.String())
+	}
+}
+
+func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
+	plane := startControlPlane(t, func(cfg *config.Config) {
+		cfg.OperatorAddress = cfg.HTTPAddress
+		cfg.IntakeAddress = cfg.HTTPAddress
+	})
+
+	if status, _ := plane.get(t, "/healthz"); status != http.StatusOK {
+		t.Errorf("GET /healthz = %d", status)
+	}
+	if status, _ := plane.get(t, "/operator/v1"); status != http.StatusUnauthorized {
+		t.Errorf("GET /operator/v1 = %d, want authentication refusal from the operator router", status)
+	}
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		plane.baseURL+"/intake/v1/integrations/not-an-id/signals", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST intake route: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode == http.StatusNotFound {
+		t.Errorf("POST intake route = %d, want the intake router to handle it", response.StatusCode)
 	}
 }
 
@@ -581,31 +619,6 @@ func TestControlPlane_ShutdownCompletesAnInFlightRequest(t *testing.T) {
 	}
 }
 
-// The core isolation property, proven through the assembled process rather than only
-// against the storage package: two organizations on two placements reach two databases,
-// and an unassigned one reaches the default.
-func TestControlPlane_ServesSeveralPlacements(t *testing.T) {
-	var dedicated string
-	plane := startControlPlane(t, func(cfg *config.Config) {
-		shared := cfg.Placements["shared"]
-		dedicated = createDatabase(t, shared, "acme")
-		cfg.Placements["dedicated"] = dedicated
-		cfg.Assignments = map[string]string{"org-acme": "dedicated"}
-		cfg.DefaultPlacement = "shared"
-	})
-
-	// Both placements were migrated, and readiness is satisfied by the default.
-	if status, body := plane.get(t, "/readyz"); status != http.StatusOK {
-		t.Fatalf("GET /readyz = %d %s", status, body)
-	}
-
-	logs := plane.logs.String()
-	if !strings.Contains(logs, `"placement":"dedicated"`) ||
-		!strings.Contains(logs, `"placement":"shared"`) {
-		t.Errorf("both placements must be migrated and reported\nlogs:\n%s", logs)
-	}
-}
-
 // Every log line for a request must carry the same identifier, and the client must be able
 // to see it, or an on-call engineer cannot connect a report to a log.
 func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
@@ -708,8 +721,7 @@ func TestRun_RefusesAnUnusableListenAddress(t *testing.T) {
 	occupied := strings.TrimPrefix(plane.baseURL, "http://")
 	cfg := config.Config{
 		HTTPAddress:     occupied,
-		Placements:      map[string]string{"shared": "postgres://u:p@127.0.0.1:1/db?sslmode=disable"},
-		Assignments:     map[string]string{"org-a": "shared"},
+		DatabaseDSN:     "postgres://u:p@127.0.0.1:1/db?sslmode=disable",
 		ShutdownTimeout: time.Second,
 		ServiceName:     "oc-control-plane-test",
 	}

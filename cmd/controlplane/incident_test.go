@@ -52,7 +52,7 @@ func startIncidents(t *testing.T) *incidentPlane {
 		digest := sha256.Sum256([]byte(incidentToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = intakeOrganization
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 
 	address := listeningAddress(t, plane, "listening for alert intake")

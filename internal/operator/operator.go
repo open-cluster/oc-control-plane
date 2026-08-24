@@ -1,15 +1,10 @@
 // Package operator serves the surface an operator uses to see and act on what the control
 // plane knows about their tenant.
 //
-// It owns the listener and the composition of the route table, and nothing else. Who a caller
-// is comes from internal/identity; what they may do comes from internal/authz; what each route
-// means comes from the capability that declares it. One surface deciding who may reach it is
-// the point — a second copy of that decision is a second place for it to be wrong.
-//
-// It is deliberately its own listener, for the same reason the relay endpoint is: it speaks to
-// a different kind of caller and carries different data. Health and metrics are exposed to
-// whatever scrapes them; this is not, and separating the ports is what lets a deployment bind
-// it somewhere reachable only from inside.
+// It owns composition of the route table, and nothing else. Who a caller is comes from
+// internal/identity; what they may do comes from internal/authz; what each route means comes
+// from the capability that declares it. The application mounts the completed router on the
+// shared HTTP listener; no second component repeats its authorization decision.
 //
 // It is NO LONGER cross-tenant by design. It was, and whoever held the one shared token could
 // read and mutate any Organization by editing a path segment. Every route below is scoped to
@@ -49,8 +44,8 @@ const readTimeout = 15 * time.Second
 
 // Handlers is the operator surface's dependencies.
 type Handlers struct {
-	Placements *storage.Placements
-	Logger     *slog.Logger
+	Database *storage.Database
+	Logger   *slog.Logger
 	// Identity resolves credentials, serves the sign-in flow, and owns the identity,
 	// membership, automation and audit routes.
 	Identity identity.Handlers
@@ -183,7 +178,7 @@ func (h Handlers) routesOver(built []contributor) authz.Table {
 func (h Handlers) capabilities() []contributor {
 	return []contributor{
 		integrations.Handlers{
-			Store:         h.Placements,
+			Store:         h.Database,
 			Catalog:       h.Catalog,
 			Logger:        h.Logger,
 			Sealer:        h.Sealer,
@@ -192,18 +187,18 @@ func (h Handlers) capabilities() []contributor {
 			ConsoleURL:    h.ConsoleURL,
 		},
 		incident.Handlers{
-			Store:  h.Placements,
+			Store:  h.Database,
 			Logger: h.Logger,
 		},
 		investigation.Handlers{
-			Store:      h.Placements,
+			Store:      h.Database,
 			Runner:     h.Investigations,
 			Logger:     h.Logger,
-			Events:     h.Placements,
+			Events:     h.Database,
 			WindowLead: h.InvestigationWindowLead,
 		},
 		conversation.Handlers{
-			Store:           h.Placements,
+			Store:           h.Database,
 			Logger:          h.Logger,
 			Enabled:         h.ConversationsEnabled,
 			WindowLead:      h.InvestigationWindowLead,
@@ -263,7 +258,7 @@ func newRequestID() string {
 func (h Handlers) recordRefusal(
 	ctx context.Context, organization tenancy.Organization, event audit.Event,
 ) {
-	if err := h.Placements.RecordEvent(ctx, organization, event); err != nil {
+	if err := h.Database.RecordEvent(ctx, organization, event); err != nil {
 		h.Logger.ErrorContext(ctx, "an authorization refusal could not be recorded",
 			slog.String("organization", organization.String()),
 			slog.String("error", err.Error()))
@@ -310,7 +305,7 @@ func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	trail, err := h.Placements.SessionConflictTrail(ctx, principal, organization, registration,
+	trail, err := h.Database.SessionConflictTrail(ctx, principal, organization, registration,
 		storage.Page{Limit: pageSize(request), After: request.URL.Query().Get("after")})
 	if err != nil {
 		h.fail(writer, request, err)
@@ -341,7 +336,7 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	withdrawal, err := h.Placements.ClearSessionConflict(
+	withdrawal, err := h.Database.ClearSessionConflict(
 		ctx, principal, organization, registration)
 	if err != nil {
 		h.fail(writer, request, err)

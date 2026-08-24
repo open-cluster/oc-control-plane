@@ -75,7 +75,7 @@ type NewAPIToken struct {
 
 // CreateServiceAccount records an automation identity, so that automation runs as something
 // other than a person.
-func (p *Placements) CreateServiceAccount(
+func (p *Database) CreateServiceAccount(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	name, description string,
 ) (ServiceAccount, error) {
@@ -109,7 +109,7 @@ func (p *Placements) CreateServiceAccount(
 }
 
 // ListServiceAccounts reports what automation this tenant has.
-func (p *Placements) ListServiceAccounts(
+func (p *Database) ListServiceAccounts(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) ([]ServiceAccount, error) {
 	if !principal.MemberOf(organization) {
@@ -153,7 +153,7 @@ func (p *Placements) ListServiceAccounts(
 // RemoveServiceAccount deletes an automation identity and, with it, every token it holds. The
 // cascade is the point: an account removed while its tokens still authenticated would be a
 // deletion that deleted nothing that mattered.
-func (p *Placements) RemoveServiceAccount(
+func (p *Database) RemoveServiceAccount(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -180,7 +180,7 @@ func (p *Placements) RemoveServiceAccount(
 
 // IssueAPIToken records a scoped credential. Only the digest is stored; the token itself is
 // shown once by the handler that called this and is not recoverable.
-func (p *Placements) IssueAPIToken(
+func (p *Database) IssueAPIToken(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	wanted NewAPIToken,
 ) (APIToken, error) {
@@ -226,7 +226,7 @@ func (p *Placements) IssueAPIToken(
 
 // ListAPITokens reports a tenant's tokens, including when each was last used, so an operator
 // can retire the ones nobody needs.
-func (p *Placements) ListAPITokens(
+func (p *Database) ListAPITokens(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) ([]APIToken, error) {
 	if !principal.MemberOf(organization) {
@@ -275,7 +275,7 @@ func (p *Placements) ListAPITokens(
 
 // RevokeAPIToken withdraws a credential. It marks rather than deletes, so that a leak
 // investigation can still see when the token was last used and who issued it.
-func (p *Placements) RevokeAPIToken(
+func (p *Database) RevokeAPIToken(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
@@ -302,30 +302,20 @@ func (p *Placements) RevokeAPIToken(
 
 // BearerPrincipal resolves an API token into who is holding it.
 //
-// It is placement-wide for the reason the session lookup is: a bearer token names no tenant,
-// and a caller who could name one could try every one. The row that is found is itself the
-// authority for the organization and the role.
+// A bearer token names no tenant. The row that is found is itself the authority for the
+// organization and the role.
 //
 // A token that is expired, revoked, or belongs to a disabled account is refused with the same
 // error an unknown one gets. Telling them apart tells whoever is presenting a guess which half
 // of it landed.
-func (p *Placements) BearerPrincipal(
+func (p *Database) BearerPrincipal(
 	ctx context.Context, digest []byte,
 ) (authz.Principal, error) {
-	for _, name := range p.names() {
-		principal, err := bearerFrom(ctx, p.pools[name], digest)
-		if errors.Is(err, ErrTokenUnknown) {
-			continue
-		}
-		if err != nil {
-			// Reported rather than skipped: continuing would turn one database's outage into
-			// "this token does not exist", which automation answers by retrying forever against
-			// a credential that is in fact valid.
-			return authz.Principal{}, fmt.Errorf("resolving a token in placement %q: %w", name, err)
-		}
-		return principal, nil
+	principal, err := bearerFrom(ctx, p.pool, digest)
+	if err != nil {
+		return authz.Principal{}, err
 	}
-	return authz.Principal{}, ErrTokenUnknown
+	return principal, nil
 }
 
 func bearerFrom(ctx context.Context, on querier, digest []byte) (authz.Principal, error) {

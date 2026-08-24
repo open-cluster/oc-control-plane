@@ -47,7 +47,7 @@ func (c JobCancellation) String() string {
 // Both cases are decided in one statement, so a job cannot start executing between reading
 // its state and acting on it — which would otherwise cancel a job outright while a relay was
 // already running it, and leave that execution's result with nowhere to go.
-func (p *Placements) RequestJobCancellation(
+func (p *Database) RequestJobCancellation(
 	ctx context.Context, organization tenancy.Organization, jobID uuid.UUID,
 ) (JobCancellation, error) {
 	pool, err := p.Pool(organization)
@@ -82,7 +82,7 @@ func (p *Placements) RequestJobCancellation(
 
 // PendingCancellations lists the executing jobs a session has been asked to stop. It is scoped
 // to the session holding the lease, so no relay is ever told to stop work it is not executing.
-func (p *Placements) PendingCancellations(
+func (p *Database) PendingCancellations(
 	ctx context.Context, organization tenancy.Organization, sessionID uuid.UUID,
 ) ([]JobFence, error) {
 	pool, err := p.Pool(organization)

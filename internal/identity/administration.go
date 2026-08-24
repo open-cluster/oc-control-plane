@@ -57,7 +57,7 @@ func (h Handlers) listProviders(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	providers, err := h.Placements.ListIdentityProviders(ctx, principal, organization)
+	providers, err := h.Database.ListIdentityProviders(ctx, principal, organization)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -92,7 +92,7 @@ func (h Handlers) createProvider(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	created, err := h.Placements.ConfigureIdentityProvider(ctx, principal, organization, wanted)
+	created, err := h.Database.ConfigureIdentityProvider(ctx, principal, organization, wanted)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -127,7 +127,7 @@ func (h Handlers) updateProvider(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	updated, err := h.Placements.UpdateIdentityProvider(ctx, principal, organization, id, wanted)
+	updated, err := h.Database.UpdateIdentityProvider(ctx, principal, organization, id, wanted)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -151,7 +151,7 @@ func (h Handlers) deleteProvider(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.RemoveIdentityProvider(ctx, principal, organization, id); err != nil {
+	if err := h.Database.RemoveIdentityProvider(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
@@ -362,7 +362,7 @@ func (h Handlers) listMembers(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.ListMembers(ctx, principal, organization, storage.Page{
+	list, err := h.Database.ListMembers(ctx, principal, organization, storage.Page{
 		Limit: pageSize(request),
 		After: request.URL.Query().Get("after"),
 	})
@@ -410,7 +410,7 @@ func (h Handlers) setMember(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	member, err := h.Placements.SetMembership(ctx, principal, organization, user, role)
+	member, err := h.Database.SetMembership(ctx, principal, organization, user, role)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -436,7 +436,7 @@ func (h Handlers) removeMember(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.RemoveMembership(ctx, principal, organization, user); err != nil {
+	if err := h.Database.RemoveMembership(ctx, principal, organization, user); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
@@ -461,7 +461,7 @@ func (h Handlers) readPolicy(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	lifetime, retention, err := h.Placements.SessionPolicy(ctx, organization)
+	lifetime, retention, err := h.Database.SessionPolicy(ctx, organization)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -508,7 +508,7 @@ func (h Handlers) writePolicy(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.SetSessionPolicy(
+	if err := h.Database.SetSessionPolicy(
 		ctx, principal, organization, lifetime, body.AuditRetentionDays); err != nil {
 		h.fail(writer, request, err)
 		return

@@ -18,11 +18,11 @@ import (
 func TestOperatorIdentity_AnUnrecordableChangeDoesNotHappen(t *testing.T) {
 	plane := startIdentityPlane(t)
 
-	placements := openPlacement(t, plane.dsn)
+	database := openDatabase(t, plane.dsn)
 	organization := namedOrganization(t, identityOrg)
-	connection, err := placements.Pool(organization)
+	connection, err := database.Pool(organization)
 	if err != nil {
-		t.Fatalf("reaching the placement: %v", err)
+		t.Fatalf("reaching the database: %v", err)
 	}
 
 	// A trigger that refuses exactly the event an integration creation writes, and nothing
@@ -101,11 +101,11 @@ func TestOperatorIdentity_AnEndedSessionSaysWhy(t *testing.T) {
 		"verifiedDomains": []string{"example.test"},
 	})
 
-	placements := openPlacement(t, plane.dsn)
+	database := openDatabase(t, plane.dsn)
 	organization := namedOrganization(t, identityOrg)
-	connection, err := placements.Pool(organization)
+	connection, err := database.Pool(organization)
 	if err != nil {
-		t.Fatalf("reaching the placement: %v", err)
+		t.Fatalf("reaching the database: %v", err)
 	}
 
 	t.Run("an expired session says it expired", func(t *testing.T) {
@@ -238,11 +238,11 @@ func TestOperatorIdentity_ASessionAndItsRecordCommitTogether(t *testing.T) {
 	issuer.assert(t, "sub", "atomic-1")
 	issuer.assert(t, "email", "atomic@example.test")
 
-	placements := openPlacement(t, plane.dsn)
+	database := openDatabase(t, plane.dsn)
 	organization := namedOrganization(t, identityOrg)
-	connection, err := placements.Pool(organization)
+	connection, err := database.Pool(organization)
 	if err != nil {
-		t.Fatalf("reaching the placement: %v", err)
+		t.Fatalf("reaching the database: %v", err)
 	}
 	if _, err := connection.Exec(t.Context(), `
 		CREATE OR REPLACE FUNCTION refuse_sign_in_events() RETURNS trigger AS $$
@@ -283,10 +283,10 @@ func TestOperatorIdentity_ASessionAndItsRecordCommitTogether(t *testing.T) {
 func countSessions(t *testing.T, plane *identityPlane) int {
 	t.Helper()
 
-	placements := openPlacement(t, plane.dsn)
-	connection, err := placements.Pool(namedOrganization(t, identityOrg))
+	database := openDatabase(t, plane.dsn)
+	connection, err := database.Pool(namedOrganization(t, identityOrg))
 	if err != nil {
-		t.Fatalf("reaching the placement: %v", err)
+		t.Fatalf("reaching the database: %v", err)
 	}
 	var rows int
 	if err := connection.QueryRow(t.Context(),

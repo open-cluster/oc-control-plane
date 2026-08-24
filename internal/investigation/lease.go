@@ -64,7 +64,7 @@ type Claim struct {
 	OrgConcurrent int
 }
 
-// Leases is the durable half of claiming. It is placement-wide rather than
+// Leases is the durable half of claiming. It is database-wide rather than
 // organization-scoped, because a worker looks for work across the tenants it serves and
 // does not know which one will have some.
 type Leases interface {

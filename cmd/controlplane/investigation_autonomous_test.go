@@ -73,7 +73,7 @@ func autonomousPlaneWith(
 
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	operatorAddress := freeAddress(t)
-	intakeAddress := freeAddress(t)
+	intakeAddress := operatorAddress
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.OperatorAddress = operatorAddress
 		cfg.IntakeAddress = intakeAddress

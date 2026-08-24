@@ -53,7 +53,7 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	roster, err := h.Placements.ListRelays(ctx, principal, organization, storage.RelayQuery{
+	roster, err := h.Database.ListRelays(ctx, principal, organization, storage.RelayQuery{
 		Page:           storage.Page{Limit: query.Limit, After: query.Cursor},
 		Search:         query.Search,
 		State:          query.Filter("state"),
@@ -123,7 +123,7 @@ func (h Handlers) fleetSummary(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	fleet, err := h.Placements.FleetSummary(ctx, principal, organization, relay.LivenessAllowance,
+	fleet, err := h.Database.FleetSummary(ctx, principal, organization, relay.LivenessAllowance,
 		h.MinimumRelayVersion)
 	if err != nil {
 		h.fail(writer, request, err)
@@ -161,7 +161,7 @@ func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Re
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.QueryIntegrations(ctx, principal, organization,
+	list, err := h.Database.QueryIntegrations(ctx, principal, organization,
 		integrations.Query{
 			Page:  integrations.Page{Limit: query.Limit, After: query.Cursor},
 			Relay: registration,
@@ -209,7 +209,7 @@ func (h Handlers) relayFailures(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.RelayFailures(ctx, principal, organization, registration,
+	list, err := h.Database.RelayFailures(ctx, principal, organization, registration,
 		storage.Page{Limit: query.Limit, After: query.Cursor})
 	if err != nil {
 		h.fail(writer, request, err)
@@ -284,7 +284,7 @@ func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.
 	digest := sha256.Sum256([]byte(token))
 	expiresAt := time.Now().UTC().Add(bootstrapTokenLifetime)
 
-	if err := h.Placements.IssueOperatorBootstrapToken(
+	if err := h.Database.IssueOperatorBootstrapToken(
 		ctx, principal, organization, digest[:], expiresAt); err != nil {
 		h.fail(writer, request, err)
 		return

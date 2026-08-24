@@ -45,7 +45,7 @@ func startSlackEventPlane(t *testing.T, vendor *vendorFake, live bool) *slackEve
 	t.Helper()
 
 	operatorAddress := freeAddress(t)
-	intakeAddress := freeAddress(t)
+	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.OperatorAddress = operatorAddress
@@ -64,7 +64,7 @@ func startSlackEventPlane(t *testing.T, vendor *vendorFake, live bool) *slackEve
 			// surface is generally available.
 			cfg.SlackAgentOrganizations = []string{surfaceOrg}
 		}
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	})
 	return &slackEventPlane{
 		integrationPlane: &integrationPlane{controlPlane: plane, operator: operatorAddress},

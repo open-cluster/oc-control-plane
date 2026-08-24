@@ -66,7 +66,7 @@ type JobOutcome struct {
 //
 // Callers acknowledge only after this returns successfully. Acknowledging first would let a
 // relay stop resending a result that was never durably stored.
-func (p *Placements) RecordResult(
+func (p *Database) RecordResult(
 	ctx context.Context,
 	organization tenancy.Organization,
 	fence JobFence,
@@ -104,7 +104,7 @@ func (p *Placements) RecordResult(
 // to the caller here — unlike enrolment, where telling reasons apart would help an attacker —
 // because each one calls for a different answer to the relay, and getting that answer wrong
 // either discards a result or repeats one.
-func (p *Placements) explainRefusedResult(
+func (p *Database) explainRefusedResult(
 	ctx context.Context,
 	organization tenancy.Organization,
 	fence JobFence,

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 
@@ -32,14 +31,16 @@ import (
 func serve(ctx context.Context, process assembled) error {
 	cfg, logger := process.config, process.logger
 
-	handlers := health.Handlers{
-		Ready:   process.placements.Ping,
-		Metrics: process.telemetry.MetricsHandler,
-		Logger:  logger,
+	handler, err := httpRoutes(process)
+	if err != nil {
+		return err
 	}
 	server := &http.Server{
-		Handler:           handlers.Router(),
+		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       operatorReadTimeout,
+		WriteTimeout:      operatorWriteTimeout,
+		IdleTimeout:       operatorIdleTimeout,
 		BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 
@@ -51,7 +52,7 @@ func serve(ctx context.Context, process assembled) error {
 
 	// One slot per surface that can report a failure. Too few would leave the last goroutines
 	// blocked forever on a send nobody is left to receive.
-	failed := make(chan error, 4)
+	failed := make(chan error, 2)
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil &&
 			!errors.Is(serveErr, http.ErrServerClosed) {
@@ -73,23 +74,6 @@ func serve(ctx context.Context, process assembled) error {
 		return err
 	}
 	defer relays.stop(cfg.ShutdownTimeout, logger)
-
-	// The operator surface is a third listener for the same reason the second one exists: it
-	// reads across tenants and belongs on an interface that health and metrics do not.
-	operators, err := startOperatorEndpoint(process, failed)
-	if err != nil {
-		return err
-	}
-	defer operators.stop(cfg.ShutdownTimeout, logger)
-
-	// Intake is a fourth, and the only one a customer's own infrastructure reaches inbound.
-	// Separating it is what lets a deployment publish alert intake without publishing health,
-	// metrics, the operator surface, or the relay endpoint alongside it.
-	intake, err := startIntakeEndpoint(process, failed)
-	if err != nil {
-		return err
-	}
-	defer intake.stop(cfg.ShutdownTimeout, logger)
 
 	// The callback fires only once EVERY configured surface is bound, because its promise
 	// is "a test can address a port without racing the listener" — and a caller told about
@@ -133,18 +117,10 @@ func serve(ctx context.Context, process assembled) error {
 	// HTTP drain spend the whole budget and leave relay sessions none of it, and would make a
 	// shutdown take twice as long as it was configured to.
 	var stopped sync.WaitGroup
-	stopped.Add(3)
+	stopped.Add(1)
 	go func() {
 		defer stopped.Done()
 		relays.stop(cfg.ShutdownTimeout, logger)
-	}()
-	go func() {
-		defer stopped.Done()
-		operators.stop(cfg.ShutdownTimeout, logger)
-	}()
-	go func() {
-		defer stopped.Done()
-		intake.stop(cfg.ShutdownTimeout, logger)
 	}()
 
 	err = server.Shutdown(drainCtx)
@@ -157,26 +133,43 @@ func serve(ctx context.Context, process assembled) error {
 	return nil
 }
 
-// logMigrations reports the schema effect of this start, so a deployment's schema change
-// is visible without querying the database. Placements are reported in a stable order;
-// ranging a map directly would scramble the output that storage deliberately orders.
-func logMigrations(logger *slog.Logger, applied map[string][]string) {
-	placements := make([]string, 0, len(applied))
-	for placement := range applied {
-		placements = append(placements, placement)
-	}
-	sort.Strings(placements)
+// httpRoutes mounts the existing route owners behind one HTTP listener. Each owner keeps
+// its own authentication, authorization, body limits, and request middleware.
+func httpRoutes(process assembled) (http.Handler, error) {
+	healthRouter := health.Handlers{
+		Ready:   process.database.Ping,
+		Metrics: process.telemetry.MetricsHandler,
+		Logger:  process.logger,
+	}.Router()
 
-	for _, placement := range placements {
-		versions := applied[placement]
-		if len(versions) == 0 {
-			logger.Info("schema current", slog.String("placement", placement))
-			continue
-		}
-		logger.Info("migrations applied",
-			slog.String("placement", placement),
-			slog.Any("versions", versions))
+	mux := http.NewServeMux()
+	mux.Handle("/healthz", healthRouter)
+	mux.Handle("/readyz", healthRouter)
+	mux.Handle("/metrics", healthRouter)
+
+	if process.config.IntakeAddress != "" {
+		mux.Handle("/intake/", intakeRouter(process))
 	}
+	if process.config.OperatorAddress != "" {
+		operatorRoutes, err := operatorRouter(process)
+		if err != nil {
+			return nil, err
+		}
+		mux.Handle("/", operatorRoutes)
+	} else {
+		mux.Handle("/", healthRouter)
+	}
+	return mux, nil
+}
+
+// logMigrations reports the schema effect of this start, so a deployment's schema change
+// is visible without querying the database.
+func logMigrations(logger *slog.Logger, applied []string) {
+	if len(applied) == 0 {
+		logger.Info("schema current")
+		return
+	}
+	logger.Info("migrations applied", slog.Any("versions", applied))
 }
 
 // startRelayEndpoint listens for relays when one is configured. A configuration with no relay
@@ -198,10 +191,10 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 
 	endpoint := &relayEndpoint{
 		server:   grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler())),
-		sessions: relay.NewSessionService(process.placements, process.logger, cfg.InventoryInterval),
+		sessions: relay.NewSessionService(process.database, process.logger, cfg.InventoryInterval),
 	}
 	relayv1.RegisterRelayRegistrationServiceServer(endpoint.server,
-		relay.NewRegistrationService(process.placements, cfg.RelaySPKIPins, process.logger))
+		relay.NewRegistrationService(process.database, cfg.RelaySPKIPins, process.logger))
 	relayv1.RegisterRelaySessionServiceServer(endpoint.server, endpoint.sessions)
 
 	process.logger.Info("listening for relays",
@@ -216,19 +209,9 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 	return endpoint, nil
 }
 
-// startOperatorEndpoint listens for operators when one is configured. A deployment with no
-// operator address exposes nothing, which is the right default for a surface that reads across
-// tenants: it has to be put somewhere deliberately.
-func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEndpoint, error) {
+// operatorRouter assembles the authenticated operator route table.
+func operatorRouter(process assembled) (http.Handler, error) {
 	cfg := process.config
-	if cfg.OperatorAddress == "" {
-		return nil, nil
-	}
-
-	// The operator surface is where credentials enter and are used, so a deployment
-	// serving a credential-bearing catalog without a sealing key is refused HERE, at
-	// startup: the alternative is a setup flow that accepts a token it can only store in
-	// the clear or drop.
 	if bearing := process.catalog.CredentialBearing(); len(bearing) > 0 &&
 		!process.sealer.Configured() {
 		return nil, fmt.Errorf("%s is required: the catalog serves %s, which take a "+
@@ -240,13 +223,8 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 	if err != nil {
 		return nil, err
 	}
-	// The route table becomes a mux HERE, before the listener opens, so a route that cannot be
-	// authorized correctly is a process that refuses to start rather than a route that is
-	// served open. That is the runtime half of "a new route without a declared permission
-	// cannot ship"; the compile-time half is that authz.Privileged takes the permission
-	// positionally, and the gate in internal/gates is the third.
 	router, err := operator.Handlers{
-		Placements:              process.placements,
+		Database:                process.database,
 		Logger:                  process.logger,
 		Identity:                identities,
 		Origins:                 cfg.OperatorAllowedOrigins,
@@ -264,33 +242,7 @@ func startOperatorEndpoint(process assembled, failed chan<- error) (*operatorEnd
 	if err != nil {
 		return nil, fmt.Errorf("assembling the operator surface: %w", err)
 	}
-
-	listener, err := net.Listen("tcp", cfg.OperatorAddress)
-	if err != nil {
-		return nil, fmt.Errorf("listening for operators on %s: %w", cfg.OperatorAddress, err)
-	}
-
-	endpoint := &operatorEndpoint{server: &http.Server{
-		Handler: router,
-		// Bounded at every stage, not just the headers. This port answers across tenants and
-		// its connections are unauthenticated until a request has been read, so a client that
-		// opens one and then goes quiet must not be able to hold it.
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       operatorReadTimeout,
-		WriteTimeout:      operatorWriteTimeout,
-		IdleTimeout:       operatorIdleTimeout,
-	}}
-
-	process.logger.Info("listening for operators",
-		slog.String("address", listener.Addr().String()))
-
-	go func() {
-		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
-			!errors.Is(serveErr, http.ErrServerClosed) {
-			failed <- serveErr
-		}
-	}()
-	return endpoint, nil
+	return router, nil
 }
 
 // operatorIdentity assembles who may reach the operator surface.
@@ -304,7 +256,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	cfg := process.config
 
 	handlers := identity.Handlers{
-		Placements: process.placements,
+		Database:   process.database,
 		Logger:     process.logger,
 		OIDC:       identity.NewOIDC(),
 		PublicURL:  cfg.OperatorPublicURL,
@@ -354,52 +306,15 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	return handlers, nil
 }
 
-// startIntakeEndpoint listens for alert deliveries when one is configured. A deployment with
-// no intake address takes no alerts, which is correct for an instance that only serves relays.
-func startIntakeEndpoint(process assembled, failed chan<- error) (*intakeEndpoint, error) {
+// intakeRouter assembles authenticated Alertmanager and Slack webhook routes.
+func intakeRouter(process assembled) http.Handler {
 	cfg := process.config
-	if cfg.IntakeAddress == "" {
-		return nil, nil
-	}
-
-	listener, err := net.Listen("tcp", cfg.IntakeAddress)
-	if err != nil {
-		return nil, fmt.Errorf("listening for alert intake on %s: %w", cfg.IntakeAddress, err)
-	}
-
-	endpoint := &intakeEndpoint{server: &http.Server{
-		Handler: intake.Handlers{
-			Placements: process.placements,
-			Logger:     process.logger,
-			// The adapter table is assembled beside the catalog: the composition root is
-			// the one place that knows every provider.
-			Adapters: intake.Adapters{
-				integrations.TypeAlertmanager: alertmanager.Adapter{},
-			},
-			// The Slack agent surface, served only where this deployment holds a signing
-			// secret. A deployment with none serves no events endpoint at all rather than
-			// one that refuses everything: an endpoint that exists and refuses is a
-			// configuration to check, and one that does not exist is a deployment nobody
-			// asked to receive events.
-			Slack: slackAgent(cfg),
-		}.Router(),
-		// Bounded at every stage. This is the one surface a customer's infrastructure reaches
-		// inbound, and its connections are unauthenticated until a request has been read, so a
-		// client that opens one and then goes quiet must not be able to hold it.
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       intakeReadTimeout,
-		WriteTimeout:      intakeWriteTimeout,
-		IdleTimeout:       intakeIdleTimeout,
-	}}
-
-	process.logger.Info("listening for alert intake",
-		slog.String("address", listener.Addr().String()))
-
-	go func() {
-		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
-			!errors.Is(serveErr, http.ErrServerClosed) {
-			failed <- serveErr
-		}
-	}()
-	return endpoint, nil
+	return intake.Handlers{
+		Database: process.database,
+		Logger:   process.logger,
+		Adapters: intake.Adapters{
+			integrations.TypeAlertmanager: alertmanager.Adapter{},
+		},
+		Slack: slackAgent(cfg),
+	}.Router()
 }

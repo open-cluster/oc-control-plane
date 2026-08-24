@@ -31,23 +31,21 @@ import (
 // identically, and the credential appeared in no log line. How consumption is implemented is
 // deliberately not asserted, so the implementation can change without rewriting this.
 func TestRelayRegistration(t *testing.T) {
-	// The organization the harness assigns a placement to. An unassigned one is refused
+	// The organization the harness assigns a database to. An unassigned one is refused
 	// exactly like a bad token, which is deliberate — the refusal must not reveal which
 	// organizations exist — and makes a wrong name here look like a registration defect.
 	const organization = "org-a"
 
 	relayAddress := freeAddress(t)
-	var placementDSN string
+	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		for _, dsn := range cfg.Placements {
-			placementDSN = dsn
-		}
+		databaseDSN = cfg.DatabaseDSN
 	})
 
 	token := "bootstrap-token-for-the-registration-test"
-	issueBootstrapToken(t, placementDSN, organization, token)
+	issueBootstrapToken(t, databaseDSN, organization, token)
 
 	client := relayv1.NewRelayRegistrationServiceClient(dialRelay(t, relayAddress))
 	request := &relayv1.RegisterRequest{
@@ -146,30 +144,27 @@ func issueBootstrapToken(t *testing.T, dsn, organization, token string) {
 	defer cancel()
 
 	digest := sha256.Sum256([]byte(token))
-	if err := openPlacement(t, dsn).IssueBootstrapToken(
+	if err := openDatabase(t, dsn).IssueBootstrapToken(
 		ctx, namedOrganization(t, organization), digest[:], time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("issuing the bootstrap token: %v", err)
 	}
 }
 
-// openPlacement connects to the same database the running control plane uses, so a test can
+// openDatabase connects to the same database the running control plane uses, so a test can
 // act as the parts of the system that are not built yet — the operator issuing a token, the
 // planner enqueueing work — through their real storage functions rather than by writing rows.
-func openPlacement(t *testing.T, dsn string) *storage.Placements {
+func openDatabase(t *testing.T, dsn string) *storage.Database {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	placements, err := storage.OpenPlacements(ctx, storage.Layout{
-		Placements:       map[string]string{"seed": dsn},
-		DefaultPlacement: "seed",
-	})
+	database, err := storage.OpenDatabase(ctx, dsn)
 	if err != nil {
-		t.Fatalf("opening the placement: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
-	t.Cleanup(placements.Close)
-	return placements
+	t.Cleanup(database.Close)
+	return database
 }
 
 func dialRelay(t *testing.T, address string) *grpc.ClientConn {

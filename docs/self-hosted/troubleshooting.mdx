@@ -11,7 +11,7 @@ the configuration or remote access that failed.
 | Symptom | Check |
 | --- | --- |
 | Startup exits with an `OC_` variable | Correct the named value or missing paired setting. OpenCluster does not start with invalid configuration. |
-| `/healthz` is `200`, `/readyz` is `503` | Check the PostgreSQL placement, DSN file, network path, and database health. Restarting does not repair the dependency. |
+| `/healthz` is `200`, `/readyz` is `503` | Check the PostgreSQL DSN file, network path, and database health. Restarting does not repair the dependency. |
 | Slack cannot be enabled without a sealing key | Configure a 32-byte `OC_SEALING_KEY_FILE` and restart. |
 
 ## Integrations

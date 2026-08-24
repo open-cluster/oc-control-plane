@@ -80,8 +80,8 @@ func (b Bootstrap) Configured() bool {
 
 // Handlers is this capability's dependencies.
 type Handlers struct {
-	Placements *storage.Placements
-	Logger     *slog.Logger
+	Database *storage.Database
+	Logger   *slog.Logger
 	// OIDC speaks to whatever provider a tenant configured. It holds the caches, so it is one
 	// value for the process rather than one per request.
 	OIDC *OIDC
@@ -141,7 +141,7 @@ func (h Handlers) fromSession(
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	signedIn, err := h.Placements.SessionByToken(ctx, session.Digest(token))
+	signedIn, err := h.Database.SessionByToken(ctx, session.Digest(token))
 	if err != nil {
 		// The refusal says WHICH, because story 5 asks that a session which has run out
 		// returns the operator to sign-in with an explanation. A session that EXPIRED and one
@@ -194,7 +194,7 @@ func (h Handlers) fromBearer(
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	principal, err := h.Placements.BearerPrincipal(ctx, digest[:])
+	principal, err := h.Database.BearerPrincipal(ctx, digest[:])
 	if err != nil {
 		return authz.Principal{}, authz.ErrCredentialRejected
 	}

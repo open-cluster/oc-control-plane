@@ -48,7 +48,7 @@ func (p *pruned) PruneEventsBefore(
 ) (int64, error) {
 	p.calls = append(p.calls, call{organization.String(), before, limit})
 	if p.failFor == organization.String() {
-		return 0, errors.New("the placement is unreachable")
+		return 0, errors.New("the database is unreachable")
 	}
 	held := p.backlog[organization.String()]
 	removed := min(held, int64(limit))
@@ -163,7 +163,7 @@ func TestASweep_LeavesAnEnormousBacklogForTheNextSweepRatherThanHoldingTheWorker
 	}
 }
 
-// Retention is per tenant. One placement being unreachable is not a reason another tenant's
+// Retention is per tenant. One database being unreachable is not a reason another tenant's
 // declared schedule goes unapplied, and the difference between a degraded sweep and a silently
 // suspended one is exactly this.
 func TestASweep_KeepsGoingWhenOneTenantsRecordCannotBeReached(t *testing.T) {
@@ -206,7 +206,7 @@ func TestASweep_RemovesNothingWhenTheSchedulesCannotBeRead(t *testing.T) {
 
 	record := &pruned{
 		backlog: map[string]int64{"org-a": 5},
-		listErr: errors.New("every placement is unreachable"),
+		listErr: errors.New("every database is unreachable"),
 	}
 	quietPruner(record, time.Now()).Sweep(t.Context())
 
@@ -216,7 +216,7 @@ func TestASweep_RemovesNothingWhenTheSchedulesCannotBeRead(t *testing.T) {
 }
 
 // Run stops with its context and does not sweep before its first tick. A control plane that was
-// crash looping would otherwise scan every placement on every restart.
+// crash looping would otherwise scan every database on every restart.
 func TestThePruner_DoesNotSweepBeforeItsFirstTickAndStopsWithItsContext(t *testing.T) {
 	t.Parallel()
 

@@ -251,7 +251,6 @@ func TestAnotherTenantSeesNoInvestigations(t *testing.T) {
 	plane, _ := autonomousPlaneWith(t, &scriptedInvestigatorMain{
 		exchange: &scriptedExchangeMain{},
 	}, func(cfg *config.Config) {
-		cfg.Assignments[neighbourOrg] = "shared"
 	})
 
 	episode := plane.openEpisode(t, "DiskFull", "finger-tenant")

@@ -6,14 +6,13 @@ its edges are, and what must be true before a change ships.
 ## What this is
 
 The OpenCluster control plane: durable truth for organizations, Integrations, Signals,
-incidents and investigations, plus four listeners — health, operator API, alert intake,
-and the Relay endpoint. Customer-side execution lives in the separate Relay repository;
+incidents and investigations, plus one HTTP listener and one Relay gRPC listener. Customer-side execution lives in the separate Relay repository;
 this service speaks its protocol and never touches a customer cluster.
 
 ## Vocabulary
 
 `CONTEXT.md` is the glossary. Use its words exactly; the banned synonyms it lists fail
-review. The retired architecture (Connections, Environments, evidence chains) must not
+review. The retired architecture (Placements, Connections, Environments, evidence chains) must not
 reappear under any spelling.
 
 ## Build, test, verify
@@ -30,7 +29,8 @@ Postgres containers and real listeners; nothing mocks the database.
 
 ## Boundaries the build enforces
 
-- Only `internal/storage` touches the database; placements are resolved, never ambient.
+- Only `internal/storage` touches the deployment database; every tenant-owned query keeps
+  Organization explicit and predicates on `org_id`.
 - The integrations core imports no provider; only `internal/app` assembles the
   catalog. No switch over integration types anywhere.
 - `internal/investigation` never imports `internal/reasoning`; reasoning implements the

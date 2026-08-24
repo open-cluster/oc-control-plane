@@ -58,7 +58,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 
 	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
 	operatorAddress := freeAddress(t)
-	intakeAddress := freeAddress(t)
+	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.OperatorAddress = operatorAddress
@@ -66,7 +66,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		dsn = cfg.Placements["shared"]
+		dsn = cfg.DatabaseDSN
 	}, app.Options{Investigator: investigator})
 
 	surface := &integrationPlane{

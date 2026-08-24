@@ -89,7 +89,7 @@ func (h Handlers) listSCIMGroups(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.DirectoryGroups(ctx, principal, organization, name, start, count)
+	list, err := h.Database.DirectoryGroups(ctx, principal, organization, name, start, count)
 	if err != nil {
 		h.failSCIM(writer, request, err)
 		return
@@ -121,7 +121,7 @@ func (h Handlers) readSCIMGroup(writer http.ResponseWriter, request *http.Reques
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	group, err := h.Placements.DirectoryGroup(ctx, principal, organization, id)
+	group, err := h.Database.DirectoryGroup(ctx, principal, organization, id)
 	if err != nil {
 		h.failSCIM(writer, request, err)
 		return
@@ -150,7 +150,7 @@ func (h Handlers) createSCIMGroup(writer http.ResponseWriter, request *http.Requ
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	created, err := h.Placements.CreateDirectoryGroup(ctx, principal, organization,
+	created, err := h.Database.CreateDirectoryGroup(ctx, principal, organization,
 		strings.TrimSpace(body.DisplayName), strings.TrimSpace(body.ExternalID), members)
 	if err != nil {
 		h.failSCIM(writer, request, err)
@@ -180,7 +180,7 @@ func (h Handlers) replaceSCIMGroup(writer http.ResponseWriter, request *http.Req
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	replaced, err := h.Placements.ReplaceDirectoryGroup(ctx, principal, organization, id,
+	replaced, err := h.Database.ReplaceDirectoryGroup(ctx, principal, organization, id,
 		strings.TrimSpace(body.DisplayName), strings.TrimSpace(body.ExternalID), members)
 	if err != nil {
 		h.failSCIM(writer, request, err)
@@ -238,15 +238,15 @@ func (h Handlers) patchSCIMGroup(writer http.ResponseWriter, request *http.Reque
 		err   error
 	)
 	if replacing {
-		existing, readErr := h.Placements.DirectoryGroup(ctx, principal, organization, id)
+		existing, readErr := h.Database.DirectoryGroup(ctx, principal, organization, id)
 		if readErr != nil {
 			h.failSCIM(writer, request, readErr)
 			return
 		}
-		group, err = h.Placements.ReplaceDirectoryGroup(ctx, principal, organization, id,
+		group, err = h.Database.ReplaceDirectoryGroup(ctx, principal, organization, id,
 			existing.DisplayName, existing.ExternalID, replaceWith)
 	} else {
-		group, err = h.Placements.ChangeDirectoryGroupMembers(
+		group, err = h.Database.ChangeDirectoryGroupMembers(
 			ctx, principal, organization, id, added, removed)
 	}
 	if err != nil {
@@ -268,7 +268,7 @@ func (h Handlers) deleteSCIMGroup(writer http.ResponseWriter, request *http.Requ
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Placements.DeleteDirectoryGroup(ctx, principal, organization, id); err != nil {
+	if err := h.Database.DeleteDirectoryGroup(ctx, principal, organization, id); err != nil {
 		h.failSCIM(writer, request, err)
 		return
 	}
@@ -330,7 +330,7 @@ func (h Handlers) mapSCIMGroupToRole(writer http.ResponseWriter, request *http.R
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	mapped, err := h.Placements.MapDirectoryGroupToRole(ctx, principal, organization, id, role)
+	mapped, err := h.Database.MapDirectoryGroupToRole(ctx, principal, organization, id, role)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -352,7 +352,7 @@ func (h Handlers) listDirectoryGroups(writer http.ResponseWriter, request *http.
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	list, err := h.Placements.DirectoryGroups(ctx, principal, organization, "", 1, scimMaxResults)
+	list, err := h.Database.DirectoryGroups(ctx, principal, organization, "", 1, scimMaxResults)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
