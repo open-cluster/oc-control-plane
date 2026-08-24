@@ -39,6 +39,7 @@ troubleshooting, it is the fastest way to confirm what a deployment is actually 
 | Work | Schedule or trigger |
 | --- | --- |
 | Audit retention | Hourly, using each organization's retention setting |
+| Hosted audit forwarding | Continuously; successful deliveries are removed, while pending and terminal failures remain available for retry or replay independently of local Audit Event retention |
 | Kubernetes change-history retention | Hourly, using `OC_CHANGE_LEDGER_RETENTION_DAYS` |
 | Relay inventory synchronization | `OC_INVENTORY_INTERVAL` |
 | Investigation execution | After an investigation opens, with bounded concurrency |

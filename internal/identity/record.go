@@ -13,7 +13,7 @@ import (
 // It is the only route the Auditor role can reach, which is what makes story 19 true: an
 // auditor's access does not itself become a risk, because there is nothing else their role
 // opens. The events are returned newest first and paged, because the answer to "who disabled
-// this Connection and when" is found by reading backwards from now.
+// this Integration and when" is found by reading backwards from now.
 func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {

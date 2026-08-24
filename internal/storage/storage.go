@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5"
@@ -33,8 +34,13 @@ var ErrUnknownOrganization = errors.New("organization names no tenant")
 
 // Database is the one durable PostgreSQL store owned by a deployment.
 type Database struct {
-	pool *pgxpool.Pool
+	pool            *pgxpool.Pool
+	forwardingAudit atomic.Bool
 }
+
+// EnableAuditForwarding makes subsequent Audit Event writes enqueue the same semantic event
+// in their transaction. It is called once during composition before requests are served.
+func (d *Database) EnableAuditForwarding() { d.forwardingAudit.Store(true) }
 
 // OpenDatabase opens the deployment database. The pool dials lazily; reachability is a
 // readiness concern so a transient outage does not prevent the process from explaining it.

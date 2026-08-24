@@ -8,7 +8,7 @@ import (
 )
 
 // The detail column is the one place in this table a caller supplies free-form structure, and
-// it is written on paths that are holding a secret at the time — a Connection being created
+// it is written on paths that are holding a secret at the time — an Integration being created
 // with its shared secret, a provider being configured with its client secret. A call site that
 // forgot is the failure this exists to make impossible, so the dropping is mechanical rather
 // than remembered.

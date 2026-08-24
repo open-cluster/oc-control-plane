@@ -14,12 +14,27 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/authz"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // The integrations capability owns its vocabulary; this file is its persistence. The
 // contract is asserted here so a drifted method signature is a compile error.
 var _ integrations.Store = (*Database)(nil)
+
+func storedCredentialKeyID(sealed []byte) (string, error) {
+	if len(sealed) == 0 {
+		return "", nil
+	}
+	if sealed[0] == seal.LegacyKeyVersion {
+		return "", nil
+	}
+	identifier, err := seal.EnvelopeKeyID(sealed)
+	if err != nil {
+		return "", errors.New("storing an integration credential: invalid sealed envelope")
+	}
+	return identifier, nil
+}
 
 // integrationColumns is every column an Integration is read from, named once. One list
 // rather than five copies, because a column added to one query and forgotten in another is
@@ -79,26 +94,31 @@ func (p *Database) CreateIntegration(
 				}
 			}
 
+			credentialKeyID, err := storedCredentialKeyID(wanted.CredentialSealed)
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO integration (integration_id, org_id, integration_type_id, name,
 				                         configuration, labels, relay_id,
 				                         webhook_secret_digest, webhook_secret_fingerprint,
 				                         webhook_secret_created_at,
-				                         credential_sealed, credential_fingerprint,
+				                         credential_sealed, credential_key_id, credential_fingerprint,
 				                         credential_created_at,
 				                         status, last_verified_at, verify_note,
 				                         verify_grants, verify_facts, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 				        CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE now() END,
-				        $10, $11,
+				        $10, $11, $12,
 				        CASE WHEN $10::BYTEA IS NULL THEN NULL ELSE now() END,
-				        $12, CASE WHEN $13 THEN now() END, $14, $15, $16, $17)
+				        $13, CASE WHEN $14 THEN now() END, $15, $16, $17, $18)
 				RETURNING `+integrationColumns,
 				identityOrNew(wanted.ID), organization.String(), int16(wanted.Type), wanted.Name,
 				configuration, labels, nullableUUID(wanted.RelayID),
 				wanted.WebhookSecretDigest, nullableText(wanted.WebhookSecretFingerprint),
-				wanted.CredentialSealed, nullableText(wanted.CredentialFingerprint),
-				status, verified, note, grants, facts, wanted.CreatedBy)
+				wanted.CredentialSealed, nullableText(credentialKeyID),
+				nullableText(wanted.CredentialFingerprint), status, verified, note, grants, facts,
+				wanted.CreatedBy)
 
 			created, err := scanIntegration(row, organization.String())
 			switch {
@@ -540,6 +560,10 @@ func (p *Database) ReplaceIntegrationCredential(
 			if err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
+			credentialKeyID, err := storedCredentialKeyID(sealed)
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
@@ -547,20 +571,21 @@ func (p *Database) ReplaceIntegrationCredential(
 				       configuration          = coalesce($4, configuration),
 				       labels                 = coalesce($5, labels),
 				       credential_sealed      = $6,
-				       credential_fingerprint = $7,
+				       credential_key_id      = $7,
+				       credential_fingerprint = $8,
 				       credential_rotated_at  = now(),
-				       status                 = $8,
+				       status                 = $9,
 				       last_verified_at       = now(),
-				       verify_note            = $9,
-				       verify_grants          = $10,
-				       verify_facts           = $11,
+				       verify_note            = $10,
+				       verify_grants          = $11,
+				       verify_facts           = $12,
 				       updated_at             = now()
 				 WHERE integration_id = $1
 				   AND org_id = $2
 				   AND credential_sealed IS NOT NULL
 				RETURNING `+integrationColumns,
 				id, organization.String(), revision.Name, configuration, labels,
-				sealed, fingerprint, int16(verification.Status), verification.Note,
+				sealed, credentialKeyID, fingerprint, int16(verification.Status), verification.Note,
 				grants, facts)
 
 			replaced, err := scanIntegration(row, organization.String())

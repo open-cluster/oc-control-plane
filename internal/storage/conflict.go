@@ -250,7 +250,7 @@ func (p *Database) ClearSessionConflict(
 			"severity": "warning",
 			"effect":   "a relay credential-theft finding was destroyed",
 		},
-	}); err != nil {
+	}, p.forwardingAudit.Load()); err != nil {
 		return 0, err
 	}
 	if err = transaction.Commit(ctx); err != nil {

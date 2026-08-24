@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
@@ -48,12 +49,17 @@ type integrationPlane struct {
 
 func startIntegrationPlane(t *testing.T) *integrationPlane {
 	t.Helper()
+	return startIntegrationPlaneWithOptions(t, app.Options{})
+}
+
+func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integrationPlane {
+	t.Helper()
 
 	operatorAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
 	intakeAddress := operatorAddress
 	var dsn string
-	plane := startControlPlane(t, func(cfg *config.Config) {
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.OperatorAddress = operatorAddress
 		cfg.IntakeAddress = intakeAddress
 		cfg.RelayAddress = relayAddress
@@ -68,7 +74,7 @@ func startIntegrationPlane(t *testing.T) *integrationPlane {
 		// database fails before any query runs, which would leave the cross-tenant
 		// assertions passing against an implementation with no scoping at all.
 		dsn = cfg.DatabaseDSN
-	})
+	}, options)
 
 	connection := dialRelay(t, relayAddress)
 	return &integrationPlane{

@@ -23,7 +23,7 @@ the configuration or remote access that failed.
 | Slack returns `invalid_auth` | Paste a current token and verify it again. |
 | Slack history is empty | Invite the app to the public channel and grant `channels:history`. |
 | GitHub installation is unknown | Confirm the installation ID belongs to the configured App and the App is installed. |
-| A credential cannot be opened | The sealing key changed. Paste the integration credential again. |
+| A credential cannot be opened | Restore the matching former key under `previous_sealing_key_files`, restart, and keep it mounted until every replica reports that credential rewrapping completed. |
 | Delete is refused | Retained operational records depend on the integration. Disable it instead. |
 
 ## Relays and Kubernetes

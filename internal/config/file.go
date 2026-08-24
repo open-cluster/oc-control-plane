@@ -90,13 +90,15 @@ type filePlacement struct {
 }
 
 type fileAuthentication struct {
-	Mode                    string   `yaml:"mode"`
-	BootstrapTokenFile      string   `yaml:"bootstrap_token_file"`
-	BootstrapOrganization   string   `yaml:"bootstrap_organization"`
-	BootstrapRole           string   `yaml:"bootstrap_role"`
-	SealingKeyFile          string   `yaml:"sealing_key_file"`
-	OIDC                    fileOIDC `yaml:"oidc"`
-	LegacyMigrationComplete *bool    `yaml:"legacy_migration_complete"`
+	Mode                    string            `yaml:"mode"`
+	BootstrapTokenFile      string            `yaml:"bootstrap_token_file"`
+	BootstrapOrganization   string            `yaml:"bootstrap_organization"`
+	BootstrapRole           string            `yaml:"bootstrap_role"`
+	SealingKeyFile          string            `yaml:"sealing_key_file"`
+	SealingKeyID            string            `yaml:"sealing_key_id"`
+	PreviousSealingKeyFiles map[string]string `yaml:"previous_sealing_key_files"`
+	OIDC                    fileOIDC          `yaml:"oidc"`
+	LegacyMigrationComplete *bool             `yaml:"legacy_migration_complete"`
 }
 
 type fileOIDC struct {
@@ -212,6 +214,20 @@ func (document fileDocument) environment() map[string]string {
 	set(values, EnvOperatorTokenOrganization, document.Authentication.BootstrapOrganization)
 	set(values, EnvOperatorTokenRole, document.Authentication.BootstrapRole)
 	set(values, EnvSealingKeyFile, document.Authentication.SealingKeyFile)
+	set(values, EnvSealingKeyID, document.Authentication.SealingKeyID)
+	if len(document.Authentication.PreviousSealingKeyFiles) > 0 {
+		identifiers := make([]string, 0, len(document.Authentication.PreviousSealingKeyFiles))
+		for identifier := range document.Authentication.PreviousSealingKeyFiles {
+			identifiers = append(identifiers, identifier)
+		}
+		sort.Strings(identifiers)
+		previous := make([]string, 0, len(identifiers))
+		for _, identifier := range identifiers {
+			previous = append(previous, identifier+"="+
+				document.Authentication.PreviousSealingKeyFiles[identifier])
+		}
+		setList(values, EnvPreviousSealingKeyFiles, previous)
+	}
 	set(values, EnvAuthenticationMode, document.Authentication.Mode)
 	set(values, EnvOIDCIssuer, document.Authentication.OIDC.Issuer)
 	set(values, EnvOIDCClientID, document.Authentication.OIDC.ClientID)

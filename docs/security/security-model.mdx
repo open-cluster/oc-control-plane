@@ -59,7 +59,9 @@ Investigation records retain the source, scope, outcome, references, and summary
 read; they do not retain the model's private reasoning or a permanent bulk copy of every
 source result.
 
-Retention differs by record type. Audit retention is configured per organization.
+Retention differs by record type. Audit retention is configured per organization. When a hosted
+edition enables asynchronous audit forwarding, its pending and terminal delivery queue is a
+separate operational record and remains until successful delivery or explicit replay.
 Kubernetes change history uses the deployment retention setting. Incidents,
 investigations, and their provenance remain part of the operational record.
 

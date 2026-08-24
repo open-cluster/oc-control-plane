@@ -1,6 +1,8 @@
 package seal
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"strings"
 	"testing"
 )
@@ -107,6 +109,112 @@ func TestTheSealedFormatIsVersioned(t *testing.T) {
 	}
 }
 
+func TestKeyringReadsOldKeysAndRewrapsUnderTheActiveKey(t *testing.T) {
+	t.Parallel()
+
+	oldKey := testKey(3)
+	newKey := testKey(7)
+	old, err := NewKeyring(Key{ID: "old", Material: oldKey})
+	if err != nil {
+		t.Fatalf("building old keyring: %v", err)
+	}
+	sealed, err := old.Seal("xoxb-rotating", []byte("integration-a"))
+	if err != nil {
+		t.Fatalf("sealing under old key: %v", err)
+	}
+
+	rotating, err := NewKeyring(
+		Key{ID: "current", Material: newKey},
+		Key{ID: "old", Material: oldKey},
+	)
+	if err != nil {
+		t.Fatalf("building rotating keyring: %v", err)
+	}
+	opened, err := rotating.Open(sealed, []byte("integration-a"))
+	if err != nil || opened != "xoxb-rotating" {
+		t.Fatalf("opening old envelope during rotation: %q, %v", opened, err)
+	}
+
+	rewrapped, changed, err := rotating.Rewrap(sealed, []byte("integration-a"))
+	if err != nil {
+		t.Fatalf("rewrapping: %v", err)
+	}
+	if !changed {
+		t.Fatal("old envelope was not reported as rewrapped")
+	}
+	keyID, err := EnvelopeKeyID(rewrapped)
+	if err != nil || keyID != "current" {
+		t.Fatalf("rewrapped key id = %q, %v; want current", keyID, err)
+	}
+
+	currentOnly, err := NewKeyring(Key{ID: "current", Material: newKey})
+	if err != nil {
+		t.Fatalf("building current keyring: %v", err)
+	}
+	opened, err = currentOnly.Open(rewrapped, []byte("integration-a"))
+	if err != nil || opened != "xoxb-rotating" {
+		t.Fatalf("opening rewrapped envelope without old key: %q, %v", opened, err)
+	}
+	if _, err := currentOnly.Open(sealed, []byte("integration-a")); err == nil {
+		t.Fatal("old envelope opened after the old key was removed")
+	}
+}
+
+func TestRewrapAuthenticatesAnEnvelopeAlreadyNamingTheActiveKey(t *testing.T) {
+	t.Parallel()
+
+	keyring, err := NewKeyring(Key{ID: "current", Material: testKey(5)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := keyring.Seal("credential", []byte("integration-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := append([]byte(nil), sealed...)
+	tampered[len(tampered)-1] ^= 0xff
+	if _, _, err = keyring.Rewrap(tampered, []byte("integration-a")); err == nil {
+		t.Fatal("rewrap accepted a tampered envelope merely because it named the active key")
+	}
+}
+
+func TestKeyringReadsTheVersionOneCompatibilityEnvelope(t *testing.T) {
+	t.Parallel()
+
+	material := testKey(4)
+	legacy := legacyEnvelope(t, material, "legacy-value", []byte("integration-a"))
+	keyring, err := NewKeyring(Key{ID: "current", Material: testKey(8)},
+		Key{ID: "legacy", Material: material})
+	if err != nil {
+		t.Fatalf("building keyring: %v", err)
+	}
+	opened, err := keyring.Open(legacy, []byte("integration-a"))
+	if err != nil || opened != "legacy-value" {
+		t.Fatalf("opening version-one envelope: %q, %v", opened, err)
+	}
+}
+
+func TestKeyringRefusesAmbiguousOrUnsafeKeyIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	material := testKey(1)
+	for _, key := range []Key{
+		{ID: "", Material: material},
+		{ID: "contains space", Material: material},
+		{ID: strings.Repeat("x", 65), Material: material},
+	} {
+		if _, err := NewKeyring(key); err == nil {
+			t.Fatalf("unsafe key identifier %q was accepted", key.ID)
+		}
+	}
+	if _, err := NewKeyring(
+		Key{ID: "same", Material: material},
+		Key{ID: "same", Material: testKey(2)},
+	); err == nil {
+		t.Fatal("duplicate key identifiers were accepted")
+	}
+}
+
 // A deployment with no key cannot hold a client secret, and says so rather than storing one in
 // the clear.
 func TestWithNoKeyNothingIsSealed(t *testing.T) {
@@ -127,13 +235,35 @@ func TestWithNoKeyNothingIsSealed(t *testing.T) {
 func sealerWith(t *testing.T, seed byte) Sealer {
 	t.Helper()
 
-	key := make([]byte, KeyLength)
-	for index := range key {
-		key[index] = seed + byte(index)
-	}
-	sealer, err := New(key)
+	sealer, err := New(testKey(seed))
 	if err != nil {
 		t.Fatalf("building a sealer: %v", err)
 	}
 	return sealer
+}
+
+func testKey(seed byte) []byte {
+	key := make([]byte, KeyLength)
+	for index := range key {
+		key[index] = seed + byte(index)
+	}
+	return key
+}
+
+func legacyEnvelope(t *testing.T, material []byte, plaintext string, binding []byte) []byte {
+	t.Helper()
+	block, err := aes.NewCipher(material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	for index := range nonce {
+		nonce[index] = byte(index + 1)
+	}
+	header := append([]byte{LegacyKeyVersion}, nonce...)
+	return aead.Seal(header, nonce, []byte(plaintext), binding)
 }

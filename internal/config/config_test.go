@@ -87,6 +87,51 @@ func TestLoadProcess_YAMLThenEnvironmentThenCLI(t *testing.T) {
 	}
 }
 
+func TestLoadProcess_SealingKeyringUsesOnlyFileReferences(t *testing.T) {
+	t.Parallel()
+
+	dsn := dsnFile(t, "postgres://user:pw@localhost:5432/shared")
+	active := filepath.Join(t.TempDir(), "active-key")
+	previous := filepath.Join(t.TempDir(), "previous-key")
+	if err := os.WriteFile(active, bytesOf(11, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(previous, bytesOf(22, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := fmt.Sprintf(`
+server:
+  address: 127.0.0.1:8080
+database:
+  dsn_file: %s
+authentication:
+  sealing_key_id: current
+  sealing_key_file: %s
+  previous_sealing_key_files:
+    old: %s
+`, dsn, active, previous)
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err != nil {
+		t.Fatalf("load keyring configuration: %v", err)
+	}
+	if cfg.SealingKeyID != "current" || len(cfg.SealingKey) != 32 {
+		t.Fatalf("active sealing key = %q/%d bytes", cfg.SealingKeyID, len(cfg.SealingKey))
+	}
+	if len(cfg.PreviousSealingKeys) != 1 || cfg.PreviousSealingKeys[0].ID != "old" ||
+		len(cfg.PreviousSealingKeys[0].Material) != 32 {
+		t.Fatalf("previous sealing keys = %#v", cfg.PreviousSealingKeys)
+	}
+}
+
+func bytesOf(value byte, count int) []byte {
+	return []byte(strings.Repeat(string([]byte{value}), count))
+}
+
 func TestLoadProcess_SingleDatabaseFile(t *testing.T) {
 	t.Parallel()
 

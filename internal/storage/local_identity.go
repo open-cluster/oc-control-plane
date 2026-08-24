@@ -93,7 +93,7 @@ func (p *Database) BootstrapLocalAdmin(
 		Detail: audit.Detail{
 			"role": string(authz.Admin), "source": SourceManual.String(), "email": normalized,
 		},
-	}); err != nil {
+	}, p.forwardingAudit.Load()); err != nil {
 		return User{}, nil, err
 	}
 	memberships, err := membershipsOf(ctx, transaction, user.ID)

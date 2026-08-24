@@ -19,7 +19,7 @@ var credentialWords = []string{
 // Detail is the structured context one event carries — the previous and new value of a changed
 // setting, the reason a request was refused, the count something acted on.
 //
-// It never holds a credential and never holds evidence content. That is enforced by Safe
+// It never holds a credential and never holds raw source content. That is enforced by Safe
 // rather than by a rule call sites are asked to remember, because the paths that write these
 // events are precisely the paths holding a secret at the time.
 type Detail map[string]any

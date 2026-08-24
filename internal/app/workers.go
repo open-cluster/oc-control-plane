@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"google.golang.org/grpc"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
@@ -22,6 +24,65 @@ import (
 // Retention is measured in days, so an hour is close enough to the horizon that the surface can
 // honestly say the schedule is enforced, and far enough from it that nothing is spent looking.
 const auditPruneInterval = time.Hour
+
+const auditForwardingInterval = time.Second
+
+const credentialRotationBatch = 50
+
+func startAuditForwarding(process assembled) *backgroundWorker {
+	if process.auditForwarder == nil {
+		return nil
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	worker := audit.ForwardingWorker{
+		Outbox: process.database, Forwarder: process.auditForwarder, Owner: uuid.NewString(),
+		Lease: time.Minute, RetryBase: time.Second, MaxAttempts: 8, Batch: 50,
+		Logger: process.logger,
+	}
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		worker.Run(ctx, auditForwardingInterval)
+	}()
+	process.logger.Info("audit forwarding worker started")
+	return running
+}
+
+func startCredentialRotation(process assembled) *backgroundWorker {
+	if len(process.config.PreviousSealingKeys) == 0 {
+		return nil
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		for {
+			changed, complete, err := process.database.RewrapIntegrationCredentials(
+				ctx, process.sealer, credentialRotationBatch)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				process.logger.Error("credential rotation sweep failed")
+			} else {
+				if changed > 0 {
+					process.logger.Info("integration credentials rewrapped", slog.Int("count", changed))
+				}
+				if complete {
+					process.logger.Info("integration credential rotation complete")
+					return
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(auditForwardingInterval):
+			}
+		}
+	}()
+	process.logger.Info("integration credential rotation started")
+	return running
+}
 
 // startAuditPruner runs the worker that applies each tenant's audit retention schedule.
 //

@@ -1,8 +1,5 @@
-// Package seal holds the one mechanism for a credential that must be PRESENTED rather
-// than compared: AES-256-GCM under a key the deployment names as a file. Every other
-// credential in this product is digested, because it is only ever compared against; a
-// secret that has to be read back — an identity provider's client secret, an
-// Integration's outbound credential — is sealed with this instead.
+// Package seal holds the one mechanism for a credential that must be presented rather
+// than compared: versioned AES-256-GCM envelopes under deployment keys.
 package seal
 
 import (
@@ -13,78 +10,97 @@ import (
 	"fmt"
 )
 
-// KeyLength is the key size this build uses. AES-256 rather than AES-128 because the key
-// is configuration read from a file, so the larger one costs nothing anybody notices.
-const KeyLength = 32
+const (
+	KeyLength             = 32
+	LegacyKeyVersion byte = 1
+	EnvelopeVersion  byte = 2
+	KeyVersion            = EnvelopeVersion
+	maxKeyIDLength        = 64
+)
 
-// KeyVersion is the version every seal writes as the blob's leading byte. There is one
-// held key today; when rotation arrives, a new version's key joins the sealer and rows
-// are re-wrapped under it one by one — the byte is what makes that a migration instead
-// of a mass of blobs nothing can attribute to a key.
-const KeyVersion byte = 1
-
-// ErrNoKey reports a deployment asked to hold a presentable secret with no key configured
-// to seal it under. It is a refusal rather than a fallback to storing the secret in the
-// clear.
 var ErrNoKey = errors.New("no sealing key is configured")
 
-// Sealer holds the key presentable secrets are stored under.
-//
-// A sealed secret is ENCRYPTED rather than digested because it has to be PRESENTED —
-// to an identity provider's token endpoint, to a vendor's API — so the process must be
-// able to read it back; every other credential here is only ever compared against, and
-// a one-way digest suffices.
-//
-// That makes the key the thing that matters. It is read from a file the deployment names, in
-// the same shape a database's DSN is, and never from an environment value.
+// Key names one AES-256 key. ID is durable envelope metadata, not secret material.
+type Key struct {
+	ID       string
+	Material []byte
+}
+
+// Sealer writes with one active key and reads every retained key.
 type Sealer struct {
-	block cipher.AEAD
+	active string
+	keys   map[string]cipher.AEAD
 }
 
-// New builds a sealer from the configured key.
-func New(key []byte) (Sealer, error) {
-	if len(key) != KeyLength {
-		return Sealer{}, fmt.Errorf("%w: the key must be exactly %d bytes",
-			ErrNoKey, KeyLength)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return Sealer{}, fmt.Errorf("seal: building the cipher: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return Sealer{}, fmt.Errorf("seal: building the cipher: %w", err)
-	}
-	return Sealer{block: aead}, nil
+// New preserves the original one-key construction boundary and can read version-1 rows.
+func New(material []byte) (Sealer, error) {
+	return NewKeyring(Key{ID: "default", Material: material})
 }
 
-// Configured reports whether this deployment can hold a presentable secret at all.
-func (s Sealer) Configured() bool { return s.block != nil }
+// NewKeyring builds a sealer whose first key is active and remaining keys are read-only.
+func NewKeyring(active Key, previous ...Key) (Sealer, error) {
+	all := append([]Key{active}, previous...)
+	keys := make(map[string]cipher.AEAD, len(all))
+	for _, key := range all {
+		if !validKeyID(key.ID) {
+			return Sealer{}, errors.New("seal: key id must contain 1-64 letters, digits, '.', '_' or '-'")
+		}
+		if _, exists := keys[key.ID]; exists {
+			return Sealer{}, fmt.Errorf("seal: key id %q is configured more than once", key.ID)
+		}
+		if len(key.Material) != KeyLength {
+			return Sealer{}, fmt.Errorf("%w: key %q must be exactly %d bytes", ErrNoKey, key.ID, KeyLength)
+		}
+		block, err := aes.NewCipher(append([]byte(nil), key.Material...))
+		if err != nil {
+			return Sealer{}, fmt.Errorf("seal: building key %q: %w", key.ID, err)
+		}
+		aead, err := cipher.NewGCM(block)
+		if err != nil {
+			return Sealer{}, fmt.Errorf("seal: building key %q: %w", key.ID, err)
+		}
+		keys[key.ID] = aead
+	}
+	return Sealer{active: active.ID, keys: keys}, nil
+}
 
-// Seal encrypts a secret for storage as [key version][nonce][ciphertext]. The nonce is
-// random per call, so sealing the same secret twice produces different bytes and the
-// column leaks nothing by comparison.
-//
-// binding ties the sealed bytes to the row they belong to — an integration's ID — as
-// GCM additional authenticated data: a blob copied onto another row refuses to open
-// there. Open must be given the same binding. nil is a secret whose row identity does
-// not exist at seal time; it is bound to nothing.
+func validKeyID(id string) bool {
+	if len(id) == 0 || len(id) > maxKeyIDLength {
+		return false
+	}
+	for _, character := range id {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '.' || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (s Sealer) Configured() bool { return s.active != "" && len(s.keys) > 0 }
+
+// ActiveKeyID is the durable identifier new envelopes name.
+func (s Sealer) ActiveKeyID() string { return s.active }
+
+// Seal encrypts under the active key and binds the ciphertext to its owning record.
 func (s Sealer) Seal(plaintext string, binding []byte) ([]byte, error) {
 	if !s.Configured() {
 		return nil, ErrNoKey
 	}
-	nonce := make([]byte, s.block.NonceSize())
+	block := s.keys[s.active]
+	nonce := make([]byte, block.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("seal: minting a nonce: %w", err)
 	}
-	header := append([]byte{KeyVersion}, nonce...)
-	return s.block.Seal(header, nonce, []byte(plaintext), binding), nil
+	header := make([]byte, 0, 2+len(s.active)+len(nonce))
+	header = append(header, EnvelopeVersion, byte(len(s.active)))
+	header = append(header, s.active...)
+	header = append(header, nonce...)
+	return block.Seal(header, nonce, []byte(plaintext), binding), nil
 }
 
-// Open reads a stored secret back, under the same binding it was sealed with. A value
-// that does not authenticate is refused rather than returned corrupted: GCM's tag is
-// what tells a wrong key, a wrong binding and a tampered column apart from a secret,
-// and all three are failures rather than something to present anywhere.
+// Open authenticates either the current envelope or the version-1 compatibility envelope.
 func (s Sealer) Open(sealed []byte, binding []byte) (string, error) {
 	if !s.Configured() {
 		return "", ErrNoKey
@@ -92,21 +108,83 @@ func (s Sealer) Open(sealed []byte, binding []byte) (string, error) {
 	if len(sealed) == 0 {
 		return "", errors.New("seal: the sealed value is empty")
 	}
-	if sealed[0] != KeyVersion {
-		// Named so a half-rotated deployment self-diagnoses: the row says which key it
-		// needs, and this deployment does not hold it.
-		return "", fmt.Errorf("seal: the value is sealed under key version %d, which this "+
-			"deployment does not hold", sealed[0])
+	switch sealed[0] {
+	case LegacyKeyVersion:
+		return s.openLegacy(sealed, binding)
+	case EnvelopeVersion:
+		return s.openCurrent(sealed, binding)
+	default:
+		return "", fmt.Errorf("seal: unsupported envelope version %d", sealed[0])
 	}
-	size := s.block.NonceSize()
-	if len(sealed) < 1+size {
-		return "", errors.New("seal: the sealed value is too short to hold a nonce")
-	}
-	plaintext, err := s.block.Open(nil, sealed[1:1+size], sealed[1+size:], binding)
+}
+
+func (s Sealer) openCurrent(sealed []byte, binding []byte) (string, error) {
+	keyID, offset, err := envelopeKeyID(sealed)
 	if err != nil {
-		// The cause is deliberately dropped. It distinguishes a wrong key from a corrupted
-		// value, and neither is a fact worth putting where a log aggregator can read it.
+		return "", err
+	}
+	block, exists := s.keys[keyID]
+	if !exists {
+		return "", fmt.Errorf("seal: key %q is not configured", keyID)
+	}
+	if len(sealed) < offset+block.NonceSize()+block.Overhead() {
+		return "", errors.New("seal: the sealed value is too short")
+	}
+	nonce := sealed[offset : offset+block.NonceSize()]
+	plaintext, openErr := block.Open(nil, nonce, sealed[offset+block.NonceSize():], binding)
+	if openErr != nil {
 		return "", errors.New("seal: the stored secret could not be opened")
 	}
 	return string(plaintext), nil
+}
+
+func (s Sealer) openLegacy(sealed []byte, binding []byte) (string, error) {
+	for _, block := range s.keys {
+		if len(sealed) < 1+block.NonceSize()+block.Overhead() {
+			continue
+		}
+		nonce := sealed[1 : 1+block.NonceSize()]
+		plaintext, err := block.Open(nil, nonce, sealed[1+block.NonceSize():], binding)
+		if err == nil {
+			return string(plaintext), nil
+		}
+	}
+	return "", errors.New("seal: the stored secret could not be opened")
+}
+
+// EnvelopeKeyID reports the non-secret key identifier on a current envelope.
+func EnvelopeKeyID(sealed []byte) (string, error) {
+	keyID, _, err := envelopeKeyID(sealed)
+	return keyID, err
+}
+
+func envelopeKeyID(sealed []byte) (string, int, error) {
+	if len(sealed) < 2 || sealed[0] != EnvelopeVersion {
+		return "", 0, errors.New("seal: the value is not a current envelope")
+	}
+	length := int(sealed[1])
+	if length == 0 || length > maxKeyIDLength || len(sealed) < 2+length {
+		return "", 0, errors.New("seal: the envelope has an invalid key id")
+	}
+	keyID := string(sealed[2 : 2+length])
+	if !validKeyID(keyID) {
+		return "", 0, errors.New("seal: the envelope has an invalid key id")
+	}
+	return keyID, 2 + length, nil
+}
+
+// Rewrap returns an envelope under the active key.
+func (s Sealer) Rewrap(sealed []byte, binding []byte) ([]byte, bool, error) {
+	plaintext, err := s.Open(sealed, binding)
+	if err != nil {
+		return nil, false, err
+	}
+	if keyID, keyErr := EnvelopeKeyID(sealed); keyErr == nil && keyID == s.active {
+		return append([]byte(nil), sealed...), false, nil
+	}
+	rewrapped, err := s.Seal(plaintext, binding)
+	if err != nil {
+		return nil, false, err
+	}
+	return rewrapped, true, nil
 }

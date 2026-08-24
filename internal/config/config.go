@@ -1,6 +1,6 @@
 // Package config loads and validates the control plane's process configuration from the
-// environment. Configuration is non-secret with one deliberate exception: a placement's
-// connection string carries a password, so placements name a FILE holding the DSN rather
+// environment. Configuration is non-secret with one deliberate exception: the database
+// connection string carries a password, so configuration names a file holding the DSN rather
 // than the DSN itself. No environment value ever carries a credential, and no error ever
 // quotes a DSN file's contents — a failed start must not write a password into a log.
 package config
@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -92,6 +91,10 @@ const (
 	// so they are encrypted rather than digested, and this names the file the key is read
 	// from.
 	EnvSealingKeyFile = "OC_SEALING_KEY_FILE"
+	EnvSealingKeyID   = "OC_SEALING_KEY_ID"
+	// Previous sealing keys are id=file references used only while stored credentials are
+	// rewrapped. The values are paths, never key material.
+	EnvPreviousSealingKeyFiles = "OC_PREVIOUS_SEALING_KEY_FILES"
 
 	// EnvSlackAPIURL overrides where the Slack provider reaches its vendor. It exists for
 	// tests and for API-compatible proxies; empty means Slack's own origin.
@@ -289,7 +292,9 @@ type Config struct {
 	// SealingKey seals presentable credentials at rest: an identity provider's client
 	// secret, an integration's outbound token. Empty means this deployment cannot hold
 	// one, and submitting one is refused with that reason rather than stored in the clear.
-	SealingKey []byte
+	SealingKeyID        string
+	SealingKey          []byte
+	PreviousSealingKeys []SealingKey
 
 	// SlackAPIURL is where the Slack provider reaches its vendor; empty means Slack's own
 	// origin. It exists so a test can stand a fake where slack.com would be.
@@ -392,6 +397,12 @@ type Config struct {
 	MinimumRelayVersion string
 }
 
+// SealingKey is one retained read key during credential rotation.
+type SealingKey struct {
+	ID       string
+	Material []byte
+}
+
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
 // value, failing on the first problem and naming the offending variable.
 func Load(lookup func(string) (string, bool)) (Config, error) {
@@ -486,7 +497,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = authentication(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
-	if cfg.SealingKey, err = sealingKey(lookup); err != nil {
+	if cfg.SealingKeyID, cfg.SealingKey, cfg.PreviousSealingKeys, err = sealingKeys(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
@@ -694,15 +705,9 @@ func placements(lookup func(string) (string, bool)) (map[string]string, error) {
 // rather than wrapped, because the underlying error can quote file contents — which for
 // this file is a database password.
 func readDSN(path string) (string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := (MountedSecretSource{}).Read("", path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errors.New("dsn file does not exist")
-		}
-		if errors.Is(err, os.ErrPermission) {
-			return "", errors.New("dsn file is not readable")
-		}
-		return "", errors.New("dsn file could not be read")
+		return "", fmt.Errorf("dsn %w", err)
 	}
 	dsn := strings.TrimSpace(string(raw))
 	if dsn == "" {
@@ -763,15 +768,9 @@ func defaultPlacement(lookup func(string) (string, bool), known map[string]strin
 // because the underlying error can quote the file's contents — and for this file those
 // contents are the secret.
 func readSecretFile(path string) (string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := (MountedSecretSource{}).Read("", path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errors.New("file does not exist")
-		}
-		if errors.Is(err, os.ErrPermission) {
-			return "", errors.New("file is not readable")
-		}
-		return "", errors.New("file could not be read")
+		return "", err
 	}
 	value := strings.TrimSpace(string(raw))
 	if value == "" {
@@ -992,9 +991,9 @@ func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 		return "", nil, fmt.Errorf("%s is required when %s is set",
 			EnvGitHubAppKeyFile, EnvGitHubAppID)
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := (MountedSecretSource{}).Read(EnvGitHubAppKeyFile, path)
 	if err != nil {
-		return "", nil, fmt.Errorf("%s: the key file could not be read", EnvGitHubAppKeyFile)
+		return "", nil, err
 	}
 	if len(raw) == 0 {
 		return "", nil, fmt.Errorf("%s: the key file is empty", EnvGitHubAppKeyFile)

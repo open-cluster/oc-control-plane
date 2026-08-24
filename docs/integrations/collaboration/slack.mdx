@@ -140,8 +140,8 @@ unaffected and stays readable in the console.
   `channels:history` is granted.
 - **No message search:** use a user token with `search:read`, or rely on channel and
   thread reads.
-- **Stored credential cannot be opened:** the deployment sealing key changed; paste the
-  token again.
+- **Stored credential cannot be opened:** restore the matching former sealing key under
+  `previous_sealing_key_files`, restart, and retain it until credential rewrapping completes.
 
 ## Replace or disconnect
 

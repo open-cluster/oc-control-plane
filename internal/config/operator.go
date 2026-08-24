@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 )
 
@@ -167,14 +166,58 @@ func allowedOrigins(lookup func(string) (string, bool)) ([]string, error) {
 // The file holds the key as base64 or as raw bytes; both are accepted because a key generated
 // with openssl and one generated with head -c 32 are both what an operator will reach for. No
 // error here quotes the file's contents.
-func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
+func sealingKeys(lookup func(string) (string, bool)) (string, []byte, []SealingKey, error) {
 	path, _ := lookup(EnvSealingKeyFile)
 	if strings.TrimSpace(path) == "" {
-		return nil, nil
+		if raw, _ := lookup(EnvPreviousSealingKeyFiles); strings.TrimSpace(raw) != "" {
+			return "", nil, nil, fmt.Errorf("%s requires %s", EnvPreviousSealingKeyFiles,
+				EnvSealingKeyFile)
+		}
+		return "", nil, nil, nil
 	}
-	raw, err := os.ReadFile(strings.TrimSpace(path))
+	identifier, _ := lookup(EnvSealingKeyID)
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		identifier = "default"
+	}
+	active, err := readSealingKey(EnvSealingKeyFile, strings.TrimSpace(path))
 	if err != nil {
-		return nil, fmt.Errorf("%s: the key file could not be read", EnvSealingKeyFile)
+		return "", nil, nil, err
+	}
+
+	rawPrevious, _ := lookup(EnvPreviousSealingKeyFiles)
+	entries, err := decodeList(rawPrevious)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("%s: invalid list: %w", EnvPreviousSealingKeyFiles, err)
+	}
+	previous := make([]SealingKey, 0, len(entries))
+	seen := map[string]struct{}{identifier: {}}
+	for _, entry := range entries {
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return "", nil, nil, fmt.Errorf("%s: each entry must be id=file",
+				EnvPreviousSealingKeyFiles)
+		}
+		keyID := strings.TrimSpace(parts[0])
+		if _, duplicate := seen[keyID]; duplicate {
+			return "", nil, nil, fmt.Errorf("%s: key id %q is configured more than once",
+				EnvPreviousSealingKeyFiles, keyID)
+		}
+		material, readErr := readSealingKey(EnvPreviousSealingKeyFiles,
+			strings.TrimSpace(parts[1]))
+		if readErr != nil {
+			return "", nil, nil, readErr
+		}
+		seen[keyID] = struct{}{}
+		previous = append(previous, SealingKey{ID: keyID, Material: material})
+	}
+	return identifier, active, previous, nil
+}
+
+func readSealingKey(setting, path string) ([]byte, error) {
+	raw, err := (MountedSecretSource{}).Read(setting, path)
+	if err != nil {
+		return nil, err
 	}
 
 	trimmed := strings.TrimSpace(string(raw))
@@ -186,7 +229,7 @@ func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
 		return raw, nil
 	}
 	return nil, fmt.Errorf("%s: the key must be %d bytes, raw or base64-encoded",
-		EnvSealingKeyFile, sealingKeyLength)
+		setting, sealingKeyLength)
 }
 
 // sealingKeyLength is AES-256's key size. It is stated here rather than imported so that

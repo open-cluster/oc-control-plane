@@ -212,6 +212,15 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			"the consumed row is the authority for the organization returned to the callback",
 		"LegacyIdentityActive": "startup-wide compatibility check; returns only whether any " +
 			"retained legacy identity configuration remains active",
+		"EnableAuditForwarding": "startup-only deployment configuration; reaches no tenant data",
+		"ClaimAuditDeliveries": "deployment worker discovers ready events across tenants; each " +
+			"event carries its authoritative organization and no caller identifier selects one",
+		"CompleteAuditDelivery": "internal leased-worker completion by an event it just claimed; " +
+			"the unguessable event id and lease owner must both match",
+		"FailAuditDelivery": "internal leased-worker retry by an event it just claimed; the " +
+			"unguessable event id and lease owner must both match",
+		"RewrapIntegrationCredentials": "bounded deployment key-rotation scan; discovery crosses " +
+			"organizations and every update predicates on org_id and integration_id",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {

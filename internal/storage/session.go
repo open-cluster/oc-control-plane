@@ -74,7 +74,7 @@ func (p *Database) IssueSession(
 		Outcome:       audit.OutcomeAllowed,
 		SourceAddress: issued.Address,
 		Detail:        detail,
-	}); err != nil {
+	}, p.forwardingAudit.Load()); err != nil {
 		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -190,7 +190,7 @@ func (p *Database) DeleteSession(
 		Outcome:       audit.OutcomeAllowed,
 		SourceAddress: principal.SourceAddress(),
 		RequestID:     principal.RequestID(),
-	}); err != nil {
+	}, p.forwardingAudit.Load()); err != nil {
 		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {

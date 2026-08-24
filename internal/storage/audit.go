@@ -41,16 +41,31 @@ func (p *Database) RecordEvent(
 	if err != nil {
 		return err
 	}
-	return writeEvent(ctx, pool, event)
+	if !p.forwardingAudit.Load() {
+		return writeEvent(ctx, pool, event, false)
+	}
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning an audit write: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	if err = writeEvent(ctx, transaction, event, true); err != nil {
+		return err
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("committing an audit write: %w", err)
+	}
+	return nil
 }
 
 // writeEvent inserts one row. It is deliberately not exported: the two ways an event reaches
 // the database are RecordEvent and audited, and a third would be a way to record a change
 // outside its transaction.
-func writeEvent(ctx context.Context, on executor, event audit.Event) error {
+func writeEvent(ctx context.Context, on executor, event audit.Event, forward bool) error {
 	bounded := event.Bounded()
+	bounded.Detail = orEmptyDetail(bounded.Detail)
 
-	detail, err := json.Marshal(orEmptyDetail(bounded.Detail))
+	detail, err := json.Marshal(bounded.Detail)
 	if err != nil {
 		return fmt.Errorf("%w: encoding the detail: %w", ErrAuditFailed, err)
 	}
@@ -58,17 +73,30 @@ func writeEvent(ctx context.Context, on executor, event audit.Event) error {
 	if occurred.IsZero() {
 		occurred = time.Now().UTC()
 	}
+	bounded.OccurredAt = occurred
 
+	eventID := uuid.New()
 	if _, err := on.Exec(ctx, `
 		INSERT INTO audit_event (event_id, org_id, actor_kind, actor_id,
 		                         actor_display_name, action, target_kind, target_id, outcome,
 		                         source_address, request_id, detail, occurred_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-		uuid.New(), bounded.Organization, int16(bounded.Actor.Kind), bounded.Actor.ID,
+		eventID, bounded.Organization, int16(bounded.Actor.Kind), bounded.Actor.ID,
 		bounded.Actor.DisplayName, string(bounded.Action), string(bounded.Target.Kind),
 		bounded.Target.ID, int16(bounded.Outcome), bounded.SourceAddress, bounded.RequestID,
 		detail, occurred); err != nil {
 		return fmt.Errorf("%w: %w", ErrAuditFailed, err)
+	}
+	if forward {
+		payload, marshalErr := json.Marshal(audit.Recorded{Event: bounded, ID: eventID.String()})
+		if marshalErr != nil {
+			return fmt.Errorf("%w: encoding the forwarding event: %w", ErrAuditFailed, marshalErr)
+		}
+		if _, execErr := on.Exec(ctx, `
+			INSERT INTO audit_forwarding_outbox (event_id, org_id, event_payload)
+			VALUES ($1, $2, $3)`, eventID, bounded.Organization, payload); execErr != nil {
+			return fmt.Errorf("%w: enqueueing the forwarding event: %w", ErrAuditFailed, execErr)
+		}
 	}
 	return nil
 }
@@ -134,7 +162,7 @@ func audited[T any](
 		SourceAddress: principal.SourceAddress(),
 		RequestID:     principal.RequestID(),
 		Detail:        detail,
-	}); err != nil {
+	}, p.forwardingAudit.Load()); err != nil {
 		return zero, err
 	}
 	if err := transaction.Commit(ctx); err != nil {

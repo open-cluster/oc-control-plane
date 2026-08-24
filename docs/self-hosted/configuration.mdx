@@ -14,7 +14,7 @@ in this order, with later sources taking precedence:
 Do not put credentials in YAML or environment values. Settings ending in `_file` name a
 mounted file containing the secret. A Kubernetes Secret, Vault agent, External Secrets
 Operator, or cloud secret manager can project that file without OpenCluster embedding its
-client.
+client. Production configuration does not accept secret values from the environment.
 
 ## YAML configuration
 
@@ -51,7 +51,10 @@ authentication:
   bootstrap_token_file: "/run/secrets/operator-token"
   bootstrap_organization: "example-org"
   bootstrap_role: "admin"
+  sealing_key_id: "current"
   sealing_key_file: "/run/secrets/sealing-key"
+  previous_sealing_key_files:
+    prior: "/run/secrets/prior-sealing-key"
   oidc:
     issuer: "https://identity.example.com"
     client_id: "opencluster"
@@ -111,6 +114,23 @@ telemetry:
 Unknown keys and additional YAML documents refuse startup. This prevents a misspelled setting
 from being silently ignored. When the same setting appears in YAML and an environment variable,
 the environment value wins. `--server-address` overrides both for local development.
+
+### Rotate the sealing key
+
+First roll out this release to every replica while the existing key remains active. Do not
+start a rotation while an older replica can still write version-1 envelopes.
+
+Give the new key a new `authentication.sealing_key_id` and point `sealing_key_file` at its
+mounted file. Put every key that may still have encrypted Integration credentials under
+`previous_sealing_key_files`, keyed by its former ID. OpenCluster reads old envelopes and
+rewraps credentials in bounded database batches under the active key; fingerprints do not
+change. Roll the new keyring configuration to every replica. Keep each previous key mounted
+until all replicas report that rotation completed, then remove that map entry and restart.
+
+Existing credentials written before key IDs were introduced use the implicit `default` key ID.
+During the first rotation, list the former key as `default`. Back up PostgreSQL before rotating.
+A prior binary cannot read credentials created or rewrapped into the new envelope, so rollback
+after rotation requires restoring that backup as well as the prior binary and configuration.
 
 ## Authenticate people
 
@@ -240,6 +260,8 @@ configuration names multiple distinct databases, consolidate them before upgradi
 | `OC_OPERATOR_CONSOLE_URL` | With browser sign-in | Console URL used after sign-in and after connecting an integration. |
 | `OC_OPERATOR_ALLOWED_ORIGINS` | With browser console | Origins allowed for cookie-authenticated unsafe requests. |
 | `OC_SEALING_KEY_FILE` | With operator listener | File containing a 32-byte raw or base64 key for stored credentials. The operator surface can accept Slack credentials, so it refuses to start without this key. |
+| `OC_SEALING_KEY_ID` | No | Non-secret identifier written into new credential envelopes. Default: `default`. Change it when rotating the sealing key. |
+| `OC_PREVIOUS_SEALING_KEY_FILES` | During key rotation | Comma-separated `id=file` entries for keys that may still protect stored credentials, for example `default=/run/secrets/sealing-old,2026-08=/run/secrets/sealing-august`. IDs must be unique and the files remain mounted until rotation completes on every replica. |
 | `OC_AUTHENTICATION_MODE` | No | `local` (default) or `local+oidc`. |
 | `OC_OIDC_ISSUER` | With `local+oidc` | HTTPS issuer URL for the deployment OIDC provider. |
 | `OC_OIDC_CLIENT_ID` | With `local+oidc` | Registered OIDC client ID. |

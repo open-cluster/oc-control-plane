@@ -82,6 +82,47 @@ func countAuditEvents(t *testing.T, dsn string, organization tenancy.Organizatio
 	return count
 }
 
+func recordForwardingCopy(
+	t *testing.T, dsn string, organization tenancy.Organization, event uuid.UUID,
+	terminal, leased bool,
+) {
+	t.Helper()
+	connection, err := pgx.Connect(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	var owner any
+	var until any
+	if leased {
+		owner = "retention-worker"
+		until = time.Now().UTC().Add(time.Hour)
+	}
+	if _, err = connection.Exec(context.Background(), `
+		INSERT INTO audit_forwarding_outbox
+			(event_id, org_id, event_payload, terminal, lease_owner, lease_until)
+		VALUES ($1, $2, '{}'::jsonb, $3, $4, $5)`,
+		event, organization.String(), terminal, owner, until); err != nil {
+		t.Fatalf("recording forwarding copy: %v", err)
+	}
+}
+
+func countForwardingCopies(t *testing.T, dsn string, organization tenancy.Organization) int {
+	t.Helper()
+	connection, err := pgx.Connect(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	var count int
+	if err = connection.QueryRow(context.Background(), `
+		SELECT count(*) FROM audit_forwarding_outbox WHERE org_id = $1`,
+		organization.String()).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestPruneEventsBefore_RemovesWhatAgedOutAndKeepsWhatDidNot(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
@@ -97,7 +138,10 @@ func TestPruneEventsBefore_RemovesWhatAgedOutAndKeepsWhatDidNot(t *testing.T) {
 		recordAuditEvent(t, dsn, org, now.Add(-90*24*time.Hour)),
 		recordAuditEvent(t, dsn, org, now.Add(-60*24*time.Hour)),
 	}
-	recordAuditEvent(t, dsn, org, now.Add(-2*time.Hour))
+	recordForwardingCopy(t, dsn, org, aged[0], true, false)
+	recordForwardingCopy(t, dsn, org, aged[1], false, true)
+	recent := recordAuditEvent(t, dsn, org, now.Add(-2*time.Hour))
+	recordForwardingCopy(t, dsn, org, recent, false, false)
 	recordAuditEvent(t, dsn, org, now)
 
 	horizon := now.AddDate(0, 0, -30)
@@ -111,6 +155,9 @@ func TestPruneEventsBefore_RemovesWhatAgedOutAndKeepsWhatDidNot(t *testing.T) {
 	}
 	if remaining := countAuditEvents(t, dsn, org); remaining != 2 {
 		t.Errorf("%d events remain, want the 2 inside the retention period", remaining)
+	}
+	if remaining := countForwardingCopies(t, dsn, org); remaining != 3 {
+		t.Errorf("%d forwarding copies remain, want pending and terminal delivery state retained", remaining)
 	}
 }
 

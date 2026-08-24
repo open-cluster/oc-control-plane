@@ -2,7 +2,7 @@
 // when, from where, and whether it was allowed.
 //
 // It exists because until now the control plane could say where a claim came from and never
-// who made it. One shared token has no person behind it, so "who disabled this Connection"
+// who made it. One shared token has no person behind it, so "who disabled this Integration"
 // was not a question the record could answer at all.
 //
 // The package performs no I/O. An Event is a value; internal/storage writes it, and it writes
@@ -10,7 +10,7 @@
 // back the operation it was recording, because a change nobody can attribute is worse than a
 // change that did not happen.
 //
-// Nothing here ever carries a credential or evidence content. Detail.Safe is the mechanical
+// Nothing here ever carries a credential or raw source content. Detail.Safe is the mechanical
 // half of that promise and the reason a caller cannot forget it.
 package audit
 
@@ -161,7 +161,7 @@ type Event struct {
 	// uses so that ordering within a database is that database's clock throughout.
 	OccurredAt time.Time
 	// Detail is structured context — the previous and new value of a changed setting, the
-	// reason a request was denied. Never a credential and never evidence content.
+	// reason a request was denied. Never a credential and never raw source content.
 	Detail Detail
 }
 

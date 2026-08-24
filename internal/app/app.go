@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
@@ -42,9 +43,10 @@ const (
 // OnListen lets a test address an ephemeral port without racing the listener. Investigator
 // lets a test use a scripted model boundary instead of a paid provider.
 type Options struct {
-	Version      string
-	OnListen     func(net.Addr)
-	Investigator investigation.Investigator
+	Version        string
+	OnListen       func(net.Addr)
+	Investigator   investigation.Investigator
+	AuditForwarder audit.Forwarder
 }
 
 // Run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -94,6 +96,9 @@ func Run(
 		return fmt.Errorf("applying migrations: %w", err)
 	}
 	logMigrations(logger, applied)
+	if options.AuditForwarder != nil {
+		database.EnableAuditForwarding()
+	}
 
 	// The GitHub App is deployment configuration; a deployment without one still serves
 	// github in the catalog — the compiled provider set and the seeded reference rows
@@ -149,7 +154,7 @@ func Run(
 	// sealed under the same deployment key.
 	var sealer seal.Sealer
 	if len(cfg.SealingKey) > 0 {
-		if sealer, err = seal.New(cfg.SealingKey); err != nil {
+		if sealer, err = configuredSealer(cfg); err != nil {
 			return fmt.Errorf("%s: %w", config.EnvSealingKeyFile, err)
 		}
 	}
@@ -218,7 +223,20 @@ func Run(
 		sealer:         sealer,
 		investigations: investigations,
 		onListen:       options.OnListen,
+		auditForwarder: options.AuditForwarder,
 	})
+}
+
+func configuredSealer(cfg config.Config) (seal.Sealer, error) {
+	identifier := cfg.SealingKeyID
+	if identifier == "" {
+		identifier = "default"
+	}
+	previous := make([]seal.Key, 0, len(cfg.PreviousSealingKeys))
+	for _, key := range cfg.PreviousSealingKeys {
+		previous = append(previous, seal.Key{ID: key.ID, Material: key.Material})
+	}
+	return seal.NewKeyring(seal.Key{ID: identifier, Material: cfg.SealingKey}, previous...)
 }
 
 // modelBoundary builds the configured deployment's Exchange driver. Everything
@@ -271,4 +289,5 @@ type assembled struct {
 	sealer         seal.Sealer
 	investigations *investigation.Runner
 	onListen       func(net.Addr)
+	auditForwarder audit.Forwarder
 }

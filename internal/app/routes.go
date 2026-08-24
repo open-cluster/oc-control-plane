@@ -90,6 +90,12 @@ func serve(ctx context.Context, process assembled) error {
 	pruners := startAuditPruner(process)
 	defer pruners.stop()
 
+	forwarding := startAuditForwarding(process)
+	defer forwarding.stop()
+
+	credentialRotation := startCredentialRotation(process)
+	defer credentialRotation.stop()
+
 	// The change ledger ages out on its own schedule, independent of the audit record's:
 	// it is derived operational context, and what bounds it is the deployment's retention
 	// rather than a tenant's declaration.
