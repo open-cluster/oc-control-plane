@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
@@ -254,13 +255,27 @@ func operatorRouter(process assembled) (http.Handler, error) {
 // authenticate nobody, and this is the last moment anyone can be told.
 func operatorIdentity(process assembled) (identity.Handlers, error) {
 	cfg := process.config
+	checkContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	legacyActive, err := process.database.LegacyIdentityActive(checkContext)
+	if err != nil {
+		return identity.Handlers{}, err
+	}
+	if legacyActive && !cfg.LegacyIdentityMigrationComplete {
+		return identity.Handlers{}, errors.New("active legacy identity configuration remains: " +
+			"use release 539b45e to export it, then set legacy_migration_complete, " +
+			"or roll back to that release")
+	}
 
 	handlers := identity.Handlers{
-		Database:   process.database,
-		Logger:     process.logger,
-		OIDC:       identity.NewOIDC(),
-		PublicURL:  cfg.OperatorPublicURL,
-		ConsoleURL: cfg.OperatorConsoleURL,
+		Database:         process.database,
+		Logger:           process.logger,
+		OIDC:             identity.NewOIDC(),
+		OIDCIssuer:       cfg.OIDCIssuer,
+		OIDCClientID:     cfg.OIDCClientID,
+		OIDCClientSecret: cfg.OIDCClientSecret,
+		PublicURL:        cfg.OperatorPublicURL,
+		ConsoleURL:       cfg.OperatorConsoleURL,
 		// This process starts the pruner unconditionally, so the policy surface may say that a
 		// declared retention schedule is applied. It is passed rather than assumed because the
 		// statement is made to an auditor, and the only way to keep it true is for the component

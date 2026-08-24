@@ -208,6 +208,10 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// so there is no tenant in the question and nothing precise enough to leak one.
 		"RecoverStale": "expiry-bounded recovery across the database; reads no tenant " +
 			"data and takes no caller-supplied identifier",
+		"RedeemDeploymentSignIn": "the opaque state digest selects the tenant-bound flow; " +
+			"the consumed row is the authority for the organization returned to the callback",
+		"LegacyIdentityActive": "startup-wide compatibility check; returns only whether any " +
+			"retained legacy identity configuration remains active",
 	}
 
 	for _, file := range parseProductionFiles(t, filepath.Join("..", "storage")) {

@@ -92,7 +92,7 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 	}
 }
 
-// The unauthenticated surface is a NAMED list. A fourth public route is a security decision,
+// The unauthenticated surface is a NAMED list. A new public route is a security decision,
 // and this gate is what makes it one somebody has to write down rather than one that lands in a
 // diff nobody reads twice.
 func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
@@ -102,17 +102,14 @@ func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
 	// answers a tenant that does not exist exactly as it answers one that has configured no way
 	// in — so none of them is a way to enumerate customers.
 	permitted := map[string]string{
-		"GET /operator/v1/organizations/{organization}/sign-in/providers": "a console must be " +
-			"able to render a chooser before anybody has signed in",
-		"GET /operator/v1/organizations/{organization}/sign-in/{provider}": "starting a sign-in " +
+		"GET /operator/v1/organizations/{organization}/sign-in/oidc": "starting a sign-in " +
 			"is what a caller with no credential is trying to do",
 		"GET /operator/v1/sign-in/callback": "the identity provider sends the browser here, and " +
 			"it carries a state rather than a credential",
-		"POST /operator/v1/organizations/{organization}/sign-in/saml/{provider}/callback": "" +
-			"SAML's assertion consumer service. The identity provider POSTs the browser here, " +
-			"so it arrives cross-site by construction and carries no credential of ours; what " +
-			"binds it to a sign-in this product started is the single-use relay state and the " +
-			"request identifier inside the assertion, checked together",
+		"POST /operator/v1/organizations/{organization}/bootstrap": "the configured bootstrap " +
+			"credential authorizes the one-time first Admin creation inside the handler",
+		"POST /operator/v1/organizations/{organization}/sign-in/local": "a person presents " +
+			"their local password here to obtain a session",
 	}
 
 	found := make(map[string]bool)
@@ -338,8 +335,6 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 
 	prefixes := map[string]string{
 		"/operator/v1/": "this product's own surface",
-		"/scim/v2/": "RFC 7644's, so a directory's configured base URL survives an operator " +
-			"API version bump",
 	}
 
 	counted := make(map[string]int, len(prefixes))

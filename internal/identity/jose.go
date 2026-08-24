@@ -394,37 +394,6 @@ func checkClaims(payload claims, expected expectation) error {
 	return nil
 }
 
-// groupsFrom reads the configured group claim out of whatever shape the provider used. A list
-// of strings is the common one; a single string and a list of objects with a name both occur.
-func (c claims) groupsFrom(claim string) []string {
-	if claim == "" {
-		claim = "groups"
-	}
-	value, present := c.raw[claim]
-	if !present {
-		return nil
-	}
-	switch typed := value.(type) {
-	case string:
-		return []string{typed}
-	case []any:
-		groups := make([]string, 0, len(typed))
-		for _, entry := range typed {
-			switch member := entry.(type) {
-			case string:
-				groups = append(groups, member)
-			case map[string]any:
-				if name, ok := member["name"].(string); ok {
-					groups = append(groups, name)
-				}
-			}
-		}
-		return groups
-	default:
-		return nil
-	}
-}
-
 // displayName is what the record will call this person. The provider's own name claim wins;
 // the preferred username and the local part of the address are the fallbacks, because an event
 // naming a raw subject identifier is one nobody reading an audit trail can act on.

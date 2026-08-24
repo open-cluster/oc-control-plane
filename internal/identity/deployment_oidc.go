@@ -1,0 +1,123 @@
+package identity
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+)
+
+type oidcMemberRequest struct {
+	Subject     string `json:"subject"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role"`
+}
+
+func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
+	organization, ok := h.organization(w, r)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(h.OIDCIssuer) == "" {
+		writeJSON(w, http.StatusNotFound, errorView{Error: noWayIn})
+		return
+	}
+	returnTo, ok := h.returnTarget(w, r.URL.Query().Get("returnTo"))
+	if !ok {
+		return
+	}
+	ctx, cancel := contextWithTimeout(r, signInTimeout)
+	defer cancel()
+	authorization, err := h.OIDC.Authorize(ctx, h.OIDCIssuer, h.OIDCClientID, h.redirectURI(), scopes)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	err = h.Database.StartDeploymentSignIn(ctx, organization, storage.DeploymentSignInFlow{ID: newFlowID(), Organization: organization.String(), CodeVerifier: authorization.CodeVerifier, Nonce: authorization.Nonce, ReturnTo: returnTo, ExpiresAt: nowPlus(flowLifetime)}, authorization.State)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	http.Redirect(w, r, authorization.URL, http.StatusFound)
+}
+
+func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
+	state, code := r.URL.Query().Get("state"), r.URL.Query().Get("code")
+	if state == "" || code == "" {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "this is not a sign-in"})
+		return
+	}
+	ctx, cancel := contextWithTimeout(r, signInTimeout)
+	defer cancel()
+	flow, err := h.Database.RedeemDeploymentSignIn(ctx, state)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "this sign-in cannot be completed"})
+		return
+	}
+	organization, err := tenancy.NewOrganization(flow.Organization)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	asserted, err := h.OIDC.Exchange(ctx, h.OIDCIssuer, h.OIDCClientID, h.OIDCClientSecret, h.redirectURI(), code, flow.CodeVerifier, flow.Nonce)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})
+		return
+	}
+	user, memberships, err := h.Database.OIDCIdentity(ctx, organization, storage.Identity{Issuer: asserted.Issuer, Subject: asserted.Subject, Email: asserted.Email, EmailVerified: bool(asserted.EmailVerified), DisplayName: asserted.displayName()})
+	if err != nil {
+		if errors.Is(err, storage.ErrLocalCredentialUnknown) || errors.Is(err, storage.ErrUserDisabled) {
+			writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})
+			return
+		}
+		h.fail(w, r, err)
+		return
+	}
+	if err = h.issueSession(w, r, organization, user, memberships, admission{}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	http.Redirect(w, r, h.consoleTarget(flow.ReturnTo), http.StatusFound)
+}
+
+func (h Handlers) createOIDCMember(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	organization, ok := h.organization(w, r)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(h.OIDCIssuer) == "" {
+		writeJSON(w, http.StatusConflict, errorView{Error: "OIDC is not configured"})
+		return
+	}
+	var body oidcMemberRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	body.Subject = strings.TrimSpace(body.Subject)
+	body.DisplayName = strings.TrimSpace(body.DisplayName)
+	if body.Subject == "" || len(body.Subject) > 512 || body.DisplayName == "" || len(body.DisplayName) > 256 {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "subject and displayName are required"})
+		return
+	}
+	role, known := authz.ParseRole(body.Role)
+	if !known {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "role must be admin, editor, or viewer"})
+		return
+	}
+	ctx, cancel := contextWithTimeout(r, signInTimeout)
+	defer cancel()
+	member, err := h.Database.CreateOIDCMember(ctx, principal, organization, storage.Identity{Issuer: h.OIDCIssuer, Subject: body.Subject, Email: strings.TrimSpace(body.Email), DisplayName: body.DisplayName}, role)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, memberViewOf(member))
+}

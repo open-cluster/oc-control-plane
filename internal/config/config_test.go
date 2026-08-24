@@ -111,6 +111,38 @@ database:
 	}
 }
 
+func TestAuthenticationDefaultsToLocalAndOIDCIsFileConfigured(t *testing.T) {
+	t.Parallel()
+
+	localEnvironment := validEnvironment(t)
+	local, err := config.Load(lookupFrom(localEnvironment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.AuthenticationMode != "local" || local.OIDCIssuer != "" {
+		t.Fatalf("default authentication = %q issuer %q", local.AuthenticationMode, local.OIDCIssuer)
+	}
+
+	secretPath := filepath.Join(t.TempDir(), "oidc-secret")
+	if err := os.WriteFile(secretPath, []byte("deployment-oidc-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oidcEnvironment := validEnvironment(t)
+	oidcEnvironment[config.EnvAuthenticationMode] = "local+oidc"
+	oidcEnvironment[config.EnvOIDCIssuer] = "https://identity.example.test"
+	oidcEnvironment[config.EnvOIDCClientID] = "opencluster"
+	oidcEnvironment[config.EnvOIDCClientSecretFile] = secretPath
+	oidc, err := config.Load(lookupFrom(oidcEnvironment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oidc.AuthenticationMode != "local+oidc" ||
+		oidc.OIDCIssuer != "https://identity.example.test" ||
+		oidc.OIDCClientID != "opencluster" || oidc.OIDCClientSecret != "deployment-oidc-secret" {
+		t.Fatalf("OIDC configuration = %+v", oidc)
+	}
+}
+
 func TestLoad_LegacySinglePlacementBecomesDatabase(t *testing.T) {
 	t.Parallel()
 

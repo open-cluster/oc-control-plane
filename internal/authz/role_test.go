@@ -10,14 +10,14 @@ import (
 // "what can an Editor do". These tests assert the properties the table states, so a
 // permission quietly added to a role fails here rather than shipping.
 
-// Three human roles and one machine role, fixed sets, no custom roles. The count is
-// asserted rather than the list merely being read, so a fifth is a decision somebody
+// Three human roles, fixed sets, no custom roles. The count is
+// asserted rather than the list merely being read, so a fourth is a decision somebody
 // writes down.
-func TestTheRolesAreTheFourTheProductDeclares(t *testing.T) {
+func TestTheRolesAreTheThreeTheProductDeclares(t *testing.T) {
 	t.Parallel()
 
 	want := []authz.Role{
-		authz.Admin, authz.Editor, authz.Viewer, authz.DirectorySynchroniser,
+		authz.Admin, authz.Editor, authz.Viewer,
 	}
 
 	got := authz.Roles()
@@ -28,6 +28,20 @@ func TestTheRolesAreTheFourTheProductDeclares(t *testing.T) {
 	for _, role := range want {
 		if !authz.KnownRole(role) {
 			t.Errorf("%s is not a known role", role)
+		}
+	}
+}
+
+func TestRetiredDirectorySynchroniserIsInert(t *testing.T) {
+	t.Parallel()
+
+	retired := authz.Role("directory_synchroniser")
+	if authz.KnownRole(retired) {
+		t.Fatal("the retired directory synchronizer remains a role this build accepts")
+	}
+	for _, permission := range authz.Permissions() {
+		if retired.Grants(permission) {
+			t.Fatalf("the retired directory synchronizer still grants %s", permission)
 		}
 	}
 }
@@ -79,7 +93,7 @@ func TestAnEditorOperatesWithoutAdministering(t *testing.T) {
 		authz.IntegrationCreate, authz.IntegrationDelete, authz.IntegrationSecretRotate,
 		authz.RelayBootstrapIssue, authz.RelayConflictClear,
 		authz.IdentityConfigure, authz.MemberManage, authz.SessionRevoke,
-		authz.ServiceAccountManage, authz.TokenManage, authz.DirectorySync,
+		authz.ServiceAccountManage, authz.TokenManage,
 	} {
 		if authz.Editor.Grants(forbidden) {
 			t.Errorf("an editor holds %s; changing what the estate is, and who may sign in, "+
@@ -126,46 +140,6 @@ func TestOnlyAnAdminMayDestroyAFindingOrExtendTheEstate(t *testing.T) {
 		if role.Grants(authz.RelayBootstrapIssue) {
 			t.Errorf("%s can issue a bootstrap token, which enrols infrastructure into the "+
 				"tenant", role)
-		}
-	}
-}
-
-// A directory's credential reaches the provisioning endpoints and nothing else: the
-// credential lives somewhere this product does not control, so what it can reach when it
-// leaks is the whole question.
-func TestADirectorySynchroniserProvisionsAndReadsNothingElse(t *testing.T) {
-	t.Parallel()
-
-	for _, permission := range authz.Permissions() {
-		granted := authz.DirectorySynchroniser.Grants(permission)
-		if permission == authz.DirectorySync && !granted {
-			t.Error("a directory synchroniser cannot provision, which is the whole role")
-		}
-		if permission != authz.DirectorySync && granted {
-			t.Errorf("a directory synchroniser holds %s; this credential sits in a customer's "+
-				"identity vendor and what it reaches when it leaks is the whole question",
-				permission)
-		}
-	}
-}
-
-// And nobody below the Admin may provision by hand. A directory is a source of truth about
-// who is in the company, so a credential that could write to it could grant itself a
-// tenant.
-func TestOnlyAnAdminOrADirectoryMayProvision(t *testing.T) {
-	t.Parallel()
-
-	for _, role := range authz.Roles() {
-		switch role {
-		case authz.Admin, authz.DirectorySynchroniser:
-			if !role.Grants(authz.DirectorySync) {
-				t.Errorf("%s cannot provision", role)
-			}
-		default:
-			if role.Grants(authz.DirectorySync) {
-				t.Errorf("%s can provision; a directory decides who is in a tenant, so writing "+
-					"to it is granting a tenant", role)
-			}
 		}
 	}
 }

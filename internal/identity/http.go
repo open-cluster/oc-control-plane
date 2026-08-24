@@ -112,13 +112,12 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	switch {
 	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
-	case errors.Is(err, storage.ErrProviderUnknown):
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "identity provider not found"})
-	case errors.Is(err, storage.ErrProviderNameTaken):
-		writeJSON(writer, http.StatusConflict,
-			errorView{Error: "this organization already has that identity provider"})
 	case errors.Is(err, storage.ErrUserUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "user not found"})
+	case errors.Is(err, storage.ErrLocalCredentialUnknown):
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "local account not found"})
+	case errors.Is(err, storage.ErrLocalAccountExists):
+		writeJSON(writer, http.StatusConflict, errorView{Error: "local account already exists"})
 	case errors.Is(err, storage.ErrMembershipUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "membership not found"})
 	case errors.Is(err, storage.ErrLastAdmin):

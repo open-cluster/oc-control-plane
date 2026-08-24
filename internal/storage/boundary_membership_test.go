@@ -107,27 +107,6 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		"RemoveMembership": func() error {
 			return database.RemoveMembership(ctx, stranger, organization, somebody)
 		},
-		"ListIdentityProviders": func() error {
-			_, err := database.ListIdentityProviders(ctx, stranger, organization)
-			return err
-		},
-		"ConfigureIdentityProvider": func() error {
-			_, err := database.ConfigureIdentityProvider(ctx, stranger, organization,
-				storage.NewIdentityProvider{
-					Name: "trespass", Protocol: storage.ProtocolOIDC,
-					Issuer: "https://idp.example.test", ClientID: "trespass",
-					ClientSecretSealed: []byte("sealed"),
-				})
-			return err
-		},
-		"UpdateIdentityProvider": func() error {
-			_, err := database.UpdateIdentityProvider(ctx, stranger, organization, somebody,
-				storage.NewIdentityProvider{Name: "trespass"})
-			return err
-		},
-		"RemoveIdentityProvider": func() error {
-			return database.RemoveIdentityProvider(ctx, stranger, organization, somebody)
-		},
 		"ListSessions": func() error {
 			_, err := database.ListSessions(ctx, stranger, organization)
 			return err
@@ -167,68 +146,6 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		"AuditEvents": func() error {
 			_, err := database.AuditEvents(ctx, stranger, organization, audit.Page{})
 			return err
-		},
-		// The provisioning surface. A directory's credential is bound to one organization by
-		// the token that carries it, and these are the layer that refuses if it somehow were
-		// not — which matters more here than anywhere else on this surface, because this
-		// credential lives in a customer's identity vendor.
-		"ProvisionedUsers": func() error {
-			_, err := database.ProvisionedUsers(
-				ctx, stranger, organization, storage.ProvisionedUserFilter{}, 1, 10)
-			return err
-		},
-		"ProvisionedUser": func() error {
-			_, err := database.ProvisionedUser(ctx, stranger, organization, somebody)
-			return err
-		},
-		"ProvisionUser": func() error {
-			_, err := database.ProvisionUser(ctx, stranger, organization,
-				storage.NewProvisionedUser{UserName: "trespass@example.test", Active: true})
-			return err
-		},
-		"ReplaceProvisionedUser": func() error {
-			_, err := database.ReplaceProvisionedUser(ctx, stranger, organization, somebody,
-				storage.NewProvisionedUser{UserName: "trespass@example.test", Active: true})
-			return err
-		},
-		"SetProvisionedUserActive": func() error {
-			_, err := database.SetProvisionedUserActive(
-				ctx, stranger, organization, somebody, false)
-			return err
-		},
-		"DeprovisionUser": func() error {
-			return database.DeprovisionUser(ctx, stranger, organization, somebody)
-		},
-		"DirectoryGroups": func() error {
-			_, err := database.DirectoryGroups(ctx, stranger, organization, "", 1, 10)
-			return err
-		},
-		"DirectoryGroup": func() error {
-			_, err := database.DirectoryGroup(ctx, stranger, organization, somebody)
-			return err
-		},
-		"CreateDirectoryGroup": func() error {
-			_, err := database.CreateDirectoryGroup(
-				ctx, stranger, organization, "trespass", "", nil)
-			return err
-		},
-		"ReplaceDirectoryGroup": func() error {
-			_, err := database.ReplaceDirectoryGroup(
-				ctx, stranger, organization, somebody, "trespass", "", nil)
-			return err
-		},
-		"ChangeDirectoryGroupMembers": func() error {
-			_, err := database.ChangeDirectoryGroupMembers(
-				ctx, stranger, organization, somebody, nil, nil)
-			return err
-		},
-		"MapDirectoryGroupToRole": func() error {
-			_, err := database.MapDirectoryGroupToRole(
-				ctx, stranger, organization, somebody, authz.Viewer)
-			return err
-		},
-		"DeleteDirectoryGroup": func() error {
-			return database.DeleteDirectoryGroup(ctx, stranger, organization, somebody)
 		},
 	}
 

@@ -70,11 +70,6 @@ const (
 	TokenRead            Permission = "api-token.read"
 	TokenManage          Permission = "api-token.manage"
 
-	// A directory synchronising itself into a tenant. It is one permission rather than
-	// member.manage because the two are different jobs: an administrator decides who may be
-	// in this tenant, and a directory reports who is in the company.
-	DirectorySync Permission = "directory.sync"
-
 	// The record.
 	AuditRead Permission = "audit.read"
 )
@@ -90,7 +85,6 @@ var allPermissions = []Permission{
 	ConversationRead, ConversationWrite,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,
-	DirectorySync,
 	AuditRead,
 }
 

@@ -17,22 +17,18 @@ import (
 // through internal/table, so they have no Spec to publish. Bringing them onto the shared
 // listing contract is a wire-visible change and belongs to its own decision, not to the
 // document that would describe it.
-//
-// It contributes no SCIM bodies either, and that is deliberate. The provisioning surface's
-// shapes are RFC 7643's, not this product's, and the standard already requires them to be
-// served from /scim/v2/.../Schemas — which this build does. Publishing a second, reflected
-// copy of somebody else's schema beside the authoritative one is how the two come to
-// disagree.
 func (h Handlers) Describe() describe.Contribution {
 	body := func(method, pattern string, example any) describe.Body {
 		return describe.Body{Route: method + " " + organizationBase + pattern, Example: example}
 	}
 	return describe.Contribution{
 		Bodies: []describe.Body{
-			body(http.MethodPost, "/identity-providers", providerRequest{}),
-			body(http.MethodPatch, "/identity-providers/{provider}", providerRequest{}),
-			body(http.MethodPut, "/directory-groups/{group}/role", groupRoleRequest{}),
+			body(http.MethodPost, "/bootstrap", localCredentialRequest{}),
+			body(http.MethodPost, "/sign-in/local", localCredentialRequest{}),
+			body(http.MethodPost, "/members", localMemberRequest{}),
+			body(http.MethodPost, "/members/oidc", oidcMemberRequest{}),
 			body(http.MethodPut, "/members/{user}", memberRequest{}),
+			body(http.MethodPut, "/members/{user}/password", localPasswordRequest{}),
 			body(http.MethodPut, "/policy", policyRequest{}),
 			body(http.MethodPost, "/service-accounts", serviceAccountRequest{}),
 			body(http.MethodPost, "/api-tokens", tokenRequest{}),

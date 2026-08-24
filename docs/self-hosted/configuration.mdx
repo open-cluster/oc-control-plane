@@ -46,10 +46,16 @@ server:
   shutdown_timeout: "15s"
 
 authentication:
+  mode: "local"
+  legacy_migration_complete: false
   bootstrap_token_file: "/run/secrets/operator-token"
   bootstrap_organization: "example-org"
   bootstrap_role: "admin"
   sealing_key_file: "/run/secrets/sealing-key"
+  oidc:
+    issuer: "https://identity.example.com"
+    client_id: "opencluster"
+    client_secret_file: "/run/secrets/oidc-client-secret"
 
 relay:
   address: ":8443"
@@ -106,6 +112,40 @@ Unknown keys and additional YAML documents refuse startup. This prevents a missp
 from being silently ignored. When the same setting appears in YAML and an environment variable,
 the environment value wins. `--server-address` overrides both for local development.
 
+## Authenticate people
+
+Local authentication is the default and registration is closed. Configure the bootstrap token,
+then call `POST /operator/v1/organizations/{organization}/bootstrap` with that bearer token and
+an email, display name, and password of at least 12 characters. This creates the deployment's
+first Admin and cannot be repeated. Admins add local members with `POST .../members` and reset a
+password with `PUT .../members/{user}/password`; a reset revokes existing sessions.
+
+Passwords are versioned Argon2id verifiers. Sessions use Secure, HttpOnly, SameSite cookies, and
+unsafe cookie-authenticated requests require an allowed `Origin`.
+
+Set `authentication.mode` to `local+oidc` to add one generic OIDC provider. Register
+`{server.public_url}/operator/v1/sign-in/callback` at the provider. An Admin pre-provisions each
+person with `POST .../members/oidc`, supplying the exact OIDC `subject`, display name, and an
+`admin`, `editor`, or `viewer` role. OpenCluster authenticates issuer and subject; the database
+membership remains authoritative for authorization. Local Admin access remains for recovery.
+
+### Upgrade from native SAML or SCIM
+
+The last compatible build is `539b45e`. Before upgrading, use that build's
+`GET .../members`, `GET .../identity-providers`, and `GET .../directory-groups` routes to save
+every active user, Organization membership, role, and sign-in configuration as JSON. Retain a
+database backup. Set `authentication.legacy_migration_complete` to `true` only after checking
+that export, then upgrade, bootstrap the local Admin, and create equivalent local or
+deployment-OIDC identities. Verify an Admin and one user of each role can sign in. Change the
+provider callback only after validation.
+
+The upgrade retains legacy identity-provider, SAML, SCIM, and directory-mapping rows. Startup
+reads only whether an enabled provider or role-mapped directory group remains and refuses with
+migration guidance unless the operator acknowledged the completed export. Runtime never
+authenticates from or mutates those records. It never converts
+or deletes them silently. Keep the backup and prior binary until checks pass. To roll back, stop
+the new binary and restart the prior binary with its prior identity configuration.
+
 ## Environment compatibility reference
 
 Existing deployments may continue to use environment variables during the compatibility
@@ -154,7 +194,7 @@ export/import workflow has resolved those collisions and validation shows every 
 record counts and Integrations in the destination.
 
 Rollback is non-destructive: stop the new binary, restore the three legacy database settings
-and the former listener addresses, then restart the prior binary. Phase 2 deletes no rows and
+and the former listener addresses, then restart the prior binary. The consolidation release deletes no rows and
 changes no table shape; the added database comment is safe for the prior binary to ignore. If
 an operator-driven export/import changed data, restore the pre-migration backups instead.
 
@@ -200,6 +240,11 @@ configuration names multiple distinct databases, consolidate them before upgradi
 | `OC_OPERATOR_CONSOLE_URL` | With browser sign-in | Console URL used after sign-in and after connecting an integration. |
 | `OC_OPERATOR_ALLOWED_ORIGINS` | With browser console | Origins allowed for cookie-authenticated unsafe requests. |
 | `OC_SEALING_KEY_FILE` | With operator listener | File containing a 32-byte raw or base64 key for stored credentials. The operator surface can accept Slack credentials, so it refuses to start without this key. |
+| `OC_AUTHENTICATION_MODE` | No | `local` (default) or `local+oidc`. |
+| `OC_OIDC_ISSUER` | With `local+oidc` | HTTPS issuer URL for the deployment OIDC provider. |
+| `OC_OIDC_CLIENT_ID` | With `local+oidc` | Registered OIDC client ID. |
+| `OC_OIDC_CLIENT_SECRET_FILE` | With `local+oidc` | File containing the OIDC client secret. |
+| `OC_LEGACY_IDENTITY_MIGRATION_COMPLETE` | During identity migration | Set to `true` only after exporting legacy users, memberships, roles, and provider configuration. |
 
 The operator public and console URLs must share a registrable domain. Keep the operator
 listener private even when a browser-facing proxy is configured.

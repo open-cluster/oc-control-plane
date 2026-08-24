@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,166 +106,14 @@ type MemberList struct {
 	Next    string
 }
 
-// ResolveUser finds or creates the person an identity provider just asserted, and returns them
-// with the memberships that decide what they may reach.
-//
-// The caller is completing a sign-in against a provider configured by one organization,
-// so the organization is explicit and nothing about the identity selects the tenant.
-//
-// grant, when non-zero, is the role a first-time signer-in is provisioned with. Zero means
-// just-in-time provisioning is off for this provider: an unknown person is then created as a
-// user with no membership, which signs them in to nothing and lets an administrator find them
-// rather than making them invisible.
-func (p *Database) ResolveUser(
-	ctx context.Context, organization tenancy.Organization,
-	identity Identity, grant authz.Role,
-) (User, []authz.Membership, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return User{}, nil, err
+func orEmptyText(value *string) string {
+	if value == nil {
+		return ""
 	}
-
-	transaction, err := pool.Begin(ctx)
-	if err != nil {
-		return User{}, nil, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-
-	// A person the DIRECTORY provisioned exists already, under a placeholder identity, because
-	// a directory knows a userName and this product knows an issuer and a subject. This is
-	// where those become one row rather than two.
-	if err := adoptProvisionedUser(ctx, transaction, organization, identity); err != nil {
-		return User{}, nil, err
-	}
-
-	// One statement, so two concurrent sign-ins by the same person cannot both insert. The
-	// update is what keeps a renamed or re-verified account current without a second write.
-	var user User
-	var disabled *time.Time
-	if err := transaction.QueryRow(ctx, `
-		INSERT INTO app_user (user_id, issuer, subject, email, email_verified, display_name,
-		                      last_sign_in)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
-		ON CONFLICT (issuer, subject) DO UPDATE
-		    SET email          = EXCLUDED.email,
-		        email_verified = EXCLUDED.email_verified,
-		        display_name   = EXCLUDED.display_name,
-		        last_sign_in   = now(),
-		        updated_at     = now()
-		RETURNING user_id, issuer, subject, email, email_verified, display_name, disabled_at,
-		          created_at`,
-		uuid.New(), identity.Issuer, identity.Subject, identity.Email, identity.EmailVerified,
-		identity.DisplayName).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email,
-		&user.EmailVerified, &user.DisplayName, &disabled, &user.CreatedAt); err != nil {
-		return User{}, nil, fmt.Errorf("resolving a user: %w", err)
-	}
-	if disabled != nil {
-		user.DisabledAt = *disabled
-	}
-	if user.Disabled() {
-		return user, nil, ErrUserDisabled
-	}
-
-	if authz.KnownRole(grant) {
-		// DO NOTHING rather than an update: a person who already holds a role in this tenant
-		// keeps it. Re-granting on every sign-in would silently undo an administrator's
-		// deliberate change the next time the person signed in.
-		tag, err := transaction.Exec(ctx, `
-			INSERT INTO organization_membership (membership_id, org_id, user_id, role,
-			                                     source, granted_by)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (org_id, user_id) DO NOTHING`,
-			uuid.New(), organization.String(), user.ID, string(grant),
-			int16(SourceJIT), "just-in-time provisioning")
-		if err != nil {
-			return User{}, nil, fmt.Errorf("provisioning a membership: %w", err)
-		}
-		// Only when a membership was actually CREATED. Every sign-in reaches this statement and
-		// almost all of them are conflicts; recording those would fill the trail with a row per
-		// sign-in saying nothing happened, and the one row that matters — somebody gained
-		// access to this tenant without an administrator doing anything — would be lost in it.
-		if tag.RowsAffected() == 1 {
-			if err := writeEvent(ctx, transaction, audit.Event{
-				Organization: organization.String(),
-				Actor: audit.Actor{
-					Kind:        audit.ActorUser,
-					ID:          user.ID.String(),
-					DisplayName: user.DisplayName,
-				},
-				Action:  audit.ActionUserProvisioned,
-				Target:  audit.Target{Kind: audit.TargetMembership, ID: user.ID.String()},
-				Outcome: audit.OutcomeAllowed,
-				Detail: audit.Detail{
-					"role":   string(grant),
-					"source": SourceJIT.String(),
-					"email":  user.Email,
-				},
-			}); err != nil {
-				return User{}, nil, err
-			}
-		}
-	}
-
-	memberships, err := membershipsOf(ctx, transaction, user.ID)
-	if err != nil {
-		return User{}, nil, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return User{}, nil, fmt.Errorf("commit: %w", err)
-	}
-	return user, memberships, nil
+	return *value
 }
 
-// adoptProvisionedUser turns a directory's placeholder identity into the real one, the first
-// time the person it describes actually signs in.
-//
-// Without it a provisioned person signing in would create a SECOND user row: the directory
-// created one keyed on a placeholder issuer and a userName, and the sign-in is keyed on the
-// provider's issuer and subject. They would have two identities, one membership, and an audit
-// trail split between them — and the sign-in would land on the half with no membership and
-// reach nothing, which is a support ticket rather than an error.
-//
-// Two bounds make it safe, and both matter.
-//
-// It adopts ONLY a row this product created for a directory — the placeholder issuer is
-// namespaced to the organization and nothing else can hold it. A row belonging to a real
-// issuer is never touched, so one provider's user cannot be taken over by another's assertion
-// about the same address.
-//
-// And it matches on the ADDRESS, which is the only join available: a directory and an identity
-// provider agree on that and on nothing else. Within one tenant, two accounts at one address
-// are one person by definition — the customer's own directory said so.
-func adoptProvisionedUser(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	identity Identity,
-) error {
-	address := strings.ToLower(strings.TrimSpace(identity.Email))
-	if address == "" {
-		return nil
-	}
-
-	if _, err := transaction.Exec(ctx, `
-		UPDATE app_user
-		   SET issuer = $3, subject = $4, updated_at = now()
-		 WHERE lower(email) = $1
-		   AND issuer LIKE $2
-		   AND EXISTS (SELECT 1 FROM organization_membership
-		                WHERE organization_membership.user_id = app_user.user_id
-		                  AND organization_membership.org_id = $5)
-		   -- Nothing to do if a row already holds the real identity, and the unique constraint
-		   -- would refuse the update anyway. Guarding here makes it a no-op rather than an error
-		   -- on every sign-in after the first.
-		   AND NOT EXISTS (SELECT 1 FROM app_user existing
-		                    WHERE existing.issuer = $3 AND existing.subject = $4)`,
-		address, SCIMIssuer+":%", identity.Issuer, identity.Subject,
-		organization.String()); err != nil {
-		return fmt.Errorf("adopting a provisioned user: %w", err)
-	}
-	return nil
-}
-
-// MembershipsOf reports every organization a user holds a role in. A user is deployment-wide;
-// the memberships it carries are the answer rather than the question.
+// MembershipsOf reads the current memberships for one user.
 func (p *Database) MembershipsOf(
 	ctx context.Context, organization tenancy.Organization, user uuid.UUID,
 ) ([]authz.Membership, error) {

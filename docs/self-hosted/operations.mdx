@@ -58,6 +58,12 @@ and restart the prior binary. No row or table shape is removed by this phase. Fo
 [single-database migration procedure](/self-hosted/configuration#migrate-an-existing-deployment)
 before upgrading a deployment that currently reaches several databases.
 
+To roll back the local/OIDC authentication release, stop the new binary and restart the last
+compatible binary (`539b45e`) with its prior
+SAML, SCIM, or provider configuration. The migration retains those rows unchanged; local password
+rows and deployment sign-in flows are additive. Keep the identity export and database backup
+until local or deployment OIDC sign-in has been validated for every role.
+
 ## Integration health
 
 Verification is a point-in-time check. Alertmanager verification reports the last

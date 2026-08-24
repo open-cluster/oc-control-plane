@@ -90,10 +90,19 @@ type filePlacement struct {
 }
 
 type fileAuthentication struct {
-	BootstrapTokenFile    string `yaml:"bootstrap_token_file"`
-	BootstrapOrganization string `yaml:"bootstrap_organization"`
-	BootstrapRole         string `yaml:"bootstrap_role"`
-	SealingKeyFile        string `yaml:"sealing_key_file"`
+	Mode                    string   `yaml:"mode"`
+	BootstrapTokenFile      string   `yaml:"bootstrap_token_file"`
+	BootstrapOrganization   string   `yaml:"bootstrap_organization"`
+	BootstrapRole           string   `yaml:"bootstrap_role"`
+	SealingKeyFile          string   `yaml:"sealing_key_file"`
+	OIDC                    fileOIDC `yaml:"oidc"`
+	LegacyMigrationComplete *bool    `yaml:"legacy_migration_complete"`
+}
+
+type fileOIDC struct {
+	Issuer           string `yaml:"issuer"`
+	ClientID         string `yaml:"client_id"`
+	ClientSecretFile string `yaml:"client_secret_file"`
 }
 
 type fileRelay struct {
@@ -203,6 +212,11 @@ func (document fileDocument) environment() map[string]string {
 	set(values, EnvOperatorTokenOrganization, document.Authentication.BootstrapOrganization)
 	set(values, EnvOperatorTokenRole, document.Authentication.BootstrapRole)
 	set(values, EnvSealingKeyFile, document.Authentication.SealingKeyFile)
+	set(values, EnvAuthenticationMode, document.Authentication.Mode)
+	set(values, EnvOIDCIssuer, document.Authentication.OIDC.Issuer)
+	set(values, EnvOIDCClientID, document.Authentication.OIDC.ClientID)
+	set(values, EnvOIDCClientSecretFile, document.Authentication.OIDC.ClientSecretFile)
+	setBool(values, EnvLegacyIdentityMigrated, document.Authentication.LegacyMigrationComplete)
 	set(values, EnvRelayAddress, document.Relay.Address)
 	setList(values, EnvRelaySPKIPins, document.Relay.SPKIPins)
 	set(values, EnvInventoryInterval, document.Relay.InventoryInterval)

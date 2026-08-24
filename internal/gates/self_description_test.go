@@ -128,10 +128,6 @@ func TestEveryWriteEitherPublishesItsBodyOrIsRecordedAsTakingNone(t *testing.T) 
 	// nothing, and an empty schema published for it would say less than its absence.
 	bodyless := map[string]string{
 		"POST /operator/v1/session/sign-out": "the session being ended is the caller's own",
-		"POST /operator/v1/organizations/{organization}/sign-in/saml/{provider}/callback": "" +
-			"it is a form post from the identity provider carrying SAMLResponse, not a " +
-			"JSON body of ours; the shape is SAML's and publishing a reflected schema for " +
-			"it would describe a request no browser sends",
 		"POST /operator/v1/organizations/{organization}/integration-types/{type}/connect": "" +
 			"the flow is started from the type in the path and the caller's own identity",
 		"POST /operator/v1/organizations/{organization}/integrations/{integration}/verify": "" +
@@ -158,11 +154,6 @@ func TestEveryWriteEitherPublishesItsBodyOrIsRecordedAsTakingNone(t *testing.T) 
 		switch route.Method() {
 		case http.MethodGet, http.MethodDelete:
 			// A DELETE is decided by its path, and a GET has no body at all.
-			continue
-		}
-		if strings.HasPrefix(route.Pattern(), "/scim/v2/") {
-			// RFC 7643's shapes, served from the standard's own /Schemas endpoint. A
-			// second reflected copy beside the authoritative one is how the two disagree.
 			continue
 		}
 		if described[route.Key()] {

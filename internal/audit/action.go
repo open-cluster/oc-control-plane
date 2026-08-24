@@ -21,6 +21,7 @@ const (
 	ActionMembershipGranted  Action = "membership.granted"
 	ActionMembershipChanged  Action = "membership.changed"
 	ActionMembershipRevoked  Action = "membership.revoked"
+	ActionLocalPasswordReset Action = "local-password.reset"
 	ActionProviderConfigured Action = "identity-provider.configured"
 	ActionProviderChanged    Action = "identity-provider.changed"
 	ActionProviderRemoved    Action = "identity-provider.removed"

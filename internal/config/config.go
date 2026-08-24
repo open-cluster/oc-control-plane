@@ -46,6 +46,7 @@ const (
 	// rather than the ceiling itself: compacting at the edge means the very turn that
 	// triggered it has no room to run.
 	defaultContextThresholdPercent = 50
+	defaultAuthenticationMode      = "local"
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
@@ -68,6 +69,11 @@ const (
 	// radius rather than the whole estate.
 	EnvOperatorTokenOrganization = "OC_OPERATOR_TOKEN_ORGANIZATION"
 	EnvOperatorTokenRole         = "OC_OPERATOR_TOKEN_ROLE"
+	EnvAuthenticationMode        = "OC_AUTHENTICATION_MODE"
+	EnvOIDCIssuer                = "OC_OIDC_ISSUER"
+	EnvOIDCClientID              = "OC_OIDC_CLIENT_ID"
+	EnvOIDCClientSecretFile      = "OC_OIDC_CLIENT_SECRET_FILE"
+	EnvLegacyIdentityMigrated    = "OC_LEGACY_IDENTITY_MIGRATION_COMPLETE"
 
 	// Where this surface and its console are reachable from a browser. Both are configuration
 	// rather than values read from a request: a caller-controlled host in a redirect URI is how
@@ -272,6 +278,14 @@ type Config struct {
 	// come from.
 	OperatorAllowedOrigins []string
 
+	// AuthenticationMode is local by default. local+oidc keeps local recovery available and
+	// adds one deployment-configured generic OIDC adapter.
+	AuthenticationMode              string
+	OIDCIssuer                      string
+	OIDCClientID                    string
+	OIDCClientSecret                string
+	LegacyIdentityMigrationComplete bool
+
 	// SealingKey seals presentable credentials at rest: an identity provider's client
 	// secret, an integration's outbound token. Empty means this deployment cannot hold
 	// one, and submitting one is refused with that reason rather than stored in the clear.
@@ -392,6 +406,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		OrgConcurrentInvestigations: defaultOrgConcurrentInvestigations,
 		OrgWaitingInvestigations:    defaultOrgWaitingInvestigations,
 		ContextThresholdPercent:     defaultContextThresholdPercent,
+		AuthenticationMode:          defaultAuthenticationMode,
 	}
 
 	var err error
@@ -466,6 +481,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.OperatorAllowedOrigins, err = allowedOrigins(lookup); err != nil {
+		return Config{}, err
+	}
+	if err = authentication(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 	if cfg.SealingKey, err = sealingKey(lookup); err != nil {
@@ -545,6 +563,53 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	cfg.MinimumRelayVersion = strings.TrimSpace(minimumRelay)
 
 	return cfg, nil
+}
+
+func authentication(lookup func(string) (string, bool), cfg *Config) error {
+	migrated, err := optionalFlag(lookup, EnvLegacyIdentityMigrated)
+	if err != nil {
+		return err
+	}
+	cfg.LegacyIdentityMigrationComplete = migrated
+	mode := defaultAuthenticationMode
+	if raw, ok := lookup(EnvAuthenticationMode); ok && strings.TrimSpace(raw) != "" {
+		mode = strings.ToLower(strings.TrimSpace(raw))
+	}
+	if mode != "local" && mode != "local+oidc" {
+		return fmt.Errorf("%s must be local or local+oidc", EnvAuthenticationMode)
+	}
+	cfg.AuthenticationMode = mode
+	issuer, _ := lookup(EnvOIDCIssuer)
+	clientID, _ := lookup(EnvOIDCClientID)
+	secretFile, _ := lookup(EnvOIDCClientSecretFile)
+	issuer, clientID, secretFile = strings.TrimSpace(issuer), strings.TrimSpace(clientID),
+		strings.TrimSpace(secretFile)
+	configured := issuer != "" || clientID != "" || secretFile != ""
+	if mode == "local" {
+		if configured {
+			return fmt.Errorf("%s must be local+oidc when OIDC settings are present",
+				EnvAuthenticationMode)
+		}
+		return nil
+	}
+	if issuer == "" || clientID == "" || secretFile == "" {
+		return fmt.Errorf("%s, %s, and %s are all required in local+oidc mode",
+			EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile)
+	}
+	parsed, err := url.Parse(issuer)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" ||
+		(parsed.Scheme != "https" && (parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1")) {
+		return fmt.Errorf("%s must be an HTTPS issuer URL", EnvOIDCIssuer)
+	}
+	secret, err := readSecretFile(secretFile)
+	if err != nil {
+		return fmt.Errorf("%s: client secret file cannot be read", EnvOIDCClientSecretFile)
+	}
+	if secret == "" {
+		return fmt.Errorf("%s: client secret file is empty", EnvOIDCClientSecretFile)
+	}
+	cfg.OIDCIssuer, cfg.OIDCClientID, cfg.OIDCClientSecret = issuer, clientID, secret
+	return nil
 }
 
 func oneHTTPAddress(legacyKey, legacyAddress, serverAddress string) error {

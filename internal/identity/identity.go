@@ -6,11 +6,9 @@
 // real control plane answered 401 — and behind that, whoever held the one token could read and
 // mutate any Organization by editing a URL path segment.
 //
-// The identity provider is pluggable by construction. An OIDC Authorization Code flow with
-// PKCE is what this build implements; SAML 2.0 and SCIM are specified, are not built here, and
-// are recorded as deferred rather than silently absent. What is deliberately NOT delegated is
-// the tenancy and authorization decision: memberships, roles and sessions are this control
-// plane's own tables, so swapping the provider never moves the boundary.
+// Local authentication is always available. A deployment may add one generic OIDC Authorization
+// Code flow with PKCE. What is deliberately not delegated is the tenancy and authorization
+// decision: memberships, roles and sessions remain this control plane's durable truth.
 //
 // The routes live on the operator surface, which owns the listener. This package owns what
 // they mean; internal/authz owns who may reach them.
@@ -82,9 +80,12 @@ func (b Bootstrap) Configured() bool {
 type Handlers struct {
 	Database *storage.Database
 	Logger   *slog.Logger
-	// OIDC speaks to whatever provider a tenant configured. It holds the caches, so it is one
+	// OIDC speaks to the provider the deployment configured. It holds the caches, so it is one
 	// value for the process rather than one per request.
-	OIDC *OIDC
+	OIDC             *OIDC
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
 	// Sealer holds the key a provider's client secret is stored under. An unconfigured sealer
 	// means this deployment cannot hold one, and configuring a provider is refused with that
 	// reason rather than storing a secret in the clear.
@@ -123,6 +124,15 @@ func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 		return principal.WithRequest(request.RemoteAddr, requestID), nil
 	}
 	if presented, present := bearerToken(request.Header.Get("Authorization")); present {
+		if h.Bootstrap.accepts(presented) {
+			complete, err := h.Database.LocalBootstrapComplete(request.Context(), h.Bootstrap.Organization)
+			if err != nil {
+				return authz.Principal{}, err
+			}
+			if complete {
+				return authz.Principal{}, authz.ErrCredentialRejected
+			}
+		}
 		principal, err := h.fromBearer(request, presented)
 		if err != nil {
 			return authz.Principal{}, err

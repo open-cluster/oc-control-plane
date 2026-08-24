@@ -228,7 +228,7 @@ type identityPlane struct {
 	dsn      string
 }
 
-func startIdentityPlane(t *testing.T) *identityPlane {
+func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identityPlane {
 	t.Helper()
 
 	operatorAddress := freeAddress(t)
@@ -251,6 +251,9 @@ func startIdentityPlane(t *testing.T) *identityPlane {
 		// fails before any query runs, which would leave the cross-tenant assertions passing
 		// against an implementation with no scoping at all.
 		dsn = cfg.DatabaseDSN
+		for _, apply := range configure {
+			apply(cfg)
+		}
 	})
 	identity := &identityPlane{controlPlane: plane, operator: operatorAddress, dsn: dsn}
 	identity.waitForOperatorSurface(t)
@@ -358,13 +361,6 @@ func (p *identityPlane) call(
 // asBootstrap presents the configured bootstrap credential.
 func asBootstrap(request *http.Request) {
 	request.Header.Set("Authorization", "Bearer "+identityToken)
-}
-
-// asToken presents an issued API token.
-func asToken(secret string) func(*http.Request) {
-	return func(request *http.Request) {
-		request.Header.Set("Authorization", "Bearer "+secret)
-	}
 }
 
 // asSession presents a session cookie.

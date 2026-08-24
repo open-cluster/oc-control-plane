@@ -4,7 +4,7 @@ import "strings"
 
 // Role is a named, fixed set of permissions.
 //
-// Three human roles and one machine role exist, and they are compiled rather than
+// Three human roles exist, and they are compiled rather than
 // editable. Custom roles are deliberately out of scope: an editable role is a second
 // authorization model to review, and the first question a design partner asks is what the
 // shipped ones can do. The value is persisted as text in organization_membership.role and
@@ -22,16 +22,11 @@ const (
 	Editor Role = "editor"
 	// Viewer is read-only across the tenant's operational record.
 	Viewer Role = "viewer"
-	// DirectorySynchroniser is what a customer's directory holds. It reaches the
-	// provisioning endpoints and nothing else: the credential lives somewhere this product
-	// does not control, and a token that could do more would be a token worth stealing for
-	// something other than what it is for.
-	DirectorySynchroniser Role = "directory_synchroniser"
 )
 
 // roles is the declared set, in the order the product presents them: most privileged
 // first, so a list rendered from this reads as a ladder.
-var roles = []Role{Admin, Editor, Viewer, DirectorySynchroniser}
+var roles = []Role{Admin, Editor, Viewer}
 
 // Roles returns the roles this build declares.
 func Roles() []Role { return append([]Role(nil), roles...) }
@@ -102,10 +97,6 @@ var granted = map[Role]map[Permission]bool{
 	)...),
 
 	Viewer: setOf(estateReads...),
-
-	// One permission. A directory reports who is in the company; it does not read this
-	// tenant's estate or its record.
-	DirectorySynchroniser: setOf(DirectorySync),
 }
 
 // Grants reports whether this role holds a permission. An unrecognised role grants
