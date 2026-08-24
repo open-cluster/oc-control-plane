@@ -29,10 +29,17 @@ Start PostgreSQL, write its DSN to a file, and run the control plane:
 printf '%s' 'postgres://user:password@localhost:5432/opencluster?sslmode=disable' \
   > /tmp/opencluster.dsn
 
-OC_HTTP_ADDRESS=127.0.0.1:8080 \
-OC_PLACEMENTS=shared=/tmp/opencluster.dsn \
-OC_DEFAULT_PLACEMENT=shared \
-go run ./cmd/controlplane
+cat > opencluster.yaml <<'YAML'
+server:
+  address: "127.0.0.1:8080"
+database:
+  placements:
+    shared:
+      dsn_file: "/tmp/opencluster.dsn"
+  default_placement: "shared"
+YAML
+
+go run ./cmd/controlplane --config opencluster.yaml
 ```
 
 This minimal configuration exposes health, readiness, and metrics. See the

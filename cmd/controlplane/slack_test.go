@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
@@ -481,7 +482,7 @@ func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	err := run(ctx, cfg, io.Discard, wiring{})
+	err := app.Run(ctx, cfg, io.Discard, app.Options{})
 	if err == nil {
 		t.Fatal("the process served a credential-bearing catalog with no way to seal a credential")
 	}

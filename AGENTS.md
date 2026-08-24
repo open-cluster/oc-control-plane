@@ -31,7 +31,7 @@ Postgres containers and real listeners; nothing mocks the database.
 ## Boundaries the build enforces
 
 - Only `internal/storage` touches the database; placements are resolved, never ambient.
-- The integrations core imports no provider; only `cmd/controlplane` assembles the
+- The integrations core imports no provider; only `internal/app` assembles the
   catalog. No switch over integration types anywhere.
 - `internal/investigation` never imports `internal/reasoning`; reasoning implements the
   domain's boundary, and vendors appear only in adapter subpackages.

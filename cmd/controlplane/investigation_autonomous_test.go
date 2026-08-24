@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -83,7 +84,7 @@ func autonomousPlaneWith(
 		if adjust != nil {
 			adjust(cfg)
 		}
-	}, wiring{investigator: investigator})
+	}, app.Options{Investigator: investigator})
 	return &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,
 	}, vendor

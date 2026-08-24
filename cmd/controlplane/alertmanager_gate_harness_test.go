@@ -23,6 +23,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
@@ -66,7 +67,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
 		dsn = cfg.Placements["shared"]
-	}, wiring{investigator: investigator})
+	}, app.Options{Investigator: investigator})
 
 	surface := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress, dsn: dsn,

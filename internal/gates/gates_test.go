@@ -397,7 +397,7 @@ func TestOnlyTheCompositionRootAssemblesProviders(t *testing.T) {
 		if providers < 2 {
 			continue
 		}
-		if loaded.PkgPath == modulePath+"/cmd/controlplane" {
+		if loaded.PkgPath == modulePath+"/internal/app" {
 			assembled = true
 			continue
 		}

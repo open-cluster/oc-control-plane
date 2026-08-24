@@ -200,7 +200,7 @@ func evalAgentRevision(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("assembling the catalog: %v", err)
 	}
-	return reasoning.AgentRevision(catalogTools(catalog))
+	return reasoning.AgentRevision(catalog.Tools())
 }
 
 func evalModelFromEnvironment(t *testing.T) evalModel {

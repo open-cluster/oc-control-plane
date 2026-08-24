@@ -411,6 +411,15 @@ func checkArguments(key string, tool Tool) error {
 // All returns every definition, ordered by key so a rendered catalog is stable.
 func (c Catalog) All() []Definition { return append([]Definition(nil), c.ordered...) }
 
+// Tools returns every declared Tool in stable Integration Type and declaration order.
+func (c Catalog) Tools() []Tool {
+	var tools []Tool
+	for _, definition := range c.ordered {
+		tools = append(tools, definition.Tools...)
+	}
+	return tools
+}
+
 // Lookup resolves a definition from its stable key.
 func (c Catalog) Lookup(key string) (Definition, bool) {
 	definition, ok := c.byKey[key]

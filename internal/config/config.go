@@ -490,7 +490,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = slackApp(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
-	slackAgentRollout(lookup, &cfg)
+	if err = slackAgentRollout(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
 	if cfg.GitHubWebURL, err = optionalVendorURL(lookup, EnvGitHubWebURL); err != nil {
 		return Config{}, err
 	}
@@ -556,7 +558,11 @@ func placements(lookup func(string) (string, bool)) (map[string]string, error) {
 	}
 
 	resolved := make(map[string]string)
-	for _, entry := range strings.Split(raw, ",") {
+	entries, listErr := decodeList(raw)
+	if listErr != nil {
+		return nil, fmt.Errorf("%s: invalid list: %w", EnvPlacements, listErr)
+	}
+	for _, entry := range entries {
 		name, path, found := strings.Cut(strings.TrimSpace(entry), "=")
 		name, path = strings.TrimSpace(name), strings.TrimSpace(path)
 		if !found || name == "" || path == "" {
@@ -613,7 +619,11 @@ func assignments(lookup func(string) (string, bool), known map[string]string) (m
 	raw = strings.TrimSpace(raw)
 
 	resolved := make(map[string]string)
-	for _, entry := range strings.Split(raw, ",") {
+	entries, listErr := decodeList(raw)
+	if listErr != nil {
+		return nil, fmt.Errorf("%s: invalid list: %w", EnvAssignments, listErr)
+	}
+	for _, entry := range entries {
 		organization, placement, found := strings.Cut(strings.TrimSpace(entry), "=")
 		organization, placement = strings.TrimSpace(organization), strings.TrimSpace(placement)
 		if !found || organization == "" || placement == "" {
@@ -817,7 +827,11 @@ func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 	cfg.ModelEffort = strings.TrimSpace(effort)
 
 	consented, _ := lookup(EnvModelConsented)
-	for _, entry := range strings.Split(consented, ",") {
+	consentedEntries, err := decodeList(consented)
+	if err != nil {
+		return fmt.Errorf("%s: invalid list: %w", EnvModelConsented, err)
+	}
+	for _, entry := range consentedEntries {
 		if trimmed := strings.TrimSpace(entry); trimmed != "" {
 			cfg.ModelConsented = append(cfg.ModelConsented, trimmed)
 		}
@@ -930,13 +944,18 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 // This package deliberately depends on nothing else in the product, so what a valid
 // organization name is stays the tenancy package's answer and is not restated here — and a
 // name that is not one simply matches nothing, which is the same outcome as leaving it out.
-func slackAgentRollout(lookup func(string) (string, bool), cfg *Config) {
+func slackAgentRollout(lookup func(string) (string, bool), cfg *Config) error {
 	raw, _ := lookup(EnvSlackAgentOrganizations)
-	for entry := range strings.SplitSeq(raw, ",") {
+	entries, err := decodeList(raw)
+	if err != nil {
+		return fmt.Errorf("%s: invalid list: %w", EnvSlackAgentOrganizations, err)
+	}
+	for _, entry := range entries {
 		if name := strings.TrimSpace(entry); name != "" {
 			cfg.SlackAgentOrganizations = append(cfg.SlackAgentOrganizations, name)
 		}
 	}
+	return nil
 }
 
 // SlackAgentLiveFor reports whether the Slack agent surface is live for one organization.
@@ -1042,7 +1061,10 @@ func optionalName(lookup func(string) (string, bool), key, fallback string) (str
 // which is the property key pinning exists to remove.
 func relaySPKIPins(lookup func(string) (string, bool), relayAddress string) ([]string, error) {
 	raw, _ := lookup(EnvRelaySPKIPins)
-	fields := strings.Split(raw, ",")
+	fields, listErr := decodeList(raw)
+	if listErr != nil {
+		return nil, fmt.Errorf("%s: invalid list: %w", EnvRelaySPKIPins, listErr)
+	}
 	pins := make([]string, 0, len(fields))
 	for _, field := range fields {
 		pin := strings.TrimSpace(field)

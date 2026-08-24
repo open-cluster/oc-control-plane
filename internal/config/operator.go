@@ -143,7 +143,11 @@ func optionalOrigin(
 func allowedOrigins(lookup func(string) (string, bool)) ([]string, error) {
 	raw, _ := lookup(EnvOperatorAllowedOrigins)
 	origins := make([]string, 0, 2)
-	for _, entry := range strings.Split(raw, ",") {
+	entries, listErr := decodeList(raw)
+	if listErr != nil {
+		return nil, fmt.Errorf("%s: invalid list: %w", EnvOperatorAllowedOrigins, listErr)
+	}
+	for _, entry := range entries {
 		trimmed := strings.TrimSuffix(strings.TrimSpace(entry), "/")
 		if trimmed == "" {
 			continue

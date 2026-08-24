@@ -21,6 +21,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"go.uber.org/goleak"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 )
@@ -273,13 +274,13 @@ func freshDatabase(t *testing.T) string {
 
 func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane {
 	t.Helper()
-	return startControlPlaneRunning(t, adjust, wiring{})
+	return startControlPlaneRunning(t, adjust, app.Options{})
 }
 
 // startControlPlaneRunning is the whole harness: the assembled process, a real database, a real
 // listener, real signals, and whatever the test puts in place of the model boundary.
 func startControlPlaneRunning(
-	t *testing.T, adjust func(*config.Config), replace wiring,
+	t *testing.T, adjust func(*config.Config), options app.Options,
 ) *controlPlane {
 	t.Helper()
 	if testing.Short() {
@@ -321,8 +322,8 @@ func startControlPlaneRunning(
 	exited := make(chan error, 1)
 
 	go func() {
-		replace.onListen = func(addr net.Addr) { addresses <- addr }
-		exited <- run(runCtx, cfg, logs, replace)
+		options.OnListen = func(addr net.Addr) { addresses <- addr }
+		exited <- app.Run(runCtx, cfg, logs, options)
 	}()
 
 	var address net.Addr
@@ -716,7 +717,7 @@ func TestRun_RefusesAnUnusableListenAddress(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	err := run(ctx, cfg, io.Discard, wiring{})
+	err := app.Run(ctx, cfg, io.Discard, app.Options{})
 	if err == nil {
 		t.Fatal("binding an occupied address must fail")
 	}

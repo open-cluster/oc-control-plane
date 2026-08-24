@@ -1,10 +1,123 @@
 ---
 title: "Configuration"
-description: "Configure storage, listeners, integrations, investigations, and operational limits."
+description: "Configure OpenCluster with one YAML file and targeted overrides."
 ---
 
-OpenCluster reads configuration from environment variables and validates it before
-starting. Variables that refer to credentials contain file paths, not secret values.
+OpenCluster reads one nested YAML file and validates it before starting. Values are resolved
+in this order, with later sources taking precedence:
+
+1. Built-in defaults
+2. The YAML file named by `--config` or `OC_CONFIG_FILE`
+3. Environment-variable compatibility overrides
+4. The `--server-address` local-development override
+
+Do not put credentials in YAML or environment values. Settings ending in `_file` name a
+mounted file containing the secret. A Kubernetes Secret, Vault agent, External Secrets
+Operator, or cloud secret manager can project that file without OpenCluster embedding its
+client.
+
+## YAML configuration
+
+This is the smallest configuration that starts OpenCluster. Define at least one database
+entry and select the default used for Organizations without an explicit assignment.
+
+```yaml
+server:
+  address: ":8080"
+
+database:
+  placements:
+    shared:
+      dsn_file: "/run/secrets/postgres-dsn"
+  assignments: {}
+  default_placement: "shared"
+
+telemetry:
+  service_name: "oc-control-plane"
+  otlp_endpoint: ""
+```
+
+Optional settings use the same nested structure:
+
+```yaml
+server:
+  operator_address: ":8081"
+  intake_address: ":8082"
+  public_url: "https://opencluster.example.com"
+  console_url: "https://console.opencluster.example.com"
+  intake_public_url: "https://intake.opencluster.example.com"
+  allowed_origins: ["https://console.opencluster.example.com"]
+  shutdown_timeout: "15s"
+
+authentication:
+  bootstrap_token_file: "/run/secrets/operator-token"
+  bootstrap_organization: "example-org"
+  bootstrap_role: "admin"
+  sealing_key_file: "/run/secrets/sealing-key"
+
+relay:
+  address: ":8443"
+  spki_pins: ["BASE64_SHA256_SPKI"]
+  inventory_interval: "5m"
+  minimum_version: ""
+
+model:
+  provider: "anthropic"
+  name: "MODEL_ID"
+  api_key_file: "/run/secrets/model-key"
+  effort: "high"
+  consented_providers: ["anthropic"]
+  base_url: ""
+  spend_ceiling_cents: 500
+  context_window: 128000
+
+investigations:
+  window_lead: "2h"
+  max_tool_runs: 30
+  max_turns: 20
+
+conversations:
+  enabled: false
+  max_concurrent_investigations: 4
+  max_waiting_investigations: 16
+  context_threshold_percent: 50
+
+change_ledger:
+  retention_days: 90
+
+providers:
+  slack:
+    api_url: ""
+    client_id: ""
+    client_secret_file: ""
+    signing_secret_file: ""
+    agent_organizations: []
+  github:
+    app_id: ""
+    app_private_key_file: ""
+    api_url: ""
+    app_slug: ""
+    client_id: ""
+    client_secret_file: ""
+    web_url: ""
+
+telemetry:
+  service_name: "oc-control-plane"
+  otlp_endpoint: "collector.example.com:4317"
+```
+
+Unknown keys and additional YAML documents refuse startup. This prevents a misspelled setting
+from being silently ignored. When the same setting appears in YAML and an environment variable,
+the environment value wins. `--server-address` overrides both for local development.
+
+## Environment compatibility reference
+
+Existing deployments may continue to use environment variables during the compatibility
+window. Variables that refer to credentials contain file paths, never secret values.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_CONFIG_FILE` | No | YAML configuration file. Overridden by `--config`. |
 
 ## Storage and process
 

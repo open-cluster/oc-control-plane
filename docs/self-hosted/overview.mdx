@@ -29,10 +29,17 @@ umask 077
 printf '%s' 'postgres://user:password@postgres:5432/opencluster?sslmode=require' \
   > /tmp/opencluster-dsn
 
-OC_HTTP_ADDRESS=0.0.0.0:8080 \
-OC_PLACEMENTS=shared=/tmp/opencluster-dsn \
-OC_DEFAULT_PLACEMENT=shared \
-./oc-controlplane
+cat > opencluster.yaml <<'YAML'
+server:
+  address: "0.0.0.0:8080"
+database:
+  placements:
+    shared:
+      dsn_file: "/tmp/opencluster-dsn"
+  default_placement: "shared"
+YAML
+
+./oc-controlplane --config opencluster.yaml
 ```
 
 Check startup and readiness:
@@ -48,12 +55,12 @@ using the product workflow.
 
 ## Listener boundaries
 
-| Listener | Purpose | Recommended exposure |
+| YAML setting | Purpose | Recommended exposure |
 | --- | --- | --- |
-| `OC_HTTP_ADDRESS` | `/healthz`, `/readyz`, and `/metrics` | Internal monitoring network |
-| `OC_OPERATOR_ADDRESS` | Operator API and browser sign-in | Private network, behind TLS |
-| `OC_INTAKE_ADDRESS` | Alertmanager webhooks | Publicly reachable where needed, behind TLS |
-| `OC_RELAY_ADDRESS` | Outbound Relay sessions | Publicly reachable from clusters, behind the pinned TLS endpoint |
+| `server.address` | `/healthz`, `/readyz`, and `/metrics` | Internal monitoring network |
+| `server.operator_address` | Operator API and browser sign-in | Private network, behind TLS |
+| `server.intake_address` | Alertmanager webhooks | Publicly reachable where needed, behind TLS |
+| `relay.address` | Outbound Relay sessions | Publicly reachable from clusters, behind the pinned TLS endpoint |
 
 Next: [Configuration](/self-hosted/configuration) and
 [Operations](/self-hosted/operations).

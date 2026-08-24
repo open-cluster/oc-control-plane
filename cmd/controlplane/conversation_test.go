@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -73,7 +74,7 @@ func conversingPlane(
 		cfg.OperatorTokenOrganization = surfaceOrg
 		cfg.SlackAPIURL = vendor.URL
 		cfg.ConversationsEnabled = true
-	}, wiring{investigator: investigator})
+	}, app.Options{Investigator: investigator})
 
 	conversing := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,

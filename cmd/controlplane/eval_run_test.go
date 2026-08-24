@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -153,7 +154,7 @@ func startEvalWorld(
 			cfg.ModelBaseURL = model.BaseURL
 			cfg.ModelConsented = []string{model.Provider}
 		}
-	}, wiring{investigator: investigator})
+	}, app.Options{Investigator: investigator})
 	world := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,
 	}

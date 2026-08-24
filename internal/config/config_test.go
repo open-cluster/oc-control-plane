@@ -1,8 +1,12 @@
 package config_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +40,300 @@ func validEnvironment(t *testing.T) map[string]string {
 		"OC_HTTP_ADDRESS":          "127.0.0.1:8080",
 		"OC_PLACEMENTS":            "shared=" + dsnFile(t, "postgres://user:pw@localhost:5432/shared"),
 		"OC_PLACEMENT_ASSIGNMENTS": "org-a=shared,org-b=shared",
+	}
+}
+
+func TestLoadProcess_YAMLThenEnvironmentThenCLI(t *testing.T) {
+	t.Parallel()
+
+	dsn := dsnFile(t, "postgres://user:pw@localhost:5432/shared")
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := strings.Join([]string{
+		"server:",
+		"  address: 127.0.0.1:8080",
+		"  shutdown_timeout: 45s",
+		"database:",
+		"  placements:",
+		"    shared:",
+		"      dsn_file: " + dsn,
+		"  assignments:",
+		"    org-a: shared",
+		"telemetry:",
+		"  service_name: from-file",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadProcess(
+		[]string{"--config", path, "--server-address", "127.0.0.1:9090"},
+		lookupFrom(map[string]string{config.EnvServiceName: "from-environment"}),
+	)
+	if err != nil {
+		t.Fatalf("load process configuration: %v", err)
+	}
+
+	if cfg.HTTPAddress != "127.0.0.1:9090" {
+		t.Errorf("server address = %q, want the CLI override", cfg.HTTPAddress)
+	}
+	if cfg.ServiceName != "from-environment" {
+		t.Errorf("service name = %q, want the environment override", cfg.ServiceName)
+	}
+	if cfg.ShutdownTimeout != 45*time.Second {
+		t.Errorf("shutdown timeout = %v, want the YAML value", cfg.ShutdownTimeout)
+	}
+	if cfg.Placements["shared"] != "postgres://user:pw@localhost:5432/shared" {
+		t.Error("the YAML placement DSN was not resolved from its file")
+	}
+	if cfg.Assignments["org-a"] != "shared" {
+		t.Errorf("assignments = %v", cfg.Assignments)
+	}
+}
+
+func TestLoadProcess_UnknownYAMLFieldIsRefused(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  adress: 127.0.0.1:8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err == nil {
+		t.Fatal("an unknown YAML field must be refused")
+	}
+	if !strings.Contains(err.Error(), "adress") {
+		t.Errorf("the error must name the unknown field, got %q", err)
+	}
+}
+
+func TestLoadProcess_MultipleYAMLDocumentsAreRefused(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	if err := os.WriteFile(path, []byte(strings.Join([]string{
+		"server:",
+		"  address: 127.0.0.1:8080",
+		"---",
+		"server:",
+		"  address: 127.0.0.1:9090",
+	}, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err == nil {
+		t.Fatal("a second YAML document must be refused")
+	}
+	if !strings.Contains(err.Error(), "one YAML document") {
+		t.Errorf("the error must explain the one-document contract, got %q", err)
+	}
+}
+
+func TestLoadProcess_NestedYAMLCoversCurrentConfiguration(t *testing.T) {
+	t.Parallel()
+
+	secretFile := func(name, value string) string {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.ToSlash(path)
+	}
+	dsn := secretFile("dsn", "postgres://user:pw@localhost:5432/shared")
+	operatorToken := secretFile("operator-token", strings.Repeat("a", 32))
+	sealingKey := secretFile("sealing-key", strings.Repeat("k", 32))
+	slackClientSecret := secretFile("slack-client-secret", "slack-client-value")
+	slackSigningSecret := secretFile("slack-signing-secret", "slack-signing-value")
+	gitHubAppKey := secretFile("github-app-key", appKeyBytes)
+	gitHubClientSecret := secretFile("github-client-secret", "github-client-value")
+	modelKey := secretFile("model-key", "model-key-value")
+	pin := base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))
+
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := strings.NewReplacer(
+		"$DSN", dsn,
+		"$OPERATOR_TOKEN", operatorToken,
+		"$SEALING_KEY", sealingKey,
+		"$SLACK_CLIENT_SECRET", slackClientSecret,
+		"$SLACK_SIGNING_SECRET", slackSigningSecret,
+		"$GITHUB_APP_KEY", gitHubAppKey,
+		"$GITHUB_CLIENT_SECRET", gitHubClientSecret,
+		"$MODEL_KEY", modelKey,
+		"$RELAY_PIN", pin,
+	).Replace(strings.TrimSpace(`
+server:
+  address: 127.0.0.1:8080
+  operator_address: 127.0.0.1:8081
+  intake_address: 127.0.0.1:8082
+  public_url: http://localhost:8081
+  console_url: http://localhost:3000
+  intake_public_url: http://localhost:8082
+  allowed_origins: [http://localhost:3000]
+  shutdown_timeout: 30s
+database:
+  placements:
+    shared:
+      dsn_file: $DSN
+  default_placement: shared
+authentication:
+  bootstrap_token_file: $OPERATOR_TOKEN
+  bootstrap_organization: org-a
+  bootstrap_role: editor
+  sealing_key_file: $SEALING_KEY
+relay:
+  address: 127.0.0.1:8443
+  spki_pins: [$RELAY_PIN]
+  inventory_interval: 10m
+  minimum_version: v1.2.3
+telemetry:
+  service_name: yaml-plane
+  otlp_endpoint: collector.example:4317
+providers:
+  slack:
+    api_url: http://localhost:18080
+    client_id: slack-client
+    client_secret_file: $SLACK_CLIENT_SECRET
+    signing_secret_file: $SLACK_SIGNING_SECRET
+    agent_organizations: [org-a, org-b]
+  github:
+    app_id: "12345"
+    app_private_key_file: $GITHUB_APP_KEY
+    api_url: http://localhost:18081
+    app_slug: opencluster
+    client_id: github-client
+    client_secret_file: $GITHUB_CLIENT_SECRET
+    web_url: http://localhost:18082
+model:
+  provider: anthropic
+  name: model-test
+  api_key_file: $MODEL_KEY
+  effort: medium
+  consented_providers: [anthropic]
+  base_url: http://localhost:18083
+  spend_ceiling_cents: 123
+  context_window: 100000
+investigations:
+  window_lead: 3h
+  max_tool_runs: 31
+  max_turns: 21
+conversations:
+  enabled: true
+  max_concurrent_investigations: 5
+  max_waiting_investigations: 17
+  context_threshold_percent: 60
+change_ledger:
+  retention_days: 120
+`))
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err != nil {
+		t.Fatalf("load process configuration: %v", err)
+	}
+
+	if cfg.OperatorAddress != "127.0.0.1:8081" || cfg.IntakeAddress != "127.0.0.1:8082" {
+		t.Errorf("server surfaces = operator %q intake %q", cfg.OperatorAddress, cfg.IntakeAddress)
+	}
+	if cfg.OperatorPublicURL != "http://localhost:8081" ||
+		cfg.OperatorConsoleURL != "http://localhost:3000" ||
+		cfg.IntakePublicURL != "http://localhost:8082" {
+		t.Errorf("public URLs = %q %q %q", cfg.OperatorPublicURL,
+			cfg.OperatorConsoleURL, cfg.IntakePublicURL)
+	}
+	if len(cfg.OperatorTokenDigest) != sha256.Size || cfg.OperatorTokenOrganization != "org-a" ||
+		cfg.OperatorTokenRole != "editor" || len(cfg.SealingKey) != 32 {
+		t.Error("the nested authentication configuration was not applied")
+	}
+	if cfg.RelayAddress != "127.0.0.1:8443" || len(cfg.RelaySPKIPins) != 1 ||
+		cfg.InventoryInterval != 10*time.Minute || cfg.MinimumRelayVersion != "v1.2.3" {
+		t.Error("the nested Relay configuration was not applied")
+	}
+	if cfg.SlackClientSecret != "slack-client-value" ||
+		cfg.SlackSigningSecret != "slack-signing-value" ||
+		!cfg.SlackAgentLiveFor("org-b") {
+		t.Error("the nested Slack configuration was not applied")
+	}
+	if cfg.GitHubAppID != "12345" || cfg.GitHubClientSecret != "github-client-value" {
+		t.Error("the nested GitHub configuration was not applied")
+	}
+	if cfg.ModelProvider != "anthropic" || cfg.ModelKey != "model-key-value" ||
+		cfg.ModelSpendCeilingCents != 123 || cfg.ModelContextWindow != 100000 {
+		t.Error("the nested model configuration was not applied")
+	}
+	if cfg.InvestigationWindowLead != 3*time.Hour || cfg.InvestigationMaxToolRuns != 31 ||
+		cfg.InvestigationMaxTurns != 21 {
+		t.Error("the nested Investigation configuration was not applied")
+	}
+	if !cfg.ConversationsEnabled || cfg.OrgConcurrentInvestigations != 5 ||
+		cfg.OrgWaitingInvestigations != 17 || cfg.ContextThresholdPercent != 60 {
+		t.Error("the nested Conversation configuration was not applied")
+	}
+	if cfg.ChangeLedgerRetentionDays != 120 {
+		t.Errorf("change ledger retention = %d", cfg.ChangeLedgerRetentionDays)
+	}
+}
+
+func TestLoadProcess_StructuredYAMLPreservesCommas(t *testing.T) {
+	t.Parallel()
+
+	directory := filepath.Join(t.TempDir(), "dsn,files")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dsnPath := filepath.Join(directory, "shared")
+	if err := os.WriteFile(dsnPath, []byte("postgres://database.example/opencluster"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := fmt.Sprintf(`
+server:
+  address: ":8080"
+database:
+  placements:
+    shared:
+      dsn_file: %q
+  assignments:
+    "org,west": shared
+providers:
+  slack:
+    agent_organizations: ["org,west"]
+`, dsnPath)
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadProcess([]string{"--config", path}, lookupFrom(nil))
+	if err != nil {
+		t.Fatalf("LoadProcess() error = %v", err)
+	}
+	if got := cfg.Placements["shared"]; got != "postgres://database.example/opencluster" {
+		t.Errorf("Placements[shared] = %q", got)
+	}
+	if got := cfg.Assignments["org,west"]; got != "shared" {
+		t.Errorf("Assignments[org,west] = %q", got)
+	}
+	if got := cfg.SlackAgentOrganizations; !reflect.DeepEqual(got, []string{"org,west"}) {
+		t.Errorf("SlackAgentOrganizations = %#v", got)
+	}
+}
+
+func TestLoad_LegacyListPreservesBareQuotes(t *testing.T) {
+	t.Parallel()
+
+	environment := validEnvironment(t)
+	environment[config.EnvSlackAgentOrganizations] = `org"west,org-east`
+
+	cfg, err := config.Load(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := []string{`org"west`, "org-east"}
+	if !reflect.DeepEqual(cfg.SlackAgentOrganizations, want) {
+		t.Errorf("SlackAgentOrganizations = %#v, want %#v",
+			cfg.SlackAgentOrganizations, want)
 	}
 }
 
