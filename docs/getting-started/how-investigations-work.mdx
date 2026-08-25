@@ -26,9 +26,11 @@ what changed today — so their findings are recorded as observations rather tha
 
 Investigations can only use enabled integrations and verified access. Read windows are
 bounded around the incident, repeated identical reads are suppressed, and truncated
-results are marked. Slack and GitHub access is read-only. The Kubernetes integration
-currently contributes a workload inventory derived from recorded changes; it does not
-provide live pod, event, or log reads.
+results are marked. GitHub and Kubernetes source operations are read-only. Slack source
+reads follow the connected credential, and an installed app may additionally reply only
+in the thread where it was directly mentioned. Kubernetes investigations read live pod
+and workload runtime, namespace events, and bounded container logs through the outbound
+Relay, subject to its service-account and namespace restrictions.
 
 Every read is clamped into the investigation's window, and a read that asks for a wider
 one is narrowed rather than refused. The result states the window it actually covered, so

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -34,6 +35,7 @@ type TLSTerminator struct {
 
 	server   *http.Server
 	listener net.Listener
+	acks     *acknowledgementProbe
 }
 
 // StartTLSTerminator listens on an ephemeral port and forwards to upstream over h2c, using a
@@ -60,11 +62,13 @@ func StartTLSTerminator(serverName, upstream string) (*TLSTerminator, error) {
 		return nil, fmt.Errorf("listening: %w", err)
 	}
 
+	acks := &acknowledgementProbe{}
 	terminator := &TLSTerminator{
 		SPKIPin:  pin,
 		Address:  listener.Addr().String(),
 		listener: listener,
-		server:   &http.Server{Handler: h2cReverseProxy(target)},
+		acks:     acks,
+		server:   &http.Server{Handler: h2cReverseProxy(target, acks)},
 	}
 	go func() { _ = terminator.server.Serve(listener) }()
 	return terminator, nil
@@ -78,7 +82,7 @@ func (t *TLSTerminator) Close() error {
 // h2cReverseProxy forwards to an upstream that speaks HTTP/2 without TLS. gRPC needs HTTP/2
 // end to end — downgrading to HTTP/1.1 across the proxy would break streaming, which is
 // most of the protocol.
-func h2cReverseProxy(target *url.URL) http.Handler {
+func h2cReverseProxy(target *url.URL, acknowledgements *acknowledgementProbe) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = &http2.Transport{
 		AllowHTTP: true,
@@ -86,6 +90,12 @@ func h2cReverseProxy(target *url.URL) http.Handler {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, network, address)
 		},
+	}
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if strings.HasPrefix(response.Header.Get("Content-Type"), "application/grpc") {
+			response.Body = &acknowledgementBody{upstream: response.Body, probe: acknowledgements}
+		}
+		return nil
 	}
 	proxy.FlushInterval = -1 // Stream responses through rather than buffering them.
 	return proxy

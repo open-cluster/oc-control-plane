@@ -25,9 +25,8 @@ import (
 // nothing to sanitize because nothing private is ever asked for.
 
 // EventType is one kind of semantic fact. Persisted as the integer in the column; the
-// values are frozen. Eight, and no more in this release — `question` is deliberately
-// absent because this investigator cannot ask the operator anything, and adding it later
-// is one value and one payload.
+// values are frozen. New semantic facts append values without reinterpreting historical
+// rows; the retired compaction value remains readable for backward compatibility.
 type EventType int16
 
 const (
@@ -39,6 +38,7 @@ const (
 	EventConcluded
 	EventFailed
 	EventCompacted
+	EventCancelled
 )
 
 func (t EventType) String() string {
@@ -59,13 +59,17 @@ func (t EventType) String() string {
 		return "failed"
 	case EventCompacted:
 		return "compacted"
+	case EventCancelled:
+		return "cancelled"
 	default:
 		return "unrecognised"
 	}
 }
 
 // Terminal reports whether nothing follows this event for its investigation.
-func (t EventType) Terminal() bool { return t == EventConcluded || t == EventFailed }
+func (t EventType) Terminal() bool {
+	return t == EventConcluded || t == EventFailed || t == EventCancelled
+}
 
 // EventSchemaVersion travels in the wire envelope rather than in a persisted column,
 // because the table's shape IS version 1: a reader needs to know what it is being handed,
@@ -292,7 +296,6 @@ func toolStartedPayload(run ToolRun, integration string) map[string]any {
 	return map[string]any{
 		"ordinal":       run.Ordinal,
 		"tool":          bounded(run.Tool, eventTextBound),
-		"capability":    bounded(run.Capability, eventTextBound),
 		"integrationId": integration,
 		"arguments":     run.Arguments,
 	}
@@ -376,14 +379,3 @@ func answerDeltaPayload(text string, final bool) map[string]any {
 // maxAnswerDeltaBound lets one delta carry the whole answer, since today's providers
 // deliver it at once.
 const maxAnswerDeltaBound = MaxAnswerLength
-
-// compactedPayload reports what compaction was worth and nothing about what it said. The
-// summary text is internal: a reader learns that memory was consolidated and how much it
-// saved, which is what tells them whether the layer is working.
-func compactedPayload(version int, before, after int) map[string]any {
-	return map[string]any{
-		"version":      version,
-		"tokensBefore": before,
-		"tokensAfter":  after,
-	}
-}

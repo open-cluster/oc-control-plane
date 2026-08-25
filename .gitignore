@@ -40,6 +40,7 @@ Thumbs.db
 /artifacts/
 /artifacts-sweep/
 /artifacts-rerun/
+/.tmp/
 
 # AI-assisted development working state (local-only)
 # See github.com/open-cluster/engineering: ai/repository-boundaries.md

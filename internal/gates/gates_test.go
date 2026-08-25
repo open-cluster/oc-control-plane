@@ -203,6 +203,8 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"ClaimInvestigation": "discovers which tenant has work waiting; takes no " +
 			"caller-supplied identifier, and the claimed row is the authority for the " +
 			"organization it belongs to",
+		"ClaimWebhookWork": "discovers ready or expired webhook work across tenants; each " +
+			"claimed row carries the authoritative Organization used by every fenced transition",
 		// The lease sweeper recovers by EXPIRY across the database, bounded per call. It
 		// reads no tenant data and takes nothing selective — a reason and a batch size —
 		// so there is no tenant in the question and nothing precise enough to leak one.

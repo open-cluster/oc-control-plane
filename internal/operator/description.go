@@ -28,9 +28,9 @@ import (
 const DescriptionPath = "/operator/v1"
 
 // Description is what this deployment offers, assembled from the route table it is actually
-// serving and what each capability said about itself.
+// serving and what each route contributor said about itself.
 //
-// Both halves come from ONE call to capabilities(), so a description assembled from a
+// Both halves come from ONE call to contributors(), so a description assembled from a
 // different set of handler values than the ones being served is not a state this process can
 // reach.
 func (h Handlers) Description() describe.Document {
@@ -60,8 +60,8 @@ func (h Handlers) selfDescriptionRoute() authz.Route {
 		http.HandlerFunc(h.describeSelf))
 }
 
-// contributor is a capability that both serves routes and says what its listings and its
-// request bodies accept. Every capability on this surface is one; a capability with neither
+// contributor both serves routes and says what its listings and its request bodies accept.
+// Every route-owning module on this surface is one; a contributor with neither
 // contributes the zero value, which is a statement rather than an omission.
 type contributor interface {
 	Routes() authz.Table

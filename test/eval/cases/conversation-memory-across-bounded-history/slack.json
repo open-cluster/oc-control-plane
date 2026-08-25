@@ -1,0 +1,39 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": null
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:15:00Z",
+            "User": "UDEPLOYBOT",
+            "Text": "deployed payments abc123 to production, pool timeout 2s -\u003e 30s",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          },
+          {
+            "At": "2026-08-25T11:40:00Z",
+            "User": "UDEVROWAN0",
+            "Text": "cache warmers restarted after the payments deploy",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

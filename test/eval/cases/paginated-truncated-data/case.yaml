@@ -1,0 +1,10 @@
+name: paginated-truncated-data
+revision: "1"
+situation: Paginated operational history contains the Kafka client upgrade behind consumer lag.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true
+    honestinsufficiency: false
+moreHistory: true
+moreCommits: true

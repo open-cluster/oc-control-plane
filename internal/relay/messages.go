@@ -10,8 +10,8 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/capability"
 	"github.com/open-cluster/oc-control-plane/internal/changeledger"
+	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 
@@ -92,7 +92,7 @@ func draining(within time.Duration) *relayv1.ControlToRelay {
 	}}
 }
 
-// inventoryPolicy asks a relay to watch one Connection's scope. It is a REQUEST by
+// inventoryPolicy asks a Relay to watch one Integration's scope. It is a request by
 // design: the relay floors the interval and intersects the namespaces with its own
 // local configuration, so nothing sent here can increase load on a customer's cluster.
 // No namespaces are named — the relay watches what its operator allows.
@@ -149,8 +149,12 @@ func outcomeOf(result *relayv1.JobResult) (storage.JobOutcome, error) {
 		if carriesUnreadableFields(outcome.Failure) {
 			return storage.JobOutcome{}, unreadable
 		}
+		jobStatus := storage.JobFailed
+		if outcome.Failure.GetKind() == relayv1.JobFailure_KIND_CANCELLED {
+			jobStatus = storage.JobCancelled
+		}
 		return storage.JobOutcome{
-			Status: storage.JobFailed, Result: mustMarshal(outcome.Failure),
+			Status: jobStatus, Result: mustMarshal(outcome.Failure),
 		}, nil
 
 	case *relayv1.JobResult_Result:

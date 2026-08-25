@@ -32,7 +32,7 @@ const (
 	maxRequestBytes     = 16 << 10
 )
 
-// Handlers is this capability's dependencies.
+// Handlers is this domain surface's dependencies.
 type Handlers struct {
 	Store   Store
 	Catalog Catalog
@@ -61,7 +61,7 @@ type Handlers struct {
 	ConsoleURL string
 }
 
-// Routes is this capability's contribution to the operator API's index.
+// Routes is this domain surface's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
 	const base = "/operator/v1/organizations/{organization}"
 
@@ -96,7 +96,7 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// Describe is this capability's contribution to the deployment's self-description.
+// Describe is this domain surface's contribution to the deployment's self-description.
 //
 // The connect callback carries no body and no listing: the browser arrives on it with a
 // query the flow redeems, and describing a query as a body would document a shape nobody

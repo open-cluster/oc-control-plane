@@ -1,0 +1,9 @@
+{
+  "workloads": [
+    {
+      "kind": "Deployment",
+      "name": "payments",
+      "namespace": "payments"
+    }
+  ]
+}

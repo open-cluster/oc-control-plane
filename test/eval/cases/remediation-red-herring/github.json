@@ -1,0 +1,48 @@
+{
+  "5001": {
+    "Account": "acme-corp",
+    "Repos": [
+      {
+        "ID": 101,
+        "Name": "payments",
+        "Commits": [
+          {
+            "SHA": "bad111",
+            "Message": "reduce worker consumer concurrency to 1",
+            "Author": "kai-dev",
+            "At": "2026-08-25T11:15:00Z",
+            "Files": [
+              {
+                "Path": "config/worker.yaml",
+                "Patch": "@@ -1,3 +1,3 @@\n worker:\n-  consumer_concurrency: 16\n+  consumer_concurrency: 1"
+              }
+            ]
+          },
+          {
+            "SHA": "aid222",
+            "Message": "restore worker consumer concurrency to 16",
+            "Author": "ash-ops",
+            "At": "2026-08-25T11:53:00Z",
+            "Files": [
+              {
+                "Path": "config/worker.yaml",
+                "Patch": "@@ -1,3 +1,3 @@\n worker:\n-  consumer_concurrency: 1\n+  consumer_concurrency: 16"
+              }
+            ]
+          }
+        ],
+        "Pulls": null,
+        "Files": {
+          "config/worker.yaml": "worker:\n  consumer_concurrency: 16\n  queue: payments-events\n"
+        }
+      },
+      {
+        "ID": 102,
+        "Name": "deploy",
+        "Commits": null,
+        "Pulls": null,
+        "Files": null
+      }
+    ]
+  }
+}

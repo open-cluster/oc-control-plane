@@ -13,7 +13,7 @@ import (
 
 func revisionTool(name, description string) integrations.Tool {
 	return integrations.Tool{
-		Name: name, Capability: name, Description: description,
+		Name: name, Description: description,
 		WhenToUse: "when", WhenNotToUse: "when not", Permissions: "read",
 		Output: "records",
 		Arguments: []integrations.ToolArgument{

@@ -4,11 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
+
+type StoredJobOutcome struct {
+	Status     JobStatus
+	Result     []byte
+	TerminalAt time.Time
+}
+
+func (p *Database) JobOutcome(
+	ctx context.Context, organization tenancy.Organization, jobID uuid.UUID,
+) (StoredJobOutcome, bool, error) {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return StoredJobOutcome{}, false, err
+	}
+	var outcome StoredJobOutcome
+	err = pool.QueryRow(ctx, `
+		SELECT status, result, coalesce(terminal_at, 'epoch'::timestamptz)
+		  FROM relay_job WHERE org_id = $1 AND job_id = $2`,
+		organization.String(), jobID).Scan(&outcome.Status, &outcome.Result, &outcome.TerminalAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return StoredJobOutcome{}, false, nil
+	}
+	if err != nil {
+		return StoredJobOutcome{}, false, fmt.Errorf("reading job outcome: %w", err)
+	}
+	terminal := outcome.Status == JobSucceeded || outcome.Status == JobFailed || outcome.Status == JobCancelled
+	return outcome, terminal, nil
+}
 
 // ErrResultRefused reports that a result was not recorded because the job was not in a state
 // to accept it. The reason distinguishes a benign race from something worth alarming about,

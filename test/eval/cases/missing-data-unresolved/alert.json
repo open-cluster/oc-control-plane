@@ -1,0 +1,7 @@
+{
+  "alertname": "NightlyJobFailed",
+  "labels": {
+    "namespace": "batch",
+    "service": "batch"
+  }
+}

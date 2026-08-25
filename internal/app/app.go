@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/audit/workos"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
@@ -59,6 +60,10 @@ type Options struct {
 func Run(
 	ctx context.Context, cfg config.Config, logOutput io.Writer, options Options,
 ) error {
+	forwarder, err := configuredAuditForwarder(cfg, options)
+	if err != nil {
+		return err
+	}
 	version := strings.TrimSpace(options.Version)
 	if version == "" {
 		version = "dev"
@@ -96,7 +101,7 @@ func Run(
 		return fmt.Errorf("applying migrations: %w", err)
 	}
 	logMigrations(logger, applied)
-	if options.AuditForwarder != nil {
+	if forwarder != nil {
 		database.EnableAuditForwarding()
 	}
 
@@ -141,7 +146,7 @@ func Run(
 	// person who caused it is still the person reading the error.
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
-		kubernetes.Definition(),
+		kubernetes.Definition(kubernetes.RelayExecutor{Database: database}),
 		slack.Definition(slack.NewClient(cfg.SlackAPIURL), slackInstaller,
 			cfg.SlackSigningSecret != ""),
 		github.Definition(gitHubInstaller, gitHubApp, gitHubClient, cfg.GitHubWebURL),
@@ -223,8 +228,23 @@ func Run(
 		sealer:         sealer,
 		investigations: investigations,
 		onListen:       options.OnListen,
-		auditForwarder: options.AuditForwarder,
+		auditForwarder: forwarder,
 	})
+}
+
+func configuredAuditForwarder(cfg config.Config, options Options) (audit.Forwarder, error) {
+	if options.AuditForwarder != nil {
+		return options.AuditForwarder, nil
+	}
+	if !cfg.HostedMode {
+		return nil, nil
+	}
+	forwarder, err := workos.New(cfg.WorkOSAPIURL, cfg.WorkOSAPIKey,
+		cfg.WorkOSAuditOrganizations)
+	if err != nil {
+		return nil, fmt.Errorf("configuring hosted audit forwarding: %w", err)
+	}
+	return forwarder, nil
 }
 
 func configuredSealer(cfg config.Config) (seal.Sealer, error) {

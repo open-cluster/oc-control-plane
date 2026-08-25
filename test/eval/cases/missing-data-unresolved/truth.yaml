@@ -1,0 +1,19 @@
+causes: []
+mustnotclaim: []
+discriminating: []
+relevanttools:
+    - slack.list_channels
+    - slack.get_channel_history
+    - github.list_repositories
+    - github.read_commits
+    - github.read_commit
+    - github.read_workflow_runs
+    - github.list_releases
+    - slack.get_thread_replies
+    - github.read_pull_request
+    - github.read_workflow_runs
+    - github.list_releases
+expectfindings: false
+mustnotanswer: []
+answermarkers: []
+survives: []

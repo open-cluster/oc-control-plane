@@ -17,7 +17,7 @@ import (
 // idempotent and an ack is safe the moment the transaction commits.
 
 // refreshInventoryPolicies keeps a live session's policies current: once at greeting, then
-// on the synchronization cadence. The repeat is not a retry — it is what lets a Connection
+// on the synchronization cadence. The repeat is not a retry — it is what lets an Integration
 // created or re-bound WHILE its relay is connected start being watched now, rather than at
 // the relay's next reconnect, which a healthy relay may not make for weeks. Resending is
 // idempotent on both ends: the relay applies the same policy onto the same scope.
@@ -38,8 +38,8 @@ func (s *SessionService) refreshInventoryPolicies(session *sessionState) {
 	}
 }
 
-// sendInventoryPolicies opens one synchronization scope per Kubernetes evidence
-// Connection this registration serves and asks the relay to watch each. Failure is
+// sendInventoryPolicies opens one synchronization scope per Kubernetes Integration
+// this registration serves and asks the relay to watch each. Failure is
 // logged and not fatal to the session: a relay that received no policy synchronizes
 // nothing, which the scope's freshness surface reports, and the refresh retries.
 func (s *SessionService) sendInventoryPolicies(session *sessionState) {
@@ -62,7 +62,7 @@ func (s *SessionService) sendInventoryPolicies(session *sessionState) {
 
 // recordInventoryDelta records one delta and only then acknowledges it — record before
 // acknowledge, exactly as results are handled, because an ack is the relay's licence to
-// forget. A delta naming a Connection this relay does not serve is refused, logged and
+// forget. A delta naming an Integration this Relay does not serve is refused, logged and
 // STILL acknowledged: the relay can do nothing to make it recordable, and resending it
 // forever helps nobody.
 func (s *SessionService) recordInventoryDelta(
@@ -71,10 +71,10 @@ func (s *SessionService) recordInventoryDelta(
 	ctx := session.ctx
 	integrationID, err := uuid.Parse(delta.GetConnectionId())
 	if err != nil {
-		// Refused AND acknowledged, like a delta for an unserved Connection: nothing the
+		// Refused and acknowledged, like a delta for an unserved Integration: nothing the
 		// relay does can make this recordable, and an unacked refusal would be resent
 		// forever.
-		session.logger.WarnContext(ctx, "inventory delta names no connection",
+		session.logger.WarnContext(ctx, "inventory delta names no integration",
 			slog.String("delta_id", delta.GetDeltaId()))
 		return send(session, inventoryDeltaAck(delta.GetDeltaId()))
 	}
@@ -100,7 +100,7 @@ func (s *SessionService) recordInventoryDelta(
 		return nil
 	}
 	if recorded.Refused {
-		session.logger.WarnContext(ctx, "inventory delta refused: connection not served by this relay",
+		session.logger.WarnContext(ctx, "inventory delta refused: integration not served by this relay",
 			slog.String("integration_id", integrationID.String()))
 	}
 	return send(session, inventoryDeltaAck(delta.GetDeltaId()))

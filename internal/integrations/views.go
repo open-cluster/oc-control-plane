@@ -28,10 +28,9 @@ type typeView struct {
 	// configuration, the header this deployment expects and the version floor. Served
 	// beside the vendor's rather than instead of it, because they answer different
 	// questions and a caller labels them differently.
-	ProductDocumentationURL string   `json:"productDocumentationUrl,omitempty"`
-	Capabilities            []string `json:"capabilities"`
-	RequiresRelay           bool     `json:"requiresRelay"`
-	ReceivesWebhooks        bool     `json:"receivesWebhooks"`
+	ProductDocumentationURL string `json:"productDocumentationUrl,omitempty"`
+	RequiresRelay           bool   `json:"requiresRelay"`
+	ReceivesWebhooks        bool   `json:"receivesWebhooks"`
 	// SupportsConnect says this deployment can connect the type through the provider's
 	// own installation flow, so a setup surface offers one button instead of a form.
 	// False is the self-hosted deployment that registered no application with the
@@ -50,7 +49,6 @@ type typeView struct {
 // toolView is one declared tool as the catalog renders it.
 type toolView struct {
 	Name         string             `json:"name"`
-	Capability   string             `json:"capability"`
 	Description  string             `json:"description"`
 	WhenToUse    string             `json:"whenToUse"`
 	WhenNotToUse string             `json:"whenNotToUse"`
@@ -71,12 +69,6 @@ type typeListView struct {
 }
 
 func typeViewOf(definition Definition, configured int) typeView {
-	capabilities := definition.Capabilities
-	if capabilities == nil {
-		// An empty list rather than null: "this type makes no typed reads available" is a
-		// fact worth rendering, and a client should not have to handle two spellings of it.
-		capabilities = []string{}
-	}
 	tools := make([]toolView, 0, len(definition.Tools))
 	for _, tool := range definition.Tools {
 		arguments := make([]toolArgumentView, 0, len(tool.Arguments))
@@ -90,7 +82,6 @@ func typeViewOf(definition Definition, configured int) typeView {
 		}
 		tools = append(tools, toolView{
 			Name:         tool.Name,
-			Capability:   tool.Capability,
 			Description:  tool.Description,
 			WhenToUse:    tool.WhenToUse,
 			WhenNotToUse: tool.WhenNotToUse,
@@ -107,7 +98,6 @@ func typeViewOf(definition Definition, configured int) typeView {
 		Category:                string(definition.Category),
 		DocumentationURL:        definition.DocumentationURL,
 		ProductDocumentationURL: definition.ProductDocumentationURL(),
-		Capabilities:            capabilities,
 		RequiresRelay:           definition.RequiresRelay,
 		ReceivesWebhooks:        definition.ReceivesWebhooks,
 		SupportsConnect:         definition.Connectable(),
@@ -157,28 +147,31 @@ type integrationView struct {
 	// the account, its type, how far its grant reaches. Non-secret by construction: a
 	// provider records only what an operator would read off the provider's own screen.
 	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
-	// Capabilities is what this Integration can actually do: every capability its type
-	// declares, judged against the grants its last verification recorded, each with the
-	// reason it is unavailable when it is.
+	// Inbound reports provider-specific interaction setup separately from investigation
+	// Tools; a credential can support reads without supporting inbound app mentions.
+	Inbound *inboundAvailabilityView `json:"inbound,omitempty"`
+	// ToolAvailability reports every Tool this Integration Type declares, judged against
+	// the grants its last Verification recorded.
 	//
 	// Served rather than left to be joined by a caller. The same rule decides which tools
 	// an investigation is offered, so a second copy of it would be free to disagree; and
 	// the join needs the type's declarations, the integration's grants and — for some
 	// providers — deployment configuration a browser cannot see.
-	Capabilities []capabilityView `json:"capabilities"`
-	CreatedBy    string           `json:"createdBy,omitempty"`
-	CreatedAt    string           `json:"createdAt"`
-	UpdatedAt    string           `json:"updatedAt"`
+	ToolAvailability []toolAvailabilityView `json:"toolAvailability"`
+	CreatedBy        string                 `json:"createdBy,omitempty"`
+	CreatedAt        string                 `json:"createdAt"`
+	UpdatedAt        string                 `json:"updatedAt"`
 }
 
-// capabilityView is one declared capability and whether this integration can exercise it.
-// Reason is present only when it cannot, and names what is missing — an unavailable
-// capability with no cause makes an operator guess whether they misconfigured it,
-// declined it, or hit a bug.
-type capabilityView struct {
-	Capability string `json:"capability"`
-	Available  bool   `json:"available"`
-	Reason     string `json:"reason,omitempty"`
+type toolAvailabilityView struct {
+	Tool      string `json:"tool"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type inboundAvailabilityView struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // createdView is the one response that carries the webhook secret, exactly once.
@@ -199,31 +192,39 @@ func (h Handlers) viewOf(found Integration) integrationView {
 	// An empty list rather than null, for the reason the catalog's is: "this integration
 	// offers nothing" is a fact worth rendering, and a client should not have to handle
 	// two spellings of it.
-	capabilities := []capabilityView{}
+	availability := []toolAvailabilityView{}
+	var inbound *inboundAvailabilityView
 	if definition, known := h.Catalog.ByID(found.Type); known {
 		typeKey = definition.Key
-		for _, one := range Availability(definition, found) {
+		if definition.Inbound != nil {
+			reported := definition.Inbound(found)
+			inbound = &inboundAvailabilityView{
+				Available: reported.Available, Reason: reported.Reason,
+			}
+		}
+		for _, one := range ToolAvailabilityFor(definition, found) {
 			// A conversion rather than a field-by-field copy, and it is the stricter of
 			// the two: it compiles only while the two shapes are identical, so a field
 			// added to the domain type stops the build here until somebody decides what
 			// the wire should say about it. A copy would have silently said nothing.
-			capabilities = append(capabilities, capabilityView(one))
+			availability = append(availability, toolAvailabilityView(one))
 		}
 	}
 	view := integrationView{
-		ID:            found.ID.String(),
-		Type:          typeKey,
-		Name:          found.Name,
-		Status:        found.Status.String(),
-		Disabled:      found.Disabled(),
-		Configuration: found.Configuration,
-		Labels:        found.Labels,
-		CreatedBy:     found.CreatedBy,
-		CreatedAt:     stamp(found.CreatedAt),
-		UpdatedAt:     stamp(found.UpdatedAt),
-		VerifyNote:    found.VerifyNote,
-		VerifyFacts:   found.VerifyFacts,
-		Capabilities:  capabilities,
+		ID:               found.ID.String(),
+		Type:             typeKey,
+		Name:             found.Name,
+		Status:           found.Status.String(),
+		Disabled:         found.Disabled(),
+		Configuration:    found.Configuration,
+		Labels:           found.Labels,
+		CreatedBy:        found.CreatedBy,
+		CreatedAt:        stamp(found.CreatedAt),
+		UpdatedAt:        stamp(found.UpdatedAt),
+		VerifyNote:       found.VerifyNote,
+		VerifyFacts:      found.VerifyFacts,
+		Inbound:          inbound,
+		ToolAvailability: availability,
 	}
 	if found.RelayID != uuid.Nil {
 		view.RelayID = found.RelayID.String()

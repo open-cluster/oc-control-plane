@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"net/url"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ type Progress struct {
 }
 
 // Replies is what the worker needs from durable state. It is declared here because the
-// capability owns its vocabulary and persistence depends on it.
+// collaboration delivery owns its vocabulary and persistence depends on it.
 type Replies interface {
 	// ClaimSlackReplies leases the replies that are due, so two workers cannot write into
 	// one visible message.
@@ -123,6 +124,8 @@ type Worker struct {
 	Logger  *slog.Logger
 	// Counters records what happened to each attempt, and may be its zero value.
 	Counters Instruments
+	// ConsoleURL is the trusted deployment origin used for terminal navigation links.
+	ConsoleURL string
 	// Interval is how often the worker looks when it found nothing to do. A pass that DID
 	// work looks again after the flush interval instead, which is what bounds how often
 	// one streaming turn calls Slack.
@@ -205,6 +208,9 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 	}
 
 	rendered := Render(events)
+	if rendered.Done {
+		rendered.Footer = w.navigation(ctx, reply)
+	}
 	if held(rendered) {
 		// The size half of the flush boundary. A few words with nothing else to say are
 		// held for the next pass rather than spent on a call: Slack is never called per
@@ -290,7 +296,9 @@ func (w Worker) send(
 	if err != nil {
 		return err
 	}
-	return w.Client.ReplaceStream(ctx, token, reply.Stream, visible(Render(all), true))
+	allRendered := Render(all)
+	allRendered.Footer = rendered.Footer
+	return w.Client.ReplaceStream(ctx, token, reply.Stream, visible(allRendered, true))
 }
 
 // held reports a batch too small to be worth a call on its own.
@@ -320,7 +328,22 @@ func visible(rendered Rendered, withStatus bool) string {
 	if rendered.Failed && rendered.Text == "" {
 		text.WriteString("\n" + FailureNotice)
 	}
+	if rendered.Footer != "" {
+		text.WriteString("\n\n" + rendered.Footer)
+	}
 	return text.String()
+}
+
+func (w Worker) navigation(_ context.Context, reply Reply) string {
+	base := strings.TrimSuffix(w.ConsoleURL, "/")
+	if base == "" {
+		return ""
+	}
+	organization := url.PathEscape(reply.Organization.String())
+	investigationURL := base + "/organizations/" + organization + "/investigations/" +
+		reply.Investigation.String()
+	return "<" + investigationURL + "|Open Investigation> · <" + investigationURL +
+		"/sources|Open Sources>"
 }
 
 // credential opens the bot token this reply answers with.

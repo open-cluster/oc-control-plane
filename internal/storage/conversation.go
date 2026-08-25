@@ -219,9 +219,9 @@ func conversationMessages(
 		limit = defaultPageSize
 	}
 	rows, err := queries.Query(ctx, `
-		SELECT sequence, role, actor_kind, actor_id, actor_display, text,
+		SELECT sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
 		       investigation_id, created_at
-		  FROM (SELECT sequence, role, actor_kind, actor_id, actor_display, text,
+		  FROM (SELECT sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
 		               investigation_id, created_at
 		          FROM conversation_message
 		         WHERE org_id = $1 AND conversation_id = $2
@@ -279,7 +279,7 @@ func (p *Database) AppendMessage(
 				                   FROM conversation_message
 				                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
 				       $3, $4, $5, $6, $7
-				RETURNING sequence, role, actor_kind, actor_id, actor_display, text,
+				RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
 				          investigation_id, created_at`,
 				id, organization.String(), int16(said.Role), int16(said.ActorKind),
 				said.ActorID, said.ActorDisplay, said.Text)
@@ -638,7 +638,7 @@ func scanMessage(row scanned) (conversation.Message, error) {
 		investigationID *uuid.UUID
 	)
 	if err := row.Scan(&message.Sequence, &role, &actorKind, &message.ActorID,
-		&message.ActorDisplay, &message.Text, &investigationID,
+		&message.ActorDisplay, &message.Text, &message.SourceReference, &investigationID,
 		&message.CreatedAt); err != nil {
 		return conversation.Message{}, fmt.Errorf("scanning a message: %w", err)
 	}

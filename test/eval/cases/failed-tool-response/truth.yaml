@@ -1,0 +1,24 @@
+causes:
+    - name: deploy-observed
+      markers:
+        - abc123
+        - deploy
+      tools:
+        - slack.get_channel_history
+mustnotclaim:
+    - pool timeout
+discriminating:
+    - tool: github.read_commits
+      argmarker: ""
+relevanttools:
+    - slack.list_channels
+    - slack.get_channel_history
+    - github.list_repositories
+    - github.read_commits
+    - github.read_commit
+    - github.read_workflow_runs
+    - github.list_releases
+expectfindings: true
+mustnotanswer: []
+answermarkers: []
+survives: []

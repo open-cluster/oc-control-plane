@@ -147,6 +147,9 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			_, err := database.AuditEvents(ctx, stranger, organization, audit.Page{})
 			return err
 		},
+		"ReplayWebhookWork": func() error {
+			return database.ReplayWebhookWork(ctx, stranger, organization, somebody)
+		},
 	}
 
 	for name, call := range refusals {
@@ -161,7 +164,7 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 
 	// A gate on the gate. A function added to the operator surface and not listed above would
 	// leave this table quietly smaller, and nothing would say so.
-	const covered = 43
+	const covered = 27
 	if len(refusals) != covered {
 		t.Errorf("this table covers %d store functions and expects %d; a function added to the "+
 			"operator surface has to be added here too, or the boundary it crosses is untested",

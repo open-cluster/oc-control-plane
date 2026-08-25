@@ -1,0 +1,7 @@
+{
+  "alertname": "CheckoutTimeouts",
+  "labels": {
+    "namespace": "checkout",
+    "service": "checkout"
+  }
+}

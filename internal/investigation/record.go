@@ -33,6 +33,7 @@ const (
 	StatusRunning Status = iota + 1
 	StatusConcluded
 	StatusFailed
+	StatusCancelled
 )
 
 // The ceilings that can force a concluding turn, as stopped_by records them. Persisted
@@ -59,6 +60,8 @@ func (s Status) String() string {
 		return "concluded"
 	case StatusFailed:
 		return "failed"
+	case StatusCancelled:
+		return "cancelled"
 	default:
 		return "unrecognised"
 	}
@@ -72,10 +75,11 @@ const (
 	RunFailed
 )
 
-// Refusals and failures this capability names.
+// Refusals and failures the Investigation domain names.
 var (
 	// ErrUnknown reports an investigation this organization does not have.
-	ErrUnknown = errors.New("investigation unknown")
+	ErrUnknown      = errors.New("investigation unknown")
+	ErrAlreadyEnded = errors.New("investigation has already ended")
 	// ErrEpisodeUnknown reports an episode this organization does not have.
 	ErrEpisodeUnknown = errors.New("episode unknown")
 	// ErrReasonerUnavailable is the domain's word for the model boundary failing: the
@@ -215,9 +219,8 @@ type ToolRun struct {
 	IntegrationID uuid.UUID
 	// Ordinal is the run's one-based position in the investigation, which is what a
 	// finding cites.
-	Ordinal    int
-	Capability string
-	Tool       string
+	Ordinal int
+	Tool    string
 	// Arguments is the call's scope as it ran, never carrying a credential.
 	Arguments map[string]any
 	// WindowFrom and WindowUntil are the bound in force for this run. Every run carries
@@ -299,7 +302,7 @@ type List struct {
 	Next           string
 }
 
-// Store is everything this capability needs from durable state.
+// Store is everything the Investigation domain needs from durable state.
 type Store interface {
 	// CreateInvestigation records one, born running.
 	CreateInvestigation(ctx context.Context, who authz.Principal, org tenancy.Organization,
@@ -347,16 +350,11 @@ type Store interface {
 	WorkloadInventory(ctx context.Context, org tenancy.Organization,
 		limit int) ([]string, error)
 	// ConversationBrief reads what a conversation contributes to its next turn: the
-	// newest running summary, a verbatim tail of what was said, and the prior turns'
-	// findings with their citations as references. Never copied tool payloads — a finding
+	// bounded verbatim tail of what was said and prior turns' cited findings.
+	// Never copied tool payloads — a finding
 	// already names the runs that established it, and those runs are still in the record.
 	ConversationBrief(ctx context.Context, org tenancy.Organization,
 		conversation uuid.UUID, tail int) (Brief, error)
-	// RecordConversationSummary writes the next summary version. Superseded versions are
-	// kept, and the authoritative transcript is never touched.
-	RecordConversationSummary(ctx context.Context, org tenancy.Organization,
-		conversation uuid.UUID, summary Summary, tokensBefore, tokensAfter int,
-		model string) error
 	// DrainConversation opens the next turn of a conversation from whatever messages
 	// arrived while this one was running, and reports whether one opened. It is called at
 	// the terminal boundary — the "next safe point" — because that is the moment a second

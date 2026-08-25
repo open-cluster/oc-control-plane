@@ -34,8 +34,6 @@ type Telemetry struct {
 	firstAnswer   metric.Float64Histogram
 	duration      metric.Float64Histogram
 	toolDuration  metric.Float64Histogram
-	compactions   metric.Int64Counter
-	contextTokens metric.Int64Histogram
 	recovered     metric.Int64Counter
 }
 
@@ -79,17 +77,6 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 		metric.WithUnit("s")); err != nil {
 		logger.Warn("investigation tool metric unavailable",
 			slog.String("error", err.Error()))
-	}
-	if built.compactions, err = meter.Int64Counter("oc.investigation.compactions",
-		metric.WithDescription("Conversation compactions performed."),
-		metric.WithUnit("{compaction}")); err != nil {
-		logger.Warn("compaction metric unavailable", slog.String("error", err.Error()))
-	}
-	if built.contextTokens, err = meter.Int64Histogram("oc.investigation.context_tokens",
-		metric.WithDescription("Estimated conversation context size at a compaction, "+
-			"before and after."),
-		metric.WithUnit("{token}")); err != nil {
-		logger.Warn("context size metric unavailable", slog.String("error", err.Error()))
 	}
 	if built.recovered, err = meter.Int64Counter("oc.investigation.recovered",
 		metric.WithDescription("Investigations failed because their worker's lease "+
@@ -150,23 +137,6 @@ func (t *Telemetry) ranTool(run ToolRun) {
 		metric.WithAttributes(
 			attribute.String("tool", run.Tool),
 			attribute.String("outcome", outcomeWord(run.Outcome))))
-}
-
-// compacted records one consolidation and what it was worth. Before and after are what
-// answer "is the summary layer actually working" as a number rather than an opinion.
-func (t *Telemetry) compacted(before, after int) {
-	if t == nil {
-		return
-	}
-	if t.compactions != nil {
-		t.compactions.Add(context.Background(), 1)
-	}
-	if t.contextTokens != nil {
-		t.contextTokens.Record(context.Background(), int64(before),
-			metric.WithAttributes(attribute.String("phase", "before")))
-		t.contextTokens.Record(context.Background(), int64(after),
-			metric.WithAttributes(attribute.String("phase", "after")))
-	}
 }
 
 // RecoveredStale counts investigations a lapsed lease ended. A crash loop is only visible

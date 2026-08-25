@@ -1,0 +1,8 @@
+name: symptom-vs-cause
+revision: "1"
+situation: Checkout timeouts are symptoms of an upstream payments rate-limit change.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true
+    honestinsufficiency: false

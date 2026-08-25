@@ -42,7 +42,6 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 func sealingDefinition(authorized *bool) Definition {
 	return Definition{
 		ID: 99, Key: "stub", Name: "Stub", Category: CategoryCollaboration,
-		Capabilities: []string{},
 		Config: []Field{{
 			Name: "token", Title: "Token", Description: "a token",
 			Type: FieldString, Required: true, Secret: true,

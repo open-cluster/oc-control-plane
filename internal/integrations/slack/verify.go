@@ -50,7 +50,7 @@ var requiredScopes = map[string]string{
 // optionalScopes are grants an installation MAY hold and this product never requests. They
 // are recorded when present, because a tool gated on one becomes available, and their
 // absence is a stated choice rather than a gap: it does not touch the integration's status
-// and it is reported as an unavailable capability rather than a missing scope.
+// and it is reported as an unavailable Tool rather than a missing scope.
 //
 // search:read is here by decision. The default security story is that OpenCluster reasons
 // over conversations it was deliberately invited into, not everything an employee can see.

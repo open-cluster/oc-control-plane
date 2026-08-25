@@ -1,0 +1,16 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "payments-chat",
+        "Topic": "run by the on-call rota",
+        "Messages": null
+      }
+    ],
+    "Users": {
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

@@ -32,7 +32,7 @@ const (
 
 // verifications is built once for the process. A failure to construct it leaves the
 // counter nil and every emit tolerates that: telemetry that refused to start would take
-// connecting GitHub down with it, which trades an observability gap for the capability
+// connecting GitHub down with it, which trades an observability gap for the Integration
 // being observed.
 var checks = sync.OnceValue(func() metric.Int64Counter {
 	counter, err := otel.Meter(meterName).Int64Counter(

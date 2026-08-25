@@ -26,7 +26,7 @@ import (
 // The pasted form is not deleted. A deployment that registered no Slack app still serves
 // it, because an air-gapped install has no other way in — and every integration already
 // connected that way keeps working untouched, unmigrated and unre-verified. There is one
-// Slack integration with one client, one tool set and one set of capabilities; how the
+// Slack integration with one client and one Tool set; how the
 // credential was obtained is the only thing that differs.
 
 // TeamIDField is where the installed workspace's own identifier is recorded.
@@ -48,22 +48,20 @@ const AppIDField = "appID"
 //
 // search:read IS NOT REQUESTED. The security story is that OpenCluster reasons over
 // conversations it has deliberately been invited into, not everything an employee can see.
-// If workspace-wide search is ever worth having it becomes an explicit elevated capability,
+// If workspace-wide search is ever worth having it becomes an explicit elevated Tool,
 // re-authorized deliberately — not a scope that arrived quietly with everything else.
 //
 // VERIFY THESE AGAINST SLACK'S CURRENT DOCUMENTATION before a release. Slack's agent
 // platform is moving quickly, and a scope name that has been renamed fails at install time
 // in front of a customer.
 var requestedScopes = []string{
-	// The agent capability itself: the app appears as an agent and the native streaming
+	// The agent surface itself: the app appears as an agent and the native streaming
 	// methods become usable.
 	"assistant:write",
 	// Post and stream the reply.
 	"chat:write",
 	// Receive @OpenCluster in channels the app is in.
 	"app_mentions:read",
-	// Read the agent DM the engineer is talking to.
-	"im:history",
 	// Read the public channel or thread OpenCluster was asked about.
 	"channels:history",
 	// Resolve and list public channels.
@@ -84,7 +82,7 @@ var ErrNotAnInstallation = errors.New("this is not a slack installation callback
 var ErrExchangeRefused = errors.New(
 	"slack would not complete the authorization; start the connection again")
 
-// ErrNotABotInstall reports an exchange that returned no bot token. Every capability this
+// ErrNotABotInstall reports an exchange that returned no bot token. Every Tool this
 // integration offers is the bot's, so a user-token-only grant is an installation that
 // cannot do the thing it was installed for.
 var ErrNotABotInstall = errors.New(

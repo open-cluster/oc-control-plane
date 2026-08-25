@@ -3,7 +3,7 @@
 //
 // It owns composition of the route table, and nothing else. Who a caller is comes from
 // internal/identity; what they may do comes from internal/authz; what each route means comes
-// from the capability that declares it. The application mounts the completed router on the
+// from the route contributor that declares it. The application mounts the completed router on the
 // shared HTTP listener; no second component repeats its authorization decision.
 //
 // It is NO LONGER cross-tenant by design. It was, and whoever held the one shared token could
@@ -36,6 +36,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
 // readTimeout bounds how long a read may take, so an operator query cannot outlive the
@@ -96,7 +97,7 @@ type Handlers struct {
 // It is the route TABLE that is the API's index, and this function is where the table becomes a
 // mux. A route that cannot be authorized correctly — an undeclared permission, a privileged
 // route naming no organization, a duplicate — fails here, at startup, rather than being served
-// open. The gate in internal/gates asserts the other half: that no capability registers a route
+// open. The gate in internal/gates asserts the other half: that no contributor registers a route
 // outside this table.
 func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
@@ -115,16 +116,16 @@ func (h Handlers) Router() (http.Handler, error) {
 	return h.correlated(router), nil
 }
 
-// Routes is the whole operator API, assembled from what each capability declares.
+// Routes is the whole operator API, assembled from what each contributor declares.
 //
 // This package contributes the relay routes and nothing else. Every other entry comes from the
-// capability that knows what its routes mean, which is what keeps the permission a route needs
+// contributor that knows what its routes mean, which is what keeps the permission a route needs
 // next to the code that implements it rather than in a list somebody has to remember to edit.
 func (h Handlers) Routes() authz.Table {
-	return h.routesOver(h.capabilities())
+	return h.routesOver(h.contributors())
 }
 
-// routesOver assembles the table from capabilities that have ALREADY been built, so the
+// routesOver assembles the table from contributors that have ALREADY been built, so the
 // route table and the self-description can be produced from one construction of them. See
 // surface: a description assembled from different handler values than the ones being served
 // is the drift the description exists to end, and building them twice is how that happens.
@@ -157,13 +158,13 @@ func (h Handlers) routesOver(built []contributor) authz.Table {
 
 	routes = append(routes, h.selfDescriptionRoute())
 	routes = append(routes, h.Identity.Routes()...)
-	for _, capability := range built {
-		routes = append(routes, capability.Routes()...)
+	for _, contribution := range built {
+		routes = append(routes, contribution.Routes()...)
 	}
 	return routes
 }
 
-// capabilities builds every capability this surface composes, ONCE.
+// contributors builds every route-owning module this surface composes, ONCE.
 //
 // It exists so that the route table and the deployment's self-description are assembled from
 // the same handler values. Building them twice would let the document describe a listing the
@@ -175,7 +176,7 @@ func (h Handlers) routesOver(built []contributor) authz.Table {
 // answer 404 while it is off; a table that changed shape with configuration would be a
 // permission matrix nobody could review. What DOES change with the switch is one line of the
 // self-description, which is the honest place for it.
-func (h Handlers) capabilities() []contributor {
+func (h Handlers) contributors() []contributor {
 	return []contributor{
 		integrations.Handlers{
 			Store:         h.Database,
@@ -204,21 +205,23 @@ func (h Handlers) capabilities() []contributor {
 			WindowLead:      h.InvestigationWindowLead,
 			MaxWaitingTurns: h.MaxWaitingTurns,
 		},
+		webhooks.OperatorHandlers{Database: h.Database, Logger: h.Logger,
+			Counters: webhooks.NewWorkInstruments(h.Logger)},
 	}
 }
 
-// surface reports the whole route table together with what each capability said about
-// itself, from ONE construction of the capabilities.
+// surface reports the whole route table together with what each contributor said about
+// itself, from ONE construction of the contributors.
 //
 // That is the enforcement rather than the claim: both halves are read off the same `built`
 // slice, so a description assembled from different handler values than the ones being served
 // is not a state this function can produce.
 func (h Handlers) surface() (authz.Table, []describe.Contribution) {
-	built := h.capabilities()
+	built := h.contributors()
 	contributions := make([]describe.Contribution, 0, len(built)+2)
 	contributions = append(contributions, h.Describe(), h.Identity.Describe())
-	for _, capability := range built {
-		contributions = append(contributions, capability.Describe())
+	for _, contribution := range built {
+		contributions = append(contributions, contribution.Describe())
 	}
 	return h.routesOver(built), contributions
 }

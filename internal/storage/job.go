@@ -28,7 +28,8 @@ const (
 
 // Job is a unit of work as the control plane holds it.
 type Job struct {
-	ID uuid.UUID
+	ID              uuid.UUID
+	InvestigationID uuid.UUID
 	// IntegrationID is what this job reaches: one configured installation. The
 	// registration below is where it RUNS. Keeping both is what lets a customer with two
 	// clusters behind one Relay have a result attributed to the cluster it was read from
@@ -104,8 +105,8 @@ func (p *Database) EnqueueJob(
 	tag, err := pool.Exec(ctx, `
 		INSERT INTO relay_job
 			(job_id, org_id, integration_id, registration_id,
-			 capability_id, capability_version, arguments)
-		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7
+			 capability_id, capability_version, arguments, investigation_id)
+		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7, $8
 		  FROM integration
 		 WHERE integration.integration_id = $3
 		   AND integration.org_id         = $2
@@ -113,9 +114,16 @@ func (p *Database) EnqueueJob(
 		   -- The registration is taken FROM the Integration and compared to the one the
 		   -- job names, rather than trusted from the job. A caller that got it wrong is
 		   -- refused instead of silently redirected.
-		   AND integration.relay_id       = $4`,
+		   AND integration.relay_id       = $4
+		   AND ($8::uuid IS NULL OR EXISTS (
+		       SELECT 1 FROM investigation
+		        WHERE investigation.org_id = $2
+		          AND investigation.investigation_id = $8
+		          AND investigation.status = $9
+		          FOR NO KEY UPDATE))`,
 		job.ID, organization.String(), job.IntegrationID, job.RegistrationID,
-		job.CapabilityID, job.CapabilityVersion, job.Arguments)
+		job.CapabilityID, job.CapabilityVersion, job.Arguments,
+		nullableUUID(job.InvestigationID), int16(1))
 	if err != nil {
 		return 0, fmt.Errorf("enqueueing job: %w", err)
 	}
@@ -123,6 +131,48 @@ func (p *Database) EnqueueJob(
 		return 0, nil
 	}
 	return p.explainRefusedJob(ctx, organization, job)
+}
+
+// EnqueueVerifiedJob records a provider Tool read only while the Integration's current
+// durable verification still grants that exact Relay Capability. The guarded insert closes
+// the gap between offering a Tool and dispatching it.
+func (p *Database) EnqueueVerifiedJob(
+	ctx context.Context, organization tenancy.Organization, job Job,
+) error {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return err
+	}
+	tag, err := pool.Exec(ctx, `
+		INSERT INTO relay_job
+			(job_id, org_id, integration_id, registration_id,
+			 capability_id, capability_version, arguments, investigation_id)
+		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7, $10
+		  FROM integration
+		 WHERE integration.integration_id = $3
+		   AND integration.org_id = $2
+		   AND integration.relay_id = $4
+		   AND integration.disabled_at IS NULL
+		   AND integration.status IN ($8, $9)
+		   AND integration.last_verified_at IS NOT NULL
+		   AND coalesce(integration.verify_grants, '[]'::jsonb) @> to_jsonb(ARRAY[$5]::text[])
+		   AND ($10::uuid IS NULL OR EXISTS (
+		       SELECT 1 FROM investigation
+		        WHERE investigation.org_id = $2
+		          AND investigation.investigation_id = $10
+		          AND investigation.status = $11
+		          FOR NO KEY UPDATE))`,
+		job.ID, organization.String(), job.IntegrationID, job.RegistrationID,
+		job.CapabilityID, job.CapabilityVersion, job.Arguments,
+		int16(integrations.StatusActive), int16(integrations.StatusDegraded),
+		nullableUUID(job.InvestigationID), int16(1))
+	if err != nil {
+		return fmt.Errorf("enqueueing verified job: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrJobRefused
+	}
+	return nil
 }
 
 // explainRefusedJob reads why the guarded insert matched nothing.

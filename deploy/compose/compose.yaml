@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: opencluster
+      POSTGRES_USER: opencluster
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U opencluster -d opencluster"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  control-plane:
+    user: ${OPENCLUSTER_RUNTIME_UID:?set the invoking non-root uid}:${OPENCLUSTER_RUNTIME_GID:?set the invoking non-root gid}
+    image: opencluster-control-plane:dev
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    command: [--config, /etc/opencluster/opencluster.yaml]
+    environment:
+      OC_OPERATOR_TOKEN_ORGANIZATION: ${OPENCLUSTER_ORGANIZATION:-local}
+      OC_MODEL_PROVIDER: ${OPENCLUSTER_MODEL_PROVIDER:-anthropic}
+      OC_MODEL_NAME: ${OPENCLUSTER_MODEL_NAME:?set the configured model identifier}
+      OC_MODEL_CONSENTED_PROVIDERS: ${OPENCLUSTER_MODEL_CONSENTED_PROVIDERS:?explicitly consent to the configured model provider}
+      OC_RELAY_ADDRESS: ${OPENCLUSTER_RELAY_ADDRESS:-}
+      OC_RELAY_SPKI_PINS: ${OPENCLUSTER_RELAY_SPKI_PINS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./opencluster.yaml:/etc/opencluster/opencluster.yaml:ro
+    secrets:
+      - postgres_dsn
+      - operator_token
+      - sealing_key
+      - model_key
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  relay-tls:
+    profiles: [relay]
+    image: nginx:1.27-alpine
+    user: ${OPENCLUSTER_RUNTIME_UID:?set the invoking non-root uid}:${OPENCLUSTER_RUNTIME_GID:?set the invoking non-root gid}
+    command: [nginx, -g, "daemon off;"]
+    depends_on:
+      - control-plane
+    ports:
+      - "${OPENCLUSTER_RELAY_BIND_ADDRESS:-127.0.0.1}:8443:8443"
+    volumes:
+      - ./relay-nginx.conf:/etc/nginx/nginx.conf:ro
+    secrets:
+      - relay_tls_certificate
+      - relay_tls_key
+    tmpfs:
+      - /tmp
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  postgres_password:
+    file: ${OPENCLUSTER_POSTGRES_PASSWORD_FILE:?set the PostgreSQL password file path}
+  postgres_dsn:
+    file: ${OPENCLUSTER_DATABASE_DSN_FILE:?set the PostgreSQL DSN file path}
+  operator_token:
+    file: ${OPENCLUSTER_OPERATOR_TOKEN_FILE:?set the administrator bootstrap token file path}
+  sealing_key:
+    file: ${OPENCLUSTER_SEALING_KEY_FILE:?set the 32-byte sealing key file path}
+  model_key:
+    file: ${OPENCLUSTER_MODEL_KEY_FILE:?set the model API credential file path}
+  relay_tls_certificate:
+    file: ${OPENCLUSTER_RELAY_TLS_CERT_FILE:-./relay-cert.pem}
+  relay_tls_key:
+    file: ${OPENCLUSTER_RELAY_TLS_KEY_FILE:-./relay-key.pem}
+volumes:
+  postgres_data:

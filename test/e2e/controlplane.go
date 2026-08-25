@@ -14,7 +14,11 @@ import (
 
 // controlPlaneStartTimeout bounds how long the process may take to bind and report ready. It
 // includes applying the migrations, which is the slowest thing a first start does.
-const controlPlaneStartTimeout = 2 * time.Minute
+const (
+	controlPlaneStartTimeout   = 2 * time.Minute
+	organization               = "e2e-org"
+	investigationOperatorToken = "e2e-investigation-operator-token-with-sufficient-entropy"
+)
 
 // controlPlane is the control plane running as a real process.
 //
@@ -33,16 +37,32 @@ type controlPlane struct {
 	relayAddress string
 	spkiPin      string
 	dsnPath      string
+	operatorPath string
+	modelKeyPath string
+	sealingPath  string
+	modelURL     string
 	workDir      string
 }
 
 // newControlPlane reserves the addresses the control plane will serve on, without starting
 // it. The relay address is needed before the process exists, because the TLS terminator that
 // fronts it — and therefore the pin the process must advertise — has to be built first.
-func newControlPlane(workDir, dsn string) (*controlPlane, error) {
+func newControlPlane(workDir, dsn, modelURL string) (*controlPlane, error) {
 	dsnPath := filepath.Join(workDir, "database.dsn")
 	if err := os.WriteFile(dsnPath, []byte(dsn), 0o600); err != nil {
 		return nil, fmt.Errorf("writing the database dsn: %w", err)
+	}
+	operatorPath := filepath.Join(workDir, "operator.token")
+	if err := os.WriteFile(operatorPath, []byte(investigationOperatorToken), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the operator token: %w", err)
+	}
+	modelKeyPath := filepath.Join(workDir, "model.key")
+	if err := os.WriteFile(modelKeyPath, []byte("e2e-scripted-model-credential"), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the model credential: %w", err)
+	}
+	sealingPath := filepath.Join(workDir, "sealing.key")
+	if err := os.WriteFile(sealingPath, []byte("0123456789abcdef0123456789abcdef"), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the investigation sealing key: %w", err)
 	}
 
 	httpPort, relayPort, err := reservePorts()
@@ -54,6 +74,10 @@ func newControlPlane(workDir, dsn string) (*controlPlane, error) {
 		httpAddress:  net.JoinHostPort("127.0.0.1", strconv.Itoa(httpPort)),
 		relayAddress: net.JoinHostPort("127.0.0.1", strconv.Itoa(relayPort)),
 		dsnPath:      dsnPath,
+		operatorPath: operatorPath,
+		modelKeyPath: modelKeyPath,
+		sealingPath:  sealingPath,
+		modelURL:     modelURL,
 		workDir:      workDir,
 	}, nil
 }
@@ -72,12 +96,21 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 	c.output.mark(fmt.Sprintf("control plane, start %d", c.starts))
 
 	environment := map[string]string{
-		"OC_HTTP_ADDRESS":      c.httpAddress,
-		"OC_DATABASE_DSN_FILE": c.dsnPath,
-		"OC_RELAY_ADDRESS":     c.relayAddress,
-		"OC_RELAY_SPKI_PINS":   spkiPin,
-		"OC_SHUTDOWN_TIMEOUT":  "10s",
-		"OC_SERVICE_NAME":      "oc-control-plane-e2e",
+		"OC_HTTP_ADDRESS":                c.httpAddress,
+		"OC_DATABASE_DSN_FILE":           c.dsnPath,
+		"OC_RELAY_ADDRESS":               c.relayAddress,
+		"OC_RELAY_SPKI_PINS":             spkiPin,
+		"OC_OPERATOR_ADDRESS":            c.httpAddress,
+		"OC_OPERATOR_TOKEN_FILE":         c.operatorPath,
+		"OC_OPERATOR_TOKEN_ORGANIZATION": organization,
+		"OC_MODEL_PROVIDER":              "anthropic",
+		"OC_MODEL_NAME":                  "claude-sonnet-5",
+		"OC_MODEL_KEY_FILE":              c.modelKeyPath,
+		"OC_SEALING_KEY_FILE":            c.sealingPath,
+		"OC_MODEL_CONSENTED_PROVIDERS":   "anthropic",
+		"OC_MODEL_BASE_URL":              c.modelURL,
+		"OC_SHUTDOWN_TIMEOUT":            "10s",
+		"OC_SERVICE_NAME":                "oc-control-plane-e2e",
 		// Fast enough that an Integration created mid-run gains its synchronization policy,
 		// and a change lands in the ledger, within a test's patience.
 		"OC_INVENTORY_INTERVAL": "2s",

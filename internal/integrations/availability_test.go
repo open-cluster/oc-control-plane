@@ -1,192 +1,88 @@
 package integrations
 
-import "testing"
-
-// CAPABILITY AVAILABILITY, WITH THE REASON.
-//
-// Whether a capability is available is derived from ONE rule: a tool is usable only when
-// every grant it requires was recorded by the last verification. That rule already decided
-// which tools an investigation is offered. Serving it here is what stops a console
-// recomputing the same question from parts and answering it differently — which it would,
-// the first time a provider's grant vocabulary gains a member.
-//
-// The reason is half the point. "Unavailable" with no cause makes an operator guess whether
-// they misconfigured something, chose not to grant it, or hit a bug.
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func definitionWithTools() Definition {
-	return Definition{
-		Key:          "slack",
-		Capabilities: []string{"slack.list_channels", "slack.search_messages"},
-		Tools: []Tool{
-			{Name: "slack.list_channels", Capability: "slack.list_channels"},
-			{
-				Name:       "slack.search_messages",
-				Capability: "slack.search_messages",
-				Requires:   []string{"search:read"},
-			},
-		},
-	}
+	return Definition{Tools: []Tool{
+		{Name: "slack.list_channels"},
+		{Name: "slack.search_messages", Requires: []string{"search:read"}},
+	}}
 }
 
-func TestACapabilityWithNoRequirementsIsAvailable(t *testing.T) {
+func TestAvailabilityIsReportedPerToolWithoutAGenericCapabilityDeclaration(t *testing.T) {
 	t.Parallel()
 
-	found := Availability(definitionWithTools(), Integration{})
-
-	got, ok := findCapability(found, "slack.list_channels")
-	if !ok {
-		t.Fatalf("the capability is missing from %+v", found)
-	}
-	if !got.Available {
-		t.Errorf("a capability requiring no grant is unavailable: %+v", got)
-	}
-}
-
-func TestACapabilityMissingItsGrantIsUnavailableAndSaysWhich(t *testing.T) {
-	t.Parallel()
-
-	found := Availability(definitionWithTools(), Integration{VerifyGrants: []string{"channels:read"}})
-
-	got, ok := findCapability(found, "slack.search_messages")
-	if !ok {
-		t.Fatalf("the capability is missing from %+v", found)
-	}
-	if got.Available {
-		t.Error("a capability whose required grant was never recorded reports available")
-	}
-	if got.Reason == "" {
-		t.Error("unavailable with no reason makes an operator guess whether they " +
-			"misconfigured it, declined it, or hit a bug")
-	}
-	if !containsText(got.Reason, "search:read") {
-		t.Errorf("the reason does not name the missing grant: %q", got.Reason)
-	}
-}
-
-func TestARecordedGrantMakesItsCapabilityAvailable(t *testing.T) {
-	t.Parallel()
-
-	found := Availability(definitionWithTools(),
+	found := ToolAvailabilityFor(definitionWithTools(),
 		Integration{VerifyGrants: []string{"search:read"}})
-
-	got, _ := findCapability(found, "slack.search_messages")
-	if !got.Available {
-		t.Errorf("a capability whose grant WAS recorded reports unavailable: %+v", got)
+	if len(found) != 2 {
+		t.Fatalf("reported %d tools, want both declared tools: %+v", len(found), found)
 	}
-	if got.Reason != "" {
-		t.Errorf("an available capability carries a reason it does not need: %q", got.Reason)
+	if found[0].Tool == "" || found[1].Tool == "" {
+		t.Fatalf("tool availability must identify each Tool: %+v", found)
 	}
 }
 
-// Every declared capability is reported, present or not. A console rendering only what came
-// back would silently omit a capability the deployment does declare.
-func TestEveryDeclaredCapabilityIsReported(t *testing.T) {
+func TestAToolMissingItsGrantIsUnavailableAndSaysWhich(t *testing.T) {
 	t.Parallel()
 
-	found := Availability(definitionWithTools(), Integration{})
-	if len(found) != 2 {
-		t.Fatalf("reported %d capabilities, want both declared ones: %+v", len(found), found)
-	}
-}
-
-func findCapability(all []CapabilityAvailability, name string) (CapabilityAvailability, bool) {
-	for _, one := range all {
-		if one.Capability == name {
-			return one, true
+	found := ToolAvailabilityFor(definitionWithTools(), Integration{})
+	for _, one := range found {
+		if one.Tool != "slack.search_messages" {
+			continue
 		}
+		if one.Available || one.Reason == "" {
+			t.Fatalf("missing grant must be visible with a reason: %+v", one)
+		}
+		return
 	}
-	return CapabilityAvailability{}, false
+	t.Fatal("search Tool was omitted")
 }
 
-func containsText(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && func() bool {
-		for i := 0; i+len(needle) <= len(haystack); i++ {
-			if haystack[i:i+len(needle)] == needle {
-				return true
+func TestSupportedToolsUsesTheSameVerifiedGrantDecision(t *testing.T) {
+	t.Parallel()
+
+	without := SupportedTools(definitionWithTools(), Integration{})
+	if len(without) != 1 || without[0].Name != "slack.list_channels" {
+		t.Fatalf("ungranted Tool was offered: %+v", without)
+	}
+	with := SupportedTools(definitionWithTools(),
+		Integration{VerifyGrants: []string{"search:read"}})
+	if len(with) != 2 {
+		t.Fatalf("verified grant did not offer both Tools: %+v", with)
+	}
+}
+
+func TestToolAvailabilitySharesIntegrationEligibilityWithTheOffer(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	for _, scenario := range []struct {
+		name        string
+		integration Integration
+		reason      string
+		available   bool
+	}{
+		{"disabled", Integration{Status: StatusActive, LastVerifiedAt: now, DisabledAt: now}, "disabled", false},
+		{"configured", Integration{Status: StatusConfigured, LastVerifiedAt: now}, "successful Verification", false},
+		{"failed", Integration{Status: StatusFailed, LastVerifiedAt: now}, "successful Verification", false},
+		{"unverified", Integration{Status: StatusActive}, "has not recorded a Verification", false},
+		{"expired successful verification", Integration{Status: StatusActive, LastVerifiedAt: now.Add(-25 * time.Hour)}, "Verification has expired", false},
+		{"recent successful verification", Integration{Status: StatusActive, LastVerifiedAt: now.Add(-23 * time.Hour)}, "", true},
+		{"degraded current", Integration{Status: StatusDegraded, LastVerifiedAt: now}, "", true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			available := ToolAvailabilityFor(definitionWithTools(), scenario.integration)[0]
+			if available.Available != scenario.available || !strings.Contains(available.Reason, scenario.reason) {
+				t.Fatalf("availability=%+v, want available=%v reason=%q", available,
+					scenario.available, scenario.reason)
 			}
-		}
-		return false
-	}()
-}
-
-// A capability no TOOL exercises is not automatically broken. Alertmanager's whole job is
-// receiving alerts inbound, and it does that through a webhook rather than a tool an
-// investigation calls — so reporting it the way a missing grant is reported would tell an
-// operator their working integration is unavailable. That is a new lie in the place a lie
-// was being removed.
-func TestAnInboundCapabilityIsNotReportedAsBroken(t *testing.T) {
-	t.Parallel()
-
-	inbound := Definition{
-		Key:              "alertmanager",
-		ReceivesWebhooks: true,
-		Capabilities:     []string{"alertmanager.receive_alerts"},
-	}
-	got, ok := findCapability(Availability(inbound, Integration{}), "alertmanager.receive_alerts")
-	if !ok {
-		t.Fatal("the declared capability is not reported at all")
-	}
-	if !got.Available {
-		t.Errorf("an inbound capability reports unavailable: %+v; an operator reads that "+
-			"as a broken integration", got)
-	}
-	if !containsText(got.Reason, "inbound") && !containsText(got.Reason, "deliver") {
-		t.Errorf("the reason does not say how it is exercised: %q", got.Reason)
-	}
-}
-
-// A read-only type that declares a capability no tool implements IS a defect worth seeing:
-// it is how an integration comes to advertise reads it cannot perform.
-func TestADeclaredReadWithNoToolIsReportedUnavailable(t *testing.T) {
-	t.Parallel()
-
-	hollow := Definition{Key: "kubernetes", Capabilities: []string{"kubernetes.container.logs"}}
-	got, _ := findCapability(Availability(hollow, Integration{}), "kubernetes.container.logs")
-	if got.Available {
-		t.Error("a capability with no tool behind it reports available")
-	}
-	if got.Reason == "" {
-		t.Error("no reason given for a capability nothing implements")
-	}
-}
-
-// A provider may judge its own capabilities, and the generic join stays available to it.
-//
-// The case this exists for: whether OpenCluster can be spoken to in a Slack workspace
-// depends on this deployment having registered an application with the vendor, which is
-// deployment configuration and appears in no Integration field. A join that could only see
-// the row would report such a capability as working, and it would never answer.
-func TestAProviderMayJudgeItsOwnCapabilities(t *testing.T) {
-	t.Parallel()
-
-	definition := definitionWithTools()
-	definition.CapabilityStates = func(Integration) []CapabilityAvailability {
-		return []CapabilityAvailability{{
-			Capability: "slack.list_channels",
-			Reason:     "this deployment registered no application with the vendor",
-		}}
-	}
-
-	found := Availability(definition, Integration{VerifyGrants: []string{"search:read"}})
-	if len(found) != 1 || found[0].Available {
-		t.Fatalf("the provider's own judgement was not used: %+v", found)
-	}
-}
-
-// The generic join ignores the override, which is what lets an override call it without
-// recursing and without reimplementing the rule it is only adjusting.
-func TestTheGenericJoinIgnoresTheOverride(t *testing.T) {
-	t.Parallel()
-
-	definition := definitionWithTools()
-	definition.CapabilityStates = func(Integration) []CapabilityAvailability {
-		t.Error("the generic join dispatched to the override")
-		return nil
-	}
-
-	found := GrantedAvailability(definition, Integration{})
-	if len(found) != 2 {
-		t.Fatalf("the generic join reported %d capabilities, want both: %+v",
-			len(found), found)
+			if offered := SupportedTools(definitionWithTools(), scenario.integration); (len(offered) > 0) != scenario.available {
+				t.Fatalf("offer and operator disagree: %+v / %+v", available, offered)
+			}
+		})
 	}
 }

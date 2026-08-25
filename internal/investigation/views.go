@@ -74,7 +74,6 @@ type sourceView struct {
 type runView struct {
 	Ordinal       int            `json:"ordinal"`
 	IntegrationID string         `json:"integrationId,omitempty"`
-	Capability    string         `json:"capability,omitempty"`
 	Tool          string         `json:"tool"`
 	Arguments     map[string]any `json:"arguments,omitempty"`
 	WindowFrom    string         `json:"windowFrom"`
@@ -94,6 +93,13 @@ type detailView struct {
 	investigationView
 	Sources []sourceView `json:"sources"`
 	Runs    []runView    `json:"runs"`
+}
+
+type activityView struct {
+	Sequence int64          `json:"sequence"`
+	At       string         `json:"at"`
+	Type     string         `json:"type"`
+	Payload  map[string]any `json:"payload,omitempty"`
 }
 
 func investigationViewOf(found Investigation) investigationView {
@@ -150,7 +156,6 @@ func detailViewOf(found Investigation, sources []Source, runs []ToolRun) detailV
 	for _, run := range runs {
 		rendered := runView{
 			Ordinal:     run.Ordinal,
-			Capability:  run.Capability,
 			Tool:        run.Tool,
 			Arguments:   run.Arguments,
 			WindowFrom:  stamp(run.WindowFrom),

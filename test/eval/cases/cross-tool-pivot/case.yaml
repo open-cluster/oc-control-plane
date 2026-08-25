@@ -1,0 +1,8 @@
+name: cross-tool-pivot
+revision: "1"
+situation: A deployment announcement identifies the commit that changed cache behavior.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true
+    honestinsufficiency: false

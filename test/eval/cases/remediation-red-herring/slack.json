@@ -1,0 +1,47 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:54:00Z",
+            "User": "USRELEE00",
+            "Text": "restoring consumer concurrency to drain the backlog",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:20:00Z",
+            "User": "UDEPLOYBOT",
+            "Text": "deployed worker bad111 to production",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          },
+          {
+            "At": "2026-08-25T11:55:00Z",
+            "User": "UDEPLOYBOT",
+            "Text": "deployed worker aid222 to production",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

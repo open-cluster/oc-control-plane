@@ -134,6 +134,8 @@ func TestEveryWriteEitherPublishesItsBodyOrIsRecordedAsTakingNone(t *testing.T) 
 			"verification re-probes what is already recorded",
 		"POST /operator/v1/organizations/{organization}/integrations/{integration}/webhook/rotate-secret": "" +
 			"rotation mints a new secret and takes nothing",
+		"POST /operator/v1/organizations/{organization}/investigations/{investigation}/cancel": "" +
+			"the running investigation is named in the path and cancellation takes no options",
 		"POST /operator/v1/organizations/{organization}/members/{user}/revoke-sessions": "" +
 			"the member whose sessions end is named in the path",
 		"POST /operator/v1/organizations/{organization}/api-tokens/{token}/revoke": "" +
@@ -142,6 +144,8 @@ func TestEveryWriteEitherPublishesItsBodyOrIsRecordedAsTakingNone(t *testing.T) 
 			"withdrawing the mark takes no argument",
 		"POST /operator/v1/organizations/{organization}/relays/bootstrap-tokens": "" +
 			"the token's lifetime and scope are this build's, not the caller's",
+		"POST /operator/v1/organizations/{organization}/webhook-work/terminal/{work}/replay": "" +
+			"the terminal work item is named in the path and replay takes no options",
 	}
 
 	described := map[string]bool{}

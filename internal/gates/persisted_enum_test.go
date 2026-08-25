@@ -46,6 +46,14 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"JobSucceeded", int(storage.JobSucceeded), 2},
 		{"JobFailed", int(storage.JobFailed), 3},
 		{"JobCancelled", int(storage.JobCancelled), 4},
+		{"WebhookWorkAlert", int(storage.WebhookWorkAlert), 1},
+		{"WebhookWorkSlack", int(storage.WebhookWorkSlack), 2},
+		{"WebhookWorkReady", int(storage.WebhookWorkReady), 1},
+		{"WebhookWorkLeased", int(storage.WebhookWorkLeased), 2},
+		{"WebhookWorkRetry", int(storage.WebhookWorkRetry), 3},
+		{"WebhookWorkTerminal", int(storage.WebhookWorkTerminal), 4},
+		{"WebhookWorkComplete", int(storage.WebhookWorkComplete), 5},
+		{"MaxWebhookWorkAttempts", storage.MaxWebhookWorkAttempts, 12},
 
 		{"SignalFiring", int(storage.SignalFiring), 1},
 		{"SignalResolved", int(storage.SignalResolved), 2},
@@ -83,6 +91,7 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"InvestigationRunning", int(investigation.StatusRunning), 1},
 		{"InvestigationConcluded", int(investigation.StatusConcluded), 2},
 		{"InvestigationFailed", int(investigation.StatusFailed), 3},
+		{"InvestigationCancelled", int(investigation.StatusCancelled), 4},
 		{"RunSucceeded", int(investigation.RunSucceeded), 1},
 		{"RunFailed", int(investigation.RunFailed), 2},
 
@@ -97,6 +106,7 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"EventConcluded", int(investigation.EventConcluded), 6},
 		{"EventFailed", int(investigation.EventFailed), 7},
 		{"EventCompacted", int(investigation.EventCompacted), 8},
+		{"EventCancelled", int(investigation.EventCancelled), 9},
 
 		// The change ledger's vocabulary. The baseline exclusion in every change query is
 		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
@@ -141,6 +151,11 @@ var (
 		int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
 		int(storage.JobFailed), int(storage.JobCancelled),
 	}
+	webhookWorkStatusValues = []int{
+		int(storage.WebhookWorkReady), int(storage.WebhookWorkLeased),
+		int(storage.WebhookWorkRetry), int(storage.WebhookWorkTerminal),
+		int(storage.WebhookWorkComplete),
+	}
 	signalStatusValues    = []int{int(storage.SignalFiring), int(storage.SignalResolved)}
 	deliveryOutcomeValues = []int{
 		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
@@ -156,7 +171,7 @@ var (
 	}
 	investigationStatusValues = []int{
 		int(investigation.StatusRunning), int(investigation.StatusConcluded),
-		int(investigation.StatusFailed),
+		int(investigation.StatusFailed), int(investigation.StatusCancelled),
 	}
 	integrationTypeValues = []int{
 		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
@@ -183,7 +198,8 @@ var enumColumns = map[string]map[string][]int{
 	"result.go":       {"status": jobStatusValues},
 	"cancellation.go": {"status": jobStatusValues},
 	// The fleet counts leased jobs to report what the relays are holding.
-	"fleet.go": {"status": jobStatusValues},
+	"fleet.go":        {"status": jobStatusValues},
+	"webhook_work.go": {"status": webhookWorkStatusValues},
 	// The delivery path: the upsert guard compares a SIGNAL's status, and the idempotence
 	// key's partial-index predicate compares a delivery's outcome.
 	"signal.go": {"status": signalStatusValues, "outcome": deliveryOutcomeValues},
@@ -195,13 +211,15 @@ var enumColumns = map[string]map[string][]int{
 	"integration.go": {"outcome": deliveryOutcomeValues},
 	// An inbound Slack message claims its delivery through the same idempotence key every
 	// other delivery uses, so it writes and compares the accepted outcome.
-	"slack_conversation.go": {"outcome": deliveryOutcomeValues},
+	"slack_conversation.go": {
+		"outcome": deliveryOutcomeValues, "status": webhookWorkStatusValues,
+	},
 	// The outbound half: claiming compares a delivery's own lifecycle state.
 	"slack_reply.go": {"status": slackReplyValues},
 	// The ending update is guarded on the investigation still running, and the
 	// open-episode listing filters on an EPISODE's status; the two enums share the file.
-	"investigation.go": {"status": append(append([]int(nil), investigationStatusValues...),
-		episodeStatusValues...)},
+	"investigation.go": {"status": append(append(append([]int(nil), investigationStatusValues...),
+		episodeStatusValues...), jobStatusValues...)},
 	// The brief carries only what CONCLUDED turns established: a running turn has
 	// established nothing yet, and a failed one established nothing at all.
 	"conversation_brief.go": {"status": investigationStatusValues},
@@ -305,6 +323,7 @@ func TestEnumLiteralScannerReadsTheFormsInUse(t *testing.T) {
 			"integration_type_id", []int{2, 3}},
 		{"bare in list", `AND outcome IN (1, 3)`, "outcome", []int{1, 3}},
 		{"bound parameter is not a literal", `SET status = $4`, "status", nil},
+		{"bound parameters in a list are not literals", `AND status IN ($8, $9)`, "status", nil},
 		{"assignment from another column", `SET status = EXCLUDED.status`, "status", nil},
 		{"another column entirely", `WHERE signal.status = 1`, "outcome", nil},
 	} {
@@ -338,11 +357,10 @@ func enumLiteralsFor(sql, column string) []int {
 		}
 	}
 
-	digits := regexp.MustCompile(`\d+`)
 	inList := regexp.MustCompile(qualified + `\s+IN\s*\(([^)]*)\)`)
 	for _, match := range inList.FindAllStringSubmatch(sql, -1) {
-		for _, literal := range digits.FindAllString(match[1], -1) {
-			if value, err := strconv.Atoi(literal); err == nil {
+		for _, entry := range strings.Split(match[1], ",") {
+			if value, err := strconv.Atoi(strings.TrimSpace(entry)); err == nil {
 				found = append(found, value)
 			}
 		}

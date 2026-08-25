@@ -326,6 +326,34 @@ func TestThreadRepliesReturnAWholeThread(t *testing.T) {
 	}
 }
 
+func TestConversationThreadReadRefusesADifferentChannelOrThread(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSlack(t)
+	tool := toolNamed(t, NewClient(fake.URL), "slack.get_thread_replies")
+	if !tool.ConversationScoped {
+		t.Fatal("the originating-thread read must declare its restricted Conversation scope")
+	}
+
+	for name, arguments := range map[string]map[string]any{
+		"different channel": {"channel": "C-OTHER", "threadTs": "1710000000.1"},
+		"different thread":  {"channel": "C-ORIGIN", "threadTs": "1710000000.2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := tool.Run(testContext(t), integrations.ToolRequest{
+				Credential: "xoxb-under-test", Arguments: arguments,
+				OriginChannel: "C-ORIGIN", OriginThread: "1710000000.1",
+			})
+			if err == nil || !strings.Contains(err.Error(), "originating conversation thread") {
+				t.Fatalf("a read outside the originating thread was not refused: %v", err)
+			}
+		})
+	}
+	if calls := fake.called("conversations.replies"); calls != 0 {
+		t.Fatalf("out-of-scope thread reads reached Slack %d times", calls)
+	}
+}
+
 func TestSearchRequiresAQuery(t *testing.T) {
 	t.Parallel()
 

@@ -1,0 +1,36 @@
+{
+  "5001": {
+    "Account": "acme-corp",
+    "Repos": [
+      {
+        "ID": 101,
+        "Name": "payments",
+        "Commits": [
+          {
+            "SHA": "fee1dead",
+            "Message": "switch cache to write-through",
+            "Author": "kai-dev",
+            "At": "2026-08-25T11:20:00Z",
+            "Files": [
+              {
+                "Path": "config/cache.yaml",
+                "Patch": "@@ -1,3 +1,3 @@\n cache:\n-  mode: write-back\n+  mode: write-through"
+              }
+            ]
+          }
+        ],
+        "Pulls": null,
+        "Files": {
+          "config/cache.yaml": "cache:\n  mode: write-through\n  ttl: 300s\n"
+        }
+      },
+      {
+        "ID": 102,
+        "Name": "deploy",
+        "Commits": null,
+        "Pulls": null,
+        "Files": null
+      }
+    ]
+  }
+}

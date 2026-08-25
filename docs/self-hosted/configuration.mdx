@@ -74,7 +74,6 @@ model:
   consented_providers: ["anthropic"]
   base_url: ""
   spend_ceiling_cents: 500
-  context_window: 128000
 
 investigations:
   window_lead: "2h"
@@ -82,10 +81,7 @@ investigations:
   max_turns: 20
 
 conversations:
-  enabled: false
   max_concurrent_investigations: 4
-  max_waiting_investigations: 16
-  context_threshold_percent: 50
 
 change_ledger:
   retention_days: 90
@@ -290,7 +286,7 @@ listener private even when a browser-facing proxy is configured.
 | `OC_SLACK_API_URL` | No | Slack API origin override. Empty uses Slack. |
 | `OC_SLACK_CLIENT_ID` | For one-click install | The Slack app's OAuth client ID. Set with `OC_SLACK_CLIENT_SECRET_FILE` or neither. |
 | `OC_SLACK_CLIENT_SECRET_FILE` | For one-click install | File containing the Slack app's OAuth client secret. Without both, Slack is connected with the pasted-token form. |
-| `OC_SLACK_SIGNING_SECRET_FILE` | For the Slack agent | File containing the Slack app's signing secret, which inbound events are verified against. Without it, no events endpoint is served and the integration reports its inbound capabilities as unavailable. Independent of the client credential. |
+| `OC_SLACK_SIGNING_SECRET_FILE` | For the Slack agent | File containing the Slack app's signing secret, which inbound events are verified against. Without it, no events endpoint is served. Independent of the client credential. |
 | `OC_SLACK_AGENT_ORGANIZATIONS` | No | Comma-separated organizations the Slack agent surface is live for. Unset means none, which is the default. An inbound event for an organization outside it is acknowledged and dropped; reads through the Slack tools are unaffected either way. |
 | `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
 | `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
@@ -334,28 +330,48 @@ no credential at all.
 
 ## Conversations
 
-Conversations let an operator ask follow-up questions in one context. They are off until
-you turn them on; single-shot investigations are unaffected either way.
+Conversations let an operator ask follow-up questions in one context. They are enabled by
+default; single-shot investigations remain available alongside them.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `OC_CONVERSATIONS_ENABLED` | No | `true` serves the conversation routes. Default: `false`, and every conversation route answers `404`. |
 | `OC_ORG_MAX_CONCURRENT_INVESTIGATIONS` | No | Investigations one organization may run at once. Default: `4`. |
-| `OC_ORG_MAX_WAITING_INVESTIGATIONS` | No | Investigations one organization may queue behind those. Opening past it is refused. Default: `16`. |
-| `OC_MODEL_CONTEXT_WINDOW` | No | The model's context window in tokens. Default: resolved from the model name, or `128000` for a model this build does not recognise. |
-| `OC_CONTEXT_THRESHOLD_PERCENT` | No | How full a conversation's estimated context may get before older turns are summarized. `1`–`99`. Default: `50`. |
 
-The two per-organization ceilings are what keep one tenant from consuming the deployment.
-Work above the concurrency ceiling waits rather than failing; work above the queue ceiling
-is refused with a plain reason.
-
-Raise `OC_MODEL_CONTEXT_WINDOW` only if you know your model's window is larger than the
-default this build resolves. Setting it too high does not produce an error — it produces
-turns that fail when the provider rejects an oversized request.
+The per-organization concurrency ceiling keeps one tenant from consuming the deployment.
+Waiting work and model context limits remain bounded internally by the platform.
 
 Provider consent is deployment-wide. Review [what is sent to the model
 provider](/security/credentials-and-data-access#data-sent-to-the-model-provider) before
 enabling investigations.
+
+## Optional hosted extensions
+
+Self-hosted deployments do not require WorkOS and never forward audit events to it.
+An explicitly hosted deployment can enable WorkOS AuthKit through the existing
+`local+oidc` authentication settings and forward already-committed PostgreSQL audit
+events asynchronously.
+
+```yaml
+hosted:
+  active: true
+  api_key_file: "/run/secrets/workos-api-key"
+  api_url: "https://api.workos.com"
+  audit_organizations:
+    example-org: "org_workos_example"
+```
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OC_HOSTED_MODE` | For hosted extensions | Set to `true` to enable optional WorkOS integration. |
+| `OC_WORKOS_API_KEY_FILE` | In hosted mode | File containing the WorkOS API credential. |
+| `OC_WORKOS_AUDIT_ORGANIZATIONS` | In hosted mode | Comma-separated `local_organization=workos_organization` mappings. |
+| `OC_WORKOS_API_URL` | No | HTTPS WorkOS API origin override; loopback is allowed for local tests. |
+
+Hosted authentication uses `OC_AUTHENTICATION_MODE=local+oidc` with the WorkOS AuthKit
+issuer, OIDC client ID, and file-backed OIDC client secret. Authorization still comes
+from locally stored Organization memberships; provider claims never grant roles.
+PostgreSQL remains the authoritative audit record, and forwarding retries are durable,
+bounded, and deduplicated using each event's existing identity.
 
 ## Validation rules
 

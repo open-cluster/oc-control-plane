@@ -20,12 +20,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/identity"
-	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/webhooks"
+	"github.com/open-cluster/oc-control-plane/web"
 )
 
 // serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
@@ -96,6 +97,9 @@ func serve(ctx context.Context, process assembled) error {
 	credentialRotation := startCredentialRotation(process)
 	defer credentialRotation.stop()
 
+	webhookWork := startWebhookWork(process)
+	defer webhookWork.stop()
+
 	// The change ledger ages out on its own schedule, independent of the audit record's:
 	// it is derived operational context, and what bounds it is the deployment's retention
 	// rather than a tenant's declaration.
@@ -162,7 +166,8 @@ func httpRoutes(process assembled) (http.Handler, error) {
 		if err != nil {
 			return nil, err
 		}
-		mux.Handle("/", operatorRoutes)
+		mux.Handle("/operator/", operatorRoutes)
+		mux.Handle("/", web.Handler())
 	} else {
 		mux.Handle("/", healthRouter)
 	}
@@ -330,10 +335,10 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 // intakeRouter assembles authenticated Alertmanager and Slack webhook routes.
 func intakeRouter(process assembled) http.Handler {
 	cfg := process.config
-	return intake.Handlers{
+	return webhooks.Handlers{
 		Database: process.database,
 		Logger:   process.logger,
-		Adapters: intake.Adapters{
+		Adapters: webhooks.Adapters{
 			integrations.TypeAlertmanager: alertmanager.Adapter{},
 		},
 		Slack: slackAgent(cfg),

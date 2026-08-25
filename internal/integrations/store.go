@@ -10,9 +10,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
-// Store is everything this capability needs from durable state.
+// Store is everything the Integration domain needs from durable state.
 //
-// It is declared here rather than in the persistence package because the capability owns
+// It is declared here rather than in the persistence package because the domain owns
 // its vocabulary and persistence depends on it. Writes take the principal as well as the
 // organization: the middleware has already checked the membership, and taking it here means
 // the actor reaches the audit row the write commits alongside itself.
@@ -78,7 +78,7 @@ type Store interface {
 	RecordIntegrationVerification(ctx context.Context, who authz.Principal,
 		org tenancy.Organization, id uuid.UUID, verification Verification) (Integration, error)
 	// IntegrationRelayStatus reports the bound Relay's presence and advertised
-	// capabilities, for verification. The zero value when none is bound.
+	// Relay Capabilities, for verification. The zero value when none is bound.
 	IntegrationRelayStatus(ctx context.Context, org tenancy.Organization,
 		relayID uuid.UUID) (RelayStatus, error)
 	// LastAcceptedDelivery reports when an integration last accepted a webhook delivery,

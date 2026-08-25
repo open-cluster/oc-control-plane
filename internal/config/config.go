@@ -41,9 +41,7 @@ const (
 	// than accumulating until something falls over.
 	defaultOrgConcurrentInvestigations = 4
 	defaultOrgWaitingInvestigations    = 16
-	// Half the model's working budget before older turns are compacted. A soft threshold
-	// rather than the ceiling itself: compacting at the edge means the very turn that
-	// triggered it has no room to run.
+	// Context ceilings are derived internally from the selected model.
 	defaultContextThresholdPercent = 50
 	defaultAuthenticationMode      = "local"
 )
@@ -73,6 +71,10 @@ const (
 	EnvOIDCClientID              = "OC_OIDC_CLIENT_ID"
 	EnvOIDCClientSecretFile      = "OC_OIDC_CLIENT_SECRET_FILE"
 	EnvLegacyIdentityMigrated    = "OC_LEGACY_IDENTITY_MIGRATION_COMPLETE"
+	EnvHostedMode                = "OC_HOSTED_MODE"
+	EnvWorkOSAPIKeyFile          = "OC_WORKOS_API_KEY_FILE"
+	EnvWorkOSAuditOrganizations  = "OC_WORKOS_AUDIT_ORGANIZATIONS"
+	EnvWorkOSAPIURL              = "OC_WORKOS_API_URL"
 
 	// Where this surface and its console are reachable from a browser. Both are configuration
 	// rather than values read from a request: a caller-controlled host in a redirect URI is how
@@ -172,24 +174,8 @@ const (
 	EnvInvestigationMaxToolRuns = "OC_INVESTIGATION_MAX_TOOL_RUNS"
 	EnvInvestigationMaxTurns    = "OC_INVESTIGATION_MAX_TURNS"
 
-	// EnvConversationsEnabled is the per-deployment switch for the conversation surface.
-	// It is the existing configuration mechanism doing the job of a feature flag, because
-	// a flag platform is a system to operate and this is one boolean.
-	EnvConversationsEnabled = "OC_CONVERSATIONS_ENABLED"
-	// EnvOrgConcurrentInvestigations and EnvOrgWaitingInvestigations are the
-	// per-organization ceilings: how many turns one tenant may have executing at once,
-	// and how many may wait behind them.
+	// EnvOrgConcurrentInvestigations bounds the work one organization can run at once.
 	EnvOrgConcurrentInvestigations = "OC_ORG_MAX_CONCURRENT_INVESTIGATIONS"
-	EnvOrgWaitingInvestigations    = "OC_ORG_MAX_WAITING_INVESTIGATIONS"
-	// EnvModelContextWindow is the model's working context window, in tokens. Empty means
-	// the per-model default table decides, which is what a deployment that has not
-	// thought about it should get. Named for the WINDOW rather than the unit, because a
-	// variable whose name ends in TOKENS reads as a credential to anything scanning for
-	// one — including this repository's own gate.
-	EnvModelContextWindow = "OC_MODEL_CONTEXT_WINDOW"
-	// EnvContextThresholdPercent is how full the estimated context may get before older
-	// turns are compacted into the running summary.
-	EnvContextThresholdPercent = "OC_CONTEXT_THRESHOLD_PERCENT"
 
 	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
 	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
@@ -288,6 +274,12 @@ type Config struct {
 	OIDCClientID                    string
 	OIDCClientSecret                string
 	LegacyIdentityMigrationComplete bool
+	// HostedMode enables optional WorkOS authentication and asynchronous audit delivery.
+	// OSS deployments never contact WorkOS and reject hosted credentials unless enabled.
+	HostedMode               bool
+	WorkOSAPIKey             string
+	WorkOSAPIURL             string
+	WorkOSAuditOrganizations map[string]string
 
 	// SealingKey seals presentable credentials at rest: an identity provider's client
 	// secret, an integration's outbound token. Empty means this deployment cannot hold
@@ -348,17 +340,14 @@ type Config struct {
 	// window reaches back.
 	InvestigationWindowLead time.Duration
 
-	// ConversationsEnabled turns the conversation surface on. Off by default: the
-	// single-shot investigation path is untouched either way, so a deployment that has
-	// not opted in behaves exactly as it did.
+	// ConversationsEnabled keeps the supported conversation surface available by default.
 	ConversationsEnabled bool
 	// OrgConcurrentInvestigations and OrgWaitingInvestigations bound one organization's
 	// executing and queued turns.
 	OrgConcurrentInvestigations int
 	OrgWaitingInvestigations    int
-	// ModelContextWindow is the configured context window in tokens; zero means the
-	// per-model default table decides. ContextThresholdPercent is how full the estimate
-	// may get before compaction.
+	// ModelContextWindow and ContextThresholdPercent are platform-owned safety inputs;
+	// deployments cannot configure them through YAML or environment variables.
 	ModelContextWindow      int
 	ContextThresholdPercent int
 	// InvestigationMaxToolRuns and InvestigationMaxTurns are the autonomous loop's
@@ -413,6 +402,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		ChangeLedgerRetentionDays: defaultChangeLedgerRetentionDays,
 		InvestigationWindowLead:   defaultInvestigationWindowLead,
 		ModelSpendCeilingCents:    defaultModelSpendCeilingCents,
+		ConversationsEnabled:      true,
 
 		OrgConcurrentInvestigations: defaultOrgConcurrentInvestigations,
 		OrgWaitingInvestigations:    defaultOrgWaitingInvestigations,
@@ -497,6 +487,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = authentication(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
+	if err = hosted(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
 	if cfg.SealingKeyID, cfg.SealingKey, cfg.PreviousSealingKeys, err = sealingKeys(lookup); err != nil {
 		return Config{}, err
 	}
@@ -545,25 +538,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		lookup, EnvInvestigationWindowLead, cfg.InvestigationWindowLead); err != nil {
 		return Config{}, err
 	}
-	if cfg.ConversationsEnabled, err = optionalFlag(
-		lookup, EnvConversationsEnabled); err != nil {
-		return Config{}, err
-	}
 	if cfg.OrgConcurrentInvestigations, err = optionalPositiveOr(
 		lookup, EnvOrgConcurrentInvestigations,
 		cfg.OrgConcurrentInvestigations); err != nil {
-		return Config{}, err
-	}
-	if cfg.OrgWaitingInvestigations, err = optionalPositiveOr(
-		lookup, EnvOrgWaitingInvestigations, cfg.OrgWaitingInvestigations); err != nil {
-		return Config{}, err
-	}
-	if cfg.ModelContextWindow, err = optionalPositive(
-		lookup, EnvModelContextWindow); err != nil {
-		return Config{}, err
-	}
-	if cfg.ContextThresholdPercent, err = optionalPercent(
-		lookup, EnvContextThresholdPercent, cfg.ContextThresholdPercent); err != nil {
 		return Config{}, err
 	}
 	if cfg.ModelSpendCeilingCents, err = optionalCents(
@@ -832,22 +809,6 @@ func optionalPositiveOr(
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || parsed < 1 {
 		return 0, fmt.Errorf("%s must be a positive whole number", key)
-	}
-	return parsed, nil
-}
-
-// optionalPercent reads a threshold as whole percent, refusing anything outside 1-99. A
-// hundred would compact at the ceiling, which is where there is no room left to compact.
-func optionalPercent(
-	lookup func(string) (string, bool), key string, fallback int,
-) (int, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || parsed < 1 || parsed > 99 {
-		return 0, fmt.Errorf("%s must be a whole percentage between 1 and 99", key)
 	}
 	return parsed, nil
 }

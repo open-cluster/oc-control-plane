@@ -42,6 +42,9 @@ type SlackMessage struct {
 	// reply then creates.
 	Channel string
 	Thread  string
+	// MessageID is Slack's timestamp identifier for this exact message. It is retained as
+	// a safe provider reference so a worker can attach provenance after acknowledgement.
+	MessageID string
 	// Subject names the Conversation when this message opens one. It is derived from the
 	// message rather than asked for, because nobody types a subject into a chat box.
 	Subject string
@@ -85,12 +88,13 @@ func (p *Database) RecordSlackMessage(
 	// The idempotence claim comes FIRST, so a redelivery that arrives while the first is
 	// still committing loses the race at the database rather than at a read-then-write both
 	// could pass.
+	deliveryID := uuid.New()
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO integration_delivery
 			(delivery_id, org_id, integration_id, outcome, body_digest, signal_count)
 		VALUES ($1, $2, $3, 1, $4, 0)
 		ON CONFLICT (integration_id, body_digest) WHERE outcome = 1 DO NOTHING`,
-		uuid.New(), organization.String(), said.Integration, said.BodyDigest)
+		deliveryID, organization.String(), said.Integration, said.BodyDigest)
 	if err != nil {
 		return SlackMessageOutcome{}, fmt.Errorf("recording a slack delivery: %w", err)
 	}
@@ -102,7 +106,12 @@ func (p *Database) RecordSlackMessage(
 	if err != nil {
 		return SlackMessageOutcome{}, err
 	}
-	if err := appendSlackMessage(ctx, transaction, organization, conversationID, said); err != nil {
+	sequence, err := appendSlackMessage(ctx, transaction, organization, conversationID, said)
+	if err != nil {
+		return SlackMessageOutcome{}, err
+	}
+	if err := enqueueWebhookWork(ctx, transaction, organization, WebhookWorkSlack,
+		deliveryID, said.Integration, uuid.Nil, conversationID, sequence); err != nil {
 		return SlackMessageOutcome{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -179,26 +188,77 @@ func bindThread(
 func appendSlackMessage(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	conversationID uuid.UUID, said SlackMessage,
-) error {
-	if _, err := transaction.Exec(ctx, `
+) (int64, error) {
+	var sequence int64
+	if err := transaction.QueryRow(ctx, `
 		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
-		                                  actor_kind, actor_id, actor_display, text)
+		                                  actor_kind, actor_id, actor_display, text,
+		                                  provider_channel_id, provider_message_id)
 		SELECT $1, $2,
 		       coalesce((SELECT max(sequence)
 		                   FROM conversation_message
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
-		       $3, $4, $5, $6, $7`,
+		       $3, $4, $5, $6, $7, $8, $9
+		RETURNING sequence`,
 		conversationID, organization.String(),
 		int16(conversation.RolePerson), int16(conversation.ActorExternal),
-		said.ActorID, said.ActorDisplay, said.Text); err != nil {
-		return fmt.Errorf("appending a slack message: %w", err)
+		said.ActorID, said.ActorDisplay, said.Text, said.Channel, said.MessageID).Scan(&sequence); err != nil {
+		return 0, fmt.Errorf("appending a slack message: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
 		UPDATE conversation
 		   SET last_activity_at = now()
 		 WHERE conversation_id = $1 AND org_id = $2`,
 		conversationID, organization.String()); err != nil {
-		return fmt.Errorf("stamping a slack conversation: %w", err)
+		return 0, fmt.Errorf("stamping a slack conversation: %w", err)
+	}
+	return sequence, nil
+}
+
+// SlackMessageProviderReference reports the safe provider identifiers retained for one
+// accepted message. It never returns the message body or a credential.
+func (p *Database) SlackMessageProviderReference(
+	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID, sequence int64,
+) (channel, message, reference string, err error) {
+	pool, poolErr := p.Pool(organization)
+	if poolErr != nil {
+		return "", "", "", poolErr
+	}
+	err = pool.QueryRow(ctx, `
+		SELECT provider_channel_id, provider_message_id, source_reference
+		  FROM conversation_message
+		 WHERE org_id = $1 AND conversation_id = $2 AND sequence = $3`,
+		organization.String(), conversationID, sequence).Scan(&channel, &message, &reference)
+	if err != nil {
+		return "", "", "", fmt.Errorf("reading slack message provider reference: %w", err)
+	}
+	return channel, message, reference, nil
+}
+
+// SetSlackMessageSourceReference records a scope-free navigation URL derived after the
+// acknowledgement path has completed.
+func (p *Database) SetSlackMessageSourceReference(
+	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+	sequence int64, reference string, work WebhookWork,
+) error {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return err
+	}
+	tag, err := pool.Exec(ctx, `
+		UPDATE conversation_message AS message
+		   SET source_reference = $4
+		  FROM webhook_work AS work
+		 WHERE message.org_id = $1 AND message.conversation_id = $2 AND message.sequence = $3
+		   AND work.org_id = $1 AND work.work_id = $5 AND work.status = 2
+		   AND work.lease_owner = $6 AND work.lease_epoch = $7 AND work.lease_expires_at > now()`,
+		organization.String(), conversationID, sequence, reference,
+		work.ID, work.LeaseOwner, work.LeaseEpoch)
+	if err != nil {
+		return fmt.Errorf("recording slack message source reference: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrWebhookWorkLeaseLost
 	}
 	return nil
 }

@@ -1,0 +1,15 @@
+causes: []
+mustnotclaim: []
+discriminating:
+    - tool: slack.get_channel_history
+      argmarker: C2
+relevanttools:
+    - slack.list_channels
+    - slack.get_channel_history
+    - github.list_repositories
+expectfindings: true
+mustnotanswer:
+    - v2.13.9
+answermarkers:
+    - v2.14.1
+survives: []

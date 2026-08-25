@@ -20,7 +20,7 @@ import (
 
 func toolDefinitions() []integrations.ToolDefinition {
 	channelTool := integrations.Tool{
-		Name: "slack.list_channels", Capability: "slack.list_channels",
+		Name:        "slack.list_channels",
 		Description: "Lists the channels.", WhenToUse: "First.",
 		WhenNotToUse: "Twice.", Permissions: "channels:read", Output: "Channels.",
 		Arguments: []integrations.ToolArgument{{

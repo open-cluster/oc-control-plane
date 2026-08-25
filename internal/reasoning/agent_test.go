@@ -45,7 +45,7 @@ func testOrientation() investigation.Orientation {
 		Sources: []investigation.OfferedSource{{
 			Integration: integrations.Integration{Name: "Acme Slack"},
 			Tools: []integrations.Tool{{
-				Name: "slack.list_channels", Capability: "slack.list_channels",
+				Name:        "slack.list_channels",
 				Description: "lists channels", WhenToUse: "first",
 				WhenNotToUse: "never twice", Permissions: "channels:read",
 				Output: "channels",

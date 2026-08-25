@@ -29,7 +29,7 @@ public.
 | Each listing's filters, sortable fields, default sort and searchability, and the shared paging rules | "How may I query this list?" |
 | Each write's accepted body, as JSON Schema | "Why was my request refused?" — every write rejects a field it does not declare |
 
-It is derived from the running route table and each capability's own declarations, so it cannot
+It is derived from the running route table and each route contributor's declarations, so it cannot
 describe a deployment other than the one answering. A console reads it instead of guessing; when
 troubleshooting, it is the fastest way to confirm what a deployment is actually serving.
 
@@ -43,6 +43,18 @@ troubleshooting, it is the fastest way to confirm what a deployment is actually 
 | Kubernetes change-history retention | Hourly, using `OC_CHANGE_LEDGER_RETENTION_DAYS` |
 | Relay inventory synchronization | `OC_INVENTORY_INTERVAL` |
 | Investigation execution | After an investigation opens, with bounded concurrency |
+| Accepted webhook work | Continuously, with bounded retry, failed-work visibility, and Admin replay |
+
+Accepted Alertmanager deliveries and Slack questions are committed before their source is
+acknowledged. Repeated deliveries do not repeat the resulting Investigation or Conversation
+turn. Work that exhausts retry is visible at
+`GET /operator/v1/organizations/{organization}/webhook-work/terminal`; signed-in Viewers,
+Editors, and Admins may inspect its safe failure class, attempts, timestamps, and source record
+links. Only an Admin may replay one with
+`POST /operator/v1/organizations/{organization}/webhook-work/terminal/{work}/replay`.
+
+Watch `oc.webhooks.work` for accepted, duplicate, rejected, delayed, failed, and replayed
+outcomes. `oc.webhooks.work_delay` measures how long accepted deliveries wait before processing.
 
 ## Deploy and stop
 
@@ -65,12 +77,19 @@ SAML, SCIM, or provider configuration. The migration retains those rows unchange
 rows and deployment sign-in flows are additive. Keep the identity export and database backup
 until local or deployment OIDC sign-in has been validated for every role.
 
+To roll back asynchronous webhook processing, stop all instances of the new release and restart
+the previously deployed compatible release against the same database. The upgrade only adds
+database structures; do not remove them or delete accepted deliveries. The previous build keeps
+serving existing records, and any accepted delivery awaiting processing resumes when the new
+release is deployed again. Check failed webhook work and integration availability after
+re-enabling the new release.
+
 ## Integration health
 
 Verification is a point-in-time check. Alertmanager verification reports the last
 accepted delivery, so use its timestamp rather than status alone. Slack and GitHub
 verification checks the vendor live. Kubernetes verification checks the current Relay
-session and advertised capabilities.
+session and supported read operations.
 
 ## Retention
 

@@ -1,0 +1,24 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": null
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": null
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

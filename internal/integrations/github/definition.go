@@ -7,7 +7,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The capabilities connecting GitHub makes available. All reads; no write path to
+// The Tools connecting GitHub makes available. All reads; no write path to
 // anyone's code exists in this build, by decision rather than by omission.
 const (
 	ListRepositories = "github.list_repositories"
@@ -46,8 +46,6 @@ func Definition(
 		Category: integrations.CategorySourceControl,
 		DocumentationURL: "https://docs.github.com/apps/using-github-apps/" +
 			"installing-a-github-app-from-a-third-party",
-		Capabilities: []string{ListRepositories, ReadCommits, ReadCommit, ReadPullRequest,
-			ReadWorkflowRuns, ReadJobLog, ReadFile, ListReleases},
 		// The configuration form is the fallback, not the front door. Where this
 		// deployment registered an installation flow, a customer presses Connect and
 		// never sees this field; where it did not, this is how GitHub is connected.

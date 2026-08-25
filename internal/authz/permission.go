@@ -47,8 +47,12 @@ const (
 
 	// Investigations. Opening one spends model budget and reads connected systems, which
 	// is why it is not part of reading the record it produces.
-	InvestigationRead Permission = "investigation.read"
-	InvestigationOpen Permission = "investigation.open"
+	InvestigationRead   Permission = "investigation.read"
+	InvestigationOpen   Permission = "investigation.open"
+	InvestigationCancel Permission = "investigation.cancel"
+	// WebhookWorkReplay is deliberately Admin-only. Replaying accepted external work can
+	// spend model budget and re-attempt a failed domain effect.
+	WebhookWorkReplay Permission = "webhook-work.replay"
 
 	// Conversations: the multi-turn context a person talks to. Writing covers opening one
 	// and sending a message to one, because both do the same thing — a message opens a
@@ -81,7 +85,7 @@ var allPermissions = []Permission{
 	IntegrationVerify, IntegrationSecretRotate,
 	RelayRead, RelayConflictClear, RelayBootstrapIssue,
 	IncidentRead, IncidentMerge,
-	InvestigationRead, InvestigationOpen,
+	InvestigationRead, InvestigationOpen, InvestigationCancel, WebhookWorkReplay,
 	ConversationRead, ConversationWrite,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, SessionRevoke,
 	ServiceAccountRead, ServiceAccountManage, TokenRead, TokenManage,

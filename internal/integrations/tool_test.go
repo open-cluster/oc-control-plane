@@ -15,7 +15,6 @@ import (
 func definedTool() Tool {
 	return Tool{
 		Name:        "example.read_things",
-		Capability:  "example.read",
 		Description: "Reads one thing's records inside a time window.",
 		WhenToUse:   "To answer what changed before this broke.",
 		WhenNotToUse: "Not for finding the thing; that is example.list_things. " +

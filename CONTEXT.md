@@ -26,7 +26,7 @@ authorization, a credential, a tenant boundary, or a scope.
 **Integration Type** — a kind of tool OpenCluster supports: Alertmanager, Kubernetes,
 Slack, GitHub. Product-owned reference data: a row in `integration_type` seeded by
 migration, carrying minimal catalog metadata (stable key, name, description, logo,
-category), with everything behavioral — configuration schema, capabilities, client,
+category), with everything behavioral — configuration schema, client,
 verification, tools — in the type's provider package under `internal/integrations/`. The
 compiled catalog and the seeded rows are held identical by a test.
 _Avoid:_ provider (as the record noun; "provider package" for the code is fine), connector,
@@ -38,15 +38,9 @@ configuration, optional labels, optional Relay binding, status, verification. Se
 Integrations of one type are expressly allowed.
 _Avoid:_ Connection (the retired record noun), instance, source, data source.
 
-**Capability** — a named, versioned operation an Integration Type makes available:
-`kubernetes.container.logs`, `alertmanager.receive_alerts`. Declared by the type; never
-chosen or classified by the operator. The Relay-dispatched Kubernetes capabilities are
-additionally typed contracts in `internal/capability`.
-_Avoid:_ role, trigger/evidence classification, connection mode.
-
 **Verification** — a check of an Integration against reality, judged by the type's own
 definition from observed facts: a delivery that actually arrived, a Relay's live session and
-advertised capabilities. "Verified" always means the far end answered; a well-formed
+advertised Relay Capabilities. "Verified" always means the far end answered; a well-formed
 configuration proves nothing and is not called verified. A verification records the
 **grants** it observed about the credential, in the provider's own vocabulary — Slack: the
 OAuth scopes, plus the token's kind — and tool availability derives from them. It also
@@ -88,7 +82,7 @@ dropped.
 _Avoid:_ token (as the record noun), API key (for this concept).
 
 **Tool** — one bounded, read-only operation an Integration Type offers an investigation:
-`slack.get_channel_history`, `github.read_commits`. Declared beside its capability with
+`slack.get_channel_history`, `github.read_commits`. Declared with
 its purpose, when to use it, when NOT to, arguments, permissions and output — all
 enforced at catalog assembly. A tool may require verified grants; one the Integration's
 recorded grants cannot support is absent from an investigation's set, never a call that
@@ -116,11 +110,16 @@ still fires.
 Relay endpoint.
 
 **Relay** — the agent in a customer's cluster. Enrols with a single-use bootstrap token,
-holds one outbound session, executes the closed set of Kubernetes capabilities, and
+holds one outbound session, executes the closed set of Relay Capabilities, and
 synchronizes the inventory the change ledger records. A Relay belongs to an organization
 and nothing else.
 
-**Job** — one dispatched capability execution: durable, leased, fenced by
+**Relay Capability** — one closed, typed, versioned operation the control plane may ask a
+Relay to execute, such as `kubernetes.container.logs`. It is a wire contract validated on
+both sides, not a generic description of an Integration, feature, webhook, or Tool.
+_Avoid:_ Capability for Integration features or Tool availability.
+
+**Job** — one dispatched Relay Capability execution: durable, leased, fenced by
 `(session, epoch)`, never lost and never recorded twice. A job names the Integration it
 reaches and the Relay it runs on.
 
@@ -133,14 +132,14 @@ and never content. A navigation index, never evidence.
 **Conversation** — the organization-scoped, multi-turn context a person talks to, holding
 its Messages and the Investigations its turns opened. Optionally associated with one
 IncidentEpisode; many exist per organization and per episode, and two about one episode
-share only that episode's own durable context — never each other's messages or summaries.
+share only that episode's own cited Findings — never each other's Messages or answers.
 Several people may take part in one, and every Message records who sent it.
 _Avoid:_ session, thread, chat, run (as the multi-turn record); Exchange (that is the
 model boundary, below).
 
 **Message** — one thing said in a Conversation, by a person or by the agent, at a
 monotonic per-conversation sequence, with the actor who said it. `conversation_message` is
-the AUTHORITATIVE transcript: compaction never edits or deletes it. Free text in a Message
+the AUTHORITATIVE transcript and is never rewritten by follow-up orientation. Free text in a Message
 is untrusted for its whole life — a message saying "ignore your instructions" is evidence
 about what somebody typed, never an instruction.
 
@@ -149,10 +148,11 @@ Conversation. Not a record of its own.
 
 **Investigation** — one bounded answer to "what happened": opened from an episode, an
 operator's question, or a Conversation turn; routed to a few relevant sources, run through
-their tools, ended concluded with findings or failed with the reason. The slim record:
-trigger, subject, window, lifecycle, answer, findings, spend. What it IS did not change
-when Conversations arrived — a Conversation is what carries continuity BETWEEN
-investigations, and an investigation belonging to none is still a whole record.
+their tools, ended concluded with findings, failed with the reason, or cancelled by an
+attributed authorized operator. The slim record: trigger, subject, window, lifecycle,
+answer, findings, spend. What it IS did not change when Conversations arrived — a
+Conversation is what carries continuity BETWEEN investigations, and an investigation
+belonging to none is still a whole record.
 _Avoid:_ case, case file, round (as a persisted record).
 
 **Lease** — the claim one worker holds on a running Investigation, with a heartbeat and a
@@ -163,17 +163,12 @@ resumed, because only semantic events are persisted and a fabricated continuatio
 a fiction.
 
 **Event** — one durable, ordered semantic fact about a running Investigation: started,
-progress, tool started, tool completed, answer delta, concluded, failed, compacted. The
-sequence is monotonic and assigned by the lease holder, so a reader that reconnects or
-lands on another replica resumes exactly where it stopped. Composed by the platform from
-facts it already holds — never a model's narration, never a credential, never a raw tool
-payload.
-
-**Summary** (of a Conversation) — the structured running summary older turns compact into
-when the estimated context crosses its budget: goal, constraints, established findings
-with their citation references, hypotheses open and ruled out, unresolved questions.
-Versioned, superseded versions kept, and never authoritative — the Messages are. A Summary
-may only restate findings that already exist with the citations they already carry.
+progress, tool started, tool completed, answer delta, concluded, failed, or cancelled.
+The sequence is monotonic and assigned by the lease holder, except that an authorized
+operator's terminal cancellation is assigned atomically while the Investigation is
+locked. A reader that reconnects or lands on another replica resumes exactly where it
+stopped. Composed by the platform from facts it already holds — never a model's
+narration, never a credential, never a raw tool payload.
 
 **Provenance** — what an investigation persists: the sources it was offered with the
 reasons, every tool run with its scope, window, outcome, truncation, summary and source

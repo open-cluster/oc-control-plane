@@ -720,7 +720,7 @@ func decodeCapabilityNames(raw []byte) ([]string, error) {
 		return []string{}, nil
 	}
 	var attested []struct {
-		ID string `json:"capability_id"`
+		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &attested); err != nil {
 		return nil, err

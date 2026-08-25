@@ -74,6 +74,18 @@
 //     rests on.
 //   - Work enqueued while no Relay is connected is delivered when one connects.
 //   - A Relay whose control plane is killed mid-life reconnects on its own and keeps working.
+//   - An operator cancellation reaches a genuinely executing Kubernetes request, stops the
+//     real Relay read, and records the durable job as cancelled.
+//   - A result produced under a superseded execution lease is fenced off; the same durable
+//     job can subsequently complete only under a fresh lease.
+//   - A control-plane disconnect during a real Kubernetes request interrupts that request;
+//     after reconnect, unowned work is recovered and completed under a fresh execution lease.
+//   - Suppressing the first real gRPC result acknowledgement causes the Relay to resend;
+//     the duplicate is acknowledged as already recorded without changing durable truth.
+//   - An operator-opened Investigation reads the real cluster through its connected Relay
+//     and durably records a cited finding and the exact Tool run that established it.
+//   - A customer-owned Relay namespace allowlist refuses excluded namespaces with a typed
+//     local-policy failure while still permitting reads inside the declared boundary.
 //
 // Not proven here. The list is exhaustive against the specification's scenarios, because a
 // harness that ran green while quietly covering half of what it appeared to would be worse
@@ -81,18 +93,12 @@
 //
 // Needing a seam this harness does not have:
 //
-//   - Fencing: a result arriving under a superseded lease epoch. Needs a second Relay or a
-//     way to hold an execution open, and the one compiled capability finishes in about eleven
-//     milliseconds, so there is no window to act in.
-//   - Cancellation reaching an executing job. Same missing window.
-//   - Idempotent resend of an already-recorded result. Needs a way to make an acknowledgement
-//     go missing.
-//   - A connection dropped mid-execution. Same missing window.
 //   - A control-plane restart between leasing a job and sending it. What is proven below is a
 //     restart and a reconnect; the gap between the durable claim and the delivery is never
 //     entered, because entering it means stopping the process inside a few milliseconds.
 //   - A Relay reconnecting while work is genuinely in flight, so that its hello reports a
-//     roster. The roster is exercised, but always empty.
+//     nonempty roster. The current Relay cancels active work when its session closes, then
+//     reconnects with an empty roster; durable recovery of that interrupted job is proven.
 //   - A job carrying another organization's identity refused by the Relay. The control plane
 //     builds every assignment from the session it is serving, so it cannot be made to send
 //     one; producing it would need a hostile control plane, which is a fake, which is what
@@ -101,17 +107,8 @@
 //     compile the same contract, so there is no version one has and the other does not, and
 //     the control plane now refuses such a job before it is sent. It is proven in the Relay's
 //     own suite, where the advertised set can be varied.
-//   - A namespace outside the Relay's local allowlist being refused, and a local cap lowering
-//     an effective bound. Both are customer-authored configuration this harness runs with
-//     unset, and setting it would prove the Relay reads its own environment rather than
-//     anything about the protocol.
+//   - A local volume cap lowering an effective bound.
 //   - A session presenting a wrong or absent credential.
-//
-// Needing work this harness has not had yet:
-//
-//   - AN INVESTIGATION RUN END TO END. What that means is decided against the provenance
-//     model that replaces the evidence chain; the retired scenario harness is the record of
-//     what such an exercise looked like, and version control holds it.
 //
 // Excluded by decision rather than by difficulty:
 //

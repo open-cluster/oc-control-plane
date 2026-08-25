@@ -26,9 +26,9 @@ const maxEventPage = 500
 
 // AppendEvent writes one event at the sequence it carries.
 //
-// The insert is unguarded on purpose: the primary key (investigation, sequence) IS the
-// guard. The lease makes one writer, so a second row at the same position means two
-// processes believed they held it, and refusing the write is how that stops being silent.
+// The parent-row lock serializes progress with cancellation across replicas. Concluded
+// and failed runs may still emit their final answer or terminal event after their durable
+// status changes, but a cancelled stream never accepts anything after its terminal event.
 func (p *Database) AppendEvent(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	event investigation.Event,
@@ -41,13 +41,20 @@ func (p *Database) AppendEvent(
 	if err != nil {
 		return fmt.Errorf("encoding an event payload: %w", err)
 	}
-	if _, err = pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, `
 		INSERT INTO investigation_event (investigation_id, org_id, sequence, at, type,
 		                                 payload)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		SELECT $1, $2, $3, $4, $5, $6
+		  FROM investigation
+		 WHERE investigation_id = $1 AND org_id = $2 AND status <> $7
+		 FOR NO KEY UPDATE`,
 		id, organization.String(), event.Sequence, event.At, int16(event.Type),
-		payload); err != nil {
+		payload, int16(investigation.StatusCancelled))
+	if err != nil {
 		return fmt.Errorf("appending an investigation event: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return investigation.ErrAlreadyEnded
 	}
 	return nil
 }

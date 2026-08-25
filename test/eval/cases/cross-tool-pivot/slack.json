@@ -1,0 +1,32 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": null
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:25:00Z",
+            "User": "UDEPLOYBOT",
+            "Text": "payments release r2026-08-18-1 rolled out, commit fee1dead",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+causes: []
+mustnotclaim: []
+discriminating:
+    - tool: github.read_commits
+      argmarker: ""
+relevanttools:
+    - github.list_repositories
+    - github.read_commits
+    - github.read_commit
+    - github.read_file
+    - slack.list_channels
+    - slack.get_channel_history
+expectfindings: true
+mustnotanswer:
+    - fed321
+    - dev-rowan
+answermarkers:
+    - abc123
+    - kai-dev
+survives: []

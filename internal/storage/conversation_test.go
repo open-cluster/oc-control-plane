@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -497,12 +498,6 @@ func TestConversationsOnOneEpisodeShareFindingsAndNothingElse(t *testing.T) {
 				"incident share the incident, never each other", message.Text)
 		}
 	}
-	for _, constraint := range brief.Summary.Constraints {
-		if strings.Contains(constraint, "ADA-PRIVATE") {
-			t.Errorf("Bo's brief carries Ada's instruction %q", constraint)
-		}
-	}
-
 	// A conversation about a DIFFERENT incident shares nothing at all.
 	other := recordEpisode(t, database, organization, integration, "group-unrelated")
 	cass := openConversationAbout(t, database, organization, "payments are failing", other)
@@ -563,5 +558,62 @@ func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
 	}
 	if len(brief.Recommended) != 2 || brief.Recommended[0] != "roll back the 14:02 deploy" {
 		t.Errorf("recommended = %+v; what was already advised must travel", brief.Recommended)
+	}
+}
+
+func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "bounded incident history")
+	say(t, database, organization, opened.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
+		turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening a turn: took=%v error=%v", took, err)
+	}
+	findings := make([]investigation.Finding, 0, investigation.BriefMaxFindings+11)
+	for index := 0; index < investigation.BriefMaxFindings+11; index++ {
+		findings = append(findings, investigation.Finding{
+			Statement: fmt.Sprintf("finding-%03d", index), Sources: []int{index + 1},
+		})
+	}
+	if err = database.ConcludeInvestigation(context.Background(), organization,
+		turn.InvestigationID, investigation.Conclusion{Answer: "completed", Findings: findings},
+		"", investigation.Spend{}); err != nil {
+		t.Fatalf("concluding the turn: %v", err)
+	}
+	brief, err := database.ConversationBrief(context.Background(), organization, opened.ID, 20)
+	if err != nil {
+		t.Fatalf("reading the bounded brief: %v", err)
+	}
+	if len(brief.Findings) != investigation.BriefMaxFindings {
+		t.Fatalf("prior findings = %d, want exactly %d", len(brief.Findings),
+			investigation.BriefMaxFindings)
+	}
+	if first, last := brief.Findings[0].Statement, brief.Findings[len(brief.Findings)-1].Statement; first != "finding-011" || last != "finding-050" {
+		t.Fatalf("retained prior findings span %q through %q, want the newest cited facts", first, last)
+	}
+	say(t, database, organization, opened.ID, "what happened next?")
+	next, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
+		turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening a later turn: took=%v error=%v", took, err)
+	}
+	if err = database.ConcludeInvestigation(context.Background(), organization,
+		next.InvestigationID, investigation.Conclusion{
+			Answer: "later finding", Findings: []investigation.Finding{
+				{Statement: "newest-turn-finding", Sources: []int{1}},
+			},
+		}, "", investigation.Spend{}); err != nil {
+		t.Fatalf("concluding the later turn: %v", err)
+	}
+	brief, err = database.ConversationBrief(context.Background(), organization, opened.ID, 20)
+	if err != nil {
+		t.Fatalf("reading the later brief: %v", err)
+	}
+	if len(brief.Findings) != investigation.BriefMaxFindings ||
+		brief.Findings[len(brief.Findings)-1].Statement != "newest-turn-finding" {
+		t.Fatalf("older findings displaced a newer turn despite the history bound: %+v", brief.Findings)
 	}
 }

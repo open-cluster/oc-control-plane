@@ -8,7 +8,7 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/capability"
+	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 	"github.com/open-cluster/oc-control-plane/internal/storage"
 )
 

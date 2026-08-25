@@ -1,0 +1,8 @@
+name: multiple-contributing-causes
+revision: "1"
+situation: Independent database-pool and strict-TLS changes both contribute to failures.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true
+    honestinsufficiency: false

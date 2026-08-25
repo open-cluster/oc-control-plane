@@ -16,11 +16,6 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 )
 
-// organization is the tenant every relay and every job in this harness belongs to. One is
-// enough: tenant isolation is proven in the control plane's own suite against many, and what
-// is in question here is the protocol, which does not vary by tenant.
-const organization = "e2e-org"
-
 // The compiled capabilities, named here rather than at each call site because the version is
 // something several tests vary deliberately.
 const (
@@ -60,8 +55,7 @@ type harness struct {
 	plane        *controlPlane
 	relay        *relay
 	registration uuid.UUID
-	// integration is what every job in this harness reaches: a Kubernetes Integration
-	// organization's Default Environment, served by the enrolled relay.
+	// integration is the Kubernetes Integration every job reaches through the enrolled Relay.
 	integration uuid.UUID
 	workDir     string
 	// token is the bootstrap token the first Relay consumed. It is kept so a second Relay can
@@ -182,7 +176,8 @@ func requireDocker(t *testing.T) {
 func (h *harness) startControlPlane(ctx context.Context, t *testing.T) {
 	t.Helper()
 
-	plane, err := newControlPlane(h.workDir, h.truth.dsn)
+	model := startInvestigationModel(t)
+	plane, err := newControlPlane(h.workDir, h.truth.dsn, model.URL)
 	if err != nil {
 		t.Fatalf("preparing the control plane: %v", err)
 	}

@@ -109,7 +109,9 @@ func TestTheAutonomousLoopRecordsOfferedSourcesRunsAndConclusion(t *testing.T) {
 		}, nil
 	})
 	exchange := &scriptedExchange{moves: []Move{
-		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read"}},
+		{Calls: []AgentCall{{
+			ID: "c1", Tool: "stub.read__" + strings.ReplaceAll(store.candidates[0].ID.String(), "-", ""),
+		}},
 			Spend: Spend{InputTokens: 10, MicroCents: 1}},
 		{Conclusion: &Conclusion{
 			Findings: []Finding{{
@@ -433,12 +435,11 @@ func TestAnIntegrationWhoseGrantsSupportNoToolIsNotOffered(t *testing.T) {
 
 	catalog, err := integrations.NewCatalog(integrations.Definition{
 		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
-		Capabilities: []string{"stub.read"},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
 		Tools: []integrations.Tool{{
-			Name: "stub.read", Capability: "stub.read", Description: "reads",
+			Name: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
 			Output: "items", Requires: []string{"scope:special"},
 			Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {

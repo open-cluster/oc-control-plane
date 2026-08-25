@@ -1,0 +1,36 @@
+{
+  "5001": {
+    "Account": "acme-corp",
+    "Repos": [
+      {
+        "ID": 104,
+        "Name": "gateway",
+        "Commits": [
+          {
+            "SHA": "beef02",
+            "Message": "remove retry on upstream 502",
+            "Author": "kai-dev",
+            "At": "2026-08-25T11:30:00Z",
+            "Files": [
+              {
+                "Path": "config/gateway.yaml",
+                "Patch": "@@ -1,3 +1,3 @@\n upstream:\n-  retry_on_502: true\n+  retry_on_502: false"
+              }
+            ]
+          }
+        ],
+        "Pulls": null,
+        "Files": {
+          "config/gateway.yaml": "upstream:\n  retry_on_502: false\n  timeout: 10s\n"
+        }
+      },
+      {
+        "ID": 105,
+        "Name": "dns-zones",
+        "Commits": null,
+        "Pulls": null,
+        "Files": null
+      }
+    ]
+  }
+}

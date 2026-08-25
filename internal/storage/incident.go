@@ -39,7 +39,7 @@ import (
 func groupSignal(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	delivery Delivery, signal Signal, signalID uuid.UUID,
-) (bool, error) {
+) (uuid.UUID, bool, error) {
 	key, basis := signal.GroupingKey, incident.BasisSourceGrouping
 	if key == "" {
 		key, basis = signal.SourceKey, incident.BasisUngrouped
@@ -48,14 +48,14 @@ func groupSignal(
 	episodeID, opened, err := openEpisode(
 		ctx, transaction, organization, delivery, signal, key, basis)
 	if err != nil {
-		return false, err
+		return uuid.Nil, false, err
 	}
 	if _, err = transaction.Exec(ctx,
 		`UPDATE signal SET episode_id = $1 WHERE signal_id = $2 AND org_id = $3`,
 		episodeID, signalID, organization.String()); err != nil {
-		return false, fmt.Errorf("grouping a signal: %w", err)
+		return uuid.Nil, false, fmt.Errorf("grouping a signal: %w", err)
 	}
-	return opened, refreshEpisode(ctx, transaction, organization, episodeID)
+	return episodeID, opened, refreshEpisode(ctx, transaction, organization, episodeID)
 }
 
 // openEpisode returns the open episode for a grouping key, creating it when there is none.

@@ -13,9 +13,10 @@ the systems connected to OpenCluster.
 - At least one relevant integration is connected and verified.
 - You have the **Editor** or **Admin** role.
 
-Alertmanager supplies the incident context. Slack and GitHub are the live sources an
-investigation can read. Kubernetes supplies a current workload inventory for
-orientation.
+Alertmanager supplies the incident context. Slack, GitHub, and Kubernetes are live
+sources an investigation can read. Kubernetes also supplies a current workload inventory
+for orientation; live workload and pod runtime, namespace events, and bounded container
+logs are read through the connected Relay.
 
 ## Start the investigation
 
@@ -27,6 +28,14 @@ The investigation continues in the background. A deployment runs a bounded numbe
 once; if capacity is full, the request is refused and no partial investigation is
 created.
 
+## Cancel an investigation
+
+While an investigation is running, an **Editor** or **Admin** can open its detail page
+and select **Cancel**. Cancellation immediately ends the investigation, stops any
+pending or executing Relay work, and records the operator who cancelled it in the audit
+log. A cancelled investigation cannot resume; its earlier activity and cited reads
+remain available for review.
+
 ## Review the result
 
 Check the outcome first:
@@ -36,6 +45,7 @@ Check the outcome first:
 | `concluded` | The investigation finished. It may still contain unresolved leads or no findings. |
 | Concluded with a limit | The result is partial. The record names the spend, read, turn, time, or progress limit. |
 | `failed` | The investigation could not produce a valid conclusion. The record gives the reason. |
+| `cancelled` | An authorized operator stopped the investigation. Its existing activity remains available and no further reads are started. |
 
 Then review findings in causal order, open their cited reads, and check whether any
 result was truncated or failed. Treat next steps as recommendations for an operator to

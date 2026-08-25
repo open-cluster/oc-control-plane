@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,7 +65,24 @@ func (r *Runner) run(
 			"the connected sources could not be read", Spend{})
 		return
 	}
-	offered := offeredSources(r.Catalog, candidates)
+	brief := r.conversationBrief(ctx, organization, opened, events)
+	offered := offeredSourcesForConversation(r.Catalog, candidates, brief)
+	if opened.ConversationID != uuid.Nil && brief == nil {
+		var safe []OfferedSource
+		for _, source := range offered {
+			conversationProvider := false
+			for _, tool := range source.Tools {
+				if tool.ConversationScoped {
+					conversationProvider = true
+					break
+				}
+			}
+			if !conversationProvider {
+				safe = append(safe, source)
+			}
+		}
+		offered = safe
+	}
 	r.announce(ctx, events, EventStarted, startedPayload(opened, len(offered), true))
 	for rank, source := range offered {
 		recorded := Source{
@@ -80,7 +98,7 @@ func (r *Runner) run(
 		}
 	}
 
-	oriented := r.orientation(ctx, organization, opened, offered, events)
+	oriented := r.orientation(ctx, organization, opened, offered, brief)
 	exchange, err := r.Investigator.OpenExchange(ctx, oriented)
 	if err != nil {
 		r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), Spend{})
@@ -92,6 +110,7 @@ func (r *Runner) run(
 		organization: organization,
 		opened:       opened,
 		offered:      offered,
+		brief:        brief,
 		events:       events,
 		credentials: newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
 			return r.Store.RecordCredentialUnseal(ctx, organization, id,
@@ -132,6 +151,7 @@ type autonomousLoop struct {
 	organization tenancy.Organization
 	opened       Investigation
 	offered      []OfferedSource
+	brief        *Brief
 	events       *stream
 	credentials  *credentialCache
 	maxRuns      int
@@ -140,8 +160,8 @@ type autonomousLoop struct {
 	// concluding turn is forced. Zero means no budget.
 	budget int
 	// ceiling is the total this turn may carry before its conclusion is forced. It sits
-	// ABOVE budget on purpose: the difference between them is the room a compaction buys
-	// the turn that performed it, and when the two were one number that room was zero.
+	// above budget so a bounded Conversation orientation still leaves room for Tools and
+	// the concluding answer.
 	ceiling int
 	// carried is the running estimate of what this turn's transcript costs: the
 	// orientation it opened with, plus every result fed back since.
@@ -248,7 +268,7 @@ func (l *autonomousLoop) executeCall(
 	default:
 		ordinal := l.nextOrdinal()
 		l.announceToolStarted(ctx, call, ordinal)
-		run = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials,
+		run = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials, l.brief,
 			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
 		l.runner.announce(ctx, l.events, EventToolCompleted, toolCompletedPayload(run))
 		l.runner.Telemetry.ranTool(run)
@@ -419,7 +439,7 @@ func offeredSources(
 	var sources []OfferedSource
 	for _, candidate := range candidates {
 		definition, known := catalog.ByID(candidate.Type)
-		if !known || candidate.Disabled() {
+		if !known {
 			continue
 		}
 		tools := offeredTools(definition, candidate)
@@ -428,8 +448,80 @@ func offeredSources(
 		}
 		sources = append(sources, OfferedSource{Integration: candidate, Tools: tools})
 	}
+	bindDuplicateToolNames(sources)
 	sortSourcesByName(sources)
 	return sources
+}
+
+// offeredSourcesForConversation confines a provider-originated Conversation to its
+// originating thread. Other provider categories remain available, while another
+// installation of the originating provider and its broader reads are not implied.
+func offeredSourcesForConversation(
+	catalog integrations.Catalog, candidates []integrations.Integration, brief *Brief,
+) []OfferedSource {
+	if brief == nil || brief.OriginIntegrationID == "" ||
+		brief.OriginChannel == "" || brief.OriginThread == "" {
+		return offeredSources(catalog, candidates)
+	}
+
+	var originType integrations.TypeID
+	found := false
+	for _, candidate := range candidates {
+		if candidate.ID.String() == brief.OriginIntegrationID {
+			originType = candidate.Type
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+
+	allowed := make([]integrations.Integration, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Type != originType || candidate.ID.String() == brief.OriginIntegrationID {
+			allowed = append(allowed, candidate)
+		}
+	}
+
+	var scoped []OfferedSource
+	for _, source := range offeredSources(catalog, allowed) {
+		if source.Integration.Type != originType {
+			scoped = append(scoped, source)
+			continue
+		}
+		var threadReads []integrations.Tool
+		for _, tool := range source.Tools {
+			if tool.ConversationScoped {
+				threadReads = append(threadReads, tool)
+			}
+		}
+		if len(threadReads) > 0 {
+			source.Tools = threadReads
+			scoped = append(scoped, source)
+		}
+	}
+	return scoped
+}
+
+// bindDuplicateToolNames keeps two Integrations of one type independently reachable. A
+// single Integration retains the provider's stable Tool name; only collisions gain the
+// full Integration identity, so model APIs receive deterministic unique names.
+func bindDuplicateToolNames(sources []OfferedSource) {
+	counts := map[string]int{}
+	for _, source := range sources {
+		for _, tool := range source.Tools {
+			counts[tool.Name]++
+		}
+	}
+	for sourceIndex := range sources {
+		for toolIndex := range sources[sourceIndex].Tools {
+			tool := &sources[sourceIndex].Tools[toolIndex]
+			if counts[tool.Name] > 1 {
+				tool.Name += "__" + strings.ReplaceAll(sources[sourceIndex].Integration.ID.String(), "-", "")
+			}
+		}
+	}
 }
 
 // suppressedRun records an identical repeat that was not re-executed, with an in-band
@@ -548,7 +640,7 @@ func boundNextSteps(steps []string) []string {
 // orientation, never fails the investigation.
 func (r *Runner) orientation(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
-	offered []OfferedSource, events *stream,
+	offered []OfferedSource, brief *Brief,
 ) Orientation {
 	oriented := Orientation{
 		Subject:     opened.Subject,
@@ -556,10 +648,9 @@ func (r *Runner) orientation(
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Sources:     offered,
-		// What the Conversation has established so far, compacted on the way in if it has
-		// outgrown the budget. Nil for a single-shot investigation, which has nothing to
-		// continue from.
-		Brief: r.conversationBrief(ctx, organization, opened, events),
+		// Prior cited findings and a bounded Message tail, or nil for a single-shot
+		// Investigation that has no Conversation to continue.
+		Brief: brief,
 	}
 	if opened.EpisodeID != uuid.Nil {
 		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {

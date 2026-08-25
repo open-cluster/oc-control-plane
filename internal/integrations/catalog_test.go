@@ -12,12 +12,11 @@ import (
 func assembledWith(argument ToolArgument) error {
 	_, err := NewCatalog(Definition{
 		ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
-		Capabilities: []string{"stub.read"},
 		Probe: func(context.Context, ProbeInput) Verification {
 			return Verification{Status: StatusActive}
 		},
 		Tools: []Tool{{
-			Name: "stub.read", Capability: "stub.read", Description: "reads",
+			Name: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
 			Output:    "data",
 			Arguments: []ToolArgument{argument},
@@ -55,12 +54,11 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 
 	_, err := NewCatalog(Definition{
 		ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
-		Capabilities: []string{"stub.read"},
 		Probe: func(context.Context, ProbeInput) Verification {
 			return Verification{Status: StatusActive}
 		},
 		Tools: []Tool{{
-			Name: "stub.read", Capability: "stub.read", Description: "reads",
+			Name: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
 			Output: "data",
 			Arguments: []ToolArgument{

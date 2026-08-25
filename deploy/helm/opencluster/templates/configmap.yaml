@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-opencluster
+data:
+  opencluster.yaml: |
+    server:
+      address: ":{{ .Values.service.httpPort }}"
+      operator_address: ":{{ .Values.service.httpPort }}"
+      intake_address: ":{{ .Values.service.httpPort }}"
+      public_url: {{ .Values.operator.publicURL | quote }}
+      console_url: {{ .Values.operator.publicURL | quote }}
+      intake_public_url: {{ .Values.operator.publicURL | quote }}
+      allowed_origins: [{{ .Values.operator.publicURL | quote }}]
+    database:
+      dsn_file: "/run/opencluster/secrets/{{ .Values.database.dsnKey }}"
+    authentication:
+      bootstrap_token_file: "/run/opencluster/credentials/{{ .Values.credentials.operatorTokenKey }}"
+      bootstrap_organization: {{ .Values.operator.organization | quote }}
+      sealing_key_file: "/run/opencluster/credentials/{{ .Values.credentials.sealingKey }}"
+    model:
+      provider: {{ .Values.model.provider | quote }}
+      name: {{ .Values.model.name | quote }}
+      api_key_file: "/run/opencluster/credentials/{{ .Values.credentials.modelKey }}"
+      consented_providers: {{ required "model.consentedProviders requires explicit provider consent" .Values.model.consentedProviders | toJson }}
+    {{- if .Values.relay.enabled }}
+    relay:
+      address: ":{{ .Values.relay.internalPort }}"
+      spki_pins: {{ required "relay.spkiPins requires the TLS certificate's public-key digest" .Values.relay.spkiPins | toJson }}
+    {{- end }}
+    telemetry:
+      service_name: "oc-control-plane"
+  {{- if .Values.relay.enabled }}
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 1024; }
+    http {
+      access_log /dev/stdout;
+      client_body_temp_path /tmp/client-body;
+      proxy_temp_path /tmp/proxy;
+      server {
+        listen {{ .Values.relay.externalPort }} ssl;
+        http2 on;
+        ssl_certificate /run/opencluster/relay-tls/{{ .Values.relay.tls.certificateKey }};
+        ssl_certificate_key /run/opencluster/relay-tls/{{ .Values.relay.tls.privateKey }};
+        ssl_protocols TLSv1.2 TLSv1.3;
+        location / {
+          grpc_pass grpc://127.0.0.1:{{ .Values.relay.internalPort }};
+          grpc_read_timeout 1h;
+          grpc_send_timeout 1h;
+        }
+      }
+    }
+  {{- end }}

@@ -3,7 +3,7 @@
 //
 // An Integration Type is product-owned reference data. Its row in integration_type carries
 // minimal catalog metadata and is seeded by migration; everything behavioral — configuration
-// schema, capabilities, verification — lives in a provider package under this one, exported
+// schema, verification, and Tools — lives in a provider package under this one, exported
 // as a Definition and assembled into a Catalog at the composition root. The composition root
 // is the only place that knows every provider; nothing here imports one.
 //
@@ -120,7 +120,7 @@ type RelayStatus struct {
 	Bound bool
 	// Connected reports whether that Relay currently holds a session.
 	Connected bool
-	// Capabilities is what the Relay advertised at enrolment.
+	// Capabilities is the Relay Capabilities advertised at enrolment.
 	Capabilities []string
 }
 
@@ -131,6 +131,13 @@ type RelayStatus struct {
 type ProbeInput struct {
 	Integration Integration
 	Credential  string
+}
+
+// InboundAvailability describes whether an installed Integration can receive its
+// provider-specific inbound interaction, independently of investigation Tools.
+type InboundAvailability struct {
+	Available bool
+	Reason    string
 }
 
 // Definition is everything one provider package exports about its Integration Type.
@@ -151,15 +158,6 @@ type Definition struct {
 	// Ours is ProductDocumentationURL, and it is derived rather than declared here — see
 	// the method for why a hand-written second URL per provider was the wrong shape.
 	DocumentationURL string
-	// Capabilities are the named operations connecting this type makes available.
-	Capabilities []string
-	// CapabilityStates overrides how this type's capabilities are judged against one
-	// Integration, and Availability dispatches to it. Nil is the ordinary case and gets
-	// the generic join over verified grants; a provider declares one only when
-	// availability depends on something no Integration field carries, such as whether
-	// this deployment registered an application with the vendor. An override builds on
-	// GrantedAvailability rather than reimplementing the join.
-	CapabilityStates func(Integration) []CapabilityAvailability
 	// Config is what an Integration of this type is configured with, and the source its
 	// JSON Schema is rendered from.
 	Config []Field
@@ -176,9 +174,12 @@ type Definition struct {
 	// comes back with what it answered. It is the verification for every outbound type,
 	// because a credential's only honest check is presenting it.
 	Probe func(ctx context.Context, input ProbeInput) Verification
-	// Tools are the bounded reads connecting this type makes available, one per declared
-	// read capability, rendered in the catalog with the routing guidance each declares.
+	// Tools are the bounded reads connecting this type makes available, rendered in the
+	// catalog with the routing guidance each declares.
 	Tools []Tool
+	// Inbound judges a provider-specific interactive endpoint against deployment setup
+	// and recorded installation facts. Nil means the provider declares no such endpoint.
+	Inbound func(Integration) InboundAvailability
 	// Connect is the provider's own installation flow, when this deployment can offer
 	// one. Nil means the type is connected through its configuration form — which is
 	// what a self-hosted deployment that registered no application with the vendor has,
@@ -299,7 +300,7 @@ type Catalog struct {
 
 // NewCatalog assembles and validates the definitions. A duplicate key or id, a definition
 // with no verification or two kinds of it, a second secret field, a credential without a
-// probe to check it, or a tool naming a capability nothing declared — each is a
+// probe to check it, or an incomplete Tool contract — each is a
 // programming error and refuses assembly, at startup, where the person who caused it is
 // reading.
 func NewCatalog(definitions ...Definition) (Catalog, error) {
@@ -355,10 +356,6 @@ func checkDefinition(definition Definition) error {
 			definition.Key)
 	}
 
-	declared := make(map[string]bool, len(definition.Capabilities))
-	for _, capability := range definition.Capabilities {
-		declared[capability] = true
-	}
 	names := make(map[string]bool, len(definition.Tools))
 	for _, tool := range definition.Tools {
 		switch {
@@ -368,9 +365,6 @@ func checkDefinition(definition Definition) error {
 		case names[tool.Name]:
 			return fmt.Errorf("integration type %q declares tool %q twice",
 				definition.Key, tool.Name)
-		case !declared[tool.Capability]:
-			return fmt.Errorf("integration type %q tool %q exercises capability %q, which "+
-				"the type does not declare", definition.Key, tool.Name, tool.Capability)
 		case tool.Description == "" || tool.WhenToUse == "" || tool.WhenNotToUse == "" ||
 			tool.Permissions == "" || tool.Output == "":
 			return fmt.Errorf("integration type %q tool %q is missing part of its "+

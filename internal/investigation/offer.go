@@ -24,7 +24,7 @@ func offeredTools(
 	definition integrations.Definition, candidate integrations.Integration,
 ) []integrations.Tool {
 	// Delegated, never reimplemented. The same rule answers the operator surface's
-	// capability availability, and two copies of it would let what an operator is shown
+	// Tool availability, and two copies of it would let what an operator is shown
 	// disagree with what the investigator may actually call.
 	return integrations.SupportedTools(definition, candidate)
 }

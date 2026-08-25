@@ -1,0 +1,17 @@
+name: Bug report
+description: Report an observed control-plane defect without sensitive data.
+title: "Bug: "
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Remove credentials, customer identifiers, and private operational data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior and reproduction
+    validations:
+      required: true

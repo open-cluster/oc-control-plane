@@ -111,6 +111,37 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	}
 }
 
+func TestSlackConversationBriefCarriesItsExactOriginatingThread(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	integration, err := connectSlack(t, database, organization,
+		"Slack — originating workspace", slackInstallation("T-ORIGIN"))
+	if err != nil {
+		t.Fatalf("connecting Slack: %v", err)
+	}
+	outcome, err := database.RecordSlackMessage(context.Background(), organization,
+		storage.SlackMessage{
+			Integration: integration.ID, BodyDigest: randomDigest(t),
+			Channel: "C-INCIDENT", Thread: "1710000000.1", MessageID: "1710000000.2",
+			Subject: "checkout latency", ActorID: "U-SRE", ActorDisplay: "On-call",
+			Text: "why is checkout slow?",
+		})
+	if err != nil {
+		t.Fatalf("recording the originating app mention: %v", err)
+	}
+
+	brief, err := database.ConversationBrief(context.Background(), organization,
+		outcome.Conversation, 12)
+	if err != nil {
+		t.Fatalf("reading the Conversation orientation: %v", err)
+	}
+	if brief.OriginIntegrationID != integration.ID.String() ||
+		brief.OriginChannel != "C-INCIDENT" || brief.OriginThread != "1710000000.1" {
+		t.Fatalf("Conversation origin was not structurally retained: %+v", brief)
+	}
+}
+
 func TestSlackMessageCannotBindAnotherOrganizationsIntegration(t *testing.T) {
 	database, first := migratedDatabase(t)
 	second := organization(t, "org-second")

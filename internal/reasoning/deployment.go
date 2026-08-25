@@ -2,6 +2,7 @@ package reasoning
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -110,10 +111,16 @@ func (d Deployment) Validate() error {
 	}
 	if d.BaseURL != "" {
 		parsed, err := url.Parse(d.BaseURL)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		loopback := false
+		if err == nil {
+			address := net.ParseIP(parsed.Hostname())
+			loopback = parsed.Hostname() == "localhost" || address != nil && address.IsLoopback()
+		}
+		if err != nil || parsed.Host == "" ||
+			(parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback)) {
 			return fmt.Errorf(
-				"the %s deployment names a base url that is not an https host; the adapter may "+
-					"reach that host and nothing else, so it has to be one", d.Provider)
+				"the %s deployment names a base url that is not an https host or local "+
+					"loopback; the adapter may reach that host and nothing else", d.Provider)
 		}
 	}
 	return nil

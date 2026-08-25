@@ -26,7 +26,7 @@ const (
 	maxRepositoryPages = 5
 )
 
-// tools is the declared set, one-to-one with the capabilities the definition declares:
+// tools is the declared set of bounded GitHub reads:
 // the eight steps of the causal workflow, from finding the repository to reading what
 // shipped.
 func tools(app *App, client *Client) []integrations.Tool {
@@ -78,8 +78,7 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.list_repositories",
-		Capability: ListRepositories,
+		Name: "github.list_repositories",
 		Description: "Lists the repositories this installation selected, by stable id, " +
 			"with names and descriptions.",
 		WhenToUse: "First, to find which repository holds the failing service: filter by " +
@@ -178,8 +177,7 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.read_commits",
-		Capability: ReadCommits,
+		Name: "github.read_commits",
 		Description: "Reads one repository's commits inside a time window, newest first, " +
 			"bounded and flagged when the window holds more.",
 		WhenToUse: "To answer \"what changed before this broke\": read the incident's " +

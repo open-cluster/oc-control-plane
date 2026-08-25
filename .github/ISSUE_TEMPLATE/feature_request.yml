@@ -1,0 +1,14 @@
+name: Feature request
+description: Propose a product or operator workflow improvement.
+title: "Proposal: "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired operator outcome
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Security, Organization-isolation, and compatibility constraints

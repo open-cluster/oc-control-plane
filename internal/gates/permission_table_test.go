@@ -215,7 +215,7 @@ func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 			"other package is required to go through",
 		"internal/health": "owns the liveness, readiness, and metrics route tree that the " +
 			"application mounts on the shared HTTP listener; the routes carry no tenant data",
-		"internal/intake": "owns the inbound route tree that the application mounts on the " +
+		"internal/webhooks": "owns the inbound route tree that the application mounts on the " +
 			"shared HTTP listener; each Integration authenticates with its own secret rather " +
 			"than with a principal",
 		"internal/app": "mounts the already-assembled health, intake, and permission-table " +

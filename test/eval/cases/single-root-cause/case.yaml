@@ -1,0 +1,8 @@
+name: single-root-cause
+revision: "1"
+situation: A deployed payments commit increases the connection-pool timeout.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true
+    honestinsufficiency: false

@@ -41,7 +41,7 @@ func (s Status) String() string {
 	}
 }
 
-// Refusals a mutation can produce. Declared here because the capability owns its
+// Refusals a mutation can produce. Declared here because the Integration domain owns its
 // vocabulary; persistence returns these.
 var (
 	// ErrNameTaken reports a name another Integration in the organization holds.

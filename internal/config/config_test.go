@@ -188,6 +188,51 @@ func TestAuthenticationDefaultsToLocalAndOIDCIsFileConfigured(t *testing.T) {
 	}
 }
 
+func TestHostedWorkOSIsExplicitOptionalAndFileBacked(t *testing.T) {
+	t.Parallel()
+
+	environment := validEnvironment(t)
+	environment[config.EnvHostedMode] = "true"
+	environment[config.EnvAuthenticationMode] = "local+oidc"
+	environment[config.EnvOIDCIssuer] = "https://example.authkit.app"
+	environment[config.EnvOIDCClientID] = "client_workos"
+	environment[config.EnvOIDCClientSecretFile] = dsnFile(t, "workos-oidc-secret")
+	environment[config.EnvWorkOSAPIKeyFile] = dsnFile(t, "sk_workos_secret")
+	environment[config.EnvWorkOSAuditOrganizations] = "org-a=org_workos_a,org-b=org_workos_b"
+
+	configured, err := config.Load(lookupFrom(environment))
+	if err != nil {
+		t.Fatalf("loading explicitly hosted WorkOS configuration: %v", err)
+	}
+	if !configured.HostedMode || configured.WorkOSAPIKey != "sk_workos_secret" ||
+		configured.WorkOSAuditOrganizations["org-a"] != "org_workos_a" {
+		t.Fatalf("hosted WorkOS configuration was not loaded safely: %+v", configured)
+	}
+	if configured.AuthenticationMode != "local+oidc" ||
+		configured.OIDCIssuer != "https://example.authkit.app" {
+		t.Fatalf("hosted authentication must resolve through the ordinary OIDC boundary: %+v",
+			configured)
+	}
+
+	delete(environment, config.EnvHostedMode)
+	if _, err = config.Load(lookupFrom(environment)); err == nil ||
+		!strings.Contains(err.Error(), config.EnvHostedMode) {
+		t.Fatalf("WorkOS settings outside hosted mode were not refused: %v", err)
+	}
+}
+
+func TestConversationsAreAvailableWithoutARolloutSwitch(t *testing.T) {
+	t.Parallel()
+
+	loaded, err := config.Load(lookupFrom(validEnvironment(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.ConversationsEnabled {
+		t.Fatal("conversations must be enabled in the default self-hosted deployment")
+	}
+}
+
 func TestLoad_LegacySinglePlacementBecomesDatabase(t *testing.T) {
 	t.Parallel()
 
@@ -385,16 +430,12 @@ model:
   consented_providers: [anthropic]
   base_url: http://localhost:18083
   spend_ceiling_cents: 123
-  context_window: 100000
 investigations:
   window_lead: 3h
   max_tool_runs: 31
   max_turns: 21
 conversations:
-  enabled: true
   max_concurrent_investigations: 5
-  max_waiting_investigations: 17
-  context_threshold_percent: 60
 change_ledger:
   retention_days: 120
 `))
@@ -433,7 +474,7 @@ change_ledger:
 		t.Error("the nested GitHub configuration was not applied")
 	}
 	if cfg.ModelProvider != "anthropic" || cfg.ModelKey != "model-key-value" ||
-		cfg.ModelSpendCeilingCents != 123 || cfg.ModelContextWindow != 100000 {
+		cfg.ModelSpendCeilingCents != 123 {
 		t.Error("the nested model configuration was not applied")
 	}
 	if cfg.InvestigationWindowLead != 3*time.Hour || cfg.InvestigationMaxToolRuns != 31 ||
@@ -441,7 +482,7 @@ change_ledger:
 		t.Error("the nested Investigation configuration was not applied")
 	}
 	if !cfg.ConversationsEnabled || cfg.OrgConcurrentInvestigations != 5 ||
-		cfg.OrgWaitingInvestigations != 17 || cfg.ContextThresholdPercent != 60 {
+		cfg.OrgWaitingInvestigations != 16 || cfg.ContextThresholdPercent != 50 {
 		t.Error("the nested Conversation configuration was not applied")
 	}
 	if cfg.ChangeLedgerRetentionDays != 120 {

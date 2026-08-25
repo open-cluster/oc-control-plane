@@ -31,7 +31,7 @@ const (
 	clarifyWith = 3
 )
 
-// Handlers is this capability's dependencies.
+// Handlers is this domain surface's dependencies.
 type Handlers struct {
 	Store  Store
 	Runner *Runner
@@ -45,7 +45,7 @@ type Handlers struct {
 	WindowLead time.Duration
 }
 
-// Routes is this capability's contribution to the operator API's index.
+// Routes is this domain surface's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
 	const base = "/operator/v1/organizations/{organization}"
 
@@ -56,6 +56,16 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.open)),
 		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}",
 			authz.InvestigationRead, http.HandlerFunc(h.read)),
+		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/report",
+			authz.InvestigationRead, http.HandlerFunc(h.report)),
+		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/activity",
+			authz.InvestigationRead, http.HandlerFunc(h.activity)),
+		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/sources",
+			authz.InvestigationRead, http.HandlerFunc(h.sources)),
+		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/hypotheses",
+			authz.InvestigationRead, http.HandlerFunc(h.hypotheses)),
+		authz.Privileged(http.MethodPost, base+"/investigations/{investigation}/cancel",
+			authz.InvestigationCancel, http.HandlerFunc(h.cancel)),
 		// Watching an investigation run is reading it. There is no second permission,
 		// because the stream says nothing the finished record will not say — it says it
 		// while there is still something to watch.
@@ -64,7 +74,7 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// Describe is this capability's contribution to the deployment's self-description.
+// Describe is this domain surface's contribution to the deployment's self-description.
 //
 // The event stream carries no body and is not a listing: it is one investigation's own
 // events as they happen, not a page of rows a caller narrows.
@@ -385,6 +395,145 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, detailViewOf(found, sources, runs))
 }
 
+func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	ctx, done := context.WithTimeout(request.Context(), readTimeout)
+	defer done()
+	canceller, supported := h.Store.(interface {
+		CancelInvestigation(context.Context, authz.Principal, tenancy.Organization, uuid.UUID) (Investigation, error)
+	})
+	if !supported {
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "investigation cancellation is unavailable"})
+		return
+	}
+	ended, err := canceller.CancelInvestigation(ctx, principal, organization, id)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	if h.Runner != nil {
+		h.Runner.Cancel(id)
+	}
+	writeJSON(writer, http.StatusOK, investigationViewOf(ended))
+}
+
+func (h Handlers) report(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := h.caller(writer, request); !ok {
+		return
+	}
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	ctx, done := context.WithTimeout(request.Context(), readTimeout)
+	defer done()
+	found, err := h.Store.Investigation(ctx, organization, id)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, investigationViewOf(found))
+}
+
+func (h Handlers) sources(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := h.caller(writer, request); !ok {
+		return
+	}
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	ctx, done := context.WithTimeout(request.Context(), readTimeout)
+	defer done()
+	found, err := h.Store.Investigation(ctx, organization, id)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	sources, runs, err := h.Store.InvestigationProvenance(ctx, organization, id)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	detail := detailViewOf(found, sources, runs)
+	writeJSON(writer, http.StatusOK, struct {
+		InvestigationID string       `json:"investigationId"`
+		Sources         []sourceView `json:"sources"`
+		Runs            []runView    `json:"runs"`
+	}{InvestigationID: found.ID.String(), Sources: detail.Sources, Runs: detail.Runs})
+}
+
+func (h Handlers) hypotheses(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := h.caller(writer, request); !ok {
+		return
+	}
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	ctx, done := context.WithTimeout(request.Context(), readTimeout)
+	defer done()
+	found, err := h.Store.Investigation(ctx, organization, id)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	items := make([]findingView, 0, len(found.Findings))
+	for _, finding := range found.Findings {
+		switch finding.Kind {
+		case FindingProbableCause, FindingContributingFactor, FindingTriggeringChange,
+			FindingRuledOut, FindingUnresolvedLead:
+			items = append(items, findingView(finding))
+		}
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		InvestigationID string        `json:"investigationId"`
+		Items           []findingView `json:"items"`
+	}{InvestigationID: id.String(), Items: items})
+}
+
+func (h Handlers) activity(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := h.caller(writer, request); !ok {
+		return
+	}
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	if h.Events == nil {
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "investigation activity is unavailable"})
+		return
+	}
+	ctx, done := context.WithTimeout(request.Context(), readTimeout)
+	defer done()
+	if _, err := h.Store.Investigation(ctx, organization, id); err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	events, err := h.Events.Events(ctx, organization, id, 0, 100)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	items := make([]activityView, 0, len(events))
+	for _, event := range events {
+		items = append(items, activityView{
+			Sequence: event.Sequence, At: stamp(event.At), Type: event.Type.String(), Payload: event.Payload,
+		})
+	}
+	writeJSON(writer, http.StatusOK, struct {
+		InvestigationID string         `json:"investigationId"`
+		Items           []activityView `json:"items"`
+	}{InvestigationID: id.String(), Items: items})
+}
+
 func (h Handlers) caller(
 	writer http.ResponseWriter, request *http.Request,
 ) (authz.Principal, bool) {
@@ -449,6 +598,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "investigation not found"})
 	case errors.Is(err, ErrEpisodeUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "episode not found"})
+	case errors.Is(err, ErrAlreadyEnded):
+		writeJSON(writer, http.StatusConflict, errorView{Error: "investigation has already ended"})
 	case errors.Is(err, ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrBadCursor.Error()})
 	case errors.Is(err, audit.ErrWriteFailed):

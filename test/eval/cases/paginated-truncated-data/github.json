@@ -1,0 +1,36 @@
+{
+  "5001": {
+    "Account": "acme-corp",
+    "Repos": [
+      {
+        "ID": 101,
+        "Name": "payments",
+        "Commits": [
+          {
+            "SHA": "0ddba11",
+            "Message": "bump kafka client to 3.9",
+            "Author": "ash-ops",
+            "At": "2026-08-25T11:05:00Z",
+            "Files": [
+              {
+                "Path": "go.mod",
+                "Patch": "@@ -3,3 +3,3 @@\n require (\n-\tacme.dev/kafka-client v3.8.0\n+\tacme.dev/kafka-client v3.9.0"
+              }
+            ]
+          }
+        ],
+        "Pulls": null,
+        "Files": {
+          "go.mod": "module acme.dev/payments\n\nrequire (\n\tacme.dev/kafka-client v3.9.0\n)\n"
+        }
+      },
+      {
+        "ID": 102,
+        "Name": "deploy",
+        "Commits": null,
+        "Pulls": null,
+        "Files": null
+      }
+    ]
+  }
+}

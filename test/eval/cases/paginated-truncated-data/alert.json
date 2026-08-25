@@ -1,0 +1,7 @@
+{
+  "alertname": "KafkaConsumerLag",
+  "labels": {
+    "namespace": "payments",
+    "service": "payments"
+  }
+}

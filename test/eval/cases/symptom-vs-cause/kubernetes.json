@@ -1,0 +1,9 @@
+{
+  "workloads": [
+    {
+      "kind": "Deployment",
+      "name": "checkout",
+      "namespace": "checkout"
+    }
+  ]
+}

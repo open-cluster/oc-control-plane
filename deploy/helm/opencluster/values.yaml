@@ -1,0 +1,42 @@
+replicaCount: 1
+
+image:
+  repository: opencluster-control-plane
+  tag: dev
+  pullPolicy: Never
+
+database:
+  existingSecret: opencluster-database
+  dsnKey: postgres-dsn
+
+credentials:
+  existingSecret: opencluster-credentials
+  operatorTokenKey: operator-token
+  sealingKey: sealing-key
+  modelKey: model-key
+
+operator:
+  organization: local
+  publicURL: "http://localhost:8080"
+
+model:
+  provider: anthropic
+  name: claude-sonnet-5
+  consentedProviders: []
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+
+relay:
+  enabled: false
+  internalPort: 8444
+  externalPort: 8443
+  spkiPins: []
+  tls:
+    existingSecret: ""
+    certificateKey: tls.crt
+    privateKey: tls.key
+    image: nginx:1.27-alpine
+
+resources: {}

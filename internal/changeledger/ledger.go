@@ -7,9 +7,8 @@
 // The ledger is a navigation index, never citable. It tells an investigation what
 // changed around a resource in a window; a conclusion resting on a change revalidates
 // the current state live and cites the Observation that revalidation produced. A ledger
-// entry is structurally refused as an EvidenceItem — it carries no capability read, no
-// integration read and no trust class — so the rule holds by construction rather than by
-// review.
+// entry cannot become a cited Finding because it carries no bounded Tool read; the rule
+// holds by construction rather than by review.
 //
 // Persistence depends on this package and reconstructs its types; it declares none of
 // them.

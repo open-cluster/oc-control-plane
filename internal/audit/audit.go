@@ -129,6 +129,7 @@ const (
 	TargetAPIToken         TargetKind = "api_token"
 	TargetOrganization     TargetKind = "organization"
 	TargetRoute            TargetKind = "route"
+	TargetWebhookWork      TargetKind = "webhook_work"
 )
 
 // Target is what was acted on.

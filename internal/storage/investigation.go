@@ -131,12 +131,13 @@ func (p *Database) InvestigationProvenance(
 	runs := make([]investigation.ToolRun, 0, 8)
 	for runRows.Next() {
 		var (
-			run           investigation.ToolRun
-			integrationID *uuid.UUID
-			arguments     []byte
-			runSources    []byte
+			run              investigation.ToolRun
+			integrationID    *uuid.UUID
+			legacyCapability string
+			arguments        []byte
+			runSources       []byte
 		)
-		if err := runRows.Scan(&integrationID, &run.Ordinal, &run.Capability,
+		if err := runRows.Scan(&integrationID, &run.Ordinal, &legacyCapability,
 			&run.Tool, &arguments, &run.WindowFrom, &run.WindowUntil, &run.Outcome,
 			&run.Truncated, &run.Summary, &runSources, &run.Error,
 			&run.StartedAt, &run.FinishedAt); err != nil {
@@ -274,7 +275,7 @@ func (p *Database) RecordToolRun(
 		                                    started_at, finished_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		id, organization.String(), nullableUUID(run.IntegrationID), run.Ordinal,
-		run.Capability, run.Tool, arguments, run.WindowFrom, run.WindowUntil,
+		"", run.Tool, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
 		run.StartedAt, run.FinishedAt)
 	if err != nil {
@@ -309,6 +310,68 @@ func (p *Database) FailInvestigation(
 ) error {
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
 		"", []byte("[]"), []byte("[]"), "", reason, spend)
+}
+
+// CancelInvestigation ends active work and records the operator action atomically.
+func (p *Database) CancelInvestigation(
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization, id uuid.UUID,
+) (investigation.Investigation, error) {
+	return audited(ctx, p, principal, organization, audit.ActionInvestigationCancelled,
+		func(ctx context.Context, transaction pgx.Tx) (
+			investigation.Investigation, audit.Target, audit.Detail, error,
+		) {
+			row := transaction.QueryRow(ctx, `
+				UPDATE investigation
+				   SET status = $3,
+				       concluded_at = now(),
+				       cancel_requested_at = now(),
+				       cancelled_by = $4,
+				       lease_worker = '',
+				       lease_expires_at = NULL
+				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
+				RETURNING `+investigationColumns,
+				id, organization.String(), int16(investigation.StatusCancelled), principal.ID())
+			ended, err := scanInvestigation(row, organization.String())
+			if errors.Is(err, pgx.ErrNoRows) {
+				var exists bool
+				if checkErr := transaction.QueryRow(ctx,
+					`SELECT EXISTS (SELECT 1 FROM investigation WHERE investigation_id = $1 AND org_id = $2)`,
+					id, organization.String()).Scan(&exists); checkErr != nil {
+					return investigation.Investigation{}, audit.Target{}, nil, checkErr
+				}
+				if exists {
+					return investigation.Investigation{}, audit.Target{}, nil, investigation.ErrAlreadyEnded
+				}
+				return investigation.Investigation{}, audit.Target{}, nil, investigation.ErrUnknown
+			}
+			if err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil,
+					fmt.Errorf("cancelling an investigation: %w", err)
+			}
+			if _, err = transaction.Exec(ctx, `
+				UPDATE relay_job
+				   SET status = CASE WHEN status = 0 THEN 4 ELSE status END,
+				       terminal_at = CASE WHEN status = 0 THEN now() ELSE terminal_at END,
+				       cancel_requested_at = coalesce(cancel_requested_at, now())
+				 WHERE org_id = $1 AND investigation_id = $2 AND status IN (0, 1)`,
+				organization.String(), id); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil,
+					fmt.Errorf("cancelling investigation-owned Relay work: %w", err)
+			}
+			if _, err = transaction.Exec(ctx, `
+				INSERT INTO investigation_event
+				    (investigation_id, org_id, sequence, at, type, payload)
+				SELECT $1, $2, coalesce(max(sequence), 0) + 1, now(), $3,
+				       jsonb_build_object('message', 'Investigation cancelled by an operator')
+				  FROM investigation_event
+				 WHERE investigation_id = $1 AND org_id = $2`,
+				id, organization.String(), int16(investigation.EventCancelled)); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil,
+					fmt.Errorf("recording an investigation cancellation event: %w", err)
+			}
+			return ended, audit.Target{Kind: audit.TargetInvestigation, ID: id.String()},
+				audit.Detail{"subject": ended.Subject}, nil
+		})
 }
 
 // endInvestigation is the one write both endings share. Guarded on the row still

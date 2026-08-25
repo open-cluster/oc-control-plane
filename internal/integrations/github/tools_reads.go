@@ -108,8 +108,7 @@ func readCommitTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.read_commit",
-		Capability: ReadCommit,
+		Name: "github.read_commit",
 		Description: "Reads one commit whole: its changed files and their patches, " +
 			"bounded — the change itself, not the message about it.",
 		WhenToUse: "When github.read_commits surfaced a suspicious commit and \"what " +
@@ -179,8 +178,7 @@ func readPullRequestTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.read_pull_request",
-		Capability: ReadPullRequest,
+		Name: "github.read_pull_request",
 		Description: "Reads one pull request whole: its description, changed files and " +
 			"CI check status — the intent and health of a change as one answer.",
 		WhenToUse: "When a commit references a pull request and \"why was this change " +
@@ -292,8 +290,7 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.read_workflow_runs",
-		Capability: ReadWorkflowRuns,
+		Name: "github.read_workflow_runs",
 		Description: "Reads a repository's CI/CD workflow runs inside a time window, " +
 			"newest first, with status and conclusion.",
 		WhenToUse: "To answer \"did the deploy pipeline object\": failed or cancelled " +
@@ -381,8 +378,7 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.read_job_log",
-		Capability: ReadJobLog,
+		Name: "github.read_job_log",
 		Description: "Reads the log tail of a workflow run's failing job — the end of " +
 			"the log, where the failure speaks.",
 		WhenToUse: "When github.read_workflow_runs showed a failed run and \"what " +
@@ -495,8 +491,7 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.read_file",
-		Capability: ReadFile,
+		Name: "github.read_file",
 		Description: "Reads one file's contents at a ref, bounded — the configuration " +
 			"a commit touched can be inspected, not guessed.",
 		WhenToUse: "When a changed file's full context matters: the config value " +
@@ -568,8 +563,7 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "github.list_releases",
-		Capability: ListReleases,
+		Name: "github.list_releases",
 		Description: "Lists a repository's releases, newest first — what shipped, " +
 			"and when.",
 		WhenToUse: "To answer \"what shipped near the incident window\": a release " +

@@ -267,10 +267,6 @@ func (e Envelope) AddressedToUs(agent string) bool {
 	case "app_mention":
 		// Somebody named OpenCluster in a channel it is in.
 		return true
-	case "message":
-		// In a direct message with the agent, every message is addressed to it; in a
-		// channel, only a mention is, and a mention arrives as app_mention instead.
-		return event.ChannelKind == "im"
 	default:
 		return false
 	}

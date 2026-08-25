@@ -4,10 +4,11 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// Tool is one bounded read a provider offers an investigation, declared beside the
-// capability it exercises.
+// Tool is one bounded read a provider offers an investigation.
 //
 // The metadata is not documentation garnish: it is what anything routing between tools
 // reads, so a tool that cannot say when NOT to use it is a tool that gets used wrongly
@@ -17,9 +18,6 @@ type Tool struct {
 	// Name identifies the tool: "slack.get_channel_history". Stable, because provenance
 	// records carry it.
 	Name string
-	// Capability is the declared capability this tool exercises. It must be one the
-	// definition declares, which is checked at catalog assembly.
-	Capability string
 	// Description says what the tool does, in one or two sentences.
 	Description string
 	// WhenToUse says which questions this tool answers.
@@ -40,6 +38,10 @@ type Tool struct {
 	// with the connected credential — a bot token asked to run user-token search — is
 	// absent from the set, never a call that always fails.
 	Requires []string
+	// ConversationScoped marks a read that can be restricted to the provider thread
+	// that originated a Conversation. Broader reads are never implicitly granted by
+	// mentioning the application in that thread.
+	ConversationScoped bool
 	// Output says what a successful answer holds. Composed into the model-facing
 	// description ("Returns: …") and rendered on the operator catalog view.
 	Output string
@@ -58,9 +60,16 @@ type ToolArgument struct {
 // ToolRequest is one call. The credential is the unsealed outbound credential, present
 // only for the duration of the call and never stored by anything downstream of it.
 type ToolRequest struct {
-	Integration Integration
-	Credential  string
-	Arguments   map[string]any
+	// InvestigationID attaches durable execution to the Investigation that owns it.
+	// Direct provider reads outside an Investigation leave the identifier empty.
+	InvestigationID uuid.UUID
+	Integration     Integration
+	Credential      string
+	Arguments       map[string]any
+	// OriginChannel and OriginThread structurally constrain a provider-originated
+	// Conversation read. Empty values mean this Investigation has no provider thread.
+	OriginChannel string
+	OriginThread  string
 	// WindowFrom and WindowUntil are the investigation's own time bounds. A tool whose
 	// arguments carry a window clamps them inside this one, so a read cannot leave the
 	// investigation's scope however its arguments were phrased. Zero means unbounded —

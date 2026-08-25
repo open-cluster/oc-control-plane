@@ -9,8 +9,8 @@ import (
 //
 // A turn opens its own Exchange from nothing; the Conversation is what carries continuity
 // between them. The brief is that continuity, and it is assembled ONLY from what the
-// platform already holds: the running summary, a verbatim tail of what was actually said,
-// and the prior turns' findings with their citations expressed as REFERENCES — the turn and
+// platform already holds: a verbatim tail of what was actually said and the prior turns'
+// findings with their citations expressed as REFERENCES — the turn and
 // the run ordinal — never as copied tool payloads.
 //
 // Copying payloads would be the obvious thing and the wrong one. A finding already carries
@@ -21,14 +21,11 @@ import (
 // The brief's own bounds. Every one is here because a conversation that has run for hours
 // must not assemble an orientation that grows without limit.
 const (
-	// BriefRecentMessages is how many messages stay verbatim behind the summary. Enough
-	// for the last exchange or two to read as it was written.
+	// BriefRecentMessages is the bounded verbatim message tail.
 	BriefRecentMessages = 12
-	// BriefMaxFindings bounds how many prior findings a brief carries, newest turns
-	// first. A conversation with a hundred established facts is one whose summary is
-	// doing the work.
+	// BriefMaxFindings bounds how many prior cited findings a brief carries.
 	BriefMaxFindings = 40
-	// BriefMaxConstraints bounds the durable instructions a summary keeps.
+	// BriefMaxConstraints bounds remembered recommendations and failed reads.
 	BriefMaxConstraints = 12
 	// BriefMaxIdentifiers bounds the service and resource identifiers in play.
 	BriefMaxIdentifiers = 30
@@ -71,62 +68,27 @@ func (p PriorFinding) Reference() string {
 	return "turn " + strconv.Itoa(p.Turn) + " run " + strings.Join(ordinals, ", ")
 }
 
-// Summary is the structured running summary older turns compact into.
-//
-// The SECTIONS are the contract. A free-text blob would be a summary nobody could check;
-// these can be compared field by field against what the conversation actually holds, which
-// is what makes the compaction test deterministic rather than a judge's opinion.
-type Summary struct {
-	Version int
-	// CoversThrough is the message sequence this summary accounts for. Everything after
-	// it is still carried verbatim.
-	CoversThrough int64
-	// Goal is what the conversation is for, in the words it was opened with.
-	Goal string
-	// Problem is the incident or question the conversation started from.
-	Problem string
-	// Constraints are the operator's own durable instructions — "ignore the database,
-	// look at deployments" — kept VERBATIM. A paraphrase of an instruction is an
-	// instruction somebody did not give.
-	Constraints []string
-	// Established, RuledOut and Open are prior findings sorted by what they are for. A
-	// hypothesis that was ruled out stays ruled out unless new evidence appears, and it
-	// only stays ruled out if the next turn is told.
-	Established []PriorFinding
-	RuledOut    []PriorFinding
-	Open        []PriorFinding
-	// FailedReads are the reads that did not work, so a gap in an answer stays explained
-	// rather than becoming silent after compaction.
-	FailedReads []string
-	// Recommended is what earlier turns already told the operator to consider. It is the
-	// nearest thing this platform holds to "decisions already made", and it earns its
-	// place by stopping the tenth turn recommending the rollback the second one did.
-	Recommended []string
-	// Identifiers are the services and resources in play — the names the conversation has
-	// been about.
-	Identifiers []string
-}
-
 // Brief is one conversation's contribution to a turn's Orientation.
 type Brief struct {
 	ConversationID string
 	Subject        string
+	// OriginIntegrationID, OriginChannel, and OriginThread identify the provider
+	// thread that originated this Conversation. Browser Conversations leave them empty.
+	OriginIntegrationID string
+	OriginChannel       string
+	OriginThread        string
 	// Turn is this turn's one-based position, so the agent knows it is not the first.
 	Turn int
-	// Summary is the newest running summary, empty when nothing has been compacted yet.
-	Summary Summary
 	// Recent is the verbatim tail, oldest first.
 	Recent []BriefMessage
-	// RecentFrom is the sequence the verbatim tail starts at, so a compaction can record
-	// exactly what it accounts for and what is still carried as it was said.
+	// RecentFrom is the sequence the verbatim tail starts at.
 	RecentFrom int64
-	// Findings are the prior turns' findings not already inside the summary.
+	// Findings are prior turns' cited findings.
 	Findings []PriorFinding
-	// FailedReads are the prior turns' reads that did not work, outside the summary.
+	// FailedReads are the prior turns' reads that did not work.
 	FailedReads []string
-	// Recommended is what prior turns already advised, outside the summary.
+	// Recommended is what prior turns already advised.
 	Recommended []string
 	// Identifiers are what the prior turns actually read — channel ids, repository ids —
-	// outside the summary.
 	Identifiers []string
 }

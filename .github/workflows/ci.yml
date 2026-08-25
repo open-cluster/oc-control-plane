@@ -1,7 +1,3 @@
-# CI: verification only. This workflow deliberately contains NO registry push, image
-# publish, module-proxy warm, or release-upload step — publication is founder-gated and is
-# wired in as its own reviewed change when authorized. Actions are pinned by commit SHA
-# (supply chain for the CI itself).
 name: ci
 
 on:
@@ -14,8 +10,6 @@ permissions:
 
 jobs:
   verify:
-    # Integration tests start Postgres through Testcontainers, which needs the runner's
-    # Docker daemon. It is present on ubuntu-latest.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,29 +22,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The shipping module requires github.com/open-cluster/oc-relay/gen/go — the protocol
-      # contract — which lives in a private repository. Without a credential for it, every
-      # step below that resolves modules fails, and it fails deep inside whichever tool
-      # happened to run first, reporting a git exit status rather than a cause.
-      #
-      # This step exists to say the cause out loud and stop. GOPRIVATE keeps the module off
-      # the public proxy, which cannot serve it, and the rewrite hands git the token.
-      - name: Authenticate to the private contract module
-        env:
-          RELAY_REPO_TOKEN: ${{ secrets.RELAY_REPO_TOKEN }}
-        run: |
-          echo "GOPRIVATE=github.com/open-cluster/*" >> "$GITHUB_ENV"
-          if [ -z "$RELAY_REPO_TOKEN" ]; then
-            echo "::error title=No credential for the private contract module::\
-          This repository requires github.com/open-cluster/oc-relay/gen/go, which is private. \
-          Configure a RELAY_REPO_TOKEN secret with read access to open-cluster/oc-relay. \
-          Every CI run since relay registration landed has failed for this reason."
-            exit 1
-          fi
-          git config --global \
-            url."https://x-access-token:${RELAY_REPO_TOKEN}@github.com/open-cluster/".insteadOf \
-            "https://github.com/open-cluster/"
-
       - name: Install pinned tooling
         run: make tools
 
@@ -60,36 +31,20 @@ jobs:
       - name: Build (CGO disabled, trimpath)
         run: make build
 
+      - name: Validate Compose, Helm, and the public container build
+        run: make deploy-verify
+
       - name: Tests (race detector, real Postgres)
         env:
-          # A runner whose container runtime never came up must FAIL this job, not empty it.
-          # Every composed-process test skips when it cannot start Postgres, which is right
-          # on a laptop and wrong here: without this the job would report success over a
-          # suite that never ran, and the output would not say so.
           OC_REQUIRE_CONTAINERS: "1"
         run: make test
 
-      # Both modules are scanned. The harness is not shipped, but it runs in CI against real
-      # infrastructure, so a vulnerability in it is still one this repository executes.
       - name: Vulnerability scan (govulncheck)
-        run: |
-          govulncheck ./...
-          cd test/e2e && govulncheck ./...
+        run: make vuln
 
-      - name: Dependency licence check
-        run: |
-          go-licenses check ./... \
-            --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC,MPL-2.0 \
-            --ignore github.com/open-cluster/oc-control-plane
-          cd test/e2e && go-licenses check ./... \
-            --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC,MPL-2.0 \
-            --ignore github.com/open-cluster/oc-control-plane
+      - name: Dependency license check (go-licenses)
+        run: make licenses
 
-      # The gitleaks GitHub Action refuses to run for organization-owned repositories without
-      # a purchased licence key. The scanner itself is MIT-licensed, so the gate runs its
-      # release binary instead: same scan, with nothing commercial standing between the
-      # repository and its own secret detection. Pinned by exact version, with the archive
-      # checksummed before anything in it executes.
       - name: Secret scan (gitleaks, full history)
         env:
           GITLEAKS_VERSION: "8.30.1"
@@ -100,19 +55,12 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" gitleaks
-          # The config is named explicitly rather than discovered, so a file that is not
-          # being picked up fails loudly here instead of looking like a scan that found
-          # something.
           set +e
           ./gitleaks git . --config .gitleaks.toml --redact --exit-code 1 \
             --log-opts="--all --full-history" \
             --report-format json --report-path gitleaks-report.json
           scan=$?
           set -e
-          # A gate that says only "leaks found: 1" cannot be acted on: it names neither the
-          # rule that fired nor the file it fired in, and the reader is left grepping
-          # history by hand. The secret itself stays redacted — this prints what was
-          # matched and where, never the value.
           if [ "$scan" -ne 0 ] && [ -f gitleaks-report.json ]; then
             echo "::group::gitleaks findings (secret values redacted)"
             jq -r '.[] | "rule=\(.RuleID) file=\(.File) line=\(.StartLine) commit=\(.Commit[0:12]) date=\(.Date) author=\(.Author)"' gitleaks-report.json
@@ -120,17 +68,10 @@ jobs:
           fi
           exit "$scan"
 
-  # The end-to-end proof runs the Relay and this control plane as real processes against a
-  # real Kubernetes and a real Postgres. It is a separate job because it needs a second
-  # repository and takes minutes, and because a failure in it means something different from
-  # a failure above: the two halves disagree about the protocol.
-  #
-  # It cannot run without a credential for the Relay's repository, which is private and shares
-  # no history with this one. Until that credential exists the job reports plainly that the
-  # proof did not run — and NOT running is the honest outcome, because a green tick on a proof
-  # that never executed is worse than no job at all.
-  end-to-end:
+  relay-availability:
     runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.credential.outputs.available }}
     steps:
       - name: Check for the Relay repository credential
         id: credential
@@ -150,43 +91,28 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
 
+  end-to-end:
+    needs: relay-availability
+    if: needs.relay-availability.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Checkout the control plane
-        if: steps.credential.outputs.available == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Checkout the Relay
-        if: steps.credential.outputs.available == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          # The repository is oc-relay. It is checked out beside this one rather than
-          # vendored: the two share no history and no file is copied between them.
           repository: open-cluster/oc-relay
           token: ${{ secrets.RELAY_REPO_TOKEN }}
           path: .relay
 
       - name: Set up Go
-        if: steps.credential.outputs.available == 'true'
         uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version-file: go.mod
 
-      - name: Authenticate to the private contract module
-        if: steps.credential.outputs.available == 'true'
-        env:
-          RELAY_REPO_TOKEN: ${{ secrets.RELAY_REPO_TOKEN }}
-        run: |
-          git config --global \
-            url."https://x-access-token:${RELAY_REPO_TOKEN}@github.com/open-cluster/".insteadOf \
-            "https://github.com/open-cluster/"
-
       - name: Prove the protocol carries a job
-        if: steps.credential.outputs.available == 'true'
         env:
-          # The Relay is built from the tree checked out above, not vendored: the two
-          # repositories share no history and no file is copied between them.
           OC_E2E_RELAY_SOURCE: ${{ github.workspace }}/.relay
-          GOPRIVATE: github.com/open-cluster/*
-          # As above: this job exists to run against real infrastructure, so a missing
-          # container runtime is a failure rather than a reason to prove nothing.
           OC_REQUIRE_CONTAINERS: "1"
         run: cd test/e2e && go test -timeout 45m -count=1 ./...

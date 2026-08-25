@@ -131,6 +131,30 @@ func TestAWorkerThatLosesItsLeaseStopsRunning(t *testing.T) {
 	}
 }
 
+func TestWorkerObservesCancellationOnAnotherReplicaBeforeLeaseRenewal(t *testing.T) {
+	t.Parallel()
+
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryStore{status: StatusCancelled}
+	runner := &Runner{
+		Store: store, Leases: &losingLeases{heartbeat: make(chan struct{})},
+		HeartbeatEvery: time.Hour, Logger: slog.New(slog.DiscardHandler),
+	}
+	ctx, done := context.WithCancel(context.Background())
+	defer done()
+	stopped := make(chan struct{})
+	go runner.heartbeat(ctx, func() { close(stopped) }, organization, uuid.New())
+
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the worker ignored durable cancellation until its next lease renewal")
+	}
+}
+
 // When the record cannot be ended — because somebody else already ended it — NO terminal
 // event is written. The event follows the record or it does not happen; a second terminal
 // would tell a reader the run finished twice.

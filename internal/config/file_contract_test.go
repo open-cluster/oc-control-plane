@@ -73,8 +73,6 @@ func TestConfigurationDocumentationMatchesYAMLSchema(t *testing.T) {
 		fmt.Sprint(defaultChangeLedgerRetentionDays),
 		fmt.Sprint(defaultModelSpendCeilingCents),
 		fmt.Sprint(defaultOrgConcurrentInvestigations),
-		fmt.Sprint(defaultOrgWaitingInvestigations),
-		fmt.Sprint(defaultContextThresholdPercent),
 	} {
 		quoted := "`" + documentedDefault + "`"
 		if !bytes.Contains(content, []byte(quoted)) {
@@ -88,6 +86,32 @@ func TestConfigurationDocumentationMatchesYAMLSchema(t *testing.T) {
 		if !bytes.Contains(content, []byte("Default: `"+documented+"`")) {
 			t.Errorf("built-in duration %s (%s) is absent from the configuration reference",
 				documented, configured)
+		}
+	}
+}
+
+func TestConversationInternalsAreNotDeploymentConfiguration(t *testing.T) {
+	t.Parallel()
+
+	for _, setting := range yamlLeafNames(reflect.TypeOf(fileDocument{})) {
+		for _, retired := range []string{
+			"context_window", "context_threshold_percent", "max_waiting_investigations", "enabled",
+		} {
+			if setting == retired {
+				t.Errorf("platform-owned conversation setting %q must not appear in the YAML schema", retired)
+			}
+		}
+	}
+	content, err := os.ReadFile(filepath.Join("..", "..", "docs", "self-hosted", "configuration.mdx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, retired := range []string{
+		"OC_CONVERSATIONS_ENABLED", "OC_ORG_MAX_WAITING_INVESTIGATIONS",
+		"OC_MODEL_CONTEXT_WINDOW", "OC_CONTEXT_THRESHOLD_PERCENT",
+	} {
+		if bytes.Contains(content, []byte(retired)) {
+			t.Errorf("platform-owned conversation setting %q must not be documented", retired)
 		}
 	}
 }

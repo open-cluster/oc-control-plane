@@ -334,6 +334,28 @@ func TestAnAnswerIsCoalescedRatherThanSentPerToken(t *testing.T) {
 	}
 }
 
+func TestAFinalAnswerLinksTheInvestigationAndItsSources(t *testing.T) {
+	t.Parallel()
+
+	fake := newSlackCallLog(t, true)
+	worker, state := answering(t, fake, aTurn())
+	worker.ConsoleURL = "https://console.example.test/"
+	worker.answer(context.Background(), state.reply)
+
+	whole := strings.Join(fake.carried(), "")
+	if !strings.Contains(whole, "/organizations/org-a/investigations/"+
+		state.reply.Investigation.String()) {
+		t.Errorf("the final answer has no stable Investigation link: %q", whole)
+	}
+	if !strings.Contains(whole, "/organizations/org-a/investigations/"+
+		state.reply.Investigation.String()+"/sources") {
+		t.Errorf("the final answer has no Investigation Sources link: %q", whole)
+	}
+	if strings.Contains(whole, "/organizations/org-a/integrations/") {
+		t.Errorf("the Sources link points to Integration setup instead of Investigation evidence: %q", whole)
+	}
+}
+
 func TestAWorkerKilledMidStreamResumesRatherThanReposting(t *testing.T) {
 	t.Parallel()
 

@@ -1,0 +1,26 @@
+causes:
+    - name: pool-timeout-commit
+      markers:
+        - pool timeout
+        - abc123
+      tools:
+        - github.read_commits
+        - github.read_commit
+        - github.read_file
+mustnotclaim: []
+discriminating:
+    - tool: github.read_commits
+      argmarker: ""
+relevanttools:
+    - slack.list_channels
+    - slack.get_channel_history
+    - github.list_repositories
+    - github.read_commits
+    - github.read_commit
+    - github.read_workflow_runs
+    - github.list_releases
+    - github.read_file
+expectfindings: true
+mustnotanswer: []
+answermarkers: []
+survives: []

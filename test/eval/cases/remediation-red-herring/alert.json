@@ -1,0 +1,7 @@
+{
+  "alertname": "QueueBacklogGrowing",
+  "labels": {
+    "namespace": "payments",
+    "service": "worker"
+  }
+}

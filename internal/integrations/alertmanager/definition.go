@@ -4,10 +4,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// ReceiveAlerts is the one capability this type declares: it is reached inbound and
-// delivers alerts; nothing is read from it.
-const ReceiveAlerts = "alertmanager.receive_alerts"
-
 // Definition is what this provider exports to the catalog. Metadata mirrors the seeded
 // integration_type row; a test proves the two agree.
 func Definition() integrations.Definition {
@@ -21,7 +17,6 @@ func Definition() integrations.Definition {
 		Category: integrations.CategoryAlerting,
 		DocumentationURL: "https://prometheus.io/docs/alerting/latest/configuration/" +
 			"#webhook_config",
-		Capabilities: []string{ReceiveAlerts},
 		// NOTHING TO CONFIGURE, and saying so is the honest definition. Alertmanager is
 		// reached inbound: the platform mints the secret and the Integration carries its
 		// own operator-chosen name. A "source name" field would be a second place to write

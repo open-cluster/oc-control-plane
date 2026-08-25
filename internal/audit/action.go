@@ -63,7 +63,9 @@ const (
 
 	// Opening an investigation is the one operator act on it; everything the runner does
 	// afterwards is the investigation's own provenance, a record of its own.
-	ActionInvestigationOpened Action = "investigation.opened"
+	ActionInvestigationOpened    Action = "investigation.opened"
+	ActionInvestigationCancelled Action = "investigation.cancelled"
+	ActionWebhookWorkReplayed    Action = "webhook-work.replayed"
 
 	// Conversations. Opening one and sending a message to one are both operator acts, and
 	// both are recorded because a conversation several people take part in has to be able

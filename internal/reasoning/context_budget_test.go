@@ -3,7 +3,7 @@ package reasoning
 import "testing"
 
 // The budget is model-specific because the windows are. A deployment on a 200k model and
-// one on a 128k model must not compact at the same point, and a deployment that configured
+// one on a 128k model must not reserve context at the same point, and a deployment that configured
 // a number must get the number it configured.
 
 func TestTheWindowIsResolvedPerModelWithAConservativeFallback(t *testing.T) {
@@ -19,7 +19,7 @@ func TestTheWindowIsResolvedPerModelWithAConservativeFallback(t *testing.T) {
 		{"glm-4.6", 200_000},
 		{"glm-4.5-air", 128_000},
 		// The reason the fallback is conservative rather than generous: being wrong low
-		// costs one early compaction, and being wrong high costs the turn.
+		// reserves slightly too much context, and being wrong high costs the turn.
 		{"a-model-this-build-has-never-heard-of", 128_000},
 		{"", 128_000},
 	} {
@@ -41,8 +41,7 @@ func TestAConfiguredWindowOverridesTheTable(t *testing.T) {
 	}
 }
 
-// The budget is a SOFT threshold below the usable window. Compacting at the ceiling would
-// mean the very turn that triggered it has no room left to run.
+// The budget is a soft threshold below the usable window, leaving room for a final answer.
 func TestTheBudgetLeavesRoomForTheAnswerAndForTheTurn(t *testing.T) {
 	t.Parallel()
 
@@ -64,8 +63,7 @@ func TestTheBudgetLeavesRoomForTheAnswerAndForTheTurn(t *testing.T) {
 	}
 }
 
-// A nonsense threshold falls back rather than producing a budget of zero — which would
-// compact on every turn — or one at the ceiling, which would compact too late to help.
+// A nonsense threshold falls back instead of exhausting context immediately or too late.
 func TestAnUnusableThresholdFallsBack(t *testing.T) {
 	t.Parallel()
 
@@ -90,19 +88,16 @@ func TestAWindowTooSmallToReserveFromStillProducesABudget(t *testing.T) {
 
 // The two numbers must stay two, and in the right order.
 //
-// Their whole purpose is the gap between them. A change that made the ceiling equal to
-// the budget — or, worse, below it — would restore the defect silently: compaction would
-// go back to only ever helping the next turn, and nothing would fail.
-func TestTheCeilingSitsAboveTheCompactionBudget(t *testing.T) {
+// Their separation leaves each bounded turn room to gather evidence and conclude honestly.
+func TestTheCeilingSitsAboveTheSoftContextBudget(t *testing.T) {
 	t.Parallel()
 
 	for _, model := range []string{"claude-sonnet-5", "glm-5", "gpt-5", "a-model-nobody-knows"} {
 		budget := ContextBudget(model, 0, 50)
 		ceiling := ContextCeiling(model, 0)
 		if ceiling <= budget {
-			t.Errorf("%s: ceiling %d is not above budget %d; the gap between them IS the "+
-				"room a compaction buys, and without it compaction cannot help the turn "+
-				"performing it", model, ceiling, budget)
+			t.Errorf("%s: ceiling %d is not above budget %d; evidence gathering must retain "+
+				"enough context to conclude the active turn", model, ceiling, budget)
 		}
 	}
 }

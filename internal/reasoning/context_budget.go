@@ -9,7 +9,7 @@ import "strings"
 // and without a budget that turn simply fails.
 //
 // There is NO SINGLE UNIVERSAL CONSTANT here, because there is no single universal window:
-// a deployment on a 200k model and one on a 1M model should not compact at the same point.
+// a deployment on a 200k model and one on a 1M model should not stop at the same point.
 // The number is the configured window, or a per-model default, minus a reserve for the
 // answer, times a soft threshold.
 //
@@ -41,7 +41,7 @@ var contextWindows = []struct {
 
 const (
 	// defaultContextWindow is what an unrecognised model is assumed to have. Conservative
-	// on purpose: being wrong low costs one early compaction, and being wrong high costs
+	// on purpose: being wrong low ends one turn early, and being wrong high costs
 	// the turn.
 	defaultContextWindow = 128_000
 	// responseHeadroom is kept back for the answer. A budget that filled the window would
@@ -51,7 +51,7 @@ const (
 
 // ContextWindow reports the working window for a model id, in tokens. An unrecognised model
 // gets the conservative default rather than an error: a deployment configured with a model
-// this build has never heard of should compact a little early, not refuse to investigate.
+// this build has never heard of should conclude a little early, not refuse to investigate.
 func ContextWindow(model string) int {
 	folded := strings.ToLower(strings.TrimSpace(model))
 	for _, known := range contextWindows {
@@ -65,15 +65,8 @@ func ContextWindow(model string) int {
 // ContextCeiling is how much of a model's window a turn may fill in total before its
 // conclusion is forced, in tokens: the whole usable window, reserve already taken out.
 //
-// It is the HARD number, and ContextBudget below is the soft one. They are two because
-// they answer different questions — "is the conversation big enough to consolidate" and
-// "has this turn run out of room" — and when one number answered both, the answer to the
-// second was always yes first: the ceiling counts the tool catalogue as well as the
-// transcript, and the catalogue is never zero. Every turn that compacted was already
-// being told to conclude, so compaction could only ever help the next turn and never the
-// one performing it.
-//
-// The gap between the two is the room a compaction buys.
+// It is the hard ceiling, while ContextBudget below reserves a softer orientation budget.
+// Their difference leaves room for the Tool catalog and an honest concluding answer.
 func ContextCeiling(model string, configured int) int {
 	window := configured
 	if window <= 0 {
@@ -86,12 +79,11 @@ func ContextCeiling(model string, configured int) int {
 	return usable
 }
 
-// ContextBudget is how much of a model's window a conversation may fill before older turns
-// are compacted, in tokens. The soft threshold; ContextCeiling is the hard one.
+// ContextBudget is the soft token allowance for bounded Conversation orientation;
+// ContextCeiling is the hard total allowance.
 //
 // configured of zero means the per-model table decides. thresholdPercent is the soft
-// threshold — compacting AT the ceiling would mean the very turn that triggered it has no
-// room to run.
+// threshold reserves room for execution and conclusion beneath the hard ceiling.
 func ContextBudget(model string, configured, thresholdPercent int) int {
 	window := configured
 	if window <= 0 {
@@ -101,7 +93,7 @@ func ContextBudget(model string, configured, thresholdPercent int) int {
 	if usable < responseHeadroom {
 		// A window too small to reserve from is one where the reserve is the whole budget.
 		// Refusing here would turn a misconfiguration into a deployment that cannot
-		// investigate; compacting constantly is worse behavior and better than none.
+		// investigate; concluding early remains preferable to refusing every turn.
 		usable = responseHeadroom
 	}
 	if thresholdPercent <= 0 || thresholdPercent >= 100 {

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenCluster Control Plane</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Self-hosted operations</p>
+        <h1>OpenCluster Control Plane</h1>
+        <p>Investigate incidents using the integrations your organization has approved.</p>
+      </header>
+
+      <section id="sign-in" aria-labelledby="sign-in-title">
+        <h2 id="sign-in-title">Sign in</h2>
+        <form id="sign-in-form">
+          <label>Organization <input name="organization" required autocomplete="organization"></label>
+          <label>Email <input name="email" type="email" required autocomplete="username"></label>
+          <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+          <div class="actions">
+            <button type="submit">Sign in</button>
+            <button type="button" id="oidc-sign-in" class="secondary">Use your identity provider</button>
+          </div>
+        </form>
+
+        <details id="bootstrap">
+          <summary>Set up the first administrator</summary>
+          <form id="bootstrap-form">
+            <label>Organization <input name="organization" required autocomplete="organization"></label>
+            <label>Display name <input name="displayName" required autocomplete="name"></label>
+            <label>Email <input name="email" type="email" required autocomplete="email"></label>
+            <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
+            <label>Bootstrap token <input name="token" type="password" required autocomplete="off"></label>
+            <button type="submit">Create administrator</button>
+          </form>
+        </details>
+      </section>
+
+      <section id="workspace" hidden>
+        <div class="workspace-heading">
+          <p id="session-label"></p>
+          <button type="button" id="sign-out" class="secondary">Sign out</button>
+        </div>
+        <form id="investigation-form">
+          <label>Start an investigation
+            <textarea name="question" required maxlength="1024" placeholder="Why is checkout latency increasing?"></textarea>
+          </label>
+          <button type="submit">Investigate</button>
+        </form>
+        <section id="investigation" hidden>
+          <div class="workspace-heading">
+            <h2>Investigation</h2>
+            <button type="button" id="cancel" class="secondary">Cancel investigation</button>
+          </div>
+          <h3>Report</h3>
+          <pre id="report"></pre>
+          <h3>Hypotheses</h3>
+          <pre id="hypotheses"></pre>
+          <h3>Activity</h3>
+          <pre id="activity"></pre>
+          <h3>Sources</h3>
+          <pre id="sources"></pre>
+        </section>
+      </section>
+
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+  </body>
+</html>

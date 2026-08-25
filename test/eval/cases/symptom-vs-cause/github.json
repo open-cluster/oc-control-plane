@@ -1,0 +1,36 @@
+{
+  "5001": {
+    "Account": "acme-corp",
+    "Repos": [
+      {
+        "ID": 103,
+        "Name": "checkout",
+        "Commits": null,
+        "Pulls": null,
+        "Files": null
+      },
+      {
+        "ID": 101,
+        "Name": "payments",
+        "Commits": [
+          {
+            "SHA": "cafe01",
+            "Message": "drop payments api rate limit to 10 rps",
+            "Author": "ash-ops",
+            "At": "2026-08-25T11:15:00Z",
+            "Files": [
+              {
+                "Path": "config/ratelimit.yaml",
+                "Patch": "@@ -1,3 +1,3 @@\n api:\n-  rate_limit_rps: 500\n+  rate_limit_rps: 10"
+              }
+            ]
+          }
+        ],
+        "Pulls": null,
+        "Files": {
+          "config/ratelimit.yaml": "api:\n  rate_limit_rps: 10\n  burst: 20\n"
+        }
+      }
+    ]
+  }
+}

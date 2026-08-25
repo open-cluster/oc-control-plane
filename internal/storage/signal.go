@@ -149,7 +149,7 @@ func (p *Database) RecordDelivery(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	claimed, err := claimDelivery(ctx, transaction, organization, delivery)
+	deliveryID, claimed, err := claimDelivery(ctx, transaction, organization, delivery)
 	if err != nil {
 		return DeliveryOutcome{}, err
 	}
@@ -178,13 +178,19 @@ func (p *Database) RecordDelivery(
 		if inserted {
 			// A new episode of this alert. Everything else is an update to a Signal that
 			// already has its episode, and moving one would be the history changing.
-			opened, groupErr := groupSignal(
+			episodeID, opened, groupErr := groupSignal(
 				ctx, transaction, organization, delivery, signal, signalID)
 			if groupErr != nil {
 				return DeliveryOutcome{}, groupErr
 			}
 			if opened {
 				grouping.EpisodesOpened++
+				if signal.Status == SignalFiring {
+					if err := enqueueWebhookWork(ctx, transaction, organization, WebhookWorkAlert,
+						deliveryID, delivery.Integration, episodeID, uuid.Nil, 0); err != nil {
+						return DeliveryOutcome{}, err
+					}
+				}
 			} else {
 				grouping.EpisodesJoined++
 			}
@@ -217,18 +223,19 @@ func compareSignals(a, b Signal) int {
 func claimDelivery(
 	ctx context.Context, transaction pgx.Tx,
 	organization tenancy.Organization, delivery Delivery,
-) (bool, error) {
+) (uuid.UUID, bool, error) {
+	deliveryID := uuid.New()
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO integration_delivery
 			(delivery_id, org_id, integration_id, outcome, body_digest, signal_count, truncated)
 		VALUES ($1, $2, $3, 1, $4, $5, $6)
 		ON CONFLICT (integration_id, body_digest) WHERE outcome = 1 DO NOTHING`,
-		uuid.New(), organization.String(), delivery.Integration, delivery.BodyDigest,
+		deliveryID, organization.String(), delivery.Integration, delivery.BodyDigest,
 		len(delivery.Signals), delivery.Truncated)
 	if err != nil {
-		return false, fmt.Errorf("recording delivery: %w", err)
+		return uuid.Nil, false, fmt.Errorf("recording delivery: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	return deliveryID, tag.RowsAffected() == 1, nil
 }
 
 // upsertSignal writes one episode, or updates the episode this source already reported.

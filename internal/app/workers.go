@@ -13,10 +13,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/changeledger"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/intake"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
+	"github.com/open-cluster/oc-control-plane/internal/storage"
 	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/webhooks"
+	alertwork "github.com/open-cluster/oc-control-plane/internal/webhooks/alertmanager"
+	slackwork "github.com/open-cluster/oc-control-plane/internal/webhooks/slack"
 )
 
 // auditPruneInterval is how often each tenant's declared retention schedule is applied.
@@ -29,15 +32,54 @@ const auditForwardingInterval = time.Second
 
 const credentialRotationBatch = 50
 
+func startWebhookWork(process assembled) *backgroundWorker {
+	ctx, stop := context.WithCancel(context.Background())
+	slackClient := slack.NewClient(process.config.SlackAPIURL)
+	worker := webhooks.Worker{
+		Work: process.database,
+		Handlers: webhooks.WorkHandlers{
+			storage.WebhookWorkAlert: alertwork.WorkHandler{
+				Database: process.database, WindowLead: process.config.InvestigationWindowLead,
+				MaxWaitingTurns: process.config.OrgWaitingInvestigations,
+			},
+			storage.WebhookWorkSlack: slackwork.WorkHandler{
+				Work: process.database,
+				References: slackwork.SlackReferenceResolver{
+					Store:  slackwork.ReferenceDatabase{Database: process.database},
+					Client: slackClient, Sealer: process.sealer,
+				},
+				WindowLead:      process.config.InvestigationWindowLead,
+				MaxWaitingTurns: process.config.OrgWaitingInvestigations,
+				Logger:          process.logger,
+			},
+		},
+		Owner: uuid.NewString(), Lease: time.Minute, RetryBase: time.Second,
+		MaxAttempts: 8, Logger: process.logger,
+		Counters: webhooks.NewWorkInstruments(process.logger),
+	}
+	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
+	go func() {
+		defer close(running.done)
+		worker.Run(ctx)
+	}()
+	process.logger.Info("webhook work worker started")
+	return running
+}
+
 func startAuditForwarding(process assembled) *backgroundWorker {
 	if process.auditForwarder == nil {
 		return nil
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	worker := audit.ForwardingWorker{
-		Outbox: process.database, Forwarder: process.auditForwarder, Owner: uuid.NewString(),
-		Lease: time.Minute, RetryBase: time.Second, MaxAttempts: 8, Batch: 50,
-		Logger: process.logger,
+		Outbox:      process.database,
+		Forwarder:   process.auditForwarder,
+		Owner:       uuid.NewString(),
+		Lease:       time.Minute,
+		RetryBase:   time.Second,
+		MaxAttempts: 8,
+		Batch:       50,
+		Logger:      process.logger,
 	}
 	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}
 	go func() {
@@ -200,11 +242,11 @@ func (e *relayEndpoint) drain(budget time.Duration, logger *slog.Logger) {
 // The rollout gate is a closure over deployment configuration rather than a list handed
 // down, so intake consults ONE answer to "is this live here" and cannot grow a second
 // reading of an empty list.
-func slackAgent(cfg config.Config) *intake.SlackAgent {
+func slackAgent(cfg config.Config) *webhooks.SlackAgent {
 	if cfg.SlackSigningSecret == "" {
 		return nil
 	}
-	return &intake.SlackAgent{
+	return &webhooks.SlackAgent{
 		SigningSecret: cfg.SlackSigningSecret,
 		Enabled: func(organization tenancy.Organization) bool {
 			return cfg.SlackAgentLiveFor(organization.String())
@@ -226,11 +268,12 @@ func startSlackReplies(process assembled) *backgroundWorker {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	worker := slack.Worker{
-		Replies:  process.database,
-		Client:   slack.NewClient(process.config.SlackAPIURL),
-		Sealer:   process.sealer,
-		Logger:   process.logger,
-		Counters: slack.NewInstruments(process.logger),
+		Replies:    process.database,
+		Client:     slack.NewClient(process.config.SlackAPIURL),
+		Sealer:     process.sealer,
+		Logger:     process.logger,
+		Counters:   slack.NewInstruments(process.logger),
+		ConsoleURL: process.config.OperatorConsoleURL,
 	}
 
 	running := &backgroundWorker{stopping: stop, done: make(chan struct{})}

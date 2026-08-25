@@ -35,6 +35,8 @@ type Rendered struct {
 	// rather than going quiet, because a question that got no answer and no explanation is
 	// the worst outcome available.
 	Failed bool
+	// Footer is deployment-authored navigation appended only to a terminal answer.
+	Footer string
 }
 
 // Render maps events onto what a thread shows.
@@ -85,6 +87,12 @@ func Render(events []investigation.Event) Rendered {
 			rendered.Done, rendered.Failed = true, true
 			rendered.Status = "Could not finish"
 			if reason := payloadText(event, "reason", "message", "error"); reason != "" {
+				rendered.Progress = append(rendered.Progress, reason)
+			}
+		case investigation.EventCancelled:
+			rendered.Done = true
+			rendered.Status = "Cancelled"
+			if reason := payloadText(event, "message"); reason != "" {
 				rendered.Progress = append(rendered.Progress, reason)
 			}
 		}

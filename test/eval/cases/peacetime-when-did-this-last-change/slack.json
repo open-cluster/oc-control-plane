@@ -1,0 +1,46 @@
+{
+  "xoxb-eval-marketing": {
+    "Team": "Acme Marketing",
+    "Channels": [
+      {
+        "ID": "C9",
+        "Name": "campaigns",
+        "Topic": "q3 campaign planning",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:30:00Z",
+            "User": "UMKTJO0000",
+            "Text": "the autumn newsletter went out, version v9.0.0 of the template",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      }
+    ],
+    "Users": {
+      "UMKTJO0000": "mkt-jo"
+    }
+  },
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": null
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": null
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

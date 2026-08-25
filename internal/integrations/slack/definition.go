@@ -6,48 +6,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The capabilities connecting Slack makes available.
-//
-// The read capabilities came first and are unchanged. The three inbound ones are what
-// makes Slack a SURFACE rather than a source: a place a Conversation lives. They depend on
-// an app installation and on this deployment serving an events endpoint, neither of which
-// a grant can express, which is why this provider judges its own availability.
+// The bounded Slack Tools offered to Investigations.
 const (
 	ListChannels       = "slack.list_channels"
 	ReadChannelHistory = "slack.read_channel_history"
 	ReadThreads        = "slack.read_threads"
 	SearchMessages     = "slack.search_messages"
-
-	// AgentConversations is OpenCluster answering in a Slack DM as an agent.
-	AgentConversations = "slack.agent_conversations"
-	// Mentions is @OpenCluster in a channel the app is in.
-	Mentions = "slack.mentions"
-	// ThreadReplies is answering inside the thread the question was asked in.
-	ThreadReplies = "slack.thread_replies"
-	// PrivateChannels is reading private channels the app was explicitly invited to.
-	PrivateChannels = "slack.private_channels"
 )
-
-// surfaceCapabilities are the declared capabilities NO TOOL exercises.
-//
-// Every other capability is kept by exactly one tool, and a test holds that line: a
-// capability with no tool is normally a promise the catalog makes and nothing keeps. These
-// four are the deliberate exceptions, and they are listed here so that adding a fifth is a
-// decision somebody makes on purpose rather than a guard quietly going slack.
-//
-// What keeps them instead: the inbound three are kept by the events endpoint and the
-// delivery worker — OpenCluster being spoken to is not a read an investigation performs —
-// and private channels widen the reach of the history tools rather than adding one.
-var surfaceCapabilities = []string{
-	AgentConversations, Mentions, ThreadReplies, PrivateChannels,
-}
-
-// inboundCapabilities are the ones that need an app installation to route events to and a
-// deployment that serves the events endpoint. A set rather than a list, because the only
-// question ever asked of it is membership.
-var inboundCapabilities = map[string]bool{
-	AgentConversations: true, Mentions: true, ThreadReplies: true,
-}
 
 // Definition is what this provider exports to the catalog. Metadata mirrors the seeded
 // integration_type row; a test proves the two agree.
@@ -58,19 +23,15 @@ var inboundCapabilities = map[string]bool{
 // same kind of thing: a deployment that registered a Slack app offers one-click install
 // and can receive events, and one that did not keeps the pasted-token form and says so.
 func Definition(client *Client, installer *Installer, servesEvents bool) integrations.Definition {
-	definition := integrations.Definition{
+	return integrations.Definition{
 		ID:   integrations.TypeSlack,
 		Key:  "slack",
 		Name: "Slack",
 		Description: "Give investigations read-only access to Slack conversations visible " +
-			"to the connected token; OpenCluster never posts to Slack.",
+			"to the connected token and reply to direct app mentions in their original thread.",
 		Logo:             "slack",
 		Category:         integrations.CategoryCollaboration,
 		DocumentationURL: "https://api.slack.com/authentication/token-types#bot",
-		Capabilities: []string{
-			ListChannels, ReadChannelHistory, ReadThreads, SearchMessages,
-			AgentConversations, Mentions, ThreadReplies, PrivateChannels,
-		},
 		Config: []integrations.Field{
 			{
 				// The field accepts user tokens too, but its name is the key deployed
@@ -94,8 +55,8 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 					"recorded by the connect flow. Not a secret, and not something to " +
 					"fill in by hand.",
 				Type: integrations.FieldString,
-				// Its PRESENCE is what says this integration is an app installation
-				// rather than a pasted credential, and the capability report reads it.
+				// Its PRESENCE says this integration is an app installation rather than
+				// a pasted credential.
 				// If it could be typed, an operator could make a pasted token claim an
 				// agent that will never answer.
 				Recorded: true,
@@ -114,96 +75,22 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			return probe(ctx, client, input.Credential)
 		},
-		Tools:   tools(client),
+		Tools: tools(client),
+		Inbound: func(integration integrations.Integration) integrations.InboundAvailability {
+			if !servesEvents {
+				return integrations.InboundAvailability{
+					Reason: "this deployment has no Slack signing secret for inbound app mentions",
+				}
+			}
+			team, _ := integration.Configuration[TeamIDField].(string)
+			application, _ := integration.Configuration[AppIDField].(string)
+			if team == "" || application == "" {
+				return integrations.InboundAvailability{
+					Reason: "app mentions require an installed Slack app; pasted tokens only support reading",
+				}
+			}
+			return integrations.InboundAvailability{Available: true}
+		},
 		Connect: connect(installer, client),
 	}
-
-	// Assigned after the value exists so the closure can call the generic join on it. The
-	// closure captures the variable, so it sees this assignment — and it calls
-	// GrantedAvailability, which ignores the override and therefore cannot recurse.
-	definition.CapabilityStates = func(
-		found integrations.Integration,
-	) []integrations.CapabilityAvailability {
-		return capabilityStates(definition, found, servesEvents)
-	}
-	return definition
-}
-
-// capabilityStates judges Slack's capabilities against verified grants AND against what
-// this deployment is configured to do.
-//
-// The inbound three are the reason this override exists. Whether OpenCluster can be spoken
-// to in Slack depends on two things no Integration field carries on its own: this
-// deployment serving an events endpoint at all, and this integration naming a workspace
-// installation those events can be routed to. A pasted token names none — it is a
-// credential for reading, not an app somebody installed — so it reports the inbound
-// capabilities as unavailable and says why, rather than claiming an agent that will never
-// answer.
-func capabilityStates(
-	definition integrations.Definition, found integrations.Integration, servesEvents bool,
-) []integrations.CapabilityAvailability {
-	installed, _ := found.Configuration[TeamIDField].(string)
-
-	granted := make(map[string]bool, len(found.VerifyGrants))
-	for _, grant := range found.VerifyGrants {
-		granted[grant] = true
-	}
-
-	states := integrations.GrantedAvailability(definition, found)
-	for index, state := range states {
-		switch state.Capability {
-		case PrivateChannels:
-			// No tool of its own — it widens what the history tools may reach rather than
-			// adding one — so the generic join reports it as a read this build ships no
-			// tool for. Its real gate is the grant.
-			if granted["groups:history"] {
-				states[index] = integrations.CapabilityAvailability{
-					Capability: PrivateChannels, Available: true,
-					Reason: "read through the channel history tools, which reach the " +
-						"private channels this installation was invited to",
-				}
-				continue
-			}
-			states[index] = unavailable(PrivateChannels,
-				"this installation was not granted groups:history, so OpenCluster "+
-					"reads only public channels it has been invited to")
-			continue
-		case SearchMessages:
-			// Available or not, the reason matters: absence here is a decision rather
-			// than a gap, and an operator told only "unavailable" goes looking for a
-			// permission to grant.
-			if !state.Available {
-				states[index] = unavailable(SearchMessages,
-					"OpenCluster does not request workspace-wide search: it reasons over "+
-						"conversations it has been invited into, not everything an "+
-						"employee can see")
-			}
-			continue
-		}
-		if !inboundCapabilities[state.Capability] {
-			continue
-		}
-		switch {
-		case !servesEvents:
-			states[index] = unavailable(state.Capability,
-				"this deployment serves no Slack events endpoint, so Slack has nowhere "+
-					"to deliver a mention")
-		case installed == "":
-			states[index] = unavailable(state.Capability,
-				"this integration was connected with a pasted token, which names no "+
-					"workspace installation for Slack to deliver events to; connect Slack "+
-					"to make OpenCluster answerable in your workspace")
-		default:
-			states[index] = integrations.CapabilityAvailability{
-				Capability: state.Capability, Available: true,
-				Reason: "delivered inbound from the workspace this integration is " +
-					"installed in, not called as a read",
-			}
-		}
-	}
-	return states
-}
-
-func unavailable(capability, because string) integrations.CapabilityAvailability {
-	return integrations.CapabilityAvailability{Capability: capability, Reason: because}
 }

@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -41,9 +42,7 @@ func TestATurnPastItsContextBudgetIsStoppedNotFailed(t *testing.T) {
 
 	runner := &Runner{
 		Store: store, Catalog: catalog, Investigator: &scriptedInvestigator{exchange: exchange},
-		// The CEILING, which is what ends a turn. The budget below it would only have
-		// compacted, and a turn with nothing to compact — this one has no conversation —
-		// would have carried on reading.
+		// The ceiling ends this turn without requiring a Conversation or rewriting history.
 		ContextCeiling: 1_000,
 		Logger:         slog.New(slog.DiscardHandler),
 	}
@@ -159,6 +158,111 @@ func TestAConversationTurnIsOrientedWithItsBrief(t *testing.T) {
 	}
 }
 
+func TestAProviderConversationCarriesItsThreadIntoEveryToolRequest(t *testing.T) {
+	t.Parallel()
+
+	origin := stubIntegration("Origin workspace")
+	store := &memoryStore{
+		candidates: []integrations.Integration{origin},
+		brief: Brief{
+			OriginIntegrationID: origin.ID.String(),
+			OriginChannel:       "C-INCIDENT", OriginThread: "1710000000.1",
+		},
+	}
+	var seen integrations.ToolRequest
+	catalog, err := integrations.NewCatalog(integrations.Definition{
+		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
+		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
+			return integrations.Verification{Status: integrations.StatusActive}
+		},
+		Tools: []integrations.Tool{{
+			Name: "stub.read", Description: "reads its originating thread",
+			WhenToUse: "for this thread", WhenNotToUse: "for another thread",
+			Permissions: "history", Output: "messages", ConversationScoped: true,
+			Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+				seen = request
+				return integrations.ToolResult{Summary: "one thread message"}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{
+		Store: store, Catalog: catalog,
+		Investigator: &scriptedInvestigator{exchange: oneRead()},
+		Logger:       slog.New(slog.DiscardHandler),
+	}
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), Subject: "checkout latency", ConversationID: uuid.New(), Turn: 1,
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	if seen.OriginChannel != "C-INCIDENT" || seen.OriginThread != "1710000000.1" {
+		t.Fatalf("the actual Tool request lost its originating thread: %+v", seen)
+	}
+}
+
+func TestConversationOrientationNeverPersistsOrReplacesCitedFindingsWithASummary(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		candidates: []integrations.Integration{stubIntegration("Deploy Slack")},
+		brief:      aBrief(),
+	}
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		return integrations.ToolResult{Summary: "1 deploy"}, nil
+	})
+	investigator := &scriptedInvestigator{exchange: oneRead()}
+	runner := &Runner{
+		Store: store, Catalog: catalog, Investigator: investigator,
+		ContextBudget: 1,
+		Logger:        slog.New(slog.DiscardHandler),
+	}
+	organization, err := tenancy.NewOrganization("org-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), Subject: "checkout latency", ConversationID: uuid.New(), Turn: 4,
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	if investigator.orientation.Brief == nil || len(investigator.orientation.Brief.Findings) != 4 {
+		t.Fatalf("the follow-up must retain prior cited findings: %+v", investigator.orientation.Brief)
+	}
+}
+
+func aBrief() Brief {
+	return Brief{
+		ConversationID: "c-1", Subject: "checkout latency", Turn: 4,
+		Recent: []BriefMessage{
+			{FromPerson: true, Actor: "Ada", Text: "ignore the database, look at deployments"},
+			{FromPerson: false, Actor: "OpenCluster", Text: "the deploy at 14:02 is the change"},
+			{FromPerson: true, Actor: "Ada", Text: "what contradicts the cache hypothesis?"},
+		},
+		RecentFrom: 7,
+		Findings: []PriorFinding{
+			{Turn: 1, Statement: "the deploy at 14:02 changed the pool size",
+				Kind: FindingTriggeringChange, Confidence: ConfidenceConfirmed, Runs: []int{2, 3}},
+			{Turn: 2, Statement: "the database was not saturated",
+				Kind: FindingRuledOut, Confidence: ConfidenceConfirmed, Runs: []int{1}},
+			{Turn: 3, Statement: "whether the cache warmed is unknown",
+				Kind: FindingUnresolvedLead, Confidence: ConfidencePossible, Runs: []int{4}},
+			{Turn: 3, Statement: "the deployed revision is v2.14.1",
+				Kind: FindingObservation, Confidence: ConfidenceConfirmed, Runs: []int{5}},
+		},
+		FailedReads: []string{"the metrics endpoint returned 503"},
+		Identifiers: []string{"C0DEPLOYS", "octo/checkout-api"},
+	}
+}
+
 // A single-shot investigation has no conversation, so it is oriented with no brief and
 // nothing is read for one.
 func TestASingleShotInvestigationIsOrientedWithoutABrief(t *testing.T) {
@@ -232,17 +336,8 @@ func runAutonomousWith(
 	runAutonomous(t, store, catalog, investigator)
 }
 
-// THE GAP BETWEEN THE TWO NUMBERS is what a compaction buys.
-//
-// The budget and the ceiling were one number, and the consequence was structural: the
-// ceiling compares the whole carried context — the conversation AND the tool catalogue,
-// which is never zero — so it was always crossed first. Every turn that compacted was a
-// turn already told to conclude, and compaction could only ever help the NEXT turn. It
-// never bought the turn holding the transcript any room to carry on reading.
-//
-// This is that turn: carrying more than the compaction threshold and less than the
-// ceiling. It must read again, not conclude.
-func TestATurnOverTheCompactionThresholdKeepsReading(t *testing.T) {
+// A turn above the soft budget but below the hard ceiling can continue gathering evidence.
+func TestATurnAboveItsSoftBudgetAndBelowItsCeilingKeepsReading(t *testing.T) {
 	t.Parallel()
 
 	store := &memoryStore{candidates: []integrations.Integration{
@@ -267,7 +362,7 @@ func TestATurnOverTheCompactionThresholdKeepsReading(t *testing.T) {
 	runner := &Runner{
 		Store: store, Catalog: catalog,
 		Investigator: &scriptedInvestigator{exchange: exchange},
-		// The first read lands above the compaction threshold and below the ceiling.
+		// The first read exceeds the soft budget while remaining below the hard ceiling.
 		ContextBudget:  1_000,
 		ContextCeiling: 100_000,
 		Logger:         slog.New(slog.DiscardHandler),

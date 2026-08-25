@@ -249,12 +249,11 @@ func TestWhatIsNotSomebodySpeakingToUsIsDiscarded(t *testing.T) {
 		}
 	}
 
-	// A direct message to the agent IS, because in a DM there is nobody else to be talking
-	// to.
+	// Direct messages are deliberately outside the supported app_mention contract.
 	direct := base
 	direct.Kind, direct.ChannelKind = "message", "im"
-	if !(Envelope{Event: direct}).AddressedToUs("U0BOT") {
-		t.Error("a direct message to the agent does not read as addressed to us")
+	if (Envelope{Event: direct}).AddressedToUs("U0BOT") {
+		t.Error("a direct message was accepted outside the app_mention contract")
 	}
 }
 

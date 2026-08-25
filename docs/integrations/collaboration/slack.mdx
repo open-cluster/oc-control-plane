@@ -1,19 +1,21 @@
 ---
 title: "Slack"
-description: "Give investigations read-only access to conversations visible to a connected Slack token."
+description: "Read authorized Slack conversations and answer direct app mentions in their original thread."
 ---
 
-Connect Slack so investigations can read relevant conversations. OpenCluster never
-posts, reacts, or joins channels. Access depends on the token you connect: the
-recommended bot token reads public channels the app has joined, while user-token search
-can return any conversation visible to that user, including private channels and direct
-messages.
+Connect Slack so investigations can read relevant conversations and answer direct app
+mentions in their original thread. OpenCluster never posts unsolicited messages, reacts,
+or joins channels. The installed bot reads public channels and private channels to which
+it was explicitly invited. An advanced pasted user token can deliberately enable broader
+search across conversations visible to that person, including private channels and
+direct messages.
 
 ## What OpenCluster uses it for
 
 Slack provides responder observations, decisions, and actions around an incident.
-OpenCluster can list public channels, read channel history and threads, resolve author
-names, and—when a user token permits it—search messages.
+OpenCluster can list public channels, read permitted channel history and threads,
+resolve author names, answer direct app mentions in their originating thread, and—only
+when an advanced pasted user token permits it—search messages.
 
 ## Prerequisites
 
@@ -26,14 +28,19 @@ names, and—when a user token permits it—search messages.
 
 | Scope | Why it is needed |
 | --- | --- |
+| `assistant:write` | Enable Slack's agent surface and native streamed app replies. |
+| `chat:write` | Send the app's own reply only in the thread where it was directly mentioned. |
+| `app_mentions:read` | Receive direct mentions in channels the app can access. |
 | `channels:read` | Find public channels and read their names, topics, and purposes. |
 | `channels:history` | Read messages and threads in channels the app can access. |
 | `users:read` | Resolve message authors to display names. |
-| `search:read` | Search conversations visible to the connected user, which can include private channels and direct messages. Slack grants this scope to user tokens, not bot tokens. |
+| `groups:history` | Read private-channel history only after the app has been explicitly invited. |
 
-The recommended bot-token setup uses the first three scopes. It supports public-channel
-and thread reads but not workspace search. Connect a user token only if the broader
-search boundary is acceptable.
+The installed app requests these seven bot scopes. It does not request `search:read`;
+workspace-wide search is unavailable to the installed bot. The advanced pasted-token
+fallback can use a user token already granted `search:read`, which can expose private
+conversations and direct messages visible to that person. Use that fallback only after
+explicitly accepting its broader boundary.
 
 ## Connect
 
@@ -50,8 +57,10 @@ connected this way keep working unchanged; there is nothing to migrate.
 <Steps>
   <Step title="Create the Slack app">
     Create an app at [api.slack.com/apps](https://api.slack.com/apps). Under **OAuth &
-    Permissions**, add `channels:read`, `channels:history`, and `users:read` as bot token
-    scopes.
+    Permissions**, add `assistant:write`, `chat:write`, `app_mentions:read`,
+    `channels:read`, `channels:history`, `users:read`, and `groups:history` as bot
+    token scopes when enabling app mentions. A read-only pasted bot needs only the
+    channel and user scopes required by the reads it offers.
   </Step>
   <Step title="Install the app">
     Install it to the workspace and copy the Bot User OAuth Token (`xoxb-…`).
@@ -64,8 +73,8 @@ connected this way keep working unchanged; there is nothing to migrate.
     field accepts either token type described on this page.
   </Step>
   <Step title="Grant channel access">
-    Invite the app to each public incident channel it should read. OpenCluster does not
-    join channels on its own.
+    Invite the app to each public or private incident channel it should read.
+    OpenCluster does not join channels on its own.
   </Step>
 </Steps>
 
@@ -75,22 +84,23 @@ Select **Verify** on the integration. Verification records the workspace, identi
 token type, and granted scopes.
 
 A bot token holding the scopes OpenCluster asks for reports `active`. Workspace-wide
-search is listed as an unavailable capability rather than a missing scope, because
+search is listed as an unavailable Tool rather than a missing scope, because
 OpenCluster does not request `search:read` — its absence is a deliberate boundary, not a
 gap to close.
 
-`degraded` means a capability this integration was configured to provide has stopped
+`degraded` means a verified read this integration was configured to provide has stopped
 working: a scope was revoked, or Slack is refusing the token. The integration read reports
-each capability individually, with the reason when one is unavailable. A token with none
+each Tool individually, with the reason when one is unavailable. A token with none
 of the usable scopes cannot be offered to investigations.
 
 ## During investigations
 
 Available reads depend on verified scopes, token type, and channel membership.
-OpenCluster may list public channels, read history within the incident window, follow a
-thread, or search by keyword when a user token has `search:read`. Search covers
-conversations visible to that user, not only channels joined by the app. Messages are
-treated as leads; a responder's statement alone does not establish a cause.
+OpenCluster may list public channels, read permitted history within the incident
+window, or follow the originating thread. Search is unavailable to the installed bot;
+an advanced pasted user token with `search:read` can search conversations visible to
+that person, not only channels joined by the app. Messages are treated as leads; a
+responder's statement alone does not establish a cause.
 
 ## Talking to OpenCluster in Slack
 
@@ -101,7 +111,6 @@ read from.
 | --- | --- |
 | **Mention it in a channel** | `@OpenCluster why is checkout failing?` in a channel the app is in. It answers in a thread on your message. |
 | **Continue in the thread** | A further mention in that thread continues the same conversation, and a colleague joining the thread joins the same one. Everyone's messages are attributed to them. |
-| **Ask privately** | Open OpenCluster's agent and ask in a direct message. |
 
 The reply is one message that fills in as the work happens: what is being read, what each read
 found, and then the answer. OpenCluster never posts its internal reasoning, and it never answers
@@ -117,29 +126,34 @@ unaffected and stays readable in the console.
 
 ## Limitations
 
-- Bot-token channel and thread reads are limited to public channels available to the
-  app. User-token search can return private-channel, group-message, and direct-message
-  results visible to that user.
+- Bot-token channel and thread reads are limited to public channels and private
+  channels the app has been explicitly invited to. An advanced pasted user token can
+  additionally return private-channel, group-message, and direct-message search
+  results visible to that person.
 - Search uses Slack's day-level date filters. A result can fall outside the exact
   investigation window on either boundary day.
 - Text only. Files, attachments, reactions, and edit history are not read.
 - OpenCluster's only writes are its own replies in the thread it was addressed in. It does not
   react, join channels, post into channels it was not spoken to in, or edit anyone's message.
-- Workspace-wide search is not requested. OpenCluster reasons over conversations it has been
-  invited into, not everything an employee can see, and the integration reports that capability
-  as unavailable with that reason rather than as a gap.
+- By default, Slack reads stay in the thread that opened the Conversation. A broader channel
+  history or search is a separate bounded Tool, is offered only from verified Slack scopes,
+  appears in investigation activity, and remains subject to Slack's own channel permissions.
+- Workspace-wide search is not requested by the recommended bot installation. OpenCluster
+  reasons over conversations it has been invited into, not everything an employee can see.
 - A message sent while OpenCluster is still working is picked up at the end of the current turn
   rather than starting a second one. A running turn cannot be interrupted from Slack.
 - Reads are bounded. Truncated channel, history, and thread results are marked.
 - Slack rate limits are honored and surfaced in the investigation record.
+- Resolving an incoming message's permalink happens after acknowledgement. A failed lookup
+  cannot delay acknowledgement, discard the durable question, or prevent the Investigation.
 
 ## Troubleshooting
 
 - **`invalid_auth`:** paste a current token and verify again.
 - **No channel messages:** invite the app to the channel and confirm
   `channels:history` is granted.
-- **No message search:** use a user token with `search:read`, or rely on channel and
-  thread reads.
+- **No message search:** this is expected for an installed bot. Rely on channel and
+  thread reads, or explicitly evaluate the broader advanced user-token fallback.
 - **Stored credential cannot be opened:** restore the matching former sealing key under
   `previous_sealing_key_files`, restart, and retain it until credential rewrapping completes.
 

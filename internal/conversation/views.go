@@ -33,10 +33,11 @@ type messageView struct {
 	Role     string `json:"role"`
 	// ActorKind says whether the actor is an OpenCluster principal or an identity that
 	// belongs to some other surface, so a client never renders one as the other.
-	ActorKind    string `json:"actorKind"`
-	ActorID      string `json:"actorId,omitempty"`
-	ActorDisplay string `json:"actorDisplay,omitempty"`
-	Text         string `json:"text"`
+	ActorKind       string `json:"actorKind"`
+	ActorID         string `json:"actorId,omitempty"`
+	ActorDisplay    string `json:"actorDisplay,omitempty"`
+	Text            string `json:"text"`
+	SourceReference string `json:"sourceReference,omitempty"`
 	// InvestigationID is the turn this message opened or came from. Absent while the
 	// message is still queued, which is what a client renders as "waiting".
 	InvestigationID string `json:"investigationId,omitempty"`
@@ -100,13 +101,14 @@ func conversationViewOf(found Conversation) conversationView {
 
 func messageViewOf(message Message) messageView {
 	view := messageView{
-		Sequence:     message.Sequence,
-		Role:         message.Role.String(),
-		ActorKind:    message.ActorKind.String(),
-		ActorID:      message.ActorID,
-		ActorDisplay: message.ActorDisplay,
-		Text:         message.Text,
-		CreatedAt:    stamp(message.CreatedAt),
+		Sequence:        message.Sequence,
+		Role:            message.Role.String(),
+		ActorKind:       message.ActorKind.String(),
+		ActorID:         message.ActorID,
+		ActorDisplay:    message.ActorDisplay,
+		Text:            message.Text,
+		SourceReference: message.SourceReference,
+		CreatedAt:       stamp(message.CreatedAt),
 	}
 	if message.InvestigationID != uuid.Nil {
 		view.InvestigationID = message.InvestigationID.String()

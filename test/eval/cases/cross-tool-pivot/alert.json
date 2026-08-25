@@ -1,0 +1,7 @@
+{
+  "alertname": "PaymentsCacheStale",
+  "labels": {
+    "namespace": "payments",
+    "service": "payments"
+  }
+}

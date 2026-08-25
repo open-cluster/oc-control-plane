@@ -1,0 +1,32 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:32:00Z",
+            "User": "USRELEE00",
+            "Text": "consumer lag spiked right after the kafka client bump",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": null
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "alertname": "PaymentsErrorsHigh",
+  "labels": {
+    "namespace": "payments",
+    "service": "payments"
+  }
+}

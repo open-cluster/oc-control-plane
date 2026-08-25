@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -29,7 +30,7 @@ const (
 	defaultSearchMatches   = 20
 )
 
-// tools is the declared set, one-to-one with the capabilities the definition declares.
+// tools is the declared set of bounded Slack reads.
 func tools(client *Client) []integrations.Tool {
 	return []integrations.Tool{
 		listChannelsTool(client),
@@ -125,6 +126,9 @@ func permalink(workspace, channel, ts string) string {
 		"/p" + strings.ReplaceAll(ts, ".", "")
 }
 
+// Permalink returns the stable workspace URL for one Slack message.
+func Permalink(workspace, channel, ts string) string { return permalink(workspace, channel, ts) }
+
 func listChannelsTool(client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
@@ -144,8 +148,7 @@ func listChannelsTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "slack.list_channels",
-		Capability: ListChannels,
+		Name: "slack.list_channels",
 		Description: "Lists the workspace's public, unarchived channels with their topics " +
 			"and purposes, walking the listing far enough that a filter match beyond the " +
 			"first page is still found.",
@@ -240,8 +243,7 @@ func channelHistoryTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "slack.get_channel_history",
-		Capability: ReadChannelHistory,
+		Name: "slack.get_channel_history",
 		Description: "Reads one channel's messages inside a time window, bounded and " +
 			"flagged when the window holds more.",
 		WhenToUse: "To read what people said in a selected channel during the incident's " +
@@ -320,8 +322,7 @@ func threadRepliesTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "slack.get_thread_replies",
-		Capability: ReadThreads,
+		Name: "slack.get_thread_replies",
 		Description: "Reads one thread's messages in order, answering the newest tail of " +
 			"a bounded walk with the truncated flag set when the thread held more — the " +
 			"end of a war-room thread is where the conclusion lives.",
@@ -333,7 +334,8 @@ func threadRepliesTool(client *Client) integrations.Tool {
 		Arguments: declared,
 		Permissions: "the bot token needs the channels:history scope; users:read resolves " +
 			"authors to names",
-		Requires: []string{"channels:history"},
+		Requires:           []string{"channels:history"},
+		ConversationScoped: true,
 		Output: "the thread's messages in order — the newest tail of what a bounded walk " +
 			"reached — each with ts, the author resolved to a display name, text and a " +
 			"permalink; the truncated flag reports a thread longer than what came back, " +
@@ -350,6 +352,12 @@ func threadRepliesTool(client *Client) integrations.Tool {
 			thread, err := values.Required("threadTs")
 			if err != nil {
 				return integrations.ToolResult{}, err
+			}
+			if request.OriginChannel != "" || request.OriginThread != "" {
+				if channel != request.OriginChannel || thread != request.OriginThread {
+					return integrations.ToolResult{}, errors.New(
+						"the read is outside the originating conversation thread")
+				}
 			}
 			limit, err := values.Count("limit", defaultMessagesPerRead, maxThreadReplies)
 			if err != nil {
@@ -397,8 +405,7 @@ func searchMessagesTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name:       "slack.search_messages",
-		Capability: SearchMessages,
+		Name: "slack.search_messages",
 		Description: "Searches messages across the workspace for exact terms, bounded to " +
 			"the investigation's window, with the remainder flagged.",
 		WhenToUse: "When the right channel is unknown and an identifier is: an error " +

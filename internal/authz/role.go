@@ -92,7 +92,7 @@ var granted = map[Role]map[Permission]bool{
 	// here because incidents are when investigations happen. Creating, deleting and
 	// secret rotation stay with the Admin — those change what the estate IS.
 	Editor: setOf(append(append([]Permission(nil), estateReads...),
-		IntegrationVerify, IntegrationUpdate, IncidentMerge, InvestigationOpen,
+		IntegrationVerify, IntegrationUpdate, IncidentMerge, InvestigationOpen, InvestigationCancel,
 		ConversationWrite,
 	)...),
 

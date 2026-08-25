@@ -1,0 +1,30 @@
+{
+  "5001": {
+    "Account": "acme-corp",
+    "Repos": [
+      {
+        "ID": 101,
+        "Name": "payments",
+        "Commits": null,
+        "Pulls": null,
+        "Files": {
+          "CODEOWNERS": "/payments/ @acme-corp/payments-platform\n/docs/ @acme-corp/docs-guild\n"
+        }
+      }
+    ]
+  },
+  "5002": {
+    "Account": "acme-web",
+    "Repos": [
+      {
+        "ID": 300,
+        "Name": "website",
+        "Commits": null,
+        "Pulls": null,
+        "Files": {
+          "CODEOWNERS": "/site/ @acme-web/web-guild\n"
+        }
+      }
+    ]
+  }
+}

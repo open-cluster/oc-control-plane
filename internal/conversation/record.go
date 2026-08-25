@@ -164,6 +164,9 @@ type Message struct {
 	ActorID      string
 	ActorDisplay string
 	Text         string
+	// SourceReference is a provider-authored navigation URL for this exact message.
+	// Empty when the surface has none or its post-acceptance lookup did not succeed.
+	SourceReference string
 	// InvestigationID is the turn this message opened, or the turn that produced it.
 	// Zero on a message that arrived while a turn was still running: that message is
 	// QUEUED, and the drain at the next terminal boundary is what gives it a turn.

@@ -50,27 +50,6 @@ func TestTheOnlyConfigurationFieldIsTheInstallationID(t *testing.T) {
 	}
 }
 
-func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
-	t.Parallel()
-
-	definition := Definition(nil, nil, NewClient(""), "")
-
-	exercised := map[string]int{}
-	for _, tool := range definition.Tools {
-		exercised[tool.Capability]++
-	}
-	for _, capability := range definition.Capabilities {
-		if exercised[capability] != 1 {
-			t.Errorf("capability %s is exercised by %d tools, want exactly one",
-				capability, exercised[capability])
-		}
-		delete(exercised, capability)
-	}
-	for capability := range exercised {
-		t.Errorf("tool capability %s is not one the definition declares", capability)
-	}
-}
-
 func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	t.Parallel()
 

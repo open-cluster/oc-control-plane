@@ -65,6 +65,14 @@ type fileDocument struct {
 	Investigations fileInvestigations `yaml:"investigations"`
 	Conversations  fileConversations  `yaml:"conversations"`
 	ChangeLedger   fileChangeLedger   `yaml:"change_ledger"`
+	Hosted         fileHosted         `yaml:"hosted"`
+}
+
+type fileHosted struct {
+	Active             *bool             `yaml:"active"`
+	APIKeyFile         string            `yaml:"api_key_file"`
+	APIURL             string            `yaml:"api_url"`
+	AuditOrganizations map[string]string `yaml:"audit_organizations"`
 }
 
 type fileServer struct {
@@ -150,7 +158,6 @@ type fileModel struct {
 	ConsentedProviders []string `yaml:"consented_providers"`
 	BaseURL            string   `yaml:"base_url"`
 	SpendCeilingCents  *int     `yaml:"spend_ceiling_cents"`
-	ContextWindow      *int     `yaml:"context_window"`
 }
 
 type fileInvestigations struct {
@@ -160,10 +167,7 @@ type fileInvestigations struct {
 }
 
 type fileConversations struct {
-	Enabled                     *bool `yaml:"enabled"`
-	MaxConcurrentInvestigations *int  `yaml:"max_concurrent_investigations"`
-	MaxWaitingInvestigations    *int  `yaml:"max_waiting_investigations"`
-	ContextThresholdPercent     *int  `yaml:"context_threshold_percent"`
+	MaxConcurrentInvestigations *int `yaml:"max_concurrent_investigations"`
 }
 
 type fileChangeLedger struct {
@@ -233,6 +237,21 @@ func (document fileDocument) environment() map[string]string {
 	set(values, EnvOIDCClientID, document.Authentication.OIDC.ClientID)
 	set(values, EnvOIDCClientSecretFile, document.Authentication.OIDC.ClientSecretFile)
 	setBool(values, EnvLegacyIdentityMigrated, document.Authentication.LegacyMigrationComplete)
+	setBool(values, EnvHostedMode, document.Hosted.Active)
+	set(values, EnvWorkOSAPIKeyFile, document.Hosted.APIKeyFile)
+	set(values, EnvWorkOSAPIURL, document.Hosted.APIURL)
+	if len(document.Hosted.AuditOrganizations) > 0 {
+		local := make([]string, 0, len(document.Hosted.AuditOrganizations))
+		for organization := range document.Hosted.AuditOrganizations {
+			local = append(local, organization)
+		}
+		sort.Strings(local)
+		mapped := make([]string, 0, len(local))
+		for _, organization := range local {
+			mapped = append(mapped, organization+"="+document.Hosted.AuditOrganizations[organization])
+		}
+		setList(values, EnvWorkOSAuditOrganizations, mapped)
+	}
 	set(values, EnvRelayAddress, document.Relay.Address)
 	setList(values, EnvRelaySPKIPins, document.Relay.SPKIPins)
 	set(values, EnvInventoryInterval, document.Relay.InventoryInterval)
@@ -256,17 +275,11 @@ func (document fileDocument) environment() map[string]string {
 	setList(values, EnvModelConsented, document.Model.ConsentedProviders)
 	set(values, EnvModelBaseURL, document.Model.BaseURL)
 	setInt(values, EnvModelSpendCeiling, document.Model.SpendCeilingCents)
-	setInt(values, EnvModelContextWindow, document.Model.ContextWindow)
 	set(values, EnvInvestigationWindowLead, document.Investigations.WindowLead)
 	setInt(values, EnvInvestigationMaxToolRuns, document.Investigations.MaxToolRuns)
 	setInt(values, EnvInvestigationMaxTurns, document.Investigations.MaxTurns)
-	setBool(values, EnvConversationsEnabled, document.Conversations.Enabled)
 	setInt(values, EnvOrgConcurrentInvestigations,
 		document.Conversations.MaxConcurrentInvestigations)
-	setInt(values, EnvOrgWaitingInvestigations,
-		document.Conversations.MaxWaitingInvestigations)
-	setInt(values, EnvContextThresholdPercent,
-		document.Conversations.ContextThresholdPercent)
 	setInt(values, EnvChangeLedgerRetention, document.ChangeLedger.RetentionDays)
 
 	names := make([]string, 0, len(document.Database.Placements))

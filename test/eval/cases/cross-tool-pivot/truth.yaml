@@ -1,0 +1,28 @@
+causes:
+    - name: cache-write-through
+      markers:
+        - write-through
+        - fee1dead
+      tools:
+        - github.read_commits
+        - github.read_commit
+        - github.read_file
+mustnotclaim: []
+discriminating:
+    - tool: slack.get_channel_history
+      argmarker: C2
+    - tool: github.read_commits
+      argmarker: ""
+relevanttools:
+    - slack.list_channels
+    - slack.get_channel_history
+    - github.list_repositories
+    - github.read_commits
+    - github.read_commit
+    - github.read_workflow_runs
+    - github.list_releases
+    - github.read_file
+expectfindings: true
+mustnotanswer: []
+answermarkers: []
+survives: []

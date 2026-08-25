@@ -36,7 +36,6 @@ type memoryStore struct {
 	brief        Brief
 	briefFails   bool
 	endRefused   bool
-	summaries    []recordedSummary
 	findings     []Finding
 	nextSteps    []string
 	stoppedBy    string
@@ -54,8 +53,13 @@ func (m *memoryStore) CreateInvestigation(
 }
 
 func (m *memoryStore) Investigation(
-	context.Context, tenancy.Organization, uuid.UUID,
+	_ context.Context, _ tenancy.Organization, id uuid.UUID,
 ) (Investigation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != 0 {
+		return Investigation{ID: id, Status: m.status}, nil
+	}
 	return Investigation{}, errors.New("not used by the runner")
 }
 
@@ -101,8 +105,7 @@ func (m *memoryStore) ConcludeInvestigation(
 	return nil
 }
 
-// brief is what a scripted conversation contributes to its next turn, and summaries
-// records every compaction the runner performed.
+// brief is what a scripted conversation contributes to its next turn.
 func (m *memoryStore) ConversationBrief(
 	_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ int,
 ) (Brief, error) {
@@ -112,26 +115,6 @@ func (m *memoryStore) ConversationBrief(
 		return Brief{}, errors.New("the brief could not be read")
 	}
 	return m.brief, nil
-}
-
-func (m *memoryStore) RecordConversationSummary(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, summary Summary,
-	before, after int, model string,
-) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.summaries = append(m.summaries, recordedSummary{
-		summary: summary, before: before, after: after, model: model,
-	})
-	return nil
-}
-
-// recordedSummary is one compaction as the store saw it.
-type recordedSummary struct {
-	summary Summary
-	before  int
-	after   int
-	model   string
 }
 
 // drained records every conversation the runner tried to take up at a terminal boundary.
@@ -210,12 +193,11 @@ func stubType(
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
 		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
-		Capabilities: []string{"stub.read"},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
 		Tools: []integrations.Tool{{
-			Name: "stub.read", Capability: "stub.read", Description: "reads",
+			Name: "stub.read", Description: "reads",
 			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
 			Output: "items",
 			Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {

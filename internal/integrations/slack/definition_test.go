@@ -30,9 +30,45 @@ func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
 		t.Error("no probe; nothing could ever verify a pasted token against the vendor")
 	}
 	const wantDescription = "Give investigations read-only access to Slack conversations visible " +
-		"to the connected token; OpenCluster never posts to Slack."
+		"to the connected token and reply to direct app mentions in their original thread."
 	if definition.Description != wantDescription {
 		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
+	}
+}
+
+func TestSlackInboundAvailabilityExplainsInstallationAndDeploymentSetup(t *testing.T) {
+	t.Parallel()
+
+	installed := integrations.Integration{Configuration: map[string]any{
+		TeamIDField: "T123", AppIDField: "A123",
+	}}
+	tests := []struct {
+		name          string
+		servesEvents  bool
+		integration   integrations.Integration
+		wantAvailable bool
+		wantReason    string
+	}{
+		{name: "pasted token", servesEvents: true,
+			integration: integrations.Integration{Configuration: map[string]any{}},
+			wantReason:  "installed Slack app"},
+		{name: "no signed events endpoint", integration: installed,
+			wantReason: "signing secret"},
+		{name: "installed application", servesEvents: true, integration: installed,
+			wantAvailable: true},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			availability := Definition(NewClient(""), nil, testCase.servesEvents).
+				Inbound(testCase.integration)
+			if availability.Available != testCase.wantAvailable {
+				t.Errorf("inbound availability = %+v, want available %t",
+					availability, testCase.wantAvailable)
+			}
+			if !strings.Contains(availability.Reason, testCase.wantReason) {
+				t.Errorf("inbound reason = %q, want %q", availability.Reason, testCase.wantReason)
+			}
+		})
 	}
 }
 
@@ -66,63 +102,6 @@ func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
 	}
 	if !strings.Contains(string(definition.ConfigurationSchema()), `"writeOnly":true`) {
 		t.Error("the rendered schema does not say the token is write-only")
-	}
-}
-
-// Tools and capabilities agree in both directions. A capability without a tool is normally
-// a promise the catalog makes and nothing keeps; a tool without a capability is behavior
-// the catalog never disclosed.
-//
-// The exceptions are named rather than tolerated. A surface capability — being spoken to
-// in Slack, or reaching a private channel the app was invited to — is not a read an
-// investigation performs, so no tool exercises it; each one is listed in
-// surfaceCapabilities, which is what makes adding another a decision rather than a guard
-// going quietly slack.
-func TestToolsAndCapabilitiesAgreeOneToOne(t *testing.T) {
-	t.Parallel()
-
-	definition := Definition(NewClient(""), nil, false)
-
-	surface := map[string]bool{}
-	for _, capability := range surfaceCapabilities {
-		surface[capability] = true
-	}
-	exercised := map[string]int{}
-	for _, tool := range definition.Tools {
-		exercised[tool.Capability]++
-	}
-
-	for _, capability := range definition.Capabilities {
-		switch {
-		case surface[capability]:
-			if exercised[capability] != 0 {
-				t.Errorf("surface capability %s is also exercised by a tool; it is one or "+
-					"the other", capability)
-			}
-		case exercised[capability] != 1:
-			t.Errorf("capability %s is exercised by %d tools, want exactly one",
-				capability, exercised[capability])
-		}
-		delete(exercised, capability)
-	}
-	for capability := range exercised {
-		t.Errorf("tool capability %s is not one the definition declares", capability)
-	}
-}
-
-// Every surface capability is one the definition actually declares. Without this, a
-// capability could be excused from needing a tool by a name nothing else mentions.
-func TestSurfaceCapabilitiesAreDeclared(t *testing.T) {
-	t.Parallel()
-
-	declared := map[string]bool{}
-	for _, capability := range Definition(NewClient(""), nil, false).Capabilities {
-		declared[capability] = true
-	}
-	for _, capability := range surfaceCapabilities {
-		if !declared[capability] {
-			t.Errorf("surface capability %s is not declared by the definition", capability)
-		}
 	}
 }
 

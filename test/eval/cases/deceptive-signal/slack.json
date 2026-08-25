@@ -1,0 +1,32 @@
+{
+  "xoxb-eval-primary": {
+    "Team": "Acme",
+    "Channels": [
+      {
+        "ID": "C1",
+        "Name": "incidents",
+        "Topic": "live incident chat",
+        "Messages": [
+          {
+            "At": "2026-08-25T11:38:00Z",
+            "User": "UDEVROWAN0",
+            "Text": "probably the dns migration from yesterday again",
+            "ThreadTS": "",
+            "ReplyCount": 0
+          }
+        ]
+      },
+      {
+        "ID": "C2",
+        "Name": "deploys",
+        "Topic": "deploy announcements",
+        "Messages": null
+      }
+    ],
+    "Users": {
+      "UDEPLOYBOT": "deploy-bot",
+      "UDEVROWAN0": "dev-rowan",
+      "USRELEE00": "sre-lee"
+    }
+  }
+}

@@ -81,20 +81,14 @@ type Runner struct {
 	// ContextCeiling is how many tokens a turn may carry in total — the conversation it
 	// was handed AND the reads it has made — before its conclusion is forced.
 	//
-	// It is a SECOND number, deliberately above ContextBudget, and the gap between them
-	// is the room a compaction buys. They were one number, and that made compaction
-	// pointless for the turn doing it: the ceiling counts the tool catalogue too, which is
-	// never zero, so it was always crossed first and every compacting turn arrived already
-	// told to conclude. Zero means no ceiling, which only a test should mean.
+	// It exceeds ContextBudget so the current turn retains room for its Tool catalog and
+	// an honest conclusion. Zero means no ceiling, which only a test should mean.
 	ContextCeiling int
-	// ContextBudget is how many tokens of conversation context a turn may carry before
-	// older turns are compacted. Computed by the composition root from the model and the
-	// deployment's threshold, because THIS package must never learn what a vendor is.
+	// ContextBudget bounds the estimated context carried into a turn. It is derived from
+	// the selected model by the composition root; this package never learns vendor details.
 	// Zero means no budget, which only a test should mean.
 	ContextBudget int
-	// ModelName is recorded beside a summary, so a compaction that happened under one
-	// model's budget is legible after a deployment moves to another. It is a label and
-	// nothing here behaves differently for it.
+	// ModelName identifies the deployment model for operational attribution.
 	ModelName string
 	// MaxToolRuns and MaxTurns are the autonomous loop's ceilings — evaluation-derived
 	// tuning, so configuration rather than constants; zero means the defaults.
@@ -102,7 +96,7 @@ type Runner struct {
 	MaxTurns    int
 	Logger      *slog.Logger
 	// Telemetry measures the runtime: how long work waits, how long a reader waits, how
-	// long a run takes, and how often memory is consolidated or a worker died. Nil
+	// long a run takes, and whether a worker died. Nil
 	// measures nothing and breaks nothing.
 	Telemetry *Telemetry
 	// HeartbeatEvery is how often a held lease is renewed. Zero means the default, which
@@ -119,6 +113,7 @@ type Runner struct {
 	running sync.WaitGroup
 	mu      sync.Mutex
 	active  int
+	stops   map[uuid.UUID]context.CancelFunc
 	// base is the process-lifetime context every investigation runs under; cancelling it
 	// fails what is still running rather than orphaning it.
 	base     context.Context
@@ -150,16 +145,21 @@ func (r *Runner) Start(organization tenancy.Organization, opened Investigation) 
 	r.begin()
 	r.mu.Lock()
 	r.active++
+	ctx, done := context.WithTimeout(r.base, investigationTimeout)
+	if r.stops == nil {
+		r.stops = make(map[uuid.UUID]context.CancelFunc)
+	}
+	r.stops[opened.ID] = done
 	r.mu.Unlock()
 	r.running.Add(1)
 	go func() {
 		defer func() {
 			r.mu.Lock()
 			r.active--
+			delete(r.stops, opened.ID)
 			r.mu.Unlock()
 			r.running.Done()
 		}()
-		ctx, done := context.WithTimeout(r.base, investigationTimeout)
 		defer done()
 
 		if r.Leases != nil {
@@ -178,6 +178,16 @@ func (r *Runner) Start(organization tenancy.Organization, opened Investigation) 
 		}
 		r.runLeased(ctx, organization, opened)
 	}()
+}
+
+// Cancel stops the local worker for an investigation that was durably cancelled.
+func (r *Runner) Cancel(id uuid.UUID) {
+	r.mu.Lock()
+	stop := r.stops[id]
+	r.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
 }
 
 // Claim runs the claiming loop until the context ends: take one waiting investigation,
@@ -226,16 +236,21 @@ func (r *Runner) claimOne(ctx context.Context) bool {
 
 	r.mu.Lock()
 	r.active++
+	runCtx, done := context.WithTimeout(r.base, investigationTimeout)
+	if r.stops == nil {
+		r.stops = make(map[uuid.UUID]context.CancelFunc)
+	}
+	r.stops[claimed.ID] = done
 	r.mu.Unlock()
 	r.running.Add(1)
 	go func() {
 		defer func() {
 			r.mu.Lock()
 			r.active--
+			delete(r.stops, claimed.ID)
 			r.mu.Unlock()
 			r.running.Done()
 		}()
-		runCtx, done := context.WithTimeout(r.base, investigationTimeout)
 		defer done()
 		r.runLeased(runCtx, organization, claimed)
 	}()
@@ -346,11 +361,22 @@ func (r *Runner) heartbeat(
 	ctx context.Context, lost context.CancelFunc, organization tenancy.Organization,
 	id uuid.UUID,
 ) {
+	renewal := time.NewTicker(r.heartbeatEvery())
+	defer renewal.Stop()
+	cancellation := time.NewTicker(time.Second)
+	defer cancellation.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(r.heartbeatEvery()):
+		case <-cancellation.C:
+			found, err := r.Store.Investigation(ctx, organization, id)
+			if err == nil && found.Status == StatusCancelled {
+				lost()
+				return
+			}
+			continue
+		case <-renewal.C:
 		}
 		held, err := r.Leases.Heartbeat(ctx, organization, id, r.claim())
 		if err != nil {
@@ -447,7 +473,7 @@ func droppedRun(opened Investigation, call ToolCall, ordinal int, reason string)
 // a read that failed is provenance too, and often the provenance that matters.
 func (r *Runner) execute(
 	ctx context.Context, opened Investigation, selected []selection,
-	credentials *credentialCache, call ToolCall, ordinal int,
+	credentials *credentialCache, brief *Brief, call ToolCall, ordinal int,
 ) ToolRun {
 	run := ToolRun{
 		Ordinal:     ordinal,
@@ -466,7 +492,6 @@ func (r *Runner) execute(
 		return run
 	}
 	run.IntegrationID = source.integration.ID
-	run.Capability = tool.Capability
 
 	credential, err := credentials.open(ctx, source.integration)
 	if err != nil {
@@ -478,13 +503,19 @@ func (r *Runner) execute(
 
 	runCtx, done := context.WithTimeout(ctx, runTimeout)
 	defer done()
-	result, err := tool.Run(runCtx, integrations.ToolRequest{
-		Integration: source.integration,
-		Credential:  credential,
-		Arguments:   call.Arguments,
-		WindowFrom:  opened.WindowFrom,
-		WindowUntil: opened.WindowUntil,
-	})
+	request := integrations.ToolRequest{
+		InvestigationID: opened.ID,
+		Integration:     source.integration,
+		Credential:      credential,
+		Arguments:       call.Arguments,
+		WindowFrom:      opened.WindowFrom,
+		WindowUntil:     opened.WindowUntil,
+	}
+	if brief != nil && source.integration.ID.String() == brief.OriginIntegrationID {
+		request.OriginChannel = brief.OriginChannel
+		request.OriginThread = brief.OriginThread
+	}
+	result, err := tool.Run(runCtx, request)
 	run.FinishedAt = time.Now().UTC()
 	if err != nil {
 		run.Outcome = RunFailed
@@ -617,6 +648,23 @@ func toolNamed(selected []selection, name string) (selection, integrations.Tool,
 				return source, tool, true
 			}
 		}
+	}
+	// Compatibility for an Exchange opened before a second same-type Integration joined
+	// the offer: the old provider Tool name still resolves deterministically, while the
+	// Integration-bound names make every colliding source explicitly reachable.
+	var match selection
+	var matched integrations.Tool
+	found := 0
+	for _, source := range selected {
+		for _, tool := range source.tools {
+			if base, _, bound := strings.Cut(tool.Name, "__"); bound && base == name {
+				match, matched = source, tool
+				found++
+			}
+		}
+	}
+	if found == 1 {
+		return match, matched, true
 	}
 	return selection{}, integrations.Tool{}, false
 }

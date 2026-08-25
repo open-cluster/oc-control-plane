@@ -1,0 +1,17 @@
+causes: []
+mustnotclaim: []
+discriminating:
+    - tool: github.read_file
+      argmarker: CODEOWNERS
+relevanttools:
+    - github.list_repositories
+    - github.read_file
+    - slack.list_channels
+    - slack.get_channel_history
+expectfindings: true
+mustnotanswer:
+    - web-guild
+    - docs-guild
+answermarkers:
+    - payments-platform
+survives: []

@@ -47,9 +47,6 @@ func TestDefinition_DeclaresTheInboundShape(t *testing.T) {
 	if !definition.ReceivesWebhooks || definition.RequiresRelay {
 		t.Error("alertmanager is reached inbound and needs no relay")
 	}
-	if len(definition.Capabilities) == 0 {
-		t.Error("no capabilities declared; the catalog cannot say what connecting this does")
-	}
 	const wantDescription = "Create incidents from firing and resolved Alertmanager alerts " +
 		"delivered through an authenticated webhook."
 	if definition.Description != wantDescription {

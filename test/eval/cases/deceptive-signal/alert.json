@@ -1,0 +1,7 @@
+{
+  "alertname": "APIGateway5xx",
+  "labels": {
+    "namespace": "gateway",
+    "service": "gateway"
+  }
+}

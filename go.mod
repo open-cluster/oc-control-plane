@@ -7,6 +7,8 @@ go 1.26
 
 toolchain go1.26.6
 
+replace github.com/open-cluster/oc-relay/gen/go => ./third_party/relay-protocol
+
 require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/exaring/otelpgx v0.11.1

@@ -1,6 +1,6 @@
 ---
 title: "Security model"
-description: "Understand OpenCluster access boundaries, tenant isolation, read-only behavior, and self-hosted trust boundaries."
+description: "Understand OpenCluster access boundaries, tenant isolation, narrowly scoped writes, and self-hosted trust boundaries."
 ---
 
 OpenCluster receives alerts and reads selected operational data to investigate an
@@ -12,8 +12,8 @@ configuration.
 | System | Access |
 | --- | --- |
 | Alertmanager | Receives authenticated firing and resolved alert webhooks. It does not call Alertmanager. |
-| Kubernetes | Receives workload inventory and configuration-change metadata from an outbound Relay. It does not hold cluster credentials or perform live investigation reads. |
-| Slack | Bot-token reads cover public channels available to the app. User-token search can return any conversation visible to that user, including private channels and direct messages. OpenCluster does not write to Slack. |
+| Kubernetes | Receives workload inventory and configuration-change metadata from an outbound Relay and requests bounded live workload, pod, namespace-event, and container logs reads through that Relay. Cluster credentials never leave the customer environment. |
+| Slack | An installed bot reads public channels and explicitly invited private channels within its granted scopes, and sends thread replies only to direct app mentions in their originating thread. An advanced pasted user token can additionally search conversations visible to that user, including private channels and direct messages. |
 | GitHub | Reads repositories selected for a GitHub App installation. It has no write operations. |
 | Model provider | Receives the incident context and bounded source results needed to produce the investigation. |
 
@@ -32,8 +32,9 @@ errors to enumerate organizations the caller cannot access.
 ## Read and write boundaries
 
 OpenCluster writes its own incidents, investigation records, audit entries, and
-integration state. It does not write to Slack, GitHub, or Kubernetes. It does not run
-recommended remediation steps.
+integration state. Its only external write is an app-authored Slack reply in the same
+thread as a direct mention. It does not write to GitHub or Kubernetes, send unsolicited
+Slack messages, or run recommended remediation steps.
 
 Alertmanager is the intentional inbound exception: an authenticated webhook creates
 signals and updates incidents in OpenCluster. A Kubernetes Relay also sends inventory
@@ -50,7 +51,8 @@ enforced outside the model. Findings must cite recorded reads.
 
 Audit entries cover sign-in and identity administration, organization policy changes,
 service accounts and API tokens, integration administration and credential use, Relay
-bootstrap and conflict actions, incident merges, investigation starts, and denied
+bootstrap and conflict actions, incident merges, investigation starts, operator-
+cancelled investigations, and denied
 authorization. Alert intake, Relay inventory updates, and background investigation
 progress are not separate audit entries; those operations have their own durable records
 or provenance. Credential-shaped fields are removed from audit details.
