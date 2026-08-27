@@ -26,7 +26,7 @@ const (
 	JobCancelled
 )
 
-// Job is a unit of work as the control plane holds it.
+// RelayJob is a unit of work as the control plane holds it.
 type RelayJob struct {
 	ID              uuid.UUID
 	InvestigationID uuid.UUID
