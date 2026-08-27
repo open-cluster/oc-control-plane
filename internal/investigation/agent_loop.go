@@ -320,7 +320,8 @@ func (l *autonomousLoop) executeCall(
 		if err != nil {
 			result.Run.Outcome = RunFailed
 			result.Run.Error = err.Error()
-			return result, false, nil
+			// The validation failure is a semantic tool result for the model, not a loop failure.
+			return result, false, nil //nolint:nilerr
 		}
 		result.Run.Content = map[string]any{"accepted": true}
 		l.runner.announce(ctx, l.events, EventHypothesesUpdated,

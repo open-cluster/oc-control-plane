@@ -269,69 +269,6 @@ func readSecretFile(path string) (string, error) {
 	return value, nil
 }
 
-// optionalFlag reads a boolean switch. Only the words Go itself accepts are accepted, and
-// anything else is refused rather than read as false: a deployment that meant to turn
-// something on and typed "yes" should learn that, not run with it off.
-func optionalFlag(lookup func(string) (string, bool), key string) (bool, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return false, nil
-	}
-	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
-	if err != nil {
-		return false, fmt.Errorf("%s must be true or false", key)
-	}
-	return parsed, nil
-}
-
-// optionalPositiveOr is optionalPositive with a default that is not zero.
-func optionalPositiveOr(
-	lookup func(string) (string, bool), key string, fallback int,
-) (int, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || parsed < 1 {
-		return 0, fmt.Errorf("%s must be a positive whole number", key)
-	}
-	return parsed, nil
-}
-
-// optionalCents refuses zero and negatives: a spend ceiling that is off would make a
-// runaway investigation possible again, so it can only be raised, never removed.
-func optionalCents(lookup func(string) (string, bool), key string, fallback int) (int, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || parsed < 1 {
-		return 0, fmt.Errorf("%s must be a positive whole number of cents", key)
-	}
-	return parsed, nil
-}
-
-func required(lookup func(string) (string, bool), key string) (string, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("%s is required", key)
-	}
-	return strings.TrimSpace(value), nil
-}
-
-func requiredListenAddress(lookup func(string) (string, bool), key string) (string, error) {
-	value, err := required(lookup, key)
-	if err != nil {
-		return "", err
-	}
-	if err := validateHostPort(value); err != nil {
-		return "", fmt.Errorf("%s must be host:port: %w", key, err)
-	}
-	return value, nil
-}
-
 func optionalHostPort(lookup func(string) (string, bool), key string) (string, error) {
 	value, ok := lookup(key)
 	if !ok || strings.TrimSpace(value) == "" {
@@ -469,18 +406,6 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	}
 	cfg.SlackSigningSecret = signing
 	return nil
-}
-
-func optionalName(lookup func(string) (string, bool), key, fallback string) (string, error) {
-	value, ok := lookup(key)
-	if !ok {
-		return fallback, nil
-	}
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "", fmt.Errorf("%s must not be blank", key)
-	}
-	return trimmed, nil
 }
 
 // relaySPKIPins reads the pin set the Relay endpoint advertises at enrolment. Pins are

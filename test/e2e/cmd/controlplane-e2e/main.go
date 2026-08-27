@@ -13,6 +13,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cfg, err := config.LoadProcess(os.Args[1:], os.LookupEnv)
@@ -23,6 +27,7 @@ func main() {
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "control plane e2e exiting: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

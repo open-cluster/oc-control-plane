@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -157,26 +156,4 @@ func pageSize(request *http.Request) int {
 		return 0
 	}
 	return size
-}
-
-// validName checks what an operator typed for a provider, an account or a policy label.
-func validName(writer http.ResponseWriter, name string, limit int) (string, bool) {
-	trimmed := strings.TrimSpace(name)
-	switch {
-	case trimmed == "":
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "name must not be empty"})
-		return "", false
-	case len(trimmed) > limit:
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "name must be at most " + strconv.Itoa(limit) + " characters"})
-		return "", false
-	}
-	for _, character := range trimmed {
-		if character < 0x20 || character == 0x7f {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "name must not contain control characters"})
-			return "", false
-		}
-	}
-	return trimmed, true
 }

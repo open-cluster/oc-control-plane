@@ -1,7 +1,7 @@
 STATICCHECK_VERSION := 2025.1.1
 GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.1.4
-GOLICENSES_VERSION := v1.6.0
+GOLICENSES_VERSION := v2.0.1
 
 .PHONY: tools lint build test test-short vuln licenses deploy-verify verify
 
@@ -16,7 +16,7 @@ tools:
 	go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	go install github.com/google/go-licenses@$(GOLICENSES_VERSION)
+	go install github.com/google/go-licenses/v2@$(GOLICENSES_VERSION)
 
 lint:
 	gofmt -l . | (! grep .)

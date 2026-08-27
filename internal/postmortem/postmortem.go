@@ -72,7 +72,7 @@ type Postmortem struct {
 	UpdatedAt           time.Time        `json:"updatedAt"`
 	ReviewedAt          time.Time        `json:"reviewedAt,omitempty"`
 	ReviewedBy          string           `json:"reviewedBy,omitempty"`
-} //todo clarify do we really need reviewedAt and reviewedBy
+}
 
 type AlertEvent struct {
 	Title   string

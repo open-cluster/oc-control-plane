@@ -3,8 +3,6 @@ package identity
 import (
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 )
 
@@ -40,17 +38,4 @@ func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request)
 		views = append(views, auditEventViewOf(event))
 	}
 	writeJSON(writer, http.StatusOK, auditListView{Events: views, Next: list.Next})
-}
-
-// identifierIn reads a UUID out of a request body rather than a path, naming the field in the
-// refusal so an operator knows which one they got wrong.
-func identifierIn(
-	writer http.ResponseWriter, value, field string,
-) (uuid.UUID, bool) {
-	id, err := uuid.Parse(value)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: field + " is not an identity"})
-		return uuid.Nil, false
-	}
-	return id, true
 }
