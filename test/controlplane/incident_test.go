@@ -14,22 +14,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// Signals grouping into the operational episode an investigation attaches to.
+// AlertEvents grouping into the operational incident an investigation attaches to.
 //
 // The seam is the composition root, for the same reason intake's is: what is under test is what an
 // operator could observe. Alerts are delivered as real signed requests to the real intake listener,
-// and the episodes they produce are read back through the real operator API. Nothing here asserts
+// and the incidents they produce are read back through the real operator API. Nothing here asserts
 // how grouping is implemented, because a second Integration will change that.
 //
 // The one thing every test below turns on: the grouping identity is the SOURCE's. Two alerts land
-// in one episode because the customer's own Alertmanager put them in one group, never because this
+// in one incident because the customer's own Alertmanager put them in one group, never because this
 // platform decided their labels looked similar.
-
-const incidentToken = "operator-token-for-the-incident-surface"
 
 // incidentPlane is a control plane with both surfaces bound: intake to deliver alerts to, and the
 // operator API to read the incidents they became.
@@ -47,9 +46,9 @@ func startIncidents(t *testing.T) *incidentPlane {
 	operatorAddress := freeAddress(t)
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.IntakeAddress = "127.0.0.1:0"
-		cfg.OperatorAddress = operatorAddress
-		digest := sha256.Sum256([]byte(incidentToken))
+		cfg.HTTPAddress = "127.0.0.1:0"
+		cfg.HTTPAddress = operatorAddress
+		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = intakeOrganization
 		dsn = cfg.DatabaseDSN
@@ -69,7 +68,7 @@ func (p *incidentPlane) deliver(t *testing.T, body string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	url := fmt.Sprintf("http://%s/intake/v1/integrations/%s/signals", p.intake, p.integration)
+	url := fmt.Sprintf("http://%s/webhooks/v1/integrations/%s/alert-events", p.intake, p.integration)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatalf("building the delivery: %v", err)
@@ -107,7 +106,10 @@ func (p *incidentPlane) call(
 	if err != nil {
 		t.Fatalf("building the request: %v", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+incidentToken)
+	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		request.Header.Set("Origin", "http://"+p.operator)
+	}
 	if reader != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -127,7 +129,7 @@ func (p *incidentPlane) call(
 
 // episodeBody mirrors what the surface answers with. It is written out rather than imported so a
 // field renamed in the view is a failure here rather than a client silently reading a zero.
-type episodeBody struct {
+type incidentBody struct {
 	ID            string `json:"id"`
 	IntegrationID string `json:"integrationId"`
 	// IntegrationName is what a responder reads: which of this tenant's installations
@@ -140,23 +142,24 @@ type episodeBody struct {
 		Explanation string `json:"explanation"`
 		Key         string `json:"key"`
 	} `json:"grouping"`
-	FirstSeenAt     time.Time  `json:"firstSeenAt"`
-	LastSeenAt      time.Time  `json:"lastSeenAt"`
-	ResolvedAt      *time.Time `json:"resolvedAt"`
-	SignalCount     int        `json:"signalCount"`
-	InvestigationID *string    `json:"investigationId"`
-	Supersession    *struct {
-		EpisodeID string `json:"episodeId"`
-		Reason    string `json:"reason"`
+	FirstSeenAt        time.Time  `json:"firstSeenAt"`
+	LastSeenAt         time.Time  `json:"lastSeenAt"`
+	ResolvedAt         *time.Time `json:"resolvedAt"`
+	AlertEventCount    int        `json:"alertEventCount"`
+	PostmortemEligible bool       `json:"postmortemEligible"`
+	InvestigationID    *string    `json:"investigationId"`
+	Supersession       *struct {
+		IncidentID string `json:"incidentId"`
+		Reason     string `json:"reason"`
 	} `json:"supersededBy"`
 }
 
-type episodeListBody struct {
-	Items []episodeBody `json:"items"`
-	Next  *string       `json:"next"`
+type incidentListBody struct {
+	Items []incidentBody `json:"items"`
+	Next  *string        `json:"next"`
 }
 
-type episodeSignalsBody struct {
+type incidentAlertEventsBody struct {
 	Items []struct {
 		ID     string `json:"id"`
 		Title  string `json:"title"`
@@ -165,34 +168,34 @@ type episodeSignalsBody struct {
 	Next *string `json:"next"`
 }
 
-func (p *incidentPlane) episodes(t *testing.T, query string) episodeListBody {
+func (p *incidentPlane) incidents(t *testing.T, query string) incidentListBody {
 	t.Helper()
 
-	path := "/operator/v1/organizations/" + intakeOrganization + "/incidents" + query
+	path := "/api/v1/organizations/" + intakeOrganization + "/incidents" + query
 	status, body := p.call(t, http.MethodGet, path, nil)
 	if status != http.StatusOK {
 		t.Fatalf("listing incidents answered %d: %s", status, body)
 	}
-	var list episodeListBody
+	var list incidentListBody
 	if err := json.Unmarshal([]byte(body), &list); err != nil {
 		t.Fatalf("decoding the incident list: %v\nbody: %s", err, body)
 	}
 	return list
 }
 
-func (p *incidentPlane) episode(t *testing.T, id string) episodeBody {
+func (p *incidentPlane) incident(t *testing.T, id string) incidentBody {
 	t.Helper()
 
-	path := "/operator/v1/organizations/" + intakeOrganization + "/incidents/" + id
+	path := "/api/v1/organizations/" + intakeOrganization + "/incidents/" + id
 	status, body := p.call(t, http.MethodGet, path, nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading incident %s answered %d: %s", id, status, body)
 	}
-	var episode episodeBody
-	if err := json.Unmarshal([]byte(body), &episode); err != nil {
+	var incident incidentBody
+	if err := json.Unmarshal([]byte(body), &incident); err != nil {
 		t.Fatalf("decoding the incident: %v\nbody: %s", err, body)
 	}
-	return episode
+	return incident
 }
 
 // grouped renders a v4 payload for one alert under a named group key, which is the identity
@@ -250,7 +253,7 @@ func ungrouped(fingerprint, alertName string, startsAt time.Time) string {
 }
 
 // The sentence the whole slice exists for: a single failure does not open twenty investigations.
-func TestIncidents_AlertsTheSourceGroupedBecomeOneEpisode(t *testing.T) {
+func TestIncidents_AlertsTheSourceGroupedBecomeOneIncident(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 
@@ -266,28 +269,28 @@ func TestIncidents_AlertsTheSourceGroupedBecomeOneEpisode(t *testing.T) {
 		}
 	}
 
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	if len(list.Items) != 1 {
-		t.Fatalf("three alerts the source grouped produced %d episodes, want 1: %+v",
+		t.Fatalf("three alerts the source grouped produced %d incidents, want 1: %+v",
 			len(list.Items), list.Items)
 	}
-	episode := list.Items[0]
-	if episode.SignalCount != 3 {
-		t.Errorf("the episode holds %d signals, want 3", episode.SignalCount)
+	incident := list.Items[0]
+	if incident.AlertEventCount != 3 {
+		t.Errorf("the incident holds %d alertEvents, want 3", incident.AlertEventCount)
 	}
-	if episode.Status != "open" {
-		t.Errorf("the episode is %q while its alerts are firing, want open", episode.Status)
+	if incident.Status != "open" {
+		t.Errorf("the incident is %q while its alerts are firing, want open", incident.Status)
 	}
 	// The grouping is EXPLAINABLE. An operator looking at three alerts in one incident is told who
 	// decided that, in the source's own terms, without having to read the code.
-	if episode.Grouping.Basis != "source_grouping" {
-		t.Errorf("the grouping basis is %q, want source_grouping", episode.Grouping.Basis)
+	if incident.Grouping.Basis != "source_grouping" {
+		t.Errorf("the grouping basis is %q, want source_grouping", incident.Grouping.Basis)
 	}
-	if episode.Grouping.Key != key {
-		t.Errorf("the episode records %q as the source's grouping key, want %q",
-			episode.Grouping.Key, key)
+	if incident.Grouping.Key != key {
+		t.Errorf("the incident records %q as the source's grouping key, want %q",
+			incident.Grouping.Key, key)
 	}
-	if episode.Grouping.Explanation == "" {
+	if incident.Grouping.Explanation == "" {
 		t.Error("the grouping carries no explanation; a grouping an operator cannot explain is " +
 			"one they will argue with rather than act on")
 	}
@@ -303,38 +306,38 @@ func TestIncidents_AlertsTheSourceKeptApartStayApart(t *testing.T) {
 	plane.deliver(t, grouped(`{}:{alertname="KubePodCrashLooping"}`, "fp-a", "KubePodCrashLooping", began))
 	plane.deliver(t, grouped(`{}:{alertname="NodeNotReady"}`, "fp-b", "NodeNotReady", began))
 
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	if len(list.Items) != 2 {
-		t.Fatalf("two alerts in different groups produced %d episodes, want 2: %+v",
+		t.Fatalf("two alerts in different groups produced %d incidents, want 2: %+v",
 			len(list.Items), list.Items)
 	}
 }
 
-// A source that supplies no grouping identity gets one episode per alert, and the record says so
+// A source that supplies no grouping identity gets one incident per alert, and the record says so
 // rather than implying somebody grouped them.
-func TestIncidents_ASourceThatGroupsNothingGetsAnEpisodePerAlert(t *testing.T) {
+func TestIncidents_ASourceThatGroupsNothingGetsAnIncidentPerAlert(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 
 	plane.deliver(t, ungrouped("fp-lonely-one", "DiskFilling", began))
 	plane.deliver(t, ungrouped("fp-lonely-two", "MemoryPressure", began))
 
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	if len(list.Items) != 2 {
-		t.Fatalf("two ungrouped alerts produced %d episodes, want 2", len(list.Items))
+		t.Fatalf("two ungrouped alerts produced %d incidents, want 2", len(list.Items))
 	}
-	for _, episode := range list.Items {
-		if episode.Grouping.Basis != "ungrouped" {
-			t.Errorf("an episode from a source that grouped nothing reports basis %q, want "+
+	for _, incident := range list.Items {
+		if incident.Grouping.Basis != "ungrouped" {
+			t.Errorf("an incident from a source that grouped nothing reports basis %q, want "+
 				"ungrouped; claiming a grouping nobody made is this platform inventing an incident",
-				episode.Grouping.Basis)
+				incident.Grouping.Basis)
 		}
 	}
 }
 
-// An episode is resolved when every alert in it has stopped, and not before. A record that said a
+// An incident is resolved when every alert in it has stopped, and not before. A record that said a
 // failure recovered while part of it was still firing is the worst thing this table could say.
-func TestIncidents_AnEpisodeResolvesOnlyWhenEveryAlertInItHas(t *testing.T) {
+func TestIncidents_AnIncidentResolvesOnlyWhenEveryAlertInItHas(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 	ended := began.Add(5 * time.Minute)
@@ -343,36 +346,36 @@ func TestIncidents_AnEpisodeResolvesOnlyWhenEveryAlertInItHas(t *testing.T) {
 	plane.deliver(t, grouped(key, "fp-one", "KubePodCrashLooping", began))
 	plane.deliver(t, grouped(key, "fp-two", "KubePodNotReady", began))
 
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	if len(list.Items) != 1 {
-		t.Fatalf("want one episode, got %d", len(list.Items))
+		t.Fatalf("want one incident, got %d", len(list.Items))
 	}
 	id := list.Items[0].ID
 
 	plane.deliver(t, groupedResolution(key, "fp-one", "KubePodCrashLooping", began, ended))
-	if episode := plane.episode(t, id); episode.Status != "open" {
-		t.Fatalf("the episode is %q with one alert still firing, want open", episode.Status)
+	if incident := plane.incident(t, id); incident.Status != "open" {
+		t.Fatalf("the incident is %q with one alert still firing, want open", incident.Status)
 	}
 
 	plane.deliver(t, groupedResolution(key, "fp-two", "KubePodNotReady", began, ended))
-	episode := plane.episode(t, id)
-	if episode.Status != "resolved" {
-		t.Errorf("the episode is %q after every alert stopped, want resolved", episode.Status)
+	incident := plane.incident(t, id)
+	if incident.Status != "resolved" {
+		t.Errorf("the incident is %q after every alert stopped, want resolved", incident.Status)
 	}
-	if episode.ResolvedAt == nil {
-		t.Error("a resolved episode carries no resolution time")
+	if incident.ResolvedAt == nil {
+		t.Error("a resolved incident carries no resolution time")
 	}
-	// And the record of what happened survives: the Signals are still there and still readable.
-	if episode.SignalCount != 2 {
-		t.Errorf("the resolved episode holds %d signals, want the 2 it grouped",
-			episode.SignalCount)
+	// And the record of what happened survives: the AlertEvents are still there and still readable.
+	if incident.AlertEventCount != 2 {
+		t.Errorf("the resolved incident holds %d alertEvents, want the 2 it grouped",
+			incident.AlertEventCount)
 	}
 }
 
-// A resolved episode releases its grouping key, so the same failure next month is a NEW episode
-// rather than the resolved record of the last one being reopened. It is the same rule the Signal
-// table already keeps for an alert's own episodes.
-func TestIncidents_TheSameFailureAgainOpensANewEpisodeRatherThanReopeningTheOld(t *testing.T) {
+// A resolved incident releases its grouping key, so the same failure next month is a NEW incident
+// rather than the resolved record of the last one being reopened. It is the same rule the AlertEvent
+// table already keeps for an alert's own incidents.
+func TestIncidents_TheSameFailureAgainOpensANewIncidentRatherThanReopeningTheOld(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	ended := began.Add(10 * time.Minute)
@@ -383,15 +386,15 @@ func TestIncidents_TheSameFailureAgainOpensANewEpisodeRatherThanReopeningTheOld(
 	plane.deliver(t, groupedResolution(key, "fp-disk", "DiskFilling", began, ended))
 	plane.deliver(t, grouped(key, "fp-disk", "DiskFilling", again))
 
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	if len(list.Items) != 2 {
-		t.Fatalf("a failure that recurred produced %d episodes, want 2 — one closed and one "+
+		t.Fatalf("a failure that recurred produced %d incidents, want 2 — one closed and one "+
 			"open: %+v", len(list.Items), list.Items)
 	}
 
 	var open, resolved int
-	for _, episode := range list.Items {
-		switch episode.Status {
+	for _, incident := range list.Items {
+		switch incident.Status {
 		case "open":
 			open++
 		case "resolved":
@@ -399,13 +402,13 @@ func TestIncidents_TheSameFailureAgainOpensANewEpisodeRatherThanReopeningTheOld(
 		}
 	}
 	if open != 1 || resolved != 1 {
-		t.Errorf("got %d open and %d resolved episodes, want one of each", open, resolved)
+		t.Errorf("got %d open and %d resolved incidents, want one of each", open, resolved)
 	}
 }
 
-// The Signals an episode grouped are readable, oldest first, because a reader following an
+// The AlertEvents an incident grouped are readable, oldest first, because a reader following an
 // incident follows it forwards.
-func TestIncidents_TheSignalsGroupedIntoAnEpisodeAreReadable(t *testing.T) {
+func TestIncidents_TheAlertEventsGroupedIntoAnIncidentAreReadable(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
 
@@ -413,23 +416,23 @@ func TestIncidents_TheSignalsGroupedIntoAnEpisodeAreReadable(t *testing.T) {
 	plane.deliver(t, grouped(key, "fp-first", "KubePodCrashLooping", began))
 	plane.deliver(t, grouped(key, "fp-second", "KubePodNotReady", began.Add(time.Minute)))
 
-	id := plane.episodes(t, "").Items[0].ID
-	path := "/operator/v1/organizations/" + intakeOrganization + "/incidents/" + id + "/signals"
+	id := plane.incidents(t, "").Items[0].ID
+	path := "/api/v1/organizations/" + intakeOrganization + "/incidents/" + id + "/alert-events"
 	status, body := plane.call(t, http.MethodGet, path, nil)
 	if status != http.StatusOK {
-		t.Fatalf("reading an episode's signals answered %d: %s", status, body)
+		t.Fatalf("reading an incident's alertEvents answered %d: %s", status, body)
 	}
 
-	var signals episodeSignalsBody
-	if err := json.Unmarshal([]byte(body), &signals); err != nil {
-		t.Fatalf("decoding the signals: %v\nbody: %s", err, body)
+	var alertEvents incidentAlertEventsBody
+	if err := json.Unmarshal([]byte(body), &alertEvents); err != nil {
+		t.Fatalf("decoding the alertEvents: %v\nbody: %s", err, body)
 	}
-	if len(signals.Items) != 2 {
-		t.Fatalf("the episode reports %d signals, want 2", len(signals.Items))
+	if len(alertEvents.Items) != 2 {
+		t.Fatalf("the incident reports %d alertEvents, want 2", len(alertEvents.Items))
 	}
-	if signals.Items[0].Title != "KubePodCrashLooping" {
-		t.Errorf("the first signal is %q; an incident reads forwards, oldest first",
-			signals.Items[0].Title)
+	if alertEvents.Items[0].Title != "KubePodCrashLooping" {
+		t.Errorf("the first Alert Event is %q; an incident reads forwards, oldest first",
+			alertEvents.Items[0].Title)
 	}
 }
 
@@ -441,14 +444,14 @@ func TestIncidents_AMergeRecordsTheCorrectionAndRewritesNothing(t *testing.T) {
 	plane.deliver(t, grouped(`{}:{alertname="KubePodCrashLooping"}`, "fp-a", "KubePodCrashLooping", began))
 	plane.deliver(t, grouped(`{}:{alertname="KubeDeploymentDegraded"}`, "fp-b", "KubeDeploymentDegraded", began))
 
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	if len(list.Items) != 2 {
-		t.Fatalf("want two episodes to merge, got %d", len(list.Items))
+		t.Fatalf("want two incidents to merge, got %d", len(list.Items))
 	}
 	absorbed, surviving := list.Items[0], list.Items[1]
 
 	const reason = "both are the checkout rollout; the deployment degraded because its pods crash"
-	path := "/operator/v1/organizations/" + intakeOrganization +
+	path := "/api/v1/organizations/" + intakeOrganization +
 		"/incidents/" + absorbed.ID + "/merge"
 	status, body := plane.call(t, http.MethodPost, path,
 		map[string]string{"into": surviving.ID, "reason": reason})
@@ -456,27 +459,27 @@ func TestIncidents_AMergeRecordsTheCorrectionAndRewritesNothing(t *testing.T) {
 		t.Fatalf("merging answered %d: %s", status, body)
 	}
 
-	// NOTHING is rewritten. The absorbed episode keeps its identity, its signals and its own
+	// NOTHING is rewritten. The absorbed incident keeps its identity, its alertEvents and its own
 	// grouping key, and gains a pointer to the one that survives it with the operator's reason.
-	after := plane.episode(t, absorbed.ID)
+	after := plane.incident(t, absorbed.ID)
 	if after.Supersession == nil {
-		t.Fatal("the absorbed episode does not say it was merged")
+		t.Fatal("the absorbed incident does not say it was merged")
 	}
-	if after.Supersession.EpisodeID != surviving.ID {
-		t.Errorf("the absorbed episode points at %s, want %s",
-			after.Supersession.EpisodeID, surviving.ID)
+	if after.Supersession.IncidentID != surviving.ID {
+		t.Errorf("the absorbed incident points at %s, want %s",
+			after.Supersession.IncidentID, surviving.ID)
 	}
 	if after.Supersession.Reason != reason {
 		t.Errorf("the merge reason is %q, want the operator's own words", after.Supersession.Reason)
 	}
-	if after.SignalCount != absorbed.SignalCount {
-		t.Errorf("the absorbed episode now holds %d signals and held %d; a merge that moved "+
-			"signals would destroy the record of the grouping it was correcting",
-			after.SignalCount, absorbed.SignalCount)
+	if after.AlertEventCount != absorbed.AlertEventCount {
+		t.Errorf("the absorbed incident now holds %d alertEvents and held %d; a merge that moved "+
+			"alertEvents would destroy the record of the grouping it was correcting",
+			after.AlertEventCount, absorbed.AlertEventCount)
 	}
 	if after.Grouping.Key != absorbed.Grouping.Key {
-		t.Error("the absorbed episode's grouping key changed; the record of why it was its own " +
-			"episode is what a reader checks the correction against")
+		t.Error("the absorbed incident's grouping key changed; the record of why it was its own " +
+			"incident is what a reader checks the correction against")
 	}
 }
 
@@ -488,16 +491,16 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 
 	plane.deliver(t, grouped(`{}:{alertname="A"}`, "fp-a", "A", began))
 	plane.deliver(t, grouped(`{}:{alertname="B"}`, "fp-b", "B", began))
-	list := plane.episodes(t, "")
+	list := plane.incidents(t, "")
 	first, second := list.Items[0], list.Items[1]
 
-	base := "/operator/v1/organizations/" + intakeOrganization + "/incidents/"
+	base := "/api/v1/organizations/" + intakeOrganization + "/incidents/"
 
 	// Into itself.
 	status, _ := plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": first.ID, "reason": "because"})
 	if status != http.StatusBadRequest {
-		t.Errorf("merging an episode into itself answered %d, want 400", status)
+		t.Errorf("merging an incident into itself answered %d, want 400", status)
 	}
 
 	// With no reason. A merge nobody explained is a grouping decision a later reader cannot check,
@@ -508,14 +511,14 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 		t.Errorf("merging with no reason answered %d, want 400", status)
 	}
 
-	// Into an episode that does not exist.
+	// Into an incident that does not exist.
 	status, _ = plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": uuid.NewString(), "reason": "because"})
 	if status != http.StatusNotFound {
-		t.Errorf("merging into an episode that does not exist answered %d, want 404", status)
+		t.Errorf("merging into an incident that does not exist answered %d, want 404", status)
 	}
 
-	// And a chain: merging into an episode that has itself been merged. A reader that had to walk
+	// And a chain: merging into an incident that has itself been merged. A reader that had to walk
 	// a chain would find a different answer depending on where it started.
 	if status, body := plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": second.ID, "reason": "they are one"}); status != http.StatusOK {
@@ -523,15 +526,15 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 	}
 	plane.deliver(t, grouped(`{}:{alertname="C"}`, "fp-c", "C", began))
 	var third string
-	for _, episode := range plane.episodes(t, "").Items {
-		if episode.ID != first.ID && episode.ID != second.ID {
-			third = episode.ID
+	for _, incident := range plane.incidents(t, "").Items {
+		if incident.ID != first.ID && incident.ID != second.ID {
+			third = incident.ID
 		}
 	}
 	status, body := plane.call(t, http.MethodPost, base+third+"/merge",
 		map[string]string{"into": first.ID, "reason": "chain"})
 	if status != http.StatusConflict {
-		t.Errorf("merging into an already-merged episode answered %d, want 409: %s", status, body)
+		t.Errorf("merging into an already-merged incident answered %d, want 409: %s", status, body)
 	}
 }
 
@@ -540,7 +543,7 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 func TestIncidents_TheListingRefusesAFilterItCannotServe(t *testing.T) {
 	plane := startIncidents(t)
 
-	path := "/operator/v1/organizations/" + intakeOrganization + "/incidents"
+	path := "/api/v1/organizations/" + intakeOrganization + "/incidents"
 	if status, _ := plane.call(t, http.MethodGet, path+"?status=resolvd", nil); status != http.StatusBadRequest {
 		t.Errorf("an unserveable status filter answered %d, want 400", status)
 	}
@@ -552,16 +555,16 @@ func TestIncidents_TheListingRefusesAFilterItCannotServe(t *testing.T) {
 	}
 }
 
-// An episode belongs to the tenant whose Connection delivered it and to no other. A caller naming
+// An incident belongs to the tenant whose Integration delivered it and to no other. A caller naming
 // another organization is answered exactly as one naming an organization that does not exist.
-func TestIncidents_AreReachableOnlyByTheTenantWhoseConnectionDeliveredThem(t *testing.T) {
+func TestIncidents_AreReachableOnlyByTheTenantWhoseIntegrationDeliveredThem(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 	plane.deliver(t, grouped(`{}:{alertname="A"}`, "fp-a", "A", began))
 
-	id := plane.episodes(t, "").Items[0].ID
+	id := plane.incidents(t, "").Items[0].ID
 	status, _ := plane.call(t, http.MethodGet,
-		"/operator/v1/organizations/org-neighbour/incidents/"+id, nil)
+		"/api/v1/organizations/org-neighbour/incidents/"+id, nil)
 	if status != http.StatusNotFound {
 		t.Errorf("reading another tenant's incident answered %d, want 404", status)
 	}
@@ -570,7 +573,7 @@ func TestIncidents_AreReachableOnlyByTheTenantWhoseConnectionDeliveredThem(t *te
 // A responder arriving from their own alerting wants to know whether to go and look at
 // Alertmanager or at something else. The view carried the identity alone, so the only field
 // a console could render restated its own label.
-func TestIncidents_AnEpisodeNamesTheIntegrationThatDeliveredIt(t *testing.T) {
+func TestIncidents_AnIncidentNamesTheIntegrationThatDeliveredIt(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
 
@@ -584,16 +587,16 @@ func TestIncidents_AnEpisodeNamesTheIntegrationThatDeliveredIt(t *testing.T) {
 	// listing resolves it from, so this asserts the join rather than a literal.
 	want := integrationName(t, plane.dsn, plane.integration)
 
-	listed := plane.episodes(t, "")
+	listed := plane.incidents(t, "")
 	if len(listed.Items) != 1 {
-		t.Fatalf("expected one episode, got %d", len(listed.Items))
+		t.Fatalf("expected one incident, got %d", len(listed.Items))
 	}
-	for _, episode := range []episodeBody{listed.Items[0], plane.episode(t, listed.Items[0].ID)} {
-		if episode.IntegrationID != plane.integration.String() {
-			t.Errorf("integrationId = %q, want %s", episode.IntegrationID, plane.integration)
+	for _, incident := range []incidentBody{listed.Items[0], plane.incident(t, listed.Items[0].ID)} {
+		if incident.IntegrationID != plane.integration.String() {
+			t.Errorf("integrationId = %q, want %s", incident.IntegrationID, plane.integration)
 		}
-		if episode.IntegrationName != want {
-			t.Errorf("integrationName = %q, want %q", episode.IntegrationName, want)
+		if incident.IntegrationName != want {
+			t.Errorf("integrationName = %q, want %q", incident.IntegrationName, want)
 		}
 	}
 }

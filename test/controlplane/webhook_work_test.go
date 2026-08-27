@@ -14,11 +14,11 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func TestTerminalWebhookWorkIsVisibleTenantScopedAndReplayable(t *testing.T) {

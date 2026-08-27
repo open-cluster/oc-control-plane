@@ -4,13 +4,13 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
 func TestInvestigationCancellationIsAnExplicitAuthorizedOperatorRoute(t *testing.T) {
 	t.Parallel()
 
-	const pattern = "/operator/v1/organizations/{organization}/investigations/{investigation}/cancel"
+	const pattern = "/api/v1/organizations/{organization}/investigations/{investigation}/cancel"
 	for _, route := range (Handlers{}).Routes() {
 		if route.Method() != http.MethodPost || route.Pattern() != pattern {
 			continue
@@ -31,7 +31,7 @@ func TestInvestigationCancellationIsAnExplicitAuthorizedOperatorRoute(t *testing
 func TestInvestigationReportActivityAndSourcesAreAuthorizedReadViews(t *testing.T) {
 	t.Parallel()
 
-	base := "/operator/v1/organizations/{organization}/investigations/{investigation}"
+	base := "/api/v1/organizations/{organization}/investigations/{investigation}"
 	for _, suffix := range []string{"/report", "/activity", "/sources", "/hypotheses"} {
 		found := false
 		for _, route := range (Handlers{}).Routes() {

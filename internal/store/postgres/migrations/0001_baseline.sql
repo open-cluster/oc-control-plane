@@ -1,0 +1,2221 @@
+-- OpenCluster control-plane baseline schema.
+-- This is the final schema for a new pre-release database; earlier development schemas must be recreated.
+
+--
+--
+
+
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: audit_event_is_append_only(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.audit_event_is_append_only() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND
+       coalesce(current_setting('opencluster.audit_retention', TRUE), '') = 'pruning' THEN
+        RETURN NULL;
+    END IF;
+    RAISE EXCEPTION 'audit_event is append-only; % is refused', TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: alert_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_event (
+    alert_event_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    source_key text NOT NULL,
+    status smallint NOT NULL,
+    title text NOT NULL,
+    summary text NOT NULL,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    incident_id uuid,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    generator_url text DEFAULT ''::text NOT NULL,
+    CONSTRAINT alert_event_generator_url_check CHECK ((length(generator_url) <= 2048)),
+    CONSTRAINT alert_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT alert_event_resolution_follows_its_start CHECK (((resolved_at IS NULL) OR (resolved_at >= started_at))),
+    CONSTRAINT alert_event_resolution_is_stamped CHECK (((status = 2) = (resolved_at IS NOT NULL))),
+    CONSTRAINT alert_event_source_key_check CHECK (((length(source_key) >= 1) AND (length(source_key) <= 512))),
+    CONSTRAINT alert_event_status_check CHECK ((status = ANY (ARRAY[1, 2]))),
+    CONSTRAINT alert_event_summary_check CHECK ((length(summary) <= 4096)),
+    CONSTRAINT alert_event_title_check CHECK ((length(title) <= 512))
+);
+
+
+--
+-- Name: TABLE alert_event; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.alert_event IS 'Normalised alerts. Nothing downstream can tell which system delivered one.';
+
+
+--
+-- Name: app_user; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_user (
+    user_id uuid NOT NULL,
+    issuer text NOT NULL,
+    subject text NOT NULL,
+    email text NOT NULL,
+    email_verified boolean DEFAULT false NOT NULL,
+    display_name text DEFAULT ''::text NOT NULL,
+    disabled_at timestamp with time zone,
+    last_sign_in timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_user_display_name_check CHECK ((length(display_name) <= 256)),
+    CONSTRAINT app_user_email_check CHECK (((length(email) >= 0) AND (length(email) <= 320))),
+    CONSTRAINT app_user_issuer_check CHECK (((length(issuer) >= 1) AND (length(issuer) <= 512))),
+    CONSTRAINT app_user_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 256)))
+);
+
+
+--
+-- Name: TABLE app_user; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.app_user IS 'A person who may sign in. Deployment-wide; identity is the issuer and subject together.';
+
+
+--
+-- Name: audit_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_event (
+    event_id uuid NOT NULL,
+    org_id text NOT NULL,
+    actor_kind smallint NOT NULL,
+    actor_id text DEFAULT ''::text NOT NULL,
+    actor_display_name text DEFAULT ''::text NOT NULL,
+    action text NOT NULL,
+    target_kind text DEFAULT ''::text NOT NULL,
+    target_id text DEFAULT ''::text NOT NULL,
+    outcome smallint NOT NULL,
+    source_address text DEFAULT ''::text NOT NULL,
+    request_id text DEFAULT ''::text NOT NULL,
+    detail jsonb DEFAULT '{}'::jsonb NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_event_action_check CHECK (((length(action) >= 1) AND (length(action) <= 128))),
+    CONSTRAINT audit_event_actor_display_name_check CHECK ((length(actor_display_name) <= 256)),
+    CONSTRAINT audit_event_actor_id_check CHECK ((length(actor_id) <= 256)),
+    CONSTRAINT audit_event_actor_kind_check CHECK ((actor_kind = ANY (ARRAY[1, 3]))),
+    CONSTRAINT audit_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT audit_event_outcome_check CHECK ((outcome = ANY (ARRAY[1, 2, 3]))),
+    CONSTRAINT audit_event_request_id_check CHECK ((length(request_id) <= 128)),
+    CONSTRAINT audit_event_source_address_check CHECK ((length(source_address) <= 128)),
+    CONSTRAINT audit_event_target_id_check CHECK ((length(target_id) <= 256)),
+    CONSTRAINT audit_event_target_kind_check CHECK ((length(target_kind) <= 64))
+);
+
+
+--
+-- Name: TABLE audit_event; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.audit_event IS 'Append-only. The database refuses an UPDATE and a DELETE; retention pruning must declare itself in its transaction.';
+
+
+--
+-- Name: change_ledger; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.change_ledger (
+    entry_id bigint NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    namespace text NOT NULL,
+    object_kind smallint NOT NULL,
+    object_name text NOT NULL,
+    object_uid text NOT NULL,
+    observed_revision text NOT NULL,
+    change_kind smallint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    fields jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT change_ledger_change_kind_check CHECK ((change_kind = ANY (ARRAY[1, 2, 3, 4]))),
+    CONSTRAINT change_ledger_deletion_has_no_revision CHECK (((change_kind = 4) = (observed_revision = ''::text))),
+    CONSTRAINT change_ledger_namespace_check CHECK (((length(namespace) >= 1) AND (length(namespace) <= 63))),
+    CONSTRAINT change_ledger_object_kind_check CHECK ((object_kind = ANY (ARRAY[1, 2, 3, 4, 5]))),
+    CONSTRAINT change_ledger_object_name_check CHECK (((length(object_name) >= 1) AND (length(object_name) <= 253))),
+    CONSTRAINT change_ledger_object_uid_check CHECK (((length(object_uid) >= 1) AND (length(object_uid) <= 128))),
+    CONSTRAINT change_ledger_observed_revision_check CHECK ((length(observed_revision) <= 128)),
+    CONSTRAINT change_ledger_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128)))
+);
+
+
+--
+-- Name: TABLE change_ledger; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.change_ledger IS 'Workload revisions and configuration changes, continuously persisted because they decay at the source. Declared intent and identity only; a navigation index, never evidence.';
+
+
+--
+-- Name: change_ledger_entry_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.change_ledger ALTER COLUMN entry_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.change_ledger_entry_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: change_ledger_scope; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.change_ledger_scope (
+    integration_id uuid NOT NULL,
+    org_id text NOT NULL,
+    policy_revision bigint DEFAULT 1 NOT NULL,
+    requested_interval_seconds integer NOT NULL,
+    covered_since timestamp with time zone,
+    baseline_at timestamp with time zone,
+    last_confirmed_at timestamp with time zone,
+    faulted boolean DEFAULT false NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT change_ledger_scope_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT change_ledger_scope_requested_interval_seconds_check CHECK ((requested_interval_seconds > 0))
+);
+
+
+--
+-- Name: TABLE change_ledger_scope; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.change_ledger_scope IS 'One integration''s synchronization state: coverage boundaries and freshness, so an empty window is answerable as "nothing changed" or "nobody was watching" — never silently.';
+
+
+--
+-- Name: conversation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.conversation (
+    conversation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    incident_id uuid,
+    surface smallint DEFAULT 1 NOT NULL,
+    subject text NOT NULL,
+    state smallint DEFAULT 1 NOT NULL,
+    created_by text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_activity_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT conversation_created_by_check CHECK ((length(created_by) <= 256)),
+    CONSTRAINT conversation_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT conversation_state_check CHECK ((state = ANY (ARRAY[1, 2]))),
+    CONSTRAINT conversation_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 512))),
+    CONSTRAINT conversation_surface_check CHECK ((surface = ANY (ARRAY[1, 2])))
+);
+
+
+--
+-- Name: TABLE conversation; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.conversation IS 'One multi-turn context a person talks to: organization-scoped, optionally about an incident, holding messages and the investigations its turns opened.';
+
+
+--
+-- Name: conversation_message; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.conversation_message (
+    conversation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    sequence bigint NOT NULL,
+    role smallint NOT NULL,
+    actor_kind smallint NOT NULL,
+    actor_id text DEFAULT ''::text NOT NULL,
+    actor_display text DEFAULT ''::text NOT NULL,
+    text text NOT NULL,
+    investigation_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    provider_channel_id text DEFAULT ''::text NOT NULL,
+    provider_message_id text DEFAULT ''::text NOT NULL,
+    source_reference text DEFAULT ''::text NOT NULL,
+    CONSTRAINT conversation_message_actor_display_check CHECK ((length(actor_display) <= 256)),
+    CONSTRAINT conversation_message_actor_id_check CHECK ((length(actor_id) <= 256)),
+    CONSTRAINT conversation_message_actor_kind_check CHECK ((actor_kind = ANY (ARRAY[1, 2]))),
+    CONSTRAINT conversation_message_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT conversation_message_role_check CHECK ((role = ANY (ARRAY[1, 2]))),
+    CONSTRAINT conversation_message_sequence_check CHECK ((sequence >= 1)),
+    CONSTRAINT conversation_message_text_check CHECK (((length(text) >= 1) AND (length(text) <= 8192)))
+);
+
+
+--
+-- Name: TABLE conversation_message; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.conversation_message IS 'The authoritative transcript, in order, with who said each thing. Never edited or deleted by compaction; untrusted for its whole life.';
+
+
+--
+-- Name: conversation_summary; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.conversation_summary (
+    conversation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    version integer NOT NULL,
+    covers_through_message_sequence bigint NOT NULL,
+    summary jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tokens_before integer DEFAULT 0 NOT NULL,
+    tokens_after integer DEFAULT 0 NOT NULL,
+    model text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT conversation_summary_covers_through_message_sequence_check CHECK ((covers_through_message_sequence >= 0)),
+    CONSTRAINT conversation_summary_model_check CHECK ((length(model) <= 128)),
+    CONSTRAINT conversation_summary_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT conversation_summary_tokens_after_check CHECK ((tokens_after >= 0)),
+    CONSTRAINT conversation_summary_tokens_before_check CHECK ((tokens_before >= 0)),
+    CONSTRAINT conversation_summary_version_check CHECK ((version >= 1))
+);
+
+
+--
+-- Name: TABLE conversation_summary; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.conversation_summary IS 'The structured running summary older turns compact into. Never authoritative; conversation_message is.';
+
+
+--
+-- Name: deployment_sign_in_flow; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_sign_in_flow (
+    flow_id uuid NOT NULL,
+    org_id text NOT NULL,
+    state_digest bytea NOT NULL,
+    code_verifier text,
+    nonce text,
+    return_to text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_sign_in_flow_state_digest_check CHECK ((octet_length(state_digest) = 32))
+);
+
+
+--
+-- Name: TABLE deployment_sign_in_flow; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_sign_in_flow IS 'Short-lived PKCE, nonce, and state records for the deployment OIDC provider.';
+
+
+--
+-- Name: incident; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.incident (
+    incident_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    grouping_key text NOT NULL,
+    grouping_basis smallint NOT NULL,
+    title text NOT NULL,
+    status smallint NOT NULL,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    alert_event_count integer DEFAULT 0 NOT NULL,
+    superseded_by uuid,
+    superseded_at timestamp with time zone,
+    supersede_reason text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT incident_alert_event_count_check CHECK ((alert_event_count >= 0)),
+    CONSTRAINT incident_ends_after_it_starts CHECK ((last_seen_at >= first_seen_at)),
+    CONSTRAINT incident_grouping_basis_check CHECK ((grouping_basis = ANY (ARRAY[1, 2]))),
+    CONSTRAINT incident_grouping_key_check CHECK (((length(grouping_key) >= 1) AND (length(grouping_key) <= 512))),
+    CONSTRAINT incident_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT incident_resolution_is_stamped CHECK (((status = 2) = (resolved_at IS NOT NULL))),
+    CONSTRAINT incident_status_check CHECK ((status = ANY (ARRAY[1, 2]))),
+    CONSTRAINT incident_supersede_reason_check CHECK ((length(supersede_reason) <= 1024)),
+    CONSTRAINT incident_supersedes_something_else CHECK (((superseded_by IS NULL) OR (superseded_by <> incident_id))),
+    CONSTRAINT incident_supersession_is_stamped CHECK (((superseded_by IS NULL) = (superseded_at IS NULL))),
+    CONSTRAINT incident_title_check CHECK ((length(title) <= 512))
+);
+
+
+--
+-- Name: TABLE incident; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.incident IS 'One operational incident, grouped from Alert Events by the identity their own source supplied. Provisional grouping, not causal truth: revisable by a merge that rewrites nothing.';
+
+
+--
+-- Name: COLUMN incident.superseded_by; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.incident.superseded_by IS 'The incident an operator merged this one into. Both records survive; nothing is rewritten.';
+
+
+--
+-- Name: integration; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration (
+    integration_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_type_id smallint NOT NULL,
+    name text NOT NULL,
+    configuration jsonb DEFAULT '{}'::jsonb NOT NULL,
+    webhook_secret_digest bytea,
+    webhook_secret_fingerprint text,
+    webhook_secret_created_at timestamp with time zone,
+    webhook_secret_rotated_at timestamp with time zone,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    relay_id uuid,
+    status smallint DEFAULT 1 NOT NULL,
+    last_verified_at timestamp with time zone,
+    verify_note text DEFAULT ''::text NOT NULL,
+    disabled_at timestamp with time zone,
+    created_by text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    credential_sealed bytea,
+    credential_fingerprint text,
+    credential_created_at timestamp with time zone,
+    credential_rotated_at timestamp with time zone,
+    verify_grants jsonb,
+    verify_facts jsonb,
+    credential_key_id text,
+    CONSTRAINT integration_created_by_check CHECK ((length(created_by) <= 256)),
+    CONSTRAINT integration_credential_fingerprint_check CHECK (((credential_fingerprint IS NULL) OR ((length(credential_fingerprint) >= 1) AND (length(credential_fingerprint) <= 64)))),
+    CONSTRAINT integration_credential_is_whole CHECK ((((credential_sealed IS NULL) AND (credential_fingerprint IS NULL) AND (credential_created_at IS NULL)) OR ((credential_sealed IS NOT NULL) AND (credential_fingerprint IS NOT NULL) AND (credential_created_at IS NOT NULL)))),
+    CONSTRAINT integration_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT integration_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT integration_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4]))),
+    CONSTRAINT integration_verify_note_check CHECK ((length(verify_note) <= 512)),
+    CONSTRAINT integration_webhook_secret_digest_check CHECK (((webhook_secret_digest IS NULL) OR (length(webhook_secret_digest) = 32))),
+    CONSTRAINT integration_webhook_secret_fingerprint_check CHECK (((webhook_secret_fingerprint IS NULL) OR ((length(webhook_secret_fingerprint) >= 1) AND (length(webhook_secret_fingerprint) <= 64)))),
+    CONSTRAINT integration_webhook_secret_is_whole CHECK ((((webhook_secret_digest IS NULL) AND (webhook_secret_fingerprint IS NULL) AND (webhook_secret_created_at IS NULL)) OR ((webhook_secret_digest IS NOT NULL) AND (webhook_secret_fingerprint IS NOT NULL) AND (webhook_secret_created_at IS NOT NULL))))
+);
+
+
+--
+-- Name: TABLE integration; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.integration IS 'One configured installation belonging to an organization. org_id is the boundary and the Relay binding says where work runs.';
+
+
+--
+-- Name: COLUMN integration.webhook_secret_fingerprint; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.integration.webhook_secret_fingerprint IS 'A minted identity for the live webhook secret. Not derived from it: a truncated hash would let a dump confirm a guess offline.';
+
+
+--
+-- Name: COLUMN integration.credential_sealed; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.integration.credential_sealed IS 'Outbound credential, AES-256-GCM sealed under the deployment sealing key. Write-only after entry; no API returns it.';
+
+
+--
+-- Name: COLUMN integration.credential_fingerprint; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.integration.credential_fingerprint IS 'A minted identity for the live credential. Not derived from it: a derived value would let a dump confirm a guess offline.';
+
+
+--
+-- Name: COLUMN integration.verify_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.integration.verify_grants IS 'Facts the probe verified about the credential (scopes, token type); tool availability derives from them.';
+
+
+--
+-- Name: COLUMN integration.verify_facts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.integration.verify_facts IS 'Non-secret facts the probe established (account, selection, reach); for display and support, never authorization.';
+
+
+--
+-- Name: COLUMN integration.credential_key_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.integration.credential_key_id IS 'Non-secret key identifier from the credential envelope; NULL only for the version-1 compatibility envelope.';
+
+
+--
+-- Name: integration_connect_flow; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_connect_flow (
+    flow_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_type_id smallint NOT NULL,
+    principal text NOT NULL,
+    state_digest bytea NOT NULL,
+    return_to text DEFAULT '/'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT integration_connect_flow_expires_after_it_started CHECK ((expires_at > created_at)),
+    CONSTRAINT integration_connect_flow_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT integration_connect_flow_principal_check CHECK (((length(principal) >= 1) AND (length(principal) <= 256))),
+    CONSTRAINT integration_connect_flow_return_to_check CHECK ((length(return_to) <= 512)),
+    CONSTRAINT integration_connect_flow_state_digest_check CHECK ((length(state_digest) = 32))
+);
+
+
+--
+-- Name: TABLE integration_connect_flow; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.integration_connect_flow IS 'One provider installation flow in progress. Digest only; single-use; the organization it names is the authority.';
+
+
+--
+-- Name: integration_delivery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_delivery (
+    delivery_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    outcome smallint NOT NULL,
+    body_digest bytea,
+    reason text DEFAULT ''::text NOT NULL,
+    alert_event_count integer DEFAULT 0 NOT NULL,
+    truncated integer DEFAULT 0 NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT integration_delivery_accepted_carries_a_digest CHECK (((outcome <> 1) OR (body_digest IS NOT NULL))),
+    CONSTRAINT integration_delivery_alert_event_count_check CHECK ((alert_event_count >= 0)),
+    CONSTRAINT integration_delivery_body_digest_check CHECK (((body_digest IS NULL) OR (length(body_digest) = 32))),
+    CONSTRAINT integration_delivery_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT integration_delivery_outcome_check CHECK ((outcome = ANY (ARRAY[1, 2, 3]))),
+    CONSTRAINT integration_delivery_reason_check CHECK ((length(reason) <= 64)),
+    CONSTRAINT integration_delivery_states_a_reason_exactly_when_it_refused CHECK (((outcome = 3) = (reason <> ''::text))),
+    CONSTRAINT integration_delivery_truncated_check CHECK ((truncated >= 0))
+);
+
+
+--
+-- Name: TABLE integration_delivery; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.integration_delivery IS 'Every webhook delivery attempt that reached a real integration. Accepted rows are the idempotence key; the rest are the health record.';
+
+
+--
+-- Name: integration_installation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_installation (
+    integration_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_type_id smallint NOT NULL,
+    application text NOT NULL,
+    enterprise text DEFAULT ''::text NOT NULL,
+    workspace text NOT NULL,
+    enterprise_wide boolean DEFAULT false NOT NULL,
+    agent text DEFAULT ''::text NOT NULL,
+    authorizer text DEFAULT ''::text NOT NULL,
+    grants text[] DEFAULT '{}'::text[] NOT NULL,
+    expires_at timestamp with time zone,
+    refresh_sealed bytea,
+    installed_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT integration_installation_agent_check CHECK ((length(agent) <= 64)),
+    CONSTRAINT integration_installation_application_check CHECK (((length(application) >= 1) AND (length(application) <= 64))),
+    CONSTRAINT integration_installation_authorizer_check CHECK ((length(authorizer) <= 64)),
+    CONSTRAINT integration_installation_enterprise_check CHECK ((length(enterprise) <= 64)),
+    CONSTRAINT integration_installation_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT integration_installation_workspace_check CHECK (((length(workspace) >= 1) AND (length(workspace) <= 64)))
+);
+
+
+--
+-- Name: integration_type; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.integration_type (
+    integration_type_id smallint NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    logo text DEFAULT ''::text NOT NULL,
+    category text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT integration_type_category_check CHECK (((length(category) >= 1) AND (length(category) <= 64))),
+    CONSTRAINT integration_type_description_check CHECK ((length(description) <= 512)),
+    CONSTRAINT integration_type_key_check CHECK (((length(key) >= 1) AND (length(key) <= 64))),
+    CONSTRAINT integration_type_logo_check CHECK ((length(logo) <= 64)),
+    CONSTRAINT integration_type_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128)))
+);
+
+
+--
+-- Name: TABLE integration_type; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.integration_type IS 'Product-owned reference data: the kinds of tool OpenCluster supports. Seeded by migration; behavior lives in provider Go code keyed by the stable key.';
+
+
+--
+-- Name: investigation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.investigation (
+    investigation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    incident_id uuid,
+    integration_id uuid,
+    question text DEFAULT ''::text NOT NULL,
+    subject text NOT NULL,
+    window_from timestamp with time zone NOT NULL,
+    window_until timestamp with time zone NOT NULL,
+    status smallint DEFAULT 1 NOT NULL,
+    conclusion jsonb DEFAULT '{}'::jsonb NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    spend_input_tokens bigint DEFAULT 0 NOT NULL,
+    spend_output_tokens bigint DEFAULT 0 NOT NULL,
+    spend_micro_cents bigint DEFAULT 0 NOT NULL,
+    created_by text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    concluded_at timestamp with time zone,
+    stopped_by text DEFAULT ''::text NOT NULL,
+    conversation_id uuid,
+    turn smallint,
+    lease_worker text DEFAULT ''::text NOT NULL,
+    lease_expires_at timestamp with time zone,
+    lease_heartbeat_at timestamp with time zone,
+    webhook_work_id uuid,
+    cancel_requested_at timestamp with time zone,
+    cancelled_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT investigation_cancellation_is_attributed CHECK (((status = 4) = ((cancel_requested_at IS NOT NULL) AND (cancelled_by <> ''::text)))),
+    CONSTRAINT investigation_cancelled_by_check CHECK ((length(cancelled_by) <= 256)),
+    CONSTRAINT investigation_conclusion_is_stamped CHECK (((status = 1) = (concluded_at IS NULL))),
+    CONSTRAINT investigation_created_by_check CHECK ((length(created_by) <= 256)),
+    CONSTRAINT investigation_error_check CHECK ((length(error) <= 1024)),
+    CONSTRAINT investigation_failure_states_a_reason CHECK (((status = 3) = (error <> ''::text))),
+    CONSTRAINT investigation_lease_is_whole CHECK (((lease_worker = ''::text) = (lease_expires_at IS NULL))),
+    CONSTRAINT investigation_lease_worker_check CHECK ((length(lease_worker) <= 128)),
+    CONSTRAINT investigation_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT investigation_question_check CHECK ((length(question) <= 1024)),
+    CONSTRAINT investigation_spend_input_tokens_check CHECK ((spend_input_tokens >= 0)),
+    CONSTRAINT investigation_spend_micro_cents_check CHECK ((spend_micro_cents >= 0)),
+    CONSTRAINT investigation_spend_output_tokens_check CHECK ((spend_output_tokens >= 0)),
+    CONSTRAINT investigation_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4]))),
+    CONSTRAINT investigation_stop_is_a_conclusion CHECK (((stopped_by = ''::text) OR (status = 2))),
+    CONSTRAINT investigation_stopped_by_check CHECK ((length(stopped_by) <= 64)),
+    CONSTRAINT investigation_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 512))),
+    CONSTRAINT investigation_turn_belongs_to_a_conversation CHECK (((conversation_id IS NULL) = (turn IS NULL))),
+    CONSTRAINT investigation_turn_check CHECK ((turn >= 1)),
+    CONSTRAINT investigation_window_ends_after_it_starts CHECK ((window_until >= window_from))
+);
+
+
+--
+-- Name: TABLE investigation; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.investigation IS 'One investigation: trigger, subject, window, lifecycle, structured conclusion, and spend. Provenance lives beside it; no chain of thought is stored.';
+
+
+--
+-- Name: COLUMN investigation.conclusion; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.conclusion IS 'Structured conclusion: status, summary, impact, findings, hypotheses, action proposals, and limitations.';
+
+
+--
+-- Name: COLUMN investigation.stopped_by; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.stopped_by IS 'The ceiling that forced the concluding turn, empty when the model concluded freely.';
+
+
+--
+-- Name: COLUMN investigation.conversation_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.conversation_id IS 'The conversation this investigation is a turn of; NULL for a single-shot investigation.';
+
+
+--
+-- Name: COLUMN investigation.turn; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.turn IS 'This investigation''s one-based position among its conversation''s turns.';
+
+
+--
+-- Name: COLUMN investigation.lease_worker; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.lease_worker IS 'The worker executing this turn; empty when the investigation is waiting to be claimed.';
+
+
+--
+-- Name: COLUMN investigation.lease_expires_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.lease_expires_at IS 'When the claim lapses if the worker stops heartbeating. Server clock, never a worker''s.';
+
+
+--
+-- Name: COLUMN investigation.lease_heartbeat_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation.lease_heartbeat_at IS 'When the holder last said it was still working.';
+
+
+--
+-- Name: investigation_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.investigation_event (
+    investigation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    sequence bigint NOT NULL,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    type smallint NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT investigation_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT investigation_event_sequence_check CHECK ((sequence >= 1)),
+    CONSTRAINT investigation_event_type_check CHECK (((type >= 1) AND (type <= 10)))
+);
+
+
+--
+-- Name: TABLE investigation_event; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.investigation_event IS 'The ordered semantic events of one investigation, for replay and live following. Platform-composed facts only; never a model''s reasoning, a credential or a raw tool payload.';
+
+
+--
+-- Name: investigation_source; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.investigation_source (
+    investigation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    rank smallint NOT NULL,
+    reason text NOT NULL,
+    selected_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT investigation_source_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT investigation_source_rank_check CHECK ((rank >= 1)),
+    CONSTRAINT investigation_source_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 512)))
+);
+
+
+--
+-- Name: TABLE investigation_source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.investigation_source IS 'The context router''s selection, in rank order, each with the reason it was chosen.';
+
+
+--
+-- Name: investigation_tool_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.investigation_tool_run (
+    investigation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid,
+    ordinal smallint NOT NULL,
+    capability text DEFAULT ''::text NOT NULL,
+    tool text NOT NULL,
+    arguments jsonb DEFAULT '{}'::jsonb NOT NULL,
+    window_from timestamp with time zone NOT NULL,
+    window_until timestamp with time zone NOT NULL,
+    outcome smallint NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    summary text DEFAULT ''::text NOT NULL,
+    sources jsonb DEFAULT '[]'::jsonb NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    purpose text DEFAULT ''::text NOT NULL,
+    hypothesis_id text DEFAULT ''::text NOT NULL,
+    CONSTRAINT investigation_tool_run_capability_check CHECK ((length(capability) <= 128)),
+    CONSTRAINT investigation_tool_run_error_check CHECK ((length(error) <= 1024)),
+    CONSTRAINT investigation_tool_run_failure_states_a_reason CHECK (((outcome = 2) = (error <> ''::text))),
+    CONSTRAINT investigation_tool_run_ordinal_check CHECK ((ordinal >= 1)),
+    CONSTRAINT investigation_tool_run_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT investigation_tool_run_outcome_check CHECK ((outcome = ANY (ARRAY[1, 2]))),
+    CONSTRAINT investigation_tool_run_summary_check CHECK ((length(summary) <= 512)),
+    CONSTRAINT investigation_tool_run_tool_check CHECK (((length(tool) >= 1) AND (length(tool) <= 128)))
+);
+
+
+--
+-- Name: TABLE investigation_tool_run; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.investigation_tool_run IS 'Every tool execution an investigation performed, succeeded or failed alike, with its scope and what came back.';
+
+
+--
+-- Name: COLUMN investigation_tool_run.capability; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.investigation_tool_run.capability IS 'Legacy compatibility field. New writes leave it empty; Tool is the investigation operation.';
+
+
+--
+-- Name: local_password; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.local_password (
+    user_id uuid NOT NULL,
+    password_hash text NOT NULL,
+    password_changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT local_password_password_hash_check CHECK (((length(password_hash) >= 32) AND (length(password_hash) <= 512)))
+);
+
+
+--
+-- Name: TABLE local_password; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.local_password IS 'Argon2id password verifiers for local users. The encoded verifier contains versioned parameters and no recoverable password.';
+
+
+--
+-- Name: operator_session; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_session (
+    session_id uuid NOT NULL,
+    token_digest bytea NOT NULL,
+    user_id uuid NOT NULL,
+    org_id text NOT NULL,
+    issued_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    revoked_by text DEFAULT ''::text NOT NULL,
+    user_agent text DEFAULT ''::text NOT NULL,
+    address text DEFAULT ''::text NOT NULL,
+    CONSTRAINT operator_session_address_check CHECK ((length(address) <= 128)),
+    CONSTRAINT operator_session_expires_after_it_was_issued CHECK ((expires_at > issued_at)),
+    CONSTRAINT operator_session_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT operator_session_revoked_by_check CHECK ((length(revoked_by) <= 256)),
+    CONSTRAINT operator_session_token_digest_check CHECK ((length(token_digest) = 32)),
+    CONSTRAINT operator_session_user_agent_check CHECK ((length(user_agent) <= 256))
+);
+
+
+--
+-- Name: TABLE operator_session; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.operator_session IS 'A signed-in operator. Only the digest of the cookie value is held; sign-out deletes the row.';
+
+
+--
+-- Name: organization_membership; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_membership (
+    membership_id uuid NOT NULL,
+    org_id text NOT NULL,
+    user_id uuid NOT NULL,
+    role text,
+    source smallint NOT NULL,
+    external_id text,
+    active boolean DEFAULT true NOT NULL,
+    granted_by text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT organization_membership_external_id_check CHECK (((external_id IS NULL) OR ((length(external_id) >= 1) AND (length(external_id) <= 256)))),
+    CONSTRAINT organization_membership_granted_by_check CHECK ((length(granted_by) <= 256)),
+    CONSTRAINT organization_membership_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT organization_membership_role_check CHECK (((role IS NULL) OR ((length(role) >= 1) AND (length(role) <= 64)))),
+    CONSTRAINT organization_membership_source_check CHECK ((source = ANY (ARRAY[1, 2, 3])))
+);
+
+
+--
+-- Name: TABLE organization_membership; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.organization_membership IS 'Which tenant a person may see and as what. The role is on the membership, not the user.';
+
+
+--
+-- Name: organization_policy; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_policy (
+    org_id text NOT NULL,
+    session_lifetime_seconds integer DEFAULT 0 NOT NULL,
+    audit_retention_days integer DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT organization_policy_audit_retention_days_check CHECK ((audit_retention_days >= 0)),
+    CONSTRAINT organization_policy_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT organization_policy_session_lifetime_seconds_check CHECK ((session_lifetime_seconds >= 0)),
+    CONSTRAINT organization_policy_updated_by_check CHECK ((length(updated_by) <= 256))
+);
+
+
+--
+-- Name: postmortem; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.postmortem (
+    incident_id uuid NOT NULL,
+    org_id text NOT NULL,
+    status text NOT NULL,
+    revision integer NOT NULL,
+    document jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    reviewed_at timestamp with time zone,
+    reviewed_by text DEFAULT ''::text NOT NULL,
+    CONSTRAINT postmortem_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT postmortem_review_is_stamped CHECK (((status = 'reviewed'::text) = (reviewed_at IS NOT NULL))),
+    CONSTRAINT postmortem_reviewed_by_check CHECK ((length(reviewed_by) <= 256)),
+    CONSTRAINT postmortem_revision_check CHECK ((revision >= 1)),
+    CONSTRAINT postmortem_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'reviewed'::text])))
+);
+
+
+--
+-- Name: relay_bootstrap_token; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.relay_bootstrap_token (
+    token_digest bytea NOT NULL,
+    org_id text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT relay_bootstrap_token_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT relay_bootstrap_token_token_digest_check CHECK ((length(token_digest) = 32))
+);
+
+
+--
+-- Name: TABLE relay_bootstrap_token; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.relay_bootstrap_token IS 'Single-use enrolment tokens, stored as digests. Consumption and issuance commit together.';
+
+
+--
+-- Name: relay_job; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.relay_job (
+    job_id uuid NOT NULL,
+    org_id text NOT NULL,
+    registration_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    capability_id text NOT NULL,
+    capability_version integer NOT NULL,
+    arguments bytea NOT NULL,
+    status smallint DEFAULT 0 NOT NULL,
+    lease_session uuid,
+    lease_epoch bigint DEFAULT 0 NOT NULL,
+    lease_expires_at timestamp with time zone,
+    cancel_requested_at timestamp with time zone,
+    result bytea,
+    terminal_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    investigation_id uuid,
+    CONSTRAINT relay_job_lease_is_whole CHECK ((((lease_session IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_session IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
+    CONSTRAINT relay_job_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT relay_job_status_check CHECK (((status >= 0) AND (status <= 4))),
+    CONSTRAINT relay_job_terminal_is_stamped CHECK (((status = ANY (ARRAY[2, 3, 4])) = (terminal_at IS NOT NULL)))
+);
+
+
+--
+-- Name: TABLE relay_job; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.relay_job IS 'Durable job truth. Leases are server-clock and fenced by (lease_session, lease_epoch).';
+
+
+--
+-- Name: COLUMN relay_job.lease_epoch; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.relay_job.lease_epoch IS 'Generation of the current lease. A result echoing an older generation is refused, never recorded.';
+
+
+--
+-- Name: relay_registration; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.relay_registration (
+    registration_id uuid NOT NULL,
+    org_id text NOT NULL,
+    credential_digest bytea NOT NULL,
+    cluster_fingerprint text NOT NULL,
+    relay_version text NOT NULL,
+    capabilities jsonb NOT NULL,
+    revoked_at timestamp with time zone,
+    session_conflict_at timestamp with time zone,
+    session_conflict_hosts integer DEFAULT 0 NOT NULL,
+    session_id uuid,
+    session_started_at timestamp with time zone,
+    session_ended_at timestamp with time zone,
+    last_seen_at timestamp with time zone,
+    session_peer text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT relay_registration_credential_digest_check CHECK ((length(credential_digest) = 32)),
+    CONSTRAINT relay_registration_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT relay_registration_session_peer_check CHECK (((session_peer IS NULL) OR (length(session_peer) <= 256)))
+);
+
+
+--
+-- Name: TABLE relay_registration; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.relay_registration IS 'Durable relay identities. The credential is returned once at enrolment and never read back.';
+
+
+--
+-- Name: relay_session_conflict_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.relay_session_conflict_event (
+    event_id bigint NOT NULL,
+    org_id text NOT NULL,
+    registration_id uuid NOT NULL,
+    kind smallint NOT NULL,
+    distinct_hosts integer DEFAULT 0 NOT NULL,
+    withdrawn_from text,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT relay_session_conflict_event_actor_belongs_to_a_withdrawal CHECK (((kind = 2) OR (withdrawn_from IS NULL))),
+    CONSTRAINT relay_session_conflict_event_distinct_hosts_check CHECK ((distinct_hosts >= 0)),
+    CONSTRAINT relay_session_conflict_event_kind_check CHECK ((kind = ANY (ARRAY[1, 2]))),
+    CONSTRAINT relay_session_conflict_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128)))
+);
+
+
+--
+-- Name: TABLE relay_session_conflict_event; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.relay_session_conflict_event IS 'Append-only trail of contested relay identities and of the withdrawals that acknowledged them.';
+
+
+--
+-- Name: relay_session_conflict_event_event_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.relay_session_conflict_event ALTER COLUMN event_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.relay_session_conflict_event_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: slack_conversation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.slack_conversation (
+    conversation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    channel_id text NOT NULL,
+    thread_ts text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT slack_conversation_channel_id_check CHECK (((length(channel_id) >= 1) AND (length(channel_id) <= 64))),
+    CONSTRAINT slack_conversation_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT slack_conversation_thread_ts_check CHECK (((length(thread_ts) >= 1) AND (length(thread_ts) <= 64)))
+);
+
+
+--
+-- Name: slack_reply; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.slack_reply (
+    investigation_id uuid NOT NULL,
+    org_id text NOT NULL,
+    integration_id uuid NOT NULL,
+    conversation_id uuid NOT NULL,
+    channel_id text NOT NULL,
+    thread_ts text NOT NULL,
+    stream_ts text DEFAULT ''::text NOT NULL,
+    native boolean DEFAULT false NOT NULL,
+    status smallint DEFAULT 1 NOT NULL,
+    last_sequence bigint DEFAULT 0 NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    leased_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT slack_reply_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT slack_reply_channel_id_check CHECK (((length(channel_id) >= 1) AND (length(channel_id) <= 64))),
+    CONSTRAINT slack_reply_last_sequence_check CHECK ((last_sequence >= 0)),
+    CONSTRAINT slack_reply_note_check CHECK ((length(note) <= 512)),
+    CONSTRAINT slack_reply_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT slack_reply_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4]))),
+    CONSTRAINT slack_reply_stream_ts_check CHECK ((length(stream_ts) <= 64)),
+    CONSTRAINT slack_reply_thread_ts_check CHECK (((length(thread_ts) >= 1) AND (length(thread_ts) <= 64)))
+);
+
+
+--
+-- Name: TABLE slack_reply; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.slack_reply IS 'Outbound delivery of one investigation into one Slack thread. Its cursor only moves forward, so a retry appends what was missed rather than reposting what was seen. A failure here is never a failure of the investigation.';
+
+
+--
+-- Name: webhook_work; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.webhook_work (
+    work_id uuid NOT NULL,
+    org_id text NOT NULL,
+    kind smallint NOT NULL,
+    status smallint DEFAULT 1 NOT NULL,
+    delivery_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    incident_id uuid,
+    conversation_id uuid,
+    message_sequence bigint,
+    attempts smallint DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_owner text DEFAULT ''::text NOT NULL,
+    lease_epoch bigint DEFAULT 0 NOT NULL,
+    lease_expires_at timestamp with time zone,
+    failure_class text DEFAULT ''::text NOT NULL,
+    failure_message text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT webhook_work_attempts_check CHECK (((attempts >= 0) AND (attempts <= 12))),
+    CONSTRAINT webhook_work_failure_class_check CHECK ((length(failure_class) <= 64)),
+    CONSTRAINT webhook_work_failure_matches_retry_or_terminal CHECK ((((status = ANY (ARRAY[3, 4])) AND (failure_class <> ''::text)) OR ((status <> ALL (ARRAY[3, 4])) AND (failure_class = ''::text)))),
+    CONSTRAINT webhook_work_failure_message_check CHECK ((length(failure_message) <= 512)),
+    CONSTRAINT webhook_work_has_one_effect_reference CHECK ((((kind = 1) AND (incident_id IS NOT NULL) AND (conversation_id IS NULL) AND (message_sequence IS NULL)) OR ((kind = 2) AND (incident_id IS NULL) AND (conversation_id IS NOT NULL) AND (message_sequence IS NOT NULL)))),
+    CONSTRAINT webhook_work_kind_check CHECK ((kind = ANY (ARRAY[1, 2]))),
+    CONSTRAINT webhook_work_lease_epoch_check CHECK ((lease_epoch >= 0)),
+    CONSTRAINT webhook_work_lease_is_complete CHECK (((status = 2) = ((lease_owner <> ''::text) AND (lease_expires_at IS NOT NULL)))),
+    CONSTRAINT webhook_work_lease_owner_check CHECK ((length(lease_owner) <= 128)),
+    CONSTRAINT webhook_work_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT webhook_work_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4, 5])))
+);
+
+
+--
+-- Name: alert_event alert_event_incident_is_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_event
+    ADD CONSTRAINT alert_event_incident_is_unique UNIQUE (integration_id, source_key, started_at);
+
+
+--
+-- Name: alert_event alert_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_event
+    ADD CONSTRAINT alert_event_pkey PRIMARY KEY (alert_event_id);
+
+
+--
+-- Name: app_user app_user_identity_is_the_issuer_and_subject; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_user
+    ADD CONSTRAINT app_user_identity_is_the_issuer_and_subject UNIQUE (issuer, subject);
+
+
+--
+-- Name: app_user app_user_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_user
+    ADD CONSTRAINT app_user_pkey PRIMARY KEY (user_id);
+
+
+--
+-- Name: audit_event audit_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_event
+    ADD CONSTRAINT audit_event_pkey PRIMARY KEY (event_id);
+
+
+--
+-- Name: change_ledger change_ledger_entry_is_unique_per_observation; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.change_ledger
+    ADD CONSTRAINT change_ledger_entry_is_unique_per_observation UNIQUE (integration_id, object_uid, observed_revision);
+
+
+--
+-- Name: change_ledger change_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.change_ledger
+    ADD CONSTRAINT change_ledger_pkey PRIMARY KEY (entry_id);
+
+
+--
+-- Name: change_ledger_scope change_ledger_scope_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.change_ledger_scope
+    ADD CONSTRAINT change_ledger_scope_pkey PRIMARY KEY (integration_id);
+
+
+--
+-- Name: conversation conversation_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation
+    ADD CONSTRAINT conversation_identity_is_org_scoped UNIQUE (org_id, conversation_id);
+
+
+--
+-- Name: conversation_message conversation_message_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation_message
+    ADD CONSTRAINT conversation_message_pkey PRIMARY KEY (org_id, conversation_id, sequence);
+
+
+--
+-- Name: conversation conversation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation
+    ADD CONSTRAINT conversation_pkey PRIMARY KEY (conversation_id);
+
+
+--
+-- Name: conversation_summary conversation_summary_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation_summary
+    ADD CONSTRAINT conversation_summary_pkey PRIMARY KEY (org_id, conversation_id, version);
+
+
+--
+-- Name: deployment_sign_in_flow deployment_sign_in_flow_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_sign_in_flow
+    ADD CONSTRAINT deployment_sign_in_flow_pkey PRIMARY KEY (flow_id);
+
+
+--
+-- Name: deployment_sign_in_flow deployment_sign_in_flow_state_digest_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_sign_in_flow
+    ADD CONSTRAINT deployment_sign_in_flow_state_digest_key UNIQUE (state_digest);
+
+
+--
+-- Name: incident incident_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident
+    ADD CONSTRAINT incident_identity_is_org_scoped UNIQUE (org_id, incident_id);
+
+
+--
+-- Name: incident incident_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident
+    ADD CONSTRAINT incident_pkey PRIMARY KEY (incident_id);
+
+
+--
+-- Name: integration_connect_flow integration_connect_flow_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_connect_flow
+    ADD CONSTRAINT integration_connect_flow_pkey PRIMARY KEY (flow_id);
+
+
+--
+-- Name: integration_connect_flow integration_connect_flow_state_is_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_connect_flow
+    ADD CONSTRAINT integration_connect_flow_state_is_unique UNIQUE (state_digest);
+
+
+--
+-- Name: integration_delivery integration_delivery_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_delivery
+    ADD CONSTRAINT integration_delivery_identity_is_org_scoped UNIQUE (org_id, delivery_id);
+
+
+--
+-- Name: integration_delivery integration_delivery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_delivery
+    ADD CONSTRAINT integration_delivery_pkey PRIMARY KEY (delivery_id);
+
+
+--
+-- Name: integration integration_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration
+    ADD CONSTRAINT integration_identity_is_org_scoped UNIQUE (org_id, integration_id);
+
+
+--
+-- Name: integration_installation integration_installation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_installation
+    ADD CONSTRAINT integration_installation_pkey PRIMARY KEY (integration_id);
+
+
+--
+-- Name: integration integration_name_is_unique_per_org; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration
+    ADD CONSTRAINT integration_name_is_unique_per_org UNIQUE (org_id, name);
+
+
+--
+-- Name: integration integration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration
+    ADD CONSTRAINT integration_pkey PRIMARY KEY (integration_id);
+
+
+--
+-- Name: integration_type integration_type_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_type
+    ADD CONSTRAINT integration_type_key_key UNIQUE (key);
+
+
+--
+-- Name: integration_type integration_type_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_type
+    ADD CONSTRAINT integration_type_pkey PRIMARY KEY (integration_type_id);
+
+
+--
+-- Name: investigation_event investigation_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_event
+    ADD CONSTRAINT investigation_event_pkey PRIMARY KEY (investigation_id, sequence);
+
+
+--
+-- Name: investigation investigation_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_identity_is_org_scoped UNIQUE (org_id, investigation_id);
+
+
+--
+-- Name: investigation investigation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_pkey PRIMARY KEY (investigation_id);
+
+
+--
+-- Name: investigation_source investigation_source_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_source
+    ADD CONSTRAINT investigation_source_pkey PRIMARY KEY (investigation_id, integration_id);
+
+
+--
+-- Name: investigation_tool_run investigation_tool_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_tool_run
+    ADD CONSTRAINT investigation_tool_run_pkey PRIMARY KEY (investigation_id, ordinal);
+
+
+--
+-- Name: investigation investigation_turn_is_unique_in_its_conversation; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_turn_is_unique_in_its_conversation UNIQUE (org_id, conversation_id, turn);
+
+
+--
+-- Name: local_password local_password_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.local_password
+    ADD CONSTRAINT local_password_pkey PRIMARY KEY (user_id);
+
+
+--
+-- Name: operator_session operator_session_digest_is_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_session
+    ADD CONSTRAINT operator_session_digest_is_unique UNIQUE (token_digest);
+
+
+--
+-- Name: operator_session operator_session_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_session
+    ADD CONSTRAINT operator_session_pkey PRIMARY KEY (session_id);
+
+
+--
+-- Name: organization_membership organization_membership_is_one_per_tenant; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_membership
+    ADD CONSTRAINT organization_membership_is_one_per_tenant UNIQUE (org_id, user_id);
+
+
+--
+-- Name: organization_membership organization_membership_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_membership
+    ADD CONSTRAINT organization_membership_pkey PRIMARY KEY (membership_id);
+
+
+--
+-- Name: organization_policy organization_policy_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_policy
+    ADD CONSTRAINT organization_policy_pkey PRIMARY KEY (org_id);
+
+
+--
+-- Name: postmortem postmortem_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postmortem
+    ADD CONSTRAINT postmortem_pkey PRIMARY KEY (org_id, incident_id);
+
+
+--
+-- Name: relay_bootstrap_token relay_bootstrap_token_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_bootstrap_token
+    ADD CONSTRAINT relay_bootstrap_token_pkey PRIMARY KEY (token_digest);
+
+
+--
+-- Name: relay_job relay_job_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_job
+    ADD CONSTRAINT relay_job_pkey PRIMARY KEY (job_id);
+
+
+--
+-- Name: relay_registration relay_registration_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_registration
+    ADD CONSTRAINT relay_registration_identity_is_org_scoped UNIQUE (org_id, registration_id);
+
+
+--
+-- Name: relay_registration relay_registration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_registration
+    ADD CONSTRAINT relay_registration_pkey PRIMARY KEY (registration_id);
+
+
+--
+-- Name: relay_session_conflict_event relay_session_conflict_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_session_conflict_event
+    ADD CONSTRAINT relay_session_conflict_event_pkey PRIMARY KEY (event_id);
+
+
+--
+-- Name: slack_conversation slack_conversation_is_one_thread; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_conversation
+    ADD CONSTRAINT slack_conversation_is_one_thread UNIQUE (integration_id, channel_id, thread_ts);
+
+
+--
+-- Name: slack_conversation slack_conversation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_conversation
+    ADD CONSTRAINT slack_conversation_pkey PRIMARY KEY (conversation_id);
+
+
+--
+-- Name: slack_reply slack_reply_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_reply
+    ADD CONSTRAINT slack_reply_pkey PRIMARY KEY (investigation_id);
+
+
+--
+-- Name: webhook_work webhook_work_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_work
+    ADD CONSTRAINT webhook_work_identity_is_org_scoped UNIQUE (org_id, work_id);
+
+
+--
+-- Name: webhook_work webhook_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_work
+    ADD CONSTRAINT webhook_work_pkey PRIMARY KEY (work_id);
+
+
+--
+-- Name: alert_event_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_event_incident_idx ON public.alert_event USING btree (incident_id, started_at DESC);
+
+
+--
+-- Name: alert_event_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_event_org_idx ON public.alert_event USING btree (org_id, received_at DESC);
+
+
+--
+-- Name: alert_event_source_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_event_source_key_idx ON public.alert_event USING btree (integration_id, source_key, started_at DESC);
+
+
+--
+-- Name: app_user_email_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_user_email_idx ON public.app_user USING btree (lower(email));
+
+
+--
+-- Name: audit_event_actor_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_event_actor_idx ON public.audit_event USING btree (org_id, actor_id, occurred_at DESC);
+
+
+--
+-- Name: audit_event_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_event_org_idx ON public.audit_event USING btree (org_id, occurred_at DESC, event_id DESC);
+
+
+--
+-- Name: audit_event_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_event_target_idx ON public.audit_event USING btree (org_id, target_kind, target_id, occurred_at DESC);
+
+
+--
+-- Name: change_ledger_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX change_ledger_retention_idx ON public.change_ledger USING btree (org_id, received_at);
+
+
+--
+-- Name: change_ledger_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX change_ledger_window_idx ON public.change_ledger USING btree (integration_id, namespace, observed_at);
+
+
+--
+-- Name: conversation_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX conversation_incident_idx ON public.conversation USING btree (incident_id) WHERE (incident_id IS NOT NULL);
+
+
+--
+-- Name: conversation_message_queued_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX conversation_message_queued_idx ON public.conversation_message USING btree (org_id, conversation_id, sequence) WHERE (investigation_id IS NULL);
+
+
+--
+-- Name: conversation_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX conversation_org_idx ON public.conversation USING btree (org_id, last_activity_at DESC, conversation_id DESC);
+
+
+--
+-- Name: deployment_sign_in_flow_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_sign_in_flow_expiry ON public.deployment_sign_in_flow USING btree (expires_at);
+
+
+--
+-- Name: incident_open_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX incident_open_key_idx ON public.incident USING btree (integration_id, grouping_key) WHERE (status = 1);
+
+
+--
+-- Name: incident_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_org_idx ON public.incident USING btree (org_id, last_seen_at DESC, incident_id DESC);
+
+
+--
+-- Name: integration_connect_flow_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_connect_flow_expiry_idx ON public.integration_connect_flow USING btree (expires_at);
+
+
+--
+-- Name: integration_delivery_accepted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_delivery_accepted_idx ON public.integration_delivery USING btree (integration_id, received_at DESC) WHERE (outcome = 1);
+
+
+--
+-- Name: integration_delivery_accepted_is_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_delivery_accepted_is_unique ON public.integration_delivery USING btree (integration_id, body_digest) WHERE (outcome = 1);
+
+
+--
+-- Name: integration_delivery_integration_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_delivery_integration_idx ON public.integration_delivery USING btree (org_id, integration_id, received_at DESC, delivery_id DESC);
+
+
+--
+-- Name: integration_installation_is_one_workspace; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX integration_installation_is_one_workspace ON public.integration_installation USING btree (integration_type_id, application, enterprise, workspace);
+
+
+--
+-- Name: integration_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_org_idx ON public.integration USING btree (org_id, created_at DESC);
+
+
+--
+-- Name: integration_relay_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX integration_relay_idx ON public.integration USING btree (org_id, relay_id) WHERE (relay_id IS NOT NULL);
+
+
+--
+-- Name: investigation_claimable_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX investigation_claimable_idx ON public.investigation USING btree (org_id, created_at, investigation_id) WHERE (status = 1);
+
+
+--
+-- Name: investigation_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX investigation_incident_idx ON public.investigation USING btree (incident_id) WHERE (incident_id IS NOT NULL);
+
+
+--
+-- Name: investigation_lease_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX investigation_lease_expiry_idx ON public.investigation USING btree (lease_expires_at) WHERE ((status = 1) AND (lease_worker <> ''::text));
+
+
+--
+-- Name: investigation_one_running_per_conversation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX investigation_one_running_per_conversation ON public.investigation USING btree (org_id, conversation_id) WHERE ((conversation_id IS NOT NULL) AND (status = 1));
+
+
+--
+-- Name: investigation_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX investigation_org_idx ON public.investigation USING btree (org_id, created_at DESC, investigation_id DESC);
+
+
+--
+-- Name: investigation_webhook_work_is_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX investigation_webhook_work_is_unique ON public.investigation USING btree (org_id, webhook_work_id) WHERE (webhook_work_id IS NOT NULL);
+
+
+--
+-- Name: operator_session_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_session_expiry_idx ON public.operator_session USING btree (expires_at);
+
+
+--
+-- Name: operator_session_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_session_user_idx ON public.operator_session USING btree (user_id, issued_at DESC);
+
+
+--
+-- Name: organization_membership_external_id_is_unique_per_org; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX organization_membership_external_id_is_unique_per_org ON public.organization_membership USING btree (org_id, external_id) WHERE (external_id IS NOT NULL);
+
+
+--
+-- Name: organization_membership_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX organization_membership_org_idx ON public.organization_membership USING btree (org_id, created_at DESC);
+
+
+--
+-- Name: organization_membership_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX organization_membership_user_idx ON public.organization_membership USING btree (user_id);
+
+
+--
+-- Name: relay_job_active_investigation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX relay_job_active_investigation_idx ON public.relay_job USING btree (org_id, investigation_id) WHERE ((investigation_id IS NOT NULL) AND (status = ANY (ARRAY[0, 1])));
+
+
+--
+-- Name: relay_job_claimable_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX relay_job_claimable_idx ON public.relay_job USING btree (org_id, registration_id, status, lease_expires_at) WHERE (status = ANY (ARRAY[0, 1]));
+
+
+--
+-- Name: relay_registration_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX relay_registration_org_idx ON public.relay_registration USING btree (org_id, created_at DESC);
+
+
+--
+-- Name: relay_registration_presence_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX relay_registration_presence_idx ON public.relay_registration USING btree (org_id, last_seen_at DESC);
+
+
+--
+-- Name: relay_session_conflict_event_registration_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX relay_session_conflict_event_registration_idx ON public.relay_session_conflict_event USING btree (org_id, registration_id, event_id DESC);
+
+
+--
+-- Name: slack_conversation_by_thread; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX slack_conversation_by_thread ON public.slack_conversation USING btree (integration_id, channel_id, thread_ts);
+
+
+--
+-- Name: slack_reply_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX slack_reply_due ON public.slack_reply USING btree (next_attempt_at, investigation_id) WHERE (status = ANY (ARRAY[1, 2]));
+
+
+--
+-- Name: webhook_work_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX webhook_work_ready_idx ON public.webhook_work USING btree (available_at, created_at, work_id) WHERE (status = ANY (ARRAY[1, 2, 3]));
+
+
+--
+-- Name: webhook_work_source_effect_is_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX webhook_work_source_effect_is_unique ON public.webhook_work USING btree (org_id, kind, delivery_id, COALESCE(incident_id, conversation_id), COALESCE(message_sequence, (0)::bigint));
+
+
+--
+-- Name: webhook_work_terminal_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX webhook_work_terminal_idx ON public.webhook_work USING btree (org_id, updated_at DESC, work_id DESC) WHERE (status = 4);
+
+
+--
+-- Name: audit_event audit_event_refuses_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER audit_event_refuses_delete BEFORE DELETE ON public.audit_event FOR EACH STATEMENT EXECUTE FUNCTION public.audit_event_is_append_only();
+
+
+--
+-- Name: audit_event audit_event_refuses_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER audit_event_refuses_truncate BEFORE TRUNCATE ON public.audit_event FOR EACH STATEMENT EXECUTE FUNCTION public.audit_event_is_append_only();
+
+
+--
+-- Name: audit_event audit_event_refuses_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER audit_event_refuses_update BEFORE UPDATE ON public.audit_event FOR EACH STATEMENT EXECUTE FUNCTION public.audit_event_is_append_only();
+
+
+--
+-- Name: alert_event alert_event_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_event
+    ADD CONSTRAINT alert_event_incident_id_fkey FOREIGN KEY (incident_id) REFERENCES public.incident(incident_id);
+
+
+--
+-- Name: alert_event alert_event_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_event
+    ADD CONSTRAINT alert_event_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: change_ledger change_ledger_integration_is_in_the_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.change_ledger
+    ADD CONSTRAINT change_ledger_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: change_ledger_scope change_ledger_scope_integration_is_in_the_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.change_ledger_scope
+    ADD CONSTRAINT change_ledger_scope_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: conversation conversation_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation
+    ADD CONSTRAINT conversation_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
+
+
+--
+-- Name: conversation_message conversation_message_belongs_to_its_conversation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation_message
+    ADD CONSTRAINT conversation_message_belongs_to_its_conversation FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: conversation_message conversation_message_names_an_org_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation_message
+    ADD CONSTRAINT conversation_message_names_an_org_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id);
+
+
+--
+-- Name: conversation_summary conversation_summary_belongs_to_its_conversation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conversation_summary
+    ADD CONSTRAINT conversation_summary_belongs_to_its_conversation FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident incident_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident
+    ADD CONSTRAINT incident_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: incident incident_superseded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident
+    ADD CONSTRAINT incident_superseded_by_fkey FOREIGN KEY (superseded_by) REFERENCES public.incident(incident_id);
+
+
+--
+-- Name: integration_connect_flow integration_connect_flow_integration_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_connect_flow
+    ADD CONSTRAINT integration_connect_flow_integration_type_id_fkey FOREIGN KEY (integration_type_id) REFERENCES public.integration_type(integration_type_id);
+
+
+--
+-- Name: integration_delivery integration_delivery_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_delivery
+    ADD CONSTRAINT integration_delivery_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
+
+
+--
+-- Name: integration_installation integration_installation_integration_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_installation
+    ADD CONSTRAINT integration_installation_integration_type_id_fkey FOREIGN KEY (integration_type_id) REFERENCES public.integration_type(integration_type_id);
+
+
+--
+-- Name: integration_installation integration_installation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration_installation
+    ADD CONSTRAINT integration_installation_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
+
+
+--
+-- Name: integration integration_integration_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration
+    ADD CONSTRAINT integration_integration_type_id_fkey FOREIGN KEY (integration_type_id) REFERENCES public.integration_type(integration_type_id);
+
+
+--
+-- Name: integration integration_relay_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.integration
+    ADD CONSTRAINT integration_relay_is_in_the_same_org FOREIGN KEY (org_id, relay_id) REFERENCES public.relay_registration(org_id, registration_id);
+
+
+--
+-- Name: investigation investigation_conversation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_conversation_is_in_the_same_org FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id);
+
+
+--
+-- Name: investigation_event investigation_event_belongs_to_its_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_event
+    ADD CONSTRAINT investigation_event_belongs_to_its_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: investigation investigation_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
+
+
+--
+-- Name: investigation investigation_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: investigation_source investigation_source_belongs_to_its_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_source
+    ADD CONSTRAINT investigation_source_belongs_to_its_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: investigation_source investigation_source_names_an_org_integration; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_source
+    ADD CONSTRAINT investigation_source_names_an_org_integration FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: investigation_tool_run investigation_tool_run_belongs_to_its_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_tool_run
+    ADD CONSTRAINT investigation_tool_run_belongs_to_its_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: investigation_tool_run investigation_tool_run_names_an_org_integration; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation_tool_run
+    ADD CONSTRAINT investigation_tool_run_names_an_org_integration FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: investigation investigation_webhook_work_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investigation
+    ADD CONSTRAINT investigation_webhook_work_is_in_the_same_org FOREIGN KEY (org_id, webhook_work_id) REFERENCES public.webhook_work(org_id, work_id);
+
+
+--
+-- Name: local_password local_password_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.local_password
+    ADD CONSTRAINT local_password_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_user(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: operator_session operator_session_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_session
+    ADD CONSTRAINT operator_session_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_user(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: organization_membership organization_membership_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_membership
+    ADD CONSTRAINT organization_membership_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_user(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: postmortem postmortem_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postmortem
+    ADD CONSTRAINT postmortem_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
+
+
+--
+-- Name: relay_job relay_job_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_job
+    ADD CONSTRAINT relay_job_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: relay_job relay_job_investigation_belongs_to_organization; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_job
+    ADD CONSTRAINT relay_job_investigation_belongs_to_organization FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: relay_job relay_job_relay_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relay_job
+    ADD CONSTRAINT relay_job_relay_is_in_the_same_org FOREIGN KEY (org_id, registration_id) REFERENCES public.relay_registration(org_id, registration_id);
+
+
+--
+-- Name: slack_conversation slack_conversation_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_conversation
+    ADD CONSTRAINT slack_conversation_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
+
+
+--
+-- Name: slack_conversation slack_conversation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_conversation
+    ADD CONSTRAINT slack_conversation_is_in_the_same_org FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: slack_reply slack_reply_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_reply
+    ADD CONSTRAINT slack_reply_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
+
+
+--
+-- Name: slack_reply slack_reply_investigation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.slack_reply
+    ADD CONSTRAINT slack_reply_investigation_is_in_the_same_org FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: webhook_work webhook_work_delivery_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_work
+    ADD CONSTRAINT webhook_work_delivery_is_in_the_same_org FOREIGN KEY (org_id, delivery_id) REFERENCES public.integration_delivery(org_id, delivery_id) ON DELETE CASCADE;
+
+
+--
+-- Name: webhook_work webhook_work_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_work
+    ADD CONSTRAINT webhook_work_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
+
+
+--
+-- Name: webhook_work webhook_work_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_work
+    ADD CONSTRAINT webhook_work_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
+
+
+--
+-- Name: webhook_work webhook_work_message_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_work
+    ADD CONSTRAINT webhook_work_message_is_in_the_same_org FOREIGN KEY (org_id, conversation_id, message_sequence) REFERENCES public.conversation_message(org_id, conversation_id, sequence);
+
+
+--
+--
+
+
+
+-- Product-owned Integration Type reference data.
+--
+--
+
+
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+INSERT INTO public.integration_type
+    (integration_type_id, key, name, description, logo, category)
+VALUES
+    (1, 'alertmanager', 'Prometheus Alertmanager', 'Create incidents from firing and resolved Alertmanager alerts delivered through an authenticated webhook.', 'alertmanager', 'alerting'),
+    (2, 'kubernetes', 'Kubernetes', 'Give investigations read-only access to Kubernetes workload runtime, namespace events, and bounded container logs through an outbound Relay.', 'kubernetes', 'infrastructure'),
+    (3, 'slack', 'Slack', 'Give investigations read-only access to Slack conversations visible to the connected token and reply to direct app mentions in their original thread.', 'slack', 'collaboration'),
+    (4, 'github', 'GitHub', 'Give investigations read-only access to selected repositories for commits, pull requests, CI failures, files, and releases.', 'github', 'source-control');

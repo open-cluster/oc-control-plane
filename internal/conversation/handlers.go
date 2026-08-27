@@ -11,11 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/describe"
-	"github.com/open-cluster/oc-control-plane/internal/table"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -34,8 +33,8 @@ type Handlers struct {
 	// turns them on; every route answers 404 while they are, so a deployment that has not
 	// enabled them does not advertise a surface it does not serve.
 	Enabled bool
-	// WindowLead is how far before an episode began a turn's window reaches back, and how
-	// far back a turn with no episode looks.
+	// WindowLead is how far before an incident began a turn's window reaches back, and how
+	// far back a turn with no incident looks.
 	WindowLead time.Duration
 	// MaxWaitingTurns bounds an organization's unclaimed turns. Opening past it is
 	// refused with a plain reason, which is what keeps the queue a queue rather than a
@@ -46,7 +45,7 @@ type Handlers struct {
 
 // Routes is this capability's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
-	const base = "/operator/v1/organizations/{organization}/conversations"
+	const base = "/api/v1/organizations/{organization}/conversations"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.ConversationRead,
@@ -78,36 +77,12 @@ const SurfaceName = "conversations"
 // the same reason the ROUTES are: the contract of a surface does not change with the
 // switch, only whether it is reachable, and a document that changed shape with
 // configuration would be one nobody could review.
-func (h Handlers) Describe() describe.Contribution {
-	const base = "/operator/v1/organizations/{organization}/conversations"
-
-	return describe.Contribution{
-		Surfaces: []describe.Surface{{
-			Name:    SurfaceName,
-			Enabled: h.Enabled,
-			Note: "A Conversation is a durable thread a person talks to, holding its own " +
-				"messages and the investigations opened from them. Where it is off, the " +
-				"conversation routes answer 404 and an investigation is opened directly.",
-		}},
-		Listings: []describe.Listing{
-			{Route: http.MethodGet + " " + base, Spec: listSpec},
-		},
-		Bodies: []describe.Body{
-			{Route: http.MethodPost + " " + base, Example: openRequest{}},
-			{
-				Route:   http.MethodPost + " " + base + "/{conversation}/messages",
-				Example: sayRequest{},
-			},
-		},
-	}
-}
-
-// openRequest starts a conversation: a subject, optionally the episode it is about, and
+// openRequest starts a conversation: a subject, optionally the incident it is about, and
 // optionally the first thing to say.
 type openRequest struct {
-	EpisodeID string `json:"episodeId"`
-	Subject   string `json:"subject"`
-	Message   string `json:"message"`
+	IncidentID string `json:"incidentId"`
+	Subject    string `json:"subject"`
+	Message    string `json:"message"`
 }
 
 // open records a conversation and, when the request carried a first message, opens its
@@ -123,15 +98,15 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	episodeID := uuid.Nil
-	if trimmed := strings.TrimSpace(asked.EpisodeID); trimmed != "" {
+	incidentID := uuid.Nil
+	if trimmed := strings.TrimSpace(asked.IncidentID); trimmed != "" {
 		parsed, err := uuid.Parse(trimmed)
 		if err != nil {
 			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "episodeId is not an identity"})
+				errorView{Error: "incidentId is not an identity"})
 			return
 		}
-		episodeID = parsed
+		incidentID = parsed
 	}
 
 	subject := strings.TrimSpace(asked.Subject)
@@ -153,10 +128,10 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	defer cancel()
 
 	opened, err := h.Store.OpenConversation(ctx, principal, organization, NewConversation{
-		EpisodeID: episodeID,
-		Surface:   SurfaceWeb,
-		Subject:   subject,
-		CreatedBy: principal.ID(),
+		IncidentID: incidentID,
+		Surface:    SurfaceWeb,
+		Subject:    subject,
+		CreatedBy:  principal.ID(),
 	})
 	if err != nil {
 		h.fail(writer, request, err)
@@ -284,7 +259,7 @@ var listSpec = table.Spec{
 	Searchable:  true,
 	Sortable:    []string{"lastActivityAt"},
 	DefaultSort: table.Sort{Field: "lastActivityAt", Descending: true},
-	Filters:     []string{"episodeId", "state"},
+	Filters:     []string{"incidentId", "state"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -306,14 +281,14 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	page := Page{Limit: parsed.Limit, After: parsed.Cursor, Search: parsed.Search}
-	if episode := parsed.Filter("episodeId"); episode != "" {
-		id, parseErr := uuid.Parse(episode)
+	if incident := parsed.Filter("incidentId"); incident != "" {
+		id, parseErr := uuid.Parse(incident)
 		if parseErr != nil {
 			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "episodeId is not an identity"})
+				errorView{Error: "incidentId is not an identity"})
 			return
 		}
-		page.Episode = id
+		page.Incident = id
 	}
 	switch parsed.Filter("state") {
 	case "":
@@ -426,8 +401,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "conversation not found"})
-	case errors.Is(err, ErrEpisodeUnknown):
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "episode not found"})
+	case errors.Is(err, ErrIncidentUnknown):
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
 	case errors.Is(err, ErrClosed):
 		writeJSON(writer, http.StatusConflict, errorView{
 			Error: "this conversation is closed; open a new one"})

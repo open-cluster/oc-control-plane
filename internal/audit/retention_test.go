@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // What the pruner does with what a tenant declared.
 //
-// The database is not the seam here — internal/storage asserts that a row leaves only through the
+// The database is not the seam here — internal/store/postgres asserts that a row leaves only through the
 // declaring transaction. What this asserts is the policy above it: which horizon each tenant's
 // days resolve to, that a backlog is worked through in bounded batches rather than one, and that
 // one tenant's failure does not silently suspend everybody else's schedule.

@@ -30,7 +30,8 @@ var buildRoot string
 // The two halves, each compiled at most once however many tests ask for them.
 var (
 	controlPlaneBinary = sync.OnceValues(func() (string, error) {
-		return build("controlplane", controlPlaneSource(), "./cmd/controlplane")
+		return build("controlplane-e2e", filepath.Join(controlPlaneSource(), "test", "e2e"),
+			"./cmd/controlplane-e2e")
 	})
 	relayBinary = sync.OnceValues(func() (string, error) {
 		source, err := relaySource()

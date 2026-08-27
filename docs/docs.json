@@ -34,7 +34,14 @@
         "pages": [
           "investigations/investigate-an-incident",
           "investigations/ask-follow-up-questions",
-          "investigations/findings-and-citations"
+          "investigations/findings-and-citations",
+          "investigations/review-a-postmortem"
+        ]
+      },
+      {
+        "group": "API reference",
+        "pages": [
+          "api-reference/overview"
         ]
       },
       {

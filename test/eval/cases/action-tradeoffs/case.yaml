@@ -1,0 +1,7 @@
+name: action-tradeoffs
+revision: "1"
+situation: A rollback mitigates customer impact quickly, while a permanent concurrency fix is slower and riskier; the response must separate them and verify each action.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true

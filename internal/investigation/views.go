@@ -22,13 +22,15 @@ type clarificationView struct {
 }
 
 type findingView struct {
+	ID        string `json:"id"`
 	Statement string `json:"statement"`
 	// Kind is the finding's causal role and Confidence its categorical certainty.
 	// Absent on findings concluded before the vocabulary existed.
 	Kind       string `json:"kind,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
+	Mechanism  string `json:"mechanism,omitempty"`
 	// Sources are one-based ordinals among the investigation's runs.
-	Sources []int `json:"sources"`
+	RunRefs []int `json:"runRefs"`
 }
 
 type spendView struct {
@@ -38,20 +40,22 @@ type spendView struct {
 }
 
 type investigationView struct {
-	ID            string `json:"id"`
-	Status        string `json:"status"`
-	Subject       string `json:"subject"`
-	Question      string `json:"question,omitempty"`
-	EpisodeID     string `json:"episodeId,omitempty"`
-	IntegrationID string `json:"integrationId,omitempty"`
-	WindowFrom    string `json:"windowFrom"`
-	WindowUntil   string `json:"windowUntil"`
-	// Answer is the direct reply in the operator's own words, absent when the
-	// conclusion carried none. The findings still carry the claims.
-	Answer   string        `json:"answer,omitempty"`
-	Findings []findingView `json:"findings"`
-	// NextSteps are the conclusion's recommended actions, absent when it carried none.
-	NextSteps []string `json:"nextSteps,omitempty"`
+	ID                        string             `json:"id"`
+	Status                    string             `json:"status"`
+	Subject                   string             `json:"subject"`
+	Question                  string             `json:"question,omitempty"`
+	IncidentID                string             `json:"incidentId,omitempty"`
+	IntegrationID             string             `json:"integrationId,omitempty"`
+	WindowFrom                string             `json:"windowFrom"`
+	WindowUntil               string             `json:"windowUntil"`
+	ConclusionStatus          ConclusionStatus   `json:"conclusionStatus,omitempty"`
+	Summary                   string             `json:"summary,omitempty"`
+	Impact                    ImpactAssessment   `json:"impact"`
+	Findings                  []findingView      `json:"findings"`
+	Hypotheses                []HypothesisResult `json:"hypotheses"`
+	Actions                   []ActionProposal   `json:"actions"`
+	Limitations               []Limitation       `json:"limitations"`
+	HumanConfirmationRequired bool               `json:"humanConfirmationRequired"`
 	// StoppedBy labels a conclusion a ceiling forced — "spend", "tool_runs",
 	// "reasoner_turns", "wall_clock", "stagnation", "context" — so a stopped
 	// investigation never renders as a free diagnosis. Absent when the model concluded
@@ -75,6 +79,8 @@ type runView struct {
 	Ordinal       int            `json:"ordinal"`
 	IntegrationID string         `json:"integrationId,omitempty"`
 	Tool          string         `json:"tool"`
+	Purpose       string         `json:"purpose,omitempty"`
+	HypothesisID  string         `json:"hypothesisId,omitempty"`
 	Arguments     map[string]any `json:"arguments,omitempty"`
 	WindowFrom    string         `json:"windowFrom"`
 	WindowUntil   string         `json:"windowUntil"`
@@ -103,22 +109,34 @@ type activityView struct {
 }
 
 func investigationViewOf(found Investigation) investigationView {
-	findings := make([]findingView, 0, len(found.Findings))
-	for _, finding := range found.Findings {
-		findings = append(findings, findingView(finding))
+	findings := make([]findingView, 0, len(found.Conclusion.Findings))
+	for _, finding := range found.Conclusion.Findings {
+		findings = append(findings, findingView{
+			ID: finding.ID, Statement: finding.Statement, Kind: finding.Kind,
+			Confidence: finding.Confidence, Mechanism: finding.Mechanism, RunRefs: finding.Sources,
+		})
+	}
+	humanConfirmationRequired := false
+	for _, action := range found.Conclusion.Actions {
+		humanConfirmationRequired = humanConfirmationRequired || action.RequiresApproval
+	}
+	for _, limitation := range found.Conclusion.Limitations {
+		humanConfirmationRequired = humanConfirmationRequired || limitation.Type == LimitationEssentialHumanInput
 	}
 	view := investigationView{
-		ID:          found.ID.String(),
-		Status:      found.Status.String(),
-		Subject:     found.Subject,
-		Question:    found.Question,
-		WindowFrom:  stamp(found.WindowFrom),
-		WindowUntil: stamp(found.WindowUntil),
-		Answer:      found.Answer,
-		Findings:    findings,
-		NextSteps:   found.NextSteps,
-		StoppedBy:   found.StoppedBy,
-		Error:       found.Error,
+		ID:               found.ID.String(),
+		Status:           publicStatus(found),
+		Subject:          found.Subject,
+		Question:         found.Question,
+		WindowFrom:       stamp(found.WindowFrom),
+		WindowUntil:      stamp(found.WindowUntil),
+		ConclusionStatus: found.Conclusion.Status,
+		Summary:          found.Conclusion.Summary, Impact: found.Conclusion.Impact,
+		Findings: findings, Hypotheses: found.Conclusion.Hypotheses,
+		Actions: found.Conclusion.Actions, Limitations: found.Conclusion.Limitations,
+		HumanConfirmationRequired: humanConfirmationRequired,
+		StoppedBy:                 found.StoppedBy,
+		Error:                     found.Error,
 		Spend: spendView{
 			InputTokens:  found.Spend.InputTokens,
 			OutputTokens: found.Spend.OutputTokens,
@@ -127,8 +145,8 @@ func investigationViewOf(found Investigation) investigationView {
 		CreatedBy: found.CreatedBy,
 		CreatedAt: stamp(found.CreatedAt),
 	}
-	if found.EpisodeID != uuid.Nil {
-		view.EpisodeID = found.EpisodeID.String()
+	if found.IncidentID != uuid.Nil {
+		view.IncidentID = found.IncidentID.String()
 	}
 	if found.IntegrationID != uuid.Nil {
 		view.IntegrationID = found.IntegrationID.String()
@@ -137,6 +155,32 @@ func investigationViewOf(found Investigation) investigationView {
 		view.ConcludedAt = stamp(found.ConcludedAt)
 	}
 	return view
+}
+
+func publicStatus(found Investigation) string {
+	switch found.Status {
+	case StatusRunning:
+		if found.Executing {
+			return "investigating"
+		}
+		return "queued"
+	case StatusConcluded:
+		for _, limitation := range found.Conclusion.Limitations {
+			if limitation.Type == LimitationEssentialHumanInput {
+				return "needs_input"
+			}
+		}
+		if found.StoppedBy != "" || found.Conclusion.Status == Inconclusive {
+			return "partial"
+		}
+		return "concluded"
+	case StatusCancelled:
+		return "cancelled"
+	case StatusFailed:
+		return "failed"
+	default:
+		return "unrecognised"
+	}
 }
 
 func detailViewOf(found Investigation, sources []Source, runs []ToolRun) detailView {
@@ -155,18 +199,20 @@ func detailViewOf(found Investigation, sources []Source, runs []ToolRun) detailV
 	}
 	for _, run := range runs {
 		rendered := runView{
-			Ordinal:     run.Ordinal,
-			Tool:        run.Tool,
-			Arguments:   run.Arguments,
-			WindowFrom:  stamp(run.WindowFrom),
-			WindowUntil: stamp(run.WindowUntil),
-			Outcome:     outcomeWord(run.Outcome),
-			Truncated:   run.Truncated,
-			Summary:     run.Summary,
-			Sources:     run.Sources,
-			Error:       run.Error,
-			StartedAt:   stamp(run.StartedAt),
-			FinishedAt:  stamp(run.FinishedAt),
+			Ordinal:      run.Ordinal,
+			Tool:         run.Tool,
+			Purpose:      run.Purpose,
+			HypothesisID: run.HypothesisID,
+			Arguments:    run.Arguments,
+			WindowFrom:   stamp(run.WindowFrom),
+			WindowUntil:  stamp(run.WindowUntil),
+			Outcome:      outcomeWord(run.Outcome),
+			Truncated:    run.Truncated,
+			Summary:      run.Summary,
+			Sources:      run.Sources,
+			Error:        run.Error,
+			StartedAt:    stamp(run.StartedAt),
+			FinishedAt:   stamp(run.FinishedAt),
 		}
 		if run.IntegrationID != uuid.Nil {
 			rendered.IntegrationID = run.IntegrationID.String()

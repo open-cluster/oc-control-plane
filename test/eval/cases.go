@@ -42,7 +42,9 @@ func LoadCases(now time.Time) ([]Case, error) {
 			DistractorSlackToken:   metadata.DistractorSlackToken,
 			DistractorInstallation: metadata.DistractorInstallation,
 			FailCommits:            metadata.FailCommits, MoreHistory: metadata.MoreHistory,
-			MoreCommits: metadata.MoreCommits,
+			MoreCommits:              metadata.MoreCommits,
+			RequireHypothesisUpdates: metadata.RequireHypothesisUpdates,
+			GeneratePostmortem:       metadata.GeneratePostmortem,
 		}
 		var alert alertFixture
 		if err := decodeOptionalJSON(fixture.Name, "alert.json", &alert); err != nil {

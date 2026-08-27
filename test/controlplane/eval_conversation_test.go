@@ -16,7 +16,7 @@ import (
 // against the same conversation, and what the conversation established at the start is
 // still there after the message tail has advanced.
 
-// A PEACETIME QUESTION, END TO END. No alert, no episode: a person asks something and the
+// A PEACETIME QUESTION, END TO END. No alert, no incident: a person asks something and the
 // plane answers it from what it can read.
 func TestAPeacetimeQuestionIsAnsweredFromWhatWasRead(t *testing.T) {
 	one := evalCaseNamed(t, evalCases(time.Now().UTC()),
@@ -29,7 +29,7 @@ func TestAPeacetimeQuestionIsAnsweredFromWhatWasRead(t *testing.T) {
 				Arguments: map[string]any{"channel": "C2"}},
 		}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
 		{Conclusion: &investigation.Conclusion{
-			Answer: "payments is running v2.14.1 in production; it was deployed 20 " +
+			Summary: "payments is running v2.14.1 in production; it was deployed 20 " +
 				"minutes ago, superseding v2.13.9.",
 			Findings: []investigation.Finding{{
 				Statement:  "the deploys channel announced payments v2.14.1 to production",
@@ -98,17 +98,17 @@ func TestAFactEstablishedFirstSurvivesToTheEndOfALongConversation(t *testing.T) 
 			}},
 		},
 		conclusion: investigation.Conclusion{
-			Answer: "commit abc123 was deployed to payments shortly before the latency " +
+			Summary: "commit abc123 was deployed to payments shortly before the latency " +
 				"rose, raising the connection pool timeout from 2s to 30s.",
 			Findings: []investigation.Finding{{
 				Statement: "the deploys channel records commit abc123 going to " +
 					"production, raising the payments connection pool timeout from 2s " +
 					"to 30s",
-				Kind:       investigation.FindingTriggeringChange,
+				Kind:       investigation.FindingTrigger,
 				Confidence: investigation.ConfidenceConfirmed,
 				Sources:    []int{2},
 			}},
-			NextSteps: []string{"confirm the pool timeout against the running config"},
+			Actions: []investigation.ActionProposal{{Title: "confirm the pool timeout against the running config"}},
 		},
 	}
 	// The reads are on the early turns, while the thread is still short enough for a turn
@@ -191,7 +191,7 @@ func (m *memoryScript) Next(
 // answering is a turn that reads nothing and replies. What it can say is what the brief
 // still carries.
 func answering(answer string) *memoryScript {
-	return &memoryScript{conclusion: investigation.Conclusion{Answer: answer}}
+	return &memoryScript{conclusion: investigation.Conclusion{Summary: answer}}
 }
 
 // observing is a turn that reads the deploy channel and states what it found there.
@@ -217,7 +217,7 @@ func observing(statements ...string) *memoryScript {
 			Arguments: map[string]any{"channel": "C2"},
 		}}}},
 		conclusion: investigation.Conclusion{
-			Answer: statements[0], Findings: findings,
+			Summary: statements[0], Findings: findings,
 		},
 	}
 }
@@ -253,7 +253,7 @@ func TestAnOwnershipQuestionIsAnsweredFromCodeowners(t *testing.T) {
 				"repositoryId": float64(101), "path": "CODEOWNERS"}},
 		}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
 		{Conclusion: &investigation.Conclusion{
-			Answer: "@acme-corp/payments-platform owns the payments service; CODEOWNERS " +
+			Summary: "@acme-corp/payments-platform owns the payments service; CODEOWNERS " +
 				"assigns /payments/ to that team.",
 			Findings: []investigation.Finding{{
 				Statement: "CODEOWNERS in acme-corp/payments assigns /payments/ to " +
@@ -298,7 +298,7 @@ func TestAChangeQuestionIsAnsweredWithTheCommitAndItsAuthor(t *testing.T) {
 				Arguments: map[string]any{"repositoryId": float64(101)}},
 		}, Spend: investigation.Spend{InputTokens: 100, OutputTokens: 10, MicroCents: 5}},
 		{Conclusion: &investigation.Conclusion{
-			Answer: "the pool configuration last changed in commit abc123, which raised " +
+			Summary: "the pool configuration last changed in commit abc123, which raised " +
 				"connect_timeout to 30s; kai-dev authored it.",
 			Findings: []investigation.Finding{{
 				Statement: "commit abc123 by kai-dev changed config/pool.yaml, raising " +

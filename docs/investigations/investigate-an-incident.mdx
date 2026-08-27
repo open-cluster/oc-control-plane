@@ -42,14 +42,20 @@ Check the outcome first:
 
 | Outcome | Meaning |
 | --- | --- |
-| `concluded` | The investigation finished. It may still contain unresolved leads or no findings. |
-| Concluded with a limit | The result is partial. The record names the spend, read, turn, time, or progress limit. |
+| `queued` | The immutable Investigation is waiting for a worker lease. |
+| `investigating` | A worker holds the lease and is gathering evidence. |
+| `needs_input` | Essential information is unavailable through connected Tools; a reply opens a new turn. |
+| `concluded` | The investigation finished without a forced limit. |
+| `partial` | A limit fired or the result remained inconclusive without requiring human input. |
 | `failed` | The investigation could not produce a valid conclusion. The record gives the reason. |
 | `cancelled` | An authorized operator stopped the investigation. Its existing activity remains available and no further reads are started. |
 
-Then review findings in causal order, open their cited reads, and check whether any
-result was truncated or failed. Treat next steps as recommendations for an operator to
-evaluate; OpenCluster does not execute them.
+Then review impact, findings, hypotheses, actions, and limitations. Open each cited read
+and check whether any result was truncated or failed. Treat every action as a proposal;
+OpenCluster does not execute it, and state-changing proposals require human approval.
 
 See [Understand findings and citations](/investigations/findings-and-citations) for the
 meaning of finding types, confidence, and citations.
+
+After the Incident resolves, continue with
+[Review a postmortem](/investigations/review-a-postmortem).

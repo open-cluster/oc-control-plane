@@ -16,13 +16,13 @@ type errorView struct {
 }
 
 type conversationView struct {
-	ID        string `json:"id"`
-	Subject   string `json:"subject"`
-	Surface   string `json:"surface"`
-	State     string `json:"state"`
-	EpisodeID string `json:"episodeId,omitempty"`
-	CreatedBy string `json:"createdBy,omitempty"`
-	CreatedAt string `json:"createdAt"`
+	ID         string `json:"id"`
+	Subject    string `json:"subject"`
+	Surface    string `json:"surface"`
+	State      string `json:"state"`
+	IncidentID string `json:"incidentId,omitempty"`
+	CreatedBy  string `json:"createdBy,omitempty"`
+	CreatedAt  string `json:"createdAt"`
 	// LastActivityAt is what the listing is ordered by, so a client rendering the order
 	// can render the reason for it.
 	LastActivityAt string `json:"lastActivityAt"`
@@ -93,8 +93,8 @@ func conversationViewOf(found Conversation) conversationView {
 		CreatedAt:      stamp(found.CreatedAt),
 		LastActivityAt: stamp(found.LastActivityAt),
 	}
-	if found.EpisodeID != uuid.Nil {
-		view.EpisodeID = found.EpisodeID.String()
+	if found.IncidentID != uuid.Nil {
+		view.IncidentID = found.IncidentID.String()
 	}
 	return view
 }

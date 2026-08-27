@@ -30,7 +30,7 @@ Add the receiver to Alertmanager and route a test alert to it:
 receivers:
   - name: opencluster
     webhook_configs:
-      - url: "https://oc.example.com/intake/v1/integrations/<integration-id>/signals"
+      - url: "https://oc.example.com/webhooks/v1/integrations/<integration-id>/alert-events"
         http_config:
           http_headers:
             X-OpenCluster-Token:

@@ -1,6 +1,6 @@
 // Package conversation owns the multi-turn context a person talks to: an
 // organization-scoped record holding the messages said in it, optionally about one
-// incident episode, and the investigations its turns opened.
+// incident incident, and the investigations its turns opened.
 //
 // What it deliberately does NOT own is the investigation. A turn opens one, and one is
 // exactly what it always was — a bounded answer with its own offered sources, tool runs,
@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // Surface is where the person is talking from. Persisted as the integer in the column;
@@ -123,8 +123,8 @@ var (
 	// answer for a conversation belonging to another tenant too: a caller must not learn
 	// that an identifier exists somewhere they cannot reach.
 	ErrUnknown = errors.New("conversation unknown")
-	// ErrEpisodeUnknown reports an episode this organization does not have.
-	ErrEpisodeUnknown = errors.New("episode unknown")
+	// ErrIncidentUnknown reports an incident this organization does not have.
+	ErrIncidentUnknown = errors.New("incident unknown")
 	// ErrClosed reports a message sent to a conversation that has been closed.
 	ErrClosed = errors.New("conversation closed")
 	// ErrBadCursor reports a page position that did not come from a previous response.
@@ -138,16 +138,16 @@ var (
 type Conversation struct {
 	ID    uuid.UUID
 	OrgID string
-	// EpisodeID is the incident episode this conversation is about, zero when it names
-	// none. Several conversations may name one episode — two people narrowing the same
-	// incident separately is what that is for — and they share only what the episode
+	// IncidentID is the incident incident this conversation is about, zero when it names
+	// none. Several conversations may name one incident — two people narrowing the same
+	// incident separately is what that is for — and they share only what the incident
 	// itself holds, never each other's messages.
-	EpisodeID uuid.UUID
-	Surface   Surface
-	Subject   string
-	State     State
-	CreatedBy string
-	CreatedAt time.Time
+	IncidentID uuid.UUID
+	Surface    Surface
+	Subject    string
+	State      State
+	CreatedBy  string
+	CreatedAt  time.Time
 	// LastActivityAt is what the listing orders by. A conversation is found by when it
 	// last moved, not by when it was opened.
 	LastActivityAt time.Time
@@ -200,10 +200,10 @@ type Turn struct {
 
 // NewConversation is what an open records.
 type NewConversation struct {
-	EpisodeID uuid.UUID
-	Surface   Surface
-	Subject   string
-	CreatedBy string
+	IncidentID uuid.UUID
+	Surface    Surface
+	Subject    string
+	CreatedBy  string
 }
 
 // NewMessage is one thing to say.
@@ -236,9 +236,9 @@ type Page struct {
 	After string
 	// Search narrows by subject, case-insensitively. Empty means no narrowing.
 	Search string
-	// Episode narrows to the conversations about one incident episode, which is how two
+	// Incident narrows to the conversations about one incident incident, which is how two
 	// people looking at the same incident find each other's. Zero means no narrowing.
-	Episode uuid.UUID
+	Incident uuid.UUID
 	// State narrows to open or closed conversations. Zero means either.
 	State State
 }
@@ -285,8 +285,8 @@ type Store interface {
 	// messages stay queued and the drain at the running turn's terminal takes them up.
 	// It is also false when nothing is queued, which a drain finding an empty queue is.
 	//
-	// lead is how far before the episode began the turn's window reaches back. A
-	// conversation naming no episode gets a window of that length ending now.
+	// lead is how far before the incident began the turn's window reaches back. A
+	// conversation naming no incident gets a window of that length ending now.
 	OpenTurn(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		lead time.Duration) (Turn, bool, error)
 	// WaitingTurns counts this organization's turns that are open and unclaimed. It is

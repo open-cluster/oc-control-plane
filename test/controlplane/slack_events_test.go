@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
@@ -41,31 +42,23 @@ type slackEventPlane struct {
 	dsn    string
 }
 
-func startSlackEventPlane(t *testing.T, vendor *vendorFake, live bool) *slackEventPlane {
+func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 	t.Helper()
 
 	operatorAddress := freeAddress(t)
 	intakeAddress := operatorAddress
 	var dsn string
-	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
-		cfg.IntakeAddress = intakeAddress
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.SlackAPIURL = vendor.URL
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = slackSigningSecret
 		cfg.OperatorPublicURL = "http://" + operatorAddress
-		if live {
-			// The staged rollout gate, which is deployment configuration and not tenant
-			// policy: it says "we are not offering this yet", and it is deleted when the
-			// surface is generally available.
-			cfg.SlackAgentOrganizations = []string{surfaceOrg}
-		}
 		dsn = cfg.DatabaseDSN
-	})
+	}, app.Options{SlackAPIURL: vendor.URL})
 	return &slackEventPlane{
 		integrationPlane: &integrationPlane{controlPlane: plane, operator: operatorAddress},
 		intake:           intakeAddress,
@@ -215,7 +208,7 @@ func (p *slackEventPlane) connectWorkspace(t *testing.T) {
 func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	status, answer := plane.deliverEvent(t,
@@ -242,7 +235,7 @@ func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 func TestSlackEvents_ADirectMessageDoesNotOpenAConversation(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	body := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER","team_id":"T0ACME",` +
@@ -260,7 +253,7 @@ func TestSlackEvents_ADirectMessageDoesNotOpenAConversation(t *testing.T) {
 func TestSlackEvents_AcceptedMentionRecordsAuditedSourceProvenance(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	if status, answer := plane.deliverEvent(t,
@@ -307,7 +300,7 @@ func TestSlackEvents_AcceptedMentionRecordsAuditedSourceProvenance(t *testing.T)
 func TestSlackEvents_AFailedPermalinkLookupDoesNotBlockTheAcceptedQuestion(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 	vendor.accept("xoxb-a-token-the-installation-does-not-hold")
 
@@ -356,7 +349,7 @@ func TestSlackEvents_AFailedPermalinkLookupDoesNotBlockTheAcceptedQuestion(t *te
 func TestSlackEvents_AThreadIsOneConversationHoweverManyPeopleSpeak(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	if status, answer := plane.deliverEvent(t, mention(
@@ -389,7 +382,7 @@ func TestSlackEvents_AThreadIsOneConversationHoweverManyPeopleSpeak(t *testing.T
 func TestSlackEvents_TheSameDeliveryTwiceIsOneQuestion(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	body := mention("<@U0BOT> what happened?", "C0INCIDENTS", "1700000001.1", "", "U9SRE")
@@ -409,7 +402,7 @@ func TestSlackEvents_TheSameDeliveryTwiceIsOneQuestion(t *testing.T) {
 func TestSlackEvents_AForgedOrReplayedRequestIsRefused(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	body := mention("<@U0BOT> what happened?", "C0INCIDENTS", "1700000001.1", "", "U9SRE")
@@ -452,7 +445,7 @@ func TestSlackEvents_AForgedOrReplayedRequestIsRefused(t *testing.T) {
 func TestSlackEvents_AnUnknownWorkspaceIsRefusedWithoutDisclosure(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	stranger := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER",` +
@@ -477,7 +470,7 @@ func TestSlackEvents_AnUnknownWorkspaceIsRefusedWithoutDisclosure(t *testing.T) 
 // nothing, and it must work before any installation exists.
 func TestSlackEvents_TheURLVerificationChallengeIsAnsweredAndCreatesNothing(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 
 	status, answer := plane.deliverEvent(t,
 		`{"type":"url_verification","challenge":"3eZbrw1aB2Cc3","token":"legacy"}`)
@@ -503,7 +496,7 @@ func TestSlackEvents_TheURLVerificationChallengeIsAnsweredAndCreatesNothing(t *t
 func TestSlackEvents_OpenClusterDoesNotAnswerItself(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	// The bot's own user id, which the installation recorded when the workspace was
@@ -518,32 +511,13 @@ func TestSlackEvents_OpenClusterDoesNotAnswerItself(t *testing.T) {
 	}
 }
 
-// Outside the staged rollout an event is acknowledged and dropped. Acknowledged, because
-// anything Slack is not told succeeded is retried, and a storm of retries for something this
-// deployment is deliberately not doing is a storm it asked for.
-func TestSlackEvents_OutsideTheRolloutAnEventIsAcknowledgedAndDropped(t *testing.T) {
-	vendor := newVendorFake(t, "xoxb-installed-token")
-	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, false)
-	plane.connectWorkspace(t)
-
-	status, answer := plane.deliverEvent(t,
-		mention("<@U0BOT> are you there?", "C0INCIDENTS", "1700000001.1", "", "U9SRE"))
-	if status != http.StatusOK {
-		t.Fatalf("an event outside the rollout answered %d: %s", status, answer)
-	}
-	if found := plane.conversationsIn(t); len(found) != 0 {
-		t.Errorf("an organization outside the rollout got %+v", found)
-	}
-}
-
 // A deployment that holds no signing secret does not serve the endpoint at all. An endpoint
 // that exists and refuses is a configuration to check; one that does not exist is a
 // deployment nobody asked to receive events.
 func TestSlackEvents_ADeploymentWithNoSigningSecretServesNoEndpoint(t *testing.T) {
 	intakeAddress := freeAddress(t)
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.IntakeAddress = intakeAddress
+		cfg.HTTPAddress = intakeAddress
 		cfg.SlackSigningSecret = ""
 	})
 
@@ -560,7 +534,7 @@ func TestSlackEvents_ADeploymentWithNoSigningSecretServesNoEndpoint(t *testing.T
 func TestSlackEvents_AcknowledgementIsFastEnoughForSlack(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
-	plane := startSlackEventPlane(t, vendor, true)
+	plane := startSlackEventPlane(t, vendor)
 	plane.connectWorkspace(t)
 
 	began := time.Now()

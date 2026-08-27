@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // THE EVENT STREAM — what a reader sees while an investigation runs.
@@ -39,6 +39,7 @@ const (
 	EventFailed
 	EventCompacted
 	EventCancelled
+	EventHypothesesUpdated
 )
 
 func (t EventType) String() string {
@@ -61,6 +62,8 @@ func (t EventType) String() string {
 		return "compacted"
 	case EventCancelled:
 		return "cancelled"
+	case EventHypothesesUpdated:
+		return "hypotheses_updated"
 	default:
 		return "unrecognised"
 	}
@@ -293,12 +296,19 @@ func startedPayload(opened Investigation, sources int, executing bool) map[strin
 // arguments are the call's own scope, normalized: a person watching wants to know it is
 // reading #deploys and not #random.
 func toolStartedPayload(run ToolRun, integration string) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"ordinal":       run.Ordinal,
 		"tool":          bounded(run.Tool, eventTextBound),
 		"integrationId": integration,
 		"arguments":     run.Arguments,
 	}
+	if run.Purpose != "" {
+		payload["purpose"] = bounded(run.Purpose, eventTextBound)
+	}
+	if run.HypothesisID != "" {
+		payload["hypothesisId"] = bounded(run.HypothesisID, eventTextBound)
+	}
+	return payload
 }
 
 // toolCompletedPayload says what came back, in one line, using the provider's OWN summary
@@ -344,14 +354,22 @@ func progressPayload(text string) map[string]any {
 	return map[string]any{"text": bounded(text, eventTextBound)}
 }
 
+func hypothesesUpdatedPayload(hypotheses []HypothesisResult) map[string]any {
+	return map[string]any{
+		"version":    HypothesisSnapshotVersion,
+		"hypotheses": hypotheses,
+	}
+}
+
 // concludedPayload is the ending a reader stops on: the direct answer, how much was
 // established, and the ceiling that forced it if one did.
 func concludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
 	payload := map[string]any{
+		"status":   conclusion.Status,
 		"findings": len(conclusion.Findings),
 	}
-	if conclusion.Answer != "" {
-		payload["answer"] = bounded(conclusion.Answer, eventTextBound)
+	if conclusion.Summary != "" {
+		payload["summary"] = bounded(conclusion.Summary, eventTextBound)
 	}
 	if stoppedBy != "" {
 		payload["stoppedBy"] = stoppedBy
@@ -378,4 +396,4 @@ func answerDeltaPayload(text string, final bool) map[string]any {
 
 // maxAnswerDeltaBound lets one delta carry the whole answer, since today's providers
 // deliver it at once.
-const maxAnswerDeltaBound = MaxAnswerLength
+const maxAnswerDeltaBound = MaxSummaryLength

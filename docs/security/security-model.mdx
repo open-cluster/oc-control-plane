@@ -37,7 +37,7 @@ thread as a direct mention. It does not write to GitHub or Kubernetes, send unso
 Slack messages, or run recommended remediation steps.
 
 Alertmanager is the intentional inbound exception: an authenticated webhook creates
-signals and updates incidents in OpenCluster. A Kubernetes Relay also sends inventory
+alertEvents and updates incidents in OpenCluster. A Kubernetes Relay also sends inventory
 and change records outbound from the cluster to OpenCluster.
 
 ## Untrusted source content

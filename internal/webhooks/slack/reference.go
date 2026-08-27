@@ -7,8 +7,8 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	providerslack "github.com/open-cluster/oc-control-plane/internal/integrations/slack"
-	"github.com/open-cluster/oc-control-plane/internal/seal"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type ReferenceStore interface {

@@ -9,11 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/describe"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/table"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type OperatorHandlers struct {
@@ -28,7 +27,7 @@ var terminalWorkSpec = table.Spec{
 }
 
 func (h OperatorHandlers) Routes() authz.Table {
-	const base = "/operator/v1/organizations/{organization}/webhook-work/terminal"
+	const base = "/api/v1/organizations/{organization}/webhook-work/terminal"
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.InvestigationRead,
 			http.HandlerFunc(h.listTerminal)),
@@ -39,20 +38,13 @@ func (h OperatorHandlers) Routes() authz.Table {
 	}
 }
 
-func (h OperatorHandlers) Describe() describe.Contribution {
-	return describe.Contribution{Listings: []describe.Listing{{
-		Route: http.MethodGet + " /operator/v1/organizations/{organization}/webhook-work/terminal",
-		Spec:  terminalWorkSpec,
-	}}}
-}
-
 type workView struct {
 	ID              string `json:"id"`
 	Kind            string `json:"kind"`
 	Status          string `json:"status"`
 	DeliveryID      string `json:"deliveryId"`
 	IntegrationID   string `json:"integrationId"`
-	EpisodeID       string `json:"episodeId,omitempty"`
+	IncidentID      string `json:"incidentId,omitempty"`
 	ConversationID  string `json:"conversationId,omitempty"`
 	MessageSequence int64  `json:"messageSequence,omitempty"`
 	Attempts        int    `json:"attempts"`
@@ -70,8 +62,8 @@ func viewOfWork(work storage.WebhookWork) workView {
 		FailureClass:    work.FailureClass, FailureMessage: work.FailureMessage,
 		CreatedAt: work.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: work.UpdatedAt.UTC().Format(time.RFC3339)}
-	if work.EpisodeID != uuid.Nil {
-		view.EpisodeID = work.EpisodeID.String()
+	if work.IncidentID != uuid.Nil {
+		view.IncidentID = work.IncidentID.String()
 	}
 	if work.ConversationID != uuid.Nil {
 		view.ConversationID = work.ConversationID.String()

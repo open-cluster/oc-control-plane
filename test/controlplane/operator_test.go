@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
@@ -34,7 +35,7 @@ func TestOperatorSurface(t *testing.T) {
 
 	// Long enough that the configuration accepts it, which is itself the point: a token short
 	// enough to guess is the same as no token on a cross-tenant surface.
-	const token = "operator-token-for-the-surface-under-test"
+	const bootstrapToken = surfaceToken
 
 	operatorAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
@@ -42,8 +43,8 @@ func TestOperatorSurface(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		cfg.OperatorAddress = operatorAddress
-		digest := sha256.Sum256([]byte(token))
+		cfg.HTTPAddress = operatorAddress
+		digest := sha256.Sum256([]byte(bootstrapToken))
 		cfg.OperatorTokenDigest = digest[:]
 		// The credential names the one tenant it reaches. That binding is the whole difference
 		// between it and the shared token it replaces, and the last case in this test asserts
@@ -51,13 +52,14 @@ func TestOperatorSurface(t *testing.T) {
 		cfg.OperatorTokenOrganization = organization
 		databaseDSN = cfg.DatabaseDSN
 	})
+	token := plane.sessionCookie
 
 	connection := dialRelay(t, relayAddress)
 	relay := registerRelay(t, connection, databaseDSN, organization)
 	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	base := "http://" + operatorAddress + "/operator/v1/organizations/" + organization
+	base := "http://" + operatorAddress + "/api/v1/organizations/" + organization
 
 	var refusals []string
 	t.Run("nothing is served without the token", func(t *testing.T) {
@@ -302,7 +304,7 @@ func TestOperatorSurface(t *testing.T) {
 
 	t.Run("an organization this deployment does not serve is not found", func(t *testing.T) {
 		status, _ := operatorRequest(t, http.MethodGet,
-			"http://"+operatorAddress+"/operator/v1/organizations/org-nowhere/relays", token)
+			"http://"+operatorAddress+"/api/v1/organizations/org-nowhere/relays", token)
 		if status != http.StatusNotFound {
 			t.Errorf("an unserved organization returned %d, want 404", status)
 		}
@@ -326,7 +328,7 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 	t.Run("a token file is required when the surface is enabled", func(t *testing.T) {
 		t.Parallel()
 		_, err := config.Load(environment(t, map[string]string{
-			config.EnvOperatorAddress: address,
+			config.EnvHTTPAddress: address,
 		}))
 		if err == nil {
 			t.Fatal("the operator surface started with no token; it reads across every tenant")
@@ -339,30 +341,11 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 	t.Run("a token too short to matter is refused", func(t *testing.T) {
 		t.Parallel()
 		_, err := config.Load(environment(t, map[string]string{
-			config.EnvOperatorAddress:   address,
+			config.EnvHTTPAddress:       address,
 			config.EnvOperatorTokenFile: secretFile(t, "token", "short"),
 		}))
 		if err == nil {
 			t.Fatal("a guessable token was accepted")
-		}
-	})
-
-	// The credential is bound to ONE organization, and that binding is required rather than
-	// defaulted. A deployment whose scope was inferred would get the ambient root credential
-	// this slice exists to replace, and the deployment that would get it is the one that did
-	// not think about it.
-	t.Run("a token that names no organization is refused", func(t *testing.T) {
-		t.Parallel()
-		_, err := config.Load(environment(t, map[string]string{
-			config.EnvOperatorAddress:   address,
-			config.EnvOperatorTokenFile: secretFile(t, "token", "a-token-long-enough-to-be-worth-something"),
-		}))
-		if err == nil {
-			t.Fatal("a credential with no organization was accepted; it would reach every tenant")
-		}
-		if !strings.Contains(err.Error(), config.EnvOperatorTokenOrganization) {
-			t.Errorf("the failure does not name %s: %v",
-				config.EnvOperatorTokenOrganization, err)
 		}
 	})
 
@@ -371,9 +354,8 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		const token = "a-token-long-enough-to-be-worth-something"
 
 		cfg, err := config.Load(environment(t, map[string]string{
-			config.EnvOperatorAddress:           address,
-			config.EnvOperatorTokenFile:         secretFile(t, "token", token),
-			config.EnvOperatorTokenOrganization: "org-a",
+			config.EnvHTTPAddress:       address,
+			config.EnvOperatorTokenFile: secretFile(t, "token", token),
 		}))
 		if err != nil {
 			t.Fatalf("loading: %v", err)
@@ -382,8 +364,8 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		if string(cfg.OperatorTokenDigest) != string(digest[:]) {
 			t.Error("the configured digest does not match the token in the file")
 		}
-		if cfg.OperatorTokenOrganization != "org-a" {
-			t.Errorf("the credential is bound to %q, want org-a", cfg.OperatorTokenOrganization)
+		if cfg.OperatorTokenOrganization != "local" {
+			t.Errorf("the bootstrap scope is %q, want local", cfg.OperatorTokenOrganization)
 		}
 		// Defaulted rather than required. A deployment with no members yet needs a credential
 		// that can create the first one; narrowing it is a one-line change once they have.
@@ -406,10 +388,8 @@ func environment(t *testing.T, overrides map[string]string) func(string) (string
 		switch key {
 		case config.EnvHTTPAddress:
 			return "127.0.0.1:8080", true
-		case config.EnvPlacements:
-			return "shared=" + dsn, true
-		case config.EnvDefaultPlacement:
-			return "shared", true
+		case config.EnvDatabaseDSNFile:
+			return dsn, true
 		default:
 			return "", false
 		}
@@ -438,7 +418,10 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 		t.Fatalf("building the request: %v", err)
 	}
 	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: token})
+	}
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		request.Header.Set("Origin", request.URL.Scheme+"://"+request.URL.Host)
 	}
 
 	response, err := http.DefaultClient.Do(request)

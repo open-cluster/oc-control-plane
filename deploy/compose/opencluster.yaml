@@ -1,21 +1,13 @@
 server:
   address: ":8080"
-  operator_address: ":8080"
-  intake_address: ":8080"
   public_url: "http://localhost:8080"
-  console_url: "http://localhost:8080"
-  intake_public_url: "http://localhost:8080"
-  allowed_origins: ["http://localhost:8080"]
 
 database:
   dsn_file: "/run/secrets/postgres_dsn"
 
 authentication:
   bootstrap_token_file: "/run/secrets/operator_token"
-  sealing_key_file: "/run/secrets/sealing_key"
+  encryption_key_file: "/run/secrets/sealing_key"
 
-model:
+ai:
   api_key_file: "/run/secrets/model_key"
-
-telemetry:
-  service_name: "oc-control-plane"

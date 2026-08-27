@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // THE AUTONOMOUS LOOP — one autonomous investigator behind the Runner shell. The
@@ -99,12 +99,6 @@ func (r *Runner) run(
 	}
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
-	exchange, err := r.Investigator.OpenExchange(ctx, oriented)
-	if err != nil {
-		r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), Spend{})
-		return
-	}
-
 	loop := &autonomousLoop{
 		runner:       r,
 		organization: organization,
@@ -128,6 +122,20 @@ func (r *Runner) run(
 	if loop.maxTurns <= 0 {
 		loop.maxTurns = defaultMaxTurns
 	}
+	for _, call := range preflightCalls(oriented) {
+		result, _, preflightErr := loop.executeCall(ctx, call)
+		if preflightErr != nil {
+			r.fail(ctx, organization, opened.ID, events,
+				"preflight provenance could not be recorded", loop.spend)
+			return
+		}
+		oriented.Preflight = append(oriented.Preflight, result.Run)
+	}
+	exchange, err := r.Investigator.OpenExchange(ctx, oriented)
+	if err != nil {
+		r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), loop.spend)
+		return
+	}
 
 	// The orientation is what the transcript opens with, so it is what the turn's own
 	// context starts at. Everything read afterwards adds to it.
@@ -142,6 +150,65 @@ func (r *Runner) run(
 	r.conclude(ctx, organization, opened.ID, events, conclusion,
 		len(loop.runs), loop.turns, loop.executed, stoppedBy, loop.spend)
 	r.Telemetry.ended(time.Since(startedAt), StatusConcluded.String(), stoppedBy)
+}
+
+func preflightCalls(oriented Orientation) []AgentCall {
+	if oriented.Trigger == nil || oriented.Brief != nil {
+		return nil
+	}
+	labels := oriented.Trigger.Labels
+	namespace := labels["namespace"]
+	workloadKind := labels["workload_kind"]
+	workloadName := labels["workload_name"]
+	exactNamespace := exactKubernetesIdentifier(namespace)
+	exactWorkload := exactNamespace && exactKubernetesIdentifier(workloadName) &&
+		(workloadKind == "Deployment" || workloadKind == "StatefulSet" ||
+			workloadKind == "DaemonSet")
+
+	var runtime, events []AgentCall
+	for _, source := range oriented.Sources {
+		if source.Integration.Type != integrations.TypeKubernetes {
+			continue
+		}
+		for _, tool := range source.Tools {
+			base := strings.SplitN(tool.Name, "__", 2)[0]
+			switch {
+			case base == "kubernetes.workload.runtime" && exactWorkload:
+				runtime = append(runtime, AgentCall{
+					ID: "preflight-runtime-" + source.Integration.ID.String(), Tool: tool.Name,
+					Purpose: "establish the exact workload's current runtime state",
+					Arguments: map[string]any{"namespace": namespace,
+						"workloadKind": workloadKind, "workloadName": workloadName},
+				})
+			case base == "kubernetes.namespace.events" && exactNamespace:
+				events = append(events, AgentCall{
+					ID: "preflight-events-" + source.Integration.ID.String(), Tool: tool.Name,
+					Purpose:   "read recent events in the exact alert namespace",
+					Arguments: map[string]any{"namespace": namespace},
+				})
+			}
+		}
+	}
+	return append(runtime, events...)
+}
+
+func exactKubernetesIdentifier(value string) bool {
+	if value == "" || len(value) > 253 || value != strings.ToLower(value) ||
+		value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	last := value[len(value)-1]
+	if (last < 'a' || last > 'z') && (last < '0' || last > '9') {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // autonomousLoop is one investigation's execution state: the ordinal space, the
@@ -219,15 +286,15 @@ func (l *autonomousLoop) converse(
 		results = make([]CallResult, 0, len(move.Calls))
 		freshRead := false
 		for _, call := range move.Calls {
-			run, fresh, err := l.executeCall(ctx, call)
+			result, fresh, err := l.executeCall(ctx, call)
 			if err != nil {
 				return Conclusion{}, "", err
 			}
 			if fresh {
 				freshRead = true
 			}
-			l.carried += runTokens(run)
-			results = append(results, CallResult{CallID: call.ID, Run: run})
+			l.carried += runTokens(result.Run)
+			results = append(results, result)
 		}
 		if freshRead {
 			stagnant = 0
@@ -243,7 +310,38 @@ func (l *autonomousLoop) converse(
 // whether the call produced fresh evidence — what the stagnation guard counts.
 func (l *autonomousLoop) executeCall(
 	ctx context.Context, call AgentCall,
-) (ToolRun, bool, error) {
+) (CallResult, bool, error) {
+	if call.Tool == UpdateHypothesesToolName {
+		snapshot, err := decodeHypothesisSnapshot(call.Arguments, len(l.runs))
+		result := CallResult{CallID: call.ID, Semantic: true, Run: ToolRun{
+			Tool: UpdateHypothesesToolName, Outcome: RunSucceeded,
+			Summary: "hypothesis snapshot accepted",
+		}}
+		if err != nil {
+			result.Run.Outcome = RunFailed
+			result.Run.Error = err.Error()
+			return result, false, nil
+		}
+		result.Run.Content = map[string]any{"accepted": true}
+		l.runner.announce(ctx, l.events, EventHypothesesUpdated,
+			hypothesesUpdatedPayload(snapshot))
+		return result, false, nil
+	}
+	if strings.TrimSpace(call.Purpose) == "" {
+		now := time.Now().UTC()
+		run := ToolRun{
+			Ordinal: l.nextOrdinal(), Tool: call.Tool, Arguments: call.Arguments,
+			HypothesisID: bounded(call.HypothesisID, eventTextBound),
+			WindowFrom:   l.opened.WindowFrom, WindowUntil: l.opened.WindowUntil,
+			Outcome: RunFailed, Error: "not executed: an external read requires a purpose",
+			StartedAt: now, FinishedAt: now,
+		}
+		if err := l.record(ctx, run); err != nil {
+			return CallResult{}, false, err
+		}
+		return CallResult{CallID: call.ID, Run: run}, false, nil
+	}
+
 	identity := callIdentityOf(call)
 	fresh := false
 	executedRead := false
@@ -279,14 +377,76 @@ func (l *autonomousLoop) executeCall(
 		fresh = run.Outcome == RunSucceeded
 		executedRead = true
 	}
+	run.Purpose = bounded(call.Purpose, eventTextBound)
+	run.HypothesisID = bounded(call.HypothesisID, eventTextBound)
 
 	if err := l.record(ctx, run); err != nil {
-		return ToolRun{}, false, err
+		return CallResult{}, false, err
 	}
 	if executedRead {
 		l.executedIdentities[identity] = run.Ordinal
 	}
-	return run, fresh, nil
+	return CallResult{CallID: call.ID, Run: run}, fresh, nil
+}
+
+func decodeHypothesisSnapshot(arguments map[string]any, runs int) ([]HypothesisResult, error) {
+	document, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the hypothesis snapshot: %w", err)
+	}
+	var input struct {
+		Hypotheses []struct {
+			ID        string           `json:"id"`
+			Statement string           `json:"statement"`
+			Status    HypothesisStatus `json:"status"`
+			Test      string           `json:"test"`
+			RunRefs   []int            `json:"run_refs"`
+		} `json:"hypotheses"`
+	}
+	if err := json.Unmarshal(document, &input); err != nil {
+		return nil, fmt.Errorf("the hypothesis snapshot is not the declared document: %w", err)
+	}
+	if len(input.Hypotheses) > MaxHypothesisSnapshotItems {
+		return nil, fmt.Errorf("the hypothesis snapshot has %d items; the limit is %d",
+			len(input.Hypotheses), MaxHypothesisSnapshotItems)
+	}
+	seen := make(map[string]bool, len(input.Hypotheses))
+	result := make([]HypothesisResult, 0, len(input.Hypotheses))
+	for _, hypothesis := range input.Hypotheses {
+		if strings.TrimSpace(hypothesis.ID) == "" || strings.TrimSpace(hypothesis.Statement) == "" ||
+			strings.TrimSpace(hypothesis.Test) == "" {
+			return nil, errors.New("each hypothesis requires id, statement, and test")
+		}
+		if seen[hypothesis.ID] {
+			return nil, fmt.Errorf("hypothesis id %q appears more than once", hypothesis.ID)
+		}
+		seen[hypothesis.ID] = true
+		if !hypothesisStatusAllowed(hypothesis.Status) {
+			return nil, fmt.Errorf("hypothesis %q has invalid status %q", hypothesis.ID,
+				hypothesis.Status)
+		}
+		for _, run := range hypothesis.RunRefs {
+			if run < 1 || run > runs {
+				return nil, fmt.Errorf("hypothesis %q cites run %d, but only %d runs exist",
+					hypothesis.ID, run, runs)
+			}
+		}
+		result = append(result, HypothesisResult{
+			ID:        bounded(hypothesis.ID, eventTextBound),
+			Statement: bounded(hypothesis.Statement, eventTextBound), Status: hypothesis.Status,
+			Test: bounded(hypothesis.Test, eventTextBound), RunRefs: hypothesis.RunRefs,
+		})
+	}
+	return result, nil
+}
+
+func hypothesisStatusAllowed(status HypothesisStatus) bool {
+	for _, allowed := range HypothesisStatuses {
+		if string(status) == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // offeredName renders a tool name for a PROGRESS line, which is prose the platform writes.
@@ -315,7 +475,8 @@ func (l *autonomousLoop) announceToolStarted(
 		name = source.integration.Name
 	}
 	payload := toolStartedPayload(ToolRun{
-		Ordinal: ordinal, Tool: call.Tool, Arguments: call.Arguments,
+		Ordinal: ordinal, Tool: call.Tool, Purpose: call.Purpose,
+		HypothesisID: call.HypothesisID, Arguments: call.Arguments,
 	}, integration)
 	if name != "" {
 		payload["integration"] = name
@@ -398,16 +559,13 @@ func (r *Runner) conclude(
 	// Bounded ONCE, here, before anything reads it. The record, the streamed checkpoint and
 	// the terminal event all carry the answer, and bounding them separately is how a reader
 	// watching the stream sees a cut nobody marked while the stored answer says it was cut.
-	conclusion.Answer = boundedAnswer(conclusion.Answer)
+	conclusion.Summary = boundedSummary(conclusion.Summary)
+	conclusion.Actions = boundActions(conclusion.Actions)
 
 	writeCtx, done := writeWindow(ctx)
 	defer done()
 	if err := r.Store.ConcludeInvestigation(writeCtx, organization, id,
-		Conclusion{
-			Answer:    conclusion.Answer,
-			Findings:  conclusion.Findings,
-			NextSteps: boundNextSteps(conclusion.NextSteps),
-		}, stoppedBy, spend); err != nil {
+		conclusion, stoppedBy, spend); err != nil {
 		r.Logger.Error("an investigation's conclusion could not be recorded",
 			slog.String("investigation_id", id.String()),
 			slog.String("error", err.Error()))
@@ -417,9 +575,9 @@ func (r *Runner) conclude(
 	// concluding document whole, so there is one delta and it is final; the shape is the
 	// streaming one, so a provider that later delivers it in pieces changes nothing a
 	// reader has to learn.
-	if conclusion.Answer != "" {
+	if conclusion.Summary != "" {
 		r.announce(writeCtx, events, EventAnswerDelta,
-			answerDeltaPayload(conclusion.Answer, true))
+			answerDeltaPayload(conclusion.Summary, true))
 	}
 	r.announce(writeCtx, events, EventConcluded, concludedPayload(conclusion, stoppedBy))
 	r.Logger.Info("investigation concluded",
@@ -562,6 +720,9 @@ func orientationTokens(oriented Orientation) int {
 	for _, identity := range oriented.Inventory {
 		total += EstimateTokens(identity)
 	}
+	for _, run := range oriented.Preflight {
+		total += runTokens(run)
+	}
 	for _, source := range oriented.Sources {
 		total += EstimateTokens(source.Integration.Name)
 		for _, tool := range source.Tools {
@@ -622,15 +783,18 @@ func wallClockAlmostOver(ctx context.Context, reserve time.Duration) bool {
 	return has && time.Until(deadline) < reserve
 }
 
-// boundNextSteps keeps the recommended actions inside the record's bounds; the decode
+// boundActions keeps proposed actions inside the record's bounds; the decode
 // side enforces the same limits, so this is the runner's own defensive copy of them.
-func boundNextSteps(steps []string) []string {
-	if len(steps) > MaxConclusionNextSteps {
-		steps = steps[:MaxConclusionNextSteps]
+func boundActions(actions []ActionProposal) []ActionProposal {
+	if len(actions) > MaxConclusionActions {
+		actions = actions[:MaxConclusionActions]
 	}
-	kept := make([]string, 0, len(steps))
-	for _, step := range steps {
-		kept = append(kept, bounded(step, MaxNextStepLength))
+	kept := make([]ActionProposal, 0, len(actions))
+	for _, action := range actions {
+		action.Title = bounded(action.Title, MaxActionTextLength)
+		action.Rationale = bounded(action.Rationale, MaxActionTextLength)
+		action.Verification = bounded(action.Verification, MaxActionTextLength)
+		kept = append(kept, action)
 	}
 	return kept
 }
@@ -652,8 +816,8 @@ func (r *Runner) orientation(
 		// Investigation that has no Conversation to continue.
 		Brief: brief,
 	}
-	if opened.EpisodeID != uuid.Nil {
-		if trigger, err := r.Store.TriggerEpisode(ctx, organization, opened.EpisodeID); err == nil {
+	if opened.IncidentID != uuid.Nil {
+		if trigger, err := r.Store.TriggerIncident(ctx, organization, opened.IncidentID); err == nil {
 			oriented.Trigger = &trigger
 		}
 	}

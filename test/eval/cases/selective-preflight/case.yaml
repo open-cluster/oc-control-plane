@@ -1,0 +1,7 @@
+name: selective-preflight
+revision: "1"
+situation: The alert already identifies one workload and namespace; orientation should fetch only the small inventory needed for those evidence sources.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true

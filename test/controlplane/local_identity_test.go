@@ -3,17 +3,13 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
@@ -29,7 +25,7 @@ type sessionBody struct {
 
 func readSession(t *testing.T, plane *identityPlane, cookie string) sessionBody {
 	t.Helper()
-	answer := plane.call(t, http.MethodGet, "http://"+plane.operator+"/operator/v1/session", nil, asSession(cookie))
+	answer := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil, asSession(cookie))
 	if answer.status != http.StatusOK {
 		t.Fatalf("session = %d: %s", answer.status, answer.body)
 	}
@@ -188,78 +184,6 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	}
 }
 
-func TestStartupRefusesActiveLegacyIdentityConfiguration(t *testing.T) {
-	plane := startIdentityPlane(t)
-	connection, err := pgx.Connect(context.Background(), plane.dsn)
-	if err != nil {
-		t.Fatalf("connect to identity database: %v", err)
-	}
-	defer func() { _ = connection.Close(context.Background()) }()
-	groupID := uuid.New()
-	_, err = connection.Exec(context.Background(), `INSERT INTO scim_group
-		(group_id,org_id,display_name,role) VALUES ($1,$2,'retained history',NULL)`, groupID, identityOrg)
-	if err != nil {
-		t.Fatalf("seed inert SCIM history: %v", err)
-	}
-
-	address := freeAddress(t)
-	cfg := config.Config{
-		HTTPAddress: address, OperatorAddress: address, DatabaseDSN: plane.dsn,
-		ShutdownTimeout: time.Second, ServiceName: "legacy-refusal-test",
-		SealingKey: make([]byte, 32), OperatorPublicURL: "http://" + address,
-		OperatorConsoleURL: identityConsole, OperatorAllowedOrigins: []string{identityConsole},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	listened := make(chan struct{})
-	exited := make(chan error, 1)
-	go func() {
-		exited <- app.Run(ctx, cfg, io.Discard, app.Options{OnListen: func(net.Addr) {
-			close(listened)
-			cancel()
-		}})
-	}()
-	select {
-	case <-listened:
-	case err = <-exited:
-		t.Fatalf("inert SCIM history refused startup: %v", err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("inert SCIM history did not reach the listener")
-	}
-	if err = <-exited; err != nil {
-		t.Fatalf("stop after inert SCIM startup: %v", err)
-	}
-
-	if _, err = connection.Exec(context.Background(), `UPDATE scim_group SET role='viewer' WHERE group_id=$1`, groupID); err != nil {
-		t.Fatalf("activate SCIM mapping: %v", err)
-	}
-	err = app.Run(context.Background(), cfg, io.Discard, app.Options{})
-	if err == nil || !strings.Contains(err.Error(), "active legacy identity configuration") ||
-		!strings.Contains(err.Error(), "539b45e") {
-		t.Fatalf("legacy startup refusal = %v", err)
-	}
-
-	cfg.LegacyIdentityMigrationComplete = true
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	listened = make(chan struct{})
-	exited = make(chan error, 1)
-	go func() {
-		exited <- app.Run(ctx, cfg, io.Discard, app.Options{OnListen: func(net.Addr) {
-			close(listened)
-			cancel()
-		}})
-	}()
-	select {
-	case <-listened:
-	case err = <-exited:
-		t.Fatalf("acknowledged legacy migration refused startup: %v", err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("acknowledged legacy migration did not reach the listener")
-	}
-	if err = <-exited; err != nil {
-		t.Fatalf("stop after acknowledged migration startup: %v", err)
-	}
-}
-
 func TestLocalMembersAreAdminManagedAndPasswordResetRevokesSessions(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/bootstrap",
@@ -323,12 +247,12 @@ func TestLocalMembersAreAdminManagedAndPasswordResetRevokesSessions(t *testing.T
 		t.Fatalf("password reset = %d: %s", reset.status, reset.body)
 	}
 
-	revoked := plane.call(t, http.MethodGet, "http://"+plane.operator+"/operator/v1/session",
+	revoked := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
 		nil, asSession(graceCookie))
 	if revoked.status != http.StatusUnauthorized {
 		t.Fatalf("session after reset = %d: %s", revoked.status, revoked.body)
 	}
-	neighborRevoked := plane.call(t, http.MethodGet, "http://"+plane.operator+"/operator/v1/session",
+	neighborRevoked := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
 		nil, asSession(neighborCookie))
 	if neighborRevoked.status != http.StatusUnauthorized {
 		t.Fatalf("neighbor session after reset = %d: %s", neighborRevoked.status, neighborRevoked.body)

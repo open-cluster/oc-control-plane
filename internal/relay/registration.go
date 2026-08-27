@@ -19,8 +19,8 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // Metadata keys the contract puts the caller's identity and secret in. They travel in call

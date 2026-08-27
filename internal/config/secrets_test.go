@@ -11,6 +11,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
+func lookupFrom(values map[string]string) func(string) (string, bool) {
+	return func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	}
+}
+
 func TestMountedSecretSourceReadsAFileWithoutExposingItsContents(t *testing.T) {
 	t.Parallel()
 

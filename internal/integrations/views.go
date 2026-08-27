@@ -260,7 +260,7 @@ func (h Handlers) viewOf(found Integration) integrationView {
 // the deployment has not said where intake is publicly reachable, because the path is true
 // either way and an operator joining it to an origin they know beats a guess made here.
 func (h Handlers) webhookURL(id uuid.UUID) string {
-	return h.IntakeBaseURL + "/intake/v1/integrations/" + id.String() + "/signals"
+	return h.IntakeBaseURL + "/webhooks/v1/integrations/" + id.String() + "/alert-events"
 }
 
 func stamp(at time.Time) string { return at.UTC().Format(time.RFC3339) }

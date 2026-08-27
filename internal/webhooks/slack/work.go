@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type WorkStore interface {

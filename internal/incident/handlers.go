@@ -10,11 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/describe"
-	"github.com/open-cluster/oc-control-plane/internal/table"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // The routes an operator reads and corrects a grouping through.
@@ -42,16 +41,16 @@ type Handlers struct {
 // at the tenant does; regrouping decides what an incident is about, and so what an investigation
 // opened for it would be scoped to.
 func (h Handlers) Routes() authz.Table {
-	const base = "/operator/v1/organizations/{organization}/incidents"
+	const base = "/api/v1/organizations/{organization}/incidents"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.IncidentRead,
 			http.HandlerFunc(h.list)),
-		authz.Privileged(http.MethodGet, base+"/{episode}", authz.IncidentRead,
-			http.HandlerFunc(h.episode)),
-		authz.Privileged(http.MethodGet, base+"/{episode}/signals", authz.IncidentRead,
-			http.HandlerFunc(h.signals)),
-		authz.Privileged(http.MethodPost, base+"/{episode}/merge", authz.IncidentMerge,
+		authz.Privileged(http.MethodGet, base+"/{incident}", authz.IncidentRead,
+			http.HandlerFunc(h.incident)),
+		authz.Privileged(http.MethodGet, base+"/{incident}/alert-events", authz.IncidentRead,
+			http.HandlerFunc(h.alertEvents)),
+		authz.Privileged(http.MethodPost, base+"/{incident}/merge", authz.IncidentMerge,
 			http.HandlerFunc(h.merge)),
 	}
 }
@@ -60,27 +59,14 @@ func (h Handlers) Routes() authz.Table {
 //
 // The listing carries the SAME spec value the handler parses with, and the body names the
 // type the handler decodes into, so neither can drift from what is actually served.
-func (h Handlers) Describe() describe.Contribution {
-	const base = "/operator/v1/organizations/{organization}/incidents"
-
-	return describe.Contribution{
-		Listings: []describe.Listing{
-			{Route: http.MethodGet + " " + base, Spec: episodesSpec},
-		},
-		Bodies: []describe.Body{
-			{Route: http.MethodPost + " " + base + "/{episode}/merge", Example: mergeRequest{}},
-		},
-	}
-}
-
-// episodesSpec is what the episode listing accepts.
+// episodesSpec is what the incident listing accepts.
 //
 // The grouping key is searchable because it is what an operator arrives holding: they were paged
-// by their own alerting, which named the group, and being unable to find the episode by it would
+// by their own alerting, which named the group, and being unable to find the incident by it would
 // mean reading the list.
-var episodesSpec = table.Spec{
+var incidentsSpec = table.Spec{
 	Searchable:  true,
-	Sortable:    []string{"lastSeenAt", "firstSeenAt", "title", "signalCount"},
+	Sortable:    []string{"lastSeenAt", "firstSeenAt", "title", "alertEventCount"},
 	DefaultSort: table.Sort{Field: "lastSeenAt", Descending: true},
 	Filters:     []string{"integrationId", "status"},
 }
@@ -90,7 +76,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, ok := h.query(writer, request, episodesSpec)
+	parsed, ok := h.query(writer, request, incidentsSpec)
 	if !ok {
 		return
 	}
@@ -101,14 +87,14 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	page, err := h.Store.QueryEpisodes(ctx, organization, narrowed)
+	page, err := h.Store.QueryIncidents(ctx, organization, narrowed)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
-	views := make([]episodeView, 0, len(page.Episodes))
-	for _, found := range page.Episodes {
+	views := make([]incidentView, 0, len(page.Incidents))
+	for _, found := range page.Incidents {
 		views = append(views, viewOf(found))
 	}
 	// No total. Counting a cursor-paginated listing costs a second scan of everything the filters
@@ -116,7 +102,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, table.Answer(views, page.Next, nil))
 }
 
-func (h Handlers) episode(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) incident(writer http.ResponseWriter, request *http.Request) {
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -124,7 +110,7 @@ func (h Handlers) episode(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	found, err := h.Store.Episode(ctx, organization, id)
+	found, err := h.Store.Incident(ctx, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -132,7 +118,7 @@ func (h Handlers) episode(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, viewOf(found))
 }
 
-func (h Handlers) signals(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request) {
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -140,22 +126,22 @@ func (h Handlers) signals(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	list, err := h.Store.EpisodeSignals(ctx, organization, id, pageOf(request))
+	list, err := h.Store.IncidentAlertEvents(ctx, organization, id, pageOf(request))
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
-	views := make([]signalView, 0, len(list.Signals))
-	for _, found := range list.Signals {
-		views = append(views, signalViewOf(found))
+	views := make([]alertEventView, 0, len(list.AlertEvents))
+	for _, found := range list.AlertEvents {
+		views = append(views, alertEventViewOf(found))
 	}
 	writeJSON(writer, http.StatusOK, table.Answer(views, list.Next, nil))
 }
 
-// merge records that two episodes an operator is looking at are one incident.
+// merge records that two incidents an operator is looking at are one incident.
 //
-// The episode in the PATH is the one that gives way, and the body names the one that survives. That
+// The incident in the PATH is the one that gives way, and the body names the one that survives. That
 // direction is the one an operator is in: they are looking at a duplicate and saying where it
 // belongs, rather than looking at the survivor and listing what to absorb into it.
 func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
@@ -174,7 +160,7 @@ func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
 	into, err := uuid.Parse(body.Into)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "into is not an episode identity"})
+			errorView{Error: "into is not an incident identity"})
 		return
 	}
 
@@ -187,18 +173,18 @@ func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), mergeTimeout)
 	defer cancel()
 
-	surviving, err := h.Store.MergeEpisodes(ctx, principal, organization, wanted)
+	surviving, err := h.Store.MergeIncidents(ctx, principal, organization, wanted)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
-	// Identifiers and counts. Never a title and never a Signal's text: both are what a customer's
+	// Identifiers and counts. Never a title and never a AlertEvent's text: both are what a customer's
 	// systems produced and a log that quoted them would turn diagnosis into a disclosure channel.
-	h.Logger.InfoContext(ctx, "incident episodes merged",
+	h.Logger.InfoContext(ctx, "incident incidents merged",
 		slog.String("organization", organization.String()),
-		slog.String("absorbed_episode_id", id.String()),
-		slog.String("surviving_episode_id", into.String()),
+		slog.String("absorbed_incident_id", id.String()),
+		slog.String("surviving_incident_id", into.String()),
 		slog.String("caller", h.callerName(request)))
 
 	writeJSON(writer, http.StatusOK, viewOf(surviving))
@@ -278,9 +264,9 @@ func (h Handlers) addressed(
 	if !ok {
 		return tenancy.Organization{}, uuid.UUID{}, false
 	}
-	id, err := uuid.Parse(request.PathValue("episode"))
+	id, err := uuid.Parse(request.PathValue("incident"))
 	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "episode is not an identity"})
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "incident is not an identity"})
 		return tenancy.Organization{}, uuid.UUID{}, false
 	}
 	return organization, id, true
@@ -313,7 +299,7 @@ func (h Handlers) callerName(request *http.Request) string {
 
 // fail answers an error, naming the ones a caller can act on.
 //
-// An episode this organization does not have and one that is another organization's are ONE
+// An incident this organization does not have and one that is another organization's are ONE
 // answer, for the same reason the investigation surface gives: telling them apart would let a
 // caller compose path parameters until one of them landed.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
@@ -342,8 +328,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	}
 }
 
-func pageOf(request *http.Request) SignalPage {
-	page := SignalPage{After: request.URL.Query().Get("cursor")}
+func pageOf(request *http.Request) AlertEventPage {
+	page := AlertEventPage{After: request.URL.Query().Get("cursor")}
 	if size, err := strconv.Atoi(request.URL.Query().Get("limit")); err == nil {
 		page.Limit = size
 	}

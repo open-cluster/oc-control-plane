@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // WorkHandler hides one provider's domain effect. The durable worker owns only leasing,

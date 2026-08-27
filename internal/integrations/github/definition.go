@@ -26,15 +26,9 @@ const (
 // The App may be nil — a deployment that configured none still serves github in the
 // catalog, because the compiled provider set and the seeded reference rows must agree
 // exactly; connecting is what fails, live and with the reason, when the probe runs.
-//
-// The Installer may be nil too, and separately: a deployment holding an App credential but
-// no registered installation flow serves the configuration form below and no connect
-// button. That is the self-hosted path, and it stays supported.
-func Definition(
-	installer *Installer, app *App, client *Client, webURL string,
-) integrations.Definition {
+func Definition(app *App, client *Client) integrations.Definition {
 	where := deployment{
-		app: app, client: client, webURL: browserOrigin(webURL, installer, client),
+		app: app, client: client, webURL: browserOrigin(client),
 	}
 	return integrations.Definition{
 		ID:   integrations.TypeGitHub,
@@ -77,8 +71,7 @@ func Definition(
 			// and an unknown id when it never did.
 			return probe(ctx, where, installation, input.Integration.VerifyFacts)
 		},
-		Tools:   tools(app, client),
-		Connect: connect(installer, app, client),
+		Tools: tools(app, client),
 	}
 }
 

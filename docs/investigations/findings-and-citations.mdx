@@ -1,6 +1,6 @@
 ---
 title: "Understand findings and citations"
-description: "Interpret finding types, confidence, citations, unresolved leads, and next steps."
+description: "Interpret conclusion status, findings, citations, hypotheses, and proposed actions."
 ---
 
 A finding is a statement supported by one or more recorded reads. Use its type, confidence,
@@ -10,13 +10,14 @@ and citations together; none is sufficient alone.
 
 | Type | Meaning |
 | --- | --- |
-| Probable cause | The condition most likely to have initiated the incident. |
-| Triggering change | A deployment or edit that set the incident in motion. |
+| Cause | The condition that initiated the incident, including its causal mechanism. |
+| Trigger | A deployment or edit that set the incident in motion. |
 | Contributing factor | A condition that increased impact or allowed propagation. |
 | Symptom | An observed effect, not an explanation. |
-| Propagation effect | Downstream impact caused by the original failure. |
+| Propagation | Downstream impact caused by the original failure. |
 | Ruled-out explanation | A plausible cause that a relevant read excluded. |
-| Unresolved lead | A plausible explanation that could not be verified, with the read needed to resolve it. |
+| Unresolved | A plausible explanation that could not be verified, with the read needed to resolve it. |
+| Observation | A cited fact with no causal role, such as the currently deployed revision. |
 
 ## Confidence
 
@@ -38,13 +39,21 @@ OpenCluster stores a summary and provenance for each read, not a permanent bulk 
 all returned content. A finding that cites a read that did not run is rejected rather
 than stored.
 
+## Conclusion status
+
+- `verified_cause` means a confirmed cited cause includes the mechanism that produced impact.
+- `supported_explanation` means the evidence supports an explanation while a plausible alternative remains.
+- `inconclusive` means the available evidence did not establish an explanation.
+- `answer_only` is used for operator questions that have no incident cause to diagnose.
+
 ## No established cause
 
-A valid conclusion can contain only unresolved leads or no findings. Use the recorded
+A valid conclusion can contain only unresolved findings or no findings. Use the recorded
 reads to see what was checked, then connect the missing source or run the recommended
 operator check. Do not interpret an empty conclusion as proof that nothing happened.
 
-## Next steps
+## Proposed actions
 
-Next steps are suggested actions, ordered toward reversible checks and mitigations.
-They are not executed automatically and are not evidence for a finding.
+Each action states its type, rationale, risk, reversibility, approval requirement,
+verification procedure, and supporting reads. Actions are never executed automatically;
+mitigation, rollback, and permanent-fix proposals always require human approval.

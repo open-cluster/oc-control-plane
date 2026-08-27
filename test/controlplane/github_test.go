@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
@@ -94,15 +95,14 @@ func startGitHubPlane(t *testing.T, vendor *githubFake) *integrationPlane {
 	t.Helper()
 
 	operatorAddress := freeAddress(t)
-	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
 		cfg.GitHubAppID = "12345"
 		cfg.GitHubAppKey = appKeyPEM(t)
-		cfg.GitHubAPIURL = vendor.URL
-	})
+	}, app.Options{GitHubAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, operator: operatorAddress}
 }
 
@@ -200,7 +200,7 @@ func TestGitHubVerifyNoticesASuspension(t *testing.T) {
 func TestGitHubWithoutAnAppRefusesAtSetup(t *testing.T) {
 	operatorAddress := freeAddress(t)
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg

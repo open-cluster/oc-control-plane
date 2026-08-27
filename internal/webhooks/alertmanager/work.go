@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type WorkHandler struct {

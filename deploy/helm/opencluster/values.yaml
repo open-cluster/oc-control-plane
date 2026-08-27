@@ -22,7 +22,6 @@ operator:
 model:
   provider: anthropic
   name: claude-sonnet-5
-  consentedProviders: []
 
 service:
   type: ClusterIP

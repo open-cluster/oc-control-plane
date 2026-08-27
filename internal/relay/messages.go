@@ -10,9 +10,9 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/changeledger"
+	"github.com/open-cluster/oc-control-plane/internal/changecontext"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // Everything the control plane puts on the wire is built here, so what a relay sees is
@@ -38,7 +38,7 @@ func accepted(sessionID string) *relayv1.ControlToRelay {
 // this refuses the same thing before it costs a dispatch, a lease and a round trip — and it
 // means a Relay is never the only thing standing between a planner's mistake and a customer's
 // cluster.
-func assignmentFor(session *sessionState, job storage.Job) (*relayv1.ControlToRelay, error) {
+func assignmentFor(session *sessionState, job storage.RelayJob) (*relayv1.ControlToRelay, error) {
 	if err := capability.Validate(job.CapabilityID, job.CapabilityVersion, job.Arguments); err != nil {
 		return nil, err
 	}

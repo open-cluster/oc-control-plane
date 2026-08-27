@@ -1,147 +1,126 @@
-# OpenCluster Control Plane
+# OpenCluster
 
-OpenCluster investigates incidents across connected operational systems and records the
-reads behind each finding. This repository contains the multi-tenant control plane:
-organizations, integrations, alerts, incidents, investigations, and the protocol
-endpoint used by the separate OpenCluster Relay.
+OpenCluster is an open-source AI SRE that investigates production incidents across the
+systems you already use. It gathers bounded read-only evidence, keeps competing
+hypotheses visible, and produces a structured conclusion that separates impact, causal
+findings, proposed actions, and limitations.
 
-The project is under active development and does not yet publish a stable release from
-this repository.
+Every material claim links back to a numbered Tool Run. OpenCluster never executes a
+mitigation: an action proposal states its risk, reversibility, approval requirement, and
+verification procedure so an on-call engineer can decide safely.
+
+> OpenCluster is experimental pre-release software. APIs and storage may change without
+> upgrade compatibility until the first stable release; recreate pre-release databases.
 
 Licensed under the [Apache License 2.0](./LICENSE).
 
-## Develop
+## Product workflow
 
-You need Go 1.26.6, Docker with Docker Compose, and Helm 3. The complete test suite
-needs a reachable Docker daemon for PostgreSQL test containers and deployment validation.
+1. Alertmanager sends an Alert Event.
+2. OpenCluster groups it into an Incident and opens a Conversation and Investigation.
+3. The investigator reads only authorized connected sources, including Kubernetes
+   through an outbound customer-side Relay.
+4. Operators watch hypotheses and operational progress while numbered Tool Runs execute.
+5. The conclusion reports impact, findings, hypotheses, action proposals, and limitations.
+6. After resolution, an operator can generate, correct, and review a draft Postmortem.
 
-```bash
-make tools       # install pinned development tools
-make test-short  # unit tests without Docker
-make verify      # the complete local CI gate
-```
+An example conclusion might report that Run 3 confirmed a deployment changed a database
+pool limit and Run 4 established the resulting connection exhaustion. A rollback remains
+a proposal: high risk, reversible, approval required, with a verification step that checks
+connection use and request errors after a human performs it.
 
-Composed-process integration tests live in `test/controlplane`, independently authored
-evaluation scenarios live in `test/eval/cases`, and the real Relay protocol proof lives
-in the separate `test/e2e` module.
+![A live OpenCluster investigation showing its structured report and cited conclusion](./assets/structured-investigation.png)
 
-## Run locally
+## Quick start
 
-Start PostgreSQL, write its DSN to a file, and run the control plane:
-
-```bash
-printf '%s' 'postgres://user:password@localhost:5432/opencluster?sslmode=disable' \
-  > /tmp/opencluster.dsn
-
-cat > opencluster.yaml <<'YAML'
-server:
-  address: "127.0.0.1:8080"
-database:
-  dsn_file: "/tmp/opencluster.dsn"
-YAML
-
-go run ./cmd/controlplane --config opencluster.yaml
-```
-
-This minimal configuration exposes health, readiness, and metrics. See the
-[self-hosted configuration](./docs/self-hosted/configuration.mdx) to enable operator
-access, alert intake, Relays, integrations, and investigations.
-
-## Deployment quick starts
-
-Docker Compose starts the control plane beside PostgreSQL. Place the PostgreSQL password
-and matching DSN in separate local files and expose their file paths. The Apache-licensed
-Relay protocol contract is bundled, so no private repository access is required:
+You need Docker with Docker Compose. Create local files for the database password, DSN,
+administrator bootstrap token, model API key, and 32-byte sealing key. Secrets are mounted
+from files and never placed directly in environment values.
 
 ```bash
 export OPENCLUSTER_POSTGRES_PASSWORD_FILE=/absolute/path/postgres-password
 export OPENCLUSTER_DATABASE_DSN_FILE=/absolute/path/postgres-dsn
-export OPENCLUSTER_OPERATOR_TOKEN_FILE=/absolute/path/admin-bootstrap-token
-export OPENCLUSTER_SEALING_KEY_FILE=/absolute/path/32-byte-sealing-key
-export OPENCLUSTER_MODEL_KEY_FILE=/absolute/path/model-api-key
-export OPENCLUSTER_MODEL_NAME=claude-sonnet-5
-export OPENCLUSTER_MODEL_CONSENTED_PROVIDERS=anthropic
+export OPENCLUSTER_BOOTSTRAP_TOKEN_FILE=/absolute/path/admin-bootstrap-token
+export OPENCLUSTER_ENCRYPTION_KEY_FILE=/absolute/path/32-byte-encryption-key
+export OPENCLUSTER_AI_API_KEY_FILE=/absolute/path/model-api-key
+export OPENCLUSTER_AI_PROVIDER=anthropic
+export OPENCLUSTER_AI_MODEL=claude-sonnet-5
 export OPENCLUSTER_RUNTIME_UID=$(id -u)
 export OPENCLUSTER_RUNTIME_GID=$(id -g)
 docker compose -f deploy/compose/compose.yaml up --build
 ```
 
-The DSN must use host `postgres`, database `opencluster`, user `opencluster`, and the
-password from the first file. The administrator token must contain at least 32 characters;
-its Organization defaults to `local` and can be set through `OPENCLUSTER_ORGANIZATION`.
-The container runs as the invoking non-root UID/GID so it can read securely permissioned
-bind-mounted files; no access token or database credential belongs in an image layer or
-environment value.
+The PostgreSQL DSN must use host `postgres`, database `opencluster`, user `opencluster`,
+and the password stored in the password file. The bootstrap token must contain at least
+32 characters. Open the configured HTTP address, create the first administrator, and
+connect Alertmanager.
 
-For Kubernetes, create a Secret containing the `postgres-dsn` file and make your locally
-built `opencluster-control-plane:dev` image available to the cluster:
+Send a test alert, then connect at least one evidence source:
+
+- Kubernetes through an optional Relay for workload runtime, namespace events, and logs.
+- GitHub for repository and change evidence.
+- Slack for operational testimony and follow-up conversations.
+
+See the [quickstart](./docs/getting-started/quickstart.mdx) for the full walkthrough.
+
+To enable the optional Relay transport, provide `OPENCLUSTER_RELAY_SPKI_PINS`, start
+Compose with `--profile relay`, or set `relay.enabled=true` in the Helm release. The
+Relay initiates the connection; the control plane never dials into a customer cluster.
+
+## Architecture
+
+The control plane owns Organizations, Integrations, Alert Events, Incidents,
+Conversations, Investigations, Tool Runs, conclusions, Postmortems, and audit events in
+PostgreSQL. One HTTP listener serves the console, public API, and inbound webhooks. A
+separate gRPC listener accepts outbound Relay sessions.
+
+Provider adapters offer native read tools behind one provider-independent investigation
+contract. Kubernetes libraries and customer cluster credentials never enter this module;
+the Relay executes the closed capability protocol inside the customer boundary.
+
+Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
+
+## Read-only security model
+
+- Every request, offered tool, Tool Run, and stored record is Organization-scoped.
+- Connected content and Conversation messages remain untrusted data, never instructions.
+- External tools are read-only and every call records an operator-visible purpose.
+- Secrets are file-backed or sealed; credential-shaped fields are removed from logs,
+  events, audit details, prompts, and API responses.
+- OpenCluster proposes production changes but exposes no execution endpoint.
+- State-changing proposals always require human approval.
+
+See [SECURITY.md](./SECURITY.md) and the
+[security model](./docs/security/security-model.mdx).
+
+## Develop
+
+Development requires Go 1.26.6, Docker, Docker Compose, and Helm 3.
 
 ```bash
-kubectl create secret generic opencluster-database \
-  --from-file=postgres-dsn=/absolute/path/postgres-dsn
-kubectl create secret generic opencluster-credentials \
-  --from-file=operator-token=/absolute/path/admin-bootstrap-token \
-  --from-file=sealing-key=/absolute/path/32-byte-sealing-key \
-  --from-file=model-key=/absolute/path/model-api-key
-helm upgrade --install opencluster ./deploy/helm/opencluster \
-  --set-json 'model.consentedProviders=["anthropic"]'
+make tools
+make test-short
+make verify
 ```
 
-Both deployment examples enable the same-origin browser console, organization-scoped
-operator bootstrap, webhook intake, Conversations, and a consented model provider. Open
-the shared HTTP address to sign in, bootstrap the first administrator, start an
-Investigation, inspect its Activity and Sources, or cancel active work.
-
-The chart mounts both existing Secrets as files, disables service-account token mounting,
-and runs the control plane as a non-root user with a read-only filesystem. Configure image
-repository, pull policy, and the external PostgreSQL endpoint for your own environment.
-
-To connect Relays, calculate the certificate's public-key pin and enable Compose's
-optional non-root gRPC/TLS terminator:
-
-```bash
-export OPENCLUSTER_RELAY_TLS_CERT_FILE=/absolute/path/relay-cert.pem
-export OPENCLUSTER_RELAY_TLS_KEY_FILE=/absolute/path/relay-key.pem
-export OPENCLUSTER_RELAY_ADDRESS=:8444
-export OPENCLUSTER_RELAY_SPKI_PINS="$(openssl x509 -in "$OPENCLUSTER_RELAY_TLS_CERT_FILE" \
-  -pubkey -noout | openssl pkey -pubin -outform DER \
-  | openssl dgst -sha256 -binary | openssl base64 -A)"
-docker compose -f deploy/compose/compose.yaml --profile relay up --build
-```
-
-The TLS endpoint listens on `127.0.0.1:8443`; set
-`OPENCLUSTER_RELAY_BIND_ADDRESS` when publishing it through your network edge.
-For Kubernetes, create a TLS Secret and enable the chart's pinned gRPC/TLS sidecar:
-
-```bash
-kubectl create secret tls opencluster-relay-tls \
-  --cert=/absolute/path/relay-cert.pem --key=/absolute/path/relay-key.pem
-helm upgrade --install opencluster ./deploy/helm/opencluster \
-  --set-json 'model.consentedProviders=["anthropic"]' \
-  --set relay.enabled=true \
-  --set relay.tls.existingSecret=opencluster-relay-tls \
-  --set-json "relay.spkiPins=[\"$OPENCLUSTER_RELAY_SPKI_PINS\"]"
-```
-
-The Relay listener remains disabled unless explicitly enabled together with a real TLS
-certificate and its matching SHA-256 SPKI pin.
+`make verify` runs lint, build, unit and PostgreSQL integration tests, vulnerability and
+license checks, deployment validation, and evaluation gates. The real Relay protocol E2E
+proof lives in the nested `test/e2e` module.
 
 ## Documentation
 
-- [Product documentation](./docs/index.mdx) — setup, integrations, investigations,
-  security, and self-hosted operations
-- [CONTEXT.md](./CONTEXT.md) — domain vocabulary
-- [AGENTS.md](./AGENTS.md) — repository boundaries and required verification
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — service and customer trust boundaries
-- [SECURITY.md](./SECURITY.md) — vulnerability reporting and security model
+- [Product documentation](./docs/index.mdx)
+- [API reference](./docs/api-reference/overview.mdx)
+- [Domain glossary](./CONTEXT.md)
+- [Architecture](./ARCHITECTURE.md)
+- [Contributor requirements](./AGENTS.md)
 
-The Mintlify site is authored in `docs/`. Every shipped integration must have a
-navigable product page.
+The Mintlify site is authored in `docs/`. Every shipped Integration must have a navigable
+product page.
 
 ## Contributing
 
-Contributors should start with [CONTRIBUTING.md](./CONTRIBUTING.md).
-[SUPPORT.md](./SUPPORT.md), [GOVERNANCE.md](./GOVERNANCE.md),
-[MAINTAINERS.md](./MAINTAINERS.md), and [ROADMAP.md](./ROADMAP.md) describe support,
-decision-making, ownership, and current direction. Contributions are licensed under the
-[Apache License 2.0](./LICENSE).
+Start with [CONTRIBUTING.md](./CONTRIBUTING.md). The project’s support, governance,
+maintainers, and roadmap are documented in [SUPPORT.md](./SUPPORT.md),
+[GOVERNANCE.md](./GOVERNANCE.md), [MAINTAINERS.md](./MAINTAINERS.md), and
+[ROADMAP.md](./ROADMAP.md).

@@ -15,7 +15,7 @@ import (
 // anything larger is a mistake or a probe, and either way it is refused without being held.
 const maxRequestBytes = 8 << 10
 
-type episodeView struct {
+type incidentView struct {
 	ID            string `json:"id"`
 	IntegrationID string `json:"integrationId"`
 	// IntegrationName is what the delivering installation is called. Served beside the
@@ -29,18 +29,19 @@ type episodeView struct {
 	Title           string `json:"title"`
 	Status          string `json:"status"`
 
-	// Grouping is why these Signals are one incident. It is on every episode rather than offered
+	// Grouping is why these AlertEvents are one incident. It is on every incident rather than offered
 	// as a separate lookup, because a grouping an operator cannot immediately explain is one they
 	// will argue with rather than act on.
 	Grouping groupingView `json:"grouping"`
 
 	FirstSeenAt time.Time `json:"firstSeenAt"`
 	LastSeenAt  time.Time `json:"lastSeenAt"`
-	// ResolvedAt is absent while any Signal in this episode is still firing.
-	ResolvedAt  *time.Time `json:"resolvedAt"`
-	SignalCount int        `json:"signalCount"`
+	// ResolvedAt is absent while any AlertEvent in this incident is still firing.
+	ResolvedAt         *time.Time `json:"resolvedAt"`
+	AlertEventCount    int        `json:"alertEventCount"`
+	PostmortemEligible bool       `json:"postmortemEligible"`
 
-	// Supersession is present only on an episode an operator merged into another. Its absence is
+	// Supersession is present only on an incident an operator merged into another. Its absence is
 	// the ordinary case and carries no information, which is why it is omitted rather than nulled.
 	Supersession *supersessionView `json:"supersededBy,omitempty"`
 
@@ -48,7 +49,7 @@ type episodeView struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// groupingView states who decided that these Signals belong together, in the source's own terms
+// groupingView states who decided that these AlertEvents belong together, in the source's own terms
 // and in words.
 type groupingView struct {
 	// Basis is the machine-readable answer, so a console can render a badge without parsing prose.
@@ -62,14 +63,14 @@ type groupingView struct {
 }
 
 type supersessionView struct {
-	EpisodeID string `json:"episodeId"`
+	IncidentID string `json:"incidentId"`
 	// Reason is the operator's own words for why these are one incident. A merge without one is
 	// refused, so this is never empty on a supersession that exists.
 	Reason string    `json:"reason"`
 	At     time.Time `json:"at"`
 }
 
-type signalView struct {
+type alertEventView struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	// Summary is free text from a customer's systems and is untrusted for its whole life. It
@@ -86,7 +87,7 @@ type signalView struct {
 }
 
 type mergeRequest struct {
-	// Into names the episode that survives. The one in the path gives way.
+	// Into names the incident that survives. The one in the path gives way.
 	Into string `json:"into"`
 	// Reason is why an operator says these are one incident, and is required.
 	Reason string `json:"reason"`
@@ -96,58 +97,59 @@ type errorView struct {
 	Error string `json:"error"`
 }
 
-func viewOf(episode Episode) episodeView {
-	view := episodeView{
-		ID:              episode.ID.String(),
-		IntegrationID:   episode.Integration.String(),
-		IntegrationName: episode.IntegrationName,
-		Title:           episode.Title,
-		Status:          episode.Status.String(),
+func viewOf(incident Incident) incidentView {
+	view := incidentView{
+		ID:              incident.ID.String(),
+		IntegrationID:   incident.Integration.String(),
+		IntegrationName: incident.IntegrationName,
+		Title:           incident.Title,
+		Status:          incident.Status.String(),
 		Grouping: groupingView{
-			Basis:       episode.Basis.String(),
-			Explanation: episode.Basis.Explain(),
-			Key:         episode.GroupingKey,
+			Basis:       incident.Basis.String(),
+			Explanation: incident.Basis.Explain(),
+			Key:         incident.GroupingKey,
 		},
-		FirstSeenAt: episode.FirstSeenAt,
-		LastSeenAt:  episode.LastSeenAt,
-		SignalCount: episode.SignalCount,
-		CreatedAt:   episode.CreatedAt,
-		UpdatedAt:   episode.UpdatedAt,
+		FirstSeenAt:        incident.FirstSeenAt,
+		LastSeenAt:         incident.LastSeenAt,
+		AlertEventCount:    incident.AlertEventCount,
+		PostmortemEligible: incident.Status == StatusResolved,
+		CreatedAt:          incident.CreatedAt,
+		UpdatedAt:          incident.UpdatedAt,
 	}
-	if !episode.ResolvedAt.IsZero() {
-		resolved := episode.ResolvedAt
+	if !incident.ResolvedAt.IsZero() {
+		resolved := incident.ResolvedAt
 		view.ResolvedAt = &resolved
 	}
-	if episode.SupersededBy != nil {
+	if incident.SupersededBy != nil {
 		view.Supersession = &supersessionView{
-			EpisodeID: episode.SupersededBy.String(),
-			Reason:    episode.SupersedeReason,
-			At:        episode.SupersededAt,
+			IncidentID: incident.SupersededBy.String(),
+			Reason:     incident.SupersedeReason,
+			At:         incident.SupersededAt,
 		}
 	}
 	return view
 }
 
-func signalViewOf(signal Signal) signalView {
-	view := signalView{
-		ID:         signal.ID.String(),
-		Title:      signal.Title,
-		Summary:    signal.Summary,
-		Labels:     signal.Labels,
+func alertEventViewOf(alertEvent AlertEvent) alertEventView {
+	view := alertEventView{
+		ID:         alertEvent.ID.String(),
+		Title:      alertEvent.Title,
+		Summary:    alertEvent.Summary,
+		Labels:     alertEvent.Labels,
 		Status:     "resolved",
-		StartedAt:  signal.StartedAt,
-		ReceivedAt: signal.ReceivedAt,
+		StartedAt:  alertEvent.StartedAt,
+		ReceivedAt: alertEvent.ReceivedAt,
 	}
-	if signal.Firing {
+	if alertEvent.Firing {
 		view.Status = "firing"
 	}
-	if signal.Labels == nil {
+	if alertEvent.Labels == nil {
 		// An absent label set encodes as {} rather than null, so a client does not have to handle
 		// two spellings of "none".
 		view.Labels = map[string]string{}
 	}
-	if !signal.ResolvedAt.IsZero() {
-		resolved := signal.ResolvedAt
+	if !alertEvent.ResolvedAt.IsZero() {
+		resolved := alertEvent.ResolvedAt
 		view.ResolvedAt = &resolved
 	}
 	return view

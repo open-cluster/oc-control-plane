@@ -19,7 +19,7 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // The endpoint serves plaintext HTTP/2. TLS terminates at the edge, which is where the

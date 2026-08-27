@@ -28,7 +28,8 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			fixtureNamespace, fixtureWorkload)
 		if calls.Add(1) > 1 {
 			name = "conclude"
-			arguments = fmt.Sprintf(`{"findings":[{"statement":"Relay observed workload %s in namespace %s","kind":"probable_cause","confidence":"confirmed","sources":[1]}],"next_steps":[]}`,
+			arguments = fmt.Sprintf(`{"status":"verified_cause","summary":"Relay observed the failing workload.","impact":{"status":"partial","current_state":"ongoing","affected_services":[%q],"affected_users":[],"summary":"The workload is unhealthy.","run_refs":[1]},"findings":[{"id":"finding-1","statement":"Relay observed workload %s in namespace %s","kind":"cause","confidence":"confirmed","mechanism":"the unhealthy workload serves the affected requests","run_refs":[1]}],"hypotheses":[],"actions":[],"limitations":[]}`,
+				fixtureWorkload,
 				fixtureWorkload, fixtureNamespace)
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -57,26 +58,26 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 
 func (h *harness) assertInvestigation(t *testing.T) {
 	t.Helper()
-	base := "http://" + h.plane.httpAddress + "/operator/v1/organizations/" + organization
+	base := "http://" + h.plane.httpAddress + "/api/v1/organizations/" + organization
 	status, body := h.operatorRequest(t, http.MethodPost,
 		base+"/integrations/"+h.integration.String()+"/verify", nil)
 	if status != http.StatusOK {
 		t.Fatalf("verifying the real Relay integration = %d: %s", status, body)
 	}
 
-	episode := uuid.New()
+	incident := uuid.New()
 	now := time.Now().UTC()
 	_, err := h.truth.pool.Exec(context.Background(), `
-		INSERT INTO incident_episode
-			(episode_id, org_id, integration_id, grouping_key, grouping_basis,
+		INSERT INTO incident
+			(incident_id, org_id, integration_id, grouping_key, grouping_basis,
 			 title, status, first_seen_at, last_seen_at)
 		VALUES ($1, $2, $3, $4, 1, $5, 1, $6, $6)`,
-		episode, organization, h.integration, "e2e-investigation", fixtureWorkload, now)
+		incident, organization, h.integration, "e2e-investigation", fixtureWorkload, now)
 	if err != nil {
 		t.Fatalf("creating the investigation incident: %v", err)
 	}
 	status, body = h.operatorRequest(t, http.MethodPost, base+"/investigations",
-		map[string]string{"episodeId": episode.String()})
+		map[string]string{"incidentId": incident.String()})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening the investigation = %d: %s", status, body)
 	}
@@ -90,10 +91,10 @@ func (h *harness) assertInvestigation(t *testing.T) {
 	h.await(t, "an investigation to cite its real Relay read", jobTimeout,
 		func(ctx context.Context) (bool, error) {
 			var status int16
-			var findings []byte
+			var conclusion []byte
 			var runs int
 			err := h.truth.pool.QueryRow(ctx, `
-				SELECT investigation.status, investigation.findings,
+				SELECT investigation.status, investigation.conclusion,
 				       count(tool.ordinal)
 				  FROM investigation
 				  LEFT JOIN investigation_tool_run tool
@@ -101,7 +102,7 @@ func (h *harness) assertInvestigation(t *testing.T) {
 				   AND tool.org_id = investigation.org_id
 				 WHERE investigation.investigation_id = $1 AND investigation.org_id = $2
 				 GROUP BY investigation.investigation_id`, opened.ID, organization).
-				Scan(&status, &findings, &runs)
+				Scan(&status, &conclusion, &runs)
 			if err != nil {
 				return false, err
 			}
@@ -110,8 +111,8 @@ func (h *harness) assertInvestigation(t *testing.T) {
 					runs, h.plane.logsSinceStart())
 			}
 			return status == 2 && runs == 1 &&
-				bytes.Contains(findings, []byte(fixtureWorkload)) &&
-				bytes.Contains(findings, []byte(`"sources": [1]`)), nil
+				bytes.Contains(conclusion, []byte(fixtureWorkload)) &&
+				bytes.Contains(conclusion, []byte(`"runRefs": [1]`)), nil
 		})
 }
 
@@ -131,7 +132,10 @@ func (h *harness) operatorRequest(t *testing.T, method, url string, payload any)
 	if err != nil {
 		t.Fatalf("creating operator request: %v", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+investigationOperatorToken)
+	request.AddCookie(h.plane.session)
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		request.Header.Set("Origin", "http://"+h.plane.httpAddress)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

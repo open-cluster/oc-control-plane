@@ -8,9 +8,8 @@
 // is the only place that knows every provider; nothing here imports one.
 //
 // An Integration is one configured installation: "Production Alertmanager", "Org Slack".
-// org_id is the tenant boundary. There is no Environment, no Connection role, and no
-// execution locality — where work runs is derivable from whether a Relay serves the
-// integration.
+// org_id is the tenant boundary. Where work runs is derivable from whether a Relay serves
+// the integration.
 package integrations
 
 import (
@@ -185,6 +184,18 @@ type Definition struct {
 	// what a self-hosted deployment that registered no application with the vendor has,
 	// and it stays supported.
 	Connect *Connect
+}
+
+// Manifest is the persisted and displayed metadata owned by a provider. Behavior remains
+// on Definition; this projection is the single input for database reconciliation, docs,
+// and clients that render the catalog.
+type Manifest struct {
+	ID          TypeID
+	Key         string
+	Name        string
+	Description string
+	Logo        string
+	Category    Category
 }
 
 // documentationSite is where this product's own documentation is published. One constant,
@@ -404,6 +415,16 @@ func checkArguments(key string, tool Tool) error {
 
 // All returns every definition, ordered by key so a rendered catalog is stable.
 func (c Catalog) All() []Definition { return append([]Definition(nil), c.ordered...) }
+
+func (c Catalog) Manifests() []Manifest {
+	manifests := make([]Manifest, 0, len(c.ordered))
+	for _, definition := range c.ordered {
+		manifests = append(manifests, Manifest{ID: definition.ID, Key: definition.Key,
+			Name: definition.Name, Description: definition.Description, Logo: definition.Logo,
+			Category: definition.Category})
+	}
+	return manifests
+}
 
 // Tools returns every declared Tool in stable Integration Type and declaration order.
 func (c Catalog) Tools() []Tool {

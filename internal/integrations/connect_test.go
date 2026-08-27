@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/seal"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
 // storeUnderSeal is a Store that must not be reached. Its methods are the embedded
@@ -67,7 +67,7 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodPost,
-		"/operator/v1/organizations/acme/integrations/stub/connect", nil)
+		"/api/v1/organizations/acme/integrations/stub/connect", nil)
 	request.SetPathValue("organization", "acme")
 	request.SetPathValue("type", "stub")
 	request = request.WithContext(

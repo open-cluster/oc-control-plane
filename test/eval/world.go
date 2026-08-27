@@ -73,20 +73,22 @@ type Kubernetes struct {
 }
 
 type Case struct {
-	Name                   string
-	Revision               string
-	Safety                 Safety
-	Alertname              string
-	Labels                 map[string]string
-	Kubernetes             Kubernetes
-	Workspaces             map[string]Workspace
-	Installations          map[string]Installation
-	DistractorSlackToken   string
-	DistractorInstallation string
-	FailCommits            int
-	MoreHistory            bool
-	MoreCommits            bool
-	Question               string
-	FollowUps              []string
-	Truth                  GroundTruth
+	Name                     string
+	Revision                 string
+	Safety                   Safety
+	Alertname                string
+	Labels                   map[string]string
+	Kubernetes               Kubernetes
+	Workspaces               map[string]Workspace
+	Installations            map[string]Installation
+	DistractorSlackToken     string
+	DistractorInstallation   string
+	FailCommits              int
+	MoreHistory              bool
+	MoreCommits              bool
+	RequireHypothesisUpdates bool
+	GeneratePostmortem       bool
+	Question                 string
+	FollowUps                []string
+	Truth                    GroundTruth
 }

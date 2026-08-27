@@ -42,6 +42,7 @@ type controlPlane struct {
 	sealingPath  string
 	modelURL     string
 	workDir      string
+	session      *http.Cookie
 }
 
 // newControlPlane reserves the addresses the control plane will serve on, without starting
@@ -96,24 +97,17 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 	c.output.mark(fmt.Sprintf("control plane, start %d", c.starts))
 
 	environment := map[string]string{
-		"OC_HTTP_ADDRESS":                c.httpAddress,
-		"OC_DATABASE_DSN_FILE":           c.dsnPath,
-		"OC_RELAY_ADDRESS":               c.relayAddress,
-		"OC_RELAY_SPKI_PINS":             spkiPin,
-		"OC_OPERATOR_ADDRESS":            c.httpAddress,
-		"OC_OPERATOR_TOKEN_FILE":         c.operatorPath,
-		"OC_OPERATOR_TOKEN_ORGANIZATION": organization,
-		"OC_MODEL_PROVIDER":              "anthropic",
-		"OC_MODEL_NAME":                  "claude-sonnet-5",
-		"OC_MODEL_KEY_FILE":              c.modelKeyPath,
-		"OC_SEALING_KEY_FILE":            c.sealingPath,
-		"OC_MODEL_CONSENTED_PROVIDERS":   "anthropic",
-		"OC_MODEL_BASE_URL":              c.modelURL,
-		"OC_SHUTDOWN_TIMEOUT":            "10s",
-		"OC_SERVICE_NAME":                "oc-control-plane-e2e",
-		// Fast enough that an Integration created mid-run gains its synchronization policy,
-		// and a change lands in the ledger, within a test's patience.
-		"OC_INVENTORY_INTERVAL": "2s",
+		"OC_SERVER_ADDRESS":       c.httpAddress,
+		"OC_PUBLIC_URL":           "http://" + c.httpAddress,
+		"OC_DATABASE_DSN_FILE":    c.dsnPath,
+		"OC_RELAY_ADDRESS":        c.relayAddress,
+		"OC_RELAY_SPKI_PINS":      spkiPin,
+		"OC_BOOTSTRAP_TOKEN_FILE": c.operatorPath,
+		"OC_AI_PROVIDER":          "anthropic",
+		"OC_AI_MODEL":             "claude-sonnet-5",
+		"OC_AI_API_KEY_FILE":      c.modelKeyPath,
+		"OC_ENCRYPTION_KEY_FILE":  c.sealingPath,
+		"OC_E2E_MODEL_BASE_URL":   c.modelURL,
 	}
 
 	running, err := startProgram("control plane", binary, environment, c.output)
@@ -121,7 +115,40 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 		return err
 	}
 	c.program = running
-	return c.awaitReady(ctx)
+	if err := c.awaitReady(ctx); err != nil {
+		return err
+	}
+	if c.session == nil {
+		return c.bootstrap(ctx)
+	}
+	return nil
+}
+
+func (c *controlPlane) bootstrap(ctx context.Context) error {
+	body := strings.NewReader(`{"email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://"+c.httpAddress+"/api/v1/organizations/"+organization+"/bootstrap", body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+investigationOperatorToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://"+c.httpAddress)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("bootstrapping the e2e administrator: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusCreated {
+		return fmt.Errorf("bootstrapping the e2e administrator returned %d", response.StatusCode)
+	}
+	for _, cookie := range response.Cookies() {
+		if cookie.Value != "" {
+			c.session = cookie
+			return nil
+		}
+	}
+	return fmt.Errorf("bootstrapping the e2e administrator issued no session")
 }
 
 // restart kills the process and brings another up on the same addresses. It models the

@@ -3,14 +3,14 @@ title: "OpenCluster"
 description: "Investigate incidents across the systems you already use, with cited findings and bounded access."
 ---
 
-OpenCluster investigates alerts across your operational systems. It connects to your
-existing alerting, infrastructure, collaboration, and source-control tools. When an
-incident needs attention, it follows the useful signals, records each read, and returns
-findings you can audit.
+OpenCluster is an open-source AI SRE for investigating production incidents. It follows
+bounded read-only evidence across your existing alerting, infrastructure, collaboration,
+and source-control systems, keeps competing hypotheses visible, and returns a structured
+conclusion you can audit.
 
-Alertmanager starts the incident. Connected systems such as Slack and GitHub provide
-context when they are relevant. OpenCluster does not replace those systems or require a
-new telemetry pipeline.
+Every material claim cites a numbered Tool Run. Action proposals state risk,
+reversibility, approval needs, and verification; OpenCluster never executes a production
+change. After resolution, you can generate and review a conservative draft Postmortem.
 
 <CardGroup cols={3}>
   <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
@@ -21,5 +21,8 @@ new telemetry pipeline.
   </Card>
   <Card title="How investigations work" icon="magnifying-glass" href="/getting-started/how-investigations-work">
     Understand the investigation flow and its boundaries.
+  </Card>
+  <Card title="API reference" icon="code" href="/api-reference/overview">
+    Use the versioned Incident, Investigation, and Postmortem endpoints.
   </Card>
 </CardGroup>

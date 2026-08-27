@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -17,9 +16,9 @@ import (
 // an operator relies on: the tool universe the model is offered, subject inference and
 // clarification, honest failure, refusal without a provider, and tenancy.
 
-// openEpisode creates an alertmanager integration and delivers one firing alert, so an
-// open episode exists to investigate.
-func (p *integrationPlane) openEpisode(t *testing.T, alertname, fingerprint string) string {
+// openIncident creates an alertmanager integration and delivers one firing alert, so an
+// open incident exists to investigate.
+func (p *integrationPlane) openIncident(t *testing.T, alertname, fingerprint string) string {
 	t.Helper()
 
 	created := p.createAlertmanager(t, "Alertmanager for "+alertname)
@@ -38,11 +37,11 @@ func (p *integrationPlane) openEpisode(t *testing.T, alertname, fingerprint stri
 		t.Fatalf("the seeding delivery = %d: %s", status, body)
 	}
 
-	return p.episodeByTitle(t, alertname)
+	return p.incidentByTitle(t, alertname)
 }
 
-// episodeByTitle resolves the open episode a delivery just created.
-func (p *integrationPlane) episodeByTitle(t *testing.T, title string) string {
+// episodeByTitle resolves the open incident a delivery just created.
+func (p *integrationPlane) incidentByTitle(t *testing.T, title string) string {
 	t.Helper()
 
 	status, body := p.call(t, http.MethodGet, p.base(surfaceOrg)+"/incidents", nil)
@@ -56,19 +55,23 @@ func (p *integrationPlane) episodeByTitle(t *testing.T, title string) string {
 		} `json:"items"`
 	}
 	decodeInto(t, body, &listed)
-	for _, episode := range listed.Items {
-		if episode.Title == title {
-			return episode.ID
+	for _, incident := range listed.Items {
+		if incident.Title == title {
+			return incident.ID
 		}
 	}
-	t.Fatalf("no episode titled %s: %s", title, body)
+	t.Fatalf("no incident titled %s: %s", title, body)
 	return ""
 }
 
-// awaitInvestigation polls until the investigation leaves running.
+// awaitInvestigation polls until the investigation leaves its active lifecycle states.
 func (p *integrationPlane) awaitInvestigation(t *testing.T, id string) string {
 	t.Helper()
 	return p.awaitInvestigationWithin(t, id, 30*time.Second)
+}
+
+func investigationActive(status string) bool {
+	return status == "queued" || status == "investigating"
 }
 
 // The org-scoped tool universe is filtered by each Integration's verified grants before
@@ -80,7 +83,7 @@ func (p *integrationPlane) awaitInvestigation(t *testing.T, id string) string {
 // never offered.
 func TestToolUniverseIsFilteredByVerifiedGrants(t *testing.T) {
 	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
-	plane, vendor := autonomousPlaneWith(t, investigator, nil)
+	plane, vendor := autonomousPlaneWith(t, investigator, 0)
 
 	if status, body := plane.createSlack(t, "Payments Bot Slack",
 		"xoxb-good-token-1234"); status != http.StatusCreated {
@@ -92,9 +95,9 @@ func TestToolUniverseIsFilteredByVerifiedGrants(t *testing.T) {
 		t.Fatalf("creating the user-token slack = %d: %s", status, body)
 	}
 
-	episode := plane.openEpisode(t, "DiskFull", "finger-grants")
+	incident := plane.openIncident(t, "DiskFull", "finger-grants")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening = %d: %s", status, body)
 	}
@@ -135,10 +138,10 @@ func TestToolUniverseIsFilteredByVerifiedGrants(t *testing.T) {
 
 func TestInvestigationFromAQuestionInfersTheSubject(t *testing.T) {
 	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
-	plane, _ := autonomousPlaneWith(t, investigator, nil)
+	plane, _ := autonomousPlaneWith(t, investigator, 0)
 	base := plane.base(surfaceOrg)
 
-	plane.openEpisode(t, "DiskFull", "finger-question")
+	plane.openIncident(t, "DiskFull", "finger-question")
 
 	status, body := plane.call(t, http.MethodPost, base+"/investigations",
 		map[string]any{"question": "what is going on with DiskFull?"})
@@ -163,11 +166,11 @@ func TestInvestigationFromAQuestionInfersTheSubject(t *testing.T) {
 func TestAnAmbiguousQuestionGetsOneClarificationInPlainLanguage(t *testing.T) {
 	plane, _ := autonomousPlaneWith(t, &scriptedInvestigatorMain{
 		exchange: &scriptedExchangeMain{},
-	}, nil)
+	}, 0)
 	base := plane.base(surfaceOrg)
 
-	plane.openEpisode(t, "DiskFull", "finger-amb-1")
-	plane.openEpisode(t, "DiskAlmostFull", "finger-amb-2")
+	plane.openIncident(t, "DiskFull", "finger-amb-1")
+	plane.openIncident(t, "DiskAlmostFull", "finger-amb-2")
 
 	status, body := plane.call(t, http.MethodPost, base+"/investigations",
 		map[string]any{"question": "why is the disk broken?"})
@@ -210,12 +213,12 @@ func TestAFailedReasonerFailsTheInvestigationHonestly(t *testing.T) {
 		failure: investigation.ErrReasonerUnavailable,
 	}
 	plane, _ := autonomousPlaneWith(t,
-		&scriptedInvestigatorMain{exchange: exchange}, nil)
+		&scriptedInvestigatorMain{exchange: exchange}, 0)
 	base := plane.base(surfaceOrg)
 
-	episode := plane.openEpisode(t, "DiskFull", "finger-fail")
+	incident := plane.openIncident(t, "DiskFull", "finger-fail")
 	status, body := plane.call(t, http.MethodPost, base+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening = %d: %s", status, body)
 	}
@@ -241,12 +244,12 @@ func TestAFailedReasonerFailsTheInvestigationHonestly(t *testing.T) {
 }
 
 func TestInvestigationsRefuseWhenNoModelProviderIsConfigured(t *testing.T) {
-	plane, _ := autonomousPlaneWith(t, nil, nil)
+	plane, _ := autonomousPlaneWith(t, nil, 0)
 	base := plane.base(surfaceOrg)
 
-	episode := plane.openEpisode(t, "DiskFull", "finger-noprov")
+	incident := plane.openIncident(t, "DiskFull", "finger-noprov")
 	status, body := plane.call(t, http.MethodPost, base+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("opening with no provider = %d, want 503: %s", status, body)
 	}
@@ -258,12 +261,11 @@ func TestInvestigationsRefuseWhenNoModelProviderIsConfigured(t *testing.T) {
 func TestAnotherTenantSeesNoInvestigations(t *testing.T) {
 	plane, _ := autonomousPlaneWith(t, &scriptedInvestigatorMain{
 		exchange: &scriptedExchangeMain{},
-	}, func(cfg *config.Config) {
-	})
+	}, 0)
 
-	episode := plane.openEpisode(t, "DiskFull", "finger-tenant")
+	incident := plane.openIncident(t, "DiskFull", "finger-tenant")
 	status, body := plane.call(t, http.MethodPost,
-		plane.base(surfaceOrg)+"/investigations", map[string]any{"episodeId": episode})
+		plane.base(surfaceOrg)+"/investigations", map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening = %d: %s", status, body)
 	}
@@ -280,14 +282,14 @@ func TestAnotherTenantSeesNoInvestigations(t *testing.T) {
 	}
 }
 
-// openInvestigation opens one from an episode and reports its id.
-func (p *integrationPlane) openInvestigation(t *testing.T, base, episode string) string {
+// openInvestigation opens one from an incident and reports its id.
+func (p *integrationPlane) openInvestigation(t *testing.T, base, incident string) string {
 	t.Helper()
 
 	status, body := p.call(t, http.MethodPost, base+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
-		t.Fatalf("opening an investigation for %s = %d: %s", episode, status, body)
+		t.Fatalf("opening an investigation for %s = %d: %s", incident, status, body)
 	}
 	var opened struct {
 		ID string `json:"id"`
@@ -299,17 +301,17 @@ func (p *integrationPlane) openInvestigation(t *testing.T, base, episode string)
 // "EVERYTHING OPENED FROM THIS INCIDENT" had no answer over the API.
 //
 // The column exists and is indexed, and the listing did not accept it — so a console
-// wanting the investigations for one episode had to read every investigation the tenant
+// wanting the investigations for one incident had to read every investigation the tenant
 // has and narrow them in a browser. That is the shape the frontend spec forbids, and it
 // is forbidden for a reason: a filter applied after paging disagrees with itself on page
 // two.
-func TestInvestigationsCanBeListedByTheEpisodeTheyCameFrom(t *testing.T) {
+func TestInvestigationsCanBeListedByTheIncidentTheyCameFrom(t *testing.T) {
 	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
-	plane, _ := autonomousPlaneWith(t, investigator, nil)
+	plane, _ := autonomousPlaneWith(t, investigator, 0)
 	base := plane.base(surfaceOrg)
 
-	wanted := plane.openEpisode(t, "DiskFull", "finger-by-episode-1")
-	other := plane.openEpisode(t, "HighLatency", "finger-by-episode-2")
+	wanted := plane.openIncident(t, "DiskFull", "finger-by-incident-1")
+	other := plane.openIncident(t, "HighLatency", "finger-by-incident-2")
 
 	mine := plane.openInvestigation(t, base, wanted)
 	theirs := plane.openInvestigation(t, base, other)
@@ -317,40 +319,40 @@ func TestInvestigationsCanBeListedByTheEpisodeTheyCameFrom(t *testing.T) {
 	plane.awaitInvestigation(t, theirs)
 
 	status, listing := plane.call(t, http.MethodGet,
-		base+"/investigations?episodeId="+wanted, nil)
+		base+"/investigations?incidentId="+wanted, nil)
 	if status != http.StatusOK {
 		t.Fatalf("filtered listing = %d: %s", status, listing)
 	}
 	if !strings.Contains(listing, mine) {
-		t.Errorf("the episode's own investigation is missing from its listing: %s", listing)
+		t.Errorf("the incident's own investigation is missing from its listing: %s", listing)
 	}
 	if strings.Contains(listing, theirs) {
-		t.Errorf("another episode's investigation is in the listing: %s", listing)
+		t.Errorf("another incident's investigation is in the listing: %s", listing)
 	}
 
-	// An episode this tenant does not have is an empty page, not an error and not a
-	// disclosure: answering differently would let a caller probe for episode ids.
+	// An incident this tenant does not have is an empty page, not an error and not a
+	// disclosure: answering differently would let a caller probe for incident ids.
 	status, empty := plane.call(t, http.MethodGet,
-		base+"/investigations?episodeId="+uuid.NewString(), nil)
+		base+"/investigations?incidentId="+uuid.NewString(), nil)
 	if status != http.StatusOK {
-		t.Fatalf("an unknown episode = %d, want an empty page: %s", status, empty)
+		t.Fatalf("an unknown incident = %d, want an empty page: %s", status, empty)
 	}
 	if strings.Contains(empty, mine) || strings.Contains(empty, theirs) {
-		t.Errorf("an unknown episode returned rows: %s", empty)
+		t.Errorf("an unknown incident returned rows: %s", empty)
 	}
 
 	// A filter this listing does not serve is REFUSED rather than ignored. An ignored
 	// filter returns everything while looking narrowed, which is the worse of the two.
 	status, refused := plane.call(t, http.MethodGet,
-		base+"/investigations?episode="+wanted, nil)
+		base+"/investigations?incident="+wanted, nil)
 	if status != http.StatusBadRequest {
 		t.Errorf("an unknown filter = %d, want 400: %s", status, refused)
 	}
 
 	// A value that is not an identifier is refused too, rather than reaching the database.
 	status, bad := plane.call(t, http.MethodGet,
-		base+"/investigations?episodeId=not-a-uuid", nil)
+		base+"/investigations?incidentId=not-a-uuid", nil)
 	if status != http.StatusBadRequest {
-		t.Errorf("a malformed episode id = %d, want 400: %s", status, bad)
+		t.Errorf("a malformed incident id = %d, want 400: %s", status, bad)
 	}
 }

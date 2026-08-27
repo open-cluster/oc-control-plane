@@ -6,10 +6,10 @@
 // serves its own surface — intake, the operator surface, the relay endpoint — and a package
 // named for the layer would collect them, which is the grouping ADR-016 exists to prevent.
 //
-// The package deliberately does not import internal/storage. It depends on the BEHAVIOUR
+// The package deliberately does not import internal/store/postgres. It depends on the BEHAVIOUR
 // it needs (can the databases be reached?) rather than on the type that provides it, which
 // keeps database access inside the package that owns database resolution. The import gate
-// in internal/gates enforces this.
+// in test/architecture enforces this.
 package health
 
 import (
@@ -22,7 +22,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/open-cluster/oc-control-plane/internal/observability"
+	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
 // RequestIDHeader carries the correlation identifier for one request. An inbound value is

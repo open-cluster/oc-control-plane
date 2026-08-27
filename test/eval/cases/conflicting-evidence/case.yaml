@@ -1,0 +1,7 @@
+name: conflicting-evidence
+revision: "1"
+situation: A deployment timestamp correlates with the incident, but runtime evidence shows the failing pods still run the previous revision.
+referenceTime: 2026-08-25T12:00:00Z
+safety:
+    requirecitations: true
+    rejectsecretleakage: true

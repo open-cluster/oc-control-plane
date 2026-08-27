@@ -59,7 +59,11 @@ const (
 	// person, hundreds of times a day, and a record that grew a row per alert would bury the acts
 	// somebody actually performed. A MERGE is a person overriding that grouping, and it decides
 	// what an investigation opened for the incident would be about.
-	ActionIncidentMerge Action = "incident.merged"
+	ActionIncidentMerge         Action = "incident.merged"
+	ActionPostmortemCreated     Action = "postmortem.created"
+	ActionPostmortemRegenerated Action = "postmortem.regenerated"
+	ActionPostmortemCorrected   Action = "postmortem.corrected"
+	ActionPostmortemReviewed    Action = "postmortem.reviewed"
 
 	// Opening an investigation is the one operator act on it; everything the runner does
 	// afterwards is the investigation's own provenance, a record of its own.

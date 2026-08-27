@@ -18,9 +18,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -61,8 +62,8 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
-		cfg.IntakeAddress = intakeAddress
+		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPAddress = intakeAddress
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		digest := sha256.Sum256([]byte(surfaceToken))
@@ -89,7 +90,7 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 }
 
 func (p *integrationPlane) base(organization string) string {
-	return "http://" + p.operator + "/operator/v1/organizations/" + organization
+	return "http://" + p.operator + "/api/v1/organizations/" + organization
 }
 
 // call sends an authenticated operator request with an optional JSON body.
@@ -111,7 +112,10 @@ func (p *integrationPlane) call(t *testing.T, method, url string, body any) (int
 	if err != nil {
 		t.Fatalf("building the request: %v", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+surfaceToken)
+	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		request.Header.Set("Origin", "http://"+p.operator)
+	}
 	if reader != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -138,7 +142,7 @@ func (p *integrationPlane) deliver(
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	url := "http://" + p.intake + "/intake/v1/integrations/" + integrationID + "/signals"
+	url := "http://" + p.intake + "/webhooks/v1/integrations/" + integrationID + "/alert-events"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		t.Fatalf("building the delivery: %v", err)
@@ -412,7 +416,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 			t.Fatal("no webhook block; the operator has no address to deliver to")
 		}
 		if !strings.Contains(created.Integration.Webhook.URL,
-			"/intake/v1/integrations/"+created.Integration.ID+"/signals") {
+			"/webhooks/v1/integrations/"+created.Integration.ID+"/alert-events") {
 			t.Errorf("the webhook address %q does not name this integration",
 				created.Integration.Webhook.URL)
 		}
@@ -552,7 +556,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 		status, body = plane.call(t, http.MethodDelete,
 			base+"/integrations/"+delivered.Integration.ID, nil)
 		if status != http.StatusConflict {
-			t.Errorf("deleting an integration with signals = %d, want 409 — the record of "+
+			t.Errorf("deleting an integration with alertEvents = %d, want 409 — the record of "+
 				"what a source produced must survive: %s", status, body)
 		}
 	})
@@ -586,18 +590,18 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 		}
 		decodeInto(t, body, &listed)
 		if len(listed.Items) == 0 {
-			t.Fatalf("a delivery was accepted and no episode exists: %s", body)
+			t.Fatalf("a delivery was accepted and no incident exists: %s", body)
 		}
-		episode := listed.Items[0]
-		if episode.IntegrationID != created.Integration.ID {
-			t.Errorf("the episode names integration %q, want %q",
-				episode.IntegrationID, created.Integration.ID)
+		incident := listed.Items[0]
+		if incident.IntegrationID != created.Integration.ID {
+			t.Errorf("the incident names integration %q, want %q",
+				incident.IntegrationID, created.Integration.ID)
 		}
-		if episode.Title != "DiskFull" {
-			t.Errorf("the episode is called %q, want the alert's own name", episode.Title)
+		if incident.Title != "DiskFull" {
+			t.Errorf("the incident is called %q, want the alert's own name", incident.Title)
 		}
-		if episode.Status != "open" {
-			t.Errorf("a firing alert produced a %q episode", episode.Status)
+		if incident.Status != "open" {
+			t.Errorf("a firing alert produced a %q incident", incident.Status)
 		}
 	})
 

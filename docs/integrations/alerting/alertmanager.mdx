@@ -40,7 +40,7 @@ secret and cannot show it again.
     receivers:
       - name: opencluster
         webhook_configs:
-          - url: "https://oc.example.com/intake/v1/integrations/<integration-id>/signals"
+          - url: "https://oc.example.com/webhooks/v1/integrations/<integration-id>/alert-events"
             send_resolved: true
             http_config:
               http_headers:

@@ -1,0 +1,10 @@
+causes:
+    - name: concurrency limit regression
+      markers: ["concurrency", "limit"]
+      tools: ["github.read_commits", "github.read_pull_request"]
+discriminating:
+    - tool: github.read_commits
+    - tool: github.read_pull_request
+relevanttools: ["github.read_commits", "github.read_pull_request"]
+expectfindings: true
+answermarkers: ["mitigation", "permanent", "risk", "reversible", "verify"]

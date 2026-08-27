@@ -45,6 +45,12 @@ func (s *scriptedExchangeMain) Next(
 	}
 	next := s.moves[0]
 	s.moves = s.moves[1:]
+	for index := range next.Calls {
+		if next.Calls[index].Purpose == "" {
+			next.Calls[index].Purpose = "exercise " + next.Calls[index].Tool +
+				" against the scripted evidence world"
+		}
+	}
 	return next, nil
 }
 
@@ -66,27 +72,20 @@ func (s *scriptedInvestigatorMain) OpenExchange(
 // autonomousPlaneWith starts a plane whose model boundary is the scripted
 // exchange, with any further config the case needs.
 func autonomousPlaneWith(
-	t *testing.T, investigator investigation.Investigator,
-	adjust func(cfg *config.Config),
+	t *testing.T, investigator investigation.Investigator, maxTurns int,
 ) (*integrationPlane, *vendorFake) {
 	t.Helper()
 
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	operatorAddress := freeAddress(t)
-	intakeAddress := operatorAddress
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
-		cfg.IntakeAddress = intakeAddress
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.SlackAPIURL = vendor.URL
-		if adjust != nil {
-			adjust(cfg)
-		}
-	}, app.Options{Investigator: investigator})
+	}, app.Options{Investigator: investigator, SlackAPIURL: vendor.URL, MaxTurns: maxTurns})
 	return &integrationPlane{
-		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,
+		controlPlane: plane, operator: operatorAddress, intake: operatorAddress,
 	}, vendor
 }
 
@@ -100,7 +99,7 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 		{Conclusion: &investigation.Conclusion{
 			Findings: []investigation.Finding{
 				{Statement: "the incident channel shows the deploy went out",
-					Kind:       investigation.FindingTriggeringChange,
+					Kind:       investigation.FindingTrigger,
 					Confidence: investigation.ConfidenceLikely,
 					Sources:    []int{1}},
 				{Statement: "no dns change was involved",
@@ -108,11 +107,13 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 					Confidence: investigation.ConfidenceConfirmed,
 					Sources:    []int{1}},
 			},
-			NextSteps: []string{"roll back the deploy", "watch the latency panel"},
+			Actions: []investigation.ActionProposal{
+				{Title: "roll back the deploy"}, {Title: "watch the latency panel"},
+			},
 		}, Spend: investigation.Spend{InputTokens: 120, OutputTokens: 30, MicroCents: 7}},
 	}}
 	investigator := &scriptedInvestigatorMain{exchange: exchange}
-	plane, vendor := autonomousPlaneWith(t, investigator, nil)
+	plane, vendor := autonomousPlaneWith(t, investigator, 0)
 	vendor.serveChannels(`{"ok":true,"channels":[
 		{"id":"C1","name":"incidents","topic":{"value":"live incident chat"}}],
 		"response_metadata":{"next_cursor":""}}`)
@@ -121,9 +122,9 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 		"xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("creating the slack integration = %d: %s", status, body)
 	}
-	episode := plane.openEpisode(t, "HighLatency", "finger-auto-1")
+	incident := plane.openIncident(t, "HighLatency", "finger-auto-1")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening the investigation = %d: %s", status, body)
 	}
@@ -139,10 +140,12 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 			Statement  string `json:"statement"`
 			Kind       string `json:"kind"`
 			Confidence string `json:"confidence"`
-			Sources    []int  `json:"sources"`
+			RunRefs    []int  `json:"runRefs"`
 		} `json:"findings"`
-		NextSteps []string `json:"nextSteps"`
-		StoppedBy string   `json:"stoppedBy"`
+		Actions []struct {
+			Title string `json:"title"`
+		} `json:"actions"`
+		StoppedBy string `json:"stoppedBy"`
 		Spend     struct {
 			MicroCents int64 `json:"microCents"`
 		} `json:"spend"`
@@ -161,13 +164,13 @@ func TestAutonomousInvestigationRecordsTheStructuredConclusion(t *testing.T) {
 		t.Fatalf("status=%q stoppedBy=%q: %s", read.Status, read.StoppedBy, final)
 	}
 	if len(read.Findings) != 2 ||
-		read.Findings[0].Kind != "triggering_change" ||
+		read.Findings[0].Kind != "trigger" ||
 		read.Findings[0].Confidence != "likely" ||
 		read.Findings[1].Kind != "ruled_out" {
 		t.Errorf("findings = %+v; the §7 conclusion must survive to the operator", read.Findings)
 	}
-	if len(read.NextSteps) != 2 || read.NextSteps[0] != "roll back the deploy" {
-		t.Errorf("next steps = %+v", read.NextSteps)
+	if len(read.Actions) != 2 || read.Actions[0].Title != "roll back the deploy" {
+		t.Errorf("actions = %+v", read.Actions)
 	}
 	if read.Spend.MicroCents != 12 {
 		t.Errorf("spend = %+v; every move summed", read.Spend)
@@ -205,16 +208,14 @@ func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 		}}},
 		{Conclusion: &investigation.Conclusion{Findings: []investigation.Finding{{
 			Statement:  "the reads that ran show a deploy announcement",
-			Kind:       investigation.FindingUnresolvedLead,
+			Kind:       investigation.FindingUnresolved,
 			Confidence: investigation.ConfidencePossible,
 			Sources:    []int{1},
 		}}}},
 	}}
 	plane, vendor := autonomousPlaneWith(t, &scriptedInvestigatorMain{
 		exchange: exchange,
-	}, func(cfg *config.Config) {
-		cfg.InvestigationMaxTurns = 1
-	})
+	}, 1)
 	vendor.serveChannels(`{"ok":true,"channels":[
 		{"id":"C1","name":"incidents","topic":{"value":"live incident chat"}}],
 		"response_metadata":{"next_cursor":""}}`)
@@ -223,9 +224,9 @@ func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 		"xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("creating the slack integration = %d: %s", status, body)
 	}
-	episode := plane.openEpisode(t, "TurnCeiling", "finger-auto-2")
+	incident := plane.openIncident(t, "TurnCeiling", "finger-auto-2")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening the investigation = %d: %s", status, body)
 	}
@@ -240,7 +241,7 @@ func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 		StoppedBy string `json:"stoppedBy"`
 	}
 	decodeInto(t, final, &read)
-	if read.Status != "concluded" || read.StoppedBy != "reasoner_turns" {
+	if read.Status != "partial" || read.StoppedBy != "reasoner_turns" {
 		t.Errorf("status=%q stoppedBy=%q; a configured ceiling ends in an honest stop: %s",
 			read.Status, read.StoppedBy, final)
 	}
@@ -258,5 +259,37 @@ func TestAutonomousTurnCeilingIsConfigurationAndStopsHonestly(t *testing.T) {
 	}
 	if !forcedConclusion {
 		t.Errorf("fed = %v; one reading turn, then the forced conclusion", fed)
+	}
+}
+
+func TestInvestigationNeedingHumanInputProjectsPublicLifecycle(t *testing.T) {
+	t.Parallel()
+
+	exchange := &scriptedExchangeMain{moves: []investigation.Move{{
+		Conclusion: &investigation.Conclusion{
+			Status: investigation.Inconclusive,
+			Limitations: []investigation.Limitation{{
+				Type: investigation.LimitationEssentialHumanInput,
+			}},
+		},
+	}}}
+	plane, _ := autonomousPlaneWith(t, &scriptedInvestigatorMain{exchange: exchange}, 0)
+	incident := plane.openIncident(t, "UnknownService", "finger-needs-input")
+	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
+		map[string]any{"incidentId": incident})
+	if status != http.StatusAccepted {
+		t.Fatalf("opening investigation = %d: %s", status, body)
+	}
+	var opened struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, body, &opened)
+	final := plane.awaitInvestigation(t, opened.ID)
+	var read struct {
+		Status string `json:"status"`
+	}
+	decodeInto(t, final, &read)
+	if read.Status != "needs_input" {
+		t.Fatalf("public lifecycle = %q, want needs_input: %s", read.Status, final)
 	}
 }

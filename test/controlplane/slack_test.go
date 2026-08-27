@@ -151,13 +151,12 @@ func startSlackPlane(t *testing.T, vendor *vendorFake) *integrationPlane {
 	t.Helper()
 
 	operatorAddress := freeAddress(t)
-	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.SlackAPIURL = vendor.URL
-	})
+	}, app.Options{SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, operator: operatorAddress}
 }
 
@@ -446,11 +445,8 @@ func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 
 	digest := sha256.Sum256([]byte(surfaceToken))
 	cfg := config.Config{
-		HTTPAddress:               "127.0.0.1:0",
 		DatabaseDSN:               freshDatabase(t),
-		ShutdownTimeout:           5 * time.Second,
-		ServiceName:               "oc-control-plane-test",
-		OperatorAddress:           freeAddress(t),
+		HTTPAddress:               freeAddress(t),
 		OperatorTokenDigest:       digest[:],
 		OperatorTokenOrganization: surfaceOrg,
 		SealingKey:                nil,

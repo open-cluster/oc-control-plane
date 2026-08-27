@@ -2,11 +2,15 @@ package controlplane
 
 import (
 	"crypto/sha256"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
@@ -23,18 +27,17 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 	t.Helper()
 
 	operatorAddress := freeAddress(t)
-	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.SlackAPIURL = vendor.URL
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = "the-slack-signing-secret"
 		cfg.OperatorPublicURL = "http://" + operatorAddress
-		cfg.OperatorConsoleURL = console
-	})
+		cfg.OperatorPublicURL = console
+	}, app.Options{SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, operator: operatorAddress}
 }
 
@@ -48,9 +51,41 @@ func (p *integrationPlane) pressConnectSlack(t *testing.T, organization string) 
 // returnFromSlack is the browser coming back from the authorization screen.
 func (p *integrationPlane) returnFromSlack(t *testing.T, parameters url.Values) (int, string) {
 	t.Helper()
-	return p.call(t, http.MethodGet,
-		"http://"+p.operator+"/operator/v1/integrations/connect/callback?"+
+	request, err := http.NewRequest(http.MethodGet,
+		"http://"+p.operator+"/api/v1/integrations/connect/callback?"+
 			parameters.Encode(), nil)
+	if err != nil {
+		t.Fatalf("building callback request: %v", err)
+	}
+	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("returning from Slack: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusFound {
+		raw, _ := io.ReadAll(response.Body)
+		return response.StatusCode, string(raw)
+	}
+	landed, err := url.Parse(response.Header.Get("Location"))
+	if err != nil {
+		t.Fatalf("parsing callback landing: %v", err)
+	}
+	outcome := landed.Query().Get("connect")
+	status := http.StatusBadRequest
+	if outcome == "connected" {
+		status = http.StatusOK
+	}
+	body, err := json.Marshal(map[string]string{
+		"connect": outcome, "integrationId": landed.Query().Get("integration"),
+	})
+	if err != nil {
+		t.Fatalf("encoding callback outcome: %v", err)
+	}
+	return status, string(body)
 }
 
 // connectSlack drives the whole flow once and returns the callback's answer.

@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
+
+const defaultWebURL = "https://github.com"
 
 // The keys a GitHub verification records on the Integration. Named constants because a
 // view, a test and a support answer all read the same map, and a key spelled twice is a
@@ -49,12 +50,8 @@ type deployment struct {
 // beside it is a GitHub Enterprise host whose web interface this build was never told
 // about. It answers empty, and nothing is recorded, because a link to github.com would send
 // somebody to a different company's settings page.
-func browserOrigin(configured string, installer *Installer, client *Client) string {
+func browserOrigin(client *Client) string {
 	switch {
-	case configured != "":
-		return strings.TrimSuffix(configured, "/")
-	case installer != nil:
-		return installer.webURL
 	case client.reachesTheVendorsOwnAPI():
 		return defaultWebURL
 	default:

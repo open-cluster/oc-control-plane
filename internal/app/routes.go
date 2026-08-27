@@ -9,22 +9,21 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/api"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
-	"github.com/open-cluster/oc-control-plane/internal/identity"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
-	"github.com/open-cluster/oc-control-plane/internal/operator"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	"github.com/open-cluster/oc-control-plane/web"
 )
@@ -75,7 +74,7 @@ func serve(ctx context.Context, process assembled) error {
 	if err != nil {
 		return err
 	}
-	defer relays.stop(cfg.ShutdownTimeout, logger)
+	defer relays.stop(defaultShutdownTimeout, logger)
 
 	// The callback fires only once EVERY configured surface is bound, because its promise
 	// is "a test can address a port without racing the listener" — and a caller told about
@@ -90,12 +89,6 @@ func serve(ctx context.Context, process assembled) error {
 	// the work it does is bounded per batch and the next instance simply continues.
 	pruners := startAuditPruner(process)
 	defer pruners.stop()
-
-	forwarding := startAuditForwarding(process)
-	defer forwarding.stop()
-
-	credentialRotation := startCredentialRotation(process)
-	defer credentialRotation.stop()
 
 	webhookWork := startWebhookWork(process)
 	defer webhookWork.stop()
@@ -120,8 +113,8 @@ func serve(ctx context.Context, process assembled) error {
 	// Drain: stop accepting, let in-flight requests finish within the budget, then exit.
 	// The shutdown context is detached from the already-cancelled process context, or the
 	// drain would end instantly and defeat the point.
-	logger.Info("draining", slog.Duration("timeout", cfg.ShutdownTimeout))
-	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
+	logger.Info("draining", slog.Duration("timeout", defaultShutdownTimeout))
+	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultShutdownTimeout)
 	defer cancel()
 
 	// Both surfaces drain at once, under one budget. Draining them in sequence would let a slow
@@ -131,7 +124,7 @@ func serve(ctx context.Context, process assembled) error {
 	stopped.Add(1)
 	go func() {
 		defer stopped.Done()
-		relays.stop(cfg.ShutdownTimeout, logger)
+		relays.stop(defaultShutdownTimeout, logger)
 	}()
 
 	err = server.Shutdown(drainCtx)
@@ -158,19 +151,19 @@ func httpRoutes(process assembled) (http.Handler, error) {
 	mux.Handle("/readyz", healthRouter)
 	mux.Handle("/metrics", healthRouter)
 
-	if process.config.IntakeAddress != "" {
-		mux.Handle("/intake/", intakeRouter(process))
+	mux.Handle("/webhooks/", intakeRouter(process))
+	operatorRoutes, err := operatorRouter(process)
+	if err != nil {
+		return nil, err
 	}
-	if process.config.OperatorAddress != "" {
-		operatorRoutes, err := operatorRouter(process)
-		if err != nil {
-			return nil, err
-		}
-		mux.Handle("/operator/", operatorRoutes)
-		mux.Handle("/", web.Handler())
-	} else {
-		mux.Handle("/", healthRouter)
-	}
+	mux.Handle("/api/", operatorRoutes)
+	// Retired pre-release route families must stay absent instead of falling through to
+	// the browser application's deep-link handler.
+	mux.HandleFunc("/operator/", http.NotFound)
+	mux.HandleFunc("/operator", http.NotFound)
+	mux.HandleFunc("/intake/", http.NotFound)
+	mux.HandleFunc("/intake", http.NotFound)
+	mux.Handle("/", web.Handler())
 	return mux, nil
 }
 
@@ -203,7 +196,7 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 
 	endpoint := &relayEndpoint{
 		server:   grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler())),
-		sessions: relay.NewSessionService(process.database, process.logger, cfg.InventoryInterval),
+		sessions: relay.NewSessionService(process.database, process.logger, defaultInventoryInterval),
 	}
 	relayv1.RegisterRelayRegistrationServiceServer(endpoint.server,
 		relay.NewRegistrationService(process.database, cfg.RelaySPKIPins, process.logger))
@@ -235,21 +228,21 @@ func operatorRouter(process assembled) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	router, err := operator.Handlers{
+	router, err := api.Handlers{
 		Database:                process.database,
 		Logger:                  process.logger,
 		Identity:                identities,
-		Origins:                 cfg.OperatorAllowedOrigins,
+		Origins:                 []string{cfg.OperatorPublicURL},
 		Catalog:                 process.catalog,
 		Sealer:                  process.sealer,
 		Investigations:          process.investigations,
-		InvestigationWindowLead: cfg.InvestigationWindowLead,
-		ConversationsEnabled:    cfg.ConversationsEnabled,
-		MaxWaitingTurns:         cfg.OrgWaitingInvestigations,
-		IntakeBaseURL:           cfg.IntakePublicURL,
+		InvestigationWindowLead: defaultInvestigationWindowLead,
+		ConversationsEnabled:    true,
+		MaxWaitingTurns:         defaultOrgWaitingInvestigations,
+		IntakeBaseURL:           cfg.OperatorPublicURL,
 		PublicURL:               cfg.OperatorPublicURL,
-		ConsoleURL:              cfg.OperatorConsoleURL,
-		MinimumRelayVersion:     cfg.MinimumRelayVersion,
+		ConsoleURL:              cfg.OperatorPublicURL,
+		MinimumRelayVersion:     "",
 	}.Router()
 	if err != nil {
 		return nil, fmt.Errorf("assembling the operator surface: %w", err)
@@ -266,18 +259,6 @@ func operatorRouter(process assembled) (http.Handler, error) {
 // authenticate nobody, and this is the last moment anyone can be told.
 func operatorIdentity(process assembled) (identity.Handlers, error) {
 	cfg := process.config
-	checkContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	legacyActive, err := process.database.LegacyIdentityActive(checkContext)
-	if err != nil {
-		return identity.Handlers{}, err
-	}
-	if legacyActive && !cfg.LegacyIdentityMigrationComplete {
-		return identity.Handlers{}, errors.New("active legacy identity configuration remains: " +
-			"use release 539b45e to export it, then set legacy_migration_complete, " +
-			"or roll back to that release")
-	}
-
 	handlers := identity.Handlers{
 		Database:         process.database,
 		Logger:           process.logger,
@@ -286,7 +267,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		OIDCClientID:     cfg.OIDCClientID,
 		OIDCClientSecret: cfg.OIDCClientSecret,
 		PublicURL:        cfg.OperatorPublicURL,
-		ConsoleURL:       cfg.OperatorConsoleURL,
+		ConsoleURL:       cfg.OperatorPublicURL,
 		// This process starts the pruner unconditionally, so the policy surface may say that a
 		// declared retention schedule is applied. It is passed rather than assumed because the
 		// statement is made to an auditor, and the only way to keep it true is for the component
@@ -301,8 +282,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	}
 	organization, err := tenancy.NewOrganization(cfg.OperatorTokenOrganization)
 	if err != nil {
-		return identity.Handlers{}, fmt.Errorf("%s: %w",
-			config.EnvOperatorTokenOrganization, err)
+		return identity.Handlers{}, fmt.Errorf("bootstrap organization: %w", err)
 	}
 	// The default is applied here as well as in config.Load, because a Config may be
 	// constructed directly — every harness in this package does — and a composition root that
@@ -316,14 +296,13 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	if !known {
 		return identity.Handlers{}, fmt.Errorf(
 			"%s names %q, which is not a role this build has",
-			config.EnvOperatorTokenRole, cfg.OperatorTokenRole)
+			"bootstrap role", cfg.OperatorTokenRole)
 	}
 	handlers.Bootstrap = identity.Bootstrap{
 		Digest:       cfg.OperatorTokenDigest,
 		Organization: organization,
 		Role:         role,
-		// Named so an event produced by the bootstrap credential is distinguishable in the
-		// record from one produced by a service account somebody created.
+		// Named so an event produced by the bootstrap credential is distinguishable in the record.
 		Name: "bootstrap credential",
 	}
 	process.logger.Info("bootstrap operator credential configured",

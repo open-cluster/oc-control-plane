@@ -13,14 +13,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // CallbackPath is where a provider returns the browser. It is ONE path for every provider
 // and it names no tenant, because a vendor registration holds a single redirect URI and
 // because a tenant read out of a callback's URL is a tenant the caller chose.
-const CallbackPath = "/operator/v1/integrations/connect/callback"
+const CallbackPath = "/api/v1/integrations/connect/callback"
 
 // connectTimeout bounds one leg of the flow. The callback leg spends two vendor calls —
 // the code exchange and the association check — and then a live probe.

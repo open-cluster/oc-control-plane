@@ -16,7 +16,7 @@ import (
 //
 // NO ORGANIZATION LABEL. Tenant identity belongs on a span; at the stated scale a tenant label
 // is a cardinality failure in any Prometheus-shaped backend, and the rule has a named home in
-// internal/observability. What is attributed here is a closed set of this build's own words,
+// internal/telemetry. What is attributed here is a closed set of this build's own words,
 // never anything a vendor or a caller supplied.
 
 const meterName = "github.com/open-cluster/oc-control-plane/internal/integrations/slack"

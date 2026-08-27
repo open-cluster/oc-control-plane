@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // Store is everything the Integration domain needs from durable state.
@@ -51,7 +51,7 @@ type Store interface {
 	SetIntegrationDisabled(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		id uuid.UUID, disabled bool) error
 	// DeleteIntegration removes one that nothing depends on, and refuses with ErrInUse
-	// when signals, jobs or ledger entries reference it.
+	// when alertEvents, jobs or ledger entries reference it.
 	DeleteIntegration(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		id uuid.UUID) error
 	// RotateIntegrationWebhookSecret replaces the digest without disturbing identity, so a

@@ -1,0 +1,23 @@
+{
+  "revision": "deterministic-structured-v1",
+  "agentRevision": "5f5a7d858ab83b99",
+  "providerModel": "scripted/deterministic",
+  "safetyPolicyVersion": "1",
+  "taskInstructionVersion": "1",
+  "bundleVersion": "1",
+  "schemaVersion": "6",
+  "fixtureRevision": "2026-08-22.1",
+  "scorerRevision": "structural-v2",
+  "causeCoverage": 1.0,
+  "discriminatingRecall": 1.0,
+  "answerAccuracy": 1.0,
+  "contradictionHandling": 1.0,
+  "honestInsufficiency": 1.0,
+  "toolPrecision": 1.0,
+  "toolCalls": 4,
+  "inputTokens": 360,
+  "outputTokens": 42,
+  "microCents": 19,
+  "latencyNanos": 0,
+  "hardGateFailures": 0
+}

@@ -15,10 +15,10 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type RelayExecutor struct{ Database *storage.Database }
@@ -40,7 +40,7 @@ func (e RelayExecutor) Execute(ctx context.Context, request integrations.ToolReq
 		return integrations.ToolResult{}, err
 	}
 	jobID := uuid.New()
-	err = e.Database.EnqueueVerifiedJob(ctx, organization, storage.Job{
+	err = e.Database.EnqueueVerifiedJob(ctx, organization, storage.RelayJob{
 		ID: jobID, InvestigationID: request.InvestigationID,
 		IntegrationID: request.Integration.ID, RegistrationID: request.Integration.RelayID,
 		CapabilityID: id, CapabilityVersion: capability.SchemaVersion1, Arguments: encoded})

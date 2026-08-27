@@ -28,7 +28,7 @@ function explain(error) {
 }
 
 function organizationURL(identifier = organization) {
-  return `/operator/v1/organizations/${encodeURIComponent(identifier)}`;
+  return `/api/v1/organizations/${encodeURIComponent(identifier)}`;
 }
 
 async function request(url, { method = 'GET', body, authorization } = {}) {
@@ -60,7 +60,7 @@ function formValues(form) {
 async function restoreSession() {
   let session;
   try {
-    session = await request('/operator/v1/session');
+    session = await request('/api/v1/session');
   } catch {
     signInSection.hidden = false;
     workspace.hidden = true;
@@ -189,7 +189,7 @@ document.querySelector('#cancel').addEventListener('click', async () => {
 
 document.querySelector('#sign-out').addEventListener('click', async () => {
   try {
-    await request('/operator/v1/session/sign-out', { method: 'POST' });
+    await request('/api/v1/session/sign-out', { method: 'POST' });
     clearInterval(refreshTimer);
     investigationSection.hidden = true;
     await restoreSession();

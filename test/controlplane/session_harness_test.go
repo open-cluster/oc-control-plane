@@ -14,10 +14,10 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // Everything the session tests use to act as a relay: enrolling one, opening its stream,
@@ -361,7 +361,7 @@ func enqueueJob(
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	job := storage.Job{
+	job := storage.RelayJob{
 		ID:                uuid.New(),
 		IntegrationID:     kubernetesIntegration(t, database, organization, registration),
 		RegistrationID:    registration,

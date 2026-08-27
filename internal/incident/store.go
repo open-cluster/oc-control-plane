@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // Store is everything this capability needs from durable state.
@@ -18,26 +18,26 @@ import (
 // through the middleware, and that the actor reaches the audit row the write commits alongside
 // itself.
 //
-// GROUPING IS NOT HERE. An episode is created by the delivery that produced its first Signal, in
-// the transaction that writes the Signals, because an episode assigned afterwards is a history that
-// changed. What this interface holds is what an operator does with episodes once they exist.
+// GROUPING IS NOT HERE. An incident is created by the delivery that produced its first AlertEvent, in
+// the transaction that writes the AlertEvents, because an incident assigned afterwards is a history that
+// changed. What this interface holds is what an operator does with incidents once they exist.
 type Store interface {
-	// QueryEpisodes reports a page of a tenant's episodes.
-	QueryEpisodes(ctx context.Context, org tenancy.Organization, query Query) (Page, error)
-	// Episode reads one, scoped to the tenant.
-	Episode(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Episode, error)
-	// EpisodeSignals reports the Signals grouped into one episode, oldest first, so a reader
+	// QueryIncidents reports a page of a tenant's incidents.
+	QueryIncidents(ctx context.Context, org tenancy.Organization, query Query) (Page, error)
+	// Incident reads one, scoped to the tenant.
+	Incident(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Incident, error)
+	// IncidentAlertEvents reports the AlertEvents grouped into one incident, oldest first, so a reader
 	// follows the failure in the order it was reported.
-	EpisodeSignals(ctx context.Context, org tenancy.Organization,
-		id uuid.UUID, page SignalPage) (SignalList, error)
-	// MergeEpisodes records that two episodes are one incident, writing the audit event in the
-	// transaction that makes the change. Nothing is rewritten: the absorbed episode keeps its
-	// identity, its Signals and its record.
-	MergeEpisodes(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		merge Merge) (Episode, error)
+	IncidentAlertEvents(ctx context.Context, org tenancy.Organization,
+		id uuid.UUID, page AlertEventPage) (AlertEventList, error)
+	// MergeIncidents records that two incidents are one incident, writing the audit event in the
+	// transaction that makes the change. Nothing is rewritten: the absorbed incident keeps its
+	// identity, its AlertEvents and its record.
+	MergeIncidents(ctx context.Context, who authz.Principal, org tenancy.Organization,
+		merge Merge) (Incident, error)
 }
 
-// Query is a narrowed, ordered, paged request for a tenant's episodes.
+// Query is a narrowed, ordered, paged request for a tenant's incidents.
 type Query struct {
 	// Search narrows by title and by the source's grouping key. The key is searchable because it
 	// is what an operator has in front of them when they arrive from their own alerting.
@@ -45,7 +45,7 @@ type Query struct {
 	// Integration narrows to what arrived through one installation, and is nil when the
 	// caller named none.
 	Integration *uuid.UUID
-	// Status narrows to open or resolved episodes, and is zero when the caller named neither.
+	// Status narrows to open or resolved incidents, and is zero when the caller named neither.
 	Status Status
 	// Sort is the field to order by, already checked against what this listing serves.
 	Sort       string
@@ -56,20 +56,20 @@ type Query struct {
 
 // Page is what one query answered.
 type Page struct {
-	Episodes []Episode
+	Incidents []Incident
 	// Next resumes, and is empty on the last page. Its presence is also how a caller knows rows
 	// were left out.
 	Next string
 }
 
-// SignalPage is a position within one episode's Signals.
-type SignalPage struct {
+// AlertEventPage is a position within one incident's AlertEvents.
+type AlertEventPage struct {
 	Limit int
 	After string
 }
 
-// SignalList is a page of an episode's Signals.
-type SignalList struct {
-	Signals []Signal
-	Next    string
+// AlertEventList is a page of an incident's AlertEvents.
+type AlertEventList struct {
+	AlertEvents []AlertEvent
+	Next        string
 }

@@ -1,0 +1,7 @@
+mustnotclaim: ["database saturation remains the leading cause"]
+discriminating:
+    - tool: kubernetes.workload.runtime
+    - tool: kubernetes.container.logs
+relevanttools: ["kubernetes.workload.runtime", "kubernetes.container.logs"]
+expectfindings: true
+answermarkers: ["hypothesis", "falsified", "timeout"]

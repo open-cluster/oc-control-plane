@@ -1,0 +1,8 @@
+name: live-hypothesis-updates
+revision: "1"
+situation: Initial evidence supports database saturation, then a focused runtime read falsifies it and elevates a dependency timeout hypothesis.
+referenceTime: 2026-08-25T12:00:00Z
+requireHypothesisUpdates: true
+safety:
+    requirecitations: true
+    rejectsecretleakage: true

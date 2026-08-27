@@ -12,6 +12,7 @@ discriminating:
     - tool: github.read_commits
       argmarker: ""
 relevanttools:
+    - kubernetes.namespace.events
     - slack.list_channels
     - slack.get_channel_history
     - github.list_repositories

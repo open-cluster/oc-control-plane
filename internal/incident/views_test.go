@@ -14,10 +14,10 @@ import (
 // A responder arriving from their own alerting wants to know whether to go and look at
 // Alertmanager or at something else.
 
-func TestAnEpisodeSaysWhichIntegrationDeliveredItByName(t *testing.T) {
+func TestAnIncidentSaysWhichIntegrationDeliveredItByName(t *testing.T) {
 	t.Parallel()
 
-	view := viewOf(Episode{
+	view := viewOf(Incident{
 		ID:              uuid.New(),
 		Integration:     uuid.New(),
 		IntegrationName: "Alertmanager — production",
@@ -32,22 +32,33 @@ func TestAnEpisodeSaysWhichIntegrationDeliveredItByName(t *testing.T) {
 	}
 }
 
-func TestAnEpisodeWithNoResolvableIntegrationKeepsTheIdentity(t *testing.T) {
+func TestAnIncidentWithNoResolvableIntegrationKeepsTheIdentity(t *testing.T) {
 	t.Parallel()
 
 	// The honest rendering of a name this service could not resolve: the identity is
 	// present and the name is absent, rather than an empty string a console would render
 	// as a blank attribute or a placeholder it invented.
 	//
-	// Unreachable through the API today — DeleteIntegration refuses while an episode
+	// Unreachable through the API today — DeleteIntegration refuses while an incident
 	// references the integration — and the read is written not to depend on that staying
 	// true, because the alternative failure is a listing that drops rows.
 	integration := uuid.New()
-	view := viewOf(Episode{ID: uuid.New(), Integration: integration})
+	view := viewOf(Incident{ID: uuid.New(), Integration: integration})
 	if view.IntegrationName != "" {
 		t.Errorf("integrationName = %q, want it absent", view.IntegrationName)
 	}
 	if view.IntegrationID != integration.String() {
 		t.Errorf("integrationId = %q, want the identity kept", view.IntegrationID)
+	}
+}
+
+func TestOnlyResolvedIncidentsPromptForAPostmortem(t *testing.T) {
+	t.Parallel()
+
+	if viewOf(Incident{Status: StatusOpen}).PostmortemEligible {
+		t.Fatal("an open incident prompted for a postmortem")
+	}
+	if !viewOf(Incident{Status: StatusResolved}).PostmortemEligible {
+		t.Fatal("a resolved incident did not prompt for a postmortem")
 	}
 }

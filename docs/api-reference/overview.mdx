@@ -1,0 +1,77 @@
+---
+title: "API reference"
+description: "Authenticate, address an Organization, and use OpenCluster's public HTTP endpoints."
+---
+
+OpenCluster serves JSON over a versioned HTTP API. Every customer-owned route includes
+the Organization in its path and requires a Principal with membership and the stated
+role permission.
+
+## Authentication
+
+Use the deployment's browser session or an approved bearer credential:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  https://oc.example.com/api/v1/organizations/local/incidents
+```
+
+Responses containing Organization data use `Cache-Control: no-store`. Unknown records
+and records belonging to another Organization both return `404`.
+
+## Core resources
+
+| Resource | Endpoints | Minimum role |
+| --- | --- | --- |
+| Integrations | `GET/POST /api/v1/organizations/{organization}/integrations` | Viewer to read, Admin to create |
+| Incidents | `GET /api/v1/organizations/{organization}/incidents` | Viewer |
+| Investigations | `GET/POST /api/v1/organizations/{organization}/investigations` | Viewer to read, Editor to open |
+| Conversations | `GET/POST /api/v1/organizations/{organization}/conversations` | Viewer to read, Editor to write |
+| Relays | `GET /api/v1/organizations/{organization}/relays` | Viewer |
+| Audit events | `GET /api/v1/organizations/{organization}/audit-events` | Viewer |
+
+Listings return `items`, an opaque `next` cursor, and any documented partial fields.
+Pass the returned cursor unchanged.
+
+## Investigation result
+
+`GET /api/v1/organizations/{organization}/investigations/{investigation}` returns
+the lifecycle status, conclusion status, summary, impact, cited findings, final
+hypotheses, action proposals, limitations, spend, and
+`humanConfirmationRequired`.
+
+Use these related endpoints:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `.../{investigation}/activity` | Ordered progress and hypothesis-update events |
+| `GET` | `.../{investigation}/sources` | Offered sources and numbered Tool Runs |
+| `GET` | `.../{investigation}/hypotheses` | Latest running snapshot or final hypotheses |
+| `POST` | `.../{investigation}/cancel` | Stop active work; Editor or Admin |
+
+## Postmortems
+
+Postmortem routes are under a resolved Incident:
+
+| Method | Path suffix | Outcome |
+| --- | --- | --- |
+| `GET` | `/postmortem` | Read the current draft or reviewed document |
+| `POST` | `/postmortem` | Generate the first draft |
+| `POST` | `/postmortem/regenerate` | Replace it with a higher draft revision |
+| `PATCH` | `/postmortem` | Apply explicit human corrections |
+| `POST` | `/postmortem/review` | Mark the document reviewed |
+
+The full prefix is
+`/api/v1/organizations/{organization}/incidents/{incident}`.
+Generation accepts optional explicit impact, resolution, and retrospective notes.
+Missing human facts remain `Needs human input.`
+
+## Webhooks
+
+Inbound integrations use `/webhooks/v1`, not the operator API. Alertmanager sends a
+bounded signed request to its Integration-specific URL. Treat webhook secrets as
+write-only credentials; OpenCluster shows a newly minted secret once.
+
+See [Prometheus Alertmanager](/integrations/alerting/alertmanager) for the supported
+payload and delivery responses.

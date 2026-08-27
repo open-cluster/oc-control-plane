@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/reasoning"
-	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/providers"
 )
 
 // The rubric layer of issue #5 §11: a model grades what markers cannot — whether the

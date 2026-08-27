@@ -1,0 +1,7 @@
+mustnotclaim: ["the latest deployment caused the incident"]
+discriminating:
+    - tool: kubernetes.workload.runtime
+    - tool: github.read_commits
+relevanttools: ["kubernetes.workload.runtime", "github.read_commits"]
+expectfindings: true
+answermarkers: ["conflict", "revision"]

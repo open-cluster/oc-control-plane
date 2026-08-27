@@ -110,7 +110,7 @@ func TestAMergeThatCouldNotMeanAnythingIsRefusedBeforeAnythingIsRead(t *testing.
 
 	whole := incident.Merge{Absorbed: one, Into: two, Reason: "one rollout, two alerts"}
 	if err := whole.Validate(); err != nil {
-		t.Errorf("a merge naming two episodes and a reason was refused: %v", err)
+		t.Errorf("a merge naming two incidents and a reason was refused: %v", err)
 	}
 }
 

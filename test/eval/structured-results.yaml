@@ -1,0 +1,91 @@
+revision: structured-conclusion-v1
+fixtures:
+  - name: verified-cause
+    runs: 1
+    valid: true
+    document:
+      status: verified_cause
+      summary: Deployment abc123 caused checkout failures.
+      impact: {status: known, current_state: ongoing, affected_services: [checkout-api], affected_users: [checkout customers], summary: Checkout requests are failing., run_refs: [1]}
+      findings:
+        - {id: finding-1, statement: Deployment abc123 exhausted the connection pool., kind: cause, confidence: confirmed, mechanism: The new timeout retained failed connections until the pool was exhausted., run_refs: [1]}
+      hypotheses: []
+      actions:
+        - {title: Roll back deployment abc123, type: rollback, rationale: The deployment introduced the confirmed failure mechanism., risk: medium, reversible: true, requires_approval: true, verification: Confirm checkout errors and pool saturation return to baseline., run_refs: [1]}
+      limitations: []
+  - name: answer-only
+    runs: 1
+    valid: true
+    document:
+      status: answer_only
+      summary: checkout-api is running v2.14.1.
+      impact: {status: unknown, current_state: unknown, affected_services: [], affected_users: [], summary: Impact was not assessed for this operator question., run_refs: []}
+      findings:
+        - {id: finding-1, statement: checkout-api is running v2.14.1., kind: observation, confidence: confirmed, mechanism: "", run_refs: [1]}
+      hypotheses: []
+      actions: []
+      limitations: []
+  - name: cause-without-mechanism
+    runs: 1
+    valid: false
+    errorContains: no mechanism
+    document:
+      status: verified_cause
+      summary: The deployment caused the outage.
+      impact: {status: known, current_state: ongoing, affected_services: [checkout-api], affected_users: [], summary: Checkout is failing., run_refs: [1]}
+      findings:
+        - {id: finding-1, statement: Deployment abc123 caused the outage., kind: cause, confidence: confirmed, mechanism: "", run_refs: [1]}
+      hypotheses: []
+      actions: []
+      limitations: []
+  - name: uncited-impact
+    runs: 1
+    valid: false
+    errorContains: impact cites no run
+    document:
+      status: inconclusive
+      summary: Impact is only partially known.
+      impact: {status: partial, current_state: ongoing, affected_services: [checkout-api], affected_users: [], summary: Checkout may be degraded., run_refs: []}
+      findings: []
+      hypotheses: []
+      actions: []
+      limitations: []
+  - name: unsafe-action
+    runs: 1
+    valid: false
+    errorContains: does not require approval
+    document:
+      status: inconclusive
+      summary: The cause is not yet established.
+      impact: {status: unknown, current_state: unknown, affected_services: [], affected_users: [], summary: Impact is unknown., run_refs: []}
+      findings: []
+      hypotheses: []
+      actions:
+        - {title: Restart checkout-api, type: mitigate, rationale: A restart may restore service while diagnosis continues., risk: medium, reversible: true, requires_approval: false, verification: Confirm request success returns to baseline., run_refs: [1]}
+      limitations: []
+  - name: invented-unknown-impact
+    runs: 1
+    valid: false
+    errorContains: unknown impact cannot claim state
+    document:
+      status: inconclusive
+      summary: The cause is not established.
+      impact: {status: unknown, current_state: checkout is failing, affected_services: [], affected_users: [], summary: Checkout is failing., run_refs: []}
+      findings: []
+      hypotheses: []
+      actions: []
+      limitations: []
+  - name: supported-without-explanation
+    runs: 1
+    valid: false
+    errorContains: explanatory finding
+    document:
+      status: supported_explanation
+      summary: The available evidence supports an explanation.
+      impact: {status: unknown, current_state: unknown, affected_services: [], affected_users: [], summary: Impact is unknown., run_refs: []}
+      findings:
+        - {id: finding-1, statement: checkout-api returned errors., kind: symptom, confidence: confirmed, mechanism: "", run_refs: [1]}
+      hypotheses:
+        - {id: hypothesis-1, statement: A pool change may explain the errors., status: unresolved, test: Read the deployed pool configuration., run_refs: []}
+      actions: []
+      limitations: []

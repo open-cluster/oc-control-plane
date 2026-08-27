@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/audit/workos"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
@@ -19,16 +17,28 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/observability"
-	"github.com/open-cluster/oc-control-plane/internal/reasoning"
-	"github.com/open-cluster/oc-control-plane/internal/reasoning/providers"
-	"github.com/open-cluster/oc-control-plane/internal/seal"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/providers"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
+	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
 // readHeaderTimeout bounds how long a client may take to send its headers, which is the
 // cheapest defence against a slow-loris holding connections open.
 const readHeaderTimeout = 10 * time.Second
+
+const (
+	defaultServiceName                 = "oc-control-plane"
+	defaultShutdownTimeout             = 15 * time.Second
+	defaultInventoryInterval           = 5 * time.Minute
+	defaultChangeRetentionDays         = 90
+	defaultInvestigationWindowLead     = 2 * time.Hour
+	defaultOrgConcurrentInvestigations = 4
+	defaultOrgWaitingInvestigations    = 16
+	defaultContextThresholdPercent     = 50
+	defaultModelSpendCeilingCents      = 500
+)
 
 // Bounds on connections to the shared HTTP surface. Route owners retain their own body and
 // request limits inside these server-wide bounds.
@@ -44,10 +54,15 @@ const (
 // OnListen lets a test address an ephemeral port without racing the listener. Investigator
 // lets a test use a scripted model boundary instead of a paid provider.
 type Options struct {
-	Version        string
-	OnListen       func(net.Addr)
-	Investigator   investigation.Investigator
-	AuditForwarder audit.Forwarder
+	Version      string
+	OnListen     func(net.Addr)
+	Investigator investigation.Investigator
+	ModelEffort  string
+	ModelBaseURL string
+	MaxToolRuns  int
+	MaxTurns     int
+	SlackAPIURL  string
+	GitHubAPIURL string
 }
 
 // Run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -60,16 +75,12 @@ type Options struct {
 func Run(
 	ctx context.Context, cfg config.Config, logOutput io.Writer, options Options,
 ) error {
-	forwarder, err := configuredAuditForwarder(cfg, options)
-	if err != nil {
-		return err
-	}
 	version := strings.TrimSpace(options.Version)
 	if version == "" {
 		version = "dev"
 	}
 	telemetry, err := observability.Start(ctx, observability.Options{
-		ServiceName:    cfg.ServiceName,
+		ServiceName:    defaultServiceName,
 		ServiceVersion: version,
 		OTLPEndpoint:   cfg.OTLPEndpoint,
 		LogOutput:      logOutput,
@@ -88,7 +99,7 @@ func Run(
 	logger := telemetry.Logger
 	logger.Info("control plane starting",
 		slog.String("version", version),
-		slog.String("service", cfg.ServiceName))
+		slog.String("service", defaultServiceName))
 
 	database, err := storage.OpenDatabase(ctx, cfg.DatabaseDSN)
 	if err != nil {
@@ -101,15 +112,12 @@ func Run(
 		return fmt.Errorf("applying migrations: %w", err)
 	}
 	logMigrations(logger, applied)
-	if forwarder != nil {
-		database.EnableAuditForwarding()
-	}
 
 	// The GitHub App is deployment configuration; a deployment without one still serves
 	// github in the catalog — the compiled provider set and the seeded reference rows
 	// must agree exactly — and connecting it fails live, with the reason. A key that
 	// cannot sign refuses startup, where whoever supplied it is still reading.
-	gitHubClient := github.NewClient(cfg.GitHubAPIURL)
+	gitHubClient := github.NewClient(options.GitHubAPIURL)
 	var gitHubApp *github.App
 	if len(cfg.GitHubAppKey) > 0 {
 		gitHubApp, err = github.NewApp(cfg.GitHubAppID, cfg.GitHubAppKey, gitHubClient)
@@ -120,14 +128,6 @@ func Run(
 	// The installation flow is registered separately from the credential: a deployment may
 	// hold an App and offer no one-click install — which is the self-hosted case — and it
 	// then serves the configuration form exactly as it does today.
-	var gitHubInstaller *github.Installer
-	if cfg.GitHubAppSlug != "" {
-		gitHubInstaller, err = github.NewInstaller(cfg.GitHubAppSlug, cfg.GitHubClientID,
-			cfg.GitHubClientSecret, cfg.GitHubWebURL)
-		if err != nil {
-			return fmt.Errorf("%s: %w", config.EnvGitHubAppSlug, err)
-		}
-	}
 
 	// Slack's installation flow is registered separately from its credential, exactly as
 	// GitHub's is: a deployment that registered no Slack app offers no connect button and
@@ -135,7 +135,7 @@ func Run(
 	var slackInstaller *slack.Installer
 	if cfg.SlackClientID != "" {
 		slackInstaller, err = slack.NewInstaller(
-			cfg.SlackClientID, cfg.SlackClientSecret, cfg.SlackAPIURL)
+			cfg.SlackClientID, cfg.SlackClientSecret, options.SlackAPIURL)
 		if err != nil {
 			return fmt.Errorf("%s: %w", config.EnvSlackClientID, err)
 		}
@@ -147,12 +147,15 @@ func Run(
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(kubernetes.RelayExecutor{Database: database}),
-		slack.Definition(slack.NewClient(cfg.SlackAPIURL), slackInstaller,
+		slack.Definition(slack.NewClient(options.SlackAPIURL), slackInstaller,
 			cfg.SlackSigningSecret != ""),
-		github.Definition(gitHubInstaller, gitHubApp, gitHubClient, cfg.GitHubWebURL),
+		github.Definition(gitHubApp, gitHubClient),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)
+	}
+	if err = database.ReconcileIntegrationTypes(ctx, catalog.Manifests()); err != nil {
+		return err
 	}
 
 	// One sealer for the process: identity client secrets and integration credentials are
@@ -170,7 +173,7 @@ func Run(
 	// can do.
 	investigator := options.Investigator
 	if investigator == nil && cfg.ModelProvider != "" {
-		if investigator, err = modelBoundary(cfg, catalog, logger); err != nil {
+		if investigator, err = modelBoundary(cfg, catalog, logger, options); err != nil {
 			return err
 		}
 	}
@@ -182,23 +185,23 @@ func Run(
 		Catalog:       catalog,
 		Sealer:        sealer,
 		Investigator:  investigator,
-		MaxToolRuns:   cfg.InvestigationMaxToolRuns,
-		MaxTurns:      cfg.InvestigationMaxTurns,
-		OrgConcurrent: cfg.OrgConcurrentInvestigations,
-		WindowLead:    cfg.InvestigationWindowLead,
+		MaxToolRuns:   options.MaxToolRuns,
+		MaxTurns:      options.MaxTurns,
+		OrgConcurrent: defaultOrgConcurrentInvestigations,
+		WindowLead:    defaultInvestigationWindowLead,
 		// The context budget is computed HERE, where the model is known, and handed to the
 		// domain as a number. internal/investigation must never learn what a vendor is,
 		// and "how big is this model's window" is a vendor fact.
-		ContextBudget: reasoning.ContextBudget(cfg.ModelName, cfg.ModelContextWindow,
-			cfg.ContextThresholdPercent),
+		ContextBudget: reasoning.ContextBudget(cfg.ModelName, 0,
+			defaultContextThresholdPercent),
 		// The ceiling is the same window without the soft threshold applied, so it always
 		// sits above the budget. The distance between them is the room a compaction buys
 		// the turn that performed it.
-		ContextCeiling:         reasoning.ContextCeiling(cfg.ModelName, cfg.ModelContextWindow),
+		ContextCeiling:         reasoning.ContextCeiling(cfg.ModelName, 0),
 		ModelName:              cfg.ModelName,
 		Telemetry:              investigation.NewTelemetry(logger),
 		Logger:                 logger,
-		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
+		SpendCeilingMicroCents: microCentsOf(defaultModelSpendCeilingCents),
 	}
 	// Drained on the way out: an investigation mid-flight is failed with the reason
 	// recorded rather than orphaned into a record that says running forever.
@@ -228,35 +231,12 @@ func Run(
 		sealer:         sealer,
 		investigations: investigations,
 		onListen:       options.OnListen,
-		auditForwarder: forwarder,
+		slackAPIURL:    options.SlackAPIURL,
 	})
 }
 
-func configuredAuditForwarder(cfg config.Config, options Options) (audit.Forwarder, error) {
-	if options.AuditForwarder != nil {
-		return options.AuditForwarder, nil
-	}
-	if !cfg.HostedMode {
-		return nil, nil
-	}
-	forwarder, err := workos.New(cfg.WorkOSAPIURL, cfg.WorkOSAPIKey,
-		cfg.WorkOSAuditOrganizations)
-	if err != nil {
-		return nil, fmt.Errorf("configuring hosted audit forwarding: %w", err)
-	}
-	return forwarder, nil
-}
-
 func configuredSealer(cfg config.Config) (seal.Sealer, error) {
-	identifier := cfg.SealingKeyID
-	if identifier == "" {
-		identifier = "default"
-	}
-	previous := make([]seal.Key, 0, len(cfg.PreviousSealingKeys))
-	for _, key := range cfg.PreviousSealingKeys {
-		previous = append(previous, seal.Key{ID: key.ID, Material: key.Material})
-	}
-	return seal.NewKeyring(seal.Key{ID: identifier, Material: cfg.SealingKey}, previous...)
+	return seal.NewKeyring(seal.Key{ID: "primary", Material: cfg.SealingKey})
 }
 
 // modelBoundary builds the configured deployment's Exchange driver. Everything
@@ -264,15 +244,15 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 // unimplemented provider, an unpriced model, an effort level nothing recognises, a
 // provider nobody consented to.
 func modelBoundary(
-	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger,
+	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger, options Options,
 ) (investigation.Investigator, error) {
 	deployment := reasoning.Deployment{
 		Provider:               cfg.ModelProvider,
 		Model:                  cfg.ModelName,
-		Effort:                 reasoning.Effort(cfg.ModelEffort),
-		BaseURL:                cfg.ModelBaseURL,
+		Effort:                 reasoning.Effort(options.ModelEffort),
+		BaseURL:                options.ModelBaseURL,
 		Credential:             reasoning.Secret(cfg.ModelKey),
-		SpendCeilingMicroCents: microCentsOf(cfg.ModelSpendCeilingCents),
+		SpendCeilingMicroCents: microCentsOf(defaultModelSpendCeilingCents),
 	}.WithDefaults()
 	if err := deployment.Validate(); err != nil {
 		return nil, err
@@ -282,7 +262,7 @@ func modelBoundary(
 		return nil, err
 	}
 	agent, err := reasoning.NewAgent(deployment, provider,
-		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelConsented...))
+		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelProvider))
 	if err != nil {
 		return nil, err
 	}
@@ -309,5 +289,5 @@ type assembled struct {
 	sealer         seal.Sealer
 	investigations *investigation.Runner
 	onListen       func(net.Addr)
-	auditForwarder audit.Forwarder
+	slackAPIURL    string
 }

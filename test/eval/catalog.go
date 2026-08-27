@@ -2,6 +2,7 @@ package eval
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -11,10 +12,79 @@ import (
 )
 
 // ScorerRevision identifies the deterministic structural scoring contract.
-const ScorerRevision = "structural-v1"
+const ScorerRevision = "structural-v2"
 
-//go:embed cases/*/*.yaml cases/*/*.json
+//go:embed cases/*/*.yaml cases/*/*.json structured-results.yaml baseline.json
 var fixtureFiles embed.FS
+
+type Baseline struct {
+	Revision               string  `json:"revision"`
+	AgentRevision          string  `json:"agentRevision"`
+	ProviderModel          string  `json:"providerModel"`
+	SafetyPolicyVersion    string  `json:"safetyPolicyVersion"`
+	TaskInstructionVersion string  `json:"taskInstructionVersion"`
+	BundleVersion          string  `json:"bundleVersion"`
+	SchemaVersion          string  `json:"schemaVersion"`
+	FixtureRevision        string  `json:"fixtureRevision"`
+	ScorerRevision         string  `json:"scorerRevision"`
+	CauseCoverage          float64 `json:"causeCoverage"`
+	DiscriminatingRecall   float64 `json:"discriminatingRecall"`
+	AnswerAccuracy         float64 `json:"answerAccuracy"`
+	ContradictionHandling  float64 `json:"contradictionHandling"`
+	HonestInsufficiency    float64 `json:"honestInsufficiency"`
+	ToolPrecision          float64 `json:"toolPrecision"`
+	ToolCalls              int     `json:"toolCalls"`
+	InputTokens            int64   `json:"inputTokens"`
+	OutputTokens           int64   `json:"outputTokens"`
+	MicroCents             int64   `json:"microCents"`
+	LatencyNanos           int64   `json:"latencyNanos"`
+	HardGateFailures       int     `json:"hardGateFailures"`
+}
+
+func LoadBaseline() (Baseline, error) {
+	raw, err := fixtureFiles.ReadFile("baseline.json")
+	if err != nil {
+		return Baseline{}, fmt.Errorf("reading evaluation baseline: %w", err)
+	}
+	var baseline Baseline
+	if err := json.Unmarshal(raw, &baseline); err != nil {
+		return Baseline{}, fmt.Errorf("decoding evaluation baseline: %w", err)
+	}
+	return baseline, nil
+}
+
+type StructuredResultFixture struct {
+	Name          string         `yaml:"name"`
+	Runs          int            `yaml:"runs"`
+	Valid         bool           `yaml:"valid"`
+	ErrorContains string         `yaml:"errorContains,omitempty"`
+	Document      map[string]any `yaml:"document"`
+}
+
+type structuredResultCatalog struct {
+	Revision string                    `yaml:"revision"`
+	Fixtures []StructuredResultFixture `yaml:"fixtures"`
+}
+
+func LoadStructuredResults() (string, []StructuredResultFixture, error) {
+	raw, err := fixtureFiles.ReadFile("structured-results.yaml")
+	if err != nil {
+		return "", nil, fmt.Errorf("reading structured result fixtures: %w", err)
+	}
+	var catalog structuredResultCatalog
+	if err := yaml.Unmarshal(raw, &catalog); err != nil {
+		return "", nil, fmt.Errorf("decoding structured result fixtures: %w", err)
+	}
+	if catalog.Revision == "" || len(catalog.Fixtures) == 0 {
+		return "", nil, fmt.Errorf("structured result fixtures require a revision and cases")
+	}
+	for _, fixture := range catalog.Fixtures {
+		if fixture.Name == "" || fixture.Document == nil || (!fixture.Valid && fixture.ErrorContains == "") {
+			return "", nil, fmt.Errorf("structured result fixture %q is incomplete", fixture.Name)
+		}
+	}
+	return catalog.Revision, catalog.Fixtures, nil
+}
 
 // Cause describes a conclusion that must be supported by an observed tool read.
 type Cause struct {
@@ -71,19 +141,21 @@ type Catalog struct {
 }
 
 type scenarioMetadata struct {
-	Name                   string    `yaml:"name"`
-	Revision               string    `yaml:"revision"`
-	Situation              string    `yaml:"situation"`
-	ReferenceTime          time.Time `yaml:"referenceTime"`
-	Safety                 Safety    `yaml:"safety"`
-	Question               string    `yaml:"question"`
-	FollowUps              []string  `yaml:"followUps"`
-	Distractors            []string  `yaml:"distractors"`
-	DistractorSlackToken   string    `yaml:"distractorSlackToken"`
-	DistractorInstallation string    `yaml:"distractorInstallation"`
-	FailCommits            int       `yaml:"failCommits"`
-	MoreHistory            bool      `yaml:"moreHistory"`
-	MoreCommits            bool      `yaml:"moreCommits"`
+	Name                     string    `yaml:"name"`
+	Revision                 string    `yaml:"revision"`
+	Situation                string    `yaml:"situation"`
+	ReferenceTime            time.Time `yaml:"referenceTime"`
+	Safety                   Safety    `yaml:"safety"`
+	Question                 string    `yaml:"question"`
+	FollowUps                []string  `yaml:"followUps"`
+	Distractors              []string  `yaml:"distractors"`
+	DistractorSlackToken     string    `yaml:"distractorSlackToken"`
+	DistractorInstallation   string    `yaml:"distractorInstallation"`
+	FailCommits              int       `yaml:"failCommits"`
+	MoreHistory              bool      `yaml:"moreHistory"`
+	MoreCommits              bool      `yaml:"moreCommits"`
+	RequireHypothesisUpdates bool      `yaml:"requireHypothesisUpdates"`
+	GeneratePostmortem       bool      `yaml:"generatePostmortem"`
 }
 
 // Load reads independently authored scenario descriptions and expected outcomes.

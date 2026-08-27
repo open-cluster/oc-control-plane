@@ -19,7 +19,7 @@ import (
 //
 // NO ORGANIZATION LABEL, ON ANY OF THEM. Tenant identity belongs on a span; at the stated scale of
 // five thousand organizations a tenant label is a cardinality failure in any Prometheus-shaped
-// backend, and the rule has a named home in internal/observability. What is attributed here is the
+// backend, and the rule has a named home in internal/telemetry. What is attributed here is the
 // DISPOSITION and the reason — a closed set of this build's own strings, never anything a caller
 // supplied.
 //
@@ -32,9 +32,9 @@ const meterName = "github.com/open-cluster/oc-control-plane/internal/webhooks"
 
 // instruments are the counters this surface keeps.
 type instruments struct {
-	deliveries metric.Int64Counter
-	signals    metric.Int64Counter
-	episodes   metric.Int64Counter
+	deliveries  metric.Int64Counter
+	alertEvents metric.Int64Counter
+	incidents   metric.Int64Counter
 	// slackEvents is the chat surface's own arrivals. Counted apart from deliveries
 	// because they answer different questions: a delivery is a customer's alerting
 	// reaching us, and this is a person speaking to OpenCluster — and the dispositions that
@@ -118,15 +118,15 @@ func newInstruments(logger *slog.Logger) instruments {
 		metric.WithUnit("{delivery}")); err != nil {
 		logger.Warn("intake delivery metric unavailable", slog.String("error", err.Error()))
 	}
-	if built.signals, err = meter.Int64Counter("oc.intake.signals",
-		metric.WithDescription("Signals recorded from accepted deliveries."),
-		metric.WithUnit("{signal}")); err != nil {
-		logger.Warn("intake signal metric unavailable", slog.String("error", err.Error()))
+	if built.alertEvents, err = meter.Int64Counter("oc.intake.alert_events",
+		metric.WithDescription("Alert Events recorded from accepted deliveries."),
+		metric.WithUnit("{alert_event}")); err != nil {
+		logger.Warn("intake Alert Event metric unavailable", slog.String("error", err.Error()))
 	}
-	if built.episodes, err = meter.Int64Counter("oc.intake.episode_groupings",
+	if built.incidents, err = meter.Int64Counter("oc.intake.incident_groupings",
 		metric.WithDescription(
-			"Grouping decisions: a new Signal opened an operational episode, or joined one."),
-		metric.WithUnit("{signal}")); err != nil {
+			"Grouping decisions: a new AlertEvent opened an operational incident, or joined one."),
+		metric.WithUnit("{alert_event}")); err != nil {
 		logger.Warn("intake grouping metric unavailable", slog.String("error", err.Error()))
 	}
 	if built.slackEvents, err = meter.Int64Counter("oc.intake.slack_events",
@@ -190,22 +190,22 @@ func (i instruments) countDelivery(ctx context.Context, disposition string) {
 		metric.WithAttributes(attribute.String(dispositionKey, disposition)))
 }
 
-// countSignals records what an accepted delivery carried and how it grouped.
-func (i instruments) countSignals(ctx context.Context, recorded, opened, joined int) {
-	if i.signals != nil && recorded > 0 {
-		i.signals.Add(ctx, int64(recorded))
+// countAlertEvents records what an accepted delivery carried and how it grouped.
+func (i instruments) countAlertEvents(ctx context.Context, recorded, opened, joined int) {
+	if i.alertEvents != nil && recorded > 0 {
+		i.alertEvents.Add(ctx, int64(recorded))
 	}
-	if i.episodes == nil {
+	if i.incidents == nil {
 		return
 	}
 	// Reported apart rather than as a ratio. A ratio computed here would be a number nobody could
 	// re-aggregate over a window, and the window is the operator's to choose.
 	if opened > 0 {
-		i.episodes.Add(ctx, int64(opened),
+		i.incidents.Add(ctx, int64(opened),
 			metric.WithAttributes(attribute.String(groupingKey, "opened")))
 	}
 	if joined > 0 {
-		i.episodes.Add(ctx, int64(joined),
+		i.incidents.Add(ctx, int64(joined),
 			metric.WithAttributes(attribute.String(groupingKey, "joined")))
 	}
 }

@@ -1,0 +1,7 @@
+{
+  "alertname": "CheckoutLatencyHigh",
+  "labels": {
+    "namespace": "payments",
+    "service": "payments"
+  }
+}

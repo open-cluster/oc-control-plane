@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -45,32 +45,32 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 			delivered.Token, intake.TokenHeader, alertmanagerGateImage)
 	}
 
-	// The Signal is what the alert became. Everything the customer's alerting already knew
+	// The AlertEvent is what the alert became. Everything the customer's alerting already knew
 	// has to survive intake, because it is what the investigation starts from.
-	signals := gate.signalsNamed(t, alertname)
-	if len(signals) != 1 {
-		t.Fatalf("one fired alert produced %d signals, want 1", len(signals))
+	alertEvents := gate.alertEventsNamed(t, alertname)
+	if len(alertEvents) != 1 {
+		t.Fatalf("one fired alert produced %d alertEvents, want 1", len(alertEvents))
 	}
-	signal := signals[0]
-	if signal.SourceKey != delivered.Payload.Alerts[0].Fingerprint {
-		t.Errorf("the signal is keyed %q, want alertmanager's own fingerprint %q",
-			signal.SourceKey, delivered.Payload.Alerts[0].Fingerprint)
+	alertEvent := alertEvents[0]
+	if alertEvent.SourceKey != delivered.Payload.Alerts[0].Fingerprint {
+		t.Errorf("the Alert Event is keyed %q, want alertmanager's own fingerprint %q",
+			alertEvent.SourceKey, delivered.Payload.Alerts[0].Fingerprint)
 	}
-	if signal.Title != alertname {
-		t.Errorf("the signal is titled %q, want %q", signal.Title, alertname)
+	if alertEvent.Title != alertname {
+		t.Errorf("the Alert Event is titled %q, want %q", alertEvent.Title, alertname)
 	}
-	if signal.Labels["severity"] != "critical" || signal.Labels["namespace"] != "payments" {
-		t.Errorf("the alert's labels did not survive intake: %v", signal.Labels)
+	if alertEvent.Labels["severity"] != "critical" || alertEvent.Labels["namespace"] != "payments" {
+		t.Errorf("the alert's labels did not survive intake: %v", alertEvent.Labels)
 	}
-	if signal.Annotations["runbook_url"] == "" || signal.Annotations["dashboard_url"] == "" {
+	if alertEvent.Annotations["runbook_url"] == "" || alertEvent.Annotations["dashboard_url"] == "" {
 		t.Errorf("the runbook and dashboard the operator wrote did not survive intake: %v",
-			signal.Annotations)
+			alertEvent.Annotations)
 	}
-	if signal.GeneratorURL == "" {
+	if alertEvent.GeneratorURL == "" {
 		t.Error("the alert's generator url did not survive intake")
 	}
-	if !signal.StartedAt.Equal(began) {
-		t.Errorf("the signal started at %s, want the alert's own %s", signal.StartedAt, began)
+	if !alertEvent.StartedAt.Equal(began) {
+		t.Errorf("the Alert Event started at %s, want the alert's own %s", alertEvent.StartedAt, began)
 	}
 
 	// The page tells an SRE to fire a test alert and select Verify. That is how they learn
@@ -88,27 +88,27 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 	}
 
 	// The incident, grouped on the identity ALERTMANAGER supplied. Nothing here infers it.
-	episodeID := gate.episodeByTitle(t, alertname)
-	episode := gate.episode(t, episodeID)
-	if episode.Grouping.Basis != "source_grouping" {
-		t.Errorf("the episode's grouping basis is %q, want source_grouping",
-			episode.Grouping.Basis)
+	incidentID := gate.incidentByTitle(t, alertname)
+	incident := gate.incident(t, incidentID)
+	if incident.Grouping.Basis != "source_grouping" {
+		t.Errorf("the incident's grouping basis is %q, want source_grouping",
+			incident.Grouping.Basis)
 	}
-	if episode.Grouping.Key != delivered.Payload.GroupKey {
-		t.Errorf("the episode is grouped on %q, want alertmanager's own group key %q",
-			episode.Grouping.Key, delivered.Payload.GroupKey)
+	if incident.Grouping.Key != delivered.Payload.GroupKey {
+		t.Errorf("the incident is grouped on %q, want alertmanager's own group key %q",
+			incident.Grouping.Key, delivered.Payload.GroupKey)
 	}
-	if episode.Status != "open" {
-		t.Errorf("the episode is %q while its alert fires, want open", episode.Status)
+	if incident.Status != "open" {
+		t.Errorf("the incident is %q while its alert fires, want open", incident.Status)
 	}
 
 	// An investigation must be openable against it, and must start from what the alert
 	// carried: an incident born from an alert that begins with nothing throws away what the
 	// operator's own alerting already knew.
 	status, body := gate.call(t, http.MethodPost, gate.base(surfaceOrg)+"/investigations",
-		map[string]any{"episodeId": episodeID})
+		map[string]any{"incidentId": incidentID})
 	if status != http.StatusAccepted {
-		t.Fatalf("opening an investigation on the episode = %d: %s", status, body)
+		t.Fatalf("opening an investigation on the incident = %d: %s", status, body)
 	}
 	var opened struct {
 		ID string `json:"id"`
@@ -136,19 +136,19 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 			"back at where the alert came from")
 	}
 
-	// A resolution closes the episode the firing opened rather than opening a second one.
+	// A resolution closes the incident the firing opened rather than opening a second one.
 	ended := time.Now().UTC().Truncate(time.Second)
 	gate.fire(t, resolvedAlert(alertname, began, ended))
 	gate.recorder.await(t, alertname, "resolved", 1)
 
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		resolved := gate.episode(t, episodeID)
+		resolved := gate.incident(t, incidentID)
 		if resolved.Status == "resolved" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the episode is still %q after alertmanager resolved its alert; an "+
+			t.Fatalf("the incident is still %q after alertmanager resolved its alert; an "+
 				"incident list that never closes is one nobody trusts", resolved.Status)
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -186,11 +186,11 @@ func TestAlertmanagerGate_ARetriedDeliveryCreatesNoSecondIncident(t *testing.T) 
 		t.Errorf("the same body redelivered = %d, want 200", status)
 	}
 
-	if signals := gate.signalsNamed(t, alertname); len(signals) != 1 {
-		t.Errorf("one alert delivered three times produced %d signals, want 1", len(signals))
+	if alertEvents := gate.alertEventsNamed(t, alertname); len(alertEvents) != 1 {
+		t.Errorf("one alert delivered three times produced %d alertEvents, want 1", len(alertEvents))
 	}
-	if list := gate.episodes(t); len(list.Items) != 1 {
-		t.Errorf("one alert delivered three times produced %d episodes, want 1: %+v",
+	if list := gate.incidents(t); len(list.Items) != 1 {
+		t.Errorf("one alert delivered three times produced %d incidents, want 1: %+v",
 			len(list.Items), list.Items)
 	}
 	if accepted := gate.countDeliveries(t, storage.DeliveryAccepted, ""); accepted != 1 {
@@ -237,8 +237,8 @@ func TestAlertmanagerGate_ARefusedDeliveryIsRecordedRatherThanLost(t *testing.T)
 		t.Errorf("a delivery to a disabled integration = %d, want 401 — an operator who "+
 			"turned it off wants deliveries refused, not merely recorded", refused.Status)
 	}
-	if signals := gate.signalsNamed(t, afterDisabling); len(signals) != 0 {
-		t.Errorf("a disabled integration recorded %d signals, want 0", len(signals))
+	if alertEvents := gate.alertEventsNamed(t, afterDisabling); len(alertEvents) != 0 {
+		t.Errorf("a disabled integration recorded %d alertEvents, want 0", len(alertEvents))
 	}
 
 	// Three refusals, each saying why, next to the one acceptance.

@@ -5,7 +5,7 @@ its edges are, and what must be true before a change ships.
 
 ## What this is
 
-The OpenCluster control plane: durable truth for organizations, Integrations, Signals,
+The OpenCluster control plane: durable truth for organizations, Integrations, Alert Events,
 incidents and investigations, plus one HTTP listener and one Relay gRPC listener. Customer-side execution lives in the separate Relay repository;
 this service speaks its protocol and never touches a customer cluster.
 
@@ -29,18 +29,18 @@ Postgres containers and real listeners; nothing mocks the database.
 
 ## Boundaries the build enforces
 
-- Only `internal/storage` touches the deployment database; every tenant-owned query keeps
+- Only `internal/store/postgres` touches the deployment database; every tenant-owned query keeps
   Organization explicit and predicates on `org_id`.
 - The integrations core imports no provider; only `internal/app` assembles the
   catalog. No switch over integration types anywhere.
-- `internal/investigation` never imports `internal/reasoning`; reasoning implements the
+- `internal/investigation` never imports `internal/investigation/agent`; reasoning implements the
   domain's boundary, and vendors appear only in adapter subpackages.
 - No Kubernetes library in this module; cluster access belongs to the Relay.
-- Persisted enum values are frozen; extending one starts in `internal/gates`.
+- Persisted enum values are frozen; extending one starts in `test/architecture`.
 - Every operator route is declared `(method, pattern, permission)` in a `Routes()` table;
   a mux registration anywhere else fails the gates.
 - Secrets: environment variables name FILES, never values; inbound secrets are digests;
-  presentable credentials are sealed via `internal/seal`; audit details drop
+  presentable credentials are sealed via `internal/secrets`; audit details drop
   credential-shaped keys mechanically.
 
 ## Style

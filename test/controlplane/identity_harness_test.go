@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/session"
 )
 
 // The identity tests run against a LOCAL MOCK ISSUER rather than a live provider, and the
@@ -37,7 +37,6 @@ const (
 	identityOrg       = "org-a"
 	identityNeighbour = "org-neighbour"
 	identityToken     = "an-operator-bootstrap-token-long-enough"
-	identityConsole   = "https://console.example.test"
 )
 
 // mockIssuer is an OpenID Connect provider that can be made to answer wrongly.
@@ -180,7 +179,10 @@ func (m *mockIssuer) token(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 
-	clientID, _, _ := request.BasicAuth()
+	clientID := request.Form.Get("client_id")
+	if basicClientID, _, ok := request.BasicAuth(); ok && basicClientID != "" {
+		clientID = basicClientID
+	}
 	if unescaped, err := url.QueryUnescape(clientID); err == nil {
 		clientID = unescaped
 	}
@@ -196,7 +198,10 @@ func (m *mockIssuer) token(writer http.ResponseWriter, request *http.Request) {
 	if other != nil {
 		signing = other
 	}
-	writeIssuerJSON(writer, map[string]any{"id_token": signRS256(claims, signing)})
+	writeIssuerJSON(writer, map[string]any{
+		"access_token": "mock-access-token", "token_type": "Bearer", "expires_in": 300,
+		"id_token": signRS256(claims, signing),
+	})
 }
 
 // signRS256 mints a compact JWS. It is spelled out rather than pulled from a library so the
@@ -234,13 +239,11 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 	operatorAddress := freeAddress(t)
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
+		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(identityToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = identityOrg
 		cfg.OperatorPublicURL = "http://" + operatorAddress
-		cfg.OperatorConsoleURL = identityConsole
-		cfg.OperatorAllowedOrigins = []string{identityConsole}
 		// A key, so a provider's client secret can be held at all. Without one, configuring a
 		// provider is refused rather than stored in the clear — which is itself asserted below.
 		cfg.SealingKey = make([]byte, 32)
@@ -286,7 +289,7 @@ func (p *identityPlane) waitForOperatorSurface(t *testing.T) {
 }
 
 func (p *identityPlane) base(organization string) string {
-	return "http://" + p.operator + "/operator/v1/organizations/" + organization
+	return "http://" + p.operator + "/api/v1/organizations/" + organization
 }
 
 // answer is one exchange with the operator surface, as a caller observes it.
@@ -329,7 +332,7 @@ func (p *identityPlane) call(
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
-		request.Header.Set("Origin", identityConsole)
+		request.Header.Set("Origin", "http://"+p.operator)
 	}
 	for _, apply := range credential {
 		apply(request)

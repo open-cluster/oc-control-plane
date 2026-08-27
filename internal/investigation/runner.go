@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/seal"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
 // The bounds an investigation runs under. Every one is named because every one is a
@@ -725,14 +725,14 @@ func (c *credentialCache) open(
 // half a sentence is the failure this exists to prevent.
 const answerCutMark = "… [truncated: the full account is in the findings]"
 
-// boundedAnswer holds the direct answer inside its bound and says so when it cuts. The
+// boundedSummary holds the operator summary inside its bound and says so when it cuts. The
 // mark is charged against the bound rather than appended past it, so the result is always
 // within the ceiling the record is written under.
-func boundedAnswer(text string) string {
+func boundedSummary(text string) string {
 	runes := []rune(text)
-	if len(runes) <= MaxAnswerLength {
+	if len(runes) <= MaxSummaryLength {
 		return text
 	}
 	mark := []rune(answerCutMark)
-	return string(runes[:MaxAnswerLength-len(mark)]) + answerCutMark
+	return string(runes[:MaxSummaryLength-len(mark)]) + answerCutMark
 }

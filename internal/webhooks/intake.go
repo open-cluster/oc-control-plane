@@ -1,4 +1,4 @@
-// Package intake accepts alerts from the systems a customer already runs.
+// Package webhooks accepts alerts from the systems a customer already runs.
 //
 // The product does not detect. Building an alerting engine would rebuild what every customer
 // already has and would contradict the position that this is an investigation platform rather
@@ -13,7 +13,7 @@
 // Accepting alerts is not a thin adapter. Each Integration Type has its own payload, its
 // own idea of authentication, its own retry behaviour and its own notion of what counts as
 // the same alert firing twice. Every one of those differences is confined to the type's
-// provider package; past normalisation nothing can tell which system delivered a Signal.
+// provider package; past normalisation nothing can tell which system delivered a AlertEvent.
 //
 // Intake owns its authenticated, bounded route tree. The application mounts that tree on the
 // shared HTTP listener; a reverse proxy may apply path-specific exposure without bypassing
@@ -34,9 +34,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // TokenHeader carries the Integration's webhook secret.
@@ -101,7 +101,7 @@ func (h Handlers) Router() http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /intake/v1/integrations/{integration}/signals",
+	mux.Handle("POST /webhooks/v1/integrations/{integration}/alert-events",
 		http.HandlerFunc(running.deliver))
 	if h.Slack.Serves() {
 		mux.Handle("POST "+SlackEventsPath, http.HandlerFunc(running.slackEvents))
@@ -210,7 +210,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	signals, truncated, err := adapter.Normalise(body)
+	alertEvents, truncated, err := adapter.Normalise(body)
 	if err != nil {
 		// The payload is not what this type's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
@@ -226,7 +226,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		Integration: integration.ID,
 		BodyDigest:  digest[:],
 		Truncated:   truncated,
-		Signals:     signals,
+		AlertEvents: alertEvents,
 	})
 }
 
@@ -275,13 +275,13 @@ func (h *surface) record(
 
 	h.counters.countDelivery(ctx, dispositionAccepted)
 	h.counters.work.Count(ctx, "accepted")
-	h.counters.countSignals(ctx, outcome.Recorded, outcome.EpisodesOpened, outcome.EpisodesJoined)
+	h.counters.countAlertEvents(ctx, outcome.Recorded, outcome.IncidentsOpened, outcome.IncidentsJoined)
 	h.Logger.InfoContext(ctx, "delivery accepted",
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", delivery.Integration.String()),
-		slog.Int("signals", outcome.Recorded),
-		slog.Int("episodes_opened", outcome.EpisodesOpened),
-		slog.Int("episodes_joined", outcome.EpisodesJoined))
+		slog.Int("alertEvents", outcome.Recorded),
+		slog.Int("episodes_opened", outcome.IncidentsOpened),
+		slog.Int("episodes_joined", outcome.IncidentsJoined))
 	writeStatus(writer, http.StatusAccepted, "accepted")
 }
 

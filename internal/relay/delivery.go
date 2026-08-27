@@ -9,7 +9,7 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // Sending work out: what is claimed, what is told to stop, and what cannot be sent at all.
@@ -165,7 +165,7 @@ func (s *SessionService) dispatchCancellations(
 // continues with the rest of the batch, because one undeliverable job holding up every job
 // behind it turns a defect into an outage — and the jobs behind it are already leased to this
 // session, so they would wait out the whole lease rather than being redelivered.
-func (s *SessionService) failUndeliverable(session *sessionState, job storage.Job, cause error) {
+func (s *SessionService) failUndeliverable(session *sessionState, job storage.RelayJob, cause error) {
 	ctx := session.ctx
 
 	// The same failure shape a relay would report, and the same KIND it would have reported

@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // THE CONTEXT CEILING, AND THE BRIEF THAT FEEDS IT.
@@ -37,7 +37,7 @@ func TestATurnPastItsContextBudgetIsStoppedNotFailed(t *testing.T) {
 	// the first read, so the second turn arrives with the tools already withdrawn.
 	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{read}},
-		{Conclusion: &Conclusion{Answer: "as much as could be read"}},
+		{Conclusion: &Conclusion{Summary: "as much as could be read"}},
 	}}
 
 	runner := &Runner{
@@ -250,11 +250,11 @@ func aBrief() Brief {
 		RecentFrom: 7,
 		Findings: []PriorFinding{
 			{Turn: 1, Statement: "the deploy at 14:02 changed the pool size",
-				Kind: FindingTriggeringChange, Confidence: ConfidenceConfirmed, Runs: []int{2, 3}},
+				Kind: FindingTrigger, Confidence: ConfidenceConfirmed, Runs: []int{2, 3}},
 			{Turn: 2, Statement: "the database was not saturated",
 				Kind: FindingRuledOut, Confidence: ConfidenceConfirmed, Runs: []int{1}},
 			{Turn: 3, Statement: "whether the cache warmed is unknown",
-				Kind: FindingUnresolvedLead, Confidence: ConfidencePossible, Runs: []int{4}},
+				Kind: FindingUnresolved, Confidence: ConfidencePossible, Runs: []int{4}},
 			{Turn: 3, Statement: "the deployed revision is v2.14.1",
 				Kind: FindingObservation, Confidence: ConfidenceConfirmed, Runs: []int{5}},
 		},
@@ -356,7 +356,7 @@ func TestATurnAboveItsSoftBudgetAndBelowItsCeilingKeepsReading(t *testing.T) {
 	exchange := &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{first}},
 		{Calls: []AgentCall{second}},
-		{Conclusion: &Conclusion{Answer: "read twice, then concluded"}},
+		{Conclusion: &Conclusion{Summary: "read twice, then concluded"}},
 	}}
 
 	runner := &Runner{

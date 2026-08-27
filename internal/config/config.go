@@ -14,189 +14,50 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Defaults for the optional settings.
 const (
-	defaultShutdownTimeout = 15 * time.Second
-	defaultServiceName     = "oc-control-plane"
-	// Five minutes places a change within an investigation window without asking a
-	// customer's cluster to answer lists it would notice.
-	defaultInventoryInterval = 5 * time.Minute
-	// Ninety days of change history covers any window an investigation would be scoped
-	// to, and is deliberately independent of evidence and audit retention.
-	defaultChangeLedgerRetentionDays = 90
-	// Two hours before the incident began: the change that caused an incident usually
-	// landed before it fired. An evaluation-derived default, not a constant — operators
-	// whose deploy cadence differs configure it.
-	defaultInvestigationWindowLead = 2 * time.Hour
-	// Five dollars per investigation is several times what a legitimate investigation
-	// spends; the ceiling is a backstop against a runaway, not a steering wheel.
-	// Re-derived from the evaluation suite's measured distributions.
-	defaultModelSpendCeilingCents = 500
-	// A tenant may hold four investigations at once and queue sixteen more. The first
-	// number is what "one tenant cannot consume the whole deployment" means; the second
-	// is what keeps overload boring — work above it is refused with a plain reason rather
-	// than accumulating until something falls over.
-	defaultOrgConcurrentInvestigations = 4
-	defaultOrgWaitingInvestigations    = 16
-	// Context ceilings are derived internally from the selected model.
-	defaultContextThresholdPercent = 50
-	defaultAuthenticationMode      = "local"
+	defaultAuthenticationMode = "local"
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
+var SupportedEnvironmentKeys = []string{
+	EnvConfigFile,
+	EnvHTTPAddress, EnvOperatorPublicURL,
+	EnvDatabaseDSNFile,
+	EnvAuthenticationMode, EnvOperatorTokenFile,
+	EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile,
+	EnvRelayAddress, EnvRelaySPKIPins,
+	EnvModelProvider, EnvModelName, EnvModelKeyFile,
+	EnvSealingKeyFile,
+	EnvLogLevel, EnvOTLPEndpoint,
+	EnvSlackClientID, EnvSlackClientSecretFile, EnvSlackSigningSecretFile,
+	EnvGitHubAppID, EnvGitHubAppKeyFile,
+}
+
 const (
-	EnvHTTPAddress      = "OC_HTTP_ADDRESS"
-	EnvDatabaseDSNFile  = "OC_DATABASE_DSN_FILE"
-	EnvPlacements       = "OC_PLACEMENTS"
-	EnvAssignments      = "OC_PLACEMENT_ASSIGNMENTS"
-	EnvDefaultPlacement = "OC_DEFAULT_PLACEMENT"
-	EnvShutdownTimeout  = "OC_SHUTDOWN_TIMEOUT"
-	EnvServiceName      = "OC_SERVICE_NAME"
-	EnvOTLPEndpoint     = "OC_OTLP_ENDPOINT"
-	EnvRelayAddress     = "OC_RELAY_ADDRESS"
-	EnvRelaySPKIPins    = "OC_RELAY_SPKI_PINS"
-
-	EnvOperatorAddress   = "OC_OPERATOR_ADDRESS"
-	EnvOperatorTokenFile = "OC_OPERATOR_TOKEN_FILE"
-	// The bootstrap credential is no longer ambient root. It names ONE organization and ONE
-	// role, so a deployment that hands it to CI has handed out something with a stated blast
-	// radius rather than the whole estate.
-	EnvOperatorTokenOrganization = "OC_OPERATOR_TOKEN_ORGANIZATION"
-	EnvOperatorTokenRole         = "OC_OPERATOR_TOKEN_ROLE"
-	EnvAuthenticationMode        = "OC_AUTHENTICATION_MODE"
-	EnvOIDCIssuer                = "OC_OIDC_ISSUER"
-	EnvOIDCClientID              = "OC_OIDC_CLIENT_ID"
-	EnvOIDCClientSecretFile      = "OC_OIDC_CLIENT_SECRET_FILE"
-	EnvLegacyIdentityMigrated    = "OC_LEGACY_IDENTITY_MIGRATION_COMPLETE"
-	EnvHostedMode                = "OC_HOSTED_MODE"
-	EnvWorkOSAPIKeyFile          = "OC_WORKOS_API_KEY_FILE"
-	EnvWorkOSAuditOrganizations  = "OC_WORKOS_AUDIT_ORGANIZATIONS"
-	EnvWorkOSAPIURL              = "OC_WORKOS_API_URL"
-
-	// Where this surface and its console are reachable from a browser. Both are configuration
-	// rather than values read from a request: a caller-controlled host in a redirect URI is how
-	// an authorization code is delivered somewhere else.
-	EnvOperatorPublicURL  = "OC_OPERATOR_PUBLIC_URL"
-	EnvOperatorConsoleURL = "OC_OPERATOR_CONSOLE_URL"
-	// The browser origins a cookie-authenticated unsafe request may come from. SameSite=Lax plus
-	// this check is the CSRF defence; there is no separate token. Empty permits no browser to
-	// make an unsafe request, which is the right posture for a deployment that has not said
-	// where its console is.
-	EnvOperatorAllowedOrigins = "OC_OPERATOR_ALLOWED_ORIGINS"
-
-	// The key every presentable credential is sealed under: an identity provider's client
-	// secret, an integration's bot token. Those are the credentials this product must be
-	// able to READ BACK — they are presented to the far end rather than compared against —
-	// so they are encrypted rather than digested, and this names the file the key is read
-	// from.
-	EnvSealingKeyFile = "OC_SEALING_KEY_FILE"
-	EnvSealingKeyID   = "OC_SEALING_KEY_ID"
-	// Previous sealing keys are id=file references used only while stored credentials are
-	// rewrapped. The values are paths, never key material.
-	EnvPreviousSealingKeyFiles = "OC_PREVIOUS_SEALING_KEY_FILES"
-
-	// EnvSlackAPIURL overrides where the Slack provider reaches its vendor. It exists for
-	// tests and for API-compatible proxies; empty means Slack's own origin.
-	EnvSlackAPIURL = "OC_SLACK_API_URL"
-	// The OpenCluster Slack app is DEPLOYMENT-level configuration, exactly as the GitHub
-	// App is: one app, installed by many customers. The variables name FILES for the two
-	// secrets, because no environment value in this product ever carries a credential.
-	//
-	// The client credential and the signing secret are INDEPENDENT. The first serves the
-	// one-click connect flow; the second serves the events endpoint. A deployment may
-	// hold either without the other — a self-hosted install that pasted a token can still
-	// receive events, and a deployment mid-registration may have a client before it has
-	// published a request URL.
+	EnvHTTPAddress            = "OC_SERVER_ADDRESS"
+	EnvOperatorPublicURL      = "OC_PUBLIC_URL"
+	EnvDatabaseDSNFile        = "OC_DATABASE_DSN_FILE"
+	EnvAuthenticationMode     = "OC_AUTH_MODE"
+	EnvOperatorTokenFile      = "OC_BOOTSTRAP_TOKEN_FILE"
+	EnvOIDCIssuer             = "OC_OIDC_ISSUER"
+	EnvOIDCClientID           = "OC_OIDC_CLIENT_ID"
+	EnvOIDCClientSecretFile   = "OC_OIDC_CLIENT_SECRET_FILE"
+	EnvRelayAddress           = "OC_RELAY_ADDRESS"
+	EnvRelaySPKIPins          = "OC_RELAY_SPKI_PINS"
+	EnvModelProvider          = "OC_AI_PROVIDER"
+	EnvModelName              = "OC_AI_MODEL"
+	EnvModelKeyFile           = "OC_AI_API_KEY_FILE"
+	EnvSealingKeyFile         = "OC_ENCRYPTION_KEY_FILE"
+	EnvLogLevel               = "OC_LOG_LEVEL"
+	EnvOTLPEndpoint           = "OC_OTLP_ENDPOINT"
 	EnvSlackClientID          = "OC_SLACK_CLIENT_ID"
 	EnvSlackClientSecretFile  = "OC_SLACK_CLIENT_SECRET_FILE"
 	EnvSlackSigningSecretFile = "OC_SLACK_SIGNING_SECRET_FILE"
-	// EnvSlackAgentOrganizations is the STAGED ROLLOUT gate for the Slack agent surface:
-	// a comma-separated list of the organizations it is live for, empty or unset meaning
-	// none.
-	//
-	// Deployment configuration on purpose, and not a tenant policy column. The two
-	// readings of "ships behind a per-organization switch" differ by a migration and a
-	// permanent customer-facing API field: a policy column would put an internal rollout
-	// decision on a customer's settings page and leave it there as a vestigial setting
-	// long after the rollout ended. When the surface is generally available this variable
-	// and the code reading it are deleted, and nothing is left behind.
-	//
-	// It is also not the only switch and does not pretend to be. An organization that has
-	// not connected Slack does not have Slack, and an integration an operator disabled
-	// stops reading and stops answering. This is the one that says "we are not offering
-	// this yet".
-	EnvSlackAgentOrganizations = "OC_SLACK_AGENT_ORGANIZATIONS"
-
-	// The GitHub App credential is DEPLOYMENT-level configuration: one app, installed by
-	// customers onto their own accounts. The id is public; the private key names a file,
-	// like every credential here.
-	EnvGitHubAppID      = "OC_GITHUB_APP_ID"
-	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
-	EnvGitHubAPIURL     = "OC_GITHUB_API_URL"
-
-	// What the one-click installation flow needs beyond the App credential: the App's own
-	// URL slug, and the OAuth client the return trip is proven with. The three are set
-	// together or not at all; without them the connect button is not offered and the
-	// configuration form remains, which is the self-hosted path.
-	EnvGitHubAppSlug          = "OC_GITHUB_APP_SLUG"
-	EnvGitHubClientID         = "OC_GITHUB_APP_CLIENT_ID"
-	EnvGitHubClientSecretFile = "OC_GITHUB_APP_CLIENT_SECRET_FILE"
-	// EnvGitHubWebURL overrides GitHub's browser origin, where an installation is started
-	// and where an authorization code is exchanged. It is separate from the API origin
-	// because on GitHub Enterprise Server the two differ; empty means github.com.
-	EnvGitHubWebURL = "OC_GITHUB_WEB_URL"
-
-	// The model deployment investigations reason with: DEPLOYMENT-level settings, never a
-	// per-tenant concern. The key names a file; consent lists the providers evidence may
-	// be sent to, and nothing listed permits nothing.
-	EnvModelProvider  = "OC_MODEL_PROVIDER"
-	EnvModelName      = "OC_MODEL_NAME"
-	EnvModelKeyFile   = "OC_MODEL_KEY_FILE"
-	EnvModelEffort    = "OC_MODEL_EFFORT"
-	EnvModelConsented = "OC_MODEL_CONSENTED_PROVIDERS"
-	EnvModelBaseURL   = "OC_MODEL_BASE_URL"
-	// EnvModelSpendCeiling is the hard spend ceiling per investigation, in whole US
-	// cents. A reached ceiling forces an honest partial conclusion labeled stopped-by-
-	// spend; it cannot be turned off, only raised.
-	EnvModelSpendCeiling = "OC_MODEL_SPEND_CEILING_CENTS"
-
-	// EnvInvestigationWindowLead widens an investigation's window backwards before the
-	// incident began, so the change that caused it is inside the window every read is
-	// clamped to.
-	EnvInvestigationWindowLead = "OC_INVESTIGATION_WINDOW_LEAD"
-
-	// EnvInvestigationMaxToolRuns and EnvInvestigationMaxTurns are the autonomous
-	// loop's safety ceilings — evaluation-derived tuning, so they are configuration
-	// rather than constants. Unset means the built-in defaults.
-	EnvInvestigationMaxToolRuns = "OC_INVESTIGATION_MAX_TOOL_RUNS"
-	EnvInvestigationMaxTurns    = "OC_INVESTIGATION_MAX_TURNS"
-
-	// EnvOrgConcurrentInvestigations bounds the work one organization can run at once.
-	EnvOrgConcurrentInvestigations = "OC_ORG_MAX_CONCURRENT_INVESTIGATIONS"
-
-	EnvIntakeAddress = "OC_INTAKE_ADDRESS"
-	// EnvIntakePublicURL is the origin a customer's own alerting reaches intake at. It is
-	// configured rather than derived from a request, because the delivery endpoint built from it
-	// is pasted into somebody else's system.
-	EnvIntakePublicURL = "OC_INTAKE_PUBLIC_URL"
-	// EnvInventoryInterval is the tick interval the control plane REQUESTS from every
-	// Relay's inventory synchronization. Requests, not sets: the Relay floors it at its
-	// own local minimum, so this can slow a fleet down and can never speed one up past
-	// what its operators allow.
-	EnvInventoryInterval = "OC_INVENTORY_INTERVAL"
-
-	// EnvChangeLedgerRetention is how many days the change ledger keeps an entry. The
-	// ledger is derived operational context on its own schedule, deliberately independent
-	// of evidence and audit retention.
-	EnvChangeLedgerRetention = "OC_CHANGE_LEDGER_RETENTION_DAYS"
-
-	// EnvMinimumRelayVersion is the relay version floor the fleet summary counts `outdated`
-	// against. Empty means nothing is compared, and the summary says so rather than reporting
-	// zero outdated as though every relay were current.
-	EnvMinimumRelayVersion = "OC_MINIMUM_RELAY_VERSION"
+	EnvGitHubAppID            = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKeyFile       = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 )
 
 // Config is the validated process configuration.
@@ -207,12 +68,6 @@ type Config struct {
 	// DatabaseDSN is the single deployment database connection string, resolved from
 	// the file named by configuration. It never appears in an environment value.
 	DatabaseDSN string
-
-	// ShutdownTimeout bounds the drain of in-flight requests on SIGTERM.
-	ShutdownTimeout time.Duration
-
-	// ServiceName identifies this process in telemetry.
-	ServiceName string
 
 	// OTLPEndpoint is the trace collector, host:port. Empty disables trace export, which
 	// is the correct default for a process with no collector configured.
@@ -229,10 +84,6 @@ type Config struct {
 	// certificate authority. More than one exists so a rotation can overlap.
 	RelaySPKIPins []string
 
-	// OperatorAddress is the compatibility switch for operator routes. Empty disables them;
-	// a non-empty value must equal HTTPAddress.
-	OperatorAddress string
-
 	// OperatorTokenDigest is the SHA-256 of the bootstrap token. The token is read from the file
 	// the operator named, reduced to this, and discarded: the process holds no copy of it, so
 	// there is nothing here to log or echo by accident.
@@ -240,9 +91,8 @@ type Config struct {
 	// It is what the old shared operator token became. The difference is the whole point: it is
 	// bound to the organization and role below rather than reaching every tenant. Its limits are
 	// worth stating rather than implying — it has no expiry and no revocation row, because it
-	// exists to bootstrap a deployment that has no members yet, and revoking it means changing
-	// the file and restarting. Every token issued after that comes from the api_token table,
-	// where both exist.
+	// exists only to bootstrap a deployment. Revoking it means changing the mounted file and
+	// restarting.
 	OperatorTokenDigest []byte
 
 	// OperatorTokenOrganization is the one tenant the bootstrap credential reaches.
@@ -256,41 +106,18 @@ type Config struct {
 	// URI registered with an identity provider is built from.
 	OperatorPublicURL string
 
-	// OperatorConsoleURL is where a browser is sent once it has signed in.
-	//
-	// It must share a registrable domain with OperatorPublicURL. That follows from the session
-	// cookie being SameSite=Lax with no separate CSRF token: a cross-SITE console would never
-	// send the cookie at all, so the deployment would authenticate nobody.
-	OperatorConsoleURL string
-
-	// OperatorAllowedOrigins are the browser origins a cookie-authenticated unsafe request may
-	// come from.
-	OperatorAllowedOrigins []string
-
 	// AuthenticationMode is local by default. local+oidc keeps local recovery available and
 	// adds one deployment-configured generic OIDC adapter.
-	AuthenticationMode              string
-	OIDCIssuer                      string
-	OIDCClientID                    string
-	OIDCClientSecret                string
-	LegacyIdentityMigrationComplete bool
-	// HostedMode enables optional WorkOS authentication and asynchronous audit delivery.
-	// OSS deployments never contact WorkOS and reject hosted credentials unless enabled.
-	HostedMode               bool
-	WorkOSAPIKey             string
-	WorkOSAPIURL             string
-	WorkOSAuditOrganizations map[string]string
+	AuthenticationMode string
+	OIDCIssuer         string
+	OIDCClientID       string
+	OIDCClientSecret   string
 
 	// SealingKey seals presentable credentials at rest: an identity provider's client
 	// secret, an integration's outbound token. Empty means this deployment cannot hold
 	// one, and submitting one is refused with that reason rather than stored in the clear.
-	SealingKeyID        string
-	SealingKey          []byte
-	PreviousSealingKeys []SealingKey
+	SealingKey []byte
 
-	// SlackAPIURL is where the Slack provider reaches its vendor; empty means Slack's own
-	// origin. It exists so a test can stand a fake where slack.com would be.
-	SlackAPIURL string
 	// SlackClientID and SlackClientSecret are the OpenCluster Slack app's OAuth client.
 	// Both empty means this deployment offers no one-click Slack install and serves the
 	// pasted-token form instead. SlackSigningSecret is what inbound events are verified
@@ -299,160 +126,40 @@ type Config struct {
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
-	// SlackAgentOrganizations are the organizations the Slack agent surface is live for.
-	// Empty means none, which is the default: an inbound event for an organization outside
-	// it is acknowledged and dropped, and reads through the existing Slack tools are
-	// untouched either way.
-	SlackAgentOrganizations []string
-
 	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
 	// means this deployment cannot reach GitHub, and connecting it is refused live with
-	// that reason. GitHubAPIURL overrides the vendor origin, for tests and GitHub
-	// Enterprise hosts.
+	// that reason.
 	GitHubAppID  string
 	GitHubAppKey []byte
-	GitHubAPIURL string
-
-	// GitHubAppSlug, GitHubClientID and GitHubClientSecret are what the one-click
-	// installation flow needs: where to send a browser, and the OAuth client the return
-	// trip is proven with. All empty means this deployment offers no installation flow
-	// for GitHub and serves the configuration form instead. GitHubWebURL overrides
-	// GitHub's browser origin, for tests and GitHub Enterprise hosts.
-	GitHubAppSlug      string
-	GitHubClientID     string
-	GitHubClientSecret string
-	GitHubWebURL       string
 
 	// The model deployment. ModelProvider empty means this deployment cannot investigate,
 	// and opening one is refused with that reason. The credential travels as a file's
 	// contents, never as an environment value.
-	ModelProvider  string
-	ModelName      string
-	ModelKey       string
-	ModelEffort    string
-	ModelConsented []string
-	ModelBaseURL   string
-	// ModelSpendCeilingCents is the hard spend ceiling per investigation, in whole US
-	// cents. Always positive: the ceiling can be raised, never removed.
-	ModelSpendCeilingCents int
-
-	// InvestigationWindowLead is how far before the incident began an investigation's
-	// window reaches back.
-	InvestigationWindowLead time.Duration
-
-	// ConversationsEnabled keeps the supported conversation surface available by default.
-	ConversationsEnabled bool
-	// OrgConcurrentInvestigations and OrgWaitingInvestigations bound one organization's
-	// executing and queued turns.
-	OrgConcurrentInvestigations int
-	OrgWaitingInvestigations    int
-	// ModelContextWindow and ContextThresholdPercent are platform-owned safety inputs;
-	// deployments cannot configure them through YAML or environment variables.
-	ModelContextWindow      int
-	ContextThresholdPercent int
-	// InvestigationMaxToolRuns and InvestigationMaxTurns are the autonomous loop's
-	// ceilings; zero means the built-in defaults.
-	InvestigationMaxToolRuns int
-	InvestigationMaxTurns    int
-
-	// IntakeAddress is the compatibility switch for alert-intake routes. Empty disables them;
-	// a non-empty value must equal HTTPAddress.
-	//
-	// It carries no credential of its own: each configured source authenticates with its own
-	// secret, so there is nothing here that would be shared across tenants.
-	IntakeAddress string
-
-	// IntakePublicURL is the public origin a customer's own system reaches intake at, for
-	// example https://intake.opencluster.example. It is what an Integration's webhook
-	// endpoint is built from.
-	//
-	// Empty is supported and means the endpoint is served as an absence rather than as a guess:
-	// a URL assembled from the operator surface's own Host header would be one that works from
-	// wherever the console is served and not from the customer's alerting, which is the one
-	// place it has to work.
-	IntakePublicURL string
-
-	// InventoryInterval is the tick interval requested from every Relay's inventory
-	// synchronization; each Relay floors it locally.
-	InventoryInterval time.Duration
-
-	// ChangeLedgerRetentionDays is how long a ledger entry is kept.
-	ChangeLedgerRetentionDays int
-
-	// MinimumRelayVersion is the relay version floor the fleet summary counts `outdated`
-	// against. Empty means this deployment states no floor, in which case nothing is counted
-	// outdated because nothing was compared — a different fact from every relay being current,
-	// and one the summary reports rather than hides.
-	MinimumRelayVersion string
-}
-
-// SealingKey is one retained read key during credential rotation.
-type SealingKey struct {
-	ID       string
-	Material []byte
+	ModelProvider string
+	ModelName     string
+	ModelKey      string
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
 // value, failing on the first problem and naming the offending variable.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	cfg := Config{
-		ShutdownTimeout:           defaultShutdownTimeout,
-		ServiceName:               defaultServiceName,
-		InventoryInterval:         defaultInventoryInterval,
-		ChangeLedgerRetentionDays: defaultChangeLedgerRetentionDays,
-		InvestigationWindowLead:   defaultInvestigationWindowLead,
-		ModelSpendCeilingCents:    defaultModelSpendCeilingCents,
-		ConversationsEnabled:      true,
-
-		OrgConcurrentInvestigations: defaultOrgConcurrentInvestigations,
-		OrgWaitingInvestigations:    defaultOrgWaitingInvestigations,
-		ContextThresholdPercent:     defaultContextThresholdPercent,
-		AuthenticationMode:          defaultAuthenticationMode,
+		HTTPAddress:        ":8080",
+		AuthenticationMode: defaultAuthenticationMode,
 	}
 
 	var err error
-	if cfg.HTTPAddress, err = requiredListenAddress(lookup, EnvHTTPAddress); err != nil {
-		return Config{}, err
+	if raw, ok := lookup(EnvHTTPAddress); ok && strings.TrimSpace(raw) != "" {
+		cfg.HTTPAddress = strings.TrimSpace(raw)
+	}
+	if err = validateHostPort(cfg.HTTPAddress); err != nil {
+		return Config{}, fmt.Errorf("%s must be a host:port listen address: %w", EnvHTTPAddress, err)
 	}
 	if cfg.DatabaseDSN, err = databaseDSN(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.DatabaseDSN == "" {
-		legacy, legacyErr := placements(lookup)
-		if legacyErr != nil {
-			return Config{}, legacyErr
-		}
-		legacyAssignments, assignmentErr := assignments(lookup, legacy)
-		if assignmentErr != nil {
-			return Config{}, assignmentErr
-		}
-		legacyDefault, defaultErr := defaultPlacement(lookup, legacy)
-		if defaultErr != nil {
-			return Config{}, defaultErr
-		}
-		if len(legacyAssignments) == 0 && legacyDefault == "" {
-			return Config{}, fmt.Errorf(
-				"%s or %s is required while using the legacy database settings",
-				EnvAssignments, EnvDefaultPlacement)
-		}
-		cfg.DatabaseDSN, err = oneDatabase(legacy)
-		if err != nil {
-			return Config{}, err
-		}
-	}
-	if cfg.ShutdownTimeout, err = optionalDuration(lookup, EnvShutdownTimeout, cfg.ShutdownTimeout); err != nil {
-		return Config{}, err
-	}
-	if cfg.InventoryInterval, err = optionalDuration(
-		lookup, EnvInventoryInterval, cfg.InventoryInterval); err != nil {
-		return Config{}, err
-	}
-	if cfg.ChangeLedgerRetentionDays, err = optionalDays(
-		lookup, EnvChangeLedgerRetention, cfg.ChangeLedgerRetentionDays); err != nil {
-		return Config{}, err
-	}
-	if cfg.ServiceName, err = optionalName(lookup, EnvServiceName, cfg.ServiceName); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("%s is required", EnvDatabaseDSNFile)
 	}
 	if cfg.OTLPEndpoint, err = optionalHostPort(lookup, EnvOTLPEndpoint); err != nil {
 		return Config{}, err
@@ -463,108 +170,45 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.OperatorAddress, err = optionalHostPort(lookup, EnvOperatorAddress); err != nil {
+	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.HTTPAddress); err != nil {
 		return Config{}, err
 	}
-	if err = oneHTTPAddress(EnvOperatorAddress, cfg.OperatorAddress, cfg.HTTPAddress); err != nil {
-		return Config{}, err
-	}
-	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.OperatorAddress); err != nil {
-		return Config{}, err
-	}
-	if err = operatorCredentialScope(lookup, &cfg); err != nil {
-		return Config{}, err
-	}
+	cfg.OperatorTokenOrganization, cfg.OperatorTokenRole = "local", defaultOperatorTokenRole
 	if cfg.OperatorPublicURL, err = optionalBrowserURL(lookup, EnvOperatorPublicURL); err != nil {
 		return Config{}, err
 	}
-	if cfg.OperatorConsoleURL, err = optionalBrowserURL(lookup, EnvOperatorConsoleURL); err != nil {
-		return Config{}, err
-	}
-	if cfg.OperatorAllowedOrigins, err = allowedOrigins(lookup); err != nil {
-		return Config{}, err
+	if cfg.OperatorPublicURL == "" {
+		cfg.OperatorPublicURL = "http://localhost:8080"
 	}
 	if err = authentication(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
-	if err = hosted(lookup, &cfg); err != nil {
-		return Config{}, err
-	}
-	if cfg.SealingKeyID, cfg.SealingKey, cfg.PreviousSealingKeys, err = sealingKeys(lookup); err != nil {
-		return Config{}, err
-	}
-	if cfg.IntakeAddress, err = optionalHostPort(lookup, EnvIntakeAddress); err != nil {
-		return Config{}, err
-	}
-	if err = oneHTTPAddress(EnvIntakeAddress, cfg.IntakeAddress, cfg.HTTPAddress); err != nil {
-		return Config{}, err
-	}
-	if cfg.IntakePublicURL, err = optionalIntakeURL(lookup, EnvIntakePublicURL); err != nil {
-		return Config{}, err
-	}
-	if cfg.SlackAPIURL, err = optionalVendorURL(lookup, EnvSlackAPIURL); err != nil {
+	if cfg.SealingKey, err = sealingKey(lookup); err != nil {
 		return Config{}, err
 	}
 	if cfg.GitHubAppID, cfg.GitHubAppKey, err = gitHubApp(lookup); err != nil {
 		return Config{}, err
 	}
-	if cfg.GitHubAPIURL, err = optionalVendorURL(lookup, EnvGitHubAPIURL); err != nil {
-		return Config{}, err
-	}
-	if err = gitHubInstallFlow(lookup, &cfg); err != nil {
-		return Config{}, err
-	}
 	if err = slackApp(lookup, &cfg); err != nil {
-		return Config{}, err
-	}
-	if err = slackAgentRollout(lookup, &cfg); err != nil {
-		return Config{}, err
-	}
-	if cfg.GitHubWebURL, err = optionalVendorURL(lookup, EnvGitHubWebURL); err != nil {
 		return Config{}, err
 	}
 	if err = modelDeployment(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
-	if cfg.InvestigationMaxToolRuns, err = optionalPositive(
-		lookup, EnvInvestigationMaxToolRuns); err != nil {
-		return Config{}, err
-	}
-	if cfg.InvestigationMaxTurns, err = optionalPositive(
-		lookup, EnvInvestigationMaxTurns); err != nil {
-		return Config{}, err
-	}
-	if cfg.InvestigationWindowLead, err = optionalDuration(
-		lookup, EnvInvestigationWindowLead, cfg.InvestigationWindowLead); err != nil {
-		return Config{}, err
-	}
-	if cfg.OrgConcurrentInvestigations, err = optionalPositiveOr(
-		lookup, EnvOrgConcurrentInvestigations,
-		cfg.OrgConcurrentInvestigations); err != nil {
-		return Config{}, err
-	}
-	if cfg.ModelSpendCeilingCents, err = optionalCents(
-		lookup, EnvModelSpendCeiling, cfg.ModelSpendCeilingCents); err != nil {
-		return Config{}, err
-	}
-	minimumRelay, _ := lookup(EnvMinimumRelayVersion)
-	cfg.MinimumRelayVersion = strings.TrimSpace(minimumRelay)
 
 	return cfg, nil
 }
 
 func authentication(lookup func(string) (string, bool), cfg *Config) error {
-	migrated, err := optionalFlag(lookup, EnvLegacyIdentityMigrated)
-	if err != nil {
-		return err
-	}
-	cfg.LegacyIdentityMigrationComplete = migrated
 	mode := defaultAuthenticationMode
 	if raw, ok := lookup(EnvAuthenticationMode); ok && strings.TrimSpace(raw) != "" {
 		mode = strings.ToLower(strings.TrimSpace(raw))
 	}
+	if mode == "oidc" {
+		mode = "local+oidc"
+	}
 	if mode != "local" && mode != "local+oidc" {
-		return fmt.Errorf("%s must be local or local+oidc", EnvAuthenticationMode)
+		return fmt.Errorf("%s must be local or oidc", EnvAuthenticationMode)
 	}
 	cfg.AuthenticationMode = mode
 	issuer, _ := lookup(EnvOIDCIssuer)
@@ -600,41 +244,11 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 	return nil
 }
 
-func oneHTTPAddress(legacyKey, legacyAddress, serverAddress string) error {
-	if legacyAddress == "" || legacyAddress == serverAddress {
-		return nil
-	}
-	return fmt.Errorf("%s conflicts with %s; all HTTP routes now use one server address",
-		legacyKey, EnvHTTPAddress)
-}
-
-func oneDatabase(legacy map[string]string) (string, error) {
-	var selected string
-	for _, dsn := range legacy {
-		if selected == "" {
-			selected = dsn
-			continue
-		}
-		if dsn != selected {
-			return "", fmt.Errorf(
-				"%s configures several databases; consolidate them before using one database per deployment",
-				EnvPlacements)
-		}
-	}
-	return selected, nil
-}
-
 func databaseDSN(lookup func(string) (string, bool)) (string, error) {
 	path, _ := lookup(EnvDatabaseDSNFile)
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", nil
-	}
-	for _, legacy := range []string{EnvPlacements, EnvAssignments, EnvDefaultPlacement} {
-		if value, ok := lookup(legacy); ok && strings.TrimSpace(value) != "" {
-			return "", fmt.Errorf("%s conflicts with compatibility setting %s; configure only one database input",
-				EnvDatabaseDSNFile, legacy)
-		}
 	}
 	dsn, err := readSecretFile(path)
 	if err != nil {
@@ -643,107 +257,6 @@ func databaseDSN(lookup func(string) (string, bool)) (string, error) {
 	return dsn, nil
 }
 
-// placements parses "name=/path/to/dsn" pairs and resolves each DSN from its file. The
-// file's contents are trimmed and never appear in an error.
-func placements(lookup func(string) (string, bool)) (map[string]string, error) {
-	raw, err := required(lookup, EnvPlacements)
-	if err != nil {
-		return nil, err
-	}
-
-	resolved := make(map[string]string)
-	entries, listErr := decodeList(raw)
-	if listErr != nil {
-		return nil, fmt.Errorf("%s: invalid list: %w", EnvPlacements, listErr)
-	}
-	for _, entry := range entries {
-		name, path, found := strings.Cut(strings.TrimSpace(entry), "=")
-		name, path = strings.TrimSpace(name), strings.TrimSpace(path)
-		if !found || name == "" || path == "" {
-			return nil, fmt.Errorf("%s: each entry must be name=path-to-dsn-file", EnvPlacements)
-		}
-		if _, duplicate := resolved[name]; duplicate {
-			return nil, fmt.Errorf("%s: placement %q is defined more than once", EnvPlacements, name)
-		}
-
-		dsn, readErr := readDSN(path)
-		if readErr != nil {
-			return nil, fmt.Errorf("%s: placement %q: %w", EnvPlacements, name, readErr)
-		}
-		resolved[name] = dsn
-	}
-	if len(resolved) == 0 {
-		return nil, fmt.Errorf("%s: no usable placements", EnvPlacements)
-	}
-	return resolved, nil
-}
-
-// readDSN reads a placement's connection string from disk. Every error is classified
-// rather than wrapped, because the underlying error can quote file contents — which for
-// this file is a database password.
-func readDSN(path string) (string, error) {
-	raw, err := (MountedSecretSource{}).Read("", path)
-	if err != nil {
-		return "", fmt.Errorf("dsn %w", err)
-	}
-	dsn := strings.TrimSpace(string(raw))
-	if dsn == "" {
-		return "", errors.New("dsn file is empty")
-	}
-	return dsn, nil
-}
-
-// assignments parses "org=placement" pairs. Every named placement must exist, so a typo
-// fails at startup rather than becoming an unresolvable organization at request time.
-//
-// The variable is optional: a deployment with a default placement puts every organization
-// on it and names only the exceptions. A deployment with neither is refused by Load, since
-// it could resolve nothing.
-func assignments(lookup func(string) (string, bool), known map[string]string) (map[string]string, error) {
-	raw, ok := lookup(EnvAssignments)
-	if !ok || strings.TrimSpace(raw) == "" {
-		return map[string]string{}, nil
-	}
-	raw = strings.TrimSpace(raw)
-
-	resolved := make(map[string]string)
-	entries, listErr := decodeList(raw)
-	if listErr != nil {
-		return nil, fmt.Errorf("%s: invalid list: %w", EnvAssignments, listErr)
-	}
-	for _, entry := range entries {
-		organization, placement, found := strings.Cut(strings.TrimSpace(entry), "=")
-		organization, placement = strings.TrimSpace(organization), strings.TrimSpace(placement)
-		if !found || organization == "" || placement == "" {
-			return nil, fmt.Errorf("%s: each entry must be organization=placement", EnvAssignments)
-		}
-		if _, ok := known[placement]; !ok {
-			return nil, fmt.Errorf("%s: organization %q names unknown placement %q",
-				EnvAssignments, organization, placement)
-		}
-		resolved[organization] = placement
-	}
-	return resolved, nil
-}
-
-// defaultPlacement resolves the optional shared-tier placement. Naming a placement that
-// does not exist is refused here so the mistake is a startup failure rather than an
-// unresolvable organization at request time.
-func defaultPlacement(lookup func(string) (string, bool), known map[string]string) (string, error) {
-	value, ok := lookup(EnvDefaultPlacement)
-	if !ok || strings.TrimSpace(value) == "" {
-		return "", nil
-	}
-	name := strings.TrimSpace(value)
-	if _, defined := known[name]; !defined {
-		return "", fmt.Errorf("%s names unknown placement %q", EnvDefaultPlacement, name)
-	}
-	return name, nil
-}
-
-// readSecretFile reads a credential from disk. Every error is classified rather than wrapped,
-// because the underlying error can quote the file's contents — and for this file those
-// contents are the secret.
 func readSecretFile(path string) (string, error) {
 	raw, err := (MountedSecretSource{}).Read("", path)
 	if err != nil {
@@ -754,33 +267,6 @@ func readSecretFile(path string) (string, error) {
 		return "", errors.New("file is empty")
 	}
 	return value, nil
-}
-
-// optionalDays reads a positive whole number of days, or the fallback when absent.
-func optionalDays(lookup func(string) (string, bool), key string, fallback int) (int, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || parsed < 1 {
-		return 0, fmt.Errorf("%s must be a positive whole number of days", key)
-	}
-	return parsed, nil
-}
-
-// optionalPositive reads a positive whole number, or zero when absent — zero meaning
-// the built-in default, so a ceiling cannot be configured off.
-func optionalPositive(lookup func(string) (string, bool), key string) (int, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return 0, nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || parsed < 1 {
-		return 0, fmt.Errorf("%s must be a positive whole number", key)
-	}
-	return parsed, nil
 }
 
 // optionalFlag reads a boolean switch. Only the words Go itself accepts are accepted, and
@@ -889,25 +375,6 @@ func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 	cfg.ModelProvider = strings.TrimSpace(provider)
 	name, _ := lookup(EnvModelName)
 	cfg.ModelName = strings.TrimSpace(name)
-	effort, _ := lookup(EnvModelEffort)
-	cfg.ModelEffort = strings.TrimSpace(effort)
-
-	consented, _ := lookup(EnvModelConsented)
-	consentedEntries, err := decodeList(consented)
-	if err != nil {
-		return fmt.Errorf("%s: invalid list: %w", EnvModelConsented, err)
-	}
-	for _, entry := range consentedEntries {
-		if trimmed := strings.TrimSpace(entry); trimmed != "" {
-			cfg.ModelConsented = append(cfg.ModelConsented, trimmed)
-		}
-	}
-
-	baseURL, err := optionalVendorURL(lookup, EnvModelBaseURL)
-	if err != nil {
-		return err
-	}
-	cfg.ModelBaseURL = baseURL
 
 	path, _ := lookup(EnvModelKeyFile)
 	path = strings.TrimSpace(path)
@@ -1002,111 +469,6 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	}
 	cfg.SlackSigningSecret = signing
 	return nil
-}
-
-// slackAgentRollout reads which organizations the Slack agent surface is live for.
-//
-// Names are carried as text, exactly as every other organization name this package reads is.
-// This package deliberately depends on nothing else in the product, so what a valid
-// organization name is stays the tenancy package's answer and is not restated here — and a
-// name that is not one simply matches nothing, which is the same outcome as leaving it out.
-func slackAgentRollout(lookup func(string) (string, bool), cfg *Config) error {
-	raw, _ := lookup(EnvSlackAgentOrganizations)
-	entries, err := decodeList(raw)
-	if err != nil {
-		return fmt.Errorf("%s: invalid list: %w", EnvSlackAgentOrganizations, err)
-	}
-	for _, entry := range entries {
-		if name := strings.TrimSpace(entry); name != "" {
-			cfg.SlackAgentOrganizations = append(cfg.SlackAgentOrganizations, name)
-		}
-	}
-	return nil
-}
-
-// SlackAgentLiveFor reports whether the Slack agent surface is live for one organization.
-//
-// A method rather than a bare list, so the surfaces consulting it cannot each invent their
-// own idea of what an empty list means. It means NO organization, which is the safe reading
-// of an unset rollout gate and the default this ships with.
-func (c Config) SlackAgentLiveFor(organization string) bool {
-	for _, name := range c.SlackAgentOrganizations {
-		if name == organization {
-			return true
-		}
-	}
-	return false
-}
-
-// gitHubInstallFlow reads what the one-click installation flow needs: all three of the
-// slug, the client id and the client secret, or none of them. Two of three would offer a
-// connect button that cannot complete, and the person who set two is still reading when
-// this refuses. The secret's contents never appear in an error.
-func gitHubInstallFlow(lookup func(string) (string, bool), cfg *Config) error {
-	slug, _ := lookup(EnvGitHubAppSlug)
-	slug = strings.TrimSpace(slug)
-	clientID, _ := lookup(EnvGitHubClientID)
-	clientID = strings.TrimSpace(clientID)
-	path, _ := lookup(EnvGitHubClientSecretFile)
-	path = strings.TrimSpace(path)
-
-	set := 0
-	for _, value := range []string{slug, clientID, path} {
-		if value != "" {
-			set++
-		}
-	}
-	switch {
-	case set == 0:
-		return nil
-	case set < 3:
-		return fmt.Errorf("%s, %s and %s are set together or not at all; a partial "+
-			"installation flow offers a button that cannot finish",
-			EnvGitHubAppSlug, EnvGitHubClientID, EnvGitHubClientSecretFile)
-	case cfg.GitHubAppID == "":
-		return fmt.Errorf("%s needs %s: an installation flow with no app credential "+
-			"cannot verify what it installed", EnvGitHubAppSlug, EnvGitHubAppID)
-	}
-	secret, err := readSecretFile(path)
-	if err != nil {
-		return fmt.Errorf("%s: %w", EnvGitHubClientSecretFile, err)
-	}
-	cfg.GitHubAppSlug, cfg.GitHubClientID, cfg.GitHubClientSecret = slug, clientID, secret
-	return nil
-}
-
-// optionalVendorURL reads a base URL a provider reaches its vendor at. Unlike an origin,
-// a path is allowed — vendor APIs live under one — and https is required except on
-// loopback, because a credential is presented to whatever answers here.
-func optionalVendorURL(lookup func(string) (string, bool), key string) (string, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return "", nil
-	}
-	trimmed := strings.TrimSuffix(strings.TrimSpace(value), "/")
-	parsed, err := url.Parse(trimmed)
-	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
-		return "", fmt.Errorf("%s must be an absolute URL such as https://vendor.example.com/api", key)
-	}
-	if parsed.Scheme != "https" && parsed.Hostname() != "localhost" &&
-		parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
-		return "", fmt.Errorf("%s must be https; a credential is presented to this URL", key)
-	}
-	return trimmed, nil
-}
-
-func optionalDuration(
-	lookup func(string) (string, bool), key string, fallback time.Duration,
-) (time.Duration, error) {
-	value, ok := lookup(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return fallback, nil
-	}
-	parsed, err := time.ParseDuration(strings.TrimSpace(value))
-	if err != nil || parsed <= 0 {
-		return 0, fmt.Errorf("%s must be a positive duration", key)
-	}
-	return parsed, nil
 }
 
 func optionalName(lookup func(string) (string, bool), key, fallback string) (string, error) {

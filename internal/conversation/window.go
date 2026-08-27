@@ -14,7 +14,7 @@ import "time"
 // A day is what "recently" means to somebody asking about production, and it is
 // deliberately NOT configurable: a question with no incident carries no operator
 // judgement to encode, and a conversation that needs a different window should be
-// attached to an episode, which is exactly what an episode is for.
+// attached to an incident, which is exactly what an incident is for.
 const MinimumQuestionWindow = 24 * time.Hour
 
 // QuestionWindow is how far back a turn reaches when it is about no particular incident.

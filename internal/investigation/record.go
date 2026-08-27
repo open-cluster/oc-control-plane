@@ -1,4 +1,4 @@
-// Package investigation owns the investigation domain: opening one from an alert episode
+// Package investigation owns the investigation domain: opening one from an alert incident
 // or an operator's question, offering every grant-supported connected source to an
 // autonomous Exchange, running bounded read tools against them, and persisting
 // OPERATIONAL PROVENANCE — what was triggered, which integrations were offered, which
@@ -20,9 +20,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // Status is where an investigation has got to. Persisted as the integer in the column;
@@ -80,8 +80,8 @@ var (
 	// ErrUnknown reports an investigation this organization does not have.
 	ErrUnknown      = errors.New("investigation unknown")
 	ErrAlreadyEnded = errors.New("investigation has already ended")
-	// ErrEpisodeUnknown reports an episode this organization does not have.
-	ErrEpisodeUnknown = errors.New("episode unknown")
+	// ErrIncidentUnknown reports an incident this organization does not have.
+	ErrIncidentUnknown = errors.New("incident unknown")
 	// ErrReasonerUnavailable is the domain's word for the model boundary failing: the
 	// reasoning step could not run. Every named provider failure wraps it, and the
 	// investigation it ends is FAILED — never concluded, because a conclusion nobody
@@ -93,31 +93,34 @@ var (
 
 // Finding is one thing the investigation established, tied to the runs that support it.
 type Finding struct {
-	Statement string
-	// Kind is the finding's causal role — FindingProbableCause and its siblings. Empty
+	ID        string `json:"id"`
+	Statement string `json:"statement"`
+	// Kind is the finding's causal role — FindingCause and its siblings. Empty
 	// on a finding concluded before the vocabulary existed; required from the
 	// autonomous conclusion, enforced where it is decoded.
-	Kind string
+	Kind string `json:"kind"`
 	// Confidence is categorical — confirmed, likely, possible — never an invented
 	// numeric certainty. Empty exactly when Kind is.
-	Confidence string
+	Confidence string `json:"confidence"`
+	// Mechanism is required for causal findings and explains how the cause produced impact.
+	Mechanism string `json:"mechanism"`
 	// Sources are one-based ordinals among the investigation's recorded tool runs. Every
 	// finding cites at least one — enforced when the reasoner's answer is decoded — so a
 	// statement nothing was read for cannot be stored as established.
-	Sources []int
+	Sources []int `json:"runRefs"`
 }
 
 // The causal kinds a finding distinguishes: persisted inside the findings record,
 // frozen like an enum. Multiple probable causes are legal — no incident is forced into
 // a single-cause model.
 const (
-	FindingProbableCause      = "probable_cause"
+	FindingCause              = "cause"
 	FindingContributingFactor = "contributing_factor"
 	FindingSymptom            = "symptom"
-	FindingTriggeringChange   = "triggering_change"
-	FindingPropagationEffect  = "propagation_effect"
+	FindingTrigger            = "trigger"
+	FindingPropagation        = "propagation"
 	FindingRuledOut           = "ruled_out"
-	FindingUnresolvedLead     = "unresolved_lead"
+	FindingUnresolved         = "unresolved"
 	// FindingObservation is an established fact with no causal role — "the deployed
 	// revision is v2.14.1". Every other kind answers "what caused this"; a peacetime
 	// question has no cause to name, and without this the answer to one has to claim to
@@ -135,9 +138,8 @@ const (
 // FindingKinds and Confidences enumerate the legal values, for decoders and gates.
 var (
 	FindingKinds = []string{
-		FindingProbableCause, FindingContributingFactor, FindingSymptom,
-		FindingTriggeringChange, FindingPropagationEffect, FindingRuledOut,
-		FindingUnresolvedLead, FindingObservation,
+		FindingCause, FindingTrigger, FindingContributingFactor, FindingSymptom,
+		FindingPropagation, FindingRuledOut, FindingUnresolved, FindingObservation,
 	}
 	Confidences = []string{ConfidenceConfirmed, ConfidenceLikely, ConfidencePossible}
 )
@@ -165,9 +167,9 @@ func (s Spend) Add(other Spend) Spend {
 type Investigation struct {
 	ID    uuid.UUID
 	OrgID string
-	// EpisodeID is the alert episode that triggered this, zero for a question with no
-	// episode resolved. IntegrationID is the episode's originating integration.
-	EpisodeID     uuid.UUID
+	// IncidentID is the alert incident that triggered this, zero for a question with no
+	// incident resolved. IntegrationID is the incident's originating integration.
+	IncidentID    uuid.UUID
 	IntegrationID uuid.UUID
 	// Question is the operator's own words, empty for an alert-triggered investigation.
 	Question string
@@ -181,15 +183,10 @@ type Investigation struct {
 	WindowFrom  time.Time
 	WindowUntil time.Time
 	Status      Status
-	// Answer is the direct reply in the operator's own words. Required of a turn that
-	// came from a question and optional for one that came from an episode, because
-	// "which version is deployed" has an answer and an alert does not ask anything. The
-	// findings still carry the claims; this only summarises them.
-	Answer   string
-	Findings []Finding
-	// NextSteps are the conclusion's recommended actions, in the order the operator
-	// should consider them; empty when the conclusion carried none.
-	NextSteps []string
+	// Executing is true only while a worker holds a live lease. It projects the internal
+	// running state as investigating rather than queued without exposing lease identity.
+	Executing  bool
+	Conclusion Conclusion
 	// StoppedBy names the ceiling that forced the concluding turn — StoppedBySpend and
 	// its siblings — and is empty when the model concluded freely. A stopped
 	// investigation still concluded, with what was established and what remains
@@ -221,6 +218,10 @@ type ToolRun struct {
 	// finding cites.
 	Ordinal int
 	Tool    string
+	// Purpose and HypothesisID are concise, operator-visible semantic metadata supplied
+	// by the common external-tool envelope. They are not private reasoning.
+	Purpose      string
+	HypothesisID string
 	// Arguments is the call's scope as it ran, never carrying a credential.
 	Arguments map[string]any
 	// WindowFrom and WindowUntil are the bound in force for this run. Every run carries
@@ -251,7 +252,7 @@ type ToolRun struct {
 
 // NewInvestigation is what a create records.
 type NewInvestigation struct {
-	EpisodeID     uuid.UUID
+	IncidentID    uuid.UUID
 	IntegrationID uuid.UUID
 	Question      string
 	Subject       string
@@ -260,12 +261,12 @@ type NewInvestigation struct {
 	CreatedBy     string
 }
 
-// Trigger is what an episode contributes when it starts an investigation. Annotations
+// Trigger is what an incident contributes when it starts an investigation. Annotations
 // and GeneratorURL are the alert's own operational knowledge — runbook and dashboard
 // links, the source's graph — preserved through intake and rendered in the autonomous
 // orientation.
 type Trigger struct {
-	EpisodeID     uuid.UUID
+	IncidentID    uuid.UUID
 	IntegrationID uuid.UUID
 	Title         string
 	Labels        map[string]string
@@ -289,11 +290,11 @@ type Page struct {
 // something different depending on what was filtered.
 type Query struct {
 	Page Page
-	// EpisodeID narrows to the investigations one alert episode opened. Zero means every
-	// investigation the tenant has. An episode this tenant does not have is an empty
+	// IncidentID narrows to the investigations one alert incident opened. Zero means every
+	// investigation the tenant has. An incident this tenant does not have is an empty
 	// page rather than a refusal: answering differently would let a caller probe for
-	// episode identifiers that are not theirs.
-	EpisodeID uuid.UUID
+	// incident identifiers that are not theirs.
+	IncidentID uuid.UUID
 }
 
 // List is a page of an organization's investigations, newest first.
@@ -331,10 +332,10 @@ type Store interface {
 	// FailInvestigation ends one with the reason it could not conclude.
 	FailInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		reason string, spend Spend) error
-	// TriggerEpisode reads what an episode contributes to the investigation it starts.
-	TriggerEpisode(ctx context.Context, org tenancy.Organization,
-		episode uuid.UUID) (Trigger, error)
-	// OpenTriggers reports the organization's open episodes, for inferring a question's
+	// TriggerIncident reads what an incident contributes to the investigation it starts.
+	TriggerIncident(ctx context.Context, org tenancy.Organization,
+		incident uuid.UUID) (Trigger, error)
+	// OpenTriggers reports the organization's open incidents, for inferring a question's
 	// subject. Bounded: subject inference reads recent context, not history.
 	OpenTriggers(ctx context.Context, org tenancy.Organization, limit int) ([]Trigger, error)
 	// InvestigationCandidates reports the enabled integrations an investigation may be

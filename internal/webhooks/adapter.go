@@ -2,14 +2,14 @@ package webhooks
 
 import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// Adapter turns one Integration Type's payload into Signals.
+// Adapter turns one Integration Type's payload into AlertEvents.
 //
 // It is the whole of what a provider-specific piece of this surface may be. A vendor's
 // payload shape exists inside its provider package and nowhere else: nothing downstream of
-// Normalise can tell which system delivered a Signal, and that boundary is what makes the
+// Normalise can tell which system delivered a AlertEvent, and that boundary is what makes the
 // second inbound provider a bounded piece of work rather than a change to the model.
 //
 // The interface is declared here, in the package that consumes it. Providers satisfy it
@@ -20,8 +20,8 @@ import (
 // that. A failure a retry COULD fix is not an adapter's to report — it has no dependencies
 // to fail — so intake maps every error from here to a permanent refusal.
 type Adapter interface {
-	// Normalise returns the Signals in one body and how many the source says it left out.
-	Normalise(body []byte) ([]storage.Signal, int, error)
+	// Normalise returns the AlertEvents in one body and how many the source says it left out.
+	Normalise(body []byte) ([]storage.AlertEvent, int, error)
 }
 
 // Adapters is the routing table the composition root supplies, keyed by the Integration

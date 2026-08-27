@@ -147,7 +147,7 @@ func assertDocumentedReceiver(t *testing.T, configuration string, where deployme
 		for _, webhook := range receiver.WebhookConfigs {
 			webhooks++
 			name = receiver.Name
-			want := where.origin + "/intake/v1/integrations/" + where.integration + "/signals"
+			want := where.origin + "/webhooks/v1/integrations/" + where.integration + "/alert-events"
 			if webhook.URL != want {
 				t.Errorf("the documented webhook url is %q, want %q; the page must point a "+
 					"customer at the endpoint intake actually serves", webhook.URL, want)

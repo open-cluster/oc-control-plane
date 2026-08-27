@@ -13,12 +13,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/describe"
-	"github.com/open-cluster/oc-control-plane/internal/seal"
-	"github.com/open-cluster/oc-control-plane/internal/table"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
 const (
@@ -63,7 +62,7 @@ type Handlers struct {
 
 // Routes is this domain surface's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
-	const base = "/operator/v1/organizations/{organization}"
+	const base = "/api/v1/organizations/{organization}"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base+"/integration-types", authz.IntegrationRead,
@@ -101,24 +100,6 @@ func (h Handlers) Routes() authz.Table {
 // The connect callback carries no body and no listing: the browser arrives on it with a
 // query the flow redeems, and describing a query as a body would document a shape nobody
 // sends.
-func (h Handlers) Describe() describe.Contribution {
-	const base = "/operator/v1/organizations/{organization}/integrations"
-
-	return describe.Contribution{
-		Listings: []describe.Listing{
-			{Route: http.MethodGet + " " + base, Spec: listSpec},
-		},
-		Bodies: []describe.Body{
-			{Route: http.MethodPost + " " + base, Example: createRequest{}},
-			{Route: http.MethodPatch + " " + base + "/{integration}", Example: reviseRequest{}},
-			{
-				Route:   http.MethodPost + " " + base + "/{integration}/enabled",
-				Example: enabledRequest{},
-			},
-		},
-	}
-}
-
 // types reports the catalog: every Integration Type this build serves, everything a setup
 // flow needs to render each one, and how many the tenant has configured. The collection is
 // compiled and small, so it answers whole rather than paged.

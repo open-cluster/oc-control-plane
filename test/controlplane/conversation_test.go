@@ -67,14 +67,12 @@ func conversingPlane(
 	operatorAddress := freeAddress(t)
 	intakeAddress := operatorAddress
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
-		cfg.IntakeAddress = intakeAddress
+		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPAddress = intakeAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
-		cfg.SlackAPIURL = vendor.URL
-		cfg.ConversationsEnabled = true
-	}, app.Options{Investigator: investigator})
+	}, app.Options{Investigator: investigator, SlackAPIURL: vendor.URL})
 
 	conversing := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress,
@@ -150,7 +148,7 @@ func concluding(statement, kind, answer string) *scriptedExchangeMain {
 			ID: "call-1", Tool: "slack.list_channels", Arguments: map[string]any{},
 		}}},
 		{Conclusion: &investigation.Conclusion{
-			Answer: answer,
+			Summary: answer,
 			Findings: []investigation.Finding{{
 				Statement: statement, Kind: kind,
 				Confidence: investigation.ConfidenceConfirmed, Sources: []int{1},
@@ -166,7 +164,7 @@ func TestAFollowUpTurnKnowsWhatTheFirstEstablished(t *testing.T) {
 
 	investigator := &briefRecorder{scripts: []investigation.Exchange{
 		concluding("the deploy at 14:02 changed the pool size",
-			investigation.FindingTriggeringChange, "the 14:02 deploy is the change"),
+			investigation.FindingTrigger, "the 14:02 deploy is the change"),
 		concluding("the database was not saturated",
 			investigation.FindingRuledOut, "the database is not the cause"),
 	}}
@@ -299,7 +297,7 @@ func TestAMessageSentMidRunIsQueuedAndDrainedIntoOneNextTurn(t *testing.T) {
 				queuedLeft++
 			}
 		}
-		if len(turns) == 2 && queuedLeft == 0 && turns[1].Status != "running" {
+		if len(turns) == 2 && queuedLeft == 0 && !investigationActive(turns[1].Status) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -443,32 +441,7 @@ func (h *heldExchange) Next(
 		}
 	}
 	h.done = true
-	return investigation.Move{Conclusion: &investigation.Conclusion{Answer: h.answer}}, nil
-}
-
-// The switch is a switch. A deployment that has not enabled conversations does not have
-// that surface, and says so as an absence rather than as a promise.
-func TestConversationsAreAbsentUntilTheDeploymentEnablesThem(t *testing.T) {
-	t.Parallel()
-
-	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
-	plane, _ := autonomousPlaneWith(t, investigator, nil)
-
-	status, body := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/conversations", nil)
-	if status != http.StatusNotFound {
-		t.Errorf("listing conversations with the switch off = %d, want 404: %s", status,
-			body)
-	}
-
-	// And the single-shot path is untouched by the switch, which is the promise to
-	// existing clients.
-	episode := plane.openEpisode(t, "HighLatency", "finger-switch-1")
-	if status, body = plane.call(t, http.MethodPost,
-		plane.base(surfaceOrg)+"/investigations",
-		map[string]any{"episodeId": episode}); status != http.StatusAccepted {
-		t.Errorf("opening a single-shot investigation = %d: %s", status, body)
-	}
+	return investigation.Move{Conclusion: &investigation.Conclusion{Summary: h.answer}}, nil
 }
 
 // THE EVENT STREAM OVER HTTP. A page that reloads mid-investigation must see everything
@@ -479,7 +452,7 @@ func TestTheEventStreamReplaysAndResumesOverTheOperatorAPI(t *testing.T) {
 
 	investigator := &briefRecorder{scripts: []investigation.Exchange{
 		concluding("the deploy at 14:02 changed the pool size",
-			investigation.FindingTriggeringChange, "the 14:02 deploy is the change"),
+			investigation.FindingTrigger, "the 14:02 deploy is the change"),
 	}}
 	plane := conversingPlane(t, investigator)
 

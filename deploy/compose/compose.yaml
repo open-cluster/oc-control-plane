@@ -23,10 +23,9 @@ services:
       dockerfile: deploy/compose/Dockerfile
     command: [--config, /etc/opencluster/opencluster.yaml]
     environment:
-      OC_OPERATOR_TOKEN_ORGANIZATION: ${OPENCLUSTER_ORGANIZATION:-local}
-      OC_MODEL_PROVIDER: ${OPENCLUSTER_MODEL_PROVIDER:-anthropic}
-      OC_MODEL_NAME: ${OPENCLUSTER_MODEL_NAME:?set the configured model identifier}
-      OC_MODEL_CONSENTED_PROVIDERS: ${OPENCLUSTER_MODEL_CONSENTED_PROVIDERS:?explicitly consent to the configured model provider}
+      OC_PUBLIC_URL: ${OPENCLUSTER_PUBLIC_URL:-http://localhost:8080}
+      OC_AI_PROVIDER: ${OPENCLUSTER_AI_PROVIDER:-anthropic}
+      OC_AI_MODEL: ${OPENCLUSTER_AI_MODEL:?set the configured model identifier}
       OC_RELAY_ADDRESS: ${OPENCLUSTER_RELAY_ADDRESS:-}
       OC_RELAY_SPKI_PINS: ${OPENCLUSTER_RELAY_SPKI_PINS:-}
     depends_on:
@@ -75,11 +74,11 @@ secrets:
   postgres_dsn:
     file: ${OPENCLUSTER_DATABASE_DSN_FILE:?set the PostgreSQL DSN file path}
   operator_token:
-    file: ${OPENCLUSTER_OPERATOR_TOKEN_FILE:?set the administrator bootstrap token file path}
+    file: ${OPENCLUSTER_BOOTSTRAP_TOKEN_FILE:?set the administrator bootstrap token file path}
   sealing_key:
-    file: ${OPENCLUSTER_SEALING_KEY_FILE:?set the 32-byte sealing key file path}
+    file: ${OPENCLUSTER_ENCRYPTION_KEY_FILE:?set the 32-byte encryption key file path}
   model_key:
-    file: ${OPENCLUSTER_MODEL_KEY_FILE:?set the model API credential file path}
+    file: ${OPENCLUSTER_AI_API_KEY_FILE:?set the AI API credential file path}
   relay_tls_certificate:
     file: ${OPENCLUSTER_RELAY_TLS_CERT_FILE:-./relay-cert.pem}
   relay_tls_key:

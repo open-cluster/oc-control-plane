@@ -5,7 +5,7 @@
 // who made it. One shared token has no person behind it, so "who disabled this Integration"
 // was not a question the record could answer at all.
 //
-// The package performs no I/O. An Event is a value; internal/storage writes it, and it writes
+// The package performs no I/O. An Event is a value; internal/store/postgres writes it, and it writes
 // it inside the same transaction as the change it describes — an audit write that fails rolls
 // back the operation it was recording, because a change nobody can attribute is worse than a
 // change that did not happen.
@@ -24,7 +24,7 @@ import (
 // be written. It is separate from the operation's own failures because it means something
 // different: the change was possible and was refused rather than attempted and broken.
 //
-// It lives here rather than in internal/storage so that a capability can recognise it without
+// It lives here rather than in internal/store/postgres so that a capability can recognise it without
 // importing persistence (ADR-017).
 var ErrWriteFailed = errors.New("the audit record could not be written")
 
@@ -47,8 +47,6 @@ type ActorKind int16
 const (
 	// ActorUser is a person who signed in through an identity provider.
 	ActorUser ActorKind = 1
-	// ActorServiceAccount is automation holding a scoped API token.
-	ActorServiceAccount ActorKind = 2
 	// ActorSystem is the control plane itself — a lease sweeper, a worker, a migration. It has
 	// no credential and cannot be impersonated, which is why it is a separate kind rather than
 	// a user row nobody can sign in as.
@@ -59,8 +57,6 @@ func (k ActorKind) String() string {
 	switch k {
 	case ActorUser:
 		return "user"
-	case ActorServiceAccount:
-		return "service_account"
 	case ActorSystem:
 		return "system"
 	default:
@@ -117,19 +113,17 @@ func System(what string) Actor {
 type TargetKind string
 
 const (
-	TargetIntegration      TargetKind = "integration"
-	TargetInvestigation    TargetKind = "investigation"
-	TargetConversation     TargetKind = "conversation"
-	TargetIncidentEpisode  TargetKind = "incident_episode"
-	TargetRelay            TargetKind = "relay"
-	TargetIdentityProvider TargetKind = "identity_provider"
-	TargetMembership       TargetKind = "membership"
-	TargetSession          TargetKind = "session"
-	TargetServiceAccount   TargetKind = "service_account"
-	TargetAPIToken         TargetKind = "api_token"
-	TargetOrganization     TargetKind = "organization"
-	TargetRoute            TargetKind = "route"
-	TargetWebhookWork      TargetKind = "webhook_work"
+	TargetIntegration   TargetKind = "integration"
+	TargetInvestigation TargetKind = "investigation"
+	TargetConversation  TargetKind = "conversation"
+	TargetIncident      TargetKind = "incident"
+	TargetPostmortem    TargetKind = "postmortem"
+	TargetRelay         TargetKind = "relay"
+	TargetMembership    TargetKind = "membership"
+	TargetSession       TargetKind = "session"
+	TargetOrganization  TargetKind = "organization"
+	TargetRoute         TargetKind = "route"
+	TargetWebhookWork   TargetKind = "webhook_work"
 )
 
 // Target is what was acted on.

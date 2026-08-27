@@ -26,7 +26,7 @@ const minOperatorTokenLength = 32
 
 // operatorTokenDigest reads the operator credential from its file and returns only the digest.
 //
-// The variable names a path, never the token, for the same reason placements name a DSN file:
+// The variable names a path, never the token, for the same reason the database setting names a file:
 // an environment value is visible to anything that can read the process's environment, ends up
 // in orchestrator manifests, and is printed by half the tooling that touches a container. No
 // error here quotes the file's contents.
@@ -41,7 +41,7 @@ func operatorTokenDigest(
 	}
 	if path == "" {
 		return nil, fmt.Errorf("%s is required when %s is set",
-			EnvOperatorTokenFile, EnvOperatorAddress)
+			EnvOperatorTokenFile, EnvHTTPAddress)
 	}
 
 	token, err := readSecretFile(path)
@@ -57,37 +57,8 @@ func operatorTokenDigest(
 	return digest[:], nil
 }
 
-// operatorCredentialScope binds the bootstrap credential to one tenant and one role.
-//
-// The organization is REQUIRED whenever a token is configured. There is deliberately no
-// default: a credential whose scope was inferred is the ambient root credential this slice
-// exists to replace, and the deployment that would get it is the one that did not think about
-// it. The role defaults to the owner, because a deployment with no members yet needs a
-// credential that can create the first one, and narrowing it is a one-line change the operator
-// can make once they have.
-func operatorCredentialScope(lookup func(string) (string, bool), cfg *Config) error {
-	if len(cfg.OperatorTokenDigest) == 0 {
-		return nil
-	}
-
-	organization, _ := lookup(EnvOperatorTokenOrganization)
-	cfg.OperatorTokenOrganization = strings.TrimSpace(organization)
-	if cfg.OperatorTokenOrganization == "" {
-		return fmt.Errorf("%s is required when %s is set: the credential is bound to one "+
-			"organization, because a token that reaches every tenant is the thing it replaces",
-			EnvOperatorTokenOrganization, EnvOperatorTokenFile)
-	}
-
-	role, _ := lookup(EnvOperatorTokenRole)
-	cfg.OperatorTokenRole = strings.TrimSpace(role)
-	if cfg.OperatorTokenRole == "" {
-		cfg.OperatorTokenRole = defaultOperatorTokenRole
-	}
-	return nil
-}
-
 // defaultOperatorTokenRole is what the bootstrap credential holds when a deployment says
-// nothing. It is named here rather than imported from internal/authz because configuration
+// nothing. It is named here rather than imported from internal/auth/authz because configuration
 // must not depend on the authorization model to parse; the composition root refuses an
 // unrecognised value when it builds the principal.
 const defaultOperatorTokenRole = "admin"
@@ -97,20 +68,6 @@ const defaultOperatorTokenRole = "admin"
 func optionalBrowserURL(lookup func(string) (string, bool), key string) (string, error) {
 	return optionalOrigin(lookup, key, "a session cookie is Secure and would never reach a "+
 		"plaintext origin")
-}
-
-// optionalIntakeURL reads the public origin a customer's own alerting reaches intake at.
-//
-// It is CONFIGURED rather than derived from a request, because the delivery endpoint this
-// produces is pasted into somebody else's system: a URL assembled from the operator surface's
-// own Host header would be one that works from wherever the console is served and not from the
-// customer's alerting, which is the one place it has to work.
-//
-// Empty is supported and means the delivery endpoint is served as an absence rather than as a
-// guess. That is the honest answer for a deployment that has not been told where it is reachable.
-func optionalIntakeURL(lookup func(string) (string, bool), key string) (string, error) {
-	return optionalOrigin(lookup, key, "a source presents its verification secret to this "+
-		"URL, and a plaintext origin would put that secret on the wire")
 }
 
 // optionalOrigin reads an absolute origin, refusing a plaintext one for the stated reason.
@@ -138,80 +95,21 @@ func optionalOrigin(
 	return trimmed, nil
 }
 
-// allowedOrigins reads where a browser may make an unsafe request from.
-func allowedOrigins(lookup func(string) (string, bool)) ([]string, error) {
-	raw, _ := lookup(EnvOperatorAllowedOrigins)
-	origins := make([]string, 0, 2)
-	entries, listErr := decodeList(raw)
-	if listErr != nil {
-		return nil, fmt.Errorf("%s: invalid list: %w", EnvOperatorAllowedOrigins, listErr)
-	}
-	for _, entry := range entries {
-		trimmed := strings.TrimSuffix(strings.TrimSpace(entry), "/")
-		if trimmed == "" {
-			continue
-		}
-		parsed, err := url.Parse(trimmed)
-		if err != nil || !parsed.IsAbs() || parsed.Host == "" {
-			return nil, fmt.Errorf("%s: each origin must be a scheme and a host, such as "+
-				"https://console.example.com", EnvOperatorAllowedOrigins)
-		}
-		origins = append(origins, trimmed)
-	}
-	return origins, nil
-}
-
 // sealingKey reads the key presentable credentials are sealed under.
 //
 // The file holds the key as base64 or as raw bytes; both are accepted because a key generated
 // with openssl and one generated with head -c 32 are both what an operator will reach for. No
 // error here quotes the file's contents.
-func sealingKeys(lookup func(string) (string, bool)) (string, []byte, []SealingKey, error) {
+func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
 	path, _ := lookup(EnvSealingKeyFile)
 	if strings.TrimSpace(path) == "" {
-		if raw, _ := lookup(EnvPreviousSealingKeyFiles); strings.TrimSpace(raw) != "" {
-			return "", nil, nil, fmt.Errorf("%s requires %s", EnvPreviousSealingKeyFiles,
-				EnvSealingKeyFile)
-		}
-		return "", nil, nil, nil
-	}
-	identifier, _ := lookup(EnvSealingKeyID)
-	identifier = strings.TrimSpace(identifier)
-	if identifier == "" {
-		identifier = "default"
+		return nil, nil
 	}
 	active, err := readSealingKey(EnvSealingKeyFile, strings.TrimSpace(path))
 	if err != nil {
-		return "", nil, nil, err
+		return nil, err
 	}
-
-	rawPrevious, _ := lookup(EnvPreviousSealingKeyFiles)
-	entries, err := decodeList(rawPrevious)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("%s: invalid list: %w", EnvPreviousSealingKeyFiles, err)
-	}
-	previous := make([]SealingKey, 0, len(entries))
-	seen := map[string]struct{}{identifier: {}}
-	for _, entry := range entries {
-		parts := strings.SplitN(entry, "=", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return "", nil, nil, fmt.Errorf("%s: each entry must be id=file",
-				EnvPreviousSealingKeyFiles)
-		}
-		keyID := strings.TrimSpace(parts[0])
-		if _, duplicate := seen[keyID]; duplicate {
-			return "", nil, nil, fmt.Errorf("%s: key id %q is configured more than once",
-				EnvPreviousSealingKeyFiles, keyID)
-		}
-		material, readErr := readSealingKey(EnvPreviousSealingKeyFiles,
-			strings.TrimSpace(parts[1]))
-		if readErr != nil {
-			return "", nil, nil, readErr
-		}
-		seen[keyID] = struct{}{}
-		previous = append(previous, SealingKey{ID: keyID, Material: material})
-	}
-	return identifier, active, previous, nil
+	return active, nil
 }
 
 func readSealingKey(setting, path string) ([]byte, error) {

@@ -25,7 +25,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -61,8 +61,8 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = operatorAddress
-		cfg.IntakeAddress = intakeAddress
+		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPAddress = intakeAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
@@ -424,7 +424,7 @@ func firingAlert(alertname string, began time.Time) map[string]any {
 
 // resolvedAlert is the same alert with an end time, which is how a source tells its own
 // Alertmanager the failure stopped. The start time is unchanged on purpose: it identifies
-// the episode being closed.
+// the incident being closed.
 func resolvedAlert(alertname string, began, ended time.Time) map[string]any {
 	alert := firingAlert(alertname, began)
 	alert["endsAt"] = ended.Format(time.RFC3339)
@@ -439,34 +439,34 @@ func (g *alertmanagerGate) replay(t *testing.T, secret string, body []byte) int 
 	return status
 }
 
-// episode reads one incident through the operator API an operator would read it through.
-func (g *alertmanagerGate) episode(t *testing.T, id string) episodeBody {
+// incident reads one incident through the operator API an operator would read it through.
+func (g *alertmanagerGate) incident(t *testing.T, id string) incidentBody {
 	t.Helper()
 
 	status, body := g.call(t, http.MethodGet, g.base(surfaceOrg)+"/incidents/"+id, nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading incident %s = %d: %s", id, status, body)
 	}
-	var episode episodeBody
-	decodeInto(t, body, &episode)
-	return episode
+	var incident incidentBody
+	decodeInto(t, body, &incident)
+	return incident
 }
 
-// episodes lists this organization's incidents.
-func (g *alertmanagerGate) episodes(t *testing.T) episodeListBody {
+// incidents lists this organization's incidents.
+func (g *alertmanagerGate) incidents(t *testing.T) incidentListBody {
 	t.Helper()
 
 	status, body := g.call(t, http.MethodGet, g.base(surfaceOrg)+"/incidents", nil)
 	if status != http.StatusOK {
 		t.Fatalf("listing incidents = %d: %s", status, body)
 	}
-	var list episodeListBody
+	var list incidentListBody
 	decodeInto(t, body, &list)
 	return list
 }
 
-// signalsNamed reports what is durably recorded for one alert name.
-func (g *alertmanagerGate) signalsNamed(t *testing.T, alertname string) []recordedSignal {
+// alertEventsNamed reports what is durably recorded for one alert name.
+func (g *alertmanagerGate) alertEventsNamed(t *testing.T, alertname string) []recordedAlertEvent {
 	t.Helper()
 	ctx := context.Background()
 
@@ -479,33 +479,33 @@ func (g *alertmanagerGate) signalsNamed(t *testing.T, alertname string) []record
 	rows, err := connection.Query(ctx, `
 		SELECT source_key, status, title, summary, labels, annotations, generator_url,
 		       started_at, resolved_at, received_at
-		  FROM signal
+		  FROM alert_event
 		 WHERE org_id = $1 AND labels ->> 'alertname' = $2
 		 ORDER BY received_at`, surfaceOrg, alertname)
 	if err != nil {
-		t.Fatalf("reading signals: %v", err)
+		t.Fatalf("reading alertEvents: %v", err)
 	}
 	defer rows.Close()
 
-	var recorded []recordedSignal
+	var recorded []recordedAlertEvent
 	for rows.Next() {
-		var signal recordedSignal
+		var alertEvent recordedAlertEvent
 		var labels, annotations []byte
-		if err = rows.Scan(&signal.SourceKey, &signal.Status, &signal.Title, &signal.Summary,
-			&labels, &annotations, &signal.GeneratorURL, &signal.StartedAt,
-			&signal.ResolvedAt, &signal.ReceivedAt); err != nil {
-			t.Fatalf("scanning a signal: %v", err)
+		if err = rows.Scan(&alertEvent.SourceKey, &alertEvent.Status, &alertEvent.Title, &alertEvent.Summary,
+			&labels, &annotations, &alertEvent.GeneratorURL, &alertEvent.StartedAt,
+			&alertEvent.ResolvedAt, &alertEvent.ReceivedAt); err != nil {
+			t.Fatalf("scanning a alert_event: %v", err)
 		}
-		if err = json.Unmarshal(labels, &signal.Labels); err != nil {
+		if err = json.Unmarshal(labels, &alertEvent.Labels); err != nil {
 			t.Fatalf("decoding labels: %v", err)
 		}
-		if err = json.Unmarshal(annotations, &signal.Annotations); err != nil {
+		if err = json.Unmarshal(annotations, &alertEvent.Annotations); err != nil {
 			t.Fatalf("decoding annotations: %v", err)
 		}
-		recorded = append(recorded, signal)
+		recorded = append(recorded, alertEvent)
 	}
 	if err = rows.Err(); err != nil {
-		t.Fatalf("reading signals: %v", err)
+		t.Fatalf("reading alertEvents: %v", err)
 	}
 	return recorded
 }

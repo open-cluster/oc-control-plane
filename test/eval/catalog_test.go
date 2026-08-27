@@ -73,3 +73,41 @@ func TestConversationEvaluationMeasuresFindingContinuityWithoutCompaction(t *tes
 		t.Fatal("the bounded-history fixture must identify cited findings that survive follow-up turns")
 	}
 }
+
+func TestLifecycleEvaluationCasesDeclareWhatTheyMeasure(t *testing.T) {
+	t.Parallel()
+
+	cases, err := eval.LoadCases(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := map[string]func(eval.Case) bool{
+		"live-hypothesis-updates": func(one eval.Case) bool { return one.RequireHypothesisUpdates },
+		"postmortem-omissions":    func(one eval.Case) bool { return one.GeneratePostmortem },
+	}
+	for _, one := range cases {
+		check, found := wanted[one.Name]
+		if !found {
+			continue
+		}
+		if !check(one) {
+			t.Errorf("evaluation case %q does not declare its lifecycle measurement", one.Name)
+		}
+		delete(wanted, one.Name)
+	}
+	for name := range wanted {
+		t.Errorf("evaluation case %q was not loaded", name)
+	}
+}
+
+func TestStructuredResultFixturesAreVersioned(t *testing.T) {
+	t.Parallel()
+
+	revision, fixtures, err := eval.LoadStructuredResults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision == "" || len(fixtures) < 7 {
+		t.Fatalf("revision=%q fixtures=%d, want a versioned contract matrix", revision, len(fixtures))
+	}
+}

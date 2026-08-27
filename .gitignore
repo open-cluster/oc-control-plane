@@ -41,6 +41,7 @@ Thumbs.db
 /artifacts-sweep/
 /artifacts-rerun/
 /.tmp/
+/.verify-cache/
 
 # AI-assisted development working state (local-only)
 # See github.com/open-cluster/engineering: ai/repository-boundaries.md
@@ -52,3 +53,6 @@ Thumbs.db
 /lessons/
 /reference/
 /assets/
+!/assets/
+/assets/*
+!/assets/structured-investigation.png

@@ -8,7 +8,7 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/changeledger"
+	"github.com/open-cluster/oc-control-plane/internal/changecontext"
 )
 
 // The change ledger's session half: policies out at greeting, deltas in as the third

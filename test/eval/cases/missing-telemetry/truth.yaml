@@ -1,0 +1,6 @@
+mustnotclaim: ["saturation caused the incident", "downstream latency caused the incident"]
+discriminating:
+    - tool: kubernetes.namespace.events
+relevanttools: ["kubernetes.namespace.events", "github.read_commits"]
+expectfindings: false
+answermarkers: ["missing", "telemetry"]

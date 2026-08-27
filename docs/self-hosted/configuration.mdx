@@ -1,383 +1,99 @@
 ---
 title: "Configuration"
-description: "Configure OpenCluster with one YAML file and targeted overrides."
+description: "Configure an OpenCluster deployment with a small, file-backed surface."
 ---
 
-OpenCluster reads one nested YAML file and validates it before starting. Values are resolved
-in this order, with later sources taking precedence:
+OpenCluster uses safe defaults for server addresses, local authentication, logs,
+telemetry, investigation limits, concurrency, retention, retries, request timeouts, and
+shutdown. A normal installation supplies the database, bootstrap, AI, and encryption
+files plus its public URL.
 
-1. Built-in defaults
-2. The YAML file named by `--config` or `OC_CONFIG_FILE`
-3. Environment-variable compatibility overrides
-4. The `--server-address` local-development override
+Environment values that end in `_FILE` name mounted files; they never contain the
+credential itself. YAML settings ending in `_file` follow the same rule.
 
-Do not put credentials in YAML or environment values. Settings ending in `_file` name a
-mounted file containing the secret. A Kubernetes Secret, Vault agent, External Secrets
-Operator, or cloud secret manager can project that file without OpenCluster embedding its
-client. Production configuration does not accept secret values from the environment.
+## Minimal YAML
 
-## YAML configuration
+```yaml
+server:
+  public_url: "https://opencluster.example.com"
+database:
+  dsn_file: "/run/opencluster/database/postgres-dsn"
+authentication:
+  bootstrap_token_file: "/run/opencluster/credentials/bootstrap-token"
+  encryption_key_file: "/run/opencluster/credentials/encryption-key"
+ai:
+  provider: "anthropic"
+  model: "MODEL_ID"
+  api_key_file: "/run/opencluster/credentials/model-key"
+```
 
-This is the smallest configuration that starts OpenCluster. Every Organization uses this
-database, while `org_id` remains the tenant boundary for every durable record.
+Pass the file with `--config /etc/opencluster/opencluster.yaml` or `OC_CONFIG_FILE`.
+Environment variables override YAML. Unknown YAML fields and additional documents stop
+startup, so misspelled configuration is never silently ignored.
+
+## Optional YAML
 
 ```yaml
 server:
   address: ":8080"
-
-database:
-  dsn_file: "/run/secrets/postgres-dsn"
-
-telemetry:
-  service_name: "oc-control-plane"
-  otlp_endpoint: ""
-```
-
-Optional settings use the same nested structure:
-
-```yaml
-server:
-  operator_address: ":8080"
-  intake_address: ":8080"
-  public_url: "https://opencluster.example.com"
-  console_url: "https://console.opencluster.example.com"
-  intake_public_url: "https://intake.opencluster.example.com"
-  allowed_origins: ["https://console.opencluster.example.com"]
-  shutdown_timeout: "15s"
-
 authentication:
-  mode: "local"
-  legacy_migration_complete: false
-  bootstrap_token_file: "/run/secrets/operator-token"
-  bootstrap_organization: "example-org"
-  bootstrap_role: "admin"
-  sealing_key_id: "current"
-  sealing_key_file: "/run/secrets/sealing-key"
-  previous_sealing_key_files:
-    prior: "/run/secrets/prior-sealing-key"
+  mode: "oidc"
   oidc:
     issuer: "https://identity.example.com"
     client_id: "opencluster"
-    client_secret_file: "/run/secrets/oidc-client-secret"
-
+    client_secret_file: "/run/opencluster/credentials/oidc-client-secret"
 relay:
   address: ":8443"
   spki_pins: ["BASE64_SHA256_SPKI"]
-  inventory_interval: "5m"
-  minimum_version: ""
-
-model:
-  provider: "anthropic"
-  name: "MODEL_ID"
-  api_key_file: "/run/secrets/model-key"
-  effort: "high"
-  consented_providers: ["anthropic"]
-  base_url: ""
-  spend_ceiling_cents: 500
-
-investigations:
-  window_lead: "2h"
-  max_tool_runs: 30
-  max_turns: 20
-
-conversations:
-  max_concurrent_investigations: 4
-
-change_ledger:
-  retention_days: 90
-
-providers:
-  slack:
-    api_url: ""
-    client_id: ""
-    client_secret_file: ""
-    signing_secret_file: ""
-    agent_organizations: []
-  github:
-    app_id: ""
-    app_private_key_file: ""
-    api_url: ""
-    app_slug: ""
-    client_id: ""
-    client_secret_file: ""
-    web_url: ""
-
 telemetry:
-  service_name: "oc-control-plane"
+  log_level: "info"
   otlp_endpoint: "collector.example.com:4317"
+slack:
+  client_id: "SLACK_CLIENT_ID"
+  client_secret_file: "/run/opencluster/credentials/slack-client-secret"
+  signing_secret_file: "/run/opencluster/credentials/slack-signing-secret"
+github:
+  app_id: "12345"
+  app_private_key_file: "/run/opencluster/credentials/github-app-key"
 ```
 
-Unknown keys and additional YAML documents refuse startup. This prevents a misspelled setting
-from being silently ignored. When the same setting appears in YAML and an environment variable,
-the environment value wins. `--server-address` overrides both for local development.
+Local authentication is the default. `oidc` adds the configured provider while local
+Admin recovery remains available. Relay is optional and listens separately from HTTP;
+customer Relays initiate outbound connections and pin the configured control-plane key.
 
-### Rotate the sealing key
+## Environment reference
 
-First roll out this release to every replica while the existing key remains active. Do not
-start a rotation while an older replica can still write version-1 envelopes.
+| Variable | Purpose |
+| --- | --- |
+| `OC_CONFIG_FILE` | Optional YAML file path. |
+| `OC_SERVER_ADDRESS` | HTTP listen address; default `:8080`. |
+| `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8080`. |
+| `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. |
+| `OC_AUTH_MODE` | `local` or `oidc`. |
+| `OC_BOOTSTRAP_TOKEN_FILE` | One-time first-Admin bootstrap token file. |
+| `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
+| `OC_OIDC_CLIENT_ID` | OIDC client ID. |
+| `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. |
+| `OC_RELAY_ADDRESS` | Optional Relay gRPC listen address. |
+| `OC_RELAY_SPKI_PINS` | Comma-separated control-plane SPKI pins. |
+| `OC_AI_PROVIDER` | Native AI provider: `anthropic` or `zai`. |
+| `OC_AI_MODEL` | Exact model identifier. |
+| `OC_AI_API_KEY_FILE` | AI provider credential file. |
+| `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. |
+| `OC_LOG_LEVEL` | Log level; default `info`. |
+| `OC_OTLP_ENDPOINT` | Optional OTLP collector host and port. |
+| `OC_SLACK_CLIENT_ID` | Deployment Slack App client ID. |
+| `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. |
+| `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. |
+| `OC_GITHUB_APP_ID` | Deployment GitHub App ID. |
+| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. |
 
-Give the new key a new `authentication.sealing_key_id` and point `sealing_key_file` at its
-mounted file. Put every key that may still have encrypted Integration credentials under
-`previous_sealing_key_files`, keyed by its former ID. OpenCluster reads old envelopes and
-rewraps credentials in bounded database batches under the active key; fingerprints do not
-change. Roll the new keyring configuration to every replica. Keep each previous key mounted
-until all replicas report that rotation completed, then remove that map entry and restart.
+The OSS binary uses one mounted AI deployment for every Organization. The resolver keeps
+Organization explicit so a separate cloud composition can select managed or encrypted
+Organization BYOK later without changing investigation behavior.
 
-Existing credentials written before key IDs were introduced use the implicit `default` key ID.
-During the first rotation, list the former key as `default`. Back up PostgreSQL before rotating.
-A prior binary cannot read credentials created or rewrapped into the new envelope, so rollback
-after rotation requires restoring that backup as well as the prior binary and configuration.
+This is a pre-release clean break. Existing databases and configuration from earlier
+builds must be recreated rather than migrated through compatibility settings.
 
-## Authenticate people
-
-Local authentication is the default and registration is closed. Configure the bootstrap token,
-then call `POST /operator/v1/organizations/{organization}/bootstrap` with that bearer token and
-an email, display name, and password of at least 12 characters. This creates the deployment's
-first Admin and cannot be repeated. Admins add local members with `POST .../members` and reset a
-password with `PUT .../members/{user}/password`; a reset revokes existing sessions.
-
-Passwords are versioned Argon2id verifiers. Sessions use Secure, HttpOnly, SameSite cookies, and
-unsafe cookie-authenticated requests require an allowed `Origin`.
-
-Set `authentication.mode` to `local+oidc` to add one generic OIDC provider. Register
-`{server.public_url}/operator/v1/sign-in/callback` at the provider. An Admin pre-provisions each
-person with `POST .../members/oidc`, supplying the exact OIDC `subject`, display name, and an
-`admin`, `editor`, or `viewer` role. OpenCluster authenticates issuer and subject; the database
-membership remains authoritative for authorization. Local Admin access remains for recovery.
-
-### Upgrade from native SAML or SCIM
-
-The last compatible build is `539b45e`. Before upgrading, use that build's
-`GET .../members`, `GET .../identity-providers`, and `GET .../directory-groups` routes to save
-every active user, Organization membership, role, and sign-in configuration as JSON. Retain a
-database backup. Set `authentication.legacy_migration_complete` to `true` only after checking
-that export, then upgrade, bootstrap the local Admin, and create equivalent local or
-deployment-OIDC identities. Verify an Admin and one user of each role can sign in. Change the
-provider callback only after validation.
-
-The upgrade retains legacy identity-provider, SAML, SCIM, and directory-mapping rows. Startup
-reads only whether an enabled provider or role-mapped directory group remains and refuses with
-migration guidance unless the operator acknowledged the completed export. Runtime never
-authenticates from or mutates those records. It never converts
-or deletes them silently. Keep the backup and prior binary until checks pass. To roll back, stop
-the new binary and restart the prior binary with its prior identity configuration.
-
-## Environment compatibility reference
-
-Existing deployments may continue to use environment variables during the compatibility
-window. Variables that refer to credentials contain file paths, never secret values.
-
-Legacy YAML remains accepted during this window. It must resolve every entry to the same
-DSN file; multiple distinct databases refuse startup and must be consolidated first:
-
-```yaml
-database:
-  placements:
-    shared:
-      dsn_file: "/run/secrets/postgres-dsn"
-  assignments: {}
-  default_placement: "shared"
-```
-
-Do not mix `database.dsn_file` with legacy database settings. A legacy operator or intake
-address enables that route group on the shared HTTP listener and therefore must equal
-`server.address`. Relay traffic remains on its separate gRPC listener.
-
-### Migrate an existing deployment
-
-Back up every configured database and keep a copy of the current binary and configuration.
-Then inspect the DSN files named by the legacy settings:
-
-- If every legacy entry reaches the same PostgreSQL database, replace the legacy database
-  block with `database.dsn_file` pointing at that DSN file. Start one instance and require
-  `/readyz` to return `200` before replacing the remaining instances.
-- If the entries reach distinct databases, split them into one control-plane deployment per
-  database. Give each deployment its former DSN file, the Organizations formerly assigned to
-  that database, its existing sealing key, and unique HTTP and Relay addresses. Repoint every
-  Alertmanager Integration webhook and Relay endpoint to the deployment that owns it. Register
-  separate Slack, GitHub, and OIDC applications or callback URLs for each deployment when a
-  provider cannot route callbacks by their authenticated Integration identity. Never select a
-  deployment from an unauthenticated request body or opaque callback state. Validate webhooks,
-  signed Slack events, OAuth and OIDC callbacks, and Relay connections before cutover, then verify
-  incidents and Investigations before removing the old multi-database instance. If provider-side
-  registrations cannot be split safely, remain on the prior binary until they can.
-
-Do not combine data-only PostgreSQL dumps. User identities, installation keys, UUIDs, and
-other deployment-wide unique values can collide even when Organization identifiers do not.
-This release deliberately refuses an automatic merge instead of choosing which record wins.
-Where one deployment is mandatory, remain on the prior binary until an application-aware
-export/import workflow has resolved those collisions and validation shows every Organization's
-record counts and Integrations in the destination.
-
-Rollback is non-destructive: stop the new binary, restore the three legacy database settings
-and the former listener addresses, then restart the prior binary. The consolidation release deletes no rows and
-changes no table shape; the added database comment is safe for the prior binary to ignore. If
-an operator-driven export/import changed data, restore the pre-migration backups instead.
-
-Legacy inputs have no scheduled removal in the current release line. Removing one requires a
-separately reviewed change that names the last compatible tag in this page at least one tagged
-release before removal. Until that notice exists, the aliases and the rollback above remain
-supported.
-
-The shared HTTP server allows 10 seconds for headers, 30 seconds to read a request, 30 seconds
-to write a response, and 60 seconds for an idle connection. Intake authentication, payload
-size limits, and operator authorization remain enforced by their route owners inside those
-connection bounds.
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_CONFIG_FILE` | No | YAML configuration file. Overridden by `--config`. |
-
-## Storage and process
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_HTTP_ADDRESS` | Yes | Shared health, metrics, operator, and intake listen address. |
-| `OC_DATABASE_DSN_FILE` | Yes | File containing the deployment PostgreSQL DSN. |
-| `OC_PLACEMENTS` | Legacy only | Comma-separated `name=dsn-file-path` entries. Every entry must name the same DSN file. |
-| `OC_DEFAULT_PLACEMENT` | Legacy only | Accepted only with the legacy database settings. |
-| `OC_PLACEMENT_ASSIGNMENTS` | Legacy only | Accepted only with the legacy database settings. |
-| `OC_SHUTDOWN_TIMEOUT` | No | Graceful shutdown budget. Default: `15s`. |
-| `OC_SERVICE_NAME` | No | Telemetry service name. Default: `oc-control-plane`. |
-| `OC_OTLP_ENDPOINT` | No | OTLP trace collector as `host:port`. Empty disables trace export. |
-
-Do not set `OC_DATABASE_DSN_FILE` together with any legacy database variable. If the legacy
-configuration names multiple distinct databases, consolidate them before upgrading.
-
-## Operator access
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_OPERATOR_ADDRESS` | No | Enables operator routes on `OC_HTTP_ADDRESS`; when set, it must equal that address. |
-| `OC_OPERATOR_TOKEN_FILE` | With bootstrap access | File containing a token of at least 32 characters. |
-| `OC_OPERATOR_TOKEN_ORGANIZATION` | With bootstrap token | Organization the token can access. |
-| `OC_OPERATOR_TOKEN_ROLE` | No | Token role. Default: `admin`. |
-| `OC_OPERATOR_PUBLIC_URL` | With browser sign-in | Public HTTPS origin used for identity-provider and integration-install redirects. |
-| `OC_OPERATOR_CONSOLE_URL` | With browser sign-in | Console URL used after sign-in and after connecting an integration. |
-| `OC_OPERATOR_ALLOWED_ORIGINS` | With browser console | Origins allowed for cookie-authenticated unsafe requests. |
-| `OC_SEALING_KEY_FILE` | With operator listener | File containing a 32-byte raw or base64 key for stored credentials. The operator surface can accept Slack credentials, so it refuses to start without this key. |
-| `OC_SEALING_KEY_ID` | No | Non-secret identifier written into new credential envelopes. Default: `default`. Change it when rotating the sealing key. |
-| `OC_PREVIOUS_SEALING_KEY_FILES` | During key rotation | Comma-separated `id=file` entries for keys that may still protect stored credentials, for example `default=/run/secrets/sealing-old,2026-08=/run/secrets/sealing-august`. IDs must be unique and the files remain mounted until rotation completes on every replica. |
-| `OC_AUTHENTICATION_MODE` | No | `local` (default) or `local+oidc`. |
-| `OC_OIDC_ISSUER` | With `local+oidc` | HTTPS issuer URL for the deployment OIDC provider. |
-| `OC_OIDC_CLIENT_ID` | With `local+oidc` | Registered OIDC client ID. |
-| `OC_OIDC_CLIENT_SECRET_FILE` | With `local+oidc` | File containing the OIDC client secret. |
-| `OC_LEGACY_IDENTITY_MIGRATION_COMPLETE` | During identity migration | Set to `true` only after exporting legacy users, memberships, roles, and provider configuration. |
-
-The operator public and console URLs must share a registrable domain. Keep the operator
-listener private even when a browser-facing proxy is configured.
-
-## Intake and Relay
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_INTAKE_ADDRESS` | No | Enables intake routes on `OC_HTTP_ADDRESS`; when set, it must equal that address. |
-| `OC_INTAKE_PUBLIC_URL` | With intake | Public HTTPS origin used to generate webhook URLs. |
-| `OC_RELAY_ADDRESS` | No | Relay listener. Empty disables Relay access. |
-| `OC_RELAY_SPKI_PINS` | With Relay | Comma-separated public-key digests given to Relays at enrolment. Keep overlapping pins during rotation. |
-| `OC_MINIMUM_RELAY_VERSION` | No | Version floor used to report outdated Relays. |
-| `OC_INVENTORY_INTERVAL` | No | Requested Relay inventory interval. Default: `5m`; each Relay may apply a floor. |
-| `OC_CHANGE_LEDGER_RETENTION_DAYS` | No | Kubernetes change-history retention. Default: `90`. |
-
-## Integrations
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_SLACK_API_URL` | No | Slack API origin override. Empty uses Slack. |
-| `OC_SLACK_CLIENT_ID` | For one-click install | The Slack app's OAuth client ID. Set with `OC_SLACK_CLIENT_SECRET_FILE` or neither. |
-| `OC_SLACK_CLIENT_SECRET_FILE` | For one-click install | File containing the Slack app's OAuth client secret. Without both, Slack is connected with the pasted-token form. |
-| `OC_SLACK_SIGNING_SECRET_FILE` | For the Slack agent | File containing the Slack app's signing secret, which inbound events are verified against. Without it, no events endpoint is served. Independent of the client credential. |
-| `OC_SLACK_AGENT_ORGANIZATIONS` | No | Comma-separated organizations the Slack agent surface is live for. Unset means none, which is the default. An inbound event for an organization outside it is acknowledged and dropped; reads through the Slack tools are unaffected either way. |
-| `OC_GITHUB_APP_ID` | With GitHub | GitHub App ID. |
-| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | With GitHub | File containing the App private key in PEM format. |
-| `OC_GITHUB_API_URL` | No | GitHub API origin. Use `https://HOST/api/v3` for GitHub Enterprise Server. |
-| `OC_GITHUB_APP_SLUG` | For one-click install | The App's URL slug, from `https://github.com/apps/SLUG`. |
-| `OC_GITHUB_APP_CLIENT_ID` | For one-click install | The App's OAuth client ID. |
-| `OC_GITHUB_APP_CLIENT_SECRET_FILE` | For one-click install | File containing the App's OAuth client secret. |
-| `OC_GITHUB_WEB_URL` | No | GitHub browser origin. Use `https://HOST` for GitHub Enterprise Server. |
-
-The Slack app's request URL is `POST {intake origin}/intake/v1/slack/events`. It is served only
-where `OC_SLACK_SIGNING_SECRET_FILE` is set — a deployment without one serves no events endpoint
-at all rather than one that refuses everything.
-
-`OC_SLACK_AGENT_ORGANIZATIONS` is a staged-rollout gate and not a customer setting: it exists so
-the agent surface can be enabled for one workspace at a time, and it is removed when the surface
-is generally available. It is not the only switch. An organization that has not connected Slack
-does not have Slack, and disabling a Slack integration stops both reading and answering.
-
-The GitHub App ID and key file are required together. The slug, client ID, and client
-secret file are required together and enable **Connect GitHub**; without them, GitHub is
-connected by entering an installation ID. Enabling the one-click flow also requires
-`OC_OPERATOR_PUBLIC_URL`, because GitHub returns the browser to an absolute callback URL.
-
-Slack requires `OC_SEALING_KEY_FILE` because its token is stored encrypted. GitHub stores
-no credential at all.
-
-## Investigations
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_MODEL_PROVIDER` | With investigations | `anthropic` or `zai`. Empty disables new investigations. |
-| `OC_MODEL_NAME` | With provider | Exact provider model identifier. |
-| `OC_MODEL_KEY_FILE` | With provider | File containing the provider API key. |
-| `OC_MODEL_CONSENTED_PROVIDERS` | With provider | Comma-separated providers approved to receive investigation data. Must include the configured provider. |
-| `OC_MODEL_EFFORT` | No | `low`, `medium`, `high`, `xhigh`, or `max`. Default: `high`. |
-| `OC_MODEL_BASE_URL` | No | Provider endpoint override. HTTPS is required except for loopback. |
-| `OC_MODEL_SPEND_CEILING_CENTS` | No | Positive per-investigation spend ceiling. Default: `500`. |
-| `OC_INVESTIGATION_WINDOW_LEAD` | No | Time added before the incident start. Default: `2h`. |
-| `OC_INVESTIGATION_MAX_TOOL_RUNS` | No | Maximum source reads. Default: `30`. |
-| `OC_INVESTIGATION_MAX_TURNS` | No | Maximum reasoning turns. Default: `20`. |
-
-## Conversations
-
-Conversations let an operator ask follow-up questions in one context. They are enabled by
-default; single-shot investigations remain available alongside them.
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_ORG_MAX_CONCURRENT_INVESTIGATIONS` | No | Investigations one organization may run at once. Default: `4`. |
-
-The per-organization concurrency ceiling keeps one tenant from consuming the deployment.
-Waiting work and model context limits remain bounded internally by the platform.
-
-Provider consent is deployment-wide. Review [what is sent to the model
-provider](/security/credentials-and-data-access#data-sent-to-the-model-provider) before
-enabling investigations.
-
-## Optional hosted extensions
-
-Self-hosted deployments do not require WorkOS and never forward audit events to it.
-An explicitly hosted deployment can enable WorkOS AuthKit through the existing
-`local+oidc` authentication settings and forward already-committed PostgreSQL audit
-events asynchronously.
-
-```yaml
-hosted:
-  active: true
-  api_key_file: "/run/secrets/workos-api-key"
-  api_url: "https://api.workos.com"
-  audit_organizations:
-    example-org: "org_workos_example"
-```
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OC_HOSTED_MODE` | For hosted extensions | Set to `true` to enable optional WorkOS integration. |
-| `OC_WORKOS_API_KEY_FILE` | In hosted mode | File containing the WorkOS API credential. |
-| `OC_WORKOS_AUDIT_ORGANIZATIONS` | In hosted mode | Comma-separated `local_organization=workos_organization` mappings. |
-| `OC_WORKOS_API_URL` | No | HTTPS WorkOS API origin override; loopback is allowed for local tests. |
-
-Hosted authentication uses `OC_AUTHENTICATION_MODE=local+oidc` with the WorkOS AuthKit
-issuer, OIDC client ID, and file-backed OIDC client secret. Authorization still comes
-from locally stored Organization memberships; provider claims never grant roles.
-PostgreSQL remains the authoritative audit record, and forwarding retries are durable,
-bounded, and deduplicated using each event's existing identity.
-
-## Validation rules
-
-- Public URLs and vendor overrides require HTTPS except on loopback.
-- Partial GitHub or model-provider credentials refuse startup.
-- Enabling the operator listener requires a sealing key because the catalog accepts
-  Slack credentials.
-- An unlisted model provider cannot receive investigation data.
-- The first invalid setting stops startup and names the variable to fix.
+The shared HTTP server allows 10 seconds for headers, 30 seconds to read a request,
+30 seconds to write a response, and 60 seconds for an idle connection.

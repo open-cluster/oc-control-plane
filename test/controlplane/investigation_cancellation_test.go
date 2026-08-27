@@ -34,10 +34,10 @@ func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedOperatorSurface(t
 	t.Parallel()
 
 	model := &blockingInvestigator{started: make(chan struct{}, 1)}
-	plane, _ := autonomousPlaneWith(t, model, nil)
-	episode := plane.openEpisode(t, "CheckoutLatency", "cancel-running")
+	plane, _ := autonomousPlaneWith(t, model, 0)
+	incident := plane.openIncident(t, "CheckoutLatency", "cancel-running")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
-		map[string]any{"episodeId": episode})
+		map[string]any{"incidentId": incident})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening an investigation = %d: %s", status, body)
 	}

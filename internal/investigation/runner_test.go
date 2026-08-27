@@ -12,10 +12,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/seal"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
 // The runner shell against an in-memory store and stub tools: the guarantees every
@@ -37,7 +37,7 @@ type memoryStore struct {
 	briefFails   bool
 	endRefused   bool
 	findings     []Finding
-	nextSteps    []string
+	actions      []ActionProposal
 	stoppedBy    string
 	unseals      []string
 	refuseUnseal bool
@@ -100,8 +100,8 @@ func (m *memoryStore) ConcludeInvestigation(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.status, m.stoppedBy, m.spend = StatusConcluded, stoppedBy, spend
-	m.answer, m.findings, m.nextSteps = conclusion.Answer, conclusion.Findings,
-		conclusion.NextSteps
+	m.answer, m.findings, m.actions = conclusion.Summary, conclusion.Findings,
+		conclusion.Actions
 	return nil
 }
 
@@ -141,7 +141,7 @@ func (m *memoryStore) FailInvestigation(
 	return nil
 }
 
-func (m *memoryStore) TriggerEpisode(
+func (m *memoryStore) TriggerIncident(
 	context.Context, tenancy.Organization, uuid.UUID,
 ) (Trigger, error) {
 	m.mu.Lock()

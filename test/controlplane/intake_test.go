@@ -44,7 +44,7 @@ func startIntake(t *testing.T) *intakePlane {
 
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.IntakeAddress = "127.0.0.1:0"
+		cfg.HTTPAddress = "127.0.0.1:0"
 		dsn = cfg.DatabaseDSN
 	})
 
@@ -102,7 +102,7 @@ func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.U
 func (p *intakePlane) deliver(t *testing.T, secret, body string) int {
 	t.Helper()
 
-	url := fmt.Sprintf("http://%s/intake/v1/integrations/%s/signals", p.address, p.integration)
+	url := fmt.Sprintf("http://%s/webhooks/v1/integrations/%s/alert-events", p.address, p.integration)
 	request, err := http.NewRequestWithContext(
 		context.Background(), http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
@@ -120,8 +120,8 @@ func (p *intakePlane) deliver(t *testing.T, secret, body string) int {
 	return response.StatusCode
 }
 
-// signals reports what is durably recorded for the organization.
-func (p *intakePlane) signals(t *testing.T) []recordedSignal {
+// alertEvents reports what is durably recorded for the organization.
+func (p *intakePlane) alertEvents(t *testing.T) []recordedAlertEvent {
 	t.Helper()
 	ctx := context.Background()
 
@@ -134,32 +134,32 @@ func (p *intakePlane) signals(t *testing.T) []recordedSignal {
 	rows, err := connection.Query(ctx, `
 		SELECT source_key, status, title, summary, labels, annotations, generator_url,
 		       started_at, resolved_at, received_at
-		  FROM signal WHERE org_id = $1 ORDER BY source_key, started_at`, intakeOrganization)
+		  FROM alert_event WHERE org_id = $1 ORDER BY source_key, started_at`, intakeOrganization)
 	if err != nil {
-		t.Fatalf("reading signals: %v", err)
+		t.Fatalf("reading alertEvents: %v", err)
 	}
 	defer rows.Close()
 
-	var recorded []recordedSignal
+	var recorded []recordedAlertEvent
 	for rows.Next() {
-		var signal recordedSignal
+		var alertEvent recordedAlertEvent
 		var labels, annotations []byte
-		if err = rows.Scan(&signal.SourceKey, &signal.Status, &signal.Title,
-			&signal.Summary, &labels, &annotations, &signal.GeneratorURL,
-			&signal.StartedAt, &signal.ResolvedAt,
-			&signal.ReceivedAt); err != nil {
-			t.Fatalf("scanning signal: %v", err)
+		if err = rows.Scan(&alertEvent.SourceKey, &alertEvent.Status, &alertEvent.Title,
+			&alertEvent.Summary, &labels, &annotations, &alertEvent.GeneratorURL,
+			&alertEvent.StartedAt, &alertEvent.ResolvedAt,
+			&alertEvent.ReceivedAt); err != nil {
+			t.Fatalf("scanning alert_event: %v", err)
 		}
-		if err = json.Unmarshal(labels, &signal.Labels); err != nil {
+		if err = json.Unmarshal(labels, &alertEvent.Labels); err != nil {
 			t.Fatalf("decoding labels: %v", err)
 		}
-		if err = json.Unmarshal(annotations, &signal.Annotations); err != nil {
+		if err = json.Unmarshal(annotations, &alertEvent.Annotations); err != nil {
 			t.Fatalf("decoding annotations: %v", err)
 		}
-		recorded = append(recorded, signal)
+		recorded = append(recorded, alertEvent)
 	}
 	if err = rows.Err(); err != nil {
-		t.Fatalf("reading signals: %v", err)
+		t.Fatalf("reading alertEvents: %v", err)
 	}
 	return recorded
 }
@@ -186,9 +186,9 @@ func (p *intakePlane) truncatedCount(t *testing.T) int {
 	return total
 }
 
-// scopes reports which tenant and Integration each recorded Signal landed under, across
+// scopes reports which tenant and Integration each recorded AlertEvent landed under, across
 // EVERY organization in the database rather than one. Scoping the query to the expected
-// tenant would make a signal written to the wrong one invisible, which is the failure being
+// tenant would make a alert_event written to the wrong one invisible, which is the failure being
 // tested for.
 func (p *intakePlane) scopes(t *testing.T) []recordedScope {
 	t.Helper()
@@ -201,9 +201,9 @@ func (p *intakePlane) scopes(t *testing.T) []recordedScope {
 	defer func() { _ = database.Close(ctx) }()
 
 	rows, err := database.Query(ctx,
-		`SELECT org_id, integration_id FROM signal ORDER BY received_at`)
+		`SELECT org_id, integration_id FROM alert_event ORDER BY received_at`)
 	if err != nil {
-		t.Fatalf("reading signal scopes: %v", err)
+		t.Fatalf("reading alert_event scopes: %v", err)
 	}
 	defer rows.Close()
 
@@ -211,12 +211,12 @@ func (p *intakePlane) scopes(t *testing.T) []recordedScope {
 	for rows.Next() {
 		var scope recordedScope
 		if err = rows.Scan(&scope.organization, &scope.integration); err != nil {
-			t.Fatalf("scanning a signal scope: %v", err)
+			t.Fatalf("scanning a alert_event scope: %v", err)
 		}
 		recorded = append(recorded, scope)
 	}
 	if err = rows.Err(); err != nil {
-		t.Fatalf("reading signal scopes: %v", err)
+		t.Fatalf("reading alert_event scopes: %v", err)
 	}
 	return recorded
 }
@@ -249,7 +249,7 @@ type recordedScope struct {
 	integration  uuid.UUID
 }
 
-type recordedSignal struct {
+type recordedAlertEvent struct {
 	SourceKey    string
 	Status       int16
 	Title        string
@@ -262,19 +262,19 @@ type recordedSignal struct {
 	ReceivedAt   time.Time
 }
 
-// firing renders a v4 webhook payload for an episode that began at startsAt and has not ended.
+// firing renders a v4 webhook payload for an incident that began at startsAt and has not ended.
 func firing(fingerprint string, startsAt time.Time) string {
 	return alertmanagerBody(fingerprint, "firing", startsAt, time.Time{}, 0)
 }
 
-// resolved renders the resolution of the episode that began at startsAt. Alertmanager sends
-// the original start time on a resolution, which is what lets it resolve the episode it
+// resolved renders the resolution of the incident that began at startsAt. Alertmanager sends
+// the original start time on a resolution, which is what lets it resolve the incident it
 // belongs to rather than opening a second one.
 func resolved(fingerprint string, startsAt, endsAt time.Time) string {
 	return alertmanagerBody(fingerprint, "resolved", startsAt, endsAt, 0)
 }
 
-// alertmanagerBody renders a v4 webhook payload for one episode of one alert.
+// alertmanagerBody renders a v4 webhook payload for one incident of one alert.
 func alertmanagerBody(
 	fingerprint, status string, startsAt, endsAt time.Time, truncated int,
 ) string {
@@ -301,7 +301,7 @@ func alertmanagerBody(
 		startsAt.Format(time.RFC3339Nano), ends)
 }
 
-// The sentence: a correctly authenticated delivery becomes a durable, normalised Signal.
+// The sentence: a correctly authenticated delivery becomes a durable, normalised AlertEvent.
 func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
 	plane := startIntake(t)
 	// The alert started well before this delivery on purpose: it is what lets the clock
@@ -315,49 +315,49 @@ func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
 			status, plane.logs.String())
 	}
 
-	recorded := plane.signals(t)
+	recorded := plane.alertEvents(t)
 	if len(recorded) != 1 {
-		t.Fatalf("recorded %d signals, want 1", len(recorded))
+		t.Fatalf("recorded %d alertEvents, want 1", len(recorded))
 	}
-	signal := recorded[0]
+	alertEvent := recorded[0]
 
-	if signal.SourceKey != "fp-node-not-ready" {
+	if alertEvent.SourceKey != "fp-node-not-ready" {
 		t.Errorf("source key = %q; deduplication must use the source's own identity",
-			signal.SourceKey)
+			alertEvent.SourceKey)
 	}
-	if signal.Status != 1 {
-		t.Errorf("status = %d, want firing", signal.Status)
+	if alertEvent.Status != 1 {
+		t.Errorf("status = %d, want firing", alertEvent.Status)
 	}
-	if signal.Title != "NodeNotReady" {
-		t.Errorf("title = %q, want the alert name", signal.Title)
+	if alertEvent.Title != "NodeNotReady" {
+		t.Errorf("title = %q, want the alert name", alertEvent.Title)
 	}
-	if signal.Summary != "the node stopped reporting" {
-		t.Errorf("summary = %q", signal.Summary)
+	if alertEvent.Summary != "the node stopped reporting" {
+		t.Errorf("summary = %q", alertEvent.Summary)
 	}
-	if signal.Labels["severity"] != "critical" || signal.Labels["namespace"] != "payments" {
-		t.Errorf("labels did not survive normalisation: %v", signal.Labels)
+	if alertEvent.Labels["severity"] != "critical" || alertEvent.Labels["namespace"] != "payments" {
+		t.Errorf("labels did not survive normalisation: %v", alertEvent.Labels)
 	}
-	if signal.Annotations["runbook_url"] != "https://runbooks.acme.example/node-not-ready" {
+	if alertEvent.Annotations["runbook_url"] != "https://runbooks.acme.example/node-not-ready" {
 		t.Errorf("annotations did not survive normalisation: %v; the operator's own "+
-			"runbook pointer must not be thrown away at intake", signal.Annotations)
+			"runbook pointer must not be thrown away at intake", alertEvent.Annotations)
 	}
-	if signal.GeneratorURL != "https://prometheus.acme.example/graph?g0.expr=up" {
+	if alertEvent.GeneratorURL != "https://prometheus.acme.example/graph?g0.expr=up" {
 		t.Errorf("generator url = %q; the alert's own pointer must survive intake",
-			signal.GeneratorURL)
+			alertEvent.GeneratorURL)
 	}
-	if !signal.StartedAt.Equal(observed) {
-		t.Errorf("started at %s, want the source's own time %s", signal.StartedAt, observed)
+	if !alertEvent.StartedAt.Equal(observed) {
+		t.Errorf("started at %s, want the source's own time %s", alertEvent.StartedAt, observed)
 	}
-	if signal.ResolvedAt != nil {
-		t.Errorf("a firing signal carries a resolution time %s", signal.ResolvedAt)
+	if alertEvent.ResolvedAt != nil {
+		t.Errorf("a firing alert_event carries a resolution time %s", alertEvent.ResolvedAt)
 	}
 	// Both clocks are kept. Collapsing them would make a delayed delivery indistinguishable
 	// from a delayed failure, and an investigator reasons about ordering. The alert started
 	// ten minutes ago, so a received time copied from the source's clock would sit ten
 	// minutes early — far outside any honest skew between this process and the database.
-	if signal.ReceivedAt.Sub(signal.StartedAt) < 5*time.Minute {
+	if alertEvent.ReceivedAt.Sub(alertEvent.StartedAt) < 5*time.Minute {
 		t.Errorf("received at %s, near the source's own start time (%s); the two clocks were "+
-			"collapsed", signal.ReceivedAt, signal.StartedAt)
+			"collapsed", alertEvent.ReceivedAt, alertEvent.StartedAt)
 	}
 }
 
@@ -387,14 +387,14 @@ func TestIntake_RefusesADeliveryWithoutTheSourcesSecret(t *testing.T) {
 		})
 	}
 
-	if recorded := plane.signals(t); len(recorded) != 0 {
-		t.Errorf("an unauthenticated delivery produced %d signals", len(recorded))
+	if recorded := plane.alertEvents(t); len(recorded) != 0 {
+		t.Errorf("an unauthenticated delivery produced %d alertEvents", len(recorded))
 	}
 }
 
 // At-least-once webhooks retry. A retry must not produce a second anything, and must be
 // answered so the source stops rather than retrying again.
-func TestIntake_RedeliveryProducesNoSecondSignal(t *testing.T) {
+func TestIntake_RedeliveryProducesNoSecondAlertEvent(t *testing.T) {
 	plane := startIntake(t)
 	body := firing("fp-same", time.Now().UTC())
 
@@ -405,17 +405,17 @@ func TestIntake_RedeliveryProducesNoSecondSignal(t *testing.T) {
 		t.Errorf("redelivery = %d, want 200 so the source stops retrying", status)
 	}
 
-	if recorded := plane.signals(t); len(recorded) != 1 {
-		t.Errorf("redelivery produced %d signals, want 1", len(recorded))
+	if recorded := plane.alertEvents(t); len(recorded) != 1 {
+		t.Errorf("redelivery produced %d alertEvents, want 1", len(recorded))
 	}
 }
 
-// A resolution updates the episode it resolves and does not erase when that episode began.
+// A resolution updates the incident it resolves and does not erase when that incident began.
 //
 // The firing time is the assertion that matters. It is what an investigator needs to reason
 // about ordering, and it is the one an implementation that overwrites the row wholesale
 // destroys while still looking correct on the status.
-func TestIntake_AResolutionUpdatesTheEpisodeItResolves(t *testing.T) {
+func TestIntake_AResolutionUpdatesTheIncidentItResolves(t *testing.T) {
 	plane := startIntake(t)
 	firedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	endedAt := time.Now().UTC().Truncate(time.Second)
@@ -429,31 +429,31 @@ func TestIntake_AResolutionUpdatesTheEpisodeItResolves(t *testing.T) {
 		t.Fatalf("resolving delivery = %d, want 202", status)
 	}
 
-	recorded := plane.signals(t)
+	recorded := plane.alertEvents(t)
 	if len(recorded) != 1 {
-		t.Fatalf("a resolution produced %d signals, want the one episode it resolves", len(recorded))
+		t.Fatalf("a resolution produced %d alertEvents, want the one incident it resolves", len(recorded))
 	}
-	signal := recorded[0]
+	alertEvent := recorded[0]
 
-	if signal.Status != 2 {
-		t.Errorf("status = %d, want resolved", signal.Status)
+	if alertEvent.Status != 2 {
+		t.Errorf("status = %d, want resolved", alertEvent.Status)
 	}
-	if !signal.StartedAt.Equal(firedAt) {
+	if !alertEvent.StartedAt.Equal(firedAt) {
 		t.Errorf("started at %s after resolution, want the original %s; the resolution erased "+
-			"when it fired", signal.StartedAt, firedAt)
+			"when it fired", alertEvent.StartedAt, firedAt)
 	}
-	if signal.ResolvedAt == nil || !signal.ResolvedAt.Equal(endedAt) {
-		t.Errorf("resolved at %v, want %s", signal.ResolvedAt, endedAt)
+	if alertEvent.ResolvedAt == nil || !alertEvent.ResolvedAt.Equal(endedAt) {
+		t.Errorf("resolved at %v, want %s", alertEvent.ResolvedAt, endedAt)
 	}
 }
 
-// The same alert firing again is a new episode, not an overwrite of the last one.
+// The same alert firing again is a new incident, not an overwrite of the last one.
 //
 // This is the property the source key alone cannot carry: Alertmanager's fingerprint is a hash
 // of the label set, so the same disk filling up next month arrives under the same one. Keyed on
 // it alone, a re-fire silently destroys the resolved record of the previous occurrence, and the
 // history an investigator opens is missing the thing they came to look at.
-func TestIntake_ARefireIsANewEpisodeNotAnOverwrite(t *testing.T) {
+func TestIntake_ARefireIsANewIncidentNotAnOverwrite(t *testing.T) {
 	plane := startIntake(t)
 	firstStart := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 	firstEnd := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
@@ -469,25 +469,25 @@ func TestIntake_ARefireIsANewEpisodeNotAnOverwrite(t *testing.T) {
 		}
 	}
 
-	recorded := plane.signals(t)
+	recorded := plane.alertEvents(t)
 	if len(recorded) != 2 {
-		t.Fatalf("the same alert firing twice produced %d signals, want an episode each",
+		t.Fatalf("the same alert firing twice produced %d alertEvents, want an incident each",
 			len(recorded))
 	}
 	// Ordered by started_at, so the first is the occurrence that already ended.
 	if recorded[0].Status != 2 || !recorded[0].StartedAt.Equal(firstStart) {
-		t.Errorf("the earlier episode is status %d started %s; the re-fire overwrote it",
+		t.Errorf("the earlier incident is status %d started %s; the re-fire overwrote it",
 			recorded[0].Status, recorded[0].StartedAt)
 	}
 	if recorded[1].Status != 1 || !recorded[1].StartedAt.Equal(secondStart) {
-		t.Errorf("the later episode is status %d started %s, want firing at %s",
+		t.Errorf("the later incident is status %d started %s, want firing at %s",
 			recorded[1].Status, recorded[1].StartedAt, secondStart)
 	}
 }
 
 // Webhooks are at-least-once AND unordered, so a redelivery of the firing can arrive after the
-// resolution that ended it. It must not resurrect a resolved episode.
-func TestIntake_ALateFiringDoesNotResurrectAResolvedEpisode(t *testing.T) {
+// resolution that ended it. It must not resurrect a resolved incident.
+func TestIntake_ALateFiringDoesNotResurrectAResolvedIncident(t *testing.T) {
 	plane := startIntake(t)
 	startedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	endedAt := time.Now().UTC().Truncate(time.Second)
@@ -496,19 +496,19 @@ func TestIntake_ALateFiringDoesNotResurrectAResolvedEpisode(t *testing.T) {
 		resolved("fp-late", startedAt, endedAt)); status != http.StatusAccepted {
 		t.Fatalf("resolving delivery = %d, want 202", status)
 	}
-	// The same episode's firing, arriving late. A different body, so the delivery digest does
+	// The same incident's firing, arriving late. A different body, so the delivery digest does
 	// not deduplicate it — this has to be caught by the model, not by the retry guard.
 	if status := plane.deliver(t, intakeSecret,
 		firing("fp-late", startedAt)); status != http.StatusAccepted {
 		t.Fatalf("late firing delivery = %d, want 202", status)
 	}
 
-	recorded := plane.signals(t)
+	recorded := plane.alertEvents(t)
 	if len(recorded) != 1 {
-		t.Fatalf("recorded %d signals, want the one episode", len(recorded))
+		t.Fatalf("recorded %d alertEvents, want the one incident", len(recorded))
 	}
 	if recorded[0].Status != 2 {
-		t.Errorf("status = %d; a late firing resurrected a resolved episode", recorded[0].Status)
+		t.Errorf("status = %d; a late firing resurrected a resolved incident", recorded[0].Status)
 	}
 }
 
@@ -574,8 +574,8 @@ func TestIntake_RefusesAMalformedPayloadWithoutAPartialWrite(t *testing.T) {
 		})
 	}
 
-	if recorded := plane.signals(t); len(recorded) != 0 {
-		t.Errorf("a malformed payload produced %d signals", len(recorded))
+	if recorded := plane.alertEvents(t); len(recorded) != 0 {
+		t.Errorf("a malformed payload produced %d alertEvents", len(recorded))
 	}
 }
 
@@ -594,8 +594,8 @@ func TestIntake_OneUnusableAlertRefusesTheWholeDelivery(t *testing.T) {
 	if status := plane.deliver(t, intakeSecret, body); status != http.StatusBadRequest {
 		t.Errorf("a delivery with one unusable alert = %d, want 400", status)
 	}
-	if recorded := plane.signals(t); len(recorded) != 0 {
-		t.Errorf("a partially unusable delivery wrote %d signals; it must write none or all",
+	if recorded := plane.alertEvents(t); len(recorded) != 0 {
+		t.Errorf("a partially unusable delivery wrote %d alertEvents; it must write none or all",
 			len(recorded))
 	}
 }
@@ -613,14 +613,14 @@ func TestIntake_RefusesAnOversizedPayload(t *testing.T) {
 	if status := plane.deliver(t, intakeSecret, body.String()); status != http.StatusRequestEntityTooLarge {
 		t.Errorf("an oversized delivery = %d, want 413", status)
 	}
-	if recorded := plane.signals(t); len(recorded) != 0 {
-		t.Errorf("an oversized delivery produced %d signals", len(recorded))
+	if recorded := plane.alertEvents(t); len(recorded) != 0 {
+		t.Errorf("an oversized delivery produced %d alertEvents", len(recorded))
 	}
 }
 
 // A delivery names its Integration and nothing else, so the tenancy question changes
 // shape: there is no longer a path parameter to get wrong, and what has to be proven is
-// that the Signal lands under the organization of the Integration row rather than under
+// that the AlertEvent lands under the organization of the Integration row rather than under
 // anything a caller could influence.
 //
 // Both organizations share one database deliberately. An organization with no database
@@ -631,7 +631,7 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.IntakeAddress = "127.0.0.1:0"
+		cfg.HTTPAddress = "127.0.0.1:0"
 		dsn = cfg.DatabaseDSN
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
@@ -653,14 +653,14 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 
 	recorded := owner.scopes(t)
 	if len(recorded) != 1 {
-		t.Fatalf("one delivery recorded %d signals across every tenant, want 1", len(recorded))
+		t.Fatalf("one delivery recorded %d alertEvents across every tenant, want 1", len(recorded))
 	}
 	if recorded[0].organization != intakeOrganization {
-		t.Errorf("the signal landed under %q, want the integration's own %q",
+		t.Errorf("the alert_event landed under %q, want the integration's own %q",
 			recorded[0].organization, intakeOrganization)
 	}
 	if recorded[0].integration != mine {
-		t.Errorf("the signal names integration %s, want %s", recorded[0].integration, mine)
+		t.Errorf("the alert_event names integration %s, want %s", recorded[0].integration, mine)
 	}
 	if recorded[0].integration == theirs {
 		t.Error("the delivery reached the neighbouring tenant's record")
@@ -674,7 +674,7 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.IntakeAddress = "127.0.0.1:0"
+		cfg.HTTPAddress = "127.0.0.1:0"
 		dsn = cfg.DatabaseDSN
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
@@ -710,17 +710,17 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 		t.Errorf("staging's secret on production = %d, want 401", status)
 	}
 
-	// Each Signal names the Integration that delivered it, and nothing crossed.
+	// Each AlertEvent names the Integration that delivered it, and nothing crossed.
 	scopes := both["production"].scopes(t)
 	if len(scopes) != 2 {
-		t.Fatalf("two accepted deliveries recorded %d signals, want 2", len(scopes))
+		t.Fatalf("two accepted deliveries recorded %d alertEvents, want 2", len(scopes))
 	}
 	byIntegration := map[uuid.UUID]int{}
 	for _, scope := range scopes {
 		byIntegration[scope.integration]++
 	}
 	if byIntegration[production] != 1 || byIntegration[staging] != 1 {
-		t.Fatalf("the signals did not land one per integration: %v", byIntegration)
+		t.Fatalf("the alertEvents did not land one per integration: %v", byIntegration)
 	}
 }
 
@@ -740,8 +740,8 @@ func TestIntake_ADisabledIntegrationRefusesDeliveries(t *testing.T) {
 		http.StatusUnauthorized {
 		t.Errorf("a delivery to a disabled connection = %d, want 401", status)
 	}
-	if recorded := plane.signals(t); len(recorded) != 1 {
-		t.Errorf("a disabled connection recorded %d signals, want only the one from before",
+	if recorded := plane.alertEvents(t); len(recorded) != 1 {
+		t.Errorf("a disabled connection recorded %d alertEvents, want only the one from before",
 			len(recorded))
 	}
 }

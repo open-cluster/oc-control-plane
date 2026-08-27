@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // THE EVENT STREAM, WITH NO MODEL AND NO CHAT SURFACE.
@@ -88,9 +88,10 @@ func runWatched(
 func oneRead() *scriptedExchange {
 	return &scriptedExchange{moves: []Move{
 		{Calls: []AgentCall{{ID: "call-1", Tool: "stub.read",
+			Purpose: "check the deployed revision", HypothesisID: "deployment-trigger",
 			Arguments: map[string]any{"channel": "deploys"}}}},
 		{Conclusion: &Conclusion{
-			Answer: "the deployed revision is v2.14.1",
+			Summary: "the deployed revision is v2.14.1",
 			Findings: []Finding{{
 				Statement: "the deployed revision is v2.14.1", Kind: FindingObservation,
 				Confidence: ConfidenceConfirmed, Sources: []int{1},
@@ -186,10 +187,93 @@ func TestAReadIsAnnouncedBeforeItRunsAndSummarisedAfter(t *testing.T) {
 		t.Errorf("the start event does not name the integration it reaches: %+v",
 			started[0].Payload)
 	}
+	if started[0].Payload["purpose"] != "check the deployed revision" ||
+		started[0].Payload["hypothesisId"] != "deployment-trigger" {
+		t.Errorf("the start event lacks semantic purpose metadata: %+v", started[0].Payload)
+	}
+	if len(store.runs) != 1 || store.runs[0].Purpose != "check the deployed revision" ||
+		store.runs[0].HypothesisID != "deployment-trigger" {
+		t.Errorf("run purpose metadata = %+v", store.runs)
+	}
 	if completed[0].Payload["outcome"] != "succeeded" ||
 		completed[0].Payload["summary"] != "1 deploy" {
 		t.Errorf("the completion does not carry the provider's own summary: %+v",
 			completed[0].Payload)
+	}
+}
+
+func TestAHypothesisSnapshotIsPersistedWithoutBecomingAToolRun(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{
+		stubIntegration("Deploy Slack"),
+	}}
+	exchange := &scriptedExchange{moves: []Move{
+		{Calls: []AgentCall{{
+			ID:   "hypotheses-1",
+			Tool: UpdateHypothesesToolName,
+			Arguments: map[string]any{"hypotheses": []any{map[string]any{
+				"id": "database-saturation", "statement": "database saturation followed the deploy",
+				"status": "exploring", "test": "compare saturation with the deployment time",
+				"run_refs": []any{},
+			}}},
+		}}},
+		{Conclusion: &Conclusion{Summary: "No cause was established."}},
+	}}
+
+	sink := runWatched(t, store, stubType(t,
+		func(integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{}, nil
+		}),
+		&scriptedInvestigator{exchange: exchange})
+
+	if len(store.runs) != 0 {
+		t.Fatalf("hypothesis update recorded tool runs: %+v", store.runs)
+	}
+	updates := sink.ofType(EventHypothesesUpdated)
+	if len(updates) != 1 {
+		t.Fatalf("%d hypothesis updates, want one", len(updates))
+	}
+	if updates[0].Payload["version"] != float64(HypothesisSnapshotVersion) &&
+		updates[0].Payload["version"] != HypothesisSnapshotVersion {
+		t.Errorf("snapshot version = %v", updates[0].Payload["version"])
+	}
+	items, ok := updates[0].Payload["hypotheses"].([]HypothesisResult)
+	if !ok || len(items) != 1 || items[0].ID != "database-saturation" ||
+		items[0].Status != HypothesisExploring {
+		t.Errorf("snapshot = %#v", updates[0].Payload["hypotheses"])
+	}
+	if len(exchange.fed) != 2 || len(exchange.fed[1].results) != 1 ||
+		!exchange.fed[1].results[0].Semantic {
+		t.Errorf("semantic acknowledgement = %+v", exchange.fed)
+	}
+}
+
+func TestLatestHypothesisSnapshotDecodesPersistedEventJSON(t *testing.T) {
+	t.Parallel()
+
+	events := []Event{
+		{Sequence: 1, Type: EventHypothesesUpdated, Payload: map[string]any{
+			"version": float64(HypothesisSnapshotVersion),
+			"hypotheses": []any{map[string]any{
+				"id": "old", "statement": "old", "status": "ruled_out",
+				"test": "old test", "runRefs": []any{float64(1)},
+			}},
+		}},
+		{Sequence: 2, Type: EventHypothesesUpdated, Payload: map[string]any{
+			"version": float64(HypothesisSnapshotVersion),
+			"hypotheses": []any{map[string]any{
+				"id": "current", "statement": "current", "status": "supported",
+				"test": "current test", "runRefs": []any{float64(2)},
+			}},
+		}},
+	}
+
+	got := latestHypothesisSnapshot(events)
+	if len(got) != 1 || got[0].ID != "current" ||
+		got[0].Status != HypothesisSupported || len(got[0].RunRefs) != 1 ||
+		got[0].RunRefs[0] != 2 {
+		t.Fatalf("latest snapshot = %+v", got)
 	}
 }
 
@@ -209,7 +293,7 @@ func TestAFailedReadIsRepresentedAsAFailure(t *testing.T) {
 		exchange: &scriptedExchange{moves: []Move{
 			{Calls: []AgentCall{{ID: "call-1", Tool: "stub.read",
 				Arguments: map[string]any{"channel": "deploys"}}}},
-			{Conclusion: &Conclusion{Answer: "nothing could be read"}},
+			{Conclusion: &Conclusion{Summary: "nothing could be read"}},
 		}},
 	})
 
@@ -282,7 +366,7 @@ func TestNoModelAuthoredTextReachesTheStream(t *testing.T) {
 		exchange: &scriptedExchange{moves: []Move{
 			{Calls: []AgentCall{{ID: "call-1", Tool: "stub.read"}}},
 			{Conclusion: &Conclusion{
-				Answer: "a plain answer",
+				Summary: "a plain answer",
 				Findings: []Finding{{
 					Statement:  marker + " stated as a finding",
 					Kind:       FindingObservation,
@@ -336,7 +420,7 @@ func TestCredentialShapedArgumentsNeverReachTheStream(t *testing.T) {
 				"api_key":       leaked,
 				"authorization": "Bearer " + leaked,
 			}}}},
-			{Conclusion: &Conclusion{Answer: "done"}},
+			{Conclusion: &Conclusion{Summary: "done"}},
 		}},
 	})
 
@@ -399,7 +483,7 @@ func TestAFiredCeilingIsAnnouncedAsProgress(t *testing.T) {
 			{Calls: []AgentCall{repeat}},
 			{Calls: []AgentCall{repeat}},
 			{Calls: []AgentCall{repeat}},
-			{Conclusion: &Conclusion{Answer: "stopped early"}},
+			{Conclusion: &Conclusion{Summary: "stopped early"}},
 		}},
 	})
 
@@ -527,7 +611,7 @@ func TestTheAnswerDeltaCarriesTheWholeAnswer(t *testing.T) {
 
 	sink := runWatched(t, store, catalog, &scriptedInvestigator{
 		exchange: &scriptedExchange{moves: []Move{
-			{Conclusion: &Conclusion{Answer: answer}},
+			{Conclusion: &Conclusion{Summary: answer}},
 		}},
 	})
 
@@ -665,7 +749,7 @@ func TestAnInventedToolNameIsNeverQuotedIntoProgress(t *testing.T) {
 				{ID: "call-1", Tool: "stub.read"},
 				{ID: "call-2", Tool: invented},
 			}},
-			{Conclusion: &Conclusion{Answer: "done"}},
+			{Conclusion: &Conclusion{Summary: "done"}},
 		}}},
 		Logger: slog.New(slog.DiscardHandler),
 	}

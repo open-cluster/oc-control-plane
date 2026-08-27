@@ -16,7 +16,7 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // The session stream is a delivery channel and nothing more: every guarantee about a job not
@@ -695,7 +695,6 @@ func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		cfg.ShutdownTimeout = 5 * time.Second
 		databaseDSN = cfg.DatabaseDSN
 	})
 

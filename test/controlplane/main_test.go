@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 )
@@ -46,12 +48,13 @@ func TestMain(m *testing.M) {
 
 // controlPlane starts one Postgres, runs the composition root against it, and returns the
 // base URL plus the captured log output. This is the single behavioural seam: the assembled
-// process, a real database, a real listener, real signals.
+// process, a real database, a real listener, real alertEvents.
 type controlPlane struct {
-	baseURL string
-	logs    *syncBuffer
-	stop    context.CancelFunc
-	exited  chan error
+	baseURL       string
+	sessionCookie string
+	logs          *syncBuffer
+	stop          context.CancelFunc
+	exited        chan error
 	// waitOnce and exitErr let shutdown be called twice — once by a test that wants to observe
 	// the exit, once by cleanup — without the second call waiting out its timeout on a channel
 	// the first already drained.
@@ -278,7 +281,7 @@ func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane 
 }
 
 // startControlPlaneRunning is the whole harness: the assembled process, a real database, a real
-// listener, real signals, and whatever the test puts in place of the model boundary.
+// listener, real alertEvents, and whatever the test puts in place of the model boundary.
 func startControlPlaneRunning(
 	t *testing.T, adjust func(*config.Config), options app.Options,
 ) *controlPlane {
@@ -302,10 +305,8 @@ func startControlPlaneRunning(
 		"@" + gate.address() + "/" + upstream.Database + "?sslmode=disable"
 
 	cfg := config.Config{
-		HTTPAddress:     "127.0.0.1:0",
-		DatabaseDSN:     gatedDSN,
-		ShutdownTimeout: 10 * time.Second,
-		ServiceName:     "oc-control-plane-test",
+		HTTPAddress: freeAddress(t),
+		DatabaseDSN: gatedDSN,
 		// A default sealing key, because the catalog serves a credential-bearing type and
 		// an operator surface without a key refuses to start. A test proving that refusal
 		// clears this deliberately.
@@ -314,16 +315,8 @@ func startControlPlaneRunning(
 	if adjust != nil {
 		adjust(&cfg)
 	}
-	if cfg.OperatorAddress != "" {
-		cfg.HTTPAddress = cfg.OperatorAddress
-	} else if cfg.IntakeAddress != "" {
-		cfg.HTTPAddress = cfg.IntakeAddress
-	}
-	if cfg.OperatorAddress != "" {
-		cfg.OperatorAddress = cfg.HTTPAddress
-	}
-	if cfg.IntakeAddress != "" {
-		cfg.IntakeAddress = cfg.HTTPAddress
+	if cfg.OperatorPublicURL == "" {
+		cfg.OperatorPublicURL = "http://" + cfg.HTTPAddress
 	}
 
 	runCtx, stop := context.WithCancel(context.Background())
@@ -353,7 +346,50 @@ func startControlPlaneRunning(
 		database: gate,
 	}
 	t.Cleanup(plane.shutdown)
+	surfaceDigest := sha256.Sum256([]byte(surfaceToken))
+	if bytes.Equal(cfg.OperatorTokenDigest, surfaceDigest[:]) {
+		plane.bootstrapAdmin(t, cfg.OperatorTokenOrganization, surfaceToken,
+			cfg.OperatorPublicURL)
+	}
 	return plane
+}
+
+func (c *controlPlane) bootstrapAdmin(
+	t *testing.T, organization, token, origin string,
+) {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{
+		"email": "admin@example.test", "displayName": "Test Administrator",
+		"password": "temporary integration test administrator password",
+	})
+	if err != nil {
+		t.Fatalf("encode bootstrap request: %v", err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		c.baseURL+"/api/v1/organizations/"+organization+"/bootstrap", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build bootstrap request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", origin)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("bootstrap integration-test administrator: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	raw, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("bootstrap integration-test administrator = %d: %s",
+			response.StatusCode, raw)
+	}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == session.CookieName && cookie.Value != "" {
+			c.sessionCookie = cookie.Value
+			return
+		}
+	}
+	t.Fatal("bootstrap integration-test administrator issued no session cookie")
 }
 
 // shutdown cancels the process context and waits for a clean exit, recording what the exit
@@ -469,16 +505,13 @@ func TestControlPlane_StartsAppliesMigrationsAndServes(t *testing.T) {
 }
 
 func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
-	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.OperatorAddress = cfg.HTTPAddress
-		cfg.IntakeAddress = cfg.HTTPAddress
-	})
+	plane := startControlPlane(t, nil)
 
 	if status, _ := plane.get(t, "/healthz"); status != http.StatusOK {
 		t.Errorf("GET /healthz = %d", status)
 	}
-	if status, _ := plane.get(t, "/operator/v1"); status != http.StatusUnauthorized {
-		t.Errorf("GET /operator/v1 = %d, want authentication refusal from the operator router", status)
+	if status, _ := plane.get(t, "/api/v1/session"); status != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/session = %d, want authentication refusal from the operator router", status)
 	}
 	if status, body := plane.get(t, "/"); status != http.StatusOK ||
 		!strings.Contains(body, "OpenCluster Control Plane") {
@@ -489,7 +522,7 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 	}
 
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
-		plane.baseURL+"/intake/v1/integrations/not-an-id/signals", strings.NewReader("{}"))
+		plane.baseURL+"/webhooks/v1/integrations/not-an-id/alert-events", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,6 +533,18 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusNotFound {
 		t.Errorf("POST intake route = %d, want the intake router to handle it", response.StatusCode)
+	}
+}
+
+func TestControlPlane_DoesNotServePreReleaseRouteAliases(t *testing.T) {
+	plane := startControlPlane(t, nil)
+	for _, path := range []string{
+		"/operator/v1/session",
+		"/intake/v1/integrations/example/signals",
+	} {
+		if status, _ := plane.get(t, path); status != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, status)
+		}
 	}
 }
 
@@ -727,10 +772,8 @@ func TestRun_RefusesAnUnusableListenAddress(t *testing.T) {
 	// serving nothing.
 	occupied := strings.TrimPrefix(plane.baseURL, "http://")
 	cfg := config.Config{
-		HTTPAddress:     occupied,
-		DatabaseDSN:     "postgres://u:p@127.0.0.1:1/db?sslmode=disable",
-		ShutdownTimeout: time.Second,
-		ServiceName:     "oc-control-plane-test",
+		HTTPAddress: occupied,
+		DatabaseDSN: "postgres://u:p@127.0.0.1:1/db?sslmode=disable",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -16,73 +16,39 @@ separate network policy.
 Alert on sustained readiness failures, failed or degraded integration verification,
 disconnected or outdated Relays, and failed investigations.
 
-## What this deployment serves
-
-`GET /operator/v1` answers a description of the running deployment. Any signed-in caller may
-read it; it describes the deployment rather than a tenant, so it needs no permission and is not
-public.
-
-| It says | Which answers |
-| --- | --- |
-| Optional surfaces, each with whether this deployment serves it | "Are conversations on here?" without reading configuration or interpreting a `404` |
-| Every route served, with the access and permission each requires | "Which sign-in routes exist?", "What does this role reach?" |
-| Each listing's filters, sortable fields, default sort and searchability, and the shared paging rules | "How may I query this list?" |
-| Each write's accepted body, as JSON Schema | "Why was my request refused?" — every write rejects a field it does not declare |
-
-It is derived from the running route table and each route contributor's declarations, so it cannot
-describe a deployment other than the one answering. A console reads it instead of guessing; when
-troubleshooting, it is the fastest way to confirm what a deployment is actually serving.
-
 ## Background work
 
 
 | Work | Schedule or trigger |
 | --- | --- |
 | Audit retention | Hourly, using each organization's retention setting |
-| Hosted audit forwarding | Continuously; successful deliveries are removed, while pending and terminal failures remain available for retry or replay independently of local Audit Event retention |
-| Kubernetes change-history retention | Hourly, using `OC_CHANGE_LEDGER_RETENTION_DAYS` |
-| Relay inventory synchronization | `OC_INVENTORY_INTERVAL` |
+| Kubernetes change-history retention | Hourly, using the built-in retention period |
+| Relay inventory synchronization | Every five minutes by default |
 | Investigation execution | After an investigation opens, with bounded concurrency |
 | Accepted webhook work | Continuously, with bounded retry, failed-work visibility, and Admin replay |
 
 Accepted Alertmanager deliveries and Slack questions are committed before their source is
 acknowledged. Repeated deliveries do not repeat the resulting Investigation or Conversation
 turn. Work that exhausts retry is visible at
-`GET /operator/v1/organizations/{organization}/webhook-work/terminal`; signed-in Viewers,
+`GET /api/v1/organizations/{organization}/webhook-work/terminal`; signed-in Viewers,
 Editors, and Admins may inspect its safe failure class, attempts, timestamps, and source record
 links. Only an Admin may replay one with
-`POST /operator/v1/organizations/{organization}/webhook-work/terminal/{work}/replay`.
+`POST /api/v1/organizations/{organization}/webhook-work/terminal/{work}/replay`.
 
 Watch `oc.webhooks.work` for accepted, duplicate, rejected, delayed, failed, and replayed
 outcomes. `oc.webhooks.work_delay` measures how long accepted deliveries wait before processing.
 
 ## Deploy and stop
 
-Migrations are forward-only and run under a database lock at startup. Multiple new
-instances can start without racing the schema. Review release notes and back up the
-database before upgrading.
+This pre-release architecture uses one new baseline schema. Existing pre-release databases
+are not upgraded in place: export any records you need, create a fresh database, and start this
+release against it. Back up the old database until the new deployment has been validated.
 
-On `SIGTERM`, OpenCluster stops accepting new work and drains requests within
-`OC_SHUTDOWN_TIMEOUT`. Investigations still running when shutdown completes are marked
-failed rather than left running.
+On `SIGTERM`, OpenCluster stops accepting new work and drains requests for up to 15 seconds.
+Investigations still running when shutdown completes are marked failed rather than left running.
 
-For a Phase 2 rollback, stop the new binary, restore the legacy database and listener inputs,
-and restart the prior binary. No row or table shape is removed by this phase. Follow the
-[single-database migration procedure](/self-hosted/configuration#migrate-an-existing-deployment)
-before upgrading a deployment that currently reaches several databases.
-
-To roll back the local/OIDC authentication release, stop the new binary and restart the last
-compatible binary (`539b45e`) with its prior
-SAML, SCIM, or provider configuration. The migration retains those rows unchanged; local password
-rows and deployment sign-in flows are additive. Keep the identity export and database backup
-until local or deployment OIDC sign-in has been validated for every role.
-
-To roll back asynchronous webhook processing, stop all instances of the new release and restart
-the previously deployed compatible release against the same database. The upgrade only adds
-database structures; do not remove them or delete accepted deliveries. The previous build keeps
-serving existing records, and any accepted delivery awaiting processing resumes when the new
-release is deployed again. Check failed webhook work and integration availability after
-re-enabling the new release.
+Rollback means stopping this release and restoring the database backup made for the previous
+binary. Do not point an older binary at the new baseline schema.
 
 ## Integration health
 
@@ -94,7 +60,7 @@ session and supported read operations.
 ## Retention
 
 Audit entries use each organization's configured retention. Kubernetes change history
-uses the deployment setting. Signals, incidents, investigations, and investigation
+uses the built-in retention period. Alert Events, Incidents, Investigations, and investigation
 provenance remain operational records and can prevent integration deletion.
 
 See [Troubleshooting](/self-hosted/troubleshooting) for common failure states.

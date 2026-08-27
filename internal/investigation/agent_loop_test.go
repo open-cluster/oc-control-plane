@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // The autonomous loop against an in-memory store, a scripted exchange and stub
@@ -27,6 +27,9 @@ type scriptedExchange struct {
 	failure error
 	// fed is every Next call's inputs, in order.
 	fed []conversationTurn
+	// allowMissingPurpose is set only by the contract test that exercises rejection.
+	// All other scripts model calls after the native schema has required a purpose.
+	allowMissingPurpose bool
 }
 
 type conversationTurn struct {
@@ -49,6 +52,14 @@ func (s *scriptedExchange) Next(
 	}
 	next := s.moves[0]
 	s.moves = s.moves[1:]
+	if !s.allowMissingPurpose {
+		for index := range next.Calls {
+			if next.Calls[index].Tool != UpdateHypothesesToolName &&
+				strings.TrimSpace(next.Calls[index].Purpose) == "" {
+				next.Calls[index].Purpose = "test the current hypothesis"
+			}
+		}
+	}
 	return next, nil
 }
 
@@ -116,11 +127,11 @@ func TestTheAutonomousLoopRecordsOfferedSourcesRunsAndConclusion(t *testing.T) {
 		{Conclusion: &Conclusion{
 			Findings: []Finding{{
 				Statement:  "the pool change did it",
-				Kind:       FindingProbableCause,
+				Kind:       FindingCause,
 				Confidence: ConfidenceConfirmed,
 				Sources:    []int{1},
 			}},
-			NextSteps: []string{"roll back the pool change"},
+			Actions: []ActionProposal{{Title: "roll back the pool change"}},
 		}, Spend: Spend{InputTokens: 20, MicroCents: 2}},
 	}}
 
@@ -143,12 +154,12 @@ func TestTheAutonomousLoopRecordsOfferedSourcesRunsAndConclusion(t *testing.T) {
 	if store.spend.MicroCents != 3 {
 		t.Errorf("spend = %+v, want both moves summed", store.spend)
 	}
-	if len(store.findings) != 1 || store.findings[0].Kind != FindingProbableCause ||
+	if len(store.findings) != 1 || store.findings[0].Kind != FindingCause ||
 		store.findings[0].Confidence != ConfidenceConfirmed {
 		t.Errorf("findings = %+v; kind and confidence must survive", store.findings)
 	}
-	if len(store.nextSteps) != 1 || store.nextSteps[0] != "roll back the pool change" {
-		t.Errorf("next steps = %+v", store.nextSteps)
+	if len(store.actions) != 1 || store.actions[0].Title != "roll back the pool change" {
+		t.Errorf("actions = %+v", store.actions)
 	}
 	if store.stoppedBy != "" {
 		t.Errorf("stopped_by = %q; a free conclusion carries no label", store.stoppedBy)
@@ -197,6 +208,102 @@ func TestADuplicateCallIsSuppressedVisibly(t *testing.T) {
 	}
 }
 
+func TestAReadWithoutPurposeIsRejectedWithoutDispatch(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{candidates: []integrations.Integration{stubIntegration("S")}}
+	executed := 0
+	catalog := stubType(t, func(integrations.ToolRequest) (integrations.ToolResult, error) {
+		executed++
+		return integrations.ToolResult{}, nil
+	})
+	exchange := &scriptedExchange{allowMissingPurpose: true, moves: []Move{
+		{Calls: []AgentCall{{ID: "c1", Tool: "stub.read"}}},
+		{Conclusion: &Conclusion{Summary: "The read was rejected."}},
+	}}
+
+	runAutonomous(t, store, catalog, &scriptedInvestigator{exchange: exchange})
+
+	if executed != 0 {
+		t.Fatalf("a read without purpose dispatched %d times", executed)
+	}
+	if len(store.runs) != 1 || store.runs[0].Outcome != RunFailed ||
+		!strings.Contains(store.runs[0].Error, "purpose") {
+		t.Fatalf("recorded run = %+v", store.runs)
+	}
+}
+
+func TestIncidentPreflightReadsOnlyExactKubernetesIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	integration := integrations.Integration{
+		ID: uuid.New(), Type: integrations.TypeKubernetes, Name: "Production Kubernetes",
+	}
+	store := &memoryStore{
+		candidates: []integrations.Integration{integration},
+		trigger: &Trigger{Title: "CheckoutUnavailable", Labels: map[string]string{
+			"namespace": "shop", "workload_kind": "Deployment",
+			"workload_name": "checkout-api",
+		}},
+	}
+	var requested []integrations.ToolRequest
+	catalog, err := integrations.NewCatalog(integrations.Definition{
+		ID: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes",
+		Category: integrations.CategoryInfrastructure,
+		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
+			return integrations.Verification{Status: integrations.StatusActive}
+		},
+		Tools: []integrations.Tool{
+			{Name: "kubernetes.workload.runtime", Description: "runtime", WhenToUse: "exact workload",
+				WhenNotToUse: "discovery", Permissions: "read", Output: "runtime",
+				Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+					requested = append(requested, request)
+					return integrations.ToolResult{Summary: "runtime read"}, nil
+				}},
+			{Name: "kubernetes.namespace.events", Description: "events", WhenToUse: "exact namespace",
+				WhenNotToUse: "discovery", Permissions: "read", Output: "events",
+				Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+					requested = append(requested, request)
+					return integrations.ToolResult{Summary: "events read"}, nil
+				}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange := &scriptedExchange{moves: []Move{{Conclusion: &Conclusion{
+		Summary: "preflight complete",
+	}}}}
+	investigator := &scriptedInvestigator{exchange: exchange}
+	runner := &Runner{Store: store, Catalog: catalog, Investigator: investigator,
+		Logger: slog.New(slog.DiscardHandler)}
+	organization, _ := tenancy.NewOrganization("org-test")
+	runner.Start(organization, Investigation{
+		ID: uuid.New(), IncidentID: uuid.New(), Subject: "checkout unavailable",
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+	})
+	runner.running.Wait()
+
+	if len(requested) != 2 || len(store.runs) != 2 {
+		t.Fatalf("requested=%d runs=%+v", len(requested), store.runs)
+	}
+	if store.runs[0].Ordinal != 1 || store.runs[1].Ordinal != 2 ||
+		store.runs[0].Purpose == "" || store.runs[1].Purpose == "" {
+		t.Errorf("preflight provenance = %+v", store.runs)
+	}
+	if got := store.runs[0].Arguments; got["namespace"] != "shop" ||
+		got["workloadKind"] != "Deployment" || got["workloadName"] != "checkout-api" {
+		t.Errorf("runtime arguments = %+v", got)
+	}
+	if got := store.runs[1].Arguments; got["namespace"] != "shop" || len(got) != 1 {
+		t.Errorf("event arguments = %+v", got)
+	}
+	if len(investigator.orientation.Preflight) != 2 ||
+		investigator.orientation.Preflight[1].Ordinal != 2 {
+		t.Errorf("orientation preflight = %+v", investigator.orientation.Preflight)
+	}
+}
+
 func TestStagnationForcesAnHonestStop(t *testing.T) {
 	t.Parallel()
 
@@ -211,7 +318,7 @@ func TestStagnationForcesAnHonestStop(t *testing.T) {
 	exchange := &scriptedExchange{moves: []Move{
 		repeat("c1"), repeat("c2"), repeat("c3"),
 		{Conclusion: &Conclusion{Findings: []Finding{{
-			Statement: "partial", Kind: FindingUnresolvedLead,
+			Statement: "partial", Kind: FindingUnresolved,
 			Confidence: ConfidencePossible, Sources: []int{1},
 		}}}},
 	}}
@@ -328,7 +435,7 @@ func TestTheSpendCeilingForcesAnHonestStopOnTheAutonomousPath(t *testing.T) {
 		{Calls: []AgentCall{{ID: "c2", Tool: "stub.read",
 			Arguments: map[string]any{"page": 2}}}, Spend: Spend{MicroCents: 7}},
 		{Conclusion: &Conclusion{Findings: []Finding{{
-			Statement: "partial", Kind: FindingUnresolvedLead,
+			Statement: "partial", Kind: FindingUnresolved,
 			Confidence: ConfidencePossible, Sources: []int{1},
 		}}}, Spend: Spend{MicroCents: 1}},
 	}}
@@ -364,7 +471,7 @@ func TestAutonomousCitationsAreCheckedAgainstRunsThatHappened(t *testing.T) {
 	})
 	exchange := &scriptedExchange{moves: []Move{
 		{Conclusion: &Conclusion{Findings: []Finding{{
-			Statement: "invented", Kind: FindingProbableCause,
+			Statement: "invented", Kind: FindingCause,
 			Confidence: ConfidenceConfirmed, Sources: []int{7},
 		}}}},
 	}}
@@ -407,7 +514,7 @@ func TestTheOrientationCarriesHeldContextOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.Start(organization, Investigation{
-		ID: uuid.New(), EpisodeID: uuid.New(), Subject: "payments latency",
+		ID: uuid.New(), IncidentID: uuid.New(), Subject: "payments latency",
 		WindowFrom: time.Now().Add(-2 * time.Hour), WindowUntil: time.Now(),
 	})
 	runner.running.Wait()

@@ -17,8 +17,8 @@ func TestAnAnswerInsideTheBoundIsUntouched(t *testing.T) {
 	t.Parallel()
 
 	answer := "checkout-api is running v2.14.1."
-	if got := boundedAnswer(answer); got != answer {
-		t.Errorf("boundedAnswer(%q) = %q; a short answer must be left exactly alone",
+	if got := boundedSummary(answer); got != answer {
+		t.Errorf("boundedSummary(%q) = %q; a short summary must be left exactly alone",
 			answer, got)
 	}
 }
@@ -26,11 +26,11 @@ func TestAnAnswerInsideTheBoundIsUntouched(t *testing.T) {
 func TestABoundedAnswerSaysItWasCut(t *testing.T) {
 	t.Parallel()
 
-	got := boundedAnswer(strings.Repeat("a", MaxAnswerLength+500))
+	got := boundedSummary(strings.Repeat("a", MaxSummaryLength+500))
 
-	if len([]rune(got)) > MaxAnswerLength {
+	if len([]rune(got)) > MaxSummaryLength {
 		t.Errorf("boundedAnswer returned %d runes, past the bound of %d",
-			len([]rune(got)), MaxAnswerLength)
+			len([]rune(got)), MaxSummaryLength)
 	}
 	if !strings.Contains(got, "truncated") {
 		t.Errorf("a cut answer does not say it was cut, so it reads as a complete "+
@@ -46,11 +46,11 @@ func TestABoundedAnswerSaysItWasCut(t *testing.T) {
 func TestTheCutMarkIsInsideTheBound(t *testing.T) {
 	t.Parallel()
 
-	for _, over := range []int{1, 2, 500, MaxAnswerLength} {
-		got := boundedAnswer(strings.Repeat("b", MaxAnswerLength+over))
-		if len([]rune(got)) > MaxAnswerLength {
+	for _, over := range []int{1, 2, 500, MaxSummaryLength} {
+		got := boundedSummary(strings.Repeat("b", MaxSummaryLength+over))
+		if len([]rune(got)) > MaxSummaryLength {
 			t.Errorf("over by %d: returned %d runes, past the bound of %d",
-				over, len([]rune(got)), MaxAnswerLength)
+				over, len([]rune(got)), MaxSummaryLength)
 		}
 	}
 }

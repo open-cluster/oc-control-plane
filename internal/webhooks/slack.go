@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
-	"github.com/open-cluster/oc-control-plane/internal/storage"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // SLACK EVENTS LIVE ON INTAKE, NOT ON THE OPERATOR API.
@@ -50,7 +50,7 @@ import (
 // SlackEventsPath is where a workspace delivers. It is a constant because it goes into a
 // Slack app registration, which a customer or an operator configures once and then does not
 // touch — a path that moved would be an app registration to edit in somebody else's system.
-const SlackEventsPath = "/intake/v1/slack/events"
+const SlackEventsPath = "/webhooks/v1/slack/events"
 
 // SlackAgent is what this listener needs to serve Slack events, and is nil where a deployment
 // serves none.

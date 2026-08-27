@@ -1,9 +1,9 @@
 // Package alertmanager is the Prometheus Alertmanager provider: the Integration Type
 // definition, its verification, and the adapter that normalises the v4 webhook payload
-// into Signals.
+// into AlertEvents.
 //
 // A vendor's payload shape exists inside its own provider package and nowhere else, so
-// nothing downstream of Normalise can tell which system delivered a Signal. The payload
+// nothing downstream of Normalise can tell which system delivered a AlertEvent. The payload
 // types are unexported, so that boundary is enforced by the compiler rather than by a
 // reviewer noticing.
 //
@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/storage"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // Bounds on what one delivery may contain. The body size limit already bounds this
@@ -41,11 +41,11 @@ type payload struct {
 	Alerts []alert `json:"alerts"`
 	// GroupKey is Alertmanager's own identity for the set of alerts it is delivering together. It
 	// is computed from the group_by the customer's own operator wrote, which is what makes it
-	// usable as an IncidentEpisode's key: when two alerts land in one episode here it is because
+	// usable as an Incident's key: when two alerts land in one incident here it is because
 	// their own system already decided they belong together. Nothing on this platform infers it.
 	//
 	// An empty one is not an error. Alertmanager always sends it, and a payload that omits it
-	// simply produces one episode per alert — a split rather than a merge, which is the failure
+	// simply produces one incident per alert — a split rather than a merge, which is the failure
 	// worth having.
 	GroupKey string `json:"groupKey"`
 	// TruncatedAlerts is how many Alertmanager left out because the payload hit its configured
@@ -72,12 +72,12 @@ type alert struct {
 // Adapter normalises Prometheus Alertmanager's v4 webhook payload.
 type Adapter struct{}
 
-// Normalise turns one delivery into Signals and reports how many the source says it left out.
+// Normalise turns one delivery into AlertEvents and reports how many the source says it left out.
 //
 // A delivery carrying no alerts is an error rather than an empty success. Alertmanager does
 // not send one, so it means the body was not the payload it claims to be — and accepting it
 // would record a delivery that proves the integration works while carrying nothing.
-func (Adapter) Normalise(body []byte) ([]storage.Signal, int, error) {
+func (Adapter) Normalise(body []byte) ([]storage.AlertEvent, int, error) {
 	var decoded payload
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return nil, 0, fmt.Errorf("payload is not alertmanager json: %w", err)
@@ -98,71 +98,71 @@ func (Adapter) Normalise(body []byte) ([]storage.Signal, int, error) {
 	// constraint violation surfacing from the database as a server error.
 	groupKey := truncate(decoded.GroupKey, maxSourceKeyLen)
 
-	signals := make([]storage.Signal, 0, len(decoded.Alerts))
+	alertEvents := make([]storage.AlertEvent, 0, len(decoded.Alerts))
 	for _, one := range decoded.Alerts {
-		signal, err := signalFrom(one, groupKey)
+		alertEvent, err := signalFrom(one, groupKey)
 		if err != nil {
 			// One unusable alert fails the whole delivery. Accepting the rest would leave the
 			// source told it succeeded while part of what it sent was silently dropped, and it
 			// will never send that part again.
 			return nil, 0, err
 		}
-		signals = append(signals, signal)
+		alertEvents = append(alertEvents, alertEvent)
 	}
-	return signals, decoded.TruncatedAlerts, nil
+	return alertEvents, decoded.TruncatedAlerts, nil
 }
 
 // signalFrom normalises one alert. The group key is the DELIVERY's, applied to every alert in it,
 // because that is the level Alertmanager decides grouping at. The internal model carries it per
-// Signal so that a source which groups per alert needs no change to anything but its own adapter.
-func signalFrom(one alert, groupKey string) (storage.Signal, error) {
+// AlertEvent so that a source which groups per alert needs no change to anything but its own adapter.
+func signalFrom(one alert, groupKey string) (storage.AlertEvent, error) {
 	if one.Fingerprint == "" {
-		return storage.Signal{}, errors.New("alert carries no fingerprint to identify it by")
+		return storage.AlertEvent{}, errors.New("alert carries no fingerprint to identify it by")
 	}
 	if len(one.Fingerprint) > maxSourceKeyLen {
-		return storage.Signal{}, errors.New("alert fingerprint is longer than any identity")
+		return storage.AlertEvent{}, errors.New("alert fingerprint is longer than any identity")
 	}
 
-	signal, err := stateOf(one)
+	alertEvent, err := stateOf(one)
 	if err != nil {
-		return storage.Signal{}, err
+		return storage.AlertEvent{}, err
 	}
 
-	signal.SourceKey = one.Fingerprint
-	signal.GroupingKey = groupKey
-	signal.Title = truncate(titleOf(one), maxTitleRunes)
-	signal.Summary = truncate(summaryOf(one), maxSummaryRunes)
-	signal.Labels = one.Labels
+	alertEvent.SourceKey = one.Fingerprint
+	alertEvent.GroupingKey = groupKey
+	alertEvent.Title = truncate(titleOf(one), maxTitleRunes)
+	alertEvent.Summary = truncate(summaryOf(one), maxSummaryRunes)
+	alertEvent.Labels = one.Labels
 	// Annotations travel whole, like labels: they carry the operator's own runbook and
 	// dashboard pointers, which are exactly what an investigation wants at hand.
-	signal.Annotations = one.Annotations
-	signal.GeneratorURL = truncate(one.GeneratorURL, maxGeneratorURLRunes)
-	return signal, nil
+	alertEvent.Annotations = one.Annotations
+	alertEvent.GeneratorURL = truncate(one.GeneratorURL, maxGeneratorURLRunes)
+	return alertEvent, nil
 }
 
-// stateOf reads the alert's status and the times that bound this episode of it.
+// stateOf reads the alert's status and the times that bound this incident of it.
 //
 // StartsAt is read for both statuses, and that is the load-bearing part. It is what identifies
-// the episode, so a resolution has to carry the same one the firing did or it would resolve
-// nothing and open a second episode instead. Alertmanager sends it on both, which is what makes
+// the incident, so a resolution has to carry the same one the firing did or it would resolve
+// nothing and open a second incident instead. Alertmanager sends it on both, which is what makes
 // this model possible at all.
-func stateOf(one alert) (storage.Signal, error) {
+func stateOf(one alert) (storage.AlertEvent, error) {
 	if one.StartsAt.IsZero() {
-		return storage.Signal{}, errors.New("alert carries no start time to identify its episode by")
+		return storage.AlertEvent{}, errors.New("alert carries no start time to identify its incident by")
 	}
 
 	switch one.Status {
 	case "firing":
-		return storage.Signal{Status: storage.SignalFiring, StartedAt: one.StartsAt}, nil
+		return storage.AlertEvent{Status: storage.AlertEventFiring, StartedAt: one.StartsAt}, nil
 	case "resolved":
 		if one.EndsAt.IsZero() {
-			return storage.Signal{}, errors.New("a resolved alert carries no end time")
+			return storage.AlertEvent{}, errors.New("a resolved alert carries no end time")
 		}
 		if one.EndsAt.Before(one.StartsAt) {
-			return storage.Signal{}, errors.New("an alert ended before it started")
+			return storage.AlertEvent{}, errors.New("an alert ended before it started")
 		}
-		return storage.Signal{
-			Status:     storage.SignalResolved,
+		return storage.AlertEvent{
+			Status:     storage.AlertEventResolved,
 			StartedAt:  one.StartsAt,
 			ResolvedAt: one.EndsAt,
 		}, nil
@@ -170,7 +170,7 @@ func stateOf(one alert) (storage.Signal, error) {
 		// No fall-through default that guesses. A status this adapter does not know is a
 		// payload it does not understand, and inventing "firing" would create an incident from
 		// something that might be the opposite.
-		return storage.Signal{}, fmt.Errorf("alert status %q is not one this adapter knows", one.Status)
+		return storage.AlertEvent{}, fmt.Errorf("alert status %q is not one this adapter knows", one.Status)
 	}
 }
 

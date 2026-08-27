@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
 )
 
 // THE FENCE, FROM THE WORKER'S SIDE.
@@ -86,7 +86,7 @@ func TestAWorkerThatLosesItsLeaseStopsRunning(t *testing.T) {
 			{Calls: []AgentCall{{ID: "call-1", Tool: "stub.read"}}},
 			{Calls: []AgentCall{{ID: "call-2", Tool: "stub.read"}}},
 			{Calls: []AgentCall{{ID: "call-3", Tool: "stub.read"}}},
-			{Conclusion: &Conclusion{Answer: "should never be reached"}},
+			{Conclusion: &Conclusion{Summary: "should never be reached"}},
 		}}},
 		// A heartbeat this test can wait on rather than a real one.
 		HeartbeatEvery: 10 * time.Millisecond,

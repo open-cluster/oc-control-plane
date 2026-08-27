@@ -260,62 +260,21 @@ func TestTheBrowserOriginIsResolvedFromWhatTheDeploymentSaid(t *testing.T) {
 	t.Parallel()
 
 	enterprise := NewClient("https://github.acme.internal/api/v3")
-	installer, err := NewInstaller("oc", "Iv1.x", "secret", "https://github.acme.internal")
-	if err != nil {
-		t.Fatalf("building the installer: %v", err)
-	}
-
 	for name, resolved := range map[string]struct {
-		configured string
-		installer  *Installer
-		client     *Client
-		want       string
+		client *Client
+		want   string
 	}{
-		"configured outright": {
-			"https://github.acme.internal/", nil, enterprise, "https://github.acme.internal",
-		},
-		"from the installation flow": {
-			"", installer, enterprise, "https://github.acme.internal",
-		},
-		"nothing overridden at all": {"", nil, NewClient(""), "https://github.com"},
-		"an api origin overridden and no browser origin beside it": {
-			"", nil, enterprise, "",
-		},
+		"vendor API": {NewClient(""), "https://github.com"},
+		"enterprise API without a browser-origin setting": {enterprise, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got := browserOrigin(resolved.configured, resolved.installer, resolved.client)
+			got := browserOrigin(resolved.client)
 			if got != resolved.want {
 				t.Errorf("browser origin = %q, want %q", got, resolved.want)
 			}
 		})
-	}
-}
-
-// A deployment connected through the configuration form gets the link too, as long as it
-// said which GitHub it talks to. The documentation promises it on that page without
-// qualification, and it has to be true there.
-func TestTheConfigurationFormPathAlsoRecordsAManageLink(t *testing.T) {
-	t.Parallel()
-
-	fake := newFakeGitHub(t)
-	healthyInstallation(fake)
-
-	// No installer: this deployment registered no installation flow, and named its
-	// origins instead.
-	definition := Definition(nil, appAgainst(t, fake), NewClient(fake.URL), fake.URL)
-	verified := definition.Probe(testContext(t), integrations.ProbeInput{
-		Integration: integrations.Integration{
-			Configuration: map[string]any{"installationId": float64(77)},
-		},
-	})
-	if verified.Status != integrations.StatusActive {
-		t.Fatalf("status = %s: %s", verified.Status, verified.Note)
-	}
-	link, _ := verified.Facts[FactManageURL].(string)
-	if !strings.HasPrefix(link, fake.URL) {
-		t.Errorf("the form path recorded %q, and the documentation promises a link", link)
 	}
 }
 
@@ -326,7 +285,7 @@ func TestADeploymentThatCannotKnowTheOriginRecordsNoManageLink(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	definition := Definition(nil, appAgainst(t, fake), NewClient(fake.URL), "")
+	definition := Definition(appAgainst(t, fake), NewClient(fake.URL))
 	verified := definition.Probe(testContext(t), integrations.ProbeInput{
 		Integration: integrations.Integration{
 			Configuration: map[string]any{"installationId": float64(77)},

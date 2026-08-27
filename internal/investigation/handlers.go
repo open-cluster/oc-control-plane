@@ -12,20 +12,20 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/authz"
-	"github.com/open-cluster/oc-control-plane/internal/describe"
-	"github.com/open-cluster/oc-control-plane/internal/table"
-	"github.com/open-cluster/oc-control-plane/internal/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
-	readTimeout     = 15 * time.Second
-	maxRequestBytes = 16 << 10
+	readTimeout         = 15 * time.Second
+	maxRequestBytes     = 16 << 10
+	maxHypothesisEvents = 500
 	// maxQuestionLength bounds an operator's question. Long enough for a sentence with
 	// identifiers in it; anything past this is a paste, not a question.
 	maxQuestionLength = 1024
-	// subjectCandidates bounds how many open episodes a question is matched against.
+	// subjectCandidates bounds how many open incidents a question is matched against.
 	subjectCandidates = 20
 	// clarifyWith bounds how many incident titles a clarification names.
 	clarifyWith = 3
@@ -47,7 +47,7 @@ type Handlers struct {
 
 // Routes is this domain surface's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
-	const base = "/operator/v1/organizations/{organization}"
+	const base = "/api/v1/organizations/{organization}"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base+"/investigations", authz.InvestigationRead,
@@ -78,24 +78,11 @@ func (h Handlers) Routes() authz.Table {
 //
 // The event stream carries no body and is not a listing: it is one investigation's own
 // events as they happen, not a page of rows a caller narrows.
-func (h Handlers) Describe() describe.Contribution {
-	const base = "/operator/v1/organizations/{organization}/investigations"
-
-	return describe.Contribution{
-		Listings: []describe.Listing{
-			{Route: http.MethodGet + " " + base, Spec: listSpec},
-		},
-		Bodies: []describe.Body{
-			{Route: http.MethodPost + " " + base, Example: openRequest{}},
-		},
-	}
-}
-
-// openRequest is what starts an investigation: an episode, or a question in the
+// openRequest is what starts an investigation: an incident, or a question in the
 // operator's own words.
 type openRequest struct {
-	EpisodeID string `json:"episodeId"`
-	Question  string `json:"question"`
+	IncidentID string `json:"incidentId"`
+	Question   string `json:"question"`
 }
 
 // open starts an investigation and answers 202 with the running record; the runner fills
@@ -145,7 +132,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 
 	window := windowOf(trigger, h.WindowLead)
 	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, NewInvestigation{
-		EpisodeID:     trigger.EpisodeID,
+		IncidentID:    trigger.IncidentID,
 		IntegrationID: trigger.IntegrationID,
 		Question:      strings.TrimSpace(asked.Question),
 		Subject:       subjectOf(trigger),
@@ -160,36 +147,36 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	h.Logger.InfoContext(ctx, "investigation opened",
 		slog.String("org_id", organization.String()),
 		slog.String("investigation_id", opened.ID.String()),
-		slog.String("episode_id", trigger.EpisodeID.String()))
+		slog.String("incident_id", trigger.IncidentID.String()))
 
 	h.Runner.Start(organization, opened)
 	writeJSON(writer, http.StatusAccepted, investigationViewOf(opened))
 }
 
-// resolveTrigger turns the request into the episode the investigation is about. An
-// episode id is taken as given; a question is matched against the organization's open
+// resolveTrigger turns the request into the incident the investigation is about. An
+// incident id is taken as given; a question is matched against the organization's open
 // incidents, and genuine ambiguity produces one clarification in plain language.
 func (h Handlers) resolveTrigger(
 	ctx context.Context, organization tenancy.Organization, asked openRequest,
 ) (Trigger, string, string, error) {
-	episodeID := strings.TrimSpace(asked.EpisodeID)
+	incidentID := strings.TrimSpace(asked.IncidentID)
 	question := strings.TrimSpace(asked.Question)
 
 	switch {
-	case episodeID != "" && question != "":
-		return Trigger{}, "", "give an episodeId or a question, not both", nil
-	case episodeID != "":
-		id, parsed := parseIdentity(episodeID)
+	case incidentID != "" && question != "":
+		return Trigger{}, "", "give an incidentId or a question, not both", nil
+	case incidentID != "":
+		id, parsed := parseIdentity(incidentID)
 		if !parsed {
-			return Trigger{}, "", "episodeId is not an identity", nil
+			return Trigger{}, "", "incidentId is not an identity", nil
 		}
-		trigger, err := h.Store.TriggerEpisode(ctx, organization, id)
+		trigger, err := h.Store.TriggerIncident(ctx, organization, id)
 		if err != nil {
 			return Trigger{}, "", "", err
 		}
 		return trigger, "", "", nil
 	case question == "":
-		return Trigger{}, "", "give an episodeId or a question", nil
+		return Trigger{}, "", "give an incidentId or a question", nil
 	case len(question) > maxQuestionLength:
 		return Trigger{}, "", "the question must be at most 1024 characters", nil
 	}
@@ -282,7 +269,7 @@ func titleList(triggers []Trigger) string {
 // maxSubjectLength mirrors the schema's own bound on the subject column.
 const maxSubjectLength = 512
 
-// subjectOf is what the investigation is about, in plain language. An episode may carry
+// subjectOf is what the investigation is about, in plain language. An incident may carry
 // an empty title — a payload can omit every name — and a subject the schema refuses
 // would turn opening into a server error, so the absence is said instead.
 func subjectOf(trigger Trigger) string {
@@ -299,7 +286,7 @@ type window struct {
 	until time.Time
 }
 
-// windowOf derives the window from the episode: widened backwards by the configured
+// windowOf derives the window from the incident: widened backwards by the configured
 // lead, and ending now while the incident is still open.
 func windowOf(trigger Trigger, lead time.Duration) window {
 	until := trigger.LastSeenAt
@@ -316,7 +303,7 @@ var listSpec = table.Spec{
 	// "Everything opened from this incident" is the question an operator arrives holding
 	// after being paged. Serving it here rather than letting a client narrow a page keeps
 	// the answer the same on page one and page nine.
-	Filters: []string{"episodeId"},
+	Filters: []string{"incidentId"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -345,17 +332,17 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	defer cancel()
 
 	query := Query{Page: Page{Limit: parsed.Limit, After: parsed.Cursor}}
-	if raw := parsed.Filter("episodeId"); raw != "" {
-		episode, parseErr := uuid.Parse(raw)
+	if raw := parsed.Filter("incidentId"); raw != "" {
+		incident, parseErr := uuid.Parse(raw)
 		if parseErr != nil {
 			// Refused rather than passed to the database: a value that is not an
 			// identifier cannot match anything, and answering an empty page would tell a
-			// caller their typo was a real episode with nothing in it.
+			// caller their typo was a real incident with nothing in it.
 			writeJSON(writer, http.StatusBadRequest, errorView{
-				Error: "episodeId is not an identifier"})
+				Error: "incidentId is not an identifier"})
 			return
 		}
-		query.EpisodeID = episode
+		query.IncidentID = incident
 	}
 
 	listed, err := h.Store.QueryInvestigations(ctx, principal, organization, query)
@@ -485,18 +472,44 @@ func (h Handlers) hypotheses(writer http.ResponseWriter, request *http.Request) 
 		h.fail(writer, request, err)
 		return
 	}
-	items := make([]findingView, 0, len(found.Findings))
-	for _, finding := range found.Findings {
-		switch finding.Kind {
-		case FindingProbableCause, FindingContributingFactor, FindingTriggeringChange,
-			FindingRuledOut, FindingUnresolvedLead:
-			items = append(items, findingView(finding))
+	items := found.Conclusion.Hypotheses
+	if found.Status == StatusRunning && h.Events != nil {
+		events, eventErr := h.Events.Events(ctx, organization, id, 0, maxHypothesisEvents)
+		if eventErr != nil {
+			h.fail(writer, request, eventErr)
+			return
 		}
+		items = latestHypothesisSnapshot(events)
 	}
 	writeJSON(writer, http.StatusOK, struct {
-		InvestigationID string        `json:"investigationId"`
-		Items           []findingView `json:"items"`
+		InvestigationID string             `json:"investigationId"`
+		Items           []HypothesisResult `json:"items"`
 	}{InvestigationID: id.String(), Items: items})
+}
+
+func latestHypothesisSnapshot(events []Event) []HypothesisResult {
+	for index := len(events) - 1; index >= 0; index-- {
+		if events[index].Type != EventHypothesesUpdated {
+			continue
+		}
+		document, err := json.Marshal(events[index].Payload)
+		if err != nil {
+			continue
+		}
+		var snapshot struct {
+			Version    int                `json:"version"`
+			Hypotheses []HypothesisResult `json:"hypotheses"`
+		}
+		if err := json.Unmarshal(document, &snapshot); err != nil ||
+			snapshot.Version != HypothesisSnapshotVersion {
+			continue
+		}
+		if snapshot.Hypotheses == nil {
+			return []HypothesisResult{}
+		}
+		return snapshot.Hypotheses
+	}
+	return []HypothesisResult{}
 }
 
 func (h Handlers) activity(writer http.ResponseWriter, request *http.Request) {
@@ -596,8 +609,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "investigation not found"})
-	case errors.Is(err, ErrEpisodeUnknown):
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "episode not found"})
+	case errors.Is(err, ErrIncidentUnknown):
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
 	case errors.Is(err, ErrAlreadyEnded):
 		writeJSON(writer, http.StatusConflict, errorView{Error: "investigation has already ended"})
 	case errors.Is(err, ErrBadCursor):

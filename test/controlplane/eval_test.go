@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/reasoning"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	"github.com/open-cluster/oc-control-plane/test/eval"
 )
 
 // The evaluation harness's two entry points. The deterministic pipeline runs in every
@@ -42,13 +44,16 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 				{ID: "c4", Tool: "github.read_commits",
 					Arguments: map[string]any{"repositoryId": float64(101)}},
 			}, Spend: investigation.Spend{InputTokens: 120, OutputTokens: 12, MicroCents: 6}},
-			{Conclusion: &investigation.Conclusion{Findings: []investigation.Finding{{
-				Statement: "commit abc123 raised the connection pool timeout shortly " +
-					"before the alert; the deploy channel announced it going out",
-				Kind:       investigation.FindingProbableCause,
-				Confidence: investigation.ConfidenceLikely,
-				Sources:    []int{2, 4},
-			}}}, Spend: investigation.Spend{InputTokens: 140, OutputTokens: 20, MicroCents: 8}},
+			{Conclusion: &investigation.Conclusion{
+				Status:  investigation.SupportedExplanation,
+				Summary: "Commit abc123 likely caused the connection failures.",
+				Findings: []investigation.Finding{{
+					Statement: "commit abc123 raised the connection pool timeout shortly " +
+						"before the alert; the deploy channel announced it going out",
+					Kind:       investigation.FindingCause,
+					Confidence: investigation.ConfidenceLikely,
+					Sources:    []int{3, 5},
+				}}}, Spend: investigation.Spend{InputTokens: 140, OutputTokens: 20, MicroCents: 8}},
 		}}
 
 		record := runEvalCase(t, one, evalModel{},
@@ -66,6 +71,9 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 		}
 		if score.DuplicateCalls != 0 || score.FalseClaims != 0 || score.FabricatedFindings != 0 {
 			t.Errorf("clean run scored dirty: %+v", score)
+		}
+		if score.HardGateFailures != 0 {
+			t.Errorf("hard safety gate failures = %d: %+v", score.HardGateFailures, score)
 		}
 		if score.ToolPrecision != 1 {
 			t.Errorf("precision = %v, want 1 for all-relevant calls", score.ToolPrecision)
@@ -108,9 +116,9 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 				{Statement: "no commits landed in the window", Sources: []int{1},
 					Kind: "ruled_out"},
 				{Statement: "the job's own logs are not reachable through any " +
-					"connected source", Sources: []int{1}, Kind: "unresolved_lead"},
+					"connected source", Sources: []int{1}, Kind: "unresolved"},
 				{Statement: "a config change caused the failure", Sources: []int{1},
-					Kind: "probable_cause"},
+					Kind: "cause"},
 			},
 		}
 
@@ -129,7 +137,10 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 				{ID: "c1", Tool: "slack.get_channel_history",
 					Arguments: map[string]any{"channel": "C1"}},
 			}, Spend: investigation.Spend{InputTokens: 90, OutputTokens: 9, MicroCents: 4}},
-			{Conclusion: &investigation.Conclusion{},
+			{Conclusion: &investigation.Conclusion{
+				Status:  investigation.Inconclusive,
+				Summary: "The connected sources were insufficient.",
+			},
 				Spend: investigation.Spend{InputTokens: 95, OutputTokens: 5, MicroCents: 4}},
 		}}
 
@@ -137,14 +148,131 @@ func TestEvalPipelineDeterministic(t *testing.T) {
 			&scriptedInvestigatorMain{exchange: exchange})
 		score := scoreEvalCase(one, record)
 
-		if score.Status != "concluded" {
-			t.Fatalf("status = %q: %+v", score.Status, record)
+		if score.Status != "partial" {
+			t.Fatalf("status = %q, want honest partial result: %+v", score.Status, record)
 		}
 		if score.FabricatedFindings != 0 {
 			t.Errorf("an empty conclusion scored %d fabricated findings",
 				score.FabricatedFindings)
 		}
 	})
+
+	t.Run("the live-hypothesis world records operator-visible snapshots", func(t *testing.T) {
+		one := evalCaseNamed(t, cases, "live-hypothesis-updates")
+		exchange := &scriptedExchangeMain{moves: []investigation.Move{
+			{Calls: []investigation.AgentCall{{
+				ID: "hypotheses-1", Tool: investigation.UpdateHypothesesToolName,
+				Arguments: map[string]any{"hypotheses": []any{map[string]any{
+					"id": "database-saturation", "statement": "database saturation is plausible",
+					"status": "exploring", "test": "read the workload runtime", "run_refs": []any{},
+				}}},
+			}}},
+			{Conclusion: &investigation.Conclusion{
+				Status: investigation.Inconclusive, Summary: "The hypothesis remains unresolved.",
+			}},
+		}}
+		record := runEvalCase(t, one, evalModel{}, &scriptedInvestigatorMain{exchange: exchange})
+		if len(record.HypothesisUpdates) != 1 || len(record.HypothesisUpdates[0]) != 1 ||
+			record.HypothesisUpdates[0][0].ID != "database-saturation" {
+			t.Fatalf("hypothesis update record = %+v", record.HypothesisUpdates)
+		}
+	})
+
+	t.Run("the postmortem-omissions world generates an honest draft", func(t *testing.T) {
+		one := evalCaseNamed(t, cases, "postmortem-omissions")
+		exchange := &scriptedExchangeMain{moves: []investigation.Move{{
+			Conclusion: &investigation.Conclusion{
+				Status: investigation.Inconclusive, Summary: "No permanent fix was verified.",
+				Actions: []investigation.ActionProposal{{
+					Title: "Verify a permanent fix", Type: investigation.ActionVerify,
+					Rationale: "The investigation established no durable resolution.",
+					Risk:      investigation.RiskLow, Reversible: true,
+					Verification: "Confirm the failure does not recur under production traffic.",
+				}},
+			},
+		}}}
+		record := runEvalCase(t, one, evalModel{}, &scriptedInvestigatorMain{exchange: exchange})
+		if record.Postmortem == nil || record.Postmortem.Status != "draft" ||
+			record.Postmortem.Impact != "Needs human input." ||
+			record.Postmortem.Resolution != "Needs human input." ||
+			!postmortemActionsMarkOmissions(record.Postmortem.ActionItems) {
+			t.Fatalf("postmortem omission record = %+v", record.Postmortem)
+		}
+	})
+}
+
+func TestCommittedEvaluationBaselineMatchesAgentRevision(t *testing.T) {
+	baseline, err := eval.LoadBaseline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := evalAgentRevision(t)
+	if baseline.AgentRevision != want {
+		t.Fatalf("committed baseline agent revision = %q, want %q", baseline.AgentRevision, want)
+	}
+	if baseline.SafetyPolicyVersion != reasoning.SafetyPolicyVersion ||
+		baseline.TaskInstructionVersion != reasoning.TaskInstructionVersion ||
+		baseline.BundleVersion != reasoning.BundleVersion ||
+		baseline.SchemaVersion != reasoning.SchemaVersion ||
+		baseline.ScorerRevision != eval.ScorerRevision {
+		t.Fatalf("committed baseline contract versions are stale: %+v", baseline)
+	}
+	if baseline.HardGateFailures != 0 || baseline.CauseCoverage < 1 ||
+		baseline.DiscriminatingRecall < 1 || baseline.AnswerAccuracy < 1 ||
+		baseline.ContradictionHandling < 1 || baseline.HonestInsufficiency < 1 {
+		t.Fatalf("committed baseline regressed: %+v", baseline)
+	}
+}
+
+func TestEvalWorldComposesKubernetesFixtures(t *testing.T) {
+	one := evalCaseNamed(t, evalCases(time.Now().UTC()), "selective-preflight")
+	world, _ := startEvalWorld(t, one, evalModel{},
+		&scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}})
+	status, body := world.call(t, http.MethodGet, world.base(surfaceOrg)+"/integrations", nil)
+	var listed struct {
+		Items []integrationBody `json:"items"`
+	}
+	decodeInto(t, body, &listed)
+	found := false
+	for _, integration := range listed.Items {
+		found = found || integration.Type == "kubernetes" && integration.Name == "Evaluation Kubernetes"
+	}
+	if status != http.StatusOK || !found {
+		t.Fatalf("Kubernetes evaluation fixture was not composed: status=%d body=%s", status, body)
+	}
+}
+
+func TestEvalWorldExecutesKubernetesFixturesThroughRelay(t *testing.T) {
+	one := evalCaseNamed(t, evalCases(time.Now().UTC()), "selective-preflight")
+	exchange := &scriptedExchangeMain{moves: []investigation.Move{
+		{Calls: []investigation.AgentCall{{
+			ID: "runtime-1", Tool: "kubernetes.workload.runtime",
+			Arguments: map[string]any{
+				"namespace": "payments", "workloadKind": "Deployment", "workloadName": "payments",
+			},
+		}}},
+		{Conclusion: &investigation.Conclusion{
+			Status: investigation.SupportedExplanation, Summary: "The payments workload is running.",
+			Findings: []investigation.Finding{{
+				ID: "finding-1", Statement: "The payments workload reports two ready replicas.",
+				Kind: investigation.FindingObservation, Confidence: investigation.ConfidenceConfirmed,
+				Mechanism: "The Relay observed the named workload runtime.", Sources: []int{1},
+			}},
+		}},
+	}}
+	record := runEvalCase(t, one, evalModel{}, &scriptedInvestigatorMain{exchange: exchange})
+	foundRuntime := false
+	for _, run := range record.Runs {
+		if run.Outcome != "succeeded" {
+			t.Fatalf("Kubernetes evaluation read failed: %+v", run)
+		}
+		if run.Tool == "kubernetes.workload.runtime" && strings.Contains(run.Summary, "payments") {
+			foundRuntime = true
+		}
+	}
+	if !foundRuntime {
+		t.Fatalf("Kubernetes evaluation run = %+v", record.Runs)
+	}
 }
 
 // TestEvalBaseline captures one full evaluation run against the real model and files it
@@ -195,7 +323,7 @@ func evalAgentRevision(t *testing.T) string {
 		alertmanager.Definition(),
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient(""), nil, false),
-		github.Definition(nil, nil, github.NewClient(""), ""),
+		github.Definition(nil, github.NewClient("")),
 	)
 	if err != nil {
 		t.Fatalf("assembling the catalog: %v", err)
