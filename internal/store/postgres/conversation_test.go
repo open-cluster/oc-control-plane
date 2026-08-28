@@ -471,8 +471,20 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 				Confidence: investigation.ConfidenceConfirmed, Sources: []int{1},
 			}},
 			Actions: []investigation.ActionProposal{{Title: "roll back the 14:02 deploy"}},
+			Limitations: []investigation.Limitation{{
+				Type:      investigation.LimitationEssentialHumanInput,
+				Statement: "ADA-PRIVATE-LIMITATION: ask the payments on-call",
+			}},
 		}, "", investigation.Spend{}); err != nil {
 		t.Fatalf("concluding Ada's turn: %v", err)
+	}
+	adaBrief, err := database.ConversationBrief(context.Background(), organization, ada.ID, 50)
+	if err != nil {
+		t.Fatalf("reading Ada's own brief: %v", err)
+	}
+	if len(adaBrief.Limitations) != 1 || len(adaBrief.Recommended) != 1 {
+		t.Fatalf("Ada's conclusion prose was not persisted into her own continuity: %+v",
+			adaBrief)
 	}
 
 	// Bo opens a separate conversation about the SAME incident.
@@ -509,6 +521,10 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 			t.Errorf("Bo's brief carries Ada's message %q; conversations about one "+
 				"incident share the incident, never each other", message.Text)
 		}
+	}
+	if len(brief.Limitations) != 0 || len(brief.Recommended) != 0 {
+		t.Errorf("Bo's brief carries Ada's private conclusion prose: limitations=%+v recommended=%+v",
+			brief.Limitations, brief.Recommended)
 	}
 	// A conversation about a DIFFERENT incident shares nothing at all.
 	other := recordIncident(t, database, organization, integration, "group-unrelated")
@@ -629,5 +645,83 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 	if len(brief.Findings) != investigation.BriefMaxFindings ||
 		brief.Findings[len(brief.Findings)-1].Statement != "newest-turn-finding" {
 		t.Fatalf("older findings displaced a newer turn despite the history bound: %+v", brief.Findings)
+	}
+}
+
+func TestConversationBriefPreservesLimitationsAndOperatorStatementsBeyondOneHundredMessages(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "long-running checkout investigation")
+	for sequence := 1; sequence <= 49; sequence++ {
+		say(t, database, organization, opened.ID,
+			fmt.Sprintf("earlier operator message %03d", sequence))
+	}
+	say(t, database, organization, opened.ID,
+		"operator fact: production traffic stayed flat while tail latency increased")
+	turn, took, err := database.OpenTurn(ctx, organization, opened.ID, turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening first turn: took=%t error=%v", took, err)
+	}
+	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
+		investigation.Conclusion{Summary: "telemetry remains incomplete",
+			Limitations: []investigation.Limitation{
+				{Type: investigation.LimitationMissingTelemetry,
+					Statement: "database wait telemetry is unavailable"},
+				{Type: investigation.LimitationMissingAccess,
+					Statement: strings.Repeat("x", investigation.BriefMessageBound+25)},
+			}}, "", investigation.Spend{}); err != nil {
+		t.Fatalf("concluding first turn: %v", err)
+	}
+	for sequence := 1; sequence <= 100; sequence++ {
+		say(t, database, organization, opened.ID,
+			fmt.Sprintf("later operator message %03d", sequence))
+	}
+	brief, err := database.ConversationBrief(ctx, organization, opened.ID,
+		investigation.BriefRecentMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brief.Recent) != investigation.BriefRecentMessages {
+		t.Fatalf("recent messages = %d, want bounded tail %d", len(brief.Recent),
+			investigation.BriefRecentMessages)
+	}
+	if len(brief.Limitations) != 2 || brief.Limitations[0] != "database wait telemetry is unavailable" {
+		t.Fatalf("prior limitations were lost: %+v", brief.Limitations)
+	}
+	if len(brief.Limitations[1]) > investigation.BriefMessageBound {
+		t.Fatalf("a retained limitation is unbounded: %d characters", len(brief.Limitations[1]))
+	}
+	if len(brief.OperatorStatements) > investigation.BriefMaxOperatorStatements {
+		t.Fatalf("operator statements are unbounded: %d", len(brief.OperatorStatements))
+	}
+	foundFact := false
+	for _, statement := range brief.OperatorStatements {
+		foundFact = foundFact || strings.Contains(statement.Text, "production traffic stayed flat")
+	}
+	if !foundFact {
+		t.Fatalf("old operator-provided fact fell out of bounded continuity: %+v",
+			brief.OperatorStatements)
+	}
+}
+
+func TestOlderOperatorContinuityHasAnIndexedProbePath(t *testing.T) {
+	t.Parallel()
+	database, organization := migratedDatabase(t)
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var definition string
+	err = pool.QueryRow(context.Background(), `
+		SELECT indexdef FROM pg_indexes
+		 WHERE schemaname = 'public'
+		   AND indexname = 'conversation_message_person_history_idx'`).Scan(&definition)
+	if err != nil {
+		t.Fatalf("person-history probe index is absent: %v", err)
+	}
+	if !strings.Contains(definition, "(org_id, conversation_id, sequence)") ||
+		!strings.Contains(definition, "WHERE (role = 1)") {
+		t.Fatalf("person-history probe index has the wrong contract: %s", definition)
 	}
 }

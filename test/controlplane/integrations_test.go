@@ -94,7 +94,9 @@ func (p *integrationPlane) base(organization string) string {
 }
 
 // call sends an authenticated operator request with an optional JSON body.
-func (p *integrationPlane) call(t *testing.T, method, url string, body any) (int, string) {
+func (p *integrationPlane) call(
+	t *testing.T, method, url string, body any, headers ...http.Header,
+) (int, string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -119,6 +121,13 @@ func (p *integrationPlane) call(t *testing.T, method, url string, body any) (int
 	}
 	if reader != nil {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	for _, supplied := range headers {
+		for name, values := range supplied {
+			for _, value := range values {
+				request.Header.Add(name, value)
+			}
+		}
 	}
 
 	response, err := http.DefaultClient.Do(request)

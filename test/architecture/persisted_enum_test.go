@@ -227,7 +227,9 @@ var enumColumns = map[string]map[string][]int{
 		incidentStatusValues...), jobStatusValues...)},
 	// The brief carries only what CONCLUDED turns established: a running turn has
 	// established nothing yet, and a failed one established nothing at all.
-	"conversation_brief.go": {"status": investigationStatusValues},
+	"conversation_brief.go": {
+		"status": investigationStatusValues, "role": conversationRoleValues,
+	},
 	// Claiming, renewing and sweeping all guard on the investigation still running, and
 	// the recovery sweep fails it — so the file writes an investigation status as a
 	// literal twice, in the two places that mean the most.

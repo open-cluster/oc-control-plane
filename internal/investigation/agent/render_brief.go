@@ -41,6 +41,12 @@ func renderBrief(brief *investigation.Brief) string {
 		kindOf(brief.Findings, investigation.FindingRuledOut))
 	writeFindings(out, "STILL OPEN — questions earlier turns could not settle",
 		kindOf(brief.Findings, investigation.FindingUnresolved))
+	if len(brief.Limitations) > 0 {
+		out.WriteString("\nKNOWN LIMITATIONS — gaps earlier turns could not resolve:\n")
+		for _, limitation := range bounded(brief.Limitations, investigation.BriefMaxConstraints) {
+			out.WriteString("- " + oneLine(limitation) + "\n")
+		}
+	}
 
 	if len(brief.FailedReads) > 0 {
 		out.WriteString("\nREADS THAT FAILED EARLIER — a gap in the answer may be one of " +
@@ -62,6 +68,16 @@ func renderBrief(brief *investigation.Brief) string {
 		out.WriteString("\nIDENTIFIERS IN PLAY — what earlier turns actually read:\n")
 		out.WriteString("  " + strings.Join(
 			bounded(brief.Identifiers, investigation.BriefMaxIdentifiers), ", ") + "\n")
+	}
+	if len(brief.OperatorStatements) > 0 {
+		out.WriteString("\nOLDER OPERATOR TESTIMONY — unverified person-authored context:\n")
+		for _, message := range brief.OperatorStatements {
+			speaker := "operator"
+			if message.Actor != "" {
+				speaker += " " + message.Actor
+			}
+			out.WriteString("- " + speaker + ": " + oneLine(message.Text) + "\n")
+		}
 	}
 
 	if len(brief.Recent) > 0 {

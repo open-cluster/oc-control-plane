@@ -497,12 +497,15 @@ func TestTheEventStreamReplaysAndResumesOverTheOperatorAPI(t *testing.T) {
 			t.Errorf("the stream carries no %q event: %s", wanted, body)
 		}
 	}
+	if kinds["compacted"] {
+		t.Errorf("a new Investigation emitted the retired compacted event: %s", body)
+	}
 
 	// THE RELOAD. Resuming after a sequence produces exactly the suffix — no gap, and
 	// nothing seen twice.
 	resumeAfter := events[1].sequence
-	status, body = plane.call(t, http.MethodGet,
-		stream+"?after="+strconv.FormatInt(resumeAfter, 10), nil)
+	status, body = plane.call(t, http.MethodGet, stream, nil,
+		http.Header{"Last-Event-ID": {strconv.FormatInt(resumeAfter, 10)}})
 	if status != http.StatusOK {
 		t.Fatalf("resuming the event stream = %d: %s", status, body)
 	}

@@ -42,6 +42,7 @@ Thumbs.db
 /artifacts-rerun/
 /.tmp/
 /.verify-cache/
+/.cache
 
 # AI-assisted development working state (local-only)
 # See github.com/open-cluster/engineering: ai/repository-boundaries.md

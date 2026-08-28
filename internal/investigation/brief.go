@@ -27,6 +27,9 @@ const (
 	BriefMaxFindings = 40
 	// BriefMaxConstraints bounds remembered recommendations and failed reads.
 	BriefMaxConstraints = 12
+	// BriefMaxOperatorStatements bounds the deterministic, history-wide sample of older
+	// person-authored testimony retained outside the recent verbatim tail.
+	BriefMaxOperatorStatements = 12
 	// BriefMaxIdentifiers bounds the service and resource identifiers in play.
 	BriefMaxIdentifiers = 30
 	// BriefMessageBound bounds one remembered message.
@@ -83,8 +86,13 @@ type Brief struct {
 	Recent []BriefMessage
 	// RecentFrom is the sequence the verbatim tail starts at.
 	RecentFrom int64
+	// OperatorStatements are bounded older person-authored messages retained as
+	// untrusted testimony, so durable operator facts do not disappear with a long tail.
+	OperatorStatements []BriefMessage
 	// Findings are prior turns' cited findings.
 	Findings []PriorFinding
+	// Limitations are gaps and unresolved constraints declared by prior conclusions.
+	Limitations []string
 	// FailedReads are the prior turns' reads that did not work.
 	FailedReads []string
 	// Recommended is what prior turns already advised.

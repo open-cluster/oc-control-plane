@@ -1,15 +1,9 @@
 package authz
 
+import "slices"
+
 import "strings"
 
-// Role is a named, fixed set of permissions.
-//
-// Three human roles exist, and they are compiled rather than
-// editable. Custom roles are deliberately out of scope: an editable role is a second
-// authorization model to review, and the first question a design partner asks is what the
-// shipped ones can do. The value is persisted as text in organization_membership.role and
-// may arrive from an identity provider's group map, so an unrecognised one has to be inert
-// rather than an error nobody handles.
 type Role string
 
 const (
@@ -33,12 +27,7 @@ func Roles() []Role { return append([]Role(nil), roles...) }
 
 // KnownRole reports whether a value names a role this build has.
 func KnownRole(role Role) bool {
-	for _, known := range roles {
-		if known == role {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(roles, role)
 }
 
 // ParseRole resolves what a database column or a group map said. An unrecognised value is
@@ -73,7 +62,12 @@ func ReadOnly(permission Permission) bool { return reads[permission] }
 // integrations, the fleet, the incidents, the investigations, and what happened. Identity
 // and automation reads are deliberately not here — who may sign in is the Admin's to see.
 var estateReads = []Permission{
-	IntegrationRead, RelayRead, IncidentRead, PostmortemRead, InvestigationRead, ConversationRead,
+	IntegrationRead,
+	RelayRead,
+	IncidentRead,
+	PostmortemRead,
+	InvestigationRead,
+	ConversationRead,
 	AuditRead,
 }
 
@@ -82,17 +76,14 @@ var estateReads = []Permission{
 var granted = map[Role]map[Permission]bool{
 	Admin: setOf(allPermissions...),
 
-	// Operating the estate during an incident. Verifying is here because "is this
-	// integration actually working, or have we been reasoning from a source that stopped
-	// answering an hour ago" is a question an Editor has at three in the morning, and
-	// making them wake an Admin to ask it is the kind of gap that gets worked around with
-	// a shared credential. Updating is here for the same incident: turning an integration
-	// off is the remediation this surface actually offers. Opening an investigation is
-	// here because incidents are when investigations happen. Creating, deleting and
-	// secret rotation stay with the Admin — those change what the estate IS.
 	Editor: setOf(append(append([]Permission(nil), estateReads...),
-		IntegrationVerify, IntegrationUpdate, IncidentMerge, InvestigationOpen, InvestigationCancel,
-		ConversationWrite, PostmortemWrite,
+		IntegrationVerify,
+		IntegrationUpdate,
+		IncidentMerge,
+		InvestigationOpen,
+		InvestigationCancel,
+		ConversationWrite,
+		PostmortemWrite,
 	)...),
 
 	Viewer: setOf(estateReads...),

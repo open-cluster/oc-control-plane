@@ -1,10 +1,5 @@
 // Package api operator serves the surface an operator uses to see and act on what the control
 // plane knows about their tenant.
-//
-// It owns composition of the route table, and nothing else. Who a caller is comes from
-// internal/auth/identity; what they may do comes from internal/auth/authz; what each route means comes
-// from the route contributor that declares it. The application mounts the completed router on the
-// shared HTTP listener; no second component repeats its authorization decision.
 package api
 
 import (
@@ -40,38 +35,23 @@ const readTimeout = 15 * time.Second
 
 // Handlers is the operator surface's dependencies.
 type Handlers struct {
-	Database *storage.Database
-	Logger   *slog.Logger
-	// Identity resolves credentials, serves the sign-in flow, and owns the identity,
-	// membership, automation and audit routes.
-	Identity identity.Handlers
+	Database                *storage.Database
+	Logger                  *slog.Logger
+	Identity                identity.Handlers
+	Catalog                 integrations.Catalog
+	Investigations          *investigation.Runner
+	InvestigationWindowLead time.Duration
+	Sealer                  seal.Sealer
+	ConversationsEnabled    bool
 	// Origins are the browser origins a cookie-authenticated unsafe request may come from.
 	// Empty means no browser may make one, which is the correct posture for a deployment that
 	// has not said where its console is served from.
 	Origins []string
-	// Catalog is the assembled Integration Type definitions, supplied by the composition
-	// root — the only place that knows every provider.
-	Catalog integrations.Catalog
-	// Sealer closes over presentable credentials at rest: identity client secrets and
-	// integration credentials, under the deployment's one key.
-	Sealer seal.Sealer
-	// Investigations runs them in the background; the investigation handlers start and
-	// read through it. InvestigationWindowLead is how far before the incident began an
-	// investigation's window reaches back.
-	Investigations          *investigation.Runner
-	InvestigationWindowLead time.Duration
-	// ConversationsEnabled is the per-deployment switch for the conversation surface.
-	// While it is off every conversation route answers 404 — the deployment does not have
-	// that surface — and single-shot investigations are untouched.
-	ConversationsEnabled bool
 	// MaxWaitingTurns bounds one organization's unclaimed turns, so overload is a plain
 	// refusal rather than a queue that grows without bound.
 	MaxWaitingTurns int
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
-	// configured rather than derived from a request, because a URL built from this listener's
-	// own Host header would be one that works from wherever the console is served and not from
-	// the customer's alerting — which is the one place it has to work. Empty is supported and is
-	// served as an absence rather than as a guess.
+	// configured rather than derived from a request
 	IntakeBaseURL string
 	// PublicURL is where this surface is reachable from a browser, and ConsoleURL is where
 	// a browser is sent afterwards. Both are configuration for the reason IntakeBaseURL is:
@@ -80,20 +60,12 @@ type Handlers struct {
 	// can be started, and starting one says so.
 	PublicURL  string
 	ConsoleURL string
-	// MinimumRelayVersion is the floor the fleet summary counts `outdated` against. Empty means
-	// this build states no floor, in which case nothing is counted outdated because nothing was
-	// compared — which the summary says, rather than reporting zero as though everything were
-	// current.
+	// MinimumRelayVersion is the floor the fleet summary counts `outdated` against.
+	//Empty means the build states no floor.
 	MinimumRelayVersion string
 }
 
 // Router returns the operator surface, or the reason it cannot be built.
-//
-// It is the route TABLE that is the API's index, and this function is where the table becomes a
-// mux. A route that cannot be authorized correctly — an undeclared permission, a privileged
-// route naming no organization, a duplicate — fails here, at startup, rather than being served
-// open. The gate in test/architecture asserts the other half: that no contributor registers a route
-// outside this table.
 func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
 		Resolve:             h.Identity.Resolve,
@@ -107,8 +79,9 @@ func (h Handlers) Router() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Correlation wraps the whole surface, so the identifier exists before the credential is
-	// resolved and every audit event a request produces can name the log lines it produced.
+
+	/* Correlation wraps the whole surface, so the identifier exists before the credential is
+	   resolved and every audit event a request produces can name the log lines it produced. */
 	return h.correlated(router), nil
 }
 

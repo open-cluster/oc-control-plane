@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -275,43 +276,60 @@ func TestEvalWorldExecutesKubernetesFixturesThroughRelay(t *testing.T) {
 	}
 }
 
-// TestEvalBaseline captures one full evaluation run against the real model and files it
-// under artifacts/eval. Gated: it spends real money and needs a credential, so it runs
-// only when asked —
+// TestEvalBaseline runs the live release gate against both supported providers and files
+// each provider's three-run capture under artifacts/eval. Gated: it spends real money
+// and needs credentials, so it runs only when asked —
 //
-//	OC_EVAL=1 OC_EVAL_MODEL_PROVIDER=anthropic OC_EVAL_MODEL_NAME=claude-sonnet-5 \
-//	OC_EVAL_MODEL_KEY_FILE=/path/to/key go test -run TestEvalBaseline -timeout 120m ./test/controlplane
+//	OC_EVAL=1 OC_EVAL_ANTHROPIC_MODEL=claude-sonnet-5 \
+//	OC_EVAL_ANTHROPIC_KEY_FILE=/path/to/anthropic-key \
+//	OC_EVAL_ZAI_MODEL=glm-4.7 OC_EVAL_ZAI_KEY_FILE=/path/to/zai-key \
+//	go test -run TestEvalBaseline -timeout 120m ./test/controlplane
 //
 // OC_EVAL_LABEL names the capture (default baseline-1-current); OC_EVAL_JUDGE=1 adds
 // the rubric layer.
 func TestEvalBaseline(t *testing.T) {
 	if os.Getenv("OC_EVAL") != "1" {
-		t.Skip("set OC_EVAL=1 with OC_EVAL_MODEL_PROVIDER/NAME/KEY_FILE to capture an evaluation run")
+		t.Skip("set OC_EVAL=1 with Anthropic and Z.AI model credentials to run the live release gate")
 	}
-	model := evalModelFromEnvironment(t)
 	label := os.Getenv("OC_EVAL_LABEL")
 	if label == "" {
 		label = "baseline-1-current"
 	}
-
-	var scores []evalScore
-	var records []evalRecord
-	for _, one := range evalCases(time.Now().UTC()) {
-		t.Run(one.Name, func(t *testing.T) {
-			record := runEvalCase(t, one, model, nil)
-			score := scoreEvalCase(one, record)
-			if os.Getenv("OC_EVAL_JUDGE") == "1" {
-				score.Judge = judgeOrReport(t, model, one, record)
+	for _, model := range evalModelsFromEnvironment(t) {
+		model := model
+		t.Run(model.Provider, func(t *testing.T) {
+			var rounds [][]evalScore
+			var allScores []evalScore
+			var records []evalRecord
+			for attempt := 1; attempt <= 3; attempt++ {
+				var scores []evalScore
+				for _, one := range evalCases(time.Now().UTC()) {
+					one := one
+					t.Run(fmt.Sprintf("run-%d/%s", attempt, one.Name), func(t *testing.T) {
+						record := runEvalCase(t, one, model, nil)
+						record.Attempt = attempt
+						score := scoreEvalCase(one, record)
+						score.Attempt = attempt
+						if os.Getenv("OC_EVAL_JUDGE") == "1" {
+							score.Judge = judgeOrReport(t, model, one, record)
+						}
+						scores = append(scores, score)
+						records = append(records, record)
+					})
+				}
+				rounds = append(rounds, scores)
+				allScores = append(allScores, scores...)
 			}
-			scores = append(scores, score)
-			records = append(records, record)
+			if err := validateEvalReleaseGate(rounds); err != nil {
+				t.Fatalf("%s live release gate: %v", model.Provider, err)
+			}
+			directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
+				label+"-"+model.Provider, gitRevision(t), evalAgentRevision(t),
+				model.Provider+"/"+model.Name, allScores, records)
+			t.Logf("%s evaluation capture filed under %s: %d cases across 3 runs",
+				model.Provider, directory, len(rounds[0]))
 		})
 	}
-
-	directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
-		label, gitRevision(t), evalAgentRevision(t),
-		model.Provider+"/"+model.Name, scores, records)
-	t.Logf("evaluation capture filed under %s: %d cases", directory, len(scores))
 }
 
 // evalAgentRevision derives the same agent revision production derives, through the
@@ -331,17 +349,26 @@ func evalAgentRevision(t *testing.T) string {
 	return reasoning.AgentRevision(catalog.Tools())
 }
 
-func evalModelFromEnvironment(t *testing.T) evalModel {
+func evalModelsFromEnvironment(t *testing.T) []evalModel {
 	t.Helper()
-	model := evalModel{
-		Provider: os.Getenv("OC_EVAL_MODEL_PROVIDER"),
-		Name:     os.Getenv("OC_EVAL_MODEL_NAME"),
-		Effort:   os.Getenv("OC_EVAL_MODEL_EFFORT"),
-		BaseURL:  os.Getenv("OC_EVAL_MODEL_BASE_URL"),
+	return []evalModel{
+		evalModelFromEnvironment(t, "ANTHROPIC", "anthropic"),
+		evalModelFromEnvironment(t, "ZAI", "zai"),
 	}
-	keyFile := os.Getenv("OC_EVAL_MODEL_KEY_FILE")
-	if model.Provider == "" || model.Name == "" || keyFile == "" {
-		t.Fatal("OC_EVAL=1 needs OC_EVAL_MODEL_PROVIDER, OC_EVAL_MODEL_NAME and OC_EVAL_MODEL_KEY_FILE")
+}
+
+func evalModelFromEnvironment(t *testing.T, prefix, provider string) evalModel {
+	t.Helper()
+	name := "OC_EVAL_" + prefix
+	model := evalModel{
+		Provider: provider,
+		Name:     os.Getenv(name + "_MODEL"),
+		Effort:   os.Getenv(name + "_EFFORT"),
+		BaseURL:  os.Getenv(name + "_BASE_URL"),
+	}
+	keyFile := os.Getenv(name + "_KEY_FILE")
+	if model.Name == "" || keyFile == "" {
+		t.Fatalf("OC_EVAL=1 needs %s_MODEL and %s_KEY_FILE", name, name)
 	}
 	key, err := os.ReadFile(keyFile)
 	if err != nil {

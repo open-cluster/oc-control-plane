@@ -63,11 +63,14 @@ func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 
 	written := []investigation.EventType{
 		investigation.EventStarted,
+		investigation.EventProgress,
 		investigation.EventToolStarted,
 		investigation.EventToolCompleted,
-		investigation.EventProgress,
 		investigation.EventAnswerDelta,
+		investigation.EventHypothesesUpdated,
 		investigation.EventConcluded,
+		investigation.EventFailed,
+		investigation.EventCancelled,
 	}
 	appendEvents(t, database, organization, id, written...)
 
@@ -92,6 +95,46 @@ func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 					written[after+position])
 			}
 		}
+	}
+}
+
+func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database, organization := migratedDatabase(t)
+	id := aTurn(t, database, organization)
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model a database already migrated by a newer binary. The current schema correctly
+	// refuses values it cannot write; a rolling-back reader must still preserve their row
+	// and continue reading the known history around it.
+	if _, err = pool.Exec(ctx,
+		`ALTER TABLE investigation_event DROP CONSTRAINT investigation_event_type_check`); err != nil {
+		t.Fatalf("modeling a newer event schema: %v", err)
+	}
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO investigation_event
+			(org_id, investigation_id, sequence, type, payload, at)
+		VALUES ($1, $2, 1, 32000, '{"future":"preserved"}', now())`,
+		organization.String(), id); err != nil {
+		t.Fatalf("seeding future history: %v", err)
+	}
+	if err = database.AppendEvent(ctx, organization, id, investigation.Event{
+		Sequence: 2, At: time.Now().UTC(), Type: investigation.EventProgress,
+		Payload: map[string]any{"text": "known history remains readable"},
+	}); err != nil {
+		t.Fatalf("appending known history after future event: %v", err)
+	}
+	events, err := database.Events(ctx, organization, id, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Type.String() != "unrecognised" ||
+		events[0].Payload["future"] != "preserved" ||
+		events[1].Type != investigation.EventProgress {
+		t.Fatalf("future event corrupted history: %+v", events)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 // evalRecord is what one case's run left behind — the raw material scoring reads.
 type evalRecord struct {
 	Case      string        `json:"case"`
+	Attempt   int           `json:"attempt,omitempty"`
 	Status    string        `json:"status"`
 	Error     string        `json:"error,omitempty"`
 	WallClock time.Duration `json:"wallClockNS"`
@@ -130,7 +131,7 @@ type evalSpend struct {
 }
 
 // evalModel is the deployment a real-model evaluation runs against, read from the
-// OC_EVAL_MODEL_* environment by the gated test; zero means the scripted conversation.
+// provider-specific OC_EVAL_* environment by the gated test; zero means the scripted conversation.
 type evalModel struct {
 	Provider string
 	Name     string

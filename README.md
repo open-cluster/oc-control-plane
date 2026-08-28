@@ -24,13 +24,6 @@ Licensed under the [Apache License 2.0](./LICENSE).
 5. The conclusion reports impact, findings, hypotheses, action proposals, and limitations.
 6. After resolution, an operator can generate, correct, and review a draft Postmortem.
 
-An example conclusion might report that Run 3 confirmed a deployment changed a database
-pool limit and Run 4 established the resulting connection exhaustion. A rollback remains
-a proposal: high risk, reversible, approval required, with a verification step that checks
-connection use and request errors after a human performs it.
-
-![A live OpenCluster investigation showing its structured report and cited conclusion](./assets/structured-investigation.png)
-
 ## Quick start
 
 You need Docker with Docker Compose. Create local files for the database password, DSN,

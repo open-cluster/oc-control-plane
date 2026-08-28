@@ -42,11 +42,6 @@ func (a Access) String() string {
 }
 
 // Route is one entry in the table that IS the operator API's index.
-//
-// The fields are unexported and the only ways to build one are the constructors in this file.
-// That is the mechanism behind "a new route without a declared permission fails to compile":
-// Privileged takes the permission as a positional argument, so omitting it does not compile,
-// and there is no other constructor that reaches a handler needing one.
 type Route struct {
 	method               string
 	pattern              string
@@ -60,7 +55,10 @@ type Route struct {
 // Privileged declares a route needing a membership in the selected Organization and the
 // permission it states. Every route on this surface that touches a tenant's data is one.
 func Privileged(
-	method, pattern string, permission Permission, handler http.Handler,
+	method string,
+	pattern string,
+	permission Permission,
+	handler http.Handler,
 ) Route {
 	return Route{
 		method:             method,
@@ -135,10 +133,7 @@ func (r Route) Key() string { return r.method + " " + r.pattern }
 // validation below is something a caller cannot skip by assembling their own.
 type Table []Route
 
-// Validate refuses a table that cannot be authorized correctly, and is called where the mux is
-// built so a mistake is a failure to start rather than a route that is open.
-//
-// Validation rejects missing handlers, malformed keys, duplicates, unset access, and
+// Validate rejects missing handlers, malformed keys, duplicates, unset access, and
 // permissions that do not match the route's access class. Each is a failure to start rather
 // than a route that is open or a net/http registration panic.
 func (t Table) Validate() error {

@@ -17,30 +17,15 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// CallbackPath is where a provider returns the browser. It is ONE path for every provider
+// CallbackPath is where a provider returns the browser. It is ONE path for every provider,
 // and it names no tenant, because a vendor registration holds a single redirect URI and
 // because a tenant read out of a callback's URL is a tenant the caller chose.
 const CallbackPath = "/api/v1/integrations/connect/callback"
-
-// connectTimeout bounds one leg of the flow. The callback leg spends two vendor calls —
-// the code exchange and the association check — and then a live probe.
 const connectTimeout = 30 * time.Second
-
-// refusedConnect is the answer to every callback whose state does not resolve to a live
-// flow this caller started: unknown, expired, already consumed, or somebody else's.
-//
-// They are one answer for the reason the sign-in refusal is one answer. A caller who could
-// tell "never issued" from "already used" learns which half of a guess landed, and the
-// state is the only thing standing between a captured callback and a bound installation.
 const refusedConnect = "this connection cannot be completed"
 
 // connectOutcome is how a finished flow reads to whoever started it: one word from a
 // closed vocabulary this build owns.
-//
-// Closed on purpose. This route is reached by a browser, so anything a provider said on it
-// is text somebody else chose, and it must not reach a redirect URL where it would be a
-// link a person could be sent. The provider's own reason goes to the log instead, where
-// the operator running the deployment reads it and an outsider does not.
 type connectOutcome string
 
 const (
@@ -98,10 +83,6 @@ type connectStartedView struct {
 }
 
 // startConnect begins a provider installation flow.
-//
-// Everything that makes the return trip checkable is written here and never leaves this
-// process: which organization, which principal, where the browser should land, and the
-// digest of the state. Only the state itself travels through the browser.
 func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -131,9 +112,6 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	if h.PublicURL == "" {
-		// The redirect URI is registered with the vendor and must be absolute. Assembling
-		// one from the request's own Host header would let a caller choose where an
-		// authorization code is delivered.
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "this deployment " +
 			"has not been told its own public URL, so it cannot receive a provider callback"})
 		return
@@ -183,13 +161,6 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 }
 
 // completeConnect takes the browser back from the provider and binds the installation.
-//
-// The order is the order the refusals matter in. The state is redeemed FIRST, and redeeming
-// it is a conditional update, so a replayed callback is refused before this process spends a
-// call on the vendor. The organization comes from the row that was redeemed; an organization
-// named in the query is not read at all. Then the provider is asked to PROVE that whoever
-// authorized this can actually reach the installation the callback named — the check the
-// whole flow exists for. Only then is anything recorded.
 func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -214,8 +185,6 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if flow.Principal != principal.ID() {
-		// A link somebody else started is not this caller's to finish, and it is the same
-		// answer an unknown state gets.
 		h.refuseConnect(writer, request, flow.ReturnTo, "another principal started it")
 		return
 	}
@@ -224,10 +193,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		h.fail(writer, request, err)
 		return
 	}
-	if !principal.Can(organization, authz.IntegrationCreate) {
-		// A membership or a role revoked between starting and returning. Answered as the
-		// authorization middleware would answer it, so this route is not a way to learn
-		// that a tenant exists.
+	if !principal.CanDo(organization, authz.IntegrationCreate) {
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 		return
 	}
@@ -243,8 +209,6 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		Query: request.URL.Query(), Callback: h.callbackURL(),
 	})
 	if err != nil {
-		// The documented attack lands here: a callback naming an installation the
-		// authorized user cannot reach proves nothing and binds nothing.
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",
 			slog.String("org_id", organization.String()),
 			slog.String("type", definition.Key),
@@ -281,14 +245,9 @@ func (h Handlers) record(
 		Type:          definition.ID,
 		Name:          bound.Name,
 		Configuration: bound.Configuration,
-		// Written in the same transaction as the row. A type that receives no events
-		// returns none, and this stays nil.
-		Installation: bound.Installation,
-		CreatedBy:    principal.ID(),
+		Installation:  bound.Installation,
+		CreatedBy:     principal.ID(),
 	}
-	// The credential the flow obtained is presented to the probe, exactly as a pasted one
-	// is. A credential the provider refuses must not come to rest, and there is one rule
-	// about that rather than one per way a credential arrived.
 	verification := definition.Probe(ctx, ProbeInput{
 		Integration: Integration{
 			Type:          wanted.Type,
@@ -322,21 +281,10 @@ func (h Handlers) record(
 
 	created, err := h.Store.CreateIntegration(ctx, principal, organization, wanted)
 	if errors.Is(err, ErrNameTaken) {
-		// The account's own name is taken by an Integration configured differently — a
-		// reinstall on the same account under a new id is the ordinary case. Disambiguated
-		// once, by something stable, rather than retried in a loop.
 		wanted.Name = disambiguate(bound.Name, wanted.ID)
 		created, err = h.Store.CreateIntegration(ctx, principal, organization, wanted)
 	}
 	if errors.Is(err, ErrWorkspaceTaken) {
-		// Another Integration — in this tenant or another — is already installed in that
-		// workspace. Refused rather than recorded, because the routing key is what decides
-		// whose event an inbound message is, and two claims on one workspace is that
-		// question having two answers.
-		//
-		// The message says nothing about WHERE the other one is. A caller learning that
-		// some other organization holds their workspace would be learning about a tenant
-		// they cannot see.
 		h.Logger.WarnContext(ctx, "a connect named a workspace already installed elsewhere",
 			slog.String("org_id", organization.String()),
 			slog.String("type", definition.Key))
@@ -358,11 +306,6 @@ func (h Handlers) record(
 // reconnect is the customer connecting an installation this tenant already has. The
 // provider sent them back here, the association is proven, and what exists is re-verified
 // rather than duplicated.
-//
-// A flow that came back with a credential REPLACES the one on the record. Authorizing
-// again issues a new credential, and the old one being dead is a common reason to
-// reconnect at all — so re-verifying the stored one would report the failure the customer
-// just came here to fix, and would leave the working credential on the floor.
 func (h Handlers) reconnect(
 	ctx context.Context, writer http.ResponseWriter, request *http.Request,
 	principal authz.Principal, organization tenancy.Organization, definition Definition,
@@ -383,9 +326,6 @@ func (h Handlers) reconnect(
 		Integration: existing, Credential: bound.Credential,
 	})
 	if verification.Status == StatusFailed {
-		// The new credential does not work. The record keeps the one it had: replacing a
-		// working credential with a refused one because the customer pressed a button is
-		// how a connected integration becomes a disconnected one.
 		h.Logger.WarnContext(ctx, "a reconnected integration did not verify",
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", existing.ID.String()),
@@ -399,9 +339,6 @@ func (h Handlers) reconnect(
 	if !ok {
 		return
 	}
-	// The routing record is refreshed WITH the credential, in one transaction. A reinstall
-	// issues a new agent identity, and a credential replaced without its routing refreshed
-	// is a live credential answering as an identity it no longer holds.
 	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
 		existing.ID, Revision{}, sealed, fingerprint, verification, bound.Installation)
 	if errors.Is(err, ErrWorkspaceTaken) {
@@ -472,8 +409,12 @@ func (h Handlers) refuseConnect(
 // typeKey is empty for a callback refused before its flow was resolved — at that point this
 // deployment genuinely does not know which type the browser was trying to connect.
 func (h Handlers) landConnect(
-	writer http.ResponseWriter, request *http.Request, returnTo, typeKey string,
-	outcome connectOutcome, id string,
+	writer http.ResponseWriter,
+	request *http.Request,
+	returnTo,
+	typeKey string,
+	outcome connectOutcome,
+	id string,
 ) {
 	countConnect(request.Context(), typeKey, outcome)
 

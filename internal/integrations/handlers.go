@@ -38,9 +38,7 @@ type Handlers struct {
 	Logger  *slog.Logger
 	// Sealer closes over outbound credentials at rest. Unconfigured means this deployment
 	// cannot hold one, and submitting a secret field is refused with that reason — never
-	// stored in the clear and never silently dropped. The composition root refuses
-	// startup outright when the catalog holds a credential-bearing type and this is
-	// unconfigured, so the refusal here is the belt to that brace.
+	// stored in the clear and never silently dropped.
 	Sealer seal.Sealer
 	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
 	// CONFIGURED rather than derived from the request, because a URL assembled from the
@@ -98,13 +96,6 @@ func (h Handlers) Routes() authz.Table {
 }
 
 // Describe is this domain surface's contribution to the deployment's self-description.
-//
-// The connect callback carries no body and no listing: the browser arrives on it with a
-// query the flow redeems, and describing a query as a body would document a shape nobody
-// sends.
-// types reports the catalog: every Integration Type this build serves, everything a setup
-// flow needs to render each one, and how many the tenant has configured. The collection is
-// compiled and small, so it answers whole rather than paged.
 func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {

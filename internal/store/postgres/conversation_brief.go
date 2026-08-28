@@ -64,11 +64,65 @@ func (p *Database) ConversationBrief(
 			Text:       boundedRunes(message.Text, investigation.BriefMessageBound),
 		})
 	}
+	if err = readOlderOperatorStatements(ctx, pool, organization, id, &brief); err != nil {
+		return investigation.Brief{}, err
+	}
 
 	if err = readPriorTurns(ctx, pool, organization, id, &brief); err != nil {
 		return investigation.Brief{}, err
 	}
 	return brief, nil
+}
+
+func readOlderOperatorStatements(
+	ctx context.Context, pool querier, organization tenancy.Organization, id uuid.UUID,
+	brief *investigation.Brief,
+) error {
+	if brief.RecentFrom <= 1 {
+		return nil
+	}
+	// Probe fixed points across the older sequence range through the partial person-message
+	// index. Both the result and the database work stay bounded as the transcript grows.
+	rows, err := pool.Query(ctx, `
+		WITH targets AS (
+			SELECT 1 + (($3::bigint - 2) * point / ($4 - 1)) AS sequence
+			  FROM generate_series(0, $4::int - 1) point
+		), probed AS (
+			SELECT message.sequence, message.actor_display, message.text
+			  FROM targets
+			 CROSS JOIN LATERAL (
+				SELECT sequence, actor_display, text
+				  FROM conversation_message
+				 WHERE org_id = $1 AND conversation_id = $2 AND role = 1
+				   AND sequence >= targets.sequence AND sequence < $3
+				 ORDER BY sequence
+				 LIMIT 1
+			 ) message
+		)
+		SELECT actor_display, text
+		  FROM probed
+		 GROUP BY sequence, actor_display, text
+		 ORDER BY sequence`, organization.String(), id, brief.RecentFrom,
+		investigation.BriefMaxOperatorStatements)
+	if err != nil {
+		return fmt.Errorf("reading older operator statements: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var actor, text string
+		if err = rows.Scan(&actor, &text); err != nil {
+			return fmt.Errorf("scanning an older operator statement: %w", err)
+		}
+		brief.OperatorStatements = append(brief.OperatorStatements, investigation.BriefMessage{
+			FromPerson: true,
+			Actor:      actor,
+			Text:       boundedRunes(text, investigation.BriefMessageBound),
+		})
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("reading older operator statements: %w", err)
+	}
+	return nil
 }
 
 // conversationRolePerson is the message role a person's own words carry. Named here rather
@@ -125,9 +179,18 @@ func readPriorTurns(
 		if err = json.Unmarshal(conclusion, &decoded); err != nil {
 			return fmt.Errorf("decoding a prior turn's conclusion: %w", err)
 		}
-		for _, action := range decoded.Actions {
-			if len(brief.Recommended) < investigation.BriefMaxConstraints {
-				brief.Recommended = append(brief.Recommended, action.Title)
+		if turn != 0 {
+			for _, limitation := range decoded.Limitations {
+				if limitation.Statement != "" &&
+					len(brief.Limitations) < investigation.BriefMaxConstraints {
+					brief.Limitations = append(brief.Limitations,
+						boundedRunes(limitation.Statement, investigation.BriefMessageBound))
+				}
+			}
+			for _, action := range decoded.Actions {
+				if len(brief.Recommended) < investigation.BriefMaxConstraints {
+					brief.Recommended = append(brief.Recommended, action.Title)
+				}
 			}
 		}
 		if len(decoded.Findings) == 0 {
