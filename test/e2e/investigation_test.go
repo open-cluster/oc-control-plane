@@ -58,7 +58,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 
 func (h *harness) assertInvestigation(t *testing.T) {
 	t.Helper()
-	base := "http://" + h.plane.httpAddress + "/api/v1/organizations/" + organization
+	base := "http://" + h.plane.httpAddress + "/api/v1"
 	status, body := h.operatorRequest(t, http.MethodPost,
 		base+"/integrations/"+h.integration.String()+"/verify", nil)
 	if status != http.StatusOK {
@@ -133,6 +133,7 @@ func (h *harness) operatorRequest(t *testing.T, method, url string, payload any)
 		t.Fatalf("creating operator request: %v", err)
 	}
 	request.AddCookie(h.plane.session)
+	request.Header.Set("X-OpenCluster-Organization", organization)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", "http://"+h.plane.httpAddress)
 	}

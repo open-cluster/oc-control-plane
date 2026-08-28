@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
@@ -371,6 +372,12 @@ func asBootstrap(request *http.Request) {
 func asSession(token string) func(*http.Request) {
 	return func(request *http.Request) {
 		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: token})
+	}
+}
+
+func inOrganization(name string) func(*http.Request) {
+	return func(request *http.Request) {
+		request.Header.Set(authz.OrganizationHeader, name)
 	}
 }
 

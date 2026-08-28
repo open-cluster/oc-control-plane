@@ -53,9 +53,13 @@ func selectOrganizationFromURL(request *http.Request) {
 	if !found {
 		return
 	}
-	organization, _, _ := strings.Cut(remainder, "/")
+	organization, resource, _ := strings.Cut(remainder, "/")
 	if organization != "" {
 		request.Header.Set(authz.OrganizationHeader, organization)
+		request.URL.Path = "/api/v1"
+		if resource != "" {
+			request.URL.Path += "/" + resource
+		}
 	}
 }
 
@@ -372,14 +376,15 @@ func (c *controlPlane) bootstrapAdmin(
 ) {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{
-		"email": "admin@example.test", "displayName": "Test Administrator",
+		"organization": organization,
+		"email":        "admin@example.test", "displayName": "Test Administrator",
 		"password": "temporary integration test administrator password",
 	})
 	if err != nil {
 		t.Fatalf("encode bootstrap request: %v", err)
 	}
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
-		c.baseURL+"/api/v1/organizations/"+organization+"/bootstrap", bytes.NewReader(body))
+		c.baseURL+"/api/v1/auth/local/bootstrap", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build bootstrap request: %v", err)
 	}

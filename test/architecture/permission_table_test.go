@@ -95,20 +95,20 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 // The unauthenticated surface is a NAMED list. A new public route is a security decision,
 // and this gate is what makes it one somebody has to write down rather than one that lands in a
 // diff nobody reads twice.
-func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
+func TestThePublicSurfaceIsExactlyTheRoutesSignInNeeds(t *testing.T) {
 	t.Parallel()
 
 	// Each is public because a caller who is not signed in is precisely who needs it, and each
 	// answers a tenant that does not exist exactly as it answers one that has configured no way
 	// in — so none of them is a way to enumerate customers.
 	permitted := map[string]string{
-		"GET /api/v1/organizations/{organization}/sign-in/oidc": "starting a sign-in " +
+		"GET /api/v1/auth/oidc/start": "starting a sign-in " +
 			"is what a caller with no credential is trying to do",
-		"GET /api/v1/sign-in/callback": "the identity provider sends the browser here, and " +
+		"GET /api/v1/auth/oidc/callback": "the identity provider sends the browser here, and " +
 			"it carries a state rather than a credential",
-		"POST /api/v1/organizations/{organization}/bootstrap": "the configured bootstrap " +
+		"POST /api/v1/auth/local/bootstrap": "the configured bootstrap " +
 			"credential authorizes the one-time first Admin creation inside the handler",
-		"POST /api/v1/organizations/{organization}/sign-in/local": "a person presents " +
+		"POST /api/v1/auth/local/sign-in": "a person presents " +
 			"their local password here to obtain a session",
 	}
 
@@ -137,12 +137,17 @@ func TestThePublicSurfaceIsExactlyTheThreeRoutesSignInNeeds(t *testing.T) {
 // themselves — requiring a permission would mean an Auditor could not sign out. The third
 // is a vendor's return trip, which arrives before this surface knows which tenant it
 // concerns.
-func TestTheAuthenticatedOnlyRoutesAreTheOnesThatCannotNameATenant(t *testing.T) {
+func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T) {
 	t.Parallel()
 
 	permitted := map[string]string{
-		"GET /api/v1/session":           "its subject is the caller themselves",
-		"POST /api/v1/session/sign-out": "an Auditor must be able to end their own session",
+		"GET /api/v1/session":       "its subject is the caller themselves",
+		"DELETE /api/v1/session":    "an Auditor must be able to end their own session",
+		"GET /api/v1/organizations": "a User may list memberships before selecting one",
+		"POST /api/v1/organizations": "edition policy, not an existing tenant Permission, " +
+			"decides whether a User may create another Organization",
+		"GET /api/v1/permissions": "membership is verified for the selected Organization, " +
+			"but reading one's own effective Permissions requires no Permission",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
 			"redirect URI, so the path can name no organization and there is no tenant in " +
 			"it to check a membership against. The tenant comes from the single-use flow " +
@@ -158,9 +163,8 @@ func TestTheAuthenticatedOnlyRoutesAreTheOnesThatCannotNameATenant(t *testing.T)
 		}
 		found[route.Key()] = true
 		if _, allowed := permitted[route.Key()]; !allowed {
-			t.Errorf("%s needs a credential and no permission; only a route that cannot name "+
-				"a tenant in its path may be that, and it has to be recorded above with the "+
-				"reason", route.Key())
+			t.Errorf("%s needs a credential and no permission and is not recorded with its reason",
+				route.Key())
 		}
 	}
 	for pattern := range permitted {
@@ -182,6 +186,118 @@ func TestNoRouteIsRegisteredTwice(t *testing.T) {
 			t.Errorf("%s is registered twice", route.Key())
 		}
 		seen[route.Key()] = true
+	}
+}
+
+func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
+	t.Parallel()
+
+	routes := operatorRoutes(t)
+	found := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		found[route.Key()] = true
+		if strings.Contains(route.Pattern(), "/organizations/{organization}/") {
+			t.Errorf("%s still carries the Organization in its path; the verified header is the sole selector",
+				route.Key())
+		}
+	}
+
+	expected := []string{
+		"DELETE /api/v1/integrations/{integration}",
+		"DELETE /api/v1/members/{user}",
+		"DELETE /api/v1/session",
+		"DELETE /api/v1/sessions/{session}",
+		"GET /api/v1/audit-events",
+		"GET /api/v1/auth/oidc/callback",
+		"GET /api/v1/auth/oidc/start",
+		"GET /api/v1/conversations",
+		"GET /api/v1/conversations/{conversation}",
+		"GET /api/v1/incidents",
+		"GET /api/v1/incidents/{incident}",
+		"GET /api/v1/incidents/{incident}/alert-events",
+		"GET /api/v1/incidents/{incident}/postmortem",
+		"GET /api/v1/integration-types",
+		"GET /api/v1/integrations",
+		"GET /api/v1/integrations/connect/callback",
+		"GET /api/v1/integrations/{integration}",
+		"GET /api/v1/investigations",
+		"GET /api/v1/investigations/{investigation}",
+		"GET /api/v1/investigations/{investigation}/activity",
+		"GET /api/v1/investigations/{investigation}/events",
+		"GET /api/v1/investigations/{investigation}/hypotheses",
+		"GET /api/v1/investigations/{investigation}/report",
+		"GET /api/v1/investigations/{investigation}/sources",
+		"GET /api/v1/members",
+		"GET /api/v1/organizations",
+		"GET /api/v1/permissions",
+		"GET /api/v1/policy",
+		"GET /api/v1/relays",
+		"GET /api/v1/relays/summary",
+		"GET /api/v1/relays/{registration}/failures",
+		"GET /api/v1/relays/{registration}/integrations",
+		"GET /api/v1/relays/{registration}/session-conflicts",
+		"GET /api/v1/session",
+		"GET /api/v1/sessions",
+		"GET /api/v1/webhook-work/terminal",
+		"GET /api/v1/webhook-work/terminal/{work}",
+		"PATCH /api/v1/incidents/{incident}/postmortem",
+		"PATCH /api/v1/integrations/{integration}",
+		"PATCH /api/v1/members/{user}",
+		"POST /api/v1/auth/local/bootstrap",
+		"POST /api/v1/auth/local/sign-in",
+		"POST /api/v1/conversations",
+		"POST /api/v1/conversations/{conversation}/messages",
+		"POST /api/v1/incidents/{incident}/merge",
+		"POST /api/v1/incidents/{incident}/postmortem",
+		"POST /api/v1/incidents/{incident}/postmortem/regenerate",
+		"POST /api/v1/incidents/{incident}/postmortem/review",
+		"POST /api/v1/integration-types/{type}/connect",
+		"POST /api/v1/integrations",
+		"POST /api/v1/integrations/{integration}/disable",
+		"POST /api/v1/integrations/{integration}/enable",
+		"POST /api/v1/integrations/{integration}/rotate-webhook-secret",
+		"POST /api/v1/integrations/{integration}/verify",
+		"POST /api/v1/investigations",
+		"POST /api/v1/investigations/{investigation}/cancel",
+		"POST /api/v1/members",
+		"POST /api/v1/organizations",
+		"POST /api/v1/relays/bootstrap-tokens",
+		"POST /api/v1/relays/{registration}/clear-conflict",
+		"POST /api/v1/webhook-work/terminal/{work}/replay",
+		"PUT /api/v1/members/{user}/password",
+		"PUT /api/v1/policy",
+	}
+	wanted := make(map[string]bool, len(expected))
+	for _, key := range expected {
+		wanted[key] = true
+		if !found[key] {
+			t.Errorf("canonical route %s is absent", key)
+		}
+	}
+	for key := range found {
+		if !wanted[key] {
+			t.Errorf("undeclared route %s is present in the canonical inventory", key)
+		}
+	}
+}
+
+func TestIntegrationStateHasExplicitCanonicalOperations(t *testing.T) {
+	t.Parallel()
+
+	found := make(map[string]bool)
+	for _, route := range operatorRoutes(t) {
+		found[route.Key()] = true
+	}
+	for _, key := range []string{
+		"POST /api/v1/integrations/{integration}/enable",
+		"POST /api/v1/integrations/{integration}/disable",
+	} {
+		if !found[key] {
+			t.Errorf("%s is absent", key)
+		}
+	}
+	if found["POST /api/v1/integrations/{integration}/enabled"] {
+		t.Error("the body-toggle Integration state route is still present")
 	}
 }
 
@@ -416,42 +532,44 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		key    string
 		reason string
 	}{
-		{"GET /api/v1/organizations/{organization}/integration-types",
+		{"GET /api/v1/integration-types",
 			"the catalog is Organization-scoped so configured Integrations can be counted per tenant"},
-		{"GET /api/v1/organizations/{organization}/integrations",
+		{"GET /api/v1/integrations",
 			"Integrations list Organization-wide; org_id is the only boundary"},
-		{"POST /api/v1/organizations/{organization}/integrations",
+		{"POST /api/v1/integrations",
 			"creating an Integration is the product's first job"},
-		{"GET /api/v1/organizations/{organization}/integrations/{integration}",
+		{"GET /api/v1/integrations/{integration}",
 			"an Integration has a detail route carrying its status and its webhook identity"},
-		{"PATCH /api/v1/organizations/{organization}/integrations/{integration}",
+		{"PATCH /api/v1/integrations/{integration}",
 			"revising changes part of a record and leaves its identity and its secret alone"},
-		{"DELETE /api/v1/organizations/{organization}/integrations/{integration}",
+		{"DELETE /api/v1/integrations/{integration}",
 			"an Integration nothing depends on can be removed; one with a history is refused"},
-		{"POST /api/v1/organizations/{organization}/integrations/{integration}/enabled",
-			"one idempotent operation replaces the enable and disable pair"},
-		{"POST /api/v1/organizations/{organization}/integrations/{integration}/verify",
+		{"POST /api/v1/integrations/{integration}/enable",
+			"enabling is explicit and idempotent"},
+		{"POST /api/v1/integrations/{integration}/disable",
+			"disabling is explicit and idempotent"},
+		{"POST /api/v1/integrations/{integration}/verify",
 			"verifying is what separates an Integration that is configured from one that works"},
-		{"POST /api/v1/organizations/{organization}/integrations/{integration}/webhook/rotate-secret",
+		{"POST /api/v1/integrations/{integration}/rotate-webhook-secret",
 			"rotating the webhook secret says which secret it rotates"},
 
 		// The fleet. A hundred relays is a hundred rows, and a hundred rows is not an assessment.
-		{"GET /api/v1/organizations/{organization}/relays/summary",
+		{"GET /api/v1/relays/summary",
 			"a fleet is assessable without reading every row"},
-		{"GET /api/v1/organizations/{organization}/relays/{registration}/integrations",
+		{"GET /api/v1/relays/{registration}/integrations",
 			"what a Relay serves is what disabling it costs"},
-		{"POST /api/v1/organizations/{organization}/relays/bootstrap-tokens",
+		{"POST /api/v1/relays/bootstrap-tokens",
 			"installing a Relay does not require sharing a permanent secret"},
-		{"GET /api/v1/organizations/{organization}/relays/{registration}/failures",
+		{"GET /api/v1/relays/{registration}/failures",
 			"an intermittent Relay is diagnosed from the record rather than from who was watching"},
 
 		// The investigation surface, on the provenance model: what it persists is what was
 		// triggered, queried, run and found — never a chain of thought.
-		{"GET /api/v1/organizations/{organization}/investigations",
+		{"GET /api/v1/investigations",
 			"investigations list as operational records, newest first"},
-		{"POST /api/v1/organizations/{organization}/investigations",
+		{"POST /api/v1/investigations",
 			"an investigation opens from an incident or a plain-language question"},
-		{"GET /api/v1/organizations/{organization}/investigations/{investigation}",
+		{"GET /api/v1/investigations/{investigation}",
 			"one investigation carries its whole provenance: sources, runs, findings, spend"},
 	} {
 		if !served[wanted.key] {

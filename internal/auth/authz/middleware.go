@@ -33,7 +33,8 @@ func Router(table Table, guard Guard) (http.Handler, error) {
 		return nil, err
 	}
 	for _, route := range table {
-		if route.access == AccessPrivileged && guard.ResolveOrganization == nil {
+		if (route.organizationScoped || route.organizationOptional) &&
+			guard.ResolveOrganization == nil {
 			return nil, fmt.Errorf("authz: privileged route %q has no Organization resolver",
 				route.Key())
 		}
@@ -57,9 +58,17 @@ func (g Guard) protect(route Route) http.Handler {
 			g.refuseUnauthenticated(writer, request, err)
 			return
 		}
+		if route.access == AccessAuthenticated && !route.organizationScoped &&
+			!route.organizationOptional && len(request.Header.Values(OrganizationHeader)) > 0 {
+			writeJSON(writer, http.StatusBadRequest,
+				errorView{Error: "active organization is not accepted"})
+			return
+		}
 
 		var organization tenancy.Organization
-		if route.access == AccessPrivileged {
+		selectedOrganization := route.organizationScoped ||
+			(route.organizationOptional && len(request.Header.Values(OrganizationHeader)) > 0)
+		if selectedOrganization {
 			organization, err = activeOrganization(request)
 			if err != nil {
 				g.recordAttributableRefusal(request, organization, principal, route,
@@ -95,7 +104,7 @@ func (g Guard) protect(route Route) http.Handler {
 			}
 		}
 
-		if route.access == AccessAuthenticated {
+		if route.access == AccessAuthenticated && !selectedOrganization {
 			if !g.originIsAllowed(principal, request) {
 				g.refuseOrigin(writer, request, principal)
 				return
@@ -116,7 +125,7 @@ func (g Guard) protect(route Route) http.Handler {
 			g.refuseOrigin(writer, request, principal)
 			return
 		}
-		if !role.Grants(route.permission) {
+		if route.access == AccessPrivileged && !role.Grants(route.permission) {
 			g.recordRefusal(request, organization, principal, route, "role does not grant it")
 			writeJSON(writer, http.StatusForbidden, errorView{
 				Error: "forbidden", Requires: string(route.permission),
@@ -143,15 +152,7 @@ func organizationSelector(request *http.Request) (tenancy.Organization, error) {
 }
 
 func activeOrganization(request *http.Request) (tenancy.Organization, error) {
-	selected, err := organizationSelector(request)
-	if err != nil {
-		return tenancy.Organization{}, err
-	}
-	fromPath, err := tenancy.NewOrganization(request.PathValue("organization"))
-	if err != nil || selected.String() != fromPath.String() {
-		return selected, fmt.Errorf("%s conflicts with the route", OrganizationHeader)
-	}
-	return selected, nil
+	return organizationSelector(request)
 }
 
 const maxOrganizationCheckBody = 64 << 10

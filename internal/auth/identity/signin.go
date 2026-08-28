@@ -23,22 +23,13 @@ func (h Handlers) issueSession(writer http.ResponseWriter, request *http.Request
 	organization tenancy.Organization, user storage.User, memberships []authz.Membership,
 	_ admission,
 ) error {
+	token, digest, issued, detail, err := h.prepareSession(
+		request, organization, user.ID, len(memberships))
+	if err != nil {
+		return err
+	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	configured, _, err := h.Database.SessionPolicy(ctx, organization)
-	if err != nil {
-		return err
-	}
-	lifetime := session.ClampLifetime(configured)
-	token, digest, err := session.NewToken()
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	issued := session.Session{ID: uuid.New(), UserID: user.ID, Organization: organization.String(),
-		IssuedAt: now, ExpiresAt: now.Add(lifetime), UserAgent: request.UserAgent(), Address: request.RemoteAddr}
-	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
-		"memberships": len(memberships), "requestId": authz.RequestIDFrom(request.Context())}
 	if err = h.Database.IssueSession(ctx, organization, issued, digest, audit.Actor{
 		Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}, detail); err != nil {
 		return err
@@ -47,8 +38,30 @@ func (h Handlers) issueSession(writer http.ResponseWriter, request *http.Request
 	return nil
 }
 
+func (h Handlers) prepareSession(
+	request *http.Request, organization tenancy.Organization, userID uuid.UUID, membershipCount int,
+) (session.Token, []byte, session.Session, audit.Detail, error) {
+	ctx, cancel := contextWithTimeout(request, readTimeout)
+	defer cancel()
+	configured, _, err := h.Database.SessionPolicy(ctx, organization)
+	if err != nil {
+		return "", nil, session.Session{}, nil, err
+	}
+	lifetime := session.ClampLifetime(configured)
+	token, digest, err := session.NewToken()
+	if err != nil {
+		return "", nil, session.Session{}, nil, err
+	}
+	now := time.Now().UTC()
+	issued := session.Session{ID: uuid.New(), UserID: userID, Organization: organization.String(),
+		IssuedAt: now, ExpiresAt: now.Add(lifetime), UserAgent: request.UserAgent(), Address: request.RemoteAddr}
+	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
+		"memberships": membershipCount, "requestId": authz.RequestIDFrom(request.Context())}
+	return token, digest, issued, detail, nil
+}
+
 func (h Handlers) redirectURI() string {
-	return strings.TrimSuffix(h.PublicURL, "/") + Base + "/sign-in/callback"
+	return strings.TrimSuffix(h.PublicURL, "/") + Base + "/auth/oidc/callback"
 }
 
 func (h Handlers) returnTarget(writer http.ResponseWriter, asked string) (string, bool) {

@@ -3,9 +3,9 @@ title: "API reference"
 description: "Authenticate, address an Organization, and use OpenCluster's public HTTP endpoints."
 ---
 
-OpenCluster serves JSON over a versioned HTTP API. Every customer-owned route includes
-the Organization in its path and requires a Principal with membership and the stated
-role permission.
+OpenCluster serves JSON over a versioned HTTP API. Every Organization-owned request sends
+one `X-OpenCluster-Organization` header and requires a Principal with current membership
+and the stated role permission.
 
 ## Authentication
 
@@ -14,7 +14,8 @@ Use the deployment's browser session or an approved bearer credential:
 ```bash
 curl --fail-with-body \
   -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
-  https://oc.example.com/api/v1/organizations/local/incidents
+  -H "X-OpenCluster-Organization: local" \
+  https://oc.example.com/api/v1/incidents
 ```
 
 Responses containing Organization data use `Cache-Control: no-store`. Unknown records
@@ -24,19 +25,19 @@ and records belonging to another Organization both return `404`.
 
 | Resource | Endpoints | Minimum role |
 | --- | --- | --- |
-| Integrations | `GET/POST /api/v1/organizations/{organization}/integrations` | Viewer to read, Admin to create |
-| Incidents | `GET /api/v1/organizations/{organization}/incidents` | Viewer |
-| Investigations | `GET/POST /api/v1/organizations/{organization}/investigations` | Viewer to read, Editor to open |
-| Conversations | `GET/POST /api/v1/organizations/{organization}/conversations` | Viewer to read, Editor to write |
-| Relays | `GET /api/v1/organizations/{organization}/relays` | Viewer |
-| Audit events | `GET /api/v1/organizations/{organization}/audit-events` | Viewer |
+| Integrations | `GET/POST /api/v1/integrations` | Viewer to read, Admin to create |
+| Incidents | `GET /api/v1/incidents` | Viewer |
+| Investigations | `GET/POST /api/v1/investigations` | Viewer to read, Editor to open |
+| Conversations | `GET/POST /api/v1/conversations` | Viewer to read, Editor to write |
+| Relays | `GET /api/v1/relays` | Viewer |
+| Audit events | `GET /api/v1/audit-events` | Viewer |
 
 Listings return `items`, an opaque `next` cursor, and any documented partial fields.
 Pass the returned cursor unchanged.
 
 ## Investigation result
 
-`GET /api/v1/organizations/{organization}/investigations/{investigation}` returns
+`GET /api/v1/investigations/{investigation}` returns
 the lifecycle status, conclusion status, summary, impact, cited findings, final
 hypotheses, action proposals, limitations, spend, and
 `humanConfirmationRequired`.
@@ -63,15 +64,16 @@ Postmortem routes are under a resolved Incident:
 | `POST` | `/postmortem/review` | Mark the document reviewed |
 
 The full prefix is
-`/api/v1/organizations/{organization}/incidents/{incident}`.
+`/api/v1/incidents/{incident}`.
 Generation accepts optional explicit impact, resolution, and retrospective notes.
 Missing human facts remain `Needs human input.`
 
 ## Webhooks
 
 Inbound integrations use `/webhooks/v1`, not the operator API. Alertmanager sends a
-bounded signed request to its Integration-specific URL. Treat webhook secrets as
-write-only credentials; OpenCluster shows a newly minted secret once.
+bounded request authenticated by its static `X-OpenCluster-Token`; it does not sign the
+request body. Treat webhook secrets as write-only credentials; OpenCluster shows a newly
+minted secret once.
 
 See [Prometheus Alertmanager](/integrations/alerting/alertmanager) for the supported
 payload and delivery responses.

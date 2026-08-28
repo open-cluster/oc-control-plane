@@ -27,14 +27,11 @@ function explain(error) {
   status.textContent = error instanceof Error ? error.message : String(error);
 }
 
-function organizationURL(identifier = organization) {
-  return `/api/v1/organizations/${encodeURIComponent(identifier)}`;
-}
-
-async function request(url, { method = 'GET', body, authorization } = {}) {
+async function request(url, { method = 'GET', body, authorization, organizationScoped = false } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (authorization) headers.Authorization = `Bearer ${authorization}`;
+  if (organizationScoped) headers['X-OpenCluster-Organization'] = organization;
 
   const response = await fetch(url, {
     method,
@@ -60,7 +57,7 @@ function formValues(form) {
 async function restoreSession() {
   let session;
   try {
-    session = await request('/api/v1/session');
+    session = await request('/api/v1/session', { organizationScoped: Boolean(organization) });
   } catch {
     signInSection.hidden = false;
     workspace.hidden = true;
@@ -95,9 +92,9 @@ document.querySelector('#sign-in-form').addEventListener('submit', async event =
   const values = formValues(event.currentTarget);
   organization = values.organization;
   try {
-    await request(`${organizationURL()}/sign-in/local`, {
+    await request('/api/v1/auth/local/sign-in', {
       method: 'POST',
-      body: { email: values.email, password: values.password },
+      body: { organization, email: values.email, password: values.password },
     });
     event.currentTarget.reset();
     await restoreSession();
@@ -113,7 +110,7 @@ document.querySelector('#oidc-sign-in').addEventListener('click', () => {
     return;
   }
   const returnTo = window.location.pathname + window.location.search + window.location.hash;
-  window.location.assign(`${organizationURL(identifier)}/sign-in/oidc?returnTo=${encodeURIComponent(returnTo)}`);
+  window.location.assign(`/api/v1/auth/oidc/start?organization=${encodeURIComponent(identifier)}&returnTo=${encodeURIComponent(returnTo)}`);
 });
 
 document.querySelector('#bootstrap-form').addEventListener('submit', async event => {
@@ -121,10 +118,10 @@ document.querySelector('#bootstrap-form').addEventListener('submit', async event
   const values = formValues(event.currentTarget);
   organization = values.organization;
   try {
-    await request(`${organizationURL()}/bootstrap`, {
+    await request('/api/v1/auth/local/bootstrap', {
       method: 'POST',
       authorization: values.token,
-      body: { email: values.email, displayName: values.displayName, password: values.password },
+      body: { organization, email: values.email, displayName: values.displayName, password: values.password },
     });
     event.currentTarget.reset();
     await restoreSession();
@@ -134,12 +131,12 @@ document.querySelector('#bootstrap-form').addEventListener('submit', async event
 });
 
 async function refreshInvestigation() {
-  const base = `${organizationURL()}/investigations/${encodeURIComponent(investigation)}`;
+  const base = `/api/v1/investigations/${encodeURIComponent(investigation)}`;
   const [report, hypotheses, activity, sources] = await Promise.all([
-    request(`${base}/report`),
-    request(`${base}/hypotheses`),
-    request(`${base}/activity`),
-    request(`${base}/sources`),
+    request(`${base}/report`, { organizationScoped: true }),
+    request(`${base}/hypotheses`, { organizationScoped: true }),
+    request(`${base}/activity`, { organizationScoped: true }),
+    request(`${base}/sources`, { organizationScoped: true }),
   ]);
   for (const [name, value] of Object.entries({ report, hypotheses, activity, sources })) {
     document.querySelector(`#${name}`).textContent = JSON.stringify(value, null, 2);
@@ -156,9 +153,10 @@ document.querySelector('#investigation-form').addEventListener('submit', async e
   event.preventDefault();
   const values = formValues(event.currentTarget);
   try {
-    const opened = await request(`${organizationURL()}/investigations`, {
+    const opened = await request('/api/v1/investigations', {
       method: 'POST',
       body: { question: values.question },
+      organizationScoped: true,
     });
     investigation = opened.id || opened.investigation?.id;
     if (!investigation) {
@@ -178,8 +176,9 @@ document.querySelector('#investigation-form').addEventListener('submit', async e
 
 document.querySelector('#cancel').addEventListener('click', async () => {
   try {
-    await request(`${organizationURL()}/investigations/${encodeURIComponent(investigation)}/cancel`, {
+    await request(`/api/v1/investigations/${encodeURIComponent(investigation)}/cancel`, {
       method: 'POST',
+      organizationScoped: true,
     });
     await refreshInvestigation();
   } catch (error) {
@@ -189,7 +188,7 @@ document.querySelector('#cancel').addEventListener('click', async () => {
 
 document.querySelector('#sign-out').addEventListener('click', async () => {
   try {
-    await request('/api/v1/session/sign-out', { method: 'POST' });
+    await request('/api/v1/session', { method: 'DELETE' });
     clearInterval(refreshTimer);
     investigationSection.hidden = true;
     await restoreSession();

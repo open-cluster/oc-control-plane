@@ -14,7 +14,7 @@ func TestPostmortemRoutesMatchThePublicContract(t *testing.T) {
 	if err := routes.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	base := "/api/v1/organizations/{organization}/incidents/{incident}/postmortem"
+	base := "/api/v1/incidents/{incident}/postmortem"
 	want := map[string]authz.Permission{
 		http.MethodGet + " " + base:                  authz.PostmortemRead,
 		http.MethodPost + " " + base:                 authz.PostmortemWrite,

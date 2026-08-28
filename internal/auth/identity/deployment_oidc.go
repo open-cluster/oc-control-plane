@@ -18,7 +18,7 @@ type oidcMemberRequest struct {
 }
 
 func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
-	organization, ok := h.preAuthenticationOrganization(w, r)
+	organization, ok := h.preAuthenticationOrganization(w, r.URL.Query().Get("organization"))
 	if !ok {
 		return
 	}
@@ -84,23 +84,10 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 	http.Redirect(w, r, h.consoleTarget(flow.ReturnTo), http.StatusFound)
 }
 
-func (h Handlers) createOIDCMember(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(w, r)
-	if !ok {
-		return
-	}
-	if strings.TrimSpace(h.OIDCIssuer) == "" {
-		writeJSON(w, http.StatusConflict, errorView{Error: "OIDC is not configured"})
-		return
-	}
-	var body oidcMemberRequest
-	if !decode(w, r, &body) {
-		return
-	}
+func (h Handlers) createOIDCMemberFrom(
+	w http.ResponseWriter, r *http.Request, principal authz.Principal,
+	organization tenancy.Organization, body oidcMemberRequest,
+) {
 	body.Subject = strings.TrimSpace(body.Subject)
 	body.DisplayName = strings.TrimSpace(body.DisplayName)
 	if body.Subject == "" || len(body.Subject) > 512 || body.DisplayName == "" || len(body.DisplayName) > 256 {

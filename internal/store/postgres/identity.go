@@ -302,6 +302,89 @@ func (p *Database) SetMembership(
 		})
 }
 
+// UpdateMembership changes the supported Role and active state in one audited transaction.
+func (p *Database) UpdateMembership(
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	user uuid.UUID, wantedRole *authz.Role, wantedActive *bool,
+) (Member, error) {
+	return audited(ctx, p, principal, organization, audit.ActionMembershipChanged,
+		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
+			var membership uuid.UUID
+			var currentRole *string
+			var currentActive bool
+			err := transaction.QueryRow(ctx, `
+				SELECT membership_id, role, active
+				  FROM organization_membership
+				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
+				organization.String(), user).Scan(&membership, &currentRole, &currentActive)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Member{}, audit.Target{}, nil, ErrMembershipUnknown
+			}
+			if err != nil {
+				return Member{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
+			}
+			role := orEmptyText(currentRole)
+			active := currentActive
+			if wantedRole != nil {
+				role = string(*wantedRole)
+			}
+			if wantedActive != nil {
+				active = *wantedActive
+			}
+			if currentActive && orEmptyText(currentRole) == string(authz.Admin) &&
+				(!active || role != string(authz.Admin)) {
+				if err := refuseIfLastAdmin(ctx, transaction, organization, user); err != nil {
+					return Member{}, audit.Target{}, nil, err
+				}
+			}
+			if _, err = transaction.Exec(ctx, `
+				UPDATE organization_membership
+				   SET role = $3, active = $4, granted_by = $5, updated_at = now()
+				 WHERE org_id = $1 AND user_id = $2`, organization.String(), user, role,
+				active, principal.ID()); err != nil {
+				return Member{}, audit.Target{}, nil, fmt.Errorf("updating a membership: %w", err)
+			}
+			if currentActive && !active {
+				if _, err = transaction.Exec(ctx, `
+					UPDATE operator_session
+					   SET revoked_at = now(), revoked_by = $3
+					 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
+					user, organization.String(), principal.ID()); err != nil {
+					return Member{}, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
+				}
+			}
+
+			var member Member
+			var external *string
+			var disabled *time.Time
+			var storedRole string
+			var source int16
+			err = transaction.QueryRow(ctx, `
+				SELECT membership.membership_id, membership.user_id, person.email,
+				       person.display_name, membership.role, membership.source,
+				       membership.external_id, membership.active, person.disabled_at,
+				       membership.created_at
+				  FROM organization_membership membership
+				  JOIN app_user person ON person.user_id = membership.user_id
+				 WHERE membership.membership_id = $1 AND membership.org_id = $2`,
+				membership, organization.String()).Scan(
+				&member.MembershipID, &member.UserID, &member.Email, &member.DisplayName,
+				&storedRole, &source, &external, &member.Active, &disabled, &member.CreatedAt)
+			if err != nil {
+				return Member{}, audit.Target{}, nil, fmt.Errorf("reading updated membership: %w", err)
+			}
+			member.Role = authz.Role(storedRole)
+			member.Source = MembershipSource(source)
+			member.ExternalID = orEmptyText(external)
+			member.Disabled = disabled != nil
+			return member, audit.Target{Kind: audit.TargetMembership, ID: membership.String()},
+				audit.Detail{
+					"beforeRole": orEmptyText(currentRole), "afterRole": role,
+					"beforeActive": currentActive, "afterActive": active,
+				}, nil
+		})
+}
+
 // RemoveMembership ends a person's access to one organization. Their user row and their place
 // in the record survive: deleting the person would leave every event they produced naming an
 // identifier nothing resolves.

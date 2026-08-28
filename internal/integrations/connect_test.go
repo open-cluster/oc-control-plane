@@ -67,12 +67,12 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodPost,
-		"/api/v1/organizations/acme/integration-types/stub/connect", nil)
+		"/api/v1/integration-types/stub/connect", nil)
 	request.Header.Set(authz.OrganizationHeader, "acme")
 	request.Header.Set("Origin", "https://console.example.com")
 	router, err := authz.Router(authz.Table{
 		authz.Privileged(http.MethodPost,
-			"/api/v1/organizations/{organization}/integration-types/{type}/connect",
+			"/api/v1/integration-types/{type}/connect",
 			authz.IntegrationCreate, http.HandlerFunc(handlers.startConnect)),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {

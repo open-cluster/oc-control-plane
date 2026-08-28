@@ -6,11 +6,6 @@ import (
 	"strings"
 )
 
-// organizationSegment is the path variable every privileged route carries. The guard resolves
-// the tenant from it and checks the principal's membership before the handler runs, so a route
-// without it cannot be authorized and is refused when the table is built.
-const organizationSegment = "{organization}"
-
 // Access says how a route is reached. There are exactly three values and each route names one
 // by which constructor built it, so "I forgot the check" is not a state a route can be in.
 type Access int
@@ -26,7 +21,7 @@ const (
 	// AccessAuthenticated needs a credential and no permission. Only the routes that describe
 	// the caller to themselves are this: who am I, and end my own session.
 	AccessAuthenticated
-	// AccessPrivileged needs a credential, a membership in the organization named in the path,
+	// AccessPrivileged needs a credential, a membership in the selected Organization,
 	// and the permission the route declares.
 	AccessPrivileged
 )
@@ -48,29 +43,32 @@ func (a Access) String() string {
 
 // Route is one entry in the table that IS the operator API's index.
 //
-// The fields are unexported and the only ways to build one are the three constructors below.
+// The fields are unexported and the only ways to build one are the constructors in this file.
 // That is the mechanism behind "a new route without a declared permission fails to compile":
 // Privileged takes the permission as a positional argument, so omitting it does not compile,
 // and there is no other constructor that reaches a handler needing one.
 type Route struct {
-	method     string
-	pattern    string
-	permission Permission
-	access     Access
-	handler    http.Handler
+	method               string
+	pattern              string
+	permission           Permission
+	access               Access
+	organizationScoped   bool
+	organizationOptional bool
+	handler              http.Handler
 }
 
-// Privileged declares a route needing a membership in the organization its path names and the
+// Privileged declares a route needing a membership in the selected Organization and the
 // permission it states. Every route on this surface that touches a tenant's data is one.
 func Privileged(
 	method, pattern string, permission Permission, handler http.Handler,
 ) Route {
 	return Route{
-		method:     method,
-		pattern:    pattern,
-		permission: permission,
-		access:     AccessPrivileged,
-		handler:    handler,
+		method:             method,
+		pattern:            pattern,
+		permission:         permission,
+		access:             AccessPrivileged,
+		organizationScoped: true,
+		handler:            handler,
 	}
 }
 
@@ -79,6 +77,25 @@ func Privileged(
 // session — where requiring a permission would mean an auditor could not sign out.
 func Authenticated(method, pattern string, handler http.Handler) Route {
 	return Route{method: method, pattern: pattern, access: AccessAuthenticated, handler: handler}
+}
+
+// OrganizationAuthenticated declares a route that verifies the selected Organization and
+// membership but requires no Permission. It serves self-describing tenant facts such as the
+// caller's effective permissions.
+func OrganizationAuthenticated(method, pattern string, handler http.Handler) Route {
+	return Route{
+		method: method, pattern: pattern, access: AccessAuthenticated,
+		organizationScoped: true, handler: handler,
+	}
+}
+
+// OptionalOrganizationAuthenticated declares a self-service route that verifies an active
+// Organization only when the caller supplies the selector.
+func OptionalOrganizationAuthenticated(method, pattern string, handler http.Handler) Route {
+	return Route{
+		method: method, pattern: pattern, access: AccessAuthenticated,
+		organizationOptional: true, handler: handler,
+	}
 }
 
 // Public declares a route reachable with no credential. Adding one is a security decision and
@@ -100,6 +117,9 @@ func (r Route) Permission() Permission { return r.permission }
 // Access says how this route is reached.
 func (r Route) Access() Access { return r.access }
 
+// OrganizationScoped reports whether the route requires a verified active Organization.
+func (r Route) OrganizationScoped() bool { return r.organizationScoped }
+
 // Handler is what serves the request once the decision has been made.
 func (r Route) Handler() http.Handler { return r.handler }
 
@@ -114,11 +134,9 @@ type Table []Route
 // Validate refuses a table that cannot be authorized correctly, and is called where the mux is
 // built so a mistake is a failure to start rather than a route that is open.
 //
-// Four things are refused, each because the alternative is a route nobody notices is wrong:
-// an unset access (a Route that came from somewhere other than a constructor), a permission
-// this build does not declare, a privileged route whose path names no organization — there
-// would then be no tenant to check a membership against — and two routes on the same key,
-// where net/http would panic at registration and the reason would be a stack trace.
+// Validation rejects missing handlers, malformed keys, duplicates, unset access, and
+// permissions that do not match the route's access class. Each is a failure to start rather
+// than a route that is open or a net/http registration panic.
 func (t Table) Validate() error {
 	seen := make(map[string]bool, len(t))
 	for _, route := range t {
@@ -139,11 +157,6 @@ func (t Table) Validate() error {
 			if !Declared(route.permission) {
 				return fmt.Errorf("authz: route %q requires %q, which this build does not "+
 					"declare as a permission", route.Key(), route.permission)
-			}
-			if !strings.Contains(route.pattern, organizationSegment) {
-				return fmt.Errorf("authz: route %q is privileged but its path names no "+
-					"organization, so there is no tenant to check a membership against",
-					route.Key())
 			}
 		case AccessAuthenticated, AccessPublic:
 			if route.permission != "" {

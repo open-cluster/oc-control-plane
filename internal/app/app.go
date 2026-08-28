@@ -59,10 +59,12 @@ type Options struct {
 	Investigator investigation.Investigator
 	ModelEffort  string
 	ModelBaseURL string
-	MaxToolRuns  int
-	MaxTurns     int
-	SlackAPIURL  string
-	GitHubAPIURL string
+	// InventoryInterval replaces the production cadence in composed-process tests.
+	InventoryInterval time.Duration
+	MaxToolRuns       int
+	MaxTurns          int
+	SlackAPIURL       string
+	GitHubAPIURL      string
 }
 
 // Run assembles and serves the control plane until ctx is cancelled, then drains within
@@ -223,15 +225,16 @@ func Run(
 	}
 
 	return serve(ctx, assembled{
-		config:         cfg,
-		logger:         logger,
-		telemetry:      telemetry,
-		database:       database,
-		catalog:        catalog,
-		sealer:         sealer,
-		investigations: investigations,
-		onListen:       options.OnListen,
-		slackAPIURL:    options.SlackAPIURL,
+		config:            cfg,
+		logger:            logger,
+		telemetry:         telemetry,
+		database:          database,
+		catalog:           catalog,
+		sealer:            sealer,
+		investigations:    investigations,
+		onListen:          options.OnListen,
+		inventoryInterval: inventoryInterval(options.InventoryInterval),
+		slackAPIURL:       options.SlackAPIURL,
 	})
 }
 
@@ -278,16 +281,24 @@ func modelBoundary(
 // every spend record counts in.
 func microCentsOf(cents int) int64 { return int64(cents) * 1_000_000 }
 
+func inventoryInterval(replacement time.Duration) time.Duration {
+	if replacement > 0 {
+		return replacement
+	}
+	return defaultInventoryInterval
+}
+
 // assembled is the constructed process: the pieces serve needs, which are meaningless
 // apart and always travel together.
 type assembled struct {
-	config         config.Config
-	logger         *slog.Logger
-	telemetry      *observability.Telemetry
-	database       *storage.Database
-	catalog        integrations.Catalog
-	sealer         seal.Sealer
-	investigations *investigation.Runner
-	onListen       func(net.Addr)
-	slackAPIURL    string
+	config            config.Config
+	logger            *slog.Logger
+	telemetry         *observability.Telemetry
+	database          *storage.Database
+	catalog           integrations.Catalog
+	sealer            seal.Sealer
+	investigations    *investigation.Runner
+	onListen          func(net.Addr)
+	inventoryInterval time.Duration
+	slackAPIURL       string
 }

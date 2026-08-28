@@ -8,7 +8,10 @@ import (
 	"net/mail"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -17,16 +20,19 @@ const maxConcurrentPasswordChecks = 8
 var passwordCheckSlots = make(chan struct{}, maxConcurrentPasswordChecks)
 
 type localCredentialRequest struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName,omitempty"`
-	Password    string `json:"password"`
+	Organization string `json:"organization"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Password     string `json:"password"`
 }
 
-type localMemberRequest struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName,omitempty"`
-	Password    string `json:"password"`
-	Role        string `json:"role"`
+type memberCreationRequest struct {
+	IdentityKind string `json:"identityKind"`
+	Subject      string `json:"subject,omitempty"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Password     string `json:"password"`
+	Role         string `json:"role"`
 }
 
 type localPasswordRequest struct {
@@ -34,7 +40,11 @@ type localPasswordRequest struct {
 }
 
 func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.Request) {
-	organization, ok := h.preAuthenticationOrganization(writer, request)
+	var body localCredentialRequest
+	if !decode(writer, request, &body) {
+		return
+	}
+	organization, ok := h.preAuthenticationOrganization(writer, body.Organization)
 	if !ok {
 		return
 	}
@@ -49,10 +59,6 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 	}
 	if h.Bootstrap.Role != authz.Admin {
 		writeJSON(writer, http.StatusUnauthorized, errorView{Error: "credential rejected"})
-		return
-	}
-	var body localCredentialRequest
-	if !decode(writer, request, &body) {
 		return
 	}
 	email, ok := localEmail(writer, body.Email)
@@ -74,10 +80,16 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	token, digest, issued, detail, err := h.prepareSession(
+		request, organization, uuid.Nil, 1)
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
-	user, memberships, err := h.Database.BootstrapLocalAdmin(
-		ctx, organization, email, displayName, encoded)
+	_, _, err = h.Database.BootstrapLocalAdmin(
+		ctx, organization, email, displayName, encoded, issued, digest, detail)
 	if errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		writeJSON(writer, http.StatusConflict,
 			errorView{Error: "a local administrator already exists"})
@@ -87,11 +99,7 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 		h.fail(writer, request, err)
 		return
 	}
-	if err := h.issueSession(writer, request, organization, user, memberships,
-		admission{Role: authz.Admin}); err != nil {
-		h.fail(writer, request, err)
-		return
-	}
+	session.Set(writer, token, issued.ExpiresAt)
 	writeJSON(writer, http.StatusCreated, map[string]bool{"bootstrapped": true})
 }
 
@@ -104,12 +112,12 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 			errorView{Error: "this sign-in cannot be completed"})
 		return
 	}
-	organization, ok := h.preAuthenticationOrganization(writer, request)
-	if !ok {
-		return
-	}
 	var body localCredentialRequest
 	if !decode(writer, request, &body) {
+		return
+	}
+	organization, ok := h.preAuthenticationOrganization(writer, body.Organization)
+	if !ok {
 		return
 	}
 	email, ok := localEmail(writer, body.Email)
@@ -154,7 +162,7 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 	writeJSON(writer, http.StatusOK, map[string]bool{"signedIn": true})
 }
 
-func (h Handlers) createLocalMember(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) createMember(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -163,8 +171,24 @@ func (h Handlers) createLocalMember(writer http.ResponseWriter, request *http.Re
 	if !ok {
 		return
 	}
-	var body localMemberRequest
+	var body memberCreationRequest
 	if !decode(writer, request, &body) {
+		return
+	}
+	switch strings.TrimSpace(body.IdentityKind) {
+	case "local":
+	case "oidc":
+		if strings.TrimSpace(h.OIDCIssuer) == "" {
+			writeJSON(writer, http.StatusConflict, errorView{Error: "OIDC is not configured"})
+			return
+		}
+		h.createOIDCMemberFrom(writer, request, principal, organization, oidcMemberRequest{
+			Subject: body.Subject, Email: body.Email, DisplayName: body.DisplayName, Role: body.Role,
+		})
+		return
+	default:
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: "identityKind must be local or oidc"})
 		return
 	}
 	email, ok := localEmail(writer, body.Email)

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	authsession "github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -89,11 +90,11 @@ func (h Handlers) organization(
 	return organization, true
 }
 
-// preAuthenticationOrganization parses the compatibility path before a Principal exists.
+// preAuthenticationOrganization parses an explicit selector before a Principal exists.
 func (h Handlers) preAuthenticationOrganization(
-	writer http.ResponseWriter, request *http.Request,
+	writer http.ResponseWriter, value string,
 ) (tenancy.Organization, bool) {
-	organization, err := tenancy.NewOrganization(request.PathValue("organization"))
+	organization, err := tenancy.NewOrganization(value)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "organization is not a name"})
 		return tenancy.Organization{}, false
@@ -132,6 +133,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusConflict, errorView{Error: "local account already exists"})
 	case errors.Is(err, storage.ErrMembershipUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "membership not found"})
+	case errors.Is(err, authsession.ErrUnknown):
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "session not found"})
 	case errors.Is(err, storage.ErrLastAdmin):
 		writeJSON(writer, http.StatusConflict, errorView{
 			Error: "an organization must keep at least one admin; appoint another first"})

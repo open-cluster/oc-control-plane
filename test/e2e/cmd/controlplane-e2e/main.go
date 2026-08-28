@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
@@ -23,6 +24,7 @@ func run() int {
 	if err == nil {
 		err = app.Run(ctx, cfg, os.Stderr, app.Options{
 			Version: "e2e", ModelBaseURL: os.Getenv("OC_E2E_MODEL_BASE_URL"),
+			InventoryInterval: time.Second,
 		})
 	}
 	if err != nil {

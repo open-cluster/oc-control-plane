@@ -10,10 +10,6 @@ import (
 // one-line change rather than a search.
 const Base = "/api/v1"
 
-// organizationBase is the tenant-scoped prefix. Every privileged route on this surface names
-// an organization, which is what lets the guard check a membership uniformly.
-const organizationBase = Base + "/organizations/{organization}"
-
 // Routes is this capability's contribution to the operator API's index.
 //
 // Every entry states how it is reached by which constructor built it. Privileged takes the
@@ -26,49 +22,54 @@ const organizationBase = Base + "/organizations/{organization}"
 // to a named list, so a fourth fails the build until somebody records why it exists.
 func (h Handlers) Routes() authz.Table {
 	table := authz.Table{
-		authz.Public(http.MethodPost, organizationBase+"/bootstrap",
+		authz.Public(http.MethodPost, Base+"/auth/local/bootstrap",
 			http.HandlerFunc(h.bootstrapLocalAdmin)),
-		authz.Public(http.MethodPost, organizationBase+"/sign-in/local",
+		authz.Public(http.MethodPost, Base+"/auth/local/sign-in",
 			http.HandlerFunc(h.localSignIn)),
-		authz.Public(http.MethodGet, organizationBase+"/sign-in/oidc",
+		authz.Public(http.MethodGet, Base+"/auth/oidc/start",
 			http.HandlerFunc(h.startDeploymentOIDCSignIn)),
-		authz.Public(http.MethodGet, Base+"/sign-in/callback",
+		authz.Public(http.MethodGet, Base+"/auth/oidc/callback",
 			http.HandlerFunc(h.completeDeploymentOIDCSignIn)),
 		// The caller describing themselves. Authenticated rather than privileged: requiring a
 		// permission would mean an Auditor could not sign out, and a person with no membership
 		// yet could not be told that they have none.
-		authz.Authenticated(http.MethodGet, Base+"/session", http.HandlerFunc(h.session)),
-		authz.Authenticated(http.MethodPost, Base+"/session/sign-out",
+		authz.OptionalOrganizationAuthenticated(http.MethodGet, Base+"/session",
+			http.HandlerFunc(h.session)),
+		authz.Authenticated(http.MethodDelete, Base+"/session",
 			http.HandlerFunc(h.signOut)),
+		authz.Authenticated(http.MethodGet, Base+"/organizations",
+			http.HandlerFunc(h.organizations)),
+		authz.Authenticated(http.MethodPost, Base+"/organizations",
+			http.HandlerFunc(h.createOrganization)),
+		authz.OrganizationAuthenticated(http.MethodGet, Base+"/permissions",
+			http.HandlerFunc(h.permissions)),
 
 		// Who they are once inside.
-		authz.Privileged(http.MethodGet, organizationBase+"/members",
+		authz.Privileged(http.MethodGet, Base+"/members",
 			authz.MemberRead, http.HandlerFunc(h.listMembers)),
-		authz.Privileged(http.MethodPost, organizationBase+"/members",
-			authz.MemberManage, http.HandlerFunc(h.createLocalMember)),
-		authz.Privileged(http.MethodPost, organizationBase+"/members/oidc",
-			authz.MemberManage, http.HandlerFunc(h.createOIDCMember)),
-		authz.Privileged(http.MethodPut, organizationBase+"/members/{user}",
+		authz.Privileged(http.MethodPost, Base+"/members",
+			authz.MemberManage, http.HandlerFunc(h.createMember)),
+		authz.Privileged(http.MethodPatch, Base+"/members/{user}",
 			authz.MemberManage, http.HandlerFunc(h.setMember)),
-		authz.Privileged(http.MethodPut, organizationBase+"/members/{user}/password",
+		authz.Privileged(http.MethodPut, Base+"/members/{user}/password",
 			authz.MemberManage, http.HandlerFunc(h.resetLocalPassword)),
-		authz.Privileged(http.MethodDelete, organizationBase+"/members/{user}",
+		authz.Privileged(http.MethodDelete, Base+"/members/{user}",
 			authz.MemberManage, http.HandlerFunc(h.removeMember)),
 
 		// Live sessions and their revocation.
-		authz.Privileged(http.MethodGet, organizationBase+"/sessions",
+		authz.Privileged(http.MethodGet, Base+"/sessions",
 			authz.MemberRead, http.HandlerFunc(h.listSessions)),
-		authz.Privileged(http.MethodPost, organizationBase+"/members/{user}/revoke-sessions",
-			authz.SessionRevoke, http.HandlerFunc(h.revokeSessions)),
+		authz.Privileged(http.MethodDelete, Base+"/sessions/{session}",
+			authz.SessionRevoke, http.HandlerFunc(h.revokeSession)),
 
 		// The tenant's own policy.
-		authz.Privileged(http.MethodGet, organizationBase+"/policy",
+		authz.Privileged(http.MethodGet, Base+"/policy",
 			authz.IdentityRead, http.HandlerFunc(h.readPolicy)),
-		authz.Privileged(http.MethodPut, organizationBase+"/policy",
+		authz.Privileged(http.MethodPut, Base+"/policy",
 			authz.IdentityConfigure, http.HandlerFunc(h.writePolicy)),
 
 		// The record.
-		authz.Privileged(http.MethodGet, organizationBase+"/audit-events",
+		authz.Privileged(http.MethodGet, Base+"/audit-events",
 			authz.AuditRead, http.HandlerFunc(h.auditEvents)),
 	}
 	return table

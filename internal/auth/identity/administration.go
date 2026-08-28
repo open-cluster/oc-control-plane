@@ -11,7 +11,8 @@ import (
 )
 
 type memberRequest struct {
-	Role string `json:"role"`
+	Role   *string `json:"role"`
+	Active *bool   `json:"active"`
 }
 
 func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -54,14 +55,23 @@ func (h Handlers) setMember(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	role, known := authz.ParseRole(body.Role)
-	if !known {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "role is not one this build has"})
+	if body.Role == nil && body.Active == nil {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "role or active is required"})
 		return
+	}
+	var role *authz.Role
+	if body.Role != nil {
+		parsed, known := authz.ParseRole(*body.Role)
+		if !known {
+			writeJSON(w, http.StatusBadRequest, errorView{Error: "role is not one this build has"})
+			return
+		}
+		role = &parsed
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
-	member, err := h.Database.SetMembership(ctx, principal, organization, user, role)
+	member, err := h.Database.UpdateMembership(
+		ctx, principal, organization, user, role, body.Active)
 	if err != nil {
 		h.fail(w, r, err)
 		return

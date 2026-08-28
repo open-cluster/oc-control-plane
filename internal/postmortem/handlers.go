@@ -26,7 +26,7 @@ type Handlers struct {
 }
 
 func (h Handlers) Routes() authz.Table {
-	const base = "/api/v1/organizations/{organization}/incidents/{incident}/postmortem"
+	const base = "/api/v1/incidents/{incident}/postmortem"
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.PostmortemRead, http.HandlerFunc(h.get)),
 		authz.Privileged(http.MethodPost, base, authz.PostmortemWrite, http.HandlerFunc(h.generate)),

@@ -41,7 +41,7 @@ type Handlers struct {
 // at the tenant does; regrouping decides what an incident is about, and so what an investigation
 // opened for it would be scoped to.
 func (h Handlers) Routes() authz.Table {
-	const base = "/api/v1/organizations/{organization}/incidents"
+	const base = "/api/v1/incidents"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.IncidentRead,

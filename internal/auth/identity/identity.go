@@ -96,6 +96,9 @@ type Handlers struct {
 	// ConsoleURL is where the browser is sent once signed in.
 	ConsoleURL string
 	Bootstrap  Bootstrap
+	// CanCreateOrganization is the edition policy seam. It decides only whether an
+	// authenticated User may create another Organization; persistence remains shared.
+	CanCreateOrganization func(authz.Principal) bool
 	// RetentionEnforced reports whether this deployment actually applies the audit retention
 	// schedule a tenant declares. It is wired from the composition root rather than assumed,
 	// because the policy surface states it to an auditor: a product reporting a retention period

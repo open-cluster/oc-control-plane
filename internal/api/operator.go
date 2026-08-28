@@ -126,7 +126,7 @@ func (h Handlers) Routes() authz.Table {
 // surface: a description assembled from different handler values than the ones being served
 // is the drift the description exists to end, and building them twice is how that happens.
 func (h Handlers) routesOver(built []contributor) authz.Table {
-	const relays = "/api/v1/organizations/{organization}/relays"
+	const relays = "/api/v1/relays"
 
 	routes := authz.Table{
 		authz.Privileged(http.MethodGet, relays, authz.RelayRead,

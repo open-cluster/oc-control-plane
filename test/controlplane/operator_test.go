@@ -325,7 +325,7 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 		cfg.OperatorTokenOrganization = "local"
 		cfg.OperatorTokenRole = "admin"
 	})
-	const path = "/api/v1/organizations/local/relays"
+	const path = "/api/v1/relays"
 
 	for _, testCase := range []struct {
 		name   string
@@ -334,7 +334,6 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 		{name: "missing"},
 		{name: "repeated", values: []string{"local", "local"}},
 		{name: "malformed", values: []string{"local organization"}},
-		{name: "conflicts with path", values: []string{"other"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			request, err := http.NewRequest(http.MethodGet, plane.baseURL+path, nil)
@@ -358,7 +357,7 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 
 	body := strings.NewReader(`{"organization":"other"}`)
 	request, err := http.NewRequest(http.MethodPost,
-		plane.baseURL+"/api/v1/organizations/local/members", body)
+		plane.baseURL+"/api/v1/members", body)
 	if err != nil {
 		t.Fatalf("build body-conflict request: %v", err)
 	}

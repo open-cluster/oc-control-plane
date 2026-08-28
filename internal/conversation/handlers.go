@@ -45,7 +45,7 @@ type Handlers struct {
 
 // Routes is this capability's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
-	const base = "/api/v1/organizations/{organization}/conversations"
+	const base = "/api/v1/conversations"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.ConversationRead,

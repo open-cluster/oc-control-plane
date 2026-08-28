@@ -54,7 +54,8 @@ func TestApplicationRestoresInvestigationDeepLinksAndEveryTransparencyView(t *te
 		{path: "/", markers: []string{"id=\"hypotheses\"", "id=\"sources\""}},
 		{path: "/app.js", markers: []string{
 			"window.location.pathname", "decodeURIComponent", "/hypotheses",
-			"scrollIntoView", "'concluded'", "if (await refreshInvestigation())", "?returnTo=",
+			"scrollIntoView", "'concluded'", "if (await refreshInvestigation())", "returnTo=",
+			"X-OpenCluster-Organization", "/api/v1/auth/local/sign-in",
 		}},
 	} {
 		response := httptest.NewRecorder()

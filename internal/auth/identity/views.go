@@ -19,9 +19,17 @@ import (
 // Principal contract the frontend already declares; the contract does not change here, the
 // control plane implements it.
 type sessionView struct {
-	Principal     principalView    `json:"principal"`
-	Organizations []membershipView `json:"organizations"`
-	ExpiresAt     time.Time        `json:"expiresAt"`
+	Principal            principalView    `json:"principal"`
+	Organizations        []membershipView `json:"organizations"`
+	ActiveOrganization   *membershipView  `json:"activeOrganization,omitempty"`
+	AuthenticationMethod string           `json:"authenticationMethod"`
+	CSRF                 csrfView         `json:"csrf"`
+	ExpiresAt            time.Time        `json:"expiresAt"`
+}
+
+type csrfView struct {
+	Mode                     string `json:"mode"`
+	RequiredForUnsafeMethods bool   `json:"requiredForUnsafeMethods"`
 }
 
 type principalView struct {
@@ -43,7 +51,8 @@ type membershipView struct {
 }
 
 func sessionViewOf(
-	principal authz.Principal, email string, expires time.Time,
+	principal authz.Principal, email string, expires time.Time, method string,
+	active *membershipView,
 ) sessionView {
 	memberships := principal.Memberships()
 
@@ -83,8 +92,11 @@ func sessionViewOf(
 			Roles:       roles,
 			Scopes:      scopes,
 		},
-		Organizations: organizations,
-		ExpiresAt:     expires,
+		Organizations:        organizations,
+		ActiveOrganization:   active,
+		AuthenticationMethod: method,
+		CSRF:                 csrfView{Mode: "origin", RequiredForUnsafeMethods: true},
+		ExpiresAt:            expires,
 	}
 }
 
@@ -100,6 +112,7 @@ type memberView struct {
 	DisplayName string    `json:"displayName"`
 	Role        string    `json:"role"`
 	Source      string    `json:"source"`
+	Active      bool      `json:"active"`
 	Disabled    bool      `json:"disabled"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -116,6 +129,7 @@ func memberViewOf(member storage.Member) memberView {
 		DisplayName: member.DisplayName,
 		Role:        string(member.Role),
 		Source:      member.Source.String(),
+		Active:      member.Active,
 		Disabled:    member.Disabled,
 		CreatedAt:   member.CreatedAt,
 	}

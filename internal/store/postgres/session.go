@@ -57,6 +57,20 @@ func (p *Database) IssueSession(
 		}
 	}()
 
+	if err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, detail); err != nil {
+		return err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+func issueSessionIn(
+	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
+) error {
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO operator_session (session_id, token_digest, user_id, org_id,
 		                              issued_at, expires_at, last_seen_at, user_agent, address)
@@ -77,10 +91,6 @@ func (p *Database) IssueSession(
 	}); err != nil {
 		return err
 	}
-	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	committed = true
 	return nil
 }
 
@@ -115,12 +125,13 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		RETURNING session_id, user_id, org_id, issued_at, expires_at, last_seen_at,
 		          revoked_at, user_agent, address,
 		          (SELECT email FROM app_user WHERE app_user.user_id = operator_session.user_id),
+		          (SELECT issuer FROM app_user WHERE app_user.user_id = operator_session.user_id),
 		          (SELECT display_name FROM app_user WHERE app_user.user_id = operator_session.user_id),
 		          (SELECT disabled_at FROM app_user WHERE app_user.user_id = operator_session.user_id)`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
 		&found.Session.Organization, &found.Session.IssuedAt, &found.Session.ExpiresAt,
 		&found.Session.LastSeenAt, &revoked, &found.Session.UserAgent, &found.Session.Address,
-		&found.User.Email, &found.User.DisplayName, &disabled)
+		&found.User.Email, &found.User.Issuer, &found.User.DisplayName, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SignedIn{}, session.ErrUnknown
 	}
@@ -176,9 +187,14 @@ func (p *Database) DeleteSession(
 		}
 	}()
 
-	if _, err := transaction.Exec(ctx,
-		`DELETE FROM operator_session WHERE session_id = $1`, id); err != nil {
+	tag, err := transaction.Exec(ctx,
+		`DELETE FROM operator_session WHERE session_id = $1 AND org_id = $2`,
+		id, organization.String())
+	if err != nil {
 		return fmt.Errorf("signing out: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return session.ErrUnknown
 	}
 	// Recorded in the same transaction as the deletion, exactly as a state change is: a session
 	// that ended with nothing saying so is a gap in the trail an offboarding review reads.
@@ -198,6 +214,31 @@ func (p *Database) DeleteSession(
 	}
 	committed = true
 	return nil
+}
+
+// RevokeSession ends one named session in an Organization and preserves it for review.
+func (p *Database) RevokeSession(
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID,
+) error {
+	_, err := audited(ctx, p, principal, organization, audit.ActionSessionRevoked,
+		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
+			tag, updateErr := transaction.Exec(ctx, `
+				UPDATE operator_session
+				   SET revoked_at = now(), revoked_by = $3
+				 WHERE session_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
+				id, organization.String(), principal.ID())
+			if updateErr != nil {
+				return struct{}{}, audit.Target{}, nil,
+					fmt.Errorf("revoking session: %w", updateErr)
+			}
+			if tag.RowsAffected() != 1 {
+				return struct{}{}, audit.Target{}, nil, session.ErrUnknown
+			}
+			return struct{}{}, audit.Target{Kind: audit.TargetSession, ID: id.String()},
+				audit.Detail{"sessionId": id.String()}, nil
+		})
+	return err
 }
 
 // RevokeSessionsOf ends every live session one person holds in one organization.

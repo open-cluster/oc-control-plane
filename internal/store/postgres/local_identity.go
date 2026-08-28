@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
@@ -21,7 +22,8 @@ var (
 	ErrLocalAccountExists     = errors.New("local account already exists")
 )
 
-const localIssuer = "opencluster:local"
+// LocalIssuer identifies identities whose credential is managed by this deployment.
+const LocalIssuer = "opencluster:local"
 
 type LocalIdentity struct {
 	User         User
@@ -31,7 +33,8 @@ type LocalIdentity struct {
 
 func (p *Database) BootstrapLocalAdmin(
 	ctx context.Context, organization tenancy.Organization,
-	email, displayName, passwordHash string,
+	email, displayName, passwordHash string, issued session.Session, digest []byte,
+	detail audit.Detail,
 ) (User, []authz.Membership, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -57,6 +60,14 @@ func (p *Database) BootstrapLocalAdmin(
 	if admins != 0 {
 		return User{}, nil, ErrLocalBootstrapComplete
 	}
+	if _, err := transaction.Exec(ctx,
+		`INSERT INTO organization (org_id, created_by) VALUES ($1, 'local bootstrap')`,
+		organization.String()); err != nil {
+		if isUniqueViolation(err, "organization_pkey") {
+			return User{}, nil, ErrLocalBootstrapComplete
+		}
+		return User{}, nil, fmt.Errorf("creating the first organization: %w", err)
+	}
 
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	var user User
@@ -65,7 +76,7 @@ func (p *Database) BootstrapLocalAdmin(
 			(user_id, issuer, subject, email, email_verified, display_name, last_sign_in)
 		VALUES ($1, $2, $3, $3, TRUE, $4, now())
 		RETURNING user_id, issuer, subject, email, email_verified, display_name, created_at`,
-		uuid.New(), localIssuer, normalized, displayName).Scan(
+		uuid.New(), LocalIssuer, normalized, displayName).Scan(
 		&user.ID, &user.Issuer, &user.Subject, &user.Email, &user.EmailVerified,
 		&user.DisplayName, &user.CreatedAt); err != nil {
 		return User{}, nil, fmt.Errorf("creating the first local administrator: %w", err)
@@ -98,6 +109,12 @@ func (p *Database) BootstrapLocalAdmin(
 	}
 	memberships, err := membershipsOf(ctx, transaction, user.ID)
 	if err != nil {
+		return User{}, nil, err
+	}
+	issued.UserID = user.ID
+	if err = issueSessionIn(ctx, transaction, organization, issued, digest, audit.Actor{
+		Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: user.DisplayName,
+	}, detail); err != nil {
 		return User{}, nil, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -141,7 +158,7 @@ func (p *Database) LocalIdentityByEmail(
 		  JOIN organization_membership membership ON membership.user_id = person.user_id
 		 WHERE person.issuer = $1 AND lower(person.email) = lower($2)
 		   AND membership.org_id = $3 AND membership.active AND membership.role IS NOT NULL`,
-		localIssuer, strings.TrimSpace(email), organization.String()).Scan(
+		LocalIssuer, strings.TrimSpace(email), organization.String()).Scan(
 		&found.User.ID, &found.User.Issuer, &found.User.Subject, &found.User.Email,
 		&found.User.EmailVerified, &found.User.DisplayName, &disabled,
 		&found.User.CreatedAt, &found.PasswordHash)
@@ -194,7 +211,7 @@ func (p *Database) CreateLocalMember(
 				INSERT INTO app_user
 					(user_id, issuer, subject, email, email_verified, display_name)
 				VALUES ($1, $2, $3, $3, TRUE, $4)`,
-				userID, localIssuer, normalized, displayName); err != nil {
+				userID, LocalIssuer, normalized, displayName); err != nil {
 				if isUniqueViolation(err, "app_user_identity_is_the_issuer_and_subject") {
 					return Member{}, audit.Target{}, nil, ErrLocalAccountExists
 				}
@@ -240,7 +257,7 @@ func (p *Database) ResetLocalPassword(
 				   AND person.user_id = credential.user_id AND person.issuer = $3
 				   AND membership.user_id = credential.user_id
 				   AND membership.org_id = $4 AND membership.active`,
-				passwordHash, user, localIssuer, organization.String())
+				passwordHash, user, LocalIssuer, organization.String())
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("resetting a local password: %w", err)
 			}

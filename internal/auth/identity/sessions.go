@@ -9,6 +9,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 // session answers who is signed in and which Organizations they may read.
@@ -26,8 +27,9 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	// A service account reading this is answering "what does this token reach", which is worth
 	// answering: it is how automation verifies its own scope without a mutation.
 	var (
-		expires time.Time
-		email   string
+		expires              time.Time
+		email                string
+		authenticationMethod string
 	)
 	if token, present := session.FromRequest(request); present {
 		ctx, cancel := contextWithTimeout(request, readTimeout)
@@ -36,9 +38,25 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 		if signedIn, err := h.Database.SessionByToken(ctx, session.Digest(token)); err == nil {
 			expires = signedIn.Session.ExpiresAt
 			email = signedIn.User.Email
+			authenticationMethod = "oidc"
+			if signedIn.User.Issuer == storage.LocalIssuer {
+				authenticationMethod = "local"
+			}
 		}
 	}
-	writeJSON(writer, http.StatusOK, sessionViewOf(principal, email, expires))
+	if authenticationMethod == "" {
+		authenticationMethod = "automation"
+	}
+	var active *membershipView
+	if organization, selected := authz.ActiveOrganizationFrom(request.Context()); selected {
+		if role, member := principal.RoleIn(organization); member {
+			active = &membershipView{
+				Organization: organization.String(), Role: string(role),
+			}
+		}
+	}
+	writeJSON(writer, http.StatusOK,
+		sessionViewOf(principal, email, expires, authenticationMethod, active))
 }
 
 // signOut ends the caller's own session on the server.
@@ -127,12 +145,7 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 	writeJSON(writer, http.StatusOK, liveSessionListView{Sessions: views})
 }
 
-// revokeSessions ends every live session one person holds in this tenant, immediately.
-//
-// Story 10: offboarding takes effect before the next token refresh. It is a separate permission
-// from managing members because ending somebody's session mid-incident and removing their
-// access are different acts with different urgency.
-func (h Handlers) revokeSessions(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) revokeSession(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -141,17 +154,15 @@ func (h Handlers) revokeSessions(writer http.ResponseWriter, request *http.Reque
 	if !ok {
 		return
 	}
-	user, ok := identifier(writer, request, "user")
+	sessionID, ok := identifier(writer, request, "session")
 	if !ok {
 		return
 	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-
-	ended, err := h.Database.RevokeSessionsOf(ctx, principal, organization, user)
-	if err != nil {
+	if err := h.Database.RevokeSession(ctx, principal, organization, sessionID); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"revoked": ended})
+	writer.WriteHeader(http.StatusNoContent)
 }

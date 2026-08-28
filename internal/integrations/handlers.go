@@ -62,7 +62,7 @@ type Handlers struct {
 
 // Routes is this domain surface's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
-	const base = "/api/v1/organizations/{organization}"
+	const base = "/api/v1"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base+"/integration-types", authz.IntegrationRead,
@@ -86,11 +86,13 @@ func (h Handlers) Routes() authz.Table {
 			authz.IntegrationUpdate, http.HandlerFunc(h.revise)),
 		authz.Privileged(http.MethodDelete, base+"/integrations/{integration}",
 			authz.IntegrationDelete, http.HandlerFunc(h.remove)),
-		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/enabled",
-			authz.IntegrationUpdate, http.HandlerFunc(h.setEnabled)),
+		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/enable",
+			authz.IntegrationUpdate, http.HandlerFunc(h.enable)),
+		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/disable",
+			authz.IntegrationUpdate, http.HandlerFunc(h.disable)),
 		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/verify",
 			authz.IntegrationVerify, http.HandlerFunc(h.verify)),
-		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/webhook/rotate-secret",
+		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/rotate-webhook-secret",
 			authz.IntegrationSecretRotate, http.HandlerFunc(h.rotateSecret)),
 	}
 }
@@ -519,12 +521,17 @@ func (h Handlers) remove(writer http.ResponseWriter, request *http.Request) {
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-// enabledRequest is idempotent on purpose: "set it to the state I want", never "toggle".
-type enabledRequest struct {
-	Enabled *bool `json:"enabled"`
+func (h Handlers) enable(writer http.ResponseWriter, request *http.Request) {
+	h.setDisabled(writer, request, false)
 }
 
-func (h Handlers) setEnabled(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) disable(writer http.ResponseWriter, request *http.Request) {
+	h.setDisabled(writer, request, true)
+}
+
+func (h Handlers) setDisabled(
+	writer http.ResponseWriter, request *http.Request, disabled bool,
+) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -533,19 +540,11 @@ func (h Handlers) setEnabled(writer http.ResponseWriter, request *http.Request) 
 	if !ok {
 		return
 	}
-	var asked enabledRequest
-	if !h.decode(writer, request, &asked) {
-		return
-	}
-	if asked.Enabled == nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "enabled is required"})
-		return
-	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
 	if err := h.Store.SetIntegrationDisabled(
-		ctx, principal, organization, id, !*asked.Enabled); err != nil {
+		ctx, principal, organization, id, disabled); err != nil {
 		h.fail(writer, request, err)
 		return
 	}

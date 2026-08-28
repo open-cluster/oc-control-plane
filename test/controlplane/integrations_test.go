@@ -643,7 +643,7 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 
 	t.Run("a rotation ends the old secret and starts the new one", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost,
-			base+"/integrations/"+created.Integration.ID+"/webhook/rotate-secret", nil)
+			base+"/integrations/"+created.Integration.ID+"/rotate-webhook-secret", nil)
 		if status != http.StatusOK {
 			t.Fatalf("rotating = %d: %s", status, body)
 		}
@@ -669,8 +669,7 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 	t.Run("a disabled integration refuses deliveries", func(t *testing.T) {
 		muted := plane.createAlertmanager(t, "Muted Alertmanager")
 		status, body := plane.call(t, http.MethodPost,
-			base+"/integrations/"+muted.Integration.ID+"/enabled",
-			map[string]any{"enabled": false})
+			base+"/integrations/"+muted.Integration.ID+"/disable", nil)
 		if status != http.StatusNoContent {
 			t.Fatalf("disabling = %d: %s", status, body)
 		}

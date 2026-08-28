@@ -16,7 +16,7 @@ import (
 // includes applying the migrations, which is the slowest thing a first start does.
 const (
 	controlPlaneStartTimeout   = 2 * time.Minute
-	organization               = "e2e-org"
+	organization               = "local"
 	investigationOperatorToken = "e2e-investigation-operator-token-with-sufficient-entropy"
 )
 
@@ -125,9 +125,9 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 }
 
 func (c *controlPlane) bootstrap(ctx context.Context) error {
-	body := strings.NewReader(`{"email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
+	body := strings.NewReader(`{"organization":"` + organization + `","email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://"+c.httpAddress+"/api/v1/organizations/"+organization+"/bootstrap", body)
+		"http://"+c.httpAddress+"/api/v1/auth/local/bootstrap", body)
 	if err != nil {
 		return err
 	}

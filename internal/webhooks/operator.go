@@ -27,7 +27,7 @@ var terminalWorkSpec = table.Spec{
 }
 
 func (h OperatorHandlers) Routes() authz.Table {
-	const base = "/api/v1/organizations/{organization}/webhook-work/terminal"
+	const base = "/api/v1/webhook-work/terminal"
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.InvestigationRead,
 			http.HandlerFunc(h.listTerminal)),

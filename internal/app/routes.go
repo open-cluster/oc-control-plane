@@ -196,7 +196,7 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 
 	endpoint := &relayEndpoint{
 		server:   grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler())),
-		sessions: relay.NewSessionService(process.database, process.logger, defaultInventoryInterval),
+		sessions: relay.NewSessionService(process.database, process.logger, process.inventoryInterval),
 	}
 	relayv1.RegisterRelayRegistrationServiceServer(endpoint.server,
 		relay.NewRegistrationService(process.database, cfg.RelaySPKIPins, process.logger))
@@ -273,6 +273,9 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		// statement is made to an auditor, and the only way to keep it true is for the component
 		// that starts the pruner to be the one that says it did.
 		RetentionEnforced: true,
+		CanCreateOrganization: func(principal authz.Principal) bool {
+			return principal.Kind() == authz.KindUser
+		},
 	}
 
 	handlers.Sealer = process.sealer

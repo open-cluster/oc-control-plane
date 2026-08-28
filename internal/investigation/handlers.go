@@ -47,7 +47,7 @@ type Handlers struct {
 
 // Routes is this domain surface's contribution to the operator API's index.
 func (h Handlers) Routes() authz.Table {
-	const base = "/api/v1/organizations/{organization}"
+	const base = "/api/v1"
 
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base+"/investigations", authz.InvestigationRead,
