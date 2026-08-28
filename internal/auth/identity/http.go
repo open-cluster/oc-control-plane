@@ -74,10 +74,23 @@ func (h Handlers) caller(
 	return principal, true
 }
 
-// organization resolves the tenant named in the path. The guard has already parsed it to make
-// its decision; parsing it again here rather than passing it through the context keeps this
-// handler readable on its own and costs a string comparison.
+// organization returns the tenant verified by the authorization middleware.
 func (h Handlers) organization(
+	writer http.ResponseWriter, request *http.Request,
+) (tenancy.Organization, bool) {
+	organization, ok := authz.ActiveOrganizationFrom(request.Context())
+	if !ok {
+		h.Logger.ErrorContext(request.Context(),
+			"a handler ran with no verified active organization",
+			slog.String("path", request.URL.Path))
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
+		return tenancy.Organization{}, false
+	}
+	return organization, true
+}
+
+// preAuthenticationOrganization parses the compatibility path before a Principal exists.
+func (h Handlers) preAuthenticationOrganization(
 	writer http.ResponseWriter, request *http.Request,
 ) (tenancy.Organization, bool) {
 	organization, err := tenancy.NewOrganization(request.PathValue("organization"))

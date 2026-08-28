@@ -34,7 +34,7 @@ type localPasswordRequest struct {
 }
 
 func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.Request) {
-	organization, ok := h.organization(writer, request)
+	organization, ok := h.preAuthenticationOrganization(writer, request)
 	if !ok {
 		return
 	}
@@ -104,7 +104,7 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 			errorView{Error: "this sign-in cannot be completed"})
 		return
 	}
-	organization, ok := h.organization(writer, request)
+	organization, ok := h.preAuthenticationOrganization(writer, request)
 	if !ok {
 		return
 	}

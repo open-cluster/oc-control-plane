@@ -134,9 +134,9 @@ func (h Handlers) addressed(
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 		return tenancy.Organization{}, uuid.Nil, authz.Principal{}, false
 	}
-	organization, err := tenancy.NewOrganization(request.PathValue("organization"))
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "organization is not a name"})
+	organization, ok := authz.ActiveOrganizationFrom(request.Context())
+	if !ok {
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 		return tenancy.Organization{}, uuid.Nil, authz.Principal{}, false
 	}
 	incidentID, err := uuid.Parse(request.PathValue("incident"))

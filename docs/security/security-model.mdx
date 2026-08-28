@@ -29,6 +29,10 @@ tenant-owned query predicates on the explicit organization identifier.
 Membership and role checks protect operator actions. Requests cannot use existence
 errors to enumerate organizations the caller cannot access.
 
+Authenticated Organization-scoped API requests send one
+`X-OpenCluster-Organization` header. OpenCluster verifies that selector against the
+signed-in User's current membership before the request reaches product behavior.
+
 ## Read and write boundaries
 
 OpenCluster writes its own incidents, investigation records, audit entries, and

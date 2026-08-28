@@ -113,6 +113,7 @@ func (p *integrationPlane) call(t *testing.T, method, url string, body any) (int
 		t.Fatalf("building the request: %v", err)
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
+	selectOrganizationFromURL(request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", "http://"+p.operator)
 	}

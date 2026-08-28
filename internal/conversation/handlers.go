@@ -348,10 +348,12 @@ func (h Handlers) caller(
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 		return authz.Principal{}, tenancy.Organization{}, false
 	}
-	organization, err := tenancy.NewOrganization(request.PathValue("organization"))
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "organization is not a name"})
+	organization, ok := authz.ActiveOrganizationFrom(request.Context())
+	if !ok {
+		h.Logger.ErrorContext(request.Context(),
+			"a handler ran with no verified active organization",
+			slog.String("path", request.URL.Path))
+		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 		return authz.Principal{}, tenancy.Organization{}, false
 	}
 	if !h.Enabled {

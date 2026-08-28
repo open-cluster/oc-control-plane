@@ -18,7 +18,7 @@ type oidcMemberRequest struct {
 }
 
 func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
-	organization, ok := h.organization(w, r)
+	organization, ok := h.preAuthenticationOrganization(w, r)
 	if !ok {
 		return
 	}

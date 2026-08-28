@@ -162,9 +162,9 @@ func addressedWork(writer http.ResponseWriter, request *http.Request) (tenancy.O
 }
 
 func workOrganization(writer http.ResponseWriter, request *http.Request) (tenancy.Organization, bool) {
-	organization, err := tenancy.NewOrganization(request.PathValue("organization"))
-	if err != nil {
-		writeWorkJSON(writer, http.StatusBadRequest, map[string]string{"error": "organization is not a name"})
+	organization, ok := authz.ActiveOrganizationFrom(request.Context())
+	if !ok {
+		writeWorkJSON(writer, http.StatusInternalServerError, map[string]string{"error": "request failed"})
 		return tenancy.Organization{}, false
 	}
 	return organization, true

@@ -261,6 +261,50 @@ func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 	}
 }
 
+func TestOrganizationScopedHandlersDoNotReparseTheOrganizationPath(t *testing.T) {
+	t.Parallel()
+
+	for _, directory := range internalPackages(t) {
+		relative, err := filepath.Rel(moduleRoot, directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := filepath.ToSlash(relative)
+		if name == "internal/auth/authz" {
+			continue
+		}
+		for _, file := range parseProductionFiles(t, directory) {
+			for _, declaration := range file.Decls {
+				function, ok := declaration.(*ast.FuncDecl)
+				if !ok || function.Body == nil {
+					continue
+				}
+				if name == "internal/auth/identity" &&
+					function.Name.Name == "preAuthenticationOrganization" {
+					continue
+				}
+				ast.Inspect(function.Body, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok || len(call.Args) != 1 {
+						return true
+					}
+					selector, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok || selector.Sel.Name != "PathValue" {
+						return true
+					}
+					literal, ok := call.Args[0].(*ast.BasicLit)
+					if ok && literal.Value == `"organization"` {
+						t.Errorf("%s.%s reparses the Organization path; handlers must consume "+
+							"the verified active Organization from request context",
+							name, function.Name.Name)
+					}
+					return true
+				})
+			}
+		}
+	}
+}
+
 // internalPackages reports every directory under internal/ that holds production Go files.
 func internalPackages(t *testing.T) []string {
 	t.Helper()

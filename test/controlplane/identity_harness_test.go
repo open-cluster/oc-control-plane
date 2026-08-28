@@ -329,6 +329,7 @@ func (p *identityPlane) call(
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	selectOrganizationFromURL(request)
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:

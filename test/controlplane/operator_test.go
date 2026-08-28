@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
@@ -317,6 +318,64 @@ func TestOperatorSurface(t *testing.T) {
 	})
 }
 
+func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
+	plane := startControlPlane(t, func(cfg *config.Config) {
+		digest := sha256.Sum256([]byte(surfaceToken))
+		cfg.OperatorTokenDigest = digest[:]
+		cfg.OperatorTokenOrganization = "local"
+		cfg.OperatorTokenRole = "admin"
+	})
+	const path = "/api/v1/organizations/local/relays"
+
+	for _, testCase := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "missing"},
+		{name: "repeated", values: []string{"local", "local"}},
+		{name: "malformed", values: []string{"local organization"}},
+		{name: "conflicts with path", values: []string{"other"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request, err := http.NewRequest(http.MethodGet, plane.baseURL+path, nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
+			for _, value := range testCase.values {
+				request.Header.Add(authz.OrganizationHeader, value)
+			}
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatalf("call request: %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != http.StatusBadRequest {
+				t.Errorf("%s selector answered %d, want 400", testCase.name, response.StatusCode)
+			}
+		})
+	}
+
+	body := strings.NewReader(`{"organization":"other"}`)
+	request, err := http.NewRequest(http.MethodPost,
+		plane.baseURL+"/api/v1/organizations/local/members", body)
+	if err != nil {
+		t.Fatalf("build body-conflict request: %v", err)
+	}
+	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
+	request.Header.Set(authz.OrganizationHeader, "local")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", plane.baseURL)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("call body-conflict request: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Errorf("body-supplied Organization answered %d, want 400", response.StatusCode)
+	}
+}
+
 // The token file is the only way a token is configured in production, so the reading of it is
 // worth exercising rather than assumed: a surface that silently starts with no credential, or
 // with a guessable one, is worse than one that refuses to start.
@@ -420,6 +479,7 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 	if token != "" {
 		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: token})
 	}
+	selectOrganizationFromURL(request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", request.URL.Scheme+"://"+request.URL.Host)
 	}
