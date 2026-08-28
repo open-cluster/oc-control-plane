@@ -191,7 +191,7 @@ func TestDeploymentExamplesOfferPinnedTLSRelayAndBehavioralCIGates(t *testing.T)
 		"deploy/helm/opencluster/templates/deployment.yaml": {"name: relay-tls", "name: relay-certificates"},
 		"deploy/helm/opencluster/templates/service.yaml":    {"name: relay-tls"},
 		".github/workflows/ci.yml":                          {"make deploy-verify", "needs.relay-availability.outputs.available"},
-		"Makefile":                                          {"deploy-verify:", "docker compose", "helm lint", "helm template", "docker build", "verify: lint build test vuln licenses deploy-verify"},
+		"Makefile":                                          {"openapi:", "deploy-verify:", "docker compose", "helm lint", "helm template", "docker build", "verify: openapi lint build test vuln licenses deploy-verify"},
 		"README.md":                                         {"OPENCLUSTER_RELAY_SPKI_PINS", "--profile relay", "relay.enabled=true"},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))

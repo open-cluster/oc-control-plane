@@ -3,7 +3,7 @@ GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.1.4
 GOLICENSES_VERSION := v2.0.1
 
-.PHONY: tools lint build test test-short vuln licenses deploy-verify verify
+.PHONY: tools lint openapi build test test-short vuln licenses deploy-verify verify
 
 HARNESS_MODULE := test/e2e
 TEST_TIMEOUT ?= 30m
@@ -26,6 +26,9 @@ lint:
 	cd $(HARNESS_MODULE) && staticcheck ./...
 	golangci-lint run
 	cd $(HARNESS_MODULE) && golangci-lint run
+
+openapi:
+	sh scripts/openapi.sh
 
 build:
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" ./...
@@ -56,4 +59,4 @@ deploy-verify:
 		> /dev/null
 	docker build --file deploy/compose/Dockerfile --tag opencluster-control-plane:ci .
 
-verify: lint build test vuln licenses deploy-verify
+verify: openapi lint build test vuln licenses deploy-verify

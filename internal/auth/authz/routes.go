@@ -120,6 +120,10 @@ func (r Route) Access() Access { return r.access }
 // OrganizationScoped reports whether the route requires a verified active Organization.
 func (r Route) OrganizationScoped() bool { return r.organizationScoped }
 
+// OrganizationOptional reports whether the caller may select an Organization for this route
+// but the route remains valid without one.
+func (r Route) OrganizationOptional() bool { return r.organizationOptional }
+
 // Handler is what serves the request once the decision has been made.
 func (r Route) Handler() http.Handler { return r.handler }
 

@@ -1,0 +1,1758 @@
+openapi: 3.1.0
+info:
+  title: OpenCluster Control Plane API
+  version: 0.1.0
+  description: Operator-facing HTTP contract for the OpenCluster control plane.
+  license:
+    name: Apache-2.0
+servers:
+  - url: /
+tags:
+  - name: Authentication
+  - name: Organizations
+  - name: Members
+  - name: Sessions
+  - name: Policy
+  - name: Audit
+  - name: Integration Types
+  - name: Integrations
+  - name: Relays
+  - name: Incidents
+  - name: Investigations
+  - name: Conversations
+  - name: Postmortems
+  - name: Webhook Work
+
+# These anchors keep security policy identical across operations. The bundled release artifact
+# expands them; this file remains the only editable source.
+x-opencluster-operation-templates:
+  public-read: &public-read
+    security: []
+    x-opencluster-access: public
+    x-opencluster-organization-selector: forbidden
+    x-opencluster-cookie-csrf: not-required
+    x-opencluster-idempotency: not-applicable
+    responses: &public-responses
+      default: { $ref: "#/components/responses/ErrorResponse" }
+  public-write: &public-write
+    security: []
+    x-opencluster-access: public
+    x-opencluster-organization-selector: forbidden
+    x-opencluster-cookie-csrf: not-required
+    x-opencluster-idempotency: not-supported
+    responses: *public-responses
+  authenticated-read: &authenticated-read
+    security: &authenticated-security
+      - SessionCookie: []
+      - BearerToken: []
+    x-opencluster-access: authenticated
+    x-opencluster-organization-selector: forbidden
+    x-opencluster-cookie-csrf: not-required
+    x-opencluster-idempotency: not-applicable
+    responses: &authenticated-responses
+      default: { $ref: "#/components/responses/ErrorResponse" }
+  authenticated-write: &authenticated-write
+    security: *authenticated-security
+    x-opencluster-access: authenticated
+    x-opencluster-organization-selector: forbidden
+    x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
+    x-opencluster-idempotency: not-supported
+    responses: *authenticated-responses
+  optional-organization-read: &optional-organization-read
+    security: *authenticated-security
+    x-opencluster-access: authenticated
+    x-opencluster-organization-selector: optional
+    x-opencluster-cookie-csrf: not-required
+    x-opencluster-idempotency: not-applicable
+    parameters:
+      - $ref: "#/components/parameters/OptionalOrganization"
+    responses: *authenticated-responses
+  organization-read: &organization-read
+    security: *authenticated-security
+    x-opencluster-access: authenticated
+    x-opencluster-organization-selector: required
+    x-opencluster-cookie-csrf: not-required
+    x-opencluster-idempotency: not-applicable
+    parameters:
+      - $ref: "#/components/parameters/Organization"
+    responses: *authenticated-responses
+  privileged-read: &privileged-read
+    security: *authenticated-security
+    x-opencluster-access: privileged
+    x-opencluster-organization-selector: required
+    x-opencluster-cookie-csrf: not-required
+    x-opencluster-idempotency: not-applicable
+    parameters:
+      - $ref: "#/components/parameters/Organization"
+    responses: *authenticated-responses
+  privileged-write: &privileged-write
+    security: *authenticated-security
+    x-opencluster-access: privileged
+    x-opencluster-organization-selector: required
+    x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
+    x-opencluster-idempotency: not-supported
+    parameters:
+      - $ref: "#/components/parameters/Organization"
+    responses: *authenticated-responses
+
+paths:
+  /api/v1/auth/local/bootstrap:
+    post:
+      <<: *public-write
+      operationId: bootstrapLocalAdmin
+      tags: [Authentication]
+      security:
+        - BootstrapToken: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalCredentialRequest" }
+        required: true
+      responses:
+        "201": { $ref: "#/components/responses/BootstrapCreated" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /api/v1/auth/local/sign-in:
+    post:
+      <<: *public-write
+      operationId: signInLocal
+      tags: [Authentication]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalCredentialRequest" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/SignIn" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /api/v1/auth/oidc/start:
+    get:
+      <<: *public-read
+      operationId: startOIDCSignIn
+      tags: [Authentication]
+      parameters:
+        - name: organization
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/OrganizationID" }
+      responses:
+        "302": { $ref: "#/components/responses/Redirect" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/v1/auth/oidc/callback:
+    get:
+      <<: *public-read
+      operationId: completeOIDCSignIn
+      tags: [Authentication]
+      parameters:
+        - { $ref: "#/components/parameters/OAuthCode" }
+        - { $ref: "#/components/parameters/OAuthState" }
+      responses:
+        "302": { $ref: "#/components/responses/Redirect" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/session:
+    get:
+      <<: *optional-organization-read
+      operationId: getSession
+      tags: [Sessions]
+      responses:
+        "200": { $ref: "#/components/responses/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      <<: *authenticated-write
+      operationId: signOut
+      tags: [Sessions]
+      responses:
+        "200": { $ref: "#/components/responses/SignOut" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/organizations:
+    get:
+      <<: *authenticated-read
+      operationId: listOrganizations
+      tags: [Organizations]
+      responses:
+        "200":
+          description: Organizations available to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      <<: *authenticated-write
+      operationId: createOrganization
+      tags: [Organizations]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrganizationRequest" }
+        required: true
+      responses:
+        "201":
+          description: Organization and initial Admin membership created atomically.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/permissions:
+    get:
+      <<: *organization-read
+      operationId: listEffectivePermissions
+      tags: [Organizations]
+      responses:
+        "200": { $ref: "#/components/responses/PermissionList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/members:
+    get:
+      <<: *privileged-read
+      operationId: listMembers
+      tags: [Members]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/After" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/MemberList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    post:
+      <<: *privileged-write
+      operationId: createMember
+      tags: [Members]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMemberRequest" }
+        required: true
+      responses:
+        "201": { $ref: "#/components/responses/Member" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/members/{user}:
+    parameters: &user-path
+      - { $ref: "#/components/parameters/UserID" }
+    patch:
+      <<: *privileged-write
+      operationId: updateMember
+      tags: [Members]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMemberRequest" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/Member" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    delete:
+      <<: *privileged-write
+      operationId: removeMember
+      tags: [Members]
+      responses:
+        "204": { description: Membership removed and its sessions revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/members/{user}/password:
+    parameters: *user-path
+    put:
+      <<: *privileged-write
+      operationId: replaceMemberPassword
+      tags: [Members]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordRequest" }
+        required: true
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/sessions:
+    get:
+      <<: *privileged-read
+      operationId: listSessions
+      tags: [Sessions]
+      responses:
+        "200": { $ref: "#/components/responses/SessionList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/sessions/{session}:
+    parameters:
+      - { $ref: "#/components/parameters/SessionID" }
+    delete:
+      <<: *privileged-write
+      operationId: revokeSession
+      tags: [Sessions]
+      responses:
+        "204": { description: The named session was revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/policy:
+    get:
+      <<: *privileged-read
+      operationId: getOrganizationPolicy
+      tags: [Policy]
+      responses:
+        "200": { $ref: "#/components/responses/Policy" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    put:
+      <<: *privileged-write
+      operationId: replaceOrganizationPolicy
+      tags: [Policy]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Policy" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/Policy" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/audit-events:
+    get:
+      <<: *privileged-read
+      operationId: listAuditEvents
+      tags: [Audit]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/After" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/AuditEventList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integration-types:
+    get:
+      <<: *privileged-read
+      operationId: listIntegrationTypes
+      tags: [Integration Types]
+      responses:
+        "200": { $ref: "#/components/responses/IntegrationTypeList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integration-types/{type}/connect:
+    parameters:
+      - { $ref: "#/components/parameters/IntegrationType" }
+    post:
+      <<: *privileged-write
+      operationId: startIntegrationConnect
+      tags: [Integration Types]
+      responses:
+        "200": { $ref: "#/components/responses/ConnectStarted" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integrations/connect/callback:
+    get:
+      <<: *authenticated-read
+      operationId: completeIntegrationConnect
+      tags: [Integrations]
+      parameters:
+        - { $ref: "#/components/parameters/OAuthCode" }
+        - { $ref: "#/components/parameters/OAuthState" }
+      responses:
+        "200": { $ref: "#/components/responses/ConnectLanded" }
+        "302": { $ref: "#/components/responses/Redirect" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/integrations:
+    get:
+      <<: *privileged-read
+      operationId: listIntegrations
+      tags: [Integrations]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/IntegrationList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    post:
+      <<: *privileged-write
+      operationId: createIntegration
+      tags: [Integrations]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIntegrationRequest" }
+        required: true
+      responses:
+        "201": { $ref: "#/components/responses/IntegrationCreated" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/integrations/{integration}:
+    parameters: &integration-path
+      - { $ref: "#/components/parameters/IntegrationID" }
+    get:
+      <<: *privileged-read
+      operationId: getIntegration
+      tags: [Integrations]
+      responses:
+        "200": { $ref: "#/components/responses/Integration" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    patch:
+      <<: *privileged-write
+      operationId: updateIntegration
+      tags: [Integrations]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateIntegrationRequest" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/Integration" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    delete:
+      <<: *privileged-write
+      operationId: deleteIntegration
+      tags: [Integrations]
+      responses:
+        "204": { description: Integration deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/integrations/{integration}/enable:
+    parameters: *integration-path
+    post:
+      <<: *privileged-write
+      operationId: enableIntegration
+      tags: [Integrations]
+      x-opencluster-idempotency: intrinsic
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integrations/{integration}/disable:
+    parameters: *integration-path
+    post:
+      <<: *privileged-write
+      operationId: disableIntegration
+      tags: [Integrations]
+      x-opencluster-idempotency: intrinsic
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integrations/{integration}/verify:
+    parameters: *integration-path
+    post:
+      <<: *privileged-write
+      operationId: verifyIntegration
+      tags: [Integrations]
+      responses:
+        "200": { $ref: "#/components/responses/Integration" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integrations/{integration}/rotate-webhook-secret:
+    parameters: *integration-path
+    post:
+      <<: *privileged-write
+      operationId: rotateIntegrationWebhookSecret
+      tags: [Integrations]
+      responses:
+        "200": { $ref: "#/components/responses/SecretRotated" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/relays:
+    get:
+      <<: *privileged-read
+      operationId: listRelays
+      tags: [Relays]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/RelayList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/relays/summary:
+    get:
+      <<: *privileged-read
+      operationId: getRelayFleetSummary
+      tags: [Relays]
+      responses:
+        "200": { $ref: "#/components/responses/RelayFleetSummary" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/relays/bootstrap-tokens:
+    post:
+      <<: *privileged-write
+      operationId: issueRelayBootstrapToken
+      tags: [Relays]
+      responses:
+        "201": { $ref: "#/components/responses/RelayBootstrapToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/relays/{registration}/integrations:
+    parameters: &relay-path
+      - { $ref: "#/components/parameters/RelayRegistrationID" }
+    get:
+      <<: *privileged-read
+      operationId: listRelayIntegrations
+      tags: [Relays]
+      responses:
+        "200": { $ref: "#/components/responses/RelayIntegrationList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/relays/{registration}/failures:
+    parameters: *relay-path
+    get:
+      <<: *privileged-read
+      operationId: listRelayFailures
+      tags: [Relays]
+      responses:
+        "200": { $ref: "#/components/responses/RelayFailureList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/relays/{registration}/session-conflicts:
+    parameters: *relay-path
+    get:
+      <<: *privileged-read
+      operationId: listRelaySessionConflicts
+      tags: [Relays]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/After" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/RelayConflictTrail" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/relays/{registration}/clear-conflict:
+    parameters: *relay-path
+    post:
+      <<: *privileged-write
+      operationId: clearRelaySessionConflict
+      tags: [Relays]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/incidents:
+    get:
+      <<: *privileged-read
+      operationId: listIncidents
+      tags: [Incidents]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/IncidentList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/incidents/{incident}:
+    parameters: &incident-path
+      - { $ref: "#/components/parameters/IncidentID" }
+    get:
+      <<: *privileged-read
+      operationId: getIncident
+      tags: [Incidents]
+      responses:
+        "200": { $ref: "#/components/responses/Incident" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/incidents/{incident}/alert-events:
+    parameters: *incident-path
+    get:
+      <<: *privileged-read
+      operationId: listIncidentAlertEvents
+      tags: [Incidents]
+      responses:
+        "200": { $ref: "#/components/responses/AlertEventList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/incidents/{incident}/merge:
+    parameters: *incident-path
+    post:
+      <<: *privileged-write
+      operationId: mergeIncident
+      tags: [Incidents]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MergeIncidentRequest" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/Incident" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations:
+    get:
+      <<: *privileged-read
+      operationId: listInvestigations
+      tags: [Investigations]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/InvestigationList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    post:
+      <<: *privileged-write
+      operationId: openInvestigation
+      tags: [Investigations]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenInvestigationRequest" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/Clarification" }
+        "202": { $ref: "#/components/responses/Investigation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/v1/investigations/{investigation}:
+    parameters: &investigation-path
+      - { $ref: "#/components/parameters/InvestigationID" }
+    get:
+      <<: *privileged-read
+      operationId: getInvestigation
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/InvestigationDetail" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/report:
+    parameters: *investigation-path
+    get:
+      <<: *privileged-read
+      operationId: getInvestigationReport
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/Investigation" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/activity:
+    parameters: *investigation-path
+    get:
+      <<: *privileged-read
+      operationId: listInvestigationActivity
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/InvestigationActivity" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/sources:
+    parameters: *investigation-path
+    get:
+      <<: *privileged-read
+      operationId: listInvestigationSources
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/InvestigationSources" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/hypotheses:
+    parameters: *investigation-path
+    get:
+      <<: *privileged-read
+      operationId: listInvestigationHypotheses
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/InvestigationHypotheses" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/cancel:
+    parameters: *investigation-path
+    post:
+      <<: *privileged-write
+      operationId: cancelInvestigation
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/Investigation" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/events:
+    parameters:
+      - { $ref: "#/components/parameters/InvestigationID" }
+      - { $ref: "#/components/parameters/Organization" }
+      - { $ref: "#/components/parameters/LastEventID" }
+    get:
+      <<: *privileged-read
+      operationId: streamInvestigationEvents
+      tags: [Investigations]
+      responses:
+        "200":
+          description: Increasing event identifiers, named events, and comment heartbeats. Last-Event-ID resumes after the named event.
+          headers:
+            X-Accel-Buffering:
+              schema: { type: string, const: "no" }
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: "id: 42\nevent: activity\ndata: {\"kind\":\"observation\"}\n\n: heartbeat\n\n"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/conversations:
+    get:
+      <<: *privileged-read
+      operationId: listConversations
+      tags: [Conversations]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/ConversationList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    post:
+      <<: *privileged-write
+      operationId: openConversation
+      tags: [Conversations]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenConversationRequest" }
+        required: true
+      responses:
+        "201": { $ref: "#/components/responses/ConversationOpened" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/conversations/{conversation}:
+    parameters: &conversation-path
+      - { $ref: "#/components/parameters/ConversationID" }
+    get:
+      <<: *privileged-read
+      operationId: getConversation
+      tags: [Conversations]
+      responses:
+        "200": { $ref: "#/components/responses/ConversationDetail" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/conversations/{conversation}/messages:
+    parameters: *conversation-path
+    post:
+      <<: *privileged-write
+      operationId: appendConversationMessage
+      tags: [Conversations]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConversationMessageRequest" }
+        required: true
+      responses:
+        "202": { $ref: "#/components/responses/ConversationMessageAccepted" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /api/v1/incidents/{incident}/postmortem:
+    parameters: *incident-path
+    get:
+      <<: *privileged-read
+      operationId: getPostmortem
+      tags: [Postmortems]
+      responses:
+        "200": { $ref: "#/components/responses/Postmortem" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    post:
+      <<: *privileged-write
+      operationId: generatePostmortem
+      tags: [Postmortems]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostmortemHumanInput" }
+        required: false
+      responses:
+        "201": { $ref: "#/components/responses/Postmortem" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    patch:
+      <<: *privileged-write
+      operationId: updatePostmortem
+      tags: [Postmortems]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostmortemCorrections" }
+        required: true
+      responses:
+        "200": { $ref: "#/components/responses/Postmortem" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/incidents/{incident}/postmortem/regenerate:
+    parameters: *incident-path
+    post:
+      <<: *privileged-write
+      operationId: regeneratePostmortem
+      tags: [Postmortems]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostmortemHumanInput" }
+        required: false
+      responses:
+        "200": { $ref: "#/components/responses/Postmortem" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/incidents/{incident}/postmortem/review:
+    parameters: *incident-path
+    post:
+      <<: *privileged-write
+      operationId: reviewPostmortem
+      tags: [Postmortems]
+      responses:
+        "200": { $ref: "#/components/responses/Postmortem" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/webhook-work/terminal:
+    get:
+      <<: *privileged-read
+      operationId: listTerminalWebhookWork
+      tags: [Webhook Work]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookWorkList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/webhook-work/terminal/{work}:
+    parameters: &work-path
+      - { $ref: "#/components/parameters/WorkID" }
+    get:
+      <<: *privileged-read
+      operationId: getTerminalWebhookWork
+      tags: [Webhook Work]
+      responses:
+        "200": { $ref: "#/components/responses/WebhookWork" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/webhook-work/terminal/{work}/replay:
+    parameters: *work-path
+    post:
+      <<: *privileged-write
+      operationId: replayTerminalWebhookWork
+      tags: [Webhook Work]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-oc_session
+    BearerToken:
+      type: http
+      scheme: bearer
+    BootstrapToken:
+      type: http
+      scheme: bearer
+      description: Deployment bootstrap credential; accepted only until bootstrap succeeds.
+  parameters:
+    Organization:
+      name: X-OpenCluster-Organization
+      in: header
+      required: true
+      description: Selects the Organization whose data and membership are authorized.
+      schema: { $ref: "#/components/schemas/OrganizationID" }
+      example: acme-production
+    OptionalOrganization:
+      name: X-OpenCluster-Organization
+      in: header
+      required: false
+      description: Optionally selects an Organization for Organization-specific session facts.
+      schema: { $ref: "#/components/schemas/OrganizationID" }
+      example: acme-production
+    After:
+      name: after
+      in: query
+      required: false
+      schema: { type: string, maxLength: 512 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque resume position returned in the preceding page's next field.
+      schema: { type: string, maxLength: 512 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema: { type: integer, format: int64, minimum: 0 }
+    OAuthCode:
+      name: code
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 4096 }
+    OAuthState:
+      name: state
+      in: query
+      required: true
+      schema: { type: string, minLength: 32, maxLength: 4096 }
+    UserID: { name: user, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    SessionID: { name: session, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    IntegrationID: { name: integration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    IntegrationType: { name: type, in: path, required: true, schema: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" } }
+    RelayRegistrationID: { name: registration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    IncidentID: { name: incident, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    InvestigationID: { name: investigation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    ConversationID: { name: conversation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    WorkID: { name: work, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+  responses:
+    ErrorResponse:
+      description: The operation did not complete.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NoContent:
+      description: The operation completed and has no response body.
+    BootstrapCreated:
+      description: Initial identity, Organization, membership, and session created atomically.
+      headers:
+        Set-Cookie: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BootstrapResult" }
+    SignIn:
+      description: Sign-in succeeded and the session cookie was issued.
+      headers:
+        Set-Cookie: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignInResult" }
+    SignOut:
+      description: The browser cookie was cleared; signedOut states whether a server-side session was ended.
+      headers:
+        Set-Cookie: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignOut" }
+    Session:
+      description: Current session facts.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Session" }
+    PermissionList: { description: Effective permissions in the selected Organization., content: { application/json: { schema: { $ref: "#/components/schemas/PermissionList" } } } }
+    MemberList: { description: Organization members., content: { application/json: { schema: { $ref: "#/components/schemas/MemberList" } } } }
+    Member: { description: Organization member., content: { application/json: { schema: { $ref: "#/components/schemas/Member" } } } }
+    SessionList: { description: Live Organization sessions., content: { application/json: { schema: { $ref: "#/components/schemas/LiveSessionList" } } } }
+    Policy: { description: Organization identity policy., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
+    AuditEventList: { description: Organization audit events., content: { application/json: { schema: { $ref: "#/components/schemas/AuditEventList" } } } }
+    IntegrationTypeList: { description: Integration Types served by this build., content: { application/json: { schema: { $ref: "#/components/schemas/IntegrationTypeList" } } } }
+    ConnectStarted: { description: Provider-owned installation flow started., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectStarted" } } } }
+    ConnectLanded: { description: Provider-owned installation flow outcome., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectLanded" } } } }
+    IntegrationList: { description: Configured Integrations., content: { application/json: { schema: { $ref: "#/components/schemas/IntegrationList" } } } }
+    IntegrationCreated: { description: Integration created; webhookSecret is present only in this response when applicable., content: { application/json: { schema: { $ref: "#/components/schemas/CreatedIntegration" } } } }
+    Integration: { description: Configured Integration., content: { application/json: { schema: { $ref: "#/components/schemas/Integration" } } } }
+    SecretRotated: { description: New webhook secret returned once; only its digest is retained., content: { application/json: { schema: { $ref: "#/components/schemas/RotatedSecret" } } } }
+    RelayList: { description: Relay roster., content: { application/json: { schema: { $ref: "#/components/schemas/RelayList" } } } }
+    RelayFleetSummary: { description: Relay fleet assessment., content: { application/json: { schema: { $ref: "#/components/schemas/RelayFleetSummary" } } } }
+    RelayBootstrapToken: { description: Bootstrap token returned once; only its digest is retained., content: { application/json: { schema: { $ref: "#/components/schemas/RelayBootstrapToken" } } } }
+    RelayIntegrationList: { description: Integrations served by a Relay., content: { application/json: { schema: { $ref: "#/components/schemas/RelayIntegrationList" } } } }
+    RelayFailureList: { description: Recent failed or cancelled Relay work., content: { application/json: { schema: { $ref: "#/components/schemas/RelayFailureList" } } } }
+    RelayConflictTrail: { description: Durable Relay session-conflict trail., content: { application/json: { schema: { $ref: "#/components/schemas/RelayConflictTrail" } } } }
+    IncidentList: { description: Incidents., content: { application/json: { schema: { $ref: "#/components/schemas/IncidentList" } } } }
+    Incident: { description: Incident., content: { application/json: { schema: { $ref: "#/components/schemas/Incident" } } } }
+    AlertEventList: { description: Alert Events in an Incident., content: { application/json: { schema: { $ref: "#/components/schemas/AlertEventList" } } } }
+    Clarification: { description: A question needed before an Investigation can be opened., content: { application/json: { schema: { $ref: "#/components/schemas/Clarification" } } } }
+    InvestigationList: { description: Investigations., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationList" } } } }
+    Investigation: { description: Investigation., content: { application/json: { schema: { $ref: "#/components/schemas/Investigation" } } } }
+    InvestigationDetail: { description: Investigation with sources and Tool Runs., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationDetail" } } } }
+    InvestigationActivity: { description: Investigation activity., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationActivity" } } } }
+    InvestigationSources: { description: Investigation sources., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationSources" } } } }
+    InvestigationHypotheses: { description: Investigation hypotheses., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationHypotheses" } } } }
+    ConversationList: { description: Conversations., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationList" } } } }
+    ConversationOpened: { description: "Conversation opened, with an optional first Message and turn.", content: { application/json: { schema: { $ref: "#/components/schemas/ConversationOpened" } } } }
+    ConversationDetail: { description: Conversation with Messages and turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationDetail" } } } }
+    ConversationMessageAccepted: { description: Message accepted; turn is absent when queued behind an active turn., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
+    Postmortem: { description: Postmortem., content: { application/json: { schema: { $ref: "#/components/schemas/Postmortem" } } } }
+    WebhookWorkList: { description: Terminal webhook work., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookWorkList" } } } }
+    WebhookWork: { description: Terminal webhook work item., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookWork" } } } }
+    Redirect:
+      description: Browser redirect.
+      headers:
+        Location:
+          required: true
+          schema: { type: string, format: uri }
+    BadRequest: { description: Invalid request., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Unauthorized: { description: Missing or rejected credential., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Forbidden:
+      description: Membership, permission, Organization selection, or cookie origin was rejected.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound: { description: Resource not found in the selected Organization., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Conflict: { description: The requested state conflicts with durable state., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    RateLimited:
+      description: A bounded concurrency or request limit was reached.
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable: { description: A required configured capability is unavailable., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  schemas:
+    UUID: { type: string, format: uuid }
+    Timestamp: { type: string, format: date-time }
+    OrganizationID: { type: string, pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", minLength: 1, maxLength: 63 }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string, minLength: 1, maxLength: 1024, example: "the selected Organization is not available to this caller" }
+        reason: { type: string, enum: [credential_rejected, session_expired, session_revoked] }
+        requires: { type: string, minLength: 1, maxLength: 128 }
+    LocalCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [organization, email, password]
+      properties:
+        organization: { $ref: "#/components/schemas/OrganizationID" }
+        email: { type: string, format: email, maxLength: 254, example: operator@example.invalid }
+        displayName: { type: string, minLength: 1, maxLength: 256, example: On-call Operator }
+        password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true, example: correct-horse-placeholder }
+    Principal:
+      type: object
+      additionalProperties: false
+      required: [id, kind, displayName, roles, scopes]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        kind: { type: string, enum: [user, automation] }
+        displayName: { type: string, minLength: 1, maxLength: 256 }
+        email: { type: string, format: email, maxLength: 254 }
+        roles: { type: array, items: { type: string, enum: [admin, editor, viewer] }, uniqueItems: true }
+        scopes: { type: array, items: { type: string }, uniqueItems: true }
+    Organization:
+      type: object
+      additionalProperties: false
+      required: [id, role]
+      properties:
+        id: { $ref: "#/components/schemas/OrganizationID" }
+        role: { type: string, enum: [admin, editor, viewer] }
+    Membership:
+      type: object
+      additionalProperties: false
+      required: [organizationId, role]
+      properties:
+        organizationId: { $ref: "#/components/schemas/OrganizationID" }
+        role: { type: string, enum: [admin, editor, viewer] }
+    OrganizationList:
+      type: object
+      additionalProperties: false
+      required: [organizations]
+      properties:
+        organizations: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+    CreateOrganizationRequest:
+      type: object
+      additionalProperties: false
+      required: [organization]
+      properties:
+        organization: { $ref: "#/components/schemas/OrganizationID" }
+    Session:
+      type: object
+      additionalProperties: false
+      required: [principal, organizations, authenticationMethod, csrf, expiresAt]
+      properties:
+        principal: { $ref: "#/components/schemas/Principal" }
+        organizations: { type: array, items: { $ref: "#/components/schemas/Membership" } }
+        activeOrganization: { oneOf: [{ $ref: "#/components/schemas/Membership" }, { type: "null" }] }
+        authenticationMethod: { type: string, enum: [local, oidc, automation] }
+        csrf:
+          type: object
+          additionalProperties: false
+          required: [mode, requiredForUnsafeMethods]
+          properties:
+            mode: { type: string, const: origin }
+            requiredForUnsafeMethods: { type: boolean, const: true }
+        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+    SignOut:
+      type: object
+      additionalProperties: false
+      required: [signedOut]
+      properties: { signedOut: { type: boolean } }
+    BootstrapResult:
+      type: object
+      additionalProperties: false
+      required: [bootstrapped]
+      properties: { bootstrapped: { type: boolean, const: true } }
+    SignInResult:
+      type: object
+      additionalProperties: false
+      required: [signedIn]
+      properties: { signedIn: { type: boolean, const: true } }
+    PermissionList:
+      type: object
+      additionalProperties: false
+      required: [organizationId, role, permissions]
+      properties:
+        organizationId: { $ref: "#/components/schemas/OrganizationID" }
+        role: { type: string, enum: [admin, editor, viewer] }
+        permissions: { type: array, items: { type: string, minLength: 1, maxLength: 128 }, uniqueItems: true }
+    Member:
+      type: object
+      additionalProperties: false
+      required: [userId, email, displayName, role, source, active, disabled, createdAt]
+      properties:
+        userId: { $ref: "#/components/schemas/UUID" }
+        email: { type: string, format: email, maxLength: 254 }
+        displayName: { type: string, minLength: 1, maxLength: 256 }
+        role: { type: string, enum: [admin, editor, viewer] }
+        source: { type: string, enum: [manual, jit, scim] }
+        active: { type: boolean }
+        disabled: { type: boolean }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+    MemberList:
+      type: object
+      additionalProperties: false
+      required: [members, next]
+      properties:
+        members: { type: array, items: { $ref: "#/components/schemas/Member" } }
+        next: { type: string, maxLength: 512 }
+    LiveSession:
+      type: object
+      additionalProperties: false
+      required: [id, userId, issuedAt, expiresAt, lastSeenAt, userAgent, address]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        userId: { $ref: "#/components/schemas/UUID" }
+        issuedAt: { $ref: "#/components/schemas/Timestamp" }
+        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+        lastSeenAt: { $ref: "#/components/schemas/Timestamp" }
+        userAgent: { type: string, maxLength: 512 }
+        address: { type: string, maxLength: 128 }
+    LiveSessionList:
+      type: object
+      additionalProperties: false
+      required: [sessions]
+      properties:
+        sessions: { type: array, items: { $ref: "#/components/schemas/LiveSession" } }
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, occurredAt, actorKind, actorId, actorName, action, targetKind, targetId, outcome, sourceAddress, requestId, detail]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        occurredAt: { $ref: "#/components/schemas/Timestamp" }
+        actorKind: { type: string, enum: [user, automation, system] }
+        actorId: { type: string, maxLength: 256 }
+        actorName: { type: string, maxLength: 256 }
+        action: { type: string, minLength: 1, maxLength: 128 }
+        targetKind: { type: string, minLength: 1, maxLength: 128 }
+        targetId: { type: string, maxLength: 256 }
+        outcome: { type: string, enum: [allowed, denied, failed] }
+        sourceAddress: { type: string, maxLength: 128 }
+        requestId: { type: string, maxLength: 128 }
+        detail: { type: object, additionalProperties: true }
+    AuditEventList:
+      type: object
+      additionalProperties: false
+      required: [events, next]
+      properties:
+        events: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
+        next: { type: string, maxLength: 512 }
+    CreateMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [identityKind, email, role]
+      properties:
+        identityKind: { type: string, enum: [local, oidc] }
+        subject: { type: string, minLength: 1, maxLength: 512 }
+        email: { type: string, format: email, maxLength: 254 }
+        displayName: { type: string, minLength: 1, maxLength: 256 }
+        password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true }
+        role: { type: string, enum: [admin, editor, viewer] }
+    UpdateMemberRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        role: { type: string, enum: [admin, editor, viewer] }
+        active: { type: boolean }
+    PasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true }
+    Policy:
+      type: object
+      additionalProperties: false
+      required: [sessionLifetimeSeconds, auditRetentionDays]
+      properties:
+        sessionLifetimeSeconds: { type: integer, minimum: 900, maximum: 2592000 }
+        auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
+        auditRetentionEnforced: { type: boolean, readOnly: true }
+    IntegrationType:
+      type: object
+      additionalProperties: false
+      required: [key, name, description, category, requiresRelay, receivesWebhooks, supportsConnect, configurationSchema, configured]
+      properties:
+        key: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, minLength: 1, maxLength: 1024 }
+        logo: { type: string, maxLength: 128 }
+        category: { type: string, enum: [alerting, infrastructure, collaboration, source-control] }
+        documentationUrl: { type: string, format: uri }
+        productDocumentationUrl: { type: string, format: uri-reference }
+        requiresRelay: { type: boolean }
+        receivesWebhooks: { type: boolean }
+        supportsConnect: { type: boolean }
+        configurationSchema: { type: object, additionalProperties: true }
+        tools: { type: array, items: { type: object, additionalProperties: true } }
+        configured: { type: integer, minimum: 0 }
+    IntegrationTypeList:
+      type: object
+      additionalProperties: false
+      required: [types]
+      properties:
+        types: { type: array, items: { $ref: "#/components/schemas/IntegrationType" } }
+    ConnectStarted:
+      type: object
+      additionalProperties: false
+      required: [authorizationUrl, expiresAt]
+      properties:
+        authorizationUrl: { type: string, format: uri }
+        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+    ConnectLanded:
+      type: object
+      additionalProperties: false
+      required: [connect]
+      properties:
+        connect: { type: string, enum: [connected, refused, failed] }
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        note: { type: string, maxLength: 1024 }
+    SecretReference:
+      type: object
+      additionalProperties: false
+      required: [fingerprint, createdAt]
+      properties:
+        fingerprint: { type: string, minLength: 8, maxLength: 128 }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        rotatedAt: { $ref: "#/components/schemas/Timestamp" }
+    WebhookReference:
+      type: object
+      additionalProperties: false
+      required: [url, secretFingerprint, secretCreatedAt]
+      properties:
+        url: { type: string, format: uri-reference }
+        secretFingerprint: { type: string, minLength: 8, maxLength: 128 }
+        secretCreatedAt: { $ref: "#/components/schemas/Timestamp" }
+        secretRotatedAt: { $ref: "#/components/schemas/Timestamp" }
+    Integration:
+      type: object
+      additionalProperties: false
+      required: [id, type, name, status, disabled, configuration, toolAvailability, createdAt, updatedAt]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        type: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [configured, active, degraded, failed] }
+        disabled: { type: boolean }
+        configuration: { type: object, additionalProperties: true }
+        labels: { type: object, maxProperties: 32, additionalProperties: { type: string, maxLength: 256 } }
+        relayId: { $ref: "#/components/schemas/UUID" }
+        webhook: { $ref: "#/components/schemas/WebhookReference" }
+        credential: { $ref: "#/components/schemas/SecretReference" }
+        lastVerifiedAt: { $ref: "#/components/schemas/Timestamp" }
+        verifyNote: { type: string, maxLength: 1024 }
+        verifyFacts: { type: object, additionalProperties: true }
+        inbound: { type: object, additionalProperties: false, required: [available], properties: { available: { type: boolean }, reason: { type: string, maxLength: 1024 } } }
+        toolAvailability: { type: array, items: { type: object, additionalProperties: false, required: [tool, available], properties: { tool: { type: string }, available: { type: boolean }, reason: { type: string, maxLength: 1024 } } } }
+        createdBy: { type: string, maxLength: 256 }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        updatedAt: { $ref: "#/components/schemas/Timestamp" }
+    PageMetadata:
+      type: object
+      required: [next, total, partial]
+      properties: &page-metadata
+        next: { oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
+        total: { oneOf: [{ type: integer, minimum: 0 }, { type: "null" }] }
+        partial: { type: array, items: { type: object, additionalProperties: false, required: [field, reason], properties: { field: { type: string }, reason: { type: string } } } }
+    IntegrationList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/Integration" } }
+    CreateIntegrationRequest:
+      type: object
+      additionalProperties: false
+      required: [type, name, configuration, labels]
+      properties:
+        type: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        configuration: { type: object, additionalProperties: true }
+        labels:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 256 }
+        relayId: { oneOf: [{ $ref: "#/components/schemas/UUID" }, { type: "null" }] }
+    UpdateIntegrationRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        configuration: { type: object, additionalProperties: true }
+        labels: { type: object, maxProperties: 32, additionalProperties: { type: string, maxLength: 256 } }
+    CreatedIntegration:
+      type: object
+      additionalProperties: false
+      required: [integration]
+      properties:
+        integration: { $ref: "#/components/schemas/Integration" }
+        webhookSecret: { type: string, minLength: 32, maxLength: 512, readOnly: true, example: ocwh_placeholder_generated_once_1234 }
+    RotatedSecret:
+      type: object
+      additionalProperties: false
+      required: [webhookSecret, secretFingerprint, effect]
+      properties:
+        webhookSecret: { type: string, minLength: 32, maxLength: 512, readOnly: true, example: ocwh_placeholder_generated_once_1234 }
+        secretFingerprint: { type: string, minLength: 8, maxLength: 128, readOnly: true, example: sha256:12ab34cd }
+        effect: { type: string, minLength: 1, maxLength: 1024 }
+    MaskedSecret:
+      type: object
+      additionalProperties: false
+      required: [configured, fingerprint]
+      properties:
+        configured: { type: boolean }
+        fingerprint: { type: string, minLength: 8, maxLength: 128, example: sha256:12ab34cd }
+    Relay:
+      type: object
+      additionalProperties: false
+      required: [registrationId, clusterFingerprint, relayVersion, registeredAt, connected, capabilities]
+      properties:
+        registrationId: { $ref: "#/components/schemas/UUID" }
+        clusterFingerprint: { type: string, minLength: 1, maxLength: 256 }
+        relayVersion: { type: string, minLength: 1, maxLength: 64 }
+        registeredAt: { $ref: "#/components/schemas/Timestamp" }
+        revokedAt: { $ref: "#/components/schemas/Timestamp" }
+        connected: { type: boolean }
+        lastSeenAt: { $ref: "#/components/schemas/Timestamp" }
+        capabilities: { type: array, items: { type: string, minLength: 1, maxLength: 128 }, uniqueItems: true }
+        sessionConflict: { type: object, additionalProperties: false, required: [detectedAt, distinctHosts, multipleHosts], properties: { detectedAt: { $ref: "#/components/schemas/Timestamp" }, distinctHosts: { type: integer, minimum: 2 }, multipleHosts: { type: boolean, const: true } } }
+    RelayList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/Relay" } }
+    RelayFleetSummary:
+      type: object
+      additionalProperties: false
+      required: [total, connected, disconnected, revoked, outdated, degraded, activeRequests, livenessSeconds, outdatedCounted]
+      properties:
+        total: { type: integer, minimum: 0 }
+        connected: { type: integer, minimum: 0 }
+        disconnected: { type: integer, minimum: 0 }
+        revoked: { type: integer, minimum: 0 }
+        outdated: { type: integer, minimum: 0 }
+        degraded: { type: integer, minimum: 0 }
+        activeRequests: { type: integer, minimum: 0 }
+        livenessSeconds: { type: integer, minimum: 1 }
+        minimumVersion: { type: string, maxLength: 64 }
+        outdatedCounted: { type: boolean }
+    RelayBootstrapToken:
+      type: object
+      additionalProperties: false
+      required: [token, expiresAt, notice]
+      properties:
+        token: { type: string, minLength: 32, maxLength: 2048, readOnly: true, example: relay-bootstrap-placeholder-token }
+        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+        notice: { type: string, minLength: 1, maxLength: 1024 }
+    RelayIntegration:
+      type: object
+      additionalProperties: false
+      required: [id, type, name, status, disabled]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        type: { type: string, minLength: 1, maxLength: 64 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [configured, active, degraded, failed] }
+        disabled: { type: boolean }
+    RelayIntegrationList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/RelayIntegration" } }
+    RelayFailure:
+      type: object
+      additionalProperties: false
+      required: [jobId, capabilityId, capabilityVersion, integrationId, outcome, at]
+      properties:
+        jobId: { $ref: "#/components/schemas/UUID" }
+        capabilityId: { type: string, minLength: 1, maxLength: 128 }
+        capabilityVersion: { type: integer, minimum: 1 }
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        outcome: { type: string, enum: [failed, cancelled] }
+        at: { $ref: "#/components/schemas/Timestamp" }
+    RelayFailureList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/RelayFailure" } }
+    RelayConflictTrail:
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, at]
+            properties:
+              kind: { type: string, enum: [detected, withdrawn] }
+              at: { $ref: "#/components/schemas/Timestamp" }
+              distinctHosts: { type: integer, minimum: 2 }
+              multipleHosts: { type: boolean }
+              withdrawnFrom: { type: string, maxLength: 128 }
+        next: { type: string, maxLength: 512 }
+    Incident:
+      type: object
+      additionalProperties: false
+      required: [id, integrationId, title, status, grouping, firstSeenAt, lastSeenAt, resolvedAt, alertEventCount, postmortemEligible, createdAt, updatedAt]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        integrationName: { type: string, maxLength: 128 }
+        title: { type: string, minLength: 1, maxLength: 1024 }
+        status: { type: string, enum: [open, resolved, superseded] }
+        grouping: { type: object, additionalProperties: false, required: [basis, explanation, key], properties: { basis: { type: string }, explanation: { type: string }, key: { type: string } } }
+        firstSeenAt: { $ref: "#/components/schemas/Timestamp" }
+        lastSeenAt: { $ref: "#/components/schemas/Timestamp" }
+        resolvedAt: { oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }] }
+        alertEventCount: { type: integer, minimum: 1 }
+        postmortemEligible: { type: boolean }
+        supersededBy: { type: object, additionalProperties: false, required: [incidentId, reason, at], properties: { incidentId: { $ref: "#/components/schemas/UUID" }, reason: { type: string }, at: { $ref: "#/components/schemas/Timestamp" } } }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        updatedAt: { $ref: "#/components/schemas/Timestamp" }
+    IncidentList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/Incident" } }
+    AlertEvent:
+      type: object
+      additionalProperties: false
+      required: [id, title, summary, labels, status, startedAt, resolvedAt, receivedAt]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        title: { type: string, minLength: 1, maxLength: 1024 }
+        summary: { type: string, maxLength: 8192 }
+        labels: { type: object, additionalProperties: { type: string, maxLength: 1024 } }
+        status: { type: string, enum: [firing, resolved] }
+        startedAt: { $ref: "#/components/schemas/Timestamp" }
+        resolvedAt: { oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }] }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+    AlertEventList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/AlertEvent" } }
+    Clarification:
+      type: object
+      additionalProperties: false
+      required: [clarification]
+      properties: { clarification: { type: string, minLength: 1, maxLength: 2048 } }
+    Investigation:
+      type: object
+      additionalProperties: false
+      required: [id, status, subject, windowFrom, windowUntil, impact, findings, hypotheses, actions, limitations, humanConfirmationRequired, spend, createdAt]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
+        subject: { type: string, minLength: 1, maxLength: 1024 }
+        question: { type: string, maxLength: 8192 }
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        windowFrom: { $ref: "#/components/schemas/Timestamp" }
+        windowUntil: { $ref: "#/components/schemas/Timestamp" }
+        conclusionStatus: { type: string, maxLength: 64 }
+        summary: { type: string, maxLength: 32768 }
+        impact: { type: object, additionalProperties: true }
+        findings: { type: array, items: { type: object, additionalProperties: true } }
+        hypotheses: { type: array, items: { type: object, additionalProperties: true } }
+        actions: { type: array, items: { type: object, additionalProperties: true } }
+        limitations: { type: array, items: { type: object, additionalProperties: true } }
+        humanConfirmationRequired: { type: boolean }
+        stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        error: { type: string, maxLength: 4096 }
+        spend: { type: object, additionalProperties: false, required: [inputTokens, outputTokens, microCents], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 }, microCents: { type: integer, format: int64, minimum: 0 } } }
+        createdBy: { type: string, maxLength: 256 }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        concludedAt: { $ref: "#/components/schemas/Timestamp" }
+    InvestigationList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/Investigation" } }
+    InvestigationSource:
+      type: object
+      additionalProperties: false
+      required: [integrationId, rank, reason, selectedAt]
+      properties:
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        rank: { type: integer, minimum: 1 }
+        reason: { type: string, maxLength: 2048 }
+        selectedAt: { $ref: "#/components/schemas/Timestamp" }
+    ToolRun:
+      type: object
+      additionalProperties: true
+      required: [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt]
+      properties:
+        ordinal: { type: integer, minimum: 1 }
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        tool: { type: string, minLength: 1, maxLength: 128 }
+        purpose: { type: string, maxLength: 2048 }
+        hypothesisId: { type: string, maxLength: 128 }
+        arguments: { type: object, additionalProperties: true }
+        windowFrom: { $ref: "#/components/schemas/Timestamp" }
+        windowUntil: { $ref: "#/components/schemas/Timestamp" }
+        outcome: { type: string, enum: [succeeded, failed] }
+        truncated: { type: boolean }
+        summary: { type: string, maxLength: 32768 }
+        sources: { type: array, items: { type: string, maxLength: 2048 } }
+        error: { type: string, maxLength: 4096 }
+        startedAt: { $ref: "#/components/schemas/Timestamp" }
+        finishedAt: { $ref: "#/components/schemas/Timestamp" }
+    InvestigationDetail:
+      allOf:
+        - { $ref: "#/components/schemas/Investigation" }
+        - type: object
+          required: [sources, runs]
+          properties:
+            sources: { type: array, items: { $ref: "#/components/schemas/InvestigationSource" } }
+            runs: { type: array, items: { $ref: "#/components/schemas/ToolRun" } }
+    InvestigationSources:
+      type: object
+      additionalProperties: false
+      required: [investigationId, sources, runs]
+      properties:
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        sources: { type: array, items: { $ref: "#/components/schemas/InvestigationSource" } }
+        runs: { type: array, items: { $ref: "#/components/schemas/ToolRun" } }
+    InvestigationHypotheses:
+      type: object
+      additionalProperties: false
+      required: [investigationId, items]
+      properties:
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        items: { type: array, items: { type: object, additionalProperties: true } }
+    InvestigationActivity:
+      type: object
+      additionalProperties: false
+      required: [investigationId, items]
+      properties:
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        items: { type: array, items: { type: object, additionalProperties: false, required: [sequence, at, type], properties: { sequence: { type: integer, format: int64, minimum: 1 }, at: { $ref: "#/components/schemas/Timestamp" }, type: { type: string, minLength: 1, maxLength: 128 }, payload: { type: object, additionalProperties: true } } } }
+    MergeIncidentRequest:
+      type: object
+      additionalProperties: false
+      required: [into, reason]
+      properties:
+        into: { $ref: "#/components/schemas/UUID" }
+        reason: { type: string, minLength: 1, maxLength: 2048 }
+    OpenInvestigationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        question: { type: string, minLength: 1, maxLength: 8192 }
+      anyOf:
+        - required: [incidentId]
+        - required: [question]
+    OpenConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [subject]
+      properties:
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        subject: { type: string, minLength: 1, maxLength: 512 }
+        message: { type: string, minLength: 1, maxLength: 8192 }
+    ConversationMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1, maxLength: 8192 }
+    Conversation:
+      type: object
+      additionalProperties: false
+      required: [id, subject, surface, state, createdAt, lastActivityAt]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        subject: { type: string, minLength: 1, maxLength: 512 }
+        surface: { type: string, enum: [web, slack] }
+        state: { type: string, enum: [open, closed] }
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        createdBy: { type: string, maxLength: 256 }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        lastActivityAt: { $ref: "#/components/schemas/Timestamp" }
+    ConversationMessage:
+      type: object
+      additionalProperties: false
+      required: [sequence, role, actorKind, text, createdAt]
+      properties:
+        sequence: { type: integer, format: int64, minimum: 1 }
+        role: { type: string, enum: [person, agent] }
+        actorKind: { type: string, enum: [principal, external] }
+        actorId: { type: string, maxLength: 256 }
+        actorDisplay: { type: string, maxLength: 256 }
+        text: { type: string, minLength: 1, maxLength: 8192 }
+        sourceReference: { type: string, maxLength: 1024 }
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+    ConversationTurn:
+      type: object
+      additionalProperties: false
+      required: [investigationId, turn, status, createdAt]
+      properties:
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        turn: { type: integer, minimum: 1 }
+        status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
+        answer: { type: string, maxLength: 32768 }
+        stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        error: { type: string, maxLength: 4096 }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        concludedAt: { $ref: "#/components/schemas/Timestamp" }
+    ConversationList:
+      type: object
+      additionalProperties: false
+      required: [items, next, total, partial]
+      properties:
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/Conversation" } }
+    ConversationDetail:
+      allOf:
+        - { $ref: "#/components/schemas/Conversation" }
+        - type: object
+          required: [messages, turns]
+          properties:
+            messages: { type: array, items: { $ref: "#/components/schemas/ConversationMessage" } }
+            turns: { type: array, items: { $ref: "#/components/schemas/ConversationTurn" } }
+    ConversationOpened:
+      allOf:
+        - { $ref: "#/components/schemas/Conversation" }
+        - type: object
+          properties:
+            message: { $ref: "#/components/schemas/ConversationMessage" }
+            turn: { $ref: "#/components/schemas/ConversationTurn" }
+            queued: { type: boolean }
+    MessageAccepted:
+      type: object
+      additionalProperties: false
+      required: [message, queued]
+      properties:
+        message: { $ref: "#/components/schemas/ConversationMessage" }
+        turn: { $ref: "#/components/schemas/ConversationTurn" }
+        queued: { type: boolean }
+    PostmortemHumanInput:
+      type: object
+      additionalProperties: false
+      properties:
+        impact: { type: string, maxLength: 32768 }
+        resolution: { type: string, maxLength: 32768 }
+        whatWentWell: { type: array, items: { type: string, maxLength: 8192 } }
+        whatWentWrong: { type: array, items: { type: string, maxLength: 8192 } }
+        detectionGaps: { type: array, items: { type: string, maxLength: 8192 } }
+    TimelineEntry:
+      type: object
+      additionalProperties: false
+      required: [at, description, runRefs]
+      properties:
+        at: { $ref: "#/components/schemas/Timestamp" }
+        description: { type: string, minLength: 1, maxLength: 8192 }
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    CitedStatement:
+      type: object
+      additionalProperties: false
+      required: [statement, runRefs]
+      properties:
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        findingId: { type: string, maxLength: 128 }
+        statement: { type: string, minLength: 1, maxLength: 8192 }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    ActionItem:
+      type: object
+      additionalProperties: false
+      required: [title, owner, deadline, verification, runRefs]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 1024 }
+        owner: { type: string, minLength: 1, maxLength: 256 }
+        deadline: { type: string, minLength: 1, maxLength: 128 }
+        verification: { type: string, minLength: 1, maxLength: 8192 }
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    Postmortem:
+      type: object
+      additionalProperties: false
+      required: [incidentId, status, revision, title, executiveSummary, impact, detection, timeline, rootCauses, contributingFactors, resolution, whatWentWell, whatWentWrong, detectionGaps, actionItems, openQuestions, createdAt, updatedAt]
+      properties:
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        status: { type: string, enum: [draft, reviewed] }
+        revision: { type: integer, minimum: 1 }
+        title: { type: string, minLength: 1, maxLength: 1024 }
+        executiveSummary: { type: string, minLength: 1, maxLength: 32768 }
+        impact: { type: string, minLength: 1, maxLength: 32768 }
+        detection: { type: string, minLength: 1, maxLength: 32768 }
+        timeline: { type: array, items: { $ref: "#/components/schemas/TimelineEntry" } }
+        rootCauses: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
+        contributingFactors: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
+        resolution: { type: string, minLength: 1, maxLength: 32768 }
+        whatWentWell: { type: array, items: { type: string, maxLength: 8192 } }
+        whatWentWrong: { type: array, items: { type: string, maxLength: 8192 } }
+        detectionGaps: { type: array, items: { type: string, maxLength: 8192 } }
+        actionItems: { type: array, items: { $ref: "#/components/schemas/ActionItem" } }
+        openQuestions: { type: array, items: { type: string, maxLength: 8192 } }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        updatedAt: { $ref: "#/components/schemas/Timestamp" }
+        reviewedAt: { $ref: "#/components/schemas/Timestamp" }
+        reviewedBy: { type: string, maxLength: 256 }
+    PostmortemCorrections:
+      allOf:
+        - { $ref: "#/components/schemas/PostmortemHumanInput" }
+        - type: object
+          minProperties: 1
+          properties:
+            title: { type: string, minLength: 1, maxLength: 1024 }
+            executiveSummary: { type: string, minLength: 1, maxLength: 32768 }
+            detection: { type: string, minLength: 1, maxLength: 32768 }
+            timeline: { type: array, items: { $ref: "#/components/schemas/TimelineEntry" } }
+            rootCauses: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
+            contributingFactors: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
+            actionItems: { type: array, items: { $ref: "#/components/schemas/ActionItem" } }
+            openQuestions: { type: array, items: { type: string, maxLength: 8192 } }
+    WebhookWork:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, deliveryId, integrationId, attempts, failureClass, failureMessage, createdAt, updatedAt]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        kind: { type: string, enum: [alert, slack] }
+        status: { type: string, const: terminal }
+        deliveryId: { $ref: "#/components/schemas/UUID" }
+        integrationId: { $ref: "#/components/schemas/UUID" }
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        conversationId: { $ref: "#/components/schemas/UUID" }
+        messageSequence: { type: integer, format: int64, minimum: 1 }
+        attempts: { type: integer, minimum: 1 }
+        failureClass: { type: string, minLength: 1, maxLength: 128 }
+        failureMessage: { type: string, minLength: 1, maxLength: 4096 }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        updatedAt: { $ref: "#/components/schemas/Timestamp" }
+    WebhookWorkList:
+      type: object
+      additionalProperties: false
+      required: [work, next]
+      properties:
+        work: { type: array, items: { $ref: "#/components/schemas/WebhookWork" } }
+        next: { type: string, maxLength: 512 }
+    CapabilityMetadata:
+      type: object
+      additionalProperties: false
+      required: [key, enabled, availability]
+      properties:
+        key: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        enabled: { type: boolean }
+        availability: { type: string, enum: [available, unavailable, degraded] }
+        reason: { oneOf: [{ type: string, maxLength: 1024 }, { type: "null" }] }

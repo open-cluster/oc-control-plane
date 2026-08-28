@@ -25,6 +25,9 @@ jobs:
       - name: Install pinned tooling
         run: make tools
 
+      - name: Validate and bundle the OpenAPI contract
+        run: make openapi
+
       - name: Lint (gofmt + vet + staticcheck + golangci-lint)
         run: make lint
 
