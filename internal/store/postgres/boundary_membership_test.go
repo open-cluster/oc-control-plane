@@ -122,8 +122,8 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			_, err := database.AuditEvents(ctx, stranger, organization, audit.Page{})
 			return err
 		},
-		"ReplayWebhookWork": func() error {
-			return database.ReplayWebhookWork(ctx, stranger, organization, somebody)
+		"ReplayWebhookDelivery": func() error {
+			return database.ReplayWebhookDelivery(ctx, stranger, organization, somebody)
 		},
 	}
 

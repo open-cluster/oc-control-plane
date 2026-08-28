@@ -51,7 +51,8 @@
           {
             "group": "Alerting",
             "pages": [
-              "integrations/alerting/alertmanager"
+              "integrations/alerting/alertmanager",
+              "integrations/alerting/generic_webhook"
             ]
           },
           {

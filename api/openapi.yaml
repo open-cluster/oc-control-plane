@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: OpenCluster Control Plane API
   version: 0.1.0
-  description: Operator-facing HTTP contract for the OpenCluster control plane.
+  description: HTTP contract for the OpenCluster control plane operator and inbound webhook surfaces.
   license:
     name: Apache-2.0
 servers:
@@ -21,7 +21,8 @@ tags:
   - name: Investigations
   - name: Conversations
   - name: Postmortems
-  - name: Webhook Work
+  - name: Webhook Deliveries
+  - name: Webhook Intake
 
 # These anchors keep security policy identical across operations. The bundled release artifact
 # expands them; this file remains the only editable source.
@@ -782,34 +783,86 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/Postmortem" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/webhook-work/terminal:
+  /webhooks/v1/integrations/{integration}/alert-events:
+    parameters:
+      - { $ref: "#/components/parameters/IntegrationID" }
+    post:
+      operationId: receiveAlertEvents
+      tags: [Webhook Intake]
+      security:
+        - WebhookToken: []
+      x-opencluster-access: webhook
+      x-opencluster-organization-selector: forbidden
+      x-opencluster-cookie-csrf: not-required
+      x-opencluster-idempotency: provider-identity-and-lifecycle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: "#/components/schemas/GenericWebhookRequest" }
+                - { $ref: "#/components/schemas/AlertmanagerWebhookRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookDuplicate" }
+        "202": { $ref: "#/components/responses/WebhookAccepted" }
+        "400": { $ref: "#/components/responses/WebhookRejected" }
+        "401": { $ref: "#/components/responses/WebhookUnauthorized" }
+        "413": { $ref: "#/components/responses/WebhookOversized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/WebhookUnavailable" }
+  /webhooks/v1/slack/events:
+    post:
+      operationId: receiveSlackEvent
+      tags: [Webhook Intake]
+      security:
+        - SlackSignature: []
+      x-opencluster-access: webhook
+      x-opencluster-organization-selector: forbidden
+      x-opencluster-cookie-csrf: not-required
+      x-opencluster-idempotency: slack-event-identity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Slack challenge or duplicate accepted. }
+        "202": { $ref: "#/components/responses/WebhookAccepted" }
+        "400": { $ref: "#/components/responses/WebhookRejected" }
+        "401": { $ref: "#/components/responses/WebhookUnauthorized" }
+        "413": { $ref: "#/components/responses/WebhookOversized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/WebhookUnavailable" }
+  /api/v1/webhook-deliveries:
     get:
       <<: *privileged-read
-      operationId: listTerminalWebhookWork
-      tags: [Webhook Work]
+      operationId: listWebhookDeliveries
+      tags: [Webhook Deliveries]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/WebhookDeliveryStatus" }
       responses:
-        "200": { $ref: "#/components/responses/WebhookWorkList" }
+        "200": { $ref: "#/components/responses/WebhookDeliveryList" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/webhook-work/terminal/{work}:
-    parameters: &work-path
-      - { $ref: "#/components/parameters/WorkID" }
+  /api/v1/webhook-deliveries/{delivery}:
+    parameters: &delivery-path
+      - { $ref: "#/components/parameters/WebhookDeliveryID" }
     get:
       <<: *privileged-read
-      operationId: getTerminalWebhookWork
-      tags: [Webhook Work]
+      operationId: getWebhookDelivery
+      tags: [Webhook Deliveries]
       responses:
-        "200": { $ref: "#/components/responses/WebhookWork" }
+        "200": { $ref: "#/components/responses/WebhookDelivery" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/webhook-work/terminal/{work}/replay:
-    parameters: *work-path
+  /api/v1/webhook-deliveries/{delivery}/replay:
+    parameters: *delivery-path
     post:
       <<: *privileged-write
-      operationId: replayTerminalWebhookWork
-      tags: [Webhook Work]
+      operationId: replayWebhookDelivery
+      tags: [Webhook Deliveries]
       responses:
         "204": { $ref: "#/components/responses/NoContent" }
         default: { $ref: "#/components/responses/ErrorResponse" }
@@ -827,6 +880,16 @@ components:
       type: http
       scheme: bearer
       description: Deployment bootstrap credential; accepted only until bootstrap succeeds.
+    WebhookToken:
+      type: apiKey
+      in: header
+      name: X-OpenCluster-Token
+      description: Static sender credential. It authenticates the sender and does not sign the body.
+    SlackSignature:
+      type: apiKey
+      in: header
+      name: X-Slack-Signature
+      description: Slack request signature verified with the configured signing secret.
   parameters:
     Organization:
       name: X-OpenCluster-Organization
@@ -881,7 +944,12 @@ components:
     IncidentID: { name: incident, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     InvestigationID: { name: investigation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     ConversationID: { name: conversation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
-    WorkID: { name: work, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    WebhookDeliveryID: { name: delivery, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    WebhookDeliveryStatus:
+      name: status
+      in: query
+      required: false
+      schema: { type: string, enum: [accepted, processing, succeeded, failed] }
   responses:
     ErrorResponse:
       description: The operation did not complete.
@@ -950,8 +1018,14 @@ components:
     ConversationDetail: { description: Conversation with Messages and turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationDetail" } } } }
     ConversationMessageAccepted: { description: Message accepted; turn is absent when queued behind an active turn., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
     Postmortem: { description: Postmortem., content: { application/json: { schema: { $ref: "#/components/schemas/Postmortem" } } } }
-    WebhookWorkList: { description: Terminal webhook work., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookWorkList" } } } }
-    WebhookWork: { description: Terminal webhook work item., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookWork" } } } }
+    WebhookDeliveryList: { description: Accepted webhook deliveries., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDeliveryList" } } } }
+    WebhookDelivery: { description: One accepted webhook delivery., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDelivery" } } } }
+    WebhookAccepted: { description: Delivery durably accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    WebhookDuplicate: { description: Delivery was already accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    WebhookRejected: { description: Permanent malformed delivery., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    WebhookUnauthorized: { description: Missing or invalid webhook credential., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    WebhookOversized: { description: Body exceeds 1 MiB., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    WebhookUnavailable: { description: Delivery could not be durably recorded; retry., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     Redirect:
       description: Browser redirect.
       headers:
@@ -1722,31 +1796,87 @@ components:
             contributingFactors: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
             actionItems: { type: array, items: { $ref: "#/components/schemas/ActionItem" } }
             openQuestions: { type: array, items: { type: string, maxLength: 8192 } }
-    WebhookWork:
+    GenericWebhookRequest:
       type: object
       additionalProperties: false
-      required: [id, kind, status, deliveryId, integrationId, attempts, failureClass, failureMessage, createdAt, updatedAt]
+      required: [eventId, status, title, severity, startedAt, deduplicationKey]
+      allOf:
+        - if:
+            properties: { status: { const: resolved } }
+          then:
+            required: [resolvedAt]
+        - if:
+            properties: { status: { const: firing } }
+          then:
+            not: { required: [resolvedAt] }
+      properties:
+        eventId: { type: string, minLength: 1, maxLength: 256 }
+        status: { type: string, enum: [firing, resolved] }
+        title:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+          description: Leading and trailing whitespace is removed before enforcing the 512-character limit.
+        severity: { type: string, enum: [info, warning, critical] }
+        startedAt: { $ref: "#/components/schemas/Timestamp" }
+        resolvedAt: { $ref: "#/components/schemas/Timestamp" }
+        deduplicationKey: { type: string, minLength: 1, maxLength: 256 }
+        labels: { type: object, maxProperties: 32, propertyNames: { minLength: 1, maxLength: 64 }, additionalProperties: { type: string, maxLength: 256 } }
+        annotations: { type: object, maxProperties: 32, propertyNames: { minLength: 1, maxLength: 64 }, additionalProperties: { type: string, maxLength: 2048 } }
+        sourceUrl: { type: string, format: uri, maxLength: 2048, pattern: "^https?://" }
+    AlertmanagerWebhookRequest:
+      type: object
+      required: [alerts]
+      additionalProperties: true
+      properties:
+        version: { type: string }
+        groupKey: { type: string, maxLength: 512 }
+        truncatedAlerts: { type: integer, minimum: 0 }
+        alerts:
+          type: array
+          minItems: 1
+          maxItems: 2048
+          items:
+            type: object
+            required: [status, fingerprint, startsAt]
+            additionalProperties: true
+            properties:
+              status: { type: string, enum: [firing, resolved] }
+              fingerprint: { type: string, minLength: 1, maxLength: 512 }
+              startsAt: { $ref: "#/components/schemas/Timestamp" }
+              endsAt: { $ref: "#/components/schemas/Timestamp" }
+              labels: { type: object, additionalProperties: { type: string } }
+              annotations: { type: object, additionalProperties: { type: string } }
+              generatorURL: { type: string, maxLength: 2048 }
+    WebhookStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, maxLength: 128 }
+    WebhookDelivery:
+      type: object
+      additionalProperties: false
+      required: [id, integrationId, providerIdentity, status, attempts, receivedAt, lastAttemptAt, nextEligibleAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
-        kind: { type: string, enum: [alert, slack] }
-        status: { type: string, const: terminal }
-        deliveryId: { $ref: "#/components/schemas/UUID" }
         integrationId: { $ref: "#/components/schemas/UUID" }
-        incidentId: { $ref: "#/components/schemas/UUID" }
-        conversationId: { $ref: "#/components/schemas/UUID" }
-        messageSequence: { type: integer, format: int64, minimum: 1 }
-        attempts: { type: integer, minimum: 1 }
-        failureClass: { type: string, minLength: 1, maxLength: 128 }
-        failureMessage: { type: string, minLength: 1, maxLength: 4096 }
-        createdAt: { $ref: "#/components/schemas/Timestamp" }
-        updatedAt: { $ref: "#/components/schemas/Timestamp" }
-    WebhookWorkList:
+        providerIdentity: { type: string, minLength: 1, maxLength: 256 }
+        lifecyclePhase: { type: string, enum: [firing, resolved] }
+        requestId: { type: string, maxLength: 128 }
+        status: { type: string, enum: [accepted, processing, succeeded, failed] }
+        attempts: { type: integer, minimum: 0, maximum: 12 }
+        failureCategory: { type: string, minLength: 1, maxLength: 64 }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+        lastAttemptAt: { oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }] }
+        nextEligibleAt: { oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }] }
+    WebhookDeliveryList:
       type: object
       additionalProperties: false
-      required: [work, next]
+      required: [items, next, total, partial]
       properties:
-        work: { type: array, items: { $ref: "#/components/schemas/WebhookWork" } }
-        next: { type: string, maxLength: 512 }
+        <<: *page-metadata
+        items: { type: array, items: { $ref: "#/components/schemas/WebhookDelivery" } }
     CapabilityMetadata:
       type: object
       additionalProperties: false

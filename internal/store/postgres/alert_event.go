@@ -57,12 +57,30 @@ type AlertEvent struct {
 type Delivery struct {
 	// Integration is the installation the body arrived through, and the only authority for
 	// the tenant everything in it belongs to.
-	Integration uuid.UUID
-	BodyDigest  []byte
+	Integration      uuid.UUID
+	ProviderIdentity string
+	LifecyclePhase   string
+	RequestID        string
+	BodyDigest       []byte
 	// Truncated is how many alerts the source says it left out. Non-zero means this record
 	// of the moment is incomplete because the sender chose not to send the rest.
 	Truncated   int
 	AlertEvents []AlertEvent
+}
+
+// ErrDeliveryIdentityConflict means a provider reused one lifecycle identity for
+// different normalized content. Retrying cannot make that payload safe to accept.
+var ErrDeliveryIdentityConflict = errors.New("delivery identity conflicts with accepted content")
+
+// NormalizedDelivery is the provider-owned meaning of one authenticated webhook body.
+// Identity and digest are computed after validation so semantically identical encodings
+// remain one delivery.
+type NormalizedDelivery struct {
+	ProviderIdentity string
+	LifecyclePhase   string
+	ContentDigest    []byte
+	Truncated        int
+	AlertEvents      []AlertEvent
 }
 
 // DeliveryOutcome is what happened to one delivery.
@@ -176,6 +194,11 @@ func (p *Database) RecordDelivery(
 			continue
 		}
 		if inserted {
+			if alertEvent.Status == AlertEventResolved {
+				// A resolution with no matching firing remains visible as a source fact, but
+				// cannot create the incident it claims already existed.
+				continue
+			}
 			// A new incident of this alert. Everything else is an update to a AlertEvent that
 			// already has its incident, and moving one would be the history changing.
 			incidentID, opened, groupErr := groupAlertEvent(
@@ -225,17 +248,39 @@ func claimDelivery(
 	organization tenancy.Organization, delivery Delivery,
 ) (uuid.UUID, bool, error) {
 	deliveryID := uuid.New()
+	providerIdentity := delivery.ProviderIdentity
+	if providerIdentity == "" {
+		providerIdentity = fmt.Sprintf("%x", delivery.BodyDigest)
+	}
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO integration_delivery
-			(delivery_id, org_id, integration_id, outcome, body_digest, alert_event_count, truncated)
-		VALUES ($1, $2, $3, 1, $4, $5, $6)
-		ON CONFLICT (integration_id, body_digest) WHERE outcome = 1 DO NOTHING`,
+			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity,
+			 lifecycle_phase, request_id, alert_event_count, truncated)
+		VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
+		WHERE outcome = 1 DO NOTHING`,
 		deliveryID, organization.String(), delivery.Integration, delivery.BodyDigest,
+		providerIdentity, delivery.LifecyclePhase, delivery.RequestID,
 		len(delivery.AlertEvents), delivery.Truncated)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("recording delivery: %w", err)
 	}
-	return deliveryID, tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() == 1 {
+		return deliveryID, true, nil
+	}
+	var acceptedDigest []byte
+	if err := transaction.QueryRow(ctx, `
+		SELECT body_digest FROM integration_delivery
+		 WHERE org_id = $1 AND integration_id = $2
+		   AND provider_identity = $3 AND lifecycle_phase = $4 AND outcome = 1`,
+		organization.String(), delivery.Integration, providerIdentity,
+		delivery.LifecyclePhase).Scan(&acceptedDigest); err != nil {
+		return uuid.Nil, false, fmt.Errorf("reading accepted delivery identity: %w", err)
+	}
+	if !slices.Equal(acceptedDigest, delivery.BodyDigest) {
+		return uuid.Nil, false, ErrDeliveryIdentityConflict
+	}
+	return deliveryID, false, nil
 }
 
 // upsertAlertEvent writes one incident, or updates the incident this source already reported.

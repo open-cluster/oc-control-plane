@@ -9,136 +9,151 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	table "github.com/open-cluster/oc-control-plane/internal/api/pagination"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-type OperatorHandlers struct {
+type DeliveryHandlers struct {
 	Database *storage.Database
 	Logger   *slog.Logger
 	Counters WorkInstruments
 }
 
-var terminalWorkSpec = table.Spec{
-	Sortable:    []string{"updatedAt"},
-	DefaultSort: table.Sort{Field: "updatedAt", Descending: true},
+var deliverySpec = table.Spec{
+	Sortable:    []string{"receivedAt"},
+	DefaultSort: table.Sort{Field: "receivedAt", Descending: true},
+	Filters:     []string{"status"},
 }
 
-func (h OperatorHandlers) Routes() authz.Table {
-	const base = "/api/v1/webhook-work/terminal"
+func (h DeliveryHandlers) Routes() authz.Table {
+	const base = "/api/v1/webhook-deliveries"
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.InvestigationRead,
-			http.HandlerFunc(h.listTerminal)),
-		authz.Privileged(http.MethodGet, base+"/{work}", authz.InvestigationRead,
-			http.HandlerFunc(h.getTerminal)),
-		authz.Privileged(http.MethodPost, base+"/{work}/replay", authz.WebhookWorkReplay,
+			http.HandlerFunc(h.list)),
+		authz.Privileged(http.MethodGet, base+"/{delivery}", authz.InvestigationRead,
+			http.HandlerFunc(h.get)),
+		authz.Privileged(http.MethodPost, base+"/{delivery}/replay", authz.WebhookDeliveryReplay,
 			http.HandlerFunc(h.replay)),
 	}
 }
 
-type workView struct {
-	ID              string `json:"id"`
-	Kind            string `json:"kind"`
-	Status          string `json:"status"`
-	DeliveryID      string `json:"deliveryId"`
-	IntegrationID   string `json:"integrationId"`
-	IncidentID      string `json:"incidentId,omitempty"`
-	ConversationID  string `json:"conversationId,omitempty"`
-	MessageSequence int64  `json:"messageSequence,omitempty"`
-	Attempts        int    `json:"attempts"`
-	FailureClass    string `json:"failureClass"`
-	FailureMessage  string `json:"failureMessage"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
+type deliveryView struct {
+	ID               string  `json:"id"`
+	IntegrationID    string  `json:"integrationId"`
+	ProviderIdentity string  `json:"providerIdentity"`
+	LifecyclePhase   string  `json:"lifecyclePhase,omitempty"`
+	RequestID        string  `json:"requestId,omitempty"`
+	Status           string  `json:"status"`
+	Attempts         int     `json:"attempts"`
+	FailureCategory  string  `json:"failureCategory,omitempty"`
+	ReceivedAt       string  `json:"receivedAt"`
+	LastAttemptAt    *string `json:"lastAttemptAt"`
+	NextEligibleAt   *string `json:"nextEligibleAt"`
 }
 
-func viewOfWork(work storage.WebhookWork) workView {
-	view := workView{ID: work.ID.String(), Kind: work.Kind.String(),
-		Status: work.Status.String(), DeliveryID: work.DeliveryID.String(),
-		IntegrationID: work.IntegrationID.String(), Attempts: work.Attempts,
-		MessageSequence: work.MessageSequence,
-		FailureClass:    work.FailureClass, FailureMessage: work.FailureMessage,
-		CreatedAt: work.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: work.UpdatedAt.UTC().Format(time.RFC3339)}
-	if work.IncidentID != uuid.Nil {
-		view.IncidentID = work.IncidentID.String()
+func viewOfDelivery(delivery storage.WebhookDelivery) deliveryView {
+	view := deliveryView{
+		ID: delivery.ID.String(), IntegrationID: delivery.IntegrationID.String(),
+		ProviderIdentity: delivery.ProviderIdentity, LifecyclePhase: delivery.LifecyclePhase,
+		RequestID: delivery.RequestID, Status: string(delivery.State), Attempts: delivery.Attempts,
+		FailureCategory: delivery.FailureClass,
+		ReceivedAt: delivery.ReceivedAt.UTC().Format(time.RFC3339),
 	}
-	if work.ConversationID != uuid.Nil {
-		view.ConversationID = work.ConversationID.String()
+	if delivery.LastAttemptAt != nil {
+		formatted := delivery.LastAttemptAt.UTC().Format(time.RFC3339)
+		view.LastAttemptAt = &formatted
+	}
+	if delivery.NextEligibleAt != nil {
+		formatted := delivery.NextEligibleAt.UTC().Format(time.RFC3339)
+		view.NextEligibleAt = &formatted
 	}
 	return view
 }
 
-func (h OperatorHandlers) listTerminal(writer http.ResponseWriter, request *http.Request) {
-	organization, ok := workOrganization(writer, request)
+func (h DeliveryHandlers) list(writer http.ResponseWriter, request *http.Request) {
+	organization, ok := deliveryOrganization(writer, request)
 	if !ok {
 		return
 	}
-	query, err := table.Parse(request.URL.Query(), terminalWorkSpec)
+	query, err := table.Parse(request.URL.Query(), deliverySpec)
 	if err != nil {
-		writeWorkJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeDeliveryJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if !query.Sort.Descending {
-		writeWorkJSON(writer, http.StatusBadRequest,
-			map[string]string{"error": "terminal webhook work supports descending updatedAt order only"})
+		writeDeliveryJSON(writer, http.StatusBadRequest,
+			map[string]string{"error": "webhook deliveries support descending receivedAt order only"})
+		return
+	}
+	state := storage.WebhookDeliveryState(query.Filter("status"))
+	if !validDeliveryState(state) {
+		writeDeliveryJSON(writer, http.StatusBadRequest,
+			map[string]string{"error": "status must be accepted, processing, succeeded, or failed"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
-	page, err := h.Database.TerminalWebhookWork(ctx, organization,
+	page, err := h.Database.WebhookDeliveries(ctx, organization, state,
 		storage.Page{Limit: query.Limit, After: query.Cursor})
 	if err != nil {
 		if errors.Is(err, storage.ErrBadCursor) {
-			writeWorkJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeDeliveryJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		h.fail(writer, err)
 		return
 	}
-	views := make([]workView, 0, len(page.Work))
-	for _, row := range page.Work {
-		views = append(views, viewOfWork(row))
+	views := make([]deliveryView, 0, len(page.Deliveries))
+	for _, delivery := range page.Deliveries {
+		views = append(views, viewOfDelivery(delivery))
 	}
-	writeWorkJSON(writer, http.StatusOK, map[string]any{"work": views, "next": page.Next})
+	writeDeliveryJSON(writer, http.StatusOK, table.Answer(views, page.Next, nil))
 }
 
-func (h OperatorHandlers) getTerminal(writer http.ResponseWriter, request *http.Request) {
-	organization, workID, ok := addressedWork(writer, request)
+func validDeliveryState(state storage.WebhookDeliveryState) bool {
+	return state == "" || state == storage.WebhookDeliveryAccepted ||
+		state == storage.WebhookDeliveryProcessing || state == storage.WebhookDeliverySucceeded ||
+		state == storage.WebhookDeliveryFailed
+}
+
+func (h DeliveryHandlers) get(writer http.ResponseWriter, request *http.Request) {
+	organization, deliveryID, ok := addressedDelivery(writer, request)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
-	work, err := h.Database.TerminalWebhookWorkByID(ctx, organization, workID)
-	if errors.Is(err, storage.ErrWebhookWorkUnknown) {
-		writeWorkJSON(writer, http.StatusNotFound, map[string]string{"error": "work not found"})
+	delivery, err := h.Database.WebhookDeliveryByID(ctx, organization, deliveryID)
+	if errors.Is(err, storage.ErrWebhookDeliveryUnknown) {
+		writeDeliveryJSON(writer, http.StatusNotFound, map[string]string{"error": "delivery not found"})
 		return
 	}
 	if err != nil {
 		h.fail(writer, err)
 		return
 	}
-	writeWorkJSON(writer, http.StatusOK, viewOfWork(work))
+	writeDeliveryJSON(writer, http.StatusOK, viewOfDelivery(delivery))
 }
 
-func (h OperatorHandlers) replay(writer http.ResponseWriter, request *http.Request) {
+func (h DeliveryHandlers) replay(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := authz.Of(request)
 	if !ok {
-		writeWorkJSON(writer, http.StatusInternalServerError, map[string]string{"error": "request failed"})
+		writeDeliveryJSON(writer, http.StatusInternalServerError,
+			map[string]string{"error": "request failed"})
 		return
 	}
-	organization, workID, ok := addressedWork(writer, request)
+	organization, deliveryID, ok := addressedDelivery(writer, request)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
-	if err := h.Database.ReplayWebhookWork(ctx, principal, organization, workID); err != nil {
-		if errors.Is(err, storage.ErrWebhookWorkUnknown) {
-			writeWorkJSON(writer, http.StatusConflict, map[string]string{"error": "only terminal work can be replayed"})
+	if err := h.Database.ReplayWebhookDelivery(ctx, principal, organization, deliveryID); err != nil {
+		if errors.Is(err, storage.ErrWebhookDeliveryUnknown) {
+			writeDeliveryJSON(writer, http.StatusConflict,
+				map[string]string{"error": "only failed deliveries can be replayed"})
 			return
 		}
 		h.fail(writer, err)
@@ -148,36 +163,42 @@ func (h OperatorHandlers) replay(writer http.ResponseWriter, request *http.Reque
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-func addressedWork(writer http.ResponseWriter, request *http.Request) (tenancy.Organization, uuid.UUID, bool) {
-	organization, ok := workOrganization(writer, request)
+func addressedDelivery(
+	writer http.ResponseWriter, request *http.Request,
+) (tenancy.Organization, uuid.UUID, bool) {
+	organization, ok := deliveryOrganization(writer, request)
 	if !ok {
 		return tenancy.Organization{}, uuid.Nil, false
 	}
-	id, err := uuid.Parse(request.PathValue("work"))
+	id, err := uuid.Parse(request.PathValue("delivery"))
 	if err != nil {
-		writeWorkJSON(writer, http.StatusBadRequest, map[string]string{"error": "work is not an identity"})
+		writeDeliveryJSON(writer, http.StatusBadRequest,
+			map[string]string{"error": "delivery is not an identity"})
 		return tenancy.Organization{}, uuid.Nil, false
 	}
 	return organization, id, true
 }
 
-func workOrganization(writer http.ResponseWriter, request *http.Request) (tenancy.Organization, bool) {
+func deliveryOrganization(
+	writer http.ResponseWriter, request *http.Request,
+) (tenancy.Organization, bool) {
 	organization, ok := authz.ActiveOrganizationFrom(request.Context())
 	if !ok {
-		writeWorkJSON(writer, http.StatusInternalServerError, map[string]string{"error": "request failed"})
+		writeDeliveryJSON(writer, http.StatusInternalServerError,
+			map[string]string{"error": "request failed"})
 		return tenancy.Organization{}, false
 	}
 	return organization, true
 }
 
-func (h OperatorHandlers) fail(writer http.ResponseWriter, err error) {
+func (h DeliveryHandlers) fail(writer http.ResponseWriter, err error) {
 	if h.Logger != nil {
-		h.Logger.Error("webhook work operator request failed", slog.String("error", err.Error()))
+		h.Logger.Error("webhook delivery operator request failed", slog.String("error", err.Error()))
 	}
-	writeWorkJSON(writer, http.StatusInternalServerError, map[string]string{"error": "request failed"})
+	writeDeliveryJSON(writer, http.StatusInternalServerError, map[string]string{"error": "request failed"})
 }
 
-func writeWorkJSON(writer http.ResponseWriter, status int, body any) {
+func writeDeliveryJSON(writer http.ResponseWriter, status int, body any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(status)

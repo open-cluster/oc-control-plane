@@ -24,7 +24,8 @@ incident. The triggering alert becomes the starting context for an investigation
 
 This integration is inbound only. The generated secret authenticates webhook
 deliveries in the `X-OpenCluster-Token` header. OpenCluster stores only a digest of the
-secret and cannot show it again.
+secret and cannot show it again. The static token authenticates the sender; it does not
+cryptographically sign the request body.
 
 ## Connect
 

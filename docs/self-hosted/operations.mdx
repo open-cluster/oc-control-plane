@@ -25,18 +25,18 @@ disconnected or outdated Relays, and failed investigations.
 | Kubernetes change-history retention | Hourly, using the built-in retention period |
 | Relay inventory synchronization | Every five minutes by default |
 | Investigation execution | After an investigation opens, with bounded concurrency |
-| Accepted webhook work | Continuously, with bounded retry, failed-work visibility, and Admin replay |
+| Accepted webhook deliveries | Continuously, with bounded retry, failed-delivery visibility, and Admin replay |
 
 Accepted Alertmanager deliveries and Slack questions are committed before their source is
 acknowledged. Repeated deliveries do not repeat the resulting Investigation or Conversation
-turn. Work that exhausts retry is visible at
-`GET /api/v1/webhook-work/terminal`; signed-in Viewers,
-Editors, and Admins may inspect its safe failure class, attempts, timestamps, and source record
-links. Only an Admin may replay one with
-`POST /api/v1/webhook-work/terminal/{work}/replay`.
+turn. A delivery that exhausts retry is visible at
+`GET /api/v1/webhook-deliveries?status=failed`; signed-in Viewers, Editors, and Admins may
+inspect its safe failure category, attempt count, timestamps, request ID, and Integration.
+Only an Admin may replay one with
+`POST /api/v1/webhook-deliveries/{delivery}/replay`.
 
-Watch `oc.webhooks.work` for accepted, duplicate, rejected, delayed, failed, and replayed
-outcomes. `oc.webhooks.work_delay` measures how long accepted deliveries wait before processing.
+Watch `oc.webhooks.deliveries` for accepted, duplicate, rejected, delayed, failed, and replayed
+outcomes. `oc.webhooks.delivery_delay` measures how long accepted deliveries wait before processing.
 
 ## Deploy and stop
 

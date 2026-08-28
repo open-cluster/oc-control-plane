@@ -58,7 +58,7 @@ func startWebhookWork(process assembled) *backgroundWorker {
 		defer close(running.done)
 		worker.Run(ctx)
 	}()
-	process.logger.Info("webhook work worker started")
+	process.logger.Info("webhook delivery worker started")
 	return running
 }
 

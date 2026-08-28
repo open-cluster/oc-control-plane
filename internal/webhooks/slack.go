@@ -88,6 +88,8 @@ func (s *SlackAgent) Serves() bool { return s != nil && s.SigningSecret != "" }
 func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
+	requestID := uuid.NewString()
+	writer.Header().Set("X-Request-ID", requestID)
 
 	// Acknowledgement latency is MEASURED rather than reasoned about. Slack retries
 	// anything it is not answered inside three seconds, so a deployment drifting towards
@@ -212,18 +214,19 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	h.acceptSlackMessage(ctx, writer, organization, integration.ID, body, envelope)
+	h.acceptSlackMessage(ctx, writer, organization, integration.ID, requestID, body, envelope)
 }
 
 // acceptSlackMessage persists the message and durable work in one transaction, then answers.
 func (h *surface) acceptSlackMessage(
 	ctx context.Context, writer http.ResponseWriter, organization tenancy.Organization,
-	integration uuid.UUID, body []byte, envelope slack.Envelope,
+	integration uuid.UUID, requestID string, body []byte, envelope slack.Envelope,
 ) {
 	digest := sha256.Sum256(body)
 	outcome, err := h.Database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: integration,
 		BodyDigest:  digest[:],
+		RequestID:   requestID,
 		Channel:     envelope.Event.Channel,
 		Thread:      envelope.Thread(),
 		MessageID:   envelope.Event.TS,
@@ -265,5 +268,5 @@ func (h *surface) acceptSlackMessage(
 		slog.String("integration_id", integration.String()),
 		slog.String("conversation_id", outcome.Conversation.String()),
 		slog.Bool("opened_conversation", outcome.Opened))
-	writeStatus(writer, http.StatusOK, "accepted")
+	writeStatus(writer, http.StatusAccepted, "accepted")
 }

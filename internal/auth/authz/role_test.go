@@ -93,7 +93,7 @@ func TestAnEditorOperatesWithoutAdministering(t *testing.T) {
 		authz.IntegrationCreate, authz.IntegrationDelete, authz.IntegrationSecretRotate,
 		authz.RelayBootstrapIssue, authz.RelayConflictClear,
 		authz.IdentityConfigure, authz.MemberManage, authz.SessionRevoke,
-		authz.WebhookWorkReplay,
+		authz.WebhookDeliveryReplay,
 	} {
 		if authz.Editor.Grants(forbidden) {
 			t.Errorf("an editor holds %s; changing what the estate is, and who may sign in, "+

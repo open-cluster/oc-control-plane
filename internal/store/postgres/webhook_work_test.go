@@ -11,7 +11,154 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
+	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
+
+type alwaysFailingWebhookHandler struct{}
+
+func (alwaysFailingWebhookHandler) Handle(context.Context, storage.WebhookWork) error {
+	return errors.New("provider unavailable")
+}
+
+func TestWebhookDeliveryProjectionAggregatesEveryWorkAndFiltersByState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database, organization := migratedDatabase(t)
+	integration := alertmanagerIntegration(t, database, organization)
+	started := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	if _, err := database.RecordDelivery(ctx, organization, storage.Delivery{
+		Integration: integration, BodyDigest: append(make([]byte, 31), 91),
+		ProviderIdentity: "aggregate-delivery", AlertEvents: []storage.AlertEvent{
+			{SourceKey: "aggregate-a", GroupingKey: "aggregate-a", Status: storage.AlertEventFiring,
+				Title: "first", StartedAt: started},
+			{SourceKey: "aggregate-b", GroupingKey: "aggregate-b", Status: storage.AlertEventFiring,
+				Title: "second", StartedAt: started},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pool, _ := database.Pool(organization)
+	var deliveryID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT delivery_id FROM integration_delivery
+		 WHERE org_id = $1 AND integration_id = $2 AND provider_identity = 'aggregate-delivery'`,
+		organization.String(), integration).Scan(&deliveryID); err != nil {
+		t.Fatal(err)
+	}
+	assertState := func(want storage.WebhookDeliveryState) storage.WebhookDelivery {
+		t.Helper()
+		delivery, err := database.WebhookDeliveryByID(ctx, organization, deliveryID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if delivery.State != want {
+			t.Fatalf("aggregate state = %q, want %q", delivery.State, want)
+		}
+		page, err := database.WebhookDeliveries(ctx, organization, want, storage.Page{Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Deliveries) != 1 || page.Deliveries[0].ID != deliveryID {
+			t.Fatalf("filter %q returned %+v", want, page.Deliveries)
+		}
+		return delivery
+	}
+	assertState(storage.WebhookDeliveryAccepted)
+	wrongState, err := database.WebhookDeliveries(ctx, organization,
+		storage.WebhookDeliveryFailed, storage.Page{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wrongState.Deliveries) != 0 {
+		t.Fatalf("failed filter included accepted deliveries: %+v", wrongState.Deliveries)
+	}
+	next := time.Now().UTC().Add(time.Minute)
+	if _, err := pool.Exec(ctx, `
+		UPDATE webhook_work SET status = 3, attempts = 3, available_at = $3,
+		       failure_class = 'provider-work-failed', failure_message = 'safe', updated_at = now()
+		 WHERE org_id = $1 AND work_id = (
+		       SELECT work_id FROM webhook_work WHERE org_id = $1 AND delivery_id = $2
+		       ORDER BY work_id LIMIT 1)`, organization.String(), deliveryID, next); err != nil {
+		t.Fatal(err)
+	}
+	processing := assertState(storage.WebhookDeliveryProcessing)
+	if processing.Attempts != 3 || processing.NextEligibleAt == nil ||
+		processing.LastAttemptAt == nil || processing.NextEligibleAt.Before(next.Add(-time.Second)) {
+		t.Fatalf("processing projection omitted aggregate timing: %+v", processing)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE webhook_work SET status = 5, failure_class = '', failure_message = '', updated_at = now()
+		 WHERE org_id = $1 AND delivery_id = $2
+		   AND work_id = (SELECT work_id FROM webhook_work WHERE org_id = $1 AND delivery_id = $2
+		                  ORDER BY work_id LIMIT 1)`, organization.String(), deliveryID); err != nil {
+		t.Fatal(err)
+	}
+	assertState(storage.WebhookDeliveryProcessing)
+	if _, err := pool.Exec(ctx, `
+		UPDATE webhook_work SET status = 5, failure_class = '', failure_message = '', updated_at = now()
+		 WHERE org_id = $1 AND delivery_id = $2`, organization.String(), deliveryID); err != nil {
+		t.Fatal(err)
+	}
+	assertState(storage.WebhookDeliverySucceeded)
+	if _, err := pool.Exec(ctx, `
+		UPDATE webhook_work SET status = 4, attempts = 4,
+		       failure_class = 'provider-work-failed', failure_message = 'safe', updated_at = now()
+		 WHERE org_id = $1 AND work_id = (
+		       SELECT work_id FROM webhook_work WHERE org_id = $1 AND delivery_id = $2
+		       ORDER BY work_id LIMIT 1)`, organization.String(), deliveryID); err != nil {
+		t.Fatal(err)
+	}
+	failed := assertState(storage.WebhookDeliveryFailed)
+	if failed.FailureClass != "provider-work-failed" || failed.Attempts != 4 {
+		t.Fatalf("failed projection = %+v", failed)
+	}
+}
+
+func TestWebhookDeliveryStopsAtTheBoundedAttemptCountAndBecomesVisible(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database, organization := migratedDatabase(t)
+	integration := alertmanagerIntegration(t, database, organization)
+	if _, err := database.RecordDelivery(ctx, organization, storage.Delivery{
+		Integration: integration, BodyDigest: append(make([]byte, 31), 92),
+		ProviderIdentity: "bounded-retry", AlertEvents: []storage.AlertEvent{{
+			SourceKey: "bounded-retry", Status: storage.AlertEventFiring,
+			Title: "bounded retry", StartedAt: time.Now().UTC().Add(-time.Minute),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	worker := webhooks.Worker{
+		Work: database, Owner: "bounded-test", Lease: time.Minute, RetryBase: time.Millisecond,
+		MaxAttempts: 3,
+		Handlers:    webhooks.WorkHandlers{storage.WebhookWorkAlert: alwaysFailingWebhookHandler{}},
+	}
+	pool, _ := database.Pool(organization)
+	for attempt := 1; attempt <= 3; attempt++ {
+		worked, err := worker.ProcessOne(ctx)
+		if err != nil || !worked {
+			t.Fatalf("attempt %d: worked=%t error=%v", attempt, worked, err)
+		}
+		if _, err = pool.Exec(ctx, `
+			UPDATE webhook_work SET available_at = now()
+			 WHERE org_id = $1 AND status = 3`, organization.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := database.WebhookDeliveries(ctx, organization,
+		storage.WebhookDeliveryFailed, storage.Page{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Deliveries) != 1 || page.Deliveries[0].Attempts != 3 ||
+		page.Deliveries[0].FailureClass != "provider-work-failed" {
+		t.Fatalf("bounded retry did not expose one failed delivery: %+v", page.Deliveries)
+	}
+	worked, err := worker.ProcessOne(ctx)
+	if err != nil || worked {
+		t.Fatalf("terminal delivery was retried: worked=%t error=%v", worked, err)
+	}
+}
 
 func TestWebhookWorkOpensExactlyOneInvestigationAcrossEffectReplay(t *testing.T) {
 	t.Parallel()
@@ -86,7 +233,7 @@ func TestWebhookWorkLeaseEpochRejectsAStaleWorker(t *testing.T) {
 	}
 }
 
-func TestTerminalWebhookReplayRestoresTheEntireAttemptBudget(t *testing.T) {
+func TestFailedWebhookDeliveryReplayRestoresTheEntireAttemptBudget(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
 	integration := alertmanagerIntegration(t, database, organization)
@@ -111,13 +258,14 @@ func TestTerminalWebhookReplayRestoresTheEntireAttemptBudget(t *testing.T) {
 			0, "provider-work-failed", "safe failure"); err != nil {
 			t.Fatalf("round %d terminal failure: %v", round, err)
 		}
-		if err = database.ReplayWebhookWork(context.Background(), principal, organization, work.ID); err != nil {
+		if err = database.ReplayWebhookDelivery(context.Background(), principal, organization,
+			work.DeliveryID); err != nil {
 			t.Fatalf("round %d replay: %v", round, err)
 		}
 	}
 }
 
-func TestTerminalWebhookReplayRollsBackWhenItsAuditCannotBeWritten(t *testing.T) {
+func TestFailedWebhookDeliveryReplayRollsBackWhenItsAuditCannotBeWritten(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	integration := alertmanagerIntegration(t, database, organization)
 	if _, err := database.RecordDelivery(context.Background(), organization, storage.Delivery{
@@ -142,13 +290,18 @@ func TestTerminalWebhookReplayRollsBackWhenItsAuditCannotBeWritten(t *testing.T)
 	if _, err = pool.Exec(context.Background(), `DROP TABLE audit_event`); err != nil {
 		t.Fatal(err)
 	}
-	if err = database.ReplayWebhookWork(context.Background(), ownerOf(t, organization),
-		organization, work.ID); !errors.Is(err, audit.ErrWriteFailed) {
+	if err = database.ReplayWebhookDelivery(context.Background(), ownerOf(t, organization),
+		organization, work.DeliveryID); !errors.Is(err, audit.ErrWriteFailed) {
 		t.Fatalf("replay without its audit = %v, want audit write failure", err)
 	}
-	terminal, err := database.TerminalWebhookWorkByID(context.Background(), organization, work.ID)
-	if err != nil || terminal.Status != storage.WebhookWorkTerminal || terminal.Attempts != 1 {
-		t.Fatalf("unaudited replay changed terminal work: %+v error=%v", terminal, err)
+	var status storage.WebhookWorkStatus
+	var attempts int
+	if err = pool.QueryRow(context.Background(), `
+		SELECT status, attempts FROM webhook_work WHERE org_id = $1 AND work_id = $2`,
+		organization.String(), work.ID).Scan(&status, &attempts); err != nil ||
+		status != storage.WebhookWorkTerminal || attempts != 1 {
+		t.Fatalf("unaudited replay changed private work: status=%v attempts=%d error=%v",
+			status, attempts, err)
 	}
 }
 

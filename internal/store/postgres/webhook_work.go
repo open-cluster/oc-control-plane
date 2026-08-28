@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
@@ -50,8 +48,8 @@ func (status WebhookWorkStatus) String() string {
 	return names[status]
 }
 
-var ErrWebhookWorkLeaseLost = errors.New("webhook work lease is no longer held")
-var ErrWebhookWorkUnknown = errors.New("webhook work not found")
+var ErrWebhookWorkLeaseLost = errors.New("webhook delivery processing lease is no longer held")
+var ErrWebhookWorkUnknown = errors.New("webhook delivery processing record not found")
 var ErrWebhookWorkCapacity = errors.New("organization has reached its waiting investigation limit")
 
 type WebhookWork struct {
@@ -86,7 +84,7 @@ func (d *Database) ApplyAlertWebhookWork(
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("beginning alert webhook work: %w", err)
+		return uuid.Nil, fmt.Errorf("beginning Alert Event delivery processing: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var investigationID uuid.UUID
@@ -106,7 +104,7 @@ func (d *Database) ApplyAlertWebhookWork(
 			  FROM incident
 			 WHERE org_id = $1 AND incident_id = $2`, work.Organization.String(),
 			work.IncidentID).Scan(&title, &firstSeen, &lastSeen); err != nil {
-			return uuid.Nil, fmt.Errorf("reading webhook work incident: %w", err)
+			return uuid.Nil, fmt.Errorf("reading delivery processing Incident: %w", err)
 		}
 		investigationID = uuid.New()
 		if _, err = tx.Exec(ctx, `
@@ -125,7 +123,7 @@ func (d *Database) ApplyAlertWebhookWork(
 		return uuid.Nil, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return uuid.Nil, fmt.Errorf("committing alert webhook work: %w", err)
+		return uuid.Nil, fmt.Errorf("committing Alert Event delivery processing: %w", err)
 	}
 	return investigationID, nil
 }
@@ -144,7 +142,7 @@ func (d *Database) ApplySlackWebhookWork(
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("beginning slack webhook work: %w", err)
+		return fmt.Errorf("beginning Slack delivery processing: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err = reserveWaitingInvestigation(ctx, tx, work.Organization, maxWaiting); err != nil {
@@ -166,7 +164,7 @@ func (d *Database) ApplySlackWebhookWork(
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("committing slack webhook work: %w", err)
+		return fmt.Errorf("committing Slack delivery processing: %w", err)
 	}
 	return nil
 }
@@ -202,7 +200,7 @@ func completeWebhookWorkTx(ctx context.Context, tx pgx.Tx, work WebhookWork) err
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch)
 	if err != nil {
-		return fmt.Errorf("completing webhook work effect: %w", err)
+		return fmt.Errorf("completing webhook delivery effect: %w", err)
 	}
 	return requireWorkLease(tag.RowsAffected())
 }
@@ -226,7 +224,7 @@ func enqueueWebhookWork(
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0))
 		ON CONFLICT DO NOTHING`, uuid.New(), organization.String(), int16(kind), deliveryID,
 		integrationID, incident, conversation, messageSequence); err != nil {
-		return fmt.Errorf("enqueueing webhook work: %w", err)
+		return fmt.Errorf("enqueueing webhook delivery processing: %w", err)
 	}
 	return nil
 }
@@ -237,7 +235,7 @@ func (d *Database) ClaimWebhookWork(
 	ctx context.Context, owner string, lease time.Duration,
 ) (WebhookWork, bool, error) {
 	if owner == "" || lease <= 0 {
-		return WebhookWork{}, false, errors.New("webhook work owner and lease are required")
+		return WebhookWork{}, false, errors.New("webhook delivery processing owner and lease are required")
 	}
 	var work WebhookWork
 	var organization string
@@ -273,11 +271,11 @@ func (d *Database) ClaimWebhookWork(
 		return WebhookWork{}, false, nil
 	}
 	if err != nil {
-		return WebhookWork{}, false, fmt.Errorf("claiming webhook work: %w", err)
+		return WebhookWork{}, false, fmt.Errorf("claiming webhook delivery processing: %w", err)
 	}
 	work.Organization, err = tenancy.NewOrganization(organization)
 	if err != nil {
-		return WebhookWork{}, false, fmt.Errorf("claimed webhook work has invalid organization: %w", err)
+		return WebhookWork{}, false, fmt.Errorf("claimed webhook delivery has invalid Organization: %w", err)
 	}
 	if incidentID != nil {
 		work.IncidentID = *incidentID
@@ -303,7 +301,7 @@ func (d *Database) HeartbeatWebhookWork(
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch, lease.String())
 	if err != nil {
-		return fmt.Errorf("heartbeating webhook work: %w", err)
+		return fmt.Errorf("renewing webhook delivery processing lease: %w", err)
 	}
 	return requireWorkLease(tag.RowsAffected())
 }
@@ -347,7 +345,7 @@ func (d *Database) DeferWebhookWork(
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch, max(delay, 0).String())
 	if err != nil {
-		return fmt.Errorf("deferring webhook work behind organization capacity: %w", err)
+		return fmt.Errorf("deferring webhook delivery behind Organization capacity: %w", err)
 	}
 	return requireWorkLease(tag.RowsAffected())
 }
@@ -370,7 +368,7 @@ func (d *Database) transitionWebhookWork(
 		work.Organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch,
 		int16(status), max(delay, 0).String(), class, message)
 	if err != nil {
-		return fmt.Errorf("transitioning webhook work: %w", err)
+		return fmt.Errorf("transitioning webhook delivery processing: %w", err)
 	}
 	return requireWorkLease(tag.RowsAffected())
 }
@@ -387,135 +385,4 @@ func boundedText(value string, maximum int) string {
 		return value
 	}
 	return value[:maximum]
-}
-
-type WebhookWorkPage struct {
-	Work []WebhookWork
-	Next string
-}
-
-func (d *Database) TerminalWebhookWork(
-	ctx context.Context, organization tenancy.Organization, page Page,
-) (WebhookWorkPage, error) {
-	after, afterID, err := decodeCursor(page.After)
-	if err != nil {
-		return WebhookWorkPage{}, ErrBadCursor
-	}
-	limit := pageLimit(page.Limit)
-	pool, err := d.Pool(organization)
-	if err != nil {
-		return WebhookWorkPage{}, err
-	}
-	rows, err := pool.Query(ctx, `
-		SELECT work_id, kind, status, delivery_id, integration_id, incident_id,
-		       conversation_id, coalesce(message_sequence, 0), attempts,
-		       failure_class, failure_message, created_at, updated_at
-		  FROM webhook_work
-		 WHERE org_id = $1 AND status = 4
-		   AND ($2::timestamptz IS NULL OR (updated_at, work_id) < ($2, $3))
-		 ORDER BY updated_at DESC, work_id DESC LIMIT $4`, organization.String(), after, afterID, limit+1)
-	if err != nil {
-		return WebhookWorkPage{}, fmt.Errorf("listing terminal webhook work: %w", err)
-	}
-	defer rows.Close()
-	var found []WebhookWork
-	for rows.Next() {
-		work := WebhookWork{Organization: organization}
-		var incidentID, conversationID *uuid.UUID
-		if err := rows.Scan(&work.ID, &work.Kind, &work.Status, &work.DeliveryID,
-			&work.IntegrationID, &incidentID, &conversationID, &work.MessageSequence,
-			&work.Attempts, &work.FailureClass, &work.FailureMessage,
-			&work.CreatedAt, &work.UpdatedAt); err != nil {
-			return WebhookWorkPage{}, fmt.Errorf("scanning terminal webhook work: %w", err)
-		}
-		if incidentID != nil {
-			work.IncidentID = *incidentID
-		}
-		if conversationID != nil {
-			work.ConversationID = *conversationID
-		}
-		found = append(found, work)
-	}
-	if err := rows.Err(); err != nil {
-		return WebhookWorkPage{}, err
-	}
-	pageResult := WebhookWorkPage{Work: found}
-	if len(found) > limit {
-		last := found[limit-1]
-		pageResult.Work = found[:limit]
-		pageResult.Next = encodeCursor(last.UpdatedAt, last.ID)
-	}
-	return pageResult, nil
-}
-
-func (d *Database) TerminalWebhookWorkByID(
-	ctx context.Context, organization tenancy.Organization, workID uuid.UUID,
-) (WebhookWork, error) {
-	pool, err := d.Pool(organization)
-	if err != nil {
-		return WebhookWork{}, err
-	}
-	work := WebhookWork{Organization: organization}
-	var incidentID, conversationID *uuid.UUID
-	err = pool.QueryRow(ctx, `
-		SELECT work_id, kind, status, delivery_id, integration_id, incident_id,
-		       conversation_id, coalesce(message_sequence, 0), attempts,
-		       failure_class, failure_message, created_at, updated_at
-		  FROM webhook_work
-		 WHERE org_id = $1 AND work_id = $2 AND status = 4`,
-		organization.String(), workID).Scan(&work.ID, &work.Kind, &work.Status,
-		&work.DeliveryID, &work.IntegrationID, &incidentID, &conversationID,
-		&work.MessageSequence, &work.Attempts, &work.FailureClass, &work.FailureMessage,
-		&work.CreatedAt, &work.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return WebhookWork{}, ErrWebhookWorkUnknown
-		}
-		return WebhookWork{}, err
-	}
-	if incidentID != nil {
-		work.IncidentID = *incidentID
-	}
-	if conversationID != nil {
-		work.ConversationID = *conversationID
-	}
-	return work, nil
-}
-
-func (d *Database) ReplayWebhookWork(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	workID uuid.UUID,
-) error {
-	_, err := audited(ctx, d, principal, organization, audit.ActionWebhookWorkReplayed,
-		func(ctx context.Context, tx pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var integrationID uuid.UUID
-			var failureClass string
-			var attempts int
-			updateErr := tx.QueryRow(ctx, `
-				WITH previous AS (
-					SELECT org_id, work_id, integration_id, failure_class, attempts
-					  FROM webhook_work
-					 WHERE org_id = $1 AND work_id = $2 AND status = 4
-					 FOR UPDATE
-
-				)
-				UPDATE webhook_work AS work
-				   SET status = 1, attempts = 0, available_at = now(),
-				       failure_class = '', failure_message = '',
-				       updated_at = now()
-				  FROM previous
-				 WHERE work.org_id = previous.org_id AND work.work_id = previous.work_id
-				RETURNING previous.integration_id, previous.failure_class, previous.attempts`,
-				organization.String(), workID).Scan(&integrationID, &failureClass, &attempts)
-			if updateErr != nil {
-				return struct{}{}, audit.Target{}, nil, updateErr
-			}
-			return struct{}{}, audit.Target{Kind: audit.TargetWebhookWork, ID: workID.String()},
-				audit.Detail{"integrationId": integrationID.String(),
-					"failureClass": failureClass, "attempts": attempts}, nil
-		})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrWebhookWorkUnknown
-	}
-	return err
 }

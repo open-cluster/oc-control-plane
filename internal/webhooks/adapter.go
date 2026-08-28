@@ -1,6 +1,8 @@
 package webhooks
 
 import (
+	"net/http"
+
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -20,8 +22,9 @@ import (
 // that. A failure a retry COULD fix is not an adapter's to report — it has no dependencies
 // to fail — so intake maps every error from here to a permanent refusal.
 type Adapter interface {
-	// Normalise returns the AlertEvents in one body and how many the source says it left out.
-	Normalise(body []byte) ([]storage.AlertEvent, int, error)
+	Authenticate(http.Header, integrations.Integration) bool
+	// Normalise returns the provider identity, canonical content digest, and Alert Events.
+	Normalise(body []byte) (storage.NormalizedDelivery, error)
 }
 
 // Adapters is the routing table the composition root supplies, keyed by the Integration

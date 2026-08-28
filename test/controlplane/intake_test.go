@@ -98,8 +98,22 @@ func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.U
 	return id
 }
 
+func (p *intakePlane) setIntegrationType(t *testing.T, typeID int) {
+	t.Helper()
+	connection, err := pgx.Connect(context.Background(), p.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	if _, err = connection.Exec(context.Background(),
+		`UPDATE integration SET integration_type_id = $2 WHERE integration_id = $1`,
+		p.integration, typeID); err != nil {
+		t.Fatalf("setting integration type: %v", err)
+	}
+}
+
 // deliver posts a body to intake with the given secret, and reports the status.
-func (p *intakePlane) deliver(t *testing.T, secret, body string) int {
+func (p *intakePlane) deliver(t *testing.T, secret, body string, headers ...http.Header) int {
 	t.Helper()
 
 	url := fmt.Sprintf("http://%s/webhooks/v1/integrations/%s/alert-events", p.address, p.integration)
@@ -110,6 +124,13 @@ func (p *intakePlane) deliver(t *testing.T, secret, body string) int {
 	}
 	if secret != "" {
 		request.Header.Set(intake.TokenHeader, secret)
+	}
+	for _, supplied := range headers {
+		for name, values := range supplied {
+			for _, value := range values {
+				request.Header.Add(name, value)
+			}
+		}
 	}
 
 	response, err := http.DefaultClient.Do(request)
@@ -299,6 +320,105 @@ func alertmanagerBody(
 	  }]
 	}`, status, truncated, status, fingerprint,
 		startsAt.Format(time.RFC3339Nano), ends)
+}
+
+func TestGenericWebhookLifecycleIsCanonicalIdempotentAndDoesNotInventIncidents(t *testing.T) {
+	plane := startIntake(t)
+	plane.setIntegrationType(t, 5)
+
+	firingBody := `{
+	  "eventId":"generic-42","status":"firing","title":"  Database latency  ",
+	  "severity":"critical","startedAt":"2026-08-28T03:00:00-04:00",
+	  "deduplicationKey":"database/latency","labels":{"region":"eu-central-1"}
+	}`
+	if status := plane.deliver(t, intakeSecret, firingBody); status != http.StatusAccepted {
+		t.Fatalf("generic firing = %d, want 202\nlogs:\n%s", status, plane.logs.String())
+	}
+	equivalent := `{"labels":{"region":"eu-central-1"},"deduplicationKey":"database/latency",` +
+		`"startedAt":"2026-08-28T07:00:00Z","severity":"critical",` +
+		`"title":"Database latency","status":"firing","eventId":"generic-42"}`
+	if status := plane.deliver(t, intakeSecret, equivalent); status != http.StatusOK {
+		t.Fatalf("canonical duplicate = %d, want 200", status)
+	}
+	conflicting := strings.Replace(equivalent, "Database latency", "Different alert", 1)
+	if status := plane.deliver(t, intakeSecret, conflicting); status != http.StatusBadRequest {
+		t.Fatalf("conflicting firing identity = %d, want 400", status)
+	}
+
+	resolution := `{"eventId":"generic-42","status":"resolved","title":"Database latency",` +
+		`"severity":"critical","startedAt":"2026-08-28T07:00:00Z",` +
+		`"resolvedAt":"2026-08-28T07:15:00Z","deduplicationKey":"database/latency",` +
+		`"labels":{"region":"eu-central-1"}}`
+	if status := plane.deliver(t, intakeSecret, resolution); status != http.StatusAccepted {
+		t.Fatalf("matching resolution = %d, want 202", status)
+	}
+	if status := plane.deliver(t, intakeSecret, resolution); status != http.StatusOK {
+		t.Fatalf("duplicate resolution = %d, want 200", status)
+	}
+
+	unmatched := `{"eventId":"generic-unmatched","status":"resolved","title":"Earlier alert",` +
+		`"severity":"warning","startedAt":"2026-08-28T06:00:00Z",` +
+		`"resolvedAt":"2026-08-28T06:05:00Z","deduplicationKey":"earlier-alert"}`
+	if status := plane.deliver(t, intakeSecret, unmatched); status != http.StatusAccepted {
+		t.Fatalf("unmatched resolution = %d, want 202", status)
+	}
+
+	connection, err := pgx.Connect(context.Background(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	var resolvedStatus int
+	if err = connection.QueryRow(context.Background(), `
+		SELECT status FROM alert_event
+		 WHERE integration_id = $1 AND source_key = 'generic-42'`, plane.integration).
+		Scan(&resolvedStatus); err != nil || resolvedStatus != 2 {
+		t.Fatalf("matching alert status = %d, error=%v", resolvedStatus, err)
+	}
+	var unmatchedIncident *uuid.UUID
+	if err = connection.QueryRow(context.Background(), `
+		SELECT incident_id FROM alert_event
+		 WHERE integration_id = $1 AND source_key = 'generic-unmatched'`, plane.integration).
+		Scan(&unmatchedIncident); err != nil || unmatchedIncident != nil {
+		t.Fatalf("unmatched resolution incident = %v, error=%v", unmatchedIncident, err)
+	}
+}
+
+func TestIntake_AuthenticatesBeforeNormalizing(t *testing.T) {
+	plane := startIntake(t)
+	if status := plane.deliver(t, "wrong-secret-long-enough", `{not-json`); status != http.StatusUnauthorized {
+		t.Fatalf("malformed unauthenticated request = %d, want authentication refusal", status)
+	}
+	if events := plane.alertEvents(t); len(events) != 0 {
+		t.Fatalf("malformed unauthenticated request created %d Alert Events", len(events))
+	}
+}
+
+func TestIntake_RateLimitsBeforeParsingOrProviderAuthentication(t *testing.T) {
+	plane := startIntake(t)
+	for request := 1; request <= 60; request++ {
+		if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusBadRequest {
+			t.Fatalf("request %d = %d before burst was consumed, want malformed", request, status)
+		}
+	}
+	if status := plane.deliver(t, "wrong-secret-long-enough", `{not-json`); status != http.StatusTooManyRequests {
+		t.Fatalf("request after burst = %d, want rate limit before auth or parsing", status)
+	}
+}
+
+func TestIntake_OrganizationClaimsCannotRedirectIntegrationOwnership(t *testing.T) {
+	plane := startIntake(t)
+	body := strings.Replace(firing("ownership-source", time.Now().UTC().Add(-time.Minute)),
+		"{", `{"organization":"claimed-org",`, 1)
+	headers := http.Header{"X-OpenCluster-Organization": []string{"claimed-org"}}
+	if status := plane.deliver(t, intakeSecret, body, headers); status != http.StatusAccepted {
+		t.Fatalf("delivery carrying Organization claims = %d, want accepted for its Integration", status)
+	}
+	scopes := plane.scopes(t)
+	if len(scopes) != 1 || scopes[0].organization != intakeOrganization ||
+		scopes[0].integration != plane.integration {
+		t.Fatalf("caller claims redirected ownership: %+v", scopes)
+	}
 }
 
 // The sentence: a correctly authenticated delivery becomes a durable, normalised AlertEvent.

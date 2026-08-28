@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
@@ -299,6 +300,7 @@ func providerManifestKeys(t *testing.T) []string {
 		kubernetes.Definition(),
 		slack.Definition(slack.NewClient(""), nil, false),
 		github.Definition(nil, github.NewClient("")),
+		genericwebhook.Definition(),
 	)
 	if err != nil {
 		t.Fatalf("assembling provider manifests: %v", err)

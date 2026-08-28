@@ -1,11 +1,14 @@
 package gates_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	"gopkg.in/yaml.v3"
 )
 
@@ -77,6 +80,21 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 	}
 
 	served := make(map[string]bool)
+	composedIntake := webhooks.Handlers{
+		Slack: &webhooks.SlackAgent{SigningSecret: "architecture-test-secret"},
+	}.Router()
+	for _, route := range webhooks.InboundRoutes() {
+		served[route.Method+" "+route.Pattern] = true
+		path := strings.Replace(route.Pattern, "{integration}",
+			"00000000-0000-0000-0000-000000000001", 1)
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		composedIntake.ServeHTTP(response, request)
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Errorf("composed intake does not register %s: GET probe returned %d",
+				route.Method+" "+route.Pattern, response.Code)
+		}
+	}
 	for _, route := range operatorRoutes(t) {
 		served[route.Key()] = true
 		operation, ok := operationFor(document, route.Method(), route.Pattern())
@@ -129,6 +147,24 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 			t.Errorf("public route %s must declare an empty security requirement", route.Key())
 		case route.Access() != authz.AccessPublic && len(*operation.Security) == 0:
 			t.Errorf("protected route %s must declare a security requirement", route.Key())
+		}
+	}
+	for key := range served {
+		if !strings.HasPrefix(key, "POST /webhooks/") {
+			continue
+		}
+		method, path, _ := strings.Cut(key, " ")
+		operation, ok := operationFor(document, method, path)
+		if !ok {
+			t.Errorf("served intake route %s is missing from OpenAPI", key)
+			continue
+		}
+		if operation.Access != "webhook" || operation.OrganizationSelector != "forbidden" ||
+			operation.CookieCSRF != "not-required" {
+			t.Errorf("%s does not declare the webhook security boundary", key)
+		}
+		if operation.Security == nil || len(*operation.Security) == 0 {
+			t.Errorf("%s must declare its provider credential scheme", key)
 		}
 	}
 	for key := range documented {

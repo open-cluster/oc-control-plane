@@ -13,6 +13,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
@@ -152,6 +153,7 @@ func Run(
 		slack.Definition(slack.NewClient(options.SlackAPIURL), slackInstaller,
 			cfg.SlackSigningSecret != ""),
 		github.Definition(gitHubApp, gitHubClient),
+		genericwebhook.Definition(),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)

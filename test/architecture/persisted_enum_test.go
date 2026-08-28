@@ -64,6 +64,7 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"TypeKubernetes", int(integrations.TypeKubernetes), 2},
 		{"TypeSlack", int(integrations.TypeSlack), 3},
 		{"TypeGitHub", int(integrations.TypeGitHub), 4},
+		{"TypeGenericWebhook", int(integrations.TypeGenericWebhook), 5},
 
 		// An Integration's observed status. A value that moved here would silently
 		// re-label every existing row: an Integration stored as failed would start reading
@@ -176,6 +177,7 @@ var (
 	integrationTypeValues = []int{
 		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
 		int(integrations.TypeSlack), int(integrations.TypeGitHub),
+		int(integrations.TypeGenericWebhook),
 	}
 	changeKindValues = []int{
 		int(changeledger.ChangeBaseline), int(changeledger.ChangeCreated),
@@ -200,6 +202,9 @@ var enumColumns = map[string]map[string][]int{
 	// The fleet counts leased jobs to report what the relays are holding.
 	"fleet.go":        {"status": jobStatusValues},
 	"webhook_work.go": {"status": webhookWorkStatusValues},
+	"webhook_delivery.go": {
+		"status": webhookWorkStatusValues, "outcome": deliveryOutcomeValues,
+	},
 	// The delivery path: the upsert guard compares a SIGNAL's status, and the idempotence
 	// key's partial-index predicate compares a delivery's outcome.
 	"alert_event.go": {"status": alertEventStatusValues, "outcome": deliveryOutcomeValues},

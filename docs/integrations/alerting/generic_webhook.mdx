@@ -1,0 +1,71 @@
+---
+title: "Generic Webhook"
+description: "Create incidents from canonical alert events sent by unsupported alert sources."
+---
+
+Use Generic Webhook when an alert source can send an outbound HTTP request but does not
+have a first-class OpenCluster integration. The sender must produce the canonical schema;
+OpenCluster does not run field mappings or transformations.
+
+## Prerequisites
+
+- Network access from the sender to the OpenCluster intake endpoint over HTTPS.
+- A sender that can set the `X-OpenCluster-Token` header and send JSON.
+- The **Admin** role in OpenCluster.
+
+## Connect
+
+Create a **Generic Webhook** integration, then copy its webhook URL and one-time secret.
+Send each alert to that URL with the secret in `X-OpenCluster-Token`.
+
+```json
+{
+  "eventId": "alert-2026-0042",
+  "status": "firing",
+  "title": "Database latency is high",
+  "severity": "critical",
+  "startedAt": "2026-08-28T07:00:00Z",
+  "deduplicationKey": "production/database-latency",
+  "labels": { "region": "eu-central-1" },
+  "annotations": { "runbook": "Check the primary database" },
+  "sourceUrl": "https://monitor.example/alerts/42"
+}
+```
+
+Use the same `eventId`, `startedAt`, and `deduplicationKey` for the matching resolution,
+set `status` to `resolved`, and add `resolvedAt`. Repeating the same phase is safe. Reusing
+an `eventId` with different content in the same phase returns `400`.
+
+## Schema limits
+
+| Field | Requirement |
+| --- | --- |
+| `eventId` | 1–256 characters; stable for the alert lifecycle |
+| `status` | `firing` or `resolved` |
+| `title` | 1–512 characters after trimming |
+| `severity` | `info`, `warning`, or `critical` |
+| `startedAt` | RFC 3339 timestamp |
+| `resolvedAt` | Required only for `resolved`; not before `startedAt` |
+| `deduplicationKey` | 1–256 characters; groups related alerts |
+| `labels` | At most 32 string entries; keys up to 64, values up to 256 characters |
+| `annotations` | At most 32 string entries; keys up to 64, values up to 2,048 characters |
+| `sourceUrl` | Optional absolute HTTP or HTTPS URL up to 2,048 characters |
+
+Unknown or duplicate fields, invalid UTF-8, trailing JSON, and an Organization identifier
+are rejected. Annotation text is displayed as untrusted source content. OpenCluster never
+fetches `sourceUrl` during intake.
+
+## Delivery responses
+
+| Response | Meaning |
+| --- | --- |
+| `202` | This lifecycle phase was durably accepted. |
+| `200` | The same phase and normalized content was already accepted. |
+| `400` | The schema is invalid or the identity conflicts with accepted content. |
+| `401` | The secret is wrong, was rotated, or the integration is disabled. |
+| `413` | The body is larger than 1 MiB. |
+| `429` | Retry after the `Retry-After` interval. |
+| `503` | OpenCluster could not record the delivery; retry. |
+
+Rotate the secret if it may have been exposed. Rotation invalidates the old value
+immediately. Disable the integration to stop new deliveries while retaining history.

@@ -23,6 +23,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	"github.com/open-cluster/oc-control-plane/web"
@@ -321,7 +322,8 @@ func intakeRouter(process assembled) http.Handler {
 		Database: process.database,
 		Logger:   process.logger,
 		Adapters: webhooks.Adapters{
-			integrations.TypeAlertmanager: alertmanager.Adapter{},
+			integrations.TypeAlertmanager:   alertmanager.Adapter{},
+			integrations.TypeGenericWebhook: genericwebhook.Adapter{},
 		},
 		Slack: slackAgent(cfg),
 	}.Router()

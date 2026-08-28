@@ -321,7 +321,7 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		t.Error("the configuration schema is not the closed JSON Schema the create operation enforces")
 	}
 
-	t.Run("every type reaches our own documentation as well as the vendor's", func(t *testing.T) {
+	t.Run("every type reaches our own documentation and provider types reach the vendor", func(t *testing.T) {
 		// The operator on an Integration page needs OUR page — the receiver YAML, the
 		// header name, the version floor — and every type named only the vendor's. The
 		// page exists and was unreachable from the product.
@@ -331,7 +331,7 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		// given resolves to a page that is really in this repository. A type added
 		// without one fails here as well as in the gate.
 		for _, entry := range catalog.Types {
-			if entry.DocumentationURL == "" {
+			if entry.DocumentationURL == "" && entry.Key != "generic_webhook" {
 				t.Errorf("%s names no vendor documentation", entry.Key)
 			}
 			if entry.ProductDocumentationURL == "" {

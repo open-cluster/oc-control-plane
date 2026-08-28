@@ -37,11 +37,11 @@ func (h WorkHandler) Handle(ctx context.Context, work storage.WebhookWork) error
 				logger = slog.Default()
 			}
 			logger.WarnContext(ctx, "slack message provenance lookup failed",
-				slog.String("work_id", work.ID.String()))
+				slog.String("delivery_id", work.DeliveryID.String()))
 		}
 	}
 	if h.Work == nil {
-		return fmt.Errorf("slack webhook work: no store")
+		return fmt.Errorf("slack webhook delivery: no store")
 	}
 	return h.Work.ApplySlackWebhookWork(ctx, work.Organization, work, h.WindowLead, h.MaxWaitingTurns)
 }

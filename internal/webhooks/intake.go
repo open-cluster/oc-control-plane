@@ -22,8 +22,6 @@ package webhooks
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,17 +44,50 @@ import (
 // written down rather than left implicit — this authenticates the sender and attests nothing
 // about the body — and verification is per-adapter precisely so a type that can sign gets a
 // signature instead.
-const TokenHeader = "X-OpenCluster-Token"
+const TokenHeader = integrations.WebhookTokenHeader
+
+const AlertEventsPath = "/webhooks/v1/integrations/{integration}/alert-events"
+
+type InboundRoute struct {
+	Method  string
+	Pattern string
+}
+
+type inboundEndpoint uint8
+
+const (
+	alertEventsEndpoint inboundEndpoint = iota + 1
+	slackEventsEndpoint
+)
+
+type inboundRoute struct {
+	InboundRoute
+	endpoint inboundEndpoint
+}
+
+// InboundRoutes is the canonical provider-authenticated HTTP inventory. The same table
+// drives mux registration, so contract parity cannot diverge from the composed surface.
+func InboundRoutes() []InboundRoute {
+	routes := inboundRouteTable()
+	result := make([]InboundRoute, 0, len(routes))
+	for _, route := range routes {
+		result = append(result, route.InboundRoute)
+	}
+	return result
+}
+
+func inboundRouteTable() []inboundRoute {
+	return []inboundRoute{
+		{InboundRoute: InboundRoute{Method: http.MethodPost, Pattern: AlertEventsPath}, endpoint: alertEventsEndpoint},
+		{InboundRoute: InboundRoute{Method: http.MethodPost, Pattern: SlackEventsPath}, endpoint: slackEventsEndpoint},
+	}
+}
 
 // maxBodyBytes bounds a delivery. It is enforced as the body is read rather than after, so an
 // oversized payload is refused without ever being held whole — intake is reachable by anything
 // that can guess an Integration identifier, and a size bound applied after buffering is not a
 // bound.
 const maxBodyBytes = 1 << 20
-
-// maxPresentedSecret bounds what may arrive in the token header, so a caller cannot make every
-// refused delivery hash a megabyte.
-const maxPresentedSecret = 256
 
 // readTimeout bounds how long one delivery may take. A source that opens a connection and
 // then goes quiet must not be able to hold it.
@@ -101,10 +132,18 @@ func (h Handlers) Router() http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /webhooks/v1/integrations/{integration}/alert-events",
-		http.HandlerFunc(running.deliver))
-	if h.Slack.Serves() {
-		mux.Handle("POST "+SlackEventsPath, http.HandlerFunc(running.slackEvents))
+	for _, route := range inboundRouteTable() {
+		var handler http.HandlerFunc
+		switch route.endpoint {
+		case alertEventsEndpoint:
+			handler = running.deliver
+		case slackEventsEndpoint:
+			if !h.Slack.Serves() {
+				continue
+			}
+			handler = running.slackEvents
+		}
+		mux.Handle(route.Method+" "+route.Pattern, handler)
 	}
 	return mux
 }
@@ -112,13 +151,13 @@ func (h Handlers) Router() http.Handler {
 // deliver accepts one webhook delivery.
 //
 // The order is the point. The rate limit comes first, because it is the only defence that must
-// hold when everything after it is being abused. Authentication comes next, before the body is
-// touched, so an unauthenticated caller reaches none of the parser — which is the part that
-// handles input nobody has vouched for. Only then is the body read, under a bound, and only
-// then parsed.
+// hold when everything after it is being abused. The body is read under its fixed bound before
+// provider verification, then the verified provider adapter is the only code allowed to parse it.
 func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
+	requestID := uuid.NewString()
+	writer.Header().Set("X-Request-ID", requestID)
 
 	integrationID, ok := h.addressed(writer, request)
 	if !ok {
@@ -133,8 +172,22 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		writeStatus(writer, http.StatusTooManyRequests, "slow down")
 		return
 	}
+	body, err := readBody(writer, request)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			h.refuse(ctx, request, "oversized")
+			h.counters.countDelivery(ctx, dispositionOversized)
+			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
+			return
+		}
+		h.refuse(ctx, request, "incomplete")
+		h.counters.countDelivery(ctx, dispositionIncomplete)
+		writeStatus(writer, http.StatusBadRequest, "payload not received")
+		return
+	}
 
-	integration, err := h.authenticate(ctx, integrationID, request)
+	integration, adapter, err := h.authenticate(ctx, integrationID, request)
 	if err != nil {
 		// A failure to READ the Integration is not a failure to authenticate, and answering
 		// it as one would be the worst mistake available here: 401 is permanent, so a
@@ -177,40 +230,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	adapter, ok := h.Adapters[integration.Type]
-	if !ok {
-		// The Integration names a type this build cannot parse, which is a deployment
-		// configured by a newer version. It is ours, not the caller's, so it is retryable.
-		h.Logger.ErrorContext(ctx, "integration names a type this build cannot parse",
-			slog.String("org_id", organization.String()),
-			slog.String("integration_id", integration.ID.String()),
-			slog.Int("type", int(integration.Type)))
-		h.counters.countDelivery(ctx, dispositionUnavailable)
-		writeStatus(writer, http.StatusServiceUnavailable, "integration not served here")
-		return
-	}
-
-	body, err := readBody(writer, request)
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			h.recordRefusal(ctx, integration, storage.RefusedOversized)
-			h.refuse(ctx, request, "oversized")
-			h.counters.countDelivery(ctx, dispositionOversized)
-			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
-			return
-		}
-		// The body did not arrive whole — a severed connection, a client that gave up.
-		// Nothing was written and there is very likely nobody left to read the answer, but
-		// saying so keeps the log from calling every unread body oversized.
-		h.recordRefusal(ctx, integration, storage.RefusedIncomplete)
-		h.refuse(ctx, request, "incomplete")
-		h.counters.countDelivery(ctx, dispositionIncomplete)
-		writeStatus(writer, http.StatusBadRequest, "payload not received")
-		return
-	}
-
-	alertEvents, truncated, err := adapter.Normalise(body)
+	normalized, err := adapter.Normalise(body)
 	if err != nil {
 		// The payload is not what this type's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
@@ -221,12 +241,14 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	digest := sha256.Sum256(body)
 	h.record(ctx, writer, organization, storage.Delivery{
-		Integration: integration.ID,
-		BodyDigest:  digest[:],
-		Truncated:   truncated,
-		AlertEvents: alertEvents,
+		Integration:      integration.ID,
+		ProviderIdentity: normalized.ProviderIdentity,
+		LifecyclePhase:   normalized.LifecyclePhase,
+		RequestID:        requestID,
+		BodyDigest:       normalized.ContentDigest,
+		Truncated:        normalized.Truncated,
+		AlertEvents:      normalized.AlertEvents,
 	})
 }
 
@@ -236,6 +258,13 @@ func (h *surface) record(
 	organization tenancy.Organization, delivery storage.Delivery,
 ) {
 	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery)
+	if errors.Is(err, storage.ErrDeliveryIdentityConflict) {
+		h.recordRefusal(ctx, integrations.Integration{ID: delivery.Integration,
+			OrgID: organization.String()}, storage.RefusedMalformed)
+		h.counters.countDelivery(ctx, dispositionMalformed)
+		writeStatus(writer, http.StatusBadRequest, "event identity conflicts with accepted content")
+		return
+	}
 	if err != nil {
 		// Nothing was written, and the source should try again — this is the one failure that
 		// is genuinely ours and genuinely transient.
@@ -300,40 +329,35 @@ var errNotAuthenticated = errors.New("not authenticated")
 // identifiers exist.
 func (h *surface) authenticate(
 	ctx context.Context, integrationID uuid.UUID, request *http.Request,
-) (integrations.Integration, error) {
+) (integrations.Integration, Adapter, error) {
 	integration, err := h.Database.IntegrationByID(ctx, integrationID)
 	switch {
 	case errors.Is(err, integrations.ErrUnknown):
-		return integrations.Integration{}, fmt.Errorf("%w: no such integration", errNotAuthenticated)
+		return integrations.Integration{}, nil, fmt.Errorf("%w: no such integration", errNotAuthenticated)
 	case err != nil:
-		return integrations.Integration{}, err
+		return integrations.Integration{}, nil, err
 	}
 
 	// The row is returned alongside every refusal below, so a rejection can be recorded
 	// against the Integration it was aimed at. That is what makes a source delivering with
 	// a stale secret VISIBLE as a rejection instead of as silence — and it is safe because
 	// the row was found by primary key, not by anything the caller asserted about a tenant.
-	presented := request.Header.Get(TokenHeader)
-	if presented == "" || len(presented) > maxPresentedSecret {
-		return integration, fmt.Errorf("%w: no usable credential presented", errNotAuthenticated)
+	adapter, served := h.Adapters[integration.Type]
+	if !served {
+		if !integrations.AuthenticateWebhookToken(request.Header, integration) {
+			return integration, nil, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
+		}
+		return integration, nil, fmt.Errorf("integration type %d is not served", integration.Type)
 	}
-
-	digest := sha256.Sum256([]byte(presented))
-	// Compared before the state checks below, so a disabled Integration or one that
-	// receives no webhooks takes the same work as a live one and the timing says nothing
-	// either. An Integration with no secret compares against an empty digest and cannot
-	// match.
-	matches := subtle.ConstantTimeCompare(digest[:], integration.WebhookSecretDigest) == 1
-
-	switch {
-	case !matches:
-		return integration, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
-	case integration.Disabled():
+	if !adapter.Authenticate(request.Header, integration) {
+		return integration, adapter, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
+	}
+	if integration.Disabled() {
 		// An operator who turned an Integration off wants deliveries refused, not merely
 		// recorded.
-		return integration, fmt.Errorf("%w: integration is disabled", errNotAuthenticated)
+		return integration, adapter, fmt.Errorf("%w: integration is disabled", errNotAuthenticated)
 	}
-	return integration, nil
+	return integration, adapter, nil
 }
 
 // callerOf reports where a delivery came from. It is what makes a campaign of credential

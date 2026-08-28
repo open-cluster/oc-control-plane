@@ -33,7 +33,7 @@ func (w Worker) Run(ctx context.Context) {
 	for {
 		worked, err := w.ProcessOne(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			w.logger().ErrorContext(ctx, "webhook work failed", slog.String("error", err.Error()))
+			w.logger().ErrorContext(ctx, "webhook delivery processing failed", slog.String("error", err.Error()))
 		}
 		if worked {
 			continue
@@ -57,7 +57,7 @@ func (w Worker) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	w.Counters.ObserveDelay(ctx, work.UpdatedAt.Sub(work.CreatedAt))
 	if work.Attempts >= storage.MaxWebhookWorkAttempts {
-		return true, w.fail(ctx, work, errors.New("the accepted webhook work exhausted its lease budget"))
+		return true, w.fail(ctx, work, errors.New("the accepted webhook delivery exhausted its processing budget"))
 	}
 	handler := w.Handlers[work.Kind]
 	if handler == nil {
@@ -130,7 +130,7 @@ func (w Worker) fail(ctx context.Context, work storage.WebhookWork, cause error)
 	terminal := work.Attempts >= maximum
 	delay := base << min(work.Attempts-1, 8)
 	class := "provider-work-failed"
-	message := "the accepted webhook work could not be applied"
+	message := "the accepted webhook delivery could not be processed"
 	if err := w.Work.FailWebhookWork(ctx, work.Organization, work, terminal, delay,
 		class, message); err != nil && !errors.Is(err, storage.ErrWebhookWorkLeaseLost) {
 		return err
@@ -140,7 +140,7 @@ func (w Worker) fail(ctx context.Context, work storage.WebhookWork, cause error)
 	} else {
 		w.Counters.Count(ctx, "delayed")
 	}
-	w.logger().WarnContext(ctx, message, slog.String("work_id", work.ID.String()),
+	w.logger().WarnContext(ctx, message, slog.String("delivery_id", work.DeliveryID.String()),
 		slog.String("failure_class", class), slog.Int("attempt", work.Attempts),
 		slog.String("cause", cause.Error()))
 	return nil

@@ -52,9 +52,9 @@ const (
 	InvestigationRead   Permission = "investigation.read"
 	InvestigationOpen   Permission = "investigation.open"
 	InvestigationCancel Permission = "investigation.cancel"
-	// WebhookWorkReplay is deliberately Admin-only. Replaying accepted external work can
+	// WebhookDeliveryReplay is deliberately Admin-only. Replaying an accepted delivery can
 	// spend model budget and re-attempt a failed domain effect.
-	WebhookWorkReplay Permission = "webhook-work.replay"
+	WebhookDeliveryReplay Permission = "webhook-delivery.replay"
 
 	// Conversations: the multi-turn context a person talks to. Writing covers opening one
 	// and sending a message to one, because both do the same thing — a message opens a
@@ -82,7 +82,7 @@ var allPermissions = []Permission{
 	RelayRead, RelayConflictClear, RelayBootstrapIssue,
 	IncidentRead, IncidentMerge,
 	PostmortemRead, PostmortemWrite,
-	InvestigationRead, InvestigationOpen, InvestigationCancel, WebhookWorkReplay,
+	InvestigationRead, InvestigationOpen, InvestigationCancel, WebhookDeliveryReplay,
 	ConversationRead, ConversationWrite,
 	IdentityRead, IdentityConfigure, MemberRead, MemberManage, SessionRevoke,
 	AuditRead,

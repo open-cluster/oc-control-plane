@@ -213,7 +213,7 @@ func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 
 	status, answer := plane.deliverEvent(t,
 		mention("<@U0BOT> why is checkout failing?", "C0INCIDENTS", "1700000001.1", "", "U9SRE"))
-	if status != http.StatusOK {
+	if status != http.StatusAccepted {
 		t.Fatalf("a mention answered %d: %s", status, answer)
 	}
 
@@ -257,7 +257,7 @@ func TestSlackEvents_AcceptedMentionRecordsAuditedSourceProvenance(t *testing.T)
 	plane.connectWorkspace(t)
 
 	if status, answer := plane.deliverEvent(t,
-		mention("<@U0BOT> investigate checkout", "C0INCIDENTS", "1700000007.123", "", "U9SRE")); status != http.StatusOK {
+		mention("<@U0BOT> investigate checkout", "C0INCIDENTS", "1700000007.123", "", "U9SRE")); status != http.StatusAccepted {
 		t.Fatalf("a mention answered %d: %s", status, answer)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -306,7 +306,7 @@ func TestSlackEvents_AFailedPermalinkLookupDoesNotBlockTheAcceptedQuestion(t *te
 
 	if status, answer := plane.deliverEvent(t,
 		mention("<@U0BOT> investigate without a permalink", "C0INCIDENTS",
-			"1700000008.456", "", "U9SRE")); status != http.StatusOK {
+			"1700000008.456", "", "U9SRE")); status != http.StatusAccepted {
 		t.Fatalf("a mention answered %d: %s", status, answer)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -354,17 +354,17 @@ func TestSlackEvents_AThreadIsOneConversationHoweverManyPeopleSpeak(t *testing.T
 
 	if status, answer := plane.deliverEvent(t, mention(
 		"<@U0BOT> checkout is erroring", "C0INCIDENTS", "1700000001.1", "", "U9SRE",
-	)); status != http.StatusOK {
+	)); status != http.StatusAccepted {
 		t.Fatalf("the first mention answered %d: %s", status, answer)
 	}
 	if status, answer := plane.deliverEvent(t, mention(
 		"<@U0BOT> only in eu-west?", "C0INCIDENTS", "1700000002.2", "1700000001.1", "U9SRE",
-	)); status != http.StatusOK {
+	)); status != http.StatusAccepted {
 		t.Fatalf("a follow-up answered %d: %s", status, answer)
 	}
 	if status, answer := plane.deliverEvent(t, mention(
 		"<@U0BOT> I see it too", "C0INCIDENTS", "1700000003.3", "1700000001.1", "U8LEAD",
-	)); status != http.StatusOK {
+	)); status != http.StatusAccepted {
 		t.Fatalf("a colleague answered %d: %s", status, answer)
 	}
 
@@ -388,7 +388,7 @@ func TestSlackEvents_TheSameDeliveryTwiceIsOneQuestion(t *testing.T) {
 	body := mention("<@U0BOT> what happened?", "C0INCIDENTS", "1700000001.1", "", "U9SRE")
 	first, _ := plane.deliverEvent(t, body)
 	second, answer := plane.deliverEvent(t, body)
-	if first != http.StatusOK || second != http.StatusOK {
+	if first != http.StatusAccepted || second != http.StatusOK {
 		t.Fatalf("a retried delivery answered %d then %d: %s", first, second, answer)
 	}
 
@@ -541,7 +541,7 @@ func TestSlackEvents_AcknowledgementIsFastEnoughForSlack(t *testing.T) {
 	status, answer := plane.deliverEvent(t,
 		mention("<@U0BOT> what happened?", "C0INCIDENTS", "1700000001.1", "", "U9SRE"))
 	took := time.Since(began)
-	if status != http.StatusOK {
+	if status != http.StatusAccepted {
 		t.Fatalf("a mention answered %d: %s", status, answer)
 	}
 	// Slack's own timeout is three seconds. The margin is deliberate: this must not be a

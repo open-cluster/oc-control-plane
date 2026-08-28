@@ -13,11 +13,14 @@
 package alertmanager
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -72,25 +75,29 @@ type alert struct {
 // Adapter normalises Prometheus Alertmanager's v4 webhook payload.
 type Adapter struct{}
 
+func (Adapter) Authenticate(headers http.Header, integration integrations.Integration) bool {
+	return integrations.AuthenticateWebhookToken(headers, integration)
+}
+
 // Normalise turns one delivery into AlertEvents and reports how many the source says it left out.
 //
 // A delivery carrying no alerts is an error rather than an empty success. Alertmanager does
 // not send one, so it means the body was not the payload it claims to be — and accepting it
 // would record a delivery that proves the integration works while carrying nothing.
-func (Adapter) Normalise(body []byte) ([]storage.AlertEvent, int, error) {
+func (Adapter) Normalise(body []byte) (storage.NormalizedDelivery, error) {
 	var decoded payload
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return nil, 0, fmt.Errorf("payload is not alertmanager json: %w", err)
+		return storage.NormalizedDelivery{}, fmt.Errorf("payload is not alertmanager json: %w", err)
 	}
 	if len(decoded.Alerts) == 0 {
-		return nil, 0, errors.New("payload carries no alerts")
+		return storage.NormalizedDelivery{}, errors.New("payload carries no alerts")
 	}
 	if len(decoded.Alerts) > maxAlertsPerBody {
-		return nil, 0, fmt.Errorf("payload carries %d alerts, more than the %d accepted",
+		return storage.NormalizedDelivery{}, fmt.Errorf("payload carries %d alerts, more than the %d accepted",
 			len(decoded.Alerts), maxAlertsPerBody)
 	}
 	if decoded.TruncatedAlerts < 0 {
-		return nil, 0, errors.New("payload reports a negative number of omitted alerts")
+		return storage.NormalizedDelivery{}, errors.New("payload reports a negative number of omitted alerts")
 	}
 
 	// The group key is bounded here rather than being allowed to fail the write, for the same
@@ -105,11 +112,17 @@ func (Adapter) Normalise(body []byte) ([]storage.AlertEvent, int, error) {
 			// One unusable alert fails the whole delivery. Accepting the rest would leave the
 			// source told it succeeded while part of what it sent was silently dropped, and it
 			// will never send that part again.
-			return nil, 0, err
+			return storage.NormalizedDelivery{}, err
 		}
 		alertEvents = append(alertEvents, alertEvent)
 	}
-	return alertEvents, decoded.TruncatedAlerts, nil
+	digest := sha256.Sum256(body)
+	return storage.NormalizedDelivery{
+		ProviderIdentity: fmt.Sprintf("%x", digest),
+		ContentDigest:    digest[:],
+		Truncated:        decoded.TruncatedAlerts,
+		AlertEvents:      alertEvents,
+	}, nil
 }
 
 // signalFrom normalises one alert. The group key is the DELIVERY's, applied to every alert in it,

@@ -26,10 +26,11 @@ import (
 type TypeID int16
 
 const (
-	TypeAlertmanager TypeID = 1
-	TypeKubernetes   TypeID = 2
-	TypeSlack        TypeID = 3
-	TypeGitHub       TypeID = 4
+	TypeAlertmanager   TypeID = 1
+	TypeKubernetes     TypeID = 2
+	TypeSlack          TypeID = 3
+	TypeGitHub         TypeID = 4
+	TypeGenericWebhook TypeID = 5
 )
 
 // Category groups the catalog. A controlled vocabulary owned here; deliberately not a table.

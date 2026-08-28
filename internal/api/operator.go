@@ -204,7 +204,7 @@ func (h Handlers) contributors() []contributor {
 			WindowLead:      h.InvestigationWindowLead,
 			MaxWaitingTurns: h.MaxWaitingTurns,
 		},
-		webhooks.OperatorHandlers{Database: h.Database, Logger: h.Logger,
+		webhooks.DeliveryHandlers{Database: h.Database, Logger: h.Logger,
 			Counters: webhooks.NewWorkInstruments(h.Logger)},
 	}
 }

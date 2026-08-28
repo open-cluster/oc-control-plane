@@ -61,17 +61,17 @@ func NewWorkInstruments(logger *slog.Logger) WorkInstruments {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	counter, err := otel.Meter(meterName).Int64Counter("oc.webhooks.work",
-		metric.WithDescription("Durable webhook work lifecycle transitions."),
-		metric.WithUnit("{work}"))
+	counter, err := otel.Meter(meterName).Int64Counter("oc.webhooks.deliveries",
+		metric.WithDescription("Durable webhook delivery lifecycle transitions."),
+		metric.WithUnit("{delivery}"))
 	if err != nil {
-		logger.Warn("webhook work metric unavailable", slog.String("error", err.Error()))
+		logger.Warn("webhook delivery metric unavailable", slog.String("error", err.Error()))
 	}
-	delay, delayErr := otel.Meter(meterName).Float64Histogram("oc.webhooks.work_delay",
+	delay, delayErr := otel.Meter(meterName).Float64Histogram("oc.webhooks.delivery_delay",
 		metric.WithDescription("Time between durable webhook acceptance and worker claim."),
 		metric.WithUnit("s"))
 	if delayErr != nil {
-		logger.Warn("webhook work delay metric unavailable", slog.String("error", delayErr.Error()))
+		logger.Warn("webhook delivery delay metric unavailable", slog.String("error", delayErr.Error()))
 	}
 	return WorkInstruments{outcomes: counter, delay: delay}
 }

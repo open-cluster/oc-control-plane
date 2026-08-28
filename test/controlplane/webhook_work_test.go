@@ -21,7 +21,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-func TestTerminalWebhookWorkIsVisibleTenantScopedAndReplayable(t *testing.T) {
+func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	created := plane.createAlertmanager(t, "Terminal webhook source")
 	if status, body := plane.deliver(t, created.Integration.ID, created.WebhookSecret,
@@ -35,7 +35,7 @@ func TestTerminalWebhookWorkIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close(ctx) }()
-	var workID string
+	var workID, deliveryID string
 	if err = database.QueryRow(ctx, `
 		UPDATE webhook_work
 		   SET status = 4, attempts = 8, lease_owner = '', lease_expires_at = NULL,
@@ -43,48 +43,47 @@ func TestTerminalWebhookWorkIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		       failure_message = 'the accepted webhook work could not be applied',
 		       updated_at = now()
 		 WHERE org_id = $1 AND integration_id = $2
-		 RETURNING work_id`, surfaceOrg, created.Integration.ID).Scan(&workID); err != nil {
+		 RETURNING work_id, delivery_id`, surfaceOrg, created.Integration.ID).Scan(&workID, &deliveryID); err != nil {
 		t.Fatalf("recording a terminal work item: %v", err)
 	}
 
-	base := plane.base(surfaceOrg) + "/webhook-work/terminal"
+	base := plane.base(surfaceOrg) + "/webhook-deliveries"
 	status, body := plane.call(t, http.MethodGet, base, nil)
 	if status != http.StatusOK {
 		t.Fatalf("listing terminal work = %d: %s", status, body)
 	}
 	var listed struct {
-		Work []struct {
+		Items []struct {
 			ID           string `json:"id"`
 			Status       string `json:"status"`
-			DeliveryID   string `json:"deliveryId"`
 			Attempts     int    `json:"attempts"`
-			FailureClass string `json:"failureClass"`
-		} `json:"work"`
+			FailureClass string `json:"failureCategory"`
+		} `json:"items"`
 	}
 	decodeInto(t, body, &listed)
-	if len(listed.Work) != 1 || listed.Work[0].ID != workID || listed.Work[0].Attempts != 8 ||
-		listed.Work[0].FailureClass != "provider-work-failed" ||
-		listed.Work[0].Status != "terminal" || listed.Work[0].DeliveryID == "" {
-		t.Fatalf("terminal work listing = %+v", listed.Work)
+	if len(listed.Items) != 1 || listed.Items[0].ID != deliveryID || listed.Items[0].Attempts != 8 ||
+		listed.Items[0].FailureClass != "provider-work-failed" || listed.Items[0].Status != "failed" {
+		t.Fatalf("failed delivery listing = %+v", listed.Items)
 	}
 	if status, body = plane.call(t, http.MethodGet, base+"?cursor=invalid", nil); status != http.StatusBadRequest {
 		t.Fatalf("a malformed terminal-work cursor = %d: %s", status, body)
 	}
-	if status, body = plane.call(t, http.MethodGet, base+"?sort=updatedAt", nil); status != http.StatusBadRequest {
+	if status, body = plane.call(t, http.MethodGet, base+"?sort=receivedAt", nil); status != http.StatusBadRequest {
 		t.Fatalf("an unsupported ascending terminal-work order = %d: %s", status, body)
 	}
 	if status, body = plane.deliver(t, created.Integration.ID, created.WebhookSecret,
 		alertmanagerPayload("terminal-webhook-second", "terminal-group-second")); status != http.StatusAccepted {
 		t.Fatalf("accepting the second delivery = %d: %s", status, body)
 	}
-	var secondWorkID string
+	var secondWorkID, secondDeliveryID string
 	if err = database.QueryRow(ctx, `
 		UPDATE webhook_work
 		   SET status = 4, attempts = 4, lease_owner = '', lease_expires_at = NULL,
 		       failure_class = 'provider-work-failed', failure_message = 'safe failure',
 		       updated_at = now()
 		 WHERE org_id = $1 AND integration_id = $2 AND work_id <> $3
-		 RETURNING work_id`, surfaceOrg, created.Integration.ID, workID).Scan(&secondWorkID); err != nil {
+		 RETURNING work_id, delivery_id`, surfaceOrg, created.Integration.ID, workID).
+		Scan(&secondWorkID, &secondDeliveryID); err != nil {
 		t.Fatalf("recording the second terminal work item: %v", err)
 	}
 	status, body = plane.call(t, http.MethodGet, base+"?limit=1", nil)
@@ -92,13 +91,13 @@ func TestTerminalWebhookWorkIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatalf("reading the first bounded terminal-work page = %d: %s", status, body)
 	}
 	var firstPage struct {
-		Work []struct {
+		Items []struct {
 			ID string `json:"id"`
-		} `json:"work"`
+		} `json:"items"`
 		Next string `json:"next"`
 	}
 	decodeInto(t, body, &firstPage)
-	if len(firstPage.Work) != 1 || firstPage.Work[0].ID != secondWorkID || firstPage.Next == "" {
+	if len(firstPage.Items) != 1 || firstPage.Items[0].ID != secondDeliveryID || firstPage.Next == "" {
 		t.Fatalf("first bounded terminal-work page = %+v", firstPage)
 	}
 	status, body = plane.call(t, http.MethodGet,
@@ -107,46 +106,45 @@ func TestTerminalWebhookWorkIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatalf("reading the second bounded terminal-work page = %d: %s", status, body)
 	}
 	var secondPage struct {
-		Work []struct {
+		Items []struct {
 			ID string `json:"id"`
-		} `json:"work"`
+		} `json:"items"`
 		Next string `json:"next"`
 	}
 	decodeInto(t, body, &secondPage)
-	if len(secondPage.Work) != 1 || secondPage.Work[0].ID != workID || secondPage.Next != "" {
+	if len(secondPage.Items) != 1 || secondPage.Items[0].ID != deliveryID || secondPage.Next != "" {
 		t.Fatalf("second bounded terminal-work page = %+v", secondPage)
 	}
-	if status, body = plane.call(t, http.MethodGet, base+"/"+workID, nil); status != http.StatusOK {
+	if status, body = plane.call(t, http.MethodGet, base+"/"+deliveryID, nil); status != http.StatusOK {
 		t.Fatalf("reading terminal work = %d: %s", status, body)
 	}
 	if status, body = plane.call(t, http.MethodGet,
-		plane.base(neighbourOrg)+"/webhook-work/terminal/"+workID, nil); status != http.StatusNotFound {
+		plane.base(neighbourOrg)+"/webhook-deliveries/"+deliveryID, nil); status != http.StatusNotFound {
 		t.Fatalf("reading another organization's work = %d: %s", status, body)
 	}
-	if status, body = plane.call(t, http.MethodPost, base+"/"+workID+"/replay", nil); status != http.StatusNoContent {
+	if status, body = plane.call(t, http.MethodPost, base+"/"+deliveryID+"/replay", nil); status != http.StatusNoContent {
 		t.Fatalf("replaying terminal work = %d: %s", status, body)
 	}
-	var auditedIntegration, auditedFailure string
-	var auditedAttempts int
+	var auditedIntegration string
+	var auditedWork int
 	if err = database.QueryRow(ctx, `
-		SELECT detail->>'integrationId', detail->>'failureClass',
-		       (detail->>'attempts')::integer
+		SELECT detail->>'integrationId', (detail->>'workReplayed')::integer
 		  FROM audit_event
-		 WHERE org_id = $1 AND action = 'webhook-work.replayed' AND target_id = $2`,
-		surfaceOrg, workID).Scan(&auditedIntegration, &auditedFailure, &auditedAttempts); err != nil || auditedIntegration != created.Integration.ID ||
-		auditedFailure != "provider-work-failed" || auditedAttempts != 8 {
-		t.Fatalf("replay audit omitted safe failure context: integration=%q failure=%q attempts=%d error=%v",
-			auditedIntegration, auditedFailure, auditedAttempts, err)
+		 WHERE org_id = $1 AND action = 'webhook-delivery.replayed' AND target_id = $2`,
+		surfaceOrg, deliveryID).Scan(&auditedIntegration, &auditedWork); err != nil ||
+		auditedIntegration != created.Integration.ID || auditedWork != 1 {
+		t.Fatalf("replay audit omitted delivery context: integration=%q work=%d error=%v",
+			auditedIntegration, auditedWork, err)
 	}
-	if status, body = plane.call(t, http.MethodGet, base+"/"+workID, nil); status != http.StatusNotFound {
-		t.Fatalf("replayed work remained terminal: %d %s", status, body)
+	if status, body = plane.call(t, http.MethodGet, base+"/"+deliveryID, nil); status != http.StatusOK {
+		t.Fatalf("replayed delivery disappeared: %d %s", status, body)
 	}
-	if status, body = plane.call(t, http.MethodPost, base+"/"+workID+"/replay", nil); status != http.StatusConflict {
+	if status, body = plane.call(t, http.MethodPost, base+"/"+deliveryID+"/replay", nil); status != http.StatusConflict {
 		t.Fatalf("replaying nonterminal work = %d: %s", status, body)
 	}
 }
 
-func TestTerminalWebhookReplayIsRefusedToEditorsAndViewers(t *testing.T) {
+func TestWebhookDeliveryReplayIsRefusedToEditorsAndViewers(t *testing.T) {
 	plane := startIdentityPlane(t)
 	created := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
 		"organization": identityOrg, "email": "admin@example.test", "displayName": "Admin",
@@ -156,7 +154,7 @@ func TestTerminalWebhookReplayIsRefusedToEditorsAndViewers(t *testing.T) {
 		t.Fatalf("bootstrapping an administrator = %d: %s", created.status, created.body)
 	}
 	admin := sessionCookie(t, created)
-	base := plane.base(identityOrg) + "/webhook-work/terminal"
+	base := plane.base(identityOrg) + "/webhook-deliveries"
 	for _, role := range []string{"editor", "viewer"} {
 		email := role + "@example.test"
 		password := "a sufficiently long " + role + " password"

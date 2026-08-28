@@ -37,6 +37,12 @@ call states an operator-visible purpose and may name the visible hypothesis it t
 One normalized alert occurrence received through a webhook. Its text remains untrusted.
 Redelivery is idempotent, and its source timestamps remain distinct from receipt time.
 
+## Webhook Delivery
+
+One accepted inbound webhook request and the operator-visible unit of retry. Its state is
+accepted, processing, succeeded, or failed based on all durable work created by that
+request. Internal work leases and attempts are not separate operator resources.
+
 ## Incident
 
 The operational occurrence Alert Events belong to using the alert source’s own grouping
