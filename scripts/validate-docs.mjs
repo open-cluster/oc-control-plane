@@ -37,7 +37,7 @@ function collectNavigation(node, found = new Set()) {
 walk(docs);
 const navigation = collectNavigation(site.navigation);
 const redirects = new Set((site.redirects ?? []).map((redirect) => redirect.source));
-const hiddenPages = new Set(["feature-availability"]);
+const hiddenPages = new Set(["feature-availability", "api-reference/generated-endpoints"]);
 const failures = [];
 const internalLink = /\]\((\/[^)#?]*)(?:[?#][^)]*)?\)/g;
 const credentialLiteral = /(?:ocwh_|xox[baprs]-|gh[pousr]_|sk-ant-)[A-Za-z0-9_-]{12,}/;
@@ -48,6 +48,24 @@ const integrationPages = [
   "integrations/source-control/github",
   "integrations/collaboration/slack",
 ];
+
+function collectOpenAPIReferences(node, found = []) {
+  if (Array.isArray(node)) {
+    for (const child of node) collectOpenAPIReferences(child, found);
+  } else if (node && typeof node === "object") {
+    for (const [key, child] of Object.entries(node)) {
+      if (key === "openapi" && typeof child === "string") found.push(child);
+      else collectOpenAPIReferences(child, found);
+    }
+  }
+  return found;
+}
+
+for (const reference of collectOpenAPIReferences(site)) {
+  if (reference.includes("/releases/latest/")) {
+    failures.push(`OpenAPI reference must pin an exact release: ${reference}`);
+  }
+}
 
 for (const page of navigation) {
   if (!pages.has(page)) failures.push(`navigation names missing page ${page}`);

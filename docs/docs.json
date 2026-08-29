@@ -47,9 +47,6 @@
     "suggestEdit": true,
     "raiseIssue": true
   },
-  "api": {
-    "openapi": "https://github.com/open-cluster/oc-control-plane/releases/latest/download/openapi.yaml"
-  },
   "navigation": {
     "groups": [
       {
@@ -112,12 +109,7 @@
           "api-reference/authentication-and-organization-context",
           "api-reference/errors-and-pagination",
           "api-reference/webhooks",
-          "api-reference/investigation-events",
-          {
-            "group": "Generated endpoints",
-            "root": "api-reference/generated-endpoints",
-            "openapi": "https://github.com/open-cluster/oc-control-plane/releases/latest/download/openapi.yaml"
-          }
+          "api-reference/investigation-events"
         ]
       },
       {
