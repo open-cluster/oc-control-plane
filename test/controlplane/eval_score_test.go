@@ -619,8 +619,17 @@ func ratioOrOne(found, total int) float64 {
 const evalReleaseQualityMinimum = 0.85
 
 func validateEvalReleaseGate(rounds [][]evalScore) error {
-	if len(rounds) != 3 {
-		return fmt.Errorf("live evaluation needs exactly 3 runs per case, got %d", len(rounds))
+	profile, err := evalProfileNamed("exhaustive")
+	if err != nil {
+		return err
+	}
+	return validateEvalProfileGate(profile, rounds)
+}
+
+func validateEvalProfileGate(profile evalProfile, rounds [][]evalScore) error {
+	if len(rounds) != profile.runs {
+		return fmt.Errorf("%s live evaluation needs exactly %d runs per case, got %d",
+			profile.name, profile.runs, len(rounds))
 	}
 	if len(rounds[0]) == 0 {
 		return fmt.Errorf("live evaluation covered no cases")
@@ -654,16 +663,23 @@ func validateEvalReleaseGate(rounds [][]evalScore) error {
 		}
 		qualities = append(qualities, evalQualityMean(qualityOf(scores)))
 	}
+	var failures []string
 	for name := range wantedCases {
-		if passes[name] < 2 {
-			return fmt.Errorf("%s passed semantic assertions in %d of 3 runs; want at least 2 of 3",
-				name, passes[name])
+		if passes[name] < profile.requiredPasses {
+			failures = append(failures, fmt.Sprintf(
+				"%s passed semantic assertions in %d of %d runs; want at least %d of %d",
+				name, passes[name], profile.runs, profile.requiredPasses, profile.runs))
 		}
 	}
 	sort.Float64s(qualities)
-	if qualities[1] < evalReleaseQualityMinimum {
-		return fmt.Errorf("median quality %.3f is below %.2f", qualities[1],
-			evalReleaseQualityMinimum)
+	quality := qualities[len(qualities)/2]
+	if quality < evalReleaseQualityMinimum {
+		failures = append(failures, fmt.Sprintf("profile quality %.3f is below %.2f",
+			quality, evalReleaseQualityMinimum))
+	}
+	if len(failures) != 0 {
+		sort.Strings(failures)
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
 }

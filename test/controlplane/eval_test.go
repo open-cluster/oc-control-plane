@@ -276,18 +276,19 @@ func TestEvalWorldExecutesKubernetesFixturesThroughRelay(t *testing.T) {
 	}
 }
 
-// TestEvalBaseline runs the live release gate against both supported providers and files
-// each provider's three-run capture under artifacts/eval. Gated: it spends real money
-// and needs credentials, so it runs only when asked —
+// TestEvalBaseline runs the selected live gate against both supported providers and files
+// each provider's capture under artifacts/eval. Gated: it spends real money and needs
+// credentials, so it runs only when asked —
 //
-//	OC_EVAL=1 OC_EVAL_ANTHROPIC_MODEL=claude-sonnet-5 \
+//	OC_EVAL=1 OC_EVAL_PROFILE=v0.1-budget OC_EVAL_ANTHROPIC_MODEL=claude-haiku-4-5 \
 //	OC_EVAL_ANTHROPIC_KEY_FILE=/path/to/anthropic-key \
 //	OC_EVAL_ZAI_MODEL=glm-4.7 OC_EVAL_ZAI_KEY_FILE=/path/to/zai-key \
 //	go test -run TestEvalBaseline -timeout 4h ./test/controlplane
 //
 // OC_EVAL_LABEL names the capture (default baseline-1-current); OC_EVAL_JUDGE=1 adds
 // the rubric layer. OC_EVAL_PROVIDER selects one provider only when resuming a timed-out
-// capture; the release evidence still requires a passing artifact from each provider.
+// capture; OC_EVAL_PROFILE defaults to v0.1-budget and only the explicit value exhaustive
+// selects the costly baseline. Release evidence requires a passing budget artifact from each provider.
 func TestEvalBaseline(t *testing.T) {
 	if os.Getenv("OC_EVAL") != "1" {
 		t.Skip("set OC_EVAL=1 with Anthropic and Z.AI model credentials to run the live release gate")
@@ -296,15 +297,23 @@ func TestEvalBaseline(t *testing.T) {
 	if label == "" {
 		label = "baseline-1-current"
 	}
+	profile, err := evalProfileNamed(os.Getenv("OC_EVAL_PROFILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, err := evalCasesForProfile(profile, evalCases(time.Now().UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, model := range evalModelsFromEnvironment(t) {
 		model := model
 		t.Run(model.Provider, func(t *testing.T) {
 			var rounds [][]evalScore
 			var allScores []evalScore
 			var records []evalRecord
-			for attempt := 1; attempt <= 3; attempt++ {
+			for attempt := 1; attempt <= profile.runs; attempt++ {
 				var scores []evalScore
-				for _, one := range evalCases(time.Now().UTC()) {
+				for _, one := range cases {
 					one := one
 					t.Run(fmt.Sprintf("run-%d/%s", attempt, one.Name), func(t *testing.T) {
 						record := runEvalCase(t, one, model, nil)
@@ -322,14 +331,14 @@ func TestEvalBaseline(t *testing.T) {
 				allScores = append(allScores, scores...)
 			}
 			directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
-				label+"-"+model.Provider, gitRevision(t), evalAgentRevision(t),
+				label+"-"+profile.name+"-"+model.Provider, gitRevision(t), evalAgentRevision(t),
 				model.Provider+"/"+model.Name, allScores, records)
-			if err := validateEvalReleaseGate(rounds); err != nil {
+			if err := validateEvalProfileGate(profile, rounds); err != nil {
 				t.Fatalf("%s live release gate: %v; report saved under %s",
 					model.Provider, err, directory)
 			}
-			t.Logf("%s evaluation capture filed under %s: %d cases across 3 runs",
-				model.Provider, directory, len(rounds[0]))
+			t.Logf("%s %s evaluation capture filed under %s: %d cases across %d runs",
+				model.Provider, profile.name, directory, len(rounds[0]), profile.runs)
 		})
 	}
 }

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/open-cluster/oc-control-plane/test/eval"
 )
@@ -67,6 +68,103 @@ func TestLiveEvaluationReleaseGateRequiresMedianQualityOfPointEightFive(t *testi
 	})
 	if err == nil || !strings.Contains(err.Error(), "0.85") {
 		t.Fatalf("low median quality was accepted: %v", err)
+	}
+}
+
+func TestV01BudgetEvaluationProfileIsFixedAndCostBounded(t *testing.T) {
+	t.Parallel()
+
+	profile, err := evalProfileNamed("v0.1-budget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"single-root-cause",
+		"multiple-contributing-causes",
+		"conflicting-evidence",
+		"missing-data-unresolved",
+		"irrelevant-integration-distractors",
+		"failed-tool-response",
+		"conversation-memory-across-bounded-history",
+		"live-hypothesis-updates",
+		"postmortem-omissions",
+		"peacetime-which-revision-is-deployed",
+	}
+	if profile.runs != 1 || profile.requiredPasses != 1 {
+		t.Fatalf("v0.1 budget profile runs/passes = %d/%d, want 1/1",
+			profile.runs, profile.requiredPasses)
+	}
+	if strings.Join(profile.caseNames, ",") != strings.Join(want, ",") {
+		t.Fatalf("v0.1 budget cases = %q, want immutable order %q",
+			profile.caseNames, want)
+	}
+	selected, err := evalCasesForProfile(profile, evalCases(time.Now().UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(selected))
+	for _, one := range selected {
+		got = append(got, one.Name)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selected v0.1 budget cases = %q, want %q", got, want)
+	}
+
+	defaultProfile, err := evalProfileNamed("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultProfile.name != "v0.1-budget" {
+		t.Fatalf("default profile = %q, want the cost-bounded v0.1 release profile",
+			defaultProfile.name)
+	}
+	exhaustive, err := evalProfileNamed("exhaustive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exhaustive.name != "exhaustive" || exhaustive.runs != 3 ||
+		exhaustive.requiredPasses != 2 || exhaustive.caseNames != nil {
+		t.Fatalf("default exhaustive profile = %+v", exhaustive)
+	}
+	if _, err := evalProfileNamed("cheap-but-undefined"); err == nil {
+		t.Fatal("an undefined evaluation profile was accepted")
+	}
+}
+
+func TestV01BudgetEvaluationGateRequiresEveryCaseAndTheQualityFloor(t *testing.T) {
+	t.Parallel()
+
+	passing := evalScore{Case: "single", CausesTotal: 1, CausesFound: 1,
+		DiscriminatingTotal: 1, DiscriminatingMade: 1,
+		AnswerMarkersTotal: 1, AnswerMarkersFound: 1}
+	profile, err := evalProfileNamed("v0.1-budget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateEvalProfileGate(profile, [][]evalScore{{passing}}); err != nil {
+		t.Fatalf("passing v0.1 budget gate: %v", err)
+	}
+
+	semanticFailure := passing
+	semanticFailure.CausesFound = 0
+	if err := validateEvalProfileGate(profile, [][]evalScore{{semanticFailure}}); err == nil ||
+		!strings.Contains(err.Error(), "1 of 1") {
+		t.Fatalf("semantic failure was accepted: %v", err)
+	}
+
+	unsafe := passing
+	unsafe.HardGateFailures = 1
+	if err := validateEvalProfileGate(profile, [][]evalScore{{unsafe}}); err == nil ||
+		!strings.Contains(err.Error(), "hard safety") {
+		t.Fatalf("hard safety failure was accepted: %v", err)
+	}
+
+	lowQuality := passing
+	lowQuality.DiscriminatingMade = 0
+	lowQuality.AnswerMarkersFound = 0
+	if err := validateEvalProfileGate(profile, [][]evalScore{{lowQuality}}); err == nil ||
+		!strings.Contains(err.Error(), "0.85") {
+		t.Fatalf("quality below 0.85 was accepted: %v", err)
 	}
 }
 
