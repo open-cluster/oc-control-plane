@@ -75,20 +75,12 @@ const (
 	RunFailed
 )
 
-// Refusals and failures the Investigation domain names.
 var (
-	// ErrUnknown reports an investigation this organization does not have.
-	ErrUnknown      = errors.New("investigation unknown")
-	ErrAlreadyEnded = errors.New("investigation has already ended")
-	// ErrIncidentUnknown reports an incident this organization does not have.
-	ErrIncidentUnknown = errors.New("incident unknown")
-	// ErrReasonerUnavailable is the domain's word for the model boundary failing: the
-	// reasoning step could not run. Every named provider failure wraps it, and the
-	// investigation it ends is FAILED — never concluded, because a conclusion nobody
-	// reasoned towards is worse than an honest failure.
+	ErrUnknown             = errors.New("investigation unknown")
+	ErrAlreadyEnded        = errors.New("investigation has already ended")
+	ErrIncidentUnknown     = errors.New("incident unknown")
 	ErrReasonerUnavailable = errors.New("the reasoning boundary is unavailable")
-	// ErrBadCursor reports a page position that did not come from a previous response.
-	ErrBadCursor = errors.New("after is not a page position from a previous response")
+	ErrBadCursor           = errors.New("after is not a page position from a previous response")
 )
 
 // Finding is one thing the investigation established, tied to the runs that support it.
@@ -110,9 +102,6 @@ type Finding struct {
 	Sources []int `json:"runRefs"`
 }
 
-// The causal kinds a finding distinguishes: persisted inside the findings record,
-// frozen like an enum. Multiple probable causes are legal — no incident is forced into
-// a single-cause model.
 const (
 	FindingCause              = "cause"
 	FindingContributingFactor = "contributing_factor"
@@ -138,18 +127,27 @@ const (
 // FindingKinds and Confidences enumerate the legal values, for decoders and gates.
 var (
 	FindingKinds = []string{
-		FindingCause, FindingTrigger, FindingContributingFactor, FindingSymptom,
-		FindingPropagation, FindingRuledOut, FindingUnresolved, FindingObservation,
+		FindingCause,
+		FindingTrigger,
+		FindingContributingFactor,
+		FindingSymptom,
+		FindingPropagation,
+		FindingRuledOut,
+		FindingUnresolved,
+		FindingObservation,
 	}
-	Confidences = []string{ConfidenceConfirmed, ConfidenceLikely, ConfidencePossible}
+	Confidences = []string{
+		ConfidenceConfirmed,
+		ConfidenceLikely,
+		ConfidencePossible,
+	}
 )
 
 // Spend is what the reasoning behind an investigation consumed.
 type Spend struct {
 	InputTokens  int64
 	OutputTokens int64
-	// MicroCents is integer money, summed from the priced calls.
-	MicroCents int64
+	MicroCents   int64
 }
 
 // Add accumulates another call's spend.
@@ -165,88 +163,55 @@ func (s Spend) Add(other Spend) Spend {
 // what it found and what it cost. Everything else an auditor needs is the provenance
 // beside it.
 type Investigation struct {
-	ID    uuid.UUID
-	OrgID string
-	// IncidentID is the alert incident that triggered this, zero for a question with no
-	// incident resolved. IntegrationID is the incident's originating integration.
-	IncidentID    uuid.UUID
-	IntegrationID uuid.UUID
-	// Question is the operator's own words, empty for an alert-triggered investigation.
-	Question string
-	// ConversationID is the Conversation this investigation is a turn of, zero for a
-	// single-shot one. Turn is its one-based position among that conversation's turns,
-	// zero when there is no conversation. The two are set together or not at all.
+	ID             uuid.UUID
+	OrgID          string
+	IncidentID     uuid.UUID
+	IntegrationID  uuid.UUID
+	Question       string
 	ConversationID uuid.UUID
 	Turn           int
-	// Subject is what is being investigated, in plain language.
-	Subject     string
-	WindowFrom  time.Time
-	WindowUntil time.Time
-	Status      Status
-	// Executing is true only while a worker holds a live lease. It projects the internal
-	// running state as investigating rather than queued without exposing lease identity.
-	Executing  bool
-	Conclusion Conclusion
-	// StoppedBy names the ceiling that forced the concluding turn — StoppedBySpend and
-	// its siblings — and is empty when the model concluded freely. A stopped
-	// investigation still concluded, with what was established and what remains
-	// unresolved; the label is what keeps resource exhaustion from being rendered as a
-	// completed diagnosis.
-	StoppedBy string
-	// Error says why a failed investigation failed, in the operator's language.
-	Error       string
-	Spend       Spend
-	CreatedBy   string
-	CreatedAt   time.Time
-	ConcludedAt time.Time
+	Subject        string
+	WindowFrom     time.Time
+	WindowUntil    time.Time
+	Status         Status
+	Executing      bool
+	Conclusion     Conclusion
+	StoppedBy      string
+	Error          string
+	Spend          Spend
+	CreatedBy      string
+	CreatedAt      time.Time
+	ConcludedAt    time.Time
 }
 
 // Source is one integration the investigation was offered, with the reason recorded.
 type Source struct {
 	IntegrationID uuid.UUID
 	Rank          int
-	// Reason says why this source joined the investigation.
-	Reason     string
-	SelectedAt time.Time
+	Reason        string
+	SelectedAt    time.Time
 }
 
-// ToolRun is one tool execution: the scope it ran under and what came of it. Its
-// identity is (investigation, ordinal) — the ordinal findings cite — not a surrogate id.
 type ToolRun struct {
 	IntegrationID uuid.UUID
-	// Ordinal is the run's one-based position in the investigation, which is what a
-	// finding cites.
-	Ordinal int
-	Tool    string
-	// Purpose and HypothesisID are concise, operator-visible semantic metadata supplied
-	// by the common external-tool envelope. They are not private reasoning.
-	Purpose      string
-	HypothesisID string
-	// Arguments is the call's scope as it ran, never carrying a credential.
-	Arguments map[string]any
-	// WindowFrom and WindowUntil are the bound in force for this run. Every run carries
-	// them, because the bound is real whether or not a read used it and the column is not
-	// nullable. WindowApplied is what says the read actually FILTERED by that window —
-	// false for a repository listing, which is not bounded in time — and it is not
-	// persisted: it describes the read, and the reader who needs it is watching the
-	// stream, not auditing the row.
+	Ordinal       int
+	Tool          string
+	Purpose       string
+	HypothesisID  string
+	Arguments     map[string]any
 	WindowFrom    time.Time
 	WindowUntil   time.Time
 	WindowApplied bool
 	Outcome       RunOutcome
 	Truncated     bool
-	// Summary is the provider's own one-line account of what came back; Sources are the
-	// identifiers of what was read — channel ids, repository ids — so a finding citing
-	// this run can be followed to its origin.
-	Summary string
-	Sources []string
+	Summary       string
+	Sources       []string
+	StartedAt     time.Time
+	FinishedAt    time.Time
 	// Error is why a failed run failed.
-	Error      string
-	StartedAt  time.Time
-	FinishedAt time.Time
-	// Content is the run's full answer, held for the reasoner within the running
-	// investigation and never persisted: provenance records what was found, not a copy
-	// of everything read.
+	Error string
+	// Content is the run's full answer, held for the reasoner
+	//within the running investigation and never persisted
 	Content any
 }
 
@@ -261,10 +226,7 @@ type NewInvestigation struct {
 	CreatedBy     string
 }
 
-// Trigger is what an incident contributes when it starts an investigation. Annotations
-// and GeneratorURL are the alert's own operational knowledge — runbook and dashboard
-// links, the source's graph — preserved through intake and rendered in the autonomous
-// orientation.
+// Trigger is what an incident contributes when it starts an investigation.
 type Trigger struct {
 	IncidentID    uuid.UUID
 	IntegrationID uuid.UUID
@@ -284,16 +246,8 @@ type Page struct {
 }
 
 // Query is what the investigations listing accepts: a position, and what to narrow by.
-//
-// It is a struct rather than a widening Page because a position and a filter are
-// different things, and the listing that mixes them ends up with a cursor that means
-// something different depending on what was filtered.
 type Query struct {
-	Page Page
-	// IncidentID narrows to the investigations one alert incident opened. Zero means every
-	// investigation the tenant has. An incident this tenant does not have is an empty
-	// page rather than a refusal: answering differently would let a caller probe for
-	// incident identifiers that are not theirs.
+	Page       Page
 	IncidentID uuid.UUID
 }
 
@@ -301,6 +255,16 @@ type Query struct {
 type List struct {
 	Investigations []Investigation
 	Next           string
+}
+
+type OfferedSource struct {
+	Integration integrations.Integration
+	Tools       []integrations.Tool
+}
+
+type ToolCall struct {
+	Tool      string
+	Arguments map[string]any
 }
 
 // Store is everything the Investigation domain needs from durable state.
@@ -365,16 +329,4 @@ type Store interface {
 	// interrupted. lead is how far back the new turn's window reaches.
 	DrainConversation(ctx context.Context, org tenancy.Organization,
 		conversation uuid.UUID, lead time.Duration) (bool, error)
-}
-
-// OfferedSource is one offered integration and what may be read from it.
-type OfferedSource struct {
-	Integration integrations.Integration
-	Tools       []integrations.Tool
-}
-
-// ToolCall is one proposed read.
-type ToolCall struct {
-	Tool      string
-	Arguments map[string]any
 }

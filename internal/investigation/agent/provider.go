@@ -7,15 +7,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// THE PROVIDER CONTRACT, AND THE REASON IT MENTIONS NO VENDOR.
-//
-// Which vendor answers is an operational fact, not an architectural one: a model is a deployment
-// choice that moves with price, availability, regional obligation and what a tenant will consent
-// to. Every one of those becomes an engineering project if a vendor's vocabulary reaches the types
-// above it, so nothing here is a message-role array, a vendor stop-reason string, a vendor usage
-// shape or an SDK type. An adapter translates in both directions and is the only component on
-// either side that knows both vocabularies.
-
 // Provider is one vendor's deployment, reduced to what reasoning actually asks of it.
 //
 // It is deliberately small. A provider does not hold a conversation, manage an investigation,
@@ -36,31 +27,19 @@ type Provider interface {
 }
 
 // Prompt is one rendered ask, in the shape every provider is given it.
-//
-// The block ordering is a design rule rather than a preference. Caching is a prefix match, so
-// nothing volatile — no timestamp, no identifier, no per-request value — may appear before the
-// last block marked cacheable, or the cache silently stops working and looks exactly like a cache
-// that is working.
 type Prompt struct {
-	// Model is the exact deployment identifier to ask. It is never constructed by appending a
-	// suffix to a family name: a constructed identifier is a 404 at best.
 	Model string
-	// System is the frozen preamble. It is identical across every investigation in every
-	// organization, which is what makes it worth caching once and reading from everything.
+	// System is the preamble(system prompt).
 	System []Block
 	// Content is the rendered deliberation, in the order the ordinals in the answer refer to.
 	Content []Block
-	// Schema is the output contract. The model is not being asked to do anything; it is being
-	// asked to return a document, and this is the shape of the document. Empty on a
-	// native-tool-calling prompt, where the conclude tool's input schema is the contract.
-	Schema Schema
+	Schema  Schema
 	// Tools are the native tool definitions, generated from the one declarative
 	// contract — never a second hand-written representation. Present, they put the
 	// prompt in tool-calling mode: the adapter translates each into its vendor's wire
 	// shape, and the answer may carry tool calls.
 	Tools []integrations.ToolDefinition
 	// ForceTool names the one tool the answer must call — the forced concluding turn.
-	// Empty leaves the choice to the model.
 	ForceTool string
 	// Turns is the conversation so far, oldest first: each the assistant's own prior
 	// move with what answered it. The adapter replays them verbatim, because caching is
@@ -125,17 +104,9 @@ type Block struct {
 }
 
 // Schema is the declared output contract, as one JSON Schema this repository owns.
-//
-// It is provider-neutral on purpose. A vendor-specific schema dialect would put the output
-// contract inside an adapter, where a second vendor could quietly diverge from it — and the
-// contract is exactly the thing that must not differ by who answered.
 type Schema struct {
-	// Name identifies the schema to a provider that wants one.
-	Name string
-	// Version is bumped when the shape changes, so anything keyed on the schema — a test
-	// fixture, a recorded answer — cannot silently replay against a different shape.
-	Version string
-	// Document is the JSON Schema itself.
+	Name     string
+	Version  string
 	Document map[string]any
 }
 
@@ -199,17 +170,12 @@ func (s Stop) String() string {
 }
 
 // Effort is how hard a provider should think before answering.
-//
-// The vocabulary is this system's and each adapter maps it onto whatever its vendor accepts,
-// including mapping several of these onto one where a vendor offers fewer levels. A provider that
-// has no such control ignores it.
 type Effort string
 
 const (
-	EffortLow    Effort = "low"
-	EffortMedium Effort = "medium"
-	EffortHigh   Effort = "high"
-	// EffortExtraHigh sits between high and max on vendors that offer it.
+	EffortLow       Effort = "low"
+	EffortMedium    Effort = "medium"
+	EffortHigh      Effort = "high"
 	EffortExtraHigh Effort = "xhigh"
 	EffortMax       Effort = "max"
 )

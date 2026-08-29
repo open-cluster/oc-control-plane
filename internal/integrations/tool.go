@@ -127,7 +127,7 @@ type ToolResult struct {
 // value into its vendor's wire shape.
 type ToolDefinition struct {
 	Name string
-	// Description is composed from the declared contract: what the tool does, when to
+	// Description is composed of the declared contract: what the tool does, when to
 	// use it, when not to, and what comes back — the whole of what a model routes by,
 	// in one place.
 	Description string

@@ -7,49 +7,20 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// THE FAILURE OUTCOMES, AND WHY THEY ARE TOLD APART.
-//
-// Each of these calls for something different from a different person, and collapsing any two of
-// them loses that. A rejected request pages the engineer who shipped this build; an outage pages
-// whoever watches the vendor. The one that matters most is the distinction between all of them and
-// an ABSTENTION: an abstention says no explanation was supported, and every failure here says
-// nobody looked. Reporting the first when the second is true is the single most damaging thing
-// this component could do, so an abstention is not in this enumeration and never shares a code
-// path with one.
-
-// ErrModelUnavailable is the general failure every named outcome also reads as: the
-// reasoning step could not run. It IS the domain's own sentinel — the boundary and its
-// meaning belong to the investigation capability, and this package answers in its
-// vocabulary.
 var ErrModelUnavailable = investigation.ErrReasonerUnavailable
 
 var (
-	// ErrRefused is the provider's own safeguards declining. It arrives as a successful response
-	// carrying a refusal rather than as a transport error, which is why the stop reason is read
-	// before the document is.
-	ErrRefused = errors.New("the model provider declined the request")
-	// ErrOutage is the provider being unreachable, rate-limited past the retries it allows, or failing
-	// on its own side.
-	ErrOutage = errors.New("the model provider is unreachable")
-	// ErrRejected is the provider saying this request is malformed. It is a defect in this build
-	// and must not be disguised as an outage, or the wrong person is paged.
-	ErrRejected = errors.New("the model provider rejected the request as malformed")
-	// ErrMalformed is an answer that did not satisfy the declared schema.
-	ErrMalformed = errors.New("the model's answer did not satisfy the declared schema")
-	// ErrTimeout is the deadline being reached.
-	ErrTimeout = errors.New("the model provider did not answer within the deadline")
-	// ErrCeilingReached is the spending ceiling reached before a request was sent.
+	ErrRefused        = errors.New("the model provider declined the request")
+	ErrOutage         = errors.New("the model provider is unreachable")
+	ErrRejected       = errors.New("the model provider rejected the request as malformed")
+	ErrMalformed      = errors.New("the model's answer did not satisfy the declared schema")
+	ErrTimeout        = errors.New("the model provider did not answer within the deadline")
 	ErrCeilingReached = errors.New("the reasoning cost ceiling has been reached")
-	// ErrUnpriced is a model with no declared rate. It is refused rather than costed at zero.
-	ErrUnpriced = errors.New("no rate is declared for this model")
-	// ErrNotConsented is a provider that may not be sent this deployment's evidence.
-	ErrNotConsented = errors.New("this deployment has not consented to this model provider")
+	ErrUnpriced       = errors.New("no rate is declared for this model")
+	ErrNotConsented   = errors.New("this deployment has not consented to this model provider")
 )
 
 // Outcome is which named failure happened.
-//
-// The values are recorded in telemetry and audit entries, so they are this system's own
-// vocabulary rather than any vendor's spelling of the same idea.
 type Outcome int16
 
 const (
@@ -60,7 +31,6 @@ const (
 	OutcomeTimeout
 	OutcomeCeilingReached
 	OutcomeNotConsented
-	OutcomeUnpriced
 )
 
 func (o Outcome) String() string {
@@ -79,8 +49,6 @@ func (o Outcome) String() string {
 		return "cost_ceiling_reached"
 	case OutcomeNotConsented:
 		return "not_consented"
-	case OutcomeUnpriced:
-		return "unpriced_model"
 	default:
 		return "unrecognised"
 	}
@@ -104,28 +72,17 @@ func (o Outcome) sentinel() error {
 		return ErrCeilingReached
 	case OutcomeNotConsented:
 		return ErrNotConsented
-	case OutcomeUnpriced:
-		return ErrUnpriced
 	default:
 		return nil
 	}
 }
 
 // Failure is one named failure with the deployment it happened on.
-//
-// It wraps the domain's reasoner-unavailable error as well as its own sentinel. That is
-// deliberate: the runner turns reasoner-unavailable into a FAILED investigation with the
-// reason recorded, which is the honest ending for every outcome here — and the specific
-// sentinel stays available to telemetry and tests that need to tell them apart.
 type Failure struct {
 	Outcome  Outcome
 	Provider string
 	Model    string
-	// Detail is what the provider said, already stripped of anything that could carry evidence
-	// content or a credential.
-	Detail string
-	// Category is the provider's own classification of a refusal, where it gives one. It is the
-	// difference between "declined for a security topic" and "declined, no reason offered".
+	Detail   string
 	Category string
 	cause    error
 }
