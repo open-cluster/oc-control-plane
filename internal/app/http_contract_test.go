@@ -9,7 +9,7 @@ import (
 )
 
 func TestSharedHTTPTimeoutsAreDocumented(t *testing.T) {
-	document, err := os.ReadFile("../../docs/self-hosted/configuration.mdx")
+	document, err := os.ReadFile("../../docs/self-hosting/configuration.mdx")
 	if err != nil {
 		t.Fatalf("read self-hosted configuration documentation: %v", err)
 	}

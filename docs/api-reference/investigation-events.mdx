@@ -1,0 +1,18 @@
+---
+title: "Investigation events"
+description: "Consume ordered Investigation activity and reconnect without losing semantic progress."
+---
+
+Investigation activity uses increasing sequence identifiers. SSE clients reconnect with `Last-Event-ID`; comment frames are heartbeats and carry no product event.
+
+Shipped event types are `started`, `progress`, `tool_started`, `tool_completed`, `answer_delta`, `hypotheses_updated`, `concluded`, `failed`, and `cancelled`. Each has a typed payload in the released OpenAPI contract.
+
+Terminal events are `concluded`, `failed`, and `cancelled`. Ignore unknown future event types while retaining their envelope so newer servers remain compatible with older clients.
+
+Every envelope includes `schemaVersion`, `organizationId`, optional `conversationId`,
+`investigationId`, increasing `sequence`, timestamp, discriminating `type`, and its typed
+`payload`. Store the last processed sequence only after handling the event successfully.
+
+For example, after receiving event ID `42`, reconnect with `Last-Event-ID: 42`; the server
+continues after that event. A reconnect after a terminal event returns the retained tail
+and then closes rather than inventing new progress.

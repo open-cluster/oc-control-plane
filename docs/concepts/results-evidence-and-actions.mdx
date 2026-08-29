@@ -1,0 +1,19 @@
+---
+title: "Results, evidence and actions"
+description: "Interpret Findings, citations, hypotheses, limitations, and Action Proposals."
+---
+
+A Finding is a factual statement supported by one or more numbered Tool Runs. Its kind describes causal role or observation; confidence is categorical, not an invented percentage. Causal Findings explain the mechanism that produced impact.
+
+Hypotheses remain `exploring`, `supported`, `ruled_out`, or `unresolved`. Limitations name missing access, telemetry, contradictions, unresolved assumptions, or essential human input.
+
+An Action Proposal can describe mitigation, rollback, verification, a permanent fix, or monitoring. It includes risk, reversibility, approval needs, verification, and citations. Proposed never means executed.
+
+For example, a likely Finding may cite a Kubernetes event and a GitHub deployment Tool
+Run. A rollback Action Proposal can cite both, state `high` risk, require approval, and
+describe how latency should be verified afterward. OpenCluster never executes that
+rollback.
+
+Citations show what OpenCluster read, not that the source was complete or correct. Review
+contradictions, source timestamps, truncation, and every Limitation. See
+[Run your first investigation](/getting-started/run-your-first-investigation).

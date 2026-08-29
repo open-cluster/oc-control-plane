@@ -1,0 +1,73 @@
+---
+title: "Docker Compose"
+description: "Run the complete OSS deployment with PostgreSQL, mounted secret files, and health checks."
+---
+
+Docker Compose is the shortest complete self-hosted path. The checked-in stack runs the
+frontend, control plane, and PostgreSQL with same-origin routing on `127.0.0.1:8080`.
+
+## Prerequisites
+
+You need Docker with Docker Compose, an available port `8080`, persistent local storage,
+and outbound HTTPS access to your configured Anthropic or Z.AI model provider. Create
+the credential files described in `.env.example`; supported credential settings always
+name files and never contain secret values.
+
+Set the required `OPENCLUSTER_*` file paths, provider and model, and numeric non-root
+`OPENCLUSTER_RUNTIME_UID` and `OPENCLUSTER_RUNTIME_GID` values. The PostgreSQL DSN uses
+host `postgres`, user and database `opencluster`, and the password from the mounted
+PostgreSQL password file.
+
+## Start and verify
+
+From the repository root, run:
+
+```bash
+docker compose -f deploy/compose/compose.yaml up --build -d
+docker compose -f deploy/compose/compose.yaml ps
+```
+
+PostgreSQL should become `healthy`; the control plane and frontend should remain
+running. Verify the process probes through the frontend:
+
+```bash
+curl --fail http://localhost:8080/healthz
+curl --fail http://localhost:8080/readyz
+```
+
+`/healthz` confirms the process is alive. `/readyz` becomes successful only when the
+deployment can serve traffic. These operational probes are intentionally not part of
+the generated product API reference.
+
+Open [http://localhost:8080](http://localhost:8080), create the first User, then create
+and select an Organization. Follow the [Quickstart](/getting-started/quickstart) to
+connect an alert source and verify an Investigation.
+
+## Persistence and shutdown
+
+PostgreSQL stores durable product state in the named `postgres_data` volume. A normal
+restart or this shutdown command retains it:
+
+```bash
+docker compose -f deploy/compose/compose.yaml down
+```
+
+Adding `--volumes` deletes that local database. Back up PostgreSQL and retain custody of
+the encryption key before moving or rebuilding a production deployment; without the
+same key, sealed integration credentials cannot be opened.
+
+## Failure states
+
+- If PostgreSQL stays unhealthy, verify that the password file and DSN agree and that
+  the DSN uses host `postgres`.
+- If the control plane exits, inspect
+  `docker compose -f deploy/compose/compose.yaml logs control-plane` for a missing file,
+  invalid key length, or provider configuration error.
+- If `/healthz` works but `/readyz` fails, inspect PostgreSQL connectivity and service
+  logs before accepting traffic.
+- If the frontend is unreachable, confirm that port `8080` is free and the `frontend`
+  service is running.
+
+Continue with [Configuration](/self-hosting/configuration),
+[Backup and restore](/self-hosting/backup-and-restore), or
+[Troubleshooting](/self-hosting/troubleshooting).

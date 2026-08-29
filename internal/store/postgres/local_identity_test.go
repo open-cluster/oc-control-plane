@@ -7,32 +7,29 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 )
 
-func TestLocalBootstrapRollsBackIdentityWhenTheSessionCannotBeIssued(t *testing.T) {
+func TestLocalBootstrapRollsBackUserWhenTheSessionCannotBeIssued(t *testing.T) {
 	t.Parallel()
 	database := openDatabaseForTest(t, postgresDSN(t))
 	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	org := organization(t, "atomic-bootstrap")
 	issued := session.Session{
-		ID: uuid.New(), Organization: org.String(),
+		ID:       uuid.New(),
 		IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
 	}
 
-	_, _, err := database.BootstrapLocalAdmin(context.Background(), org,
-		"admin@example.test", "Admin", "encoded password", issued, nil, audit.Detail{})
+	_, err := database.BootstrapLocalUser(context.Background(),
+		"admin@example.test", "Admin", "encoded password with sufficient length", issued, nil)
 	if err == nil {
 		t.Fatal("bootstrap with an invalid session digest succeeded")
 	}
-	exists, existsErr := database.OrganizationExists(context.Background(), org)
-	if existsErr != nil {
-		t.Fatalf("OrganizationExists: %v", existsErr)
-	}
-	if exists {
-		t.Fatal("failed session issuance left the bootstrapped Organization committed")
+	issued.ID = uuid.New()
+	if _, err = database.BootstrapLocalUser(context.Background(),
+		"admin@example.test", "Admin", "encoded password with sufficient length", issued,
+		make([]byte, 32)); err != nil {
+		t.Fatalf("bootstrap after rolled-back session issuance: %v", err)
 	}
 }

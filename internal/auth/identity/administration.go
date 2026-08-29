@@ -47,7 +47,7 @@ func (h Handlers) setMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	user, ok := identifier(w, r, "user")
+	membership, ok := identifier(w, r, "membership")
 	if !ok {
 		return
 	}
@@ -71,7 +71,7 @@ func (h Handlers) setMember(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
 	member, err := h.Database.UpdateMembership(
-		ctx, principal, organization, user, role, body.Active)
+		ctx, principal, organization, membership, role, body.Active)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -88,13 +88,13 @@ func (h Handlers) removeMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	user, ok := identifier(w, r, "user")
+	membership, ok := identifier(w, r, "membership")
 	if !ok {
 		return
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
-	if err := h.Database.RemoveMembership(ctx, principal, organization, user); err != nil {
+	if err := h.Database.RemoveMembership(ctx, principal, organization, membership); err != nil {
 		h.fail(w, r, err)
 		return
 	}

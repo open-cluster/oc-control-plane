@@ -3,7 +3,7 @@ GOLANGCI_LINT_VERSION := v2.12.2
 GOVULNCHECK_VERSION := v1.1.4
 GOLICENSES_VERSION := v2.0.1
 
-.PHONY: tools lint openapi build test test-short vuln licenses deploy-verify verify
+.PHONY: tools lint openapi docs build test test-short vuln licenses deploy-verify verify
 
 HARNESS_MODULE := test/e2e
 TEST_TIMEOUT ?= 30m
@@ -29,6 +29,9 @@ lint:
 
 openapi:
 	sh scripts/openapi.sh
+
+docs:
+	node scripts/validate-docs.mjs
 
 build:
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" ./...
@@ -61,4 +64,4 @@ deploy-verify:
 	docker build --file deploy/compose/Frontend.Dockerfile --tag opencluster-frontend:ci .
 	sh scripts/verify-compose-routing.sh
 
-verify: openapi lint build test vuln licenses deploy-verify
+verify: openapi docs lint build test vuln licenses deploy-verify

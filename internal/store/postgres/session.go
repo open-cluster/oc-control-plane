@@ -122,7 +122,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		   SET last_seen_at = CASE WHEN last_seen_at < now() - $2::INTERVAL
 		                           THEN now() ELSE last_seen_at END
 		 WHERE token_digest = $1
-		RETURNING session_id, user_id, org_id, issued_at, expires_at, last_seen_at,
+		RETURNING session_id, user_id, COALESCE(org_id, ''), issued_at, expires_at, last_seen_at,
 		          revoked_at, user_agent, address,
 		          (SELECT email FROM app_user WHERE app_user.user_id = operator_session.user_id),
 		          (SELECT issuer FROM app_user WHERE app_user.user_id = operator_session.user_id),

@@ -19,96 +19,141 @@
     "light": "/logo/light.svg",
     "dark": "/logo/dark.svg"
   },
+  "navbar": {
+    "links": [
+      { "type": "github", "href": "https://github.com/open-cluster/oc-control-plane" },
+      { "label": "Releases", "href": "https://github.com/open-cluster/oc-control-plane/releases" },
+      { "label": "Changelog", "href": "https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md" }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/open-cluster"
+    },
+    "links": [
+      {
+        "header": "Project",
+        "items": [
+          { "label": "Source", "href": "https://github.com/open-cluster/oc-control-plane" },
+          { "label": "Feature availability", "href": "/feature-availability" },
+          { "label": "Releases", "href": "https://github.com/open-cluster/oc-control-plane/releases" },
+          { "label": "Changelog", "href": "https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md" },
+          { "label": "Report a documentation issue", "href": "https://github.com/open-cluster/oc-control-plane/issues/new" }
+        ]
+      }
+    ]
+  },
+  "feedback": {
+    "suggestEdit": true,
+    "raiseIssue": true
+  },
+  "api": {
+    "openapi": "https://github.com/open-cluster/oc-control-plane/releases/latest/download/openapi.yaml"
+  },
   "navigation": {
     "groups": [
       {
-        "group": "Getting started",
+        "group": "Get started",
         "pages": [
           "index",
           "getting-started/quickstart",
-          "getting-started/how-investigations-work"
+          "getting-started/set-up-opencluster",
+          "getting-started/connect-your-tools",
+          "getting-started/run-your-first-investigation"
         ]
       },
       {
-        "group": "Investigations",
+        "group": "Concepts",
         "pages": [
-          "investigations/investigate-an-incident",
-          "investigations/ask-follow-up-questions",
-          "investigations/findings-and-citations",
-          "investigations/review-a-postmortem"
-        ]
-      },
-      {
-        "group": "API reference",
-        "pages": [
-          "api-reference/overview"
+          "concepts/core-concepts",
+          "concepts/alert-events-and-incidents",
+          "concepts/investigations-and-conversations",
+          "concepts/results-evidence-and-actions",
+          "concepts/postmortems"
         ]
       },
       {
         "group": "Integrations",
         "pages": [
           "integrations/overview",
-          {
-            "group": "Alerting",
-            "pages": [
-              "integrations/alerting/alertmanager",
-              "integrations/alerting/generic_webhook"
-            ]
-          },
-          {
-            "group": "Infrastructure",
-            "pages": [
-              "integrations/infrastructure/kubernetes"
-            ]
-          },
-          {
-            "group": "Collaboration",
-            "pages": [
-              "integrations/collaboration/slack"
-            ]
-          },
-          {
-            "group": "Source control",
-            "pages": [
-              "integrations/source-control/github"
-            ]
-          }
+          "integrations/alerting/generic_webhook",
+          "integrations/alerting/alertmanager",
+          "integrations/infrastructure/kubernetes",
+          "integrations/source-control/github",
+          "integrations/collaboration/slack"
+        ]
+      },
+      {
+        "group": "Self-hosting",
+        "pages": [
+          "self-hosting/docker-compose",
+          "self-hosting/helm",
+          "self-hosting/configuration",
+          "self-hosting/model-providers-and-byok",
+          "self-hosting/upgrade",
+          "self-hosting/backup-and-restore",
+          "self-hosting/troubleshooting"
         ]
       },
       {
         "group": "Security",
         "pages": [
-          "security/security-model",
-          "security/credentials-and-data-access"
+          "security/overview",
+          "security/data-handling",
+          "security/authentication-and-authorization",
+          "security/secrets-and-relay",
+          "security/ai-provider-data-flow"
         ]
       },
       {
-        "group": "Self-hosted",
+        "group": "API reference",
         "pages": [
-          "self-hosted/overview",
-          "self-hosted/migration-v0.1",
-          "self-hosted/configuration",
-          "self-hosted/operations",
-          "self-hosted/troubleshooting"
+          "api-reference/overview",
+          "api-reference/authentication-and-organization-context",
+          "api-reference/errors-and-pagination",
+          "api-reference/webhooks",
+          "api-reference/investigation-events",
+          {
+            "group": "Generated endpoints",
+            "root": "api-reference/generated-endpoints",
+            "openapi": "https://github.com/open-cluster/oc-control-plane/releases/latest/download/openapi.yaml"
+          }
+        ]
+      },
+      {
+        "group": "Developers",
+        "pages": [
+          "developers/architecture",
+          "developers/local-development",
+          "developers/contributing",
+          "developers/repositories"
         ]
       }
     ]
   },
   "redirects": [
     { "source": "/quickstart", "destination": "/getting-started/quickstart" },
-    { "source": "/investigations/overview", "destination": "/investigations/investigate-an-incident" },
-    { "source": "/investigations/how-investigations-work", "destination": "/getting-started/how-investigations-work" },
+    { "source": "/investigations/overview", "destination": "/concepts/investigations-and-conversations" },
+    { "source": "/investigations/how-investigations-work", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/integrations/alertmanager", "destination": "/integrations/alerting/alertmanager" },
     { "source": "/integrations/kubernetes", "destination": "/integrations/infrastructure/kubernetes" },
     { "source": "/integrations/slack", "destination": "/integrations/collaboration/slack" },
     { "source": "/integrations/github", "destination": "/integrations/source-control/github" },
-    { "source": "/security/overview", "destination": "/security/security-model" },
-    { "source": "/security/credentials", "destination": "/security/credentials-and-data-access" }
+    { "source": "/security/credentials", "destination": "/security/secrets-and-relay" },
+    { "source": "/self-hosted/overview", "destination": "/self-hosting/docker-compose" },
+    { "source": "/self-hosted/configuration", "destination": "/self-hosting/configuration" },
+    { "source": "/self-hosted/troubleshooting", "destination": "/self-hosting/troubleshooting" }
   ],
   "contextual": {
     "options": [
       "copy",
-      "view"
+      "view",
+      {
+        "title": "Report a documentation issue",
+        "description": "Open a GitHub issue for this documentation.",
+        "icon": "bug",
+        "href": "https://github.com/open-cluster/oc-control-plane/issues/new"
+      }
     ]
   }
 }

@@ -376,8 +376,7 @@ func (c *controlPlane) bootstrapAdmin(
 ) {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{
-		"organization": organization,
-		"email":        "admin@example.test", "displayName": "Test Administrator",
+		"email": "admin@example.test", "displayName": "Test Administrator",
 		"password": "temporary integration test administrator password",
 	})
 	if err != nil {
@@ -404,6 +403,31 @@ func (c *controlPlane) bootstrapAdmin(
 	for _, cookie := range response.Cookies() {
 		if cookie.Name == session.CookieName && cookie.Value != "" {
 			c.sessionCookie = cookie.Value
+			organizationBody, marshalErr := json.Marshal(map[string]string{
+				"displayName": "Test Organization", "requestedSlug": organization,
+			})
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			organizationRequest, requestErr := http.NewRequestWithContext(
+				context.Background(), http.MethodPost, c.baseURL+"/api/v1/organizations",
+				bytes.NewReader(organizationBody))
+			if requestErr != nil {
+				t.Fatal(requestErr)
+			}
+			organizationRequest.Header.Set("Content-Type", "application/json")
+			organizationRequest.Header.Set("Origin", origin)
+			organizationRequest.AddCookie(&http.Cookie{Name: session.CookieName, Value: c.sessionCookie})
+			organizationResponse, requestErr := http.DefaultClient.Do(organizationRequest)
+			if requestErr != nil {
+				t.Fatalf("create integration-test Organization: %v", requestErr)
+			}
+			defer func() { _ = organizationResponse.Body.Close() }()
+			if organizationResponse.StatusCode != http.StatusCreated {
+				organizationRaw, _ := io.ReadAll(organizationResponse.Body)
+				t.Fatalf("create integration-test Organization = %d: %s",
+					organizationResponse.StatusCode, organizationRaw)
+			}
 			return
 		}
 	}

@@ -12,6 +12,13 @@ Every material claim cites a numbered Tool Run. Action proposals state risk,
 reversibility, approval needs, and verification; OpenCluster never executes a production
 change. After resolution, you can generate and review a conservative draft Postmortem.
 
+OpenCluster supports both an incident loop and a question loop. Each bounded Investigation
+reads only configured sources, records numbered Tool Runs, and returns cited Findings or an
+honest limitation. See [feature availability](/feature-availability),
+[security](/security/overview), [source](https://github.com/open-cluster/oc-control-plane),
+[releases](https://github.com/open-cluster/oc-control-plane/releases), and the
+[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
+
 <CardGroup cols={3}>
   <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
     Run one investigation from alert to conclusion.
@@ -19,7 +26,7 @@ change. After resolution, you can generate and review a conservative draft Postm
   <Card title="Integrations" icon="plug" href="/integrations/overview">
     See what each connected system contributes.
   </Card>
-  <Card title="How investigations work" icon="magnifying-glass" href="/getting-started/how-investigations-work">
+  <Card title="How investigations work" icon="magnifying-glass" href="/concepts/investigations-and-conversations">
     Understand the investigation flow and its boundaries.
   </Card>
   <Card title="API reference" icon="code" href="/api-reference/overview">

@@ -211,7 +211,7 @@ type ToolRun struct {
 	// Error is why a failed run failed.
 	Error string
 	// Content is the run's full answer, held for the reasoner
-	//within the running investigation and never persisted
+	// within the running investigation and never persisted.
 	Content any
 }
 

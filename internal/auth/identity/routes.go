@@ -47,13 +47,13 @@ func (h Handlers) Routes() authz.Table {
 		// Who they are once inside.
 		authz.Privileged(http.MethodGet, Base+"/members",
 			authz.MemberRead, http.HandlerFunc(h.listMembers)),
-		authz.Privileged(http.MethodPost, Base+"/members",
+		authz.Privileged(http.MethodPost, Base+"/local-users",
 			authz.MemberManage, http.HandlerFunc(h.createMember)),
-		authz.Privileged(http.MethodPatch, Base+"/members/{user}",
+		authz.Privileged(http.MethodPatch, Base+"/members/{membership}",
 			authz.MemberManage, http.HandlerFunc(h.setMember)),
-		authz.Privileged(http.MethodPut, Base+"/members/{user}/password",
+		authz.Privileged(http.MethodPut, Base+"/local-users/{user}/password",
 			authz.MemberManage, http.HandlerFunc(h.resetLocalPassword)),
-		authz.Privileged(http.MethodDelete, Base+"/members/{user}",
+		authz.Privileged(http.MethodDelete, Base+"/members/{membership}",
 			authz.MemberManage, http.HandlerFunc(h.removeMember)),
 
 		// Live sessions and their revocation.

@@ -1,0 +1,18 @@
+---
+title: "Generated endpoints"
+description: "Browse operation-level reference generated from the released control-plane OpenAPI contract."
+---
+
+Operation-level reference is generated from the OpenAPI artifact attached to the latest control-plane release. The control-plane repository's `api/openapi.yaml` is the only editable contract.
+
+Generated operations are grouped by Authentication, Organizations and access, Integrations and Tools, Incidents, Investigations, Conversations, Relays, Webhook deliveries, and Metadata. Health, readiness, metrics, and private operations are intentionally absent.
+
+For reproducible client generation, download `openapi.yaml` and its checksum from the exact release you deploy rather than relying on the latest-release link.
+
+The nested navigation below this page is generated from that artifact. Each operation
+owns its parameters, request and response schemas, security requirements, examples, and
+stable `operationId`. Handwritten API guides own only cross-cutting behavior.
+
+If an operation is missing, compare the deployed release with the selected OpenAPI
+artifact. Do not use health, readiness, metrics, or a private operation as a generated
+product client method.

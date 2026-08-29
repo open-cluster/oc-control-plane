@@ -116,13 +116,17 @@ document.querySelector('#oidc-sign-in').addEventListener('click', () => {
 document.querySelector('#bootstrap-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = formValues(event.currentTarget);
-  organization = values.organization;
   try {
     await request('/api/v1/auth/local/bootstrap', {
       method: 'POST',
       authorization: values.token,
-      body: { organization, email: values.email, displayName: values.displayName, password: values.password },
+      body: { email: values.email, displayName: values.displayName, password: values.password },
     });
+    const created = await request('/api/v1/organizations', {
+      method: 'POST',
+      body: { displayName: values.organization },
+    });
+    organization = created.id;
     event.currentTarget.reset();
     await restoreSession();
   } catch (error) {

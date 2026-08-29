@@ -24,7 +24,7 @@ an investigation may call, so what you are shown and what the agent can do canno
 Inbound webhook behavior, such as Alertmanager deliveries, is reported through Integration
 health rather than represented as a Tool.
 
-The operator API exposes these decisions in `toolAvailability`, with each entry naming the
+The product API exposes these decisions in `toolAvailability`, with each entry naming the
 `tool`, its `available` state, and any refusal `reason`. Inbound event support appears
 separately under `inbound`; neither field grants investigation access.
 
@@ -79,5 +79,5 @@ always has one or the other — that assumption is wrong in both directions toda
 built on it also breaks silently the day a vendor gains a connect flow, rather than simply
 gaining the button.
 
-See [Credentials and data access](/security/credentials-and-data-access) before granting
+See [Secrets and Relay](/security/secrets-and-relay) before granting
 access.

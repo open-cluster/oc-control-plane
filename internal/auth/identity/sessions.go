@@ -49,9 +49,13 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	}
 	var active *membershipView
 	if organization, selected := authz.ActiveOrganizationFrom(request.Context()); selected {
-		if role, member := principal.RoleIn(organization); member {
-			active = &membershipView{
-				Organization: organization.String(), Role: string(role),
+		for _, membership := range principal.Memberships() {
+			if membership.Organization.String() == organization.String() {
+				active = &membershipView{
+					ID: membership.ID, Organization: organization.String(),
+					DisplayName: membership.DisplayName, Role: string(membership.Role),
+				}
+				break
 			}
 		}
 	}

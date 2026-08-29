@@ -39,7 +39,7 @@ type Principal struct {
 	kind          Kind
 	id            string
 	displayName   string
-	memberships   map[string]Role
+	memberships   map[string]Membership
 	credentialID  string
 	sourceAddress string
 	requestID     string
@@ -47,7 +47,9 @@ type Principal struct {
 
 // Membership is one organization and the role held in it.
 type Membership struct {
+	ID           string
 	Organization tenancy.Organization
+	DisplayName  string
 	Role         Role
 }
 
@@ -70,12 +72,12 @@ func NewPrincipal(
 			"%d bytes", ErrInvalidPrincipal, maxIdentifierLength)
 	}
 
-	held := make(map[string]Role, len(memberships))
+	held := make(map[string]Membership, len(memberships))
 	for _, membership := range memberships {
 		if membership.Organization.IsEmpty() || !KnownRole(membership.Role) {
 			continue
 		}
-		held[membership.Organization.String()] = membership.Role
+		held[membership.Organization.String()] = membership
 	}
 	return Principal{
 		kind:        kind,
@@ -121,8 +123,8 @@ func (p Principal) RequestID() string { return p.requestID }
 
 // RoleIn reports the role this principal holds in an organization.
 func (p Principal) RoleIn(organization tenancy.Organization) (Role, bool) {
-	role, member := p.memberships[organization.String()]
-	return role, member
+	membership, member := p.memberships[organization.String()]
+	return membership.Role, member
 }
 
 // MemberOf reports whether this principal holds any role in an organization.
@@ -148,11 +150,7 @@ func (p Principal) Memberships() []Membership {
 
 	listed := make([]Membership, 0, len(names))
 	for _, name := range names {
-		organization, err := tenancy.NewOrganization(name)
-		if err != nil {
-			continue
-		}
-		listed = append(listed, Membership{Organization: organization, Role: p.memberships[name]})
+		listed = append(listed, p.memberships[name])
 	}
 	return listed
 }

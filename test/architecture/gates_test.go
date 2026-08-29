@@ -139,6 +139,8 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 	// Functions whose contract is deliberately database-wide rather than tenant-scoped.
 	// Each is listed with the reason it is safe, so adding to this list is a decision.
 	databaseWide := map[string]string{
+		"BootstrapLocalUser": "deployment bootstrap creates the first User before any " +
+			"Organization exists; it writes only deployment identity and a membership-free session",
 		"OpenDatabase":   "constructs the deployment pool; performs no tenant read",
 		"Migrate":        "applies schema to the deployment database; touches no tenant row",
 		"Ping":           "reports deployment database reachability; reads no tenant data",

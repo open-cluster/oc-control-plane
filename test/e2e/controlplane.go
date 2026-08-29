@@ -125,7 +125,7 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 }
 
 func (c *controlPlane) bootstrap(ctx context.Context) error {
-	body := strings.NewReader(`{"organization":"` + organization + `","email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
+	body := strings.NewReader(`{"email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"http://"+c.httpAddress+"/api/v1/auth/local/bootstrap", body)
 	if err != nil {
@@ -145,6 +145,24 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 	for _, cookie := range response.Cookies() {
 		if cookie.Value != "" {
 			c.session = cookie
+			organizationBody := strings.NewReader(`{"displayName":"E2E Organization","requestedSlug":"` + organization + `"}`)
+			organizationRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodPost,
+				"http://"+c.httpAddress+"/api/v1/organizations", organizationBody)
+			if requestErr != nil {
+				return requestErr
+			}
+			organizationRequest.Header.Set("Content-Type", "application/json")
+			organizationRequest.Header.Set("Origin", "http://"+c.httpAddress)
+			organizationRequest.AddCookie(c.session)
+			organizationResponse, requestErr := http.DefaultClient.Do(organizationRequest)
+			if requestErr != nil {
+				return fmt.Errorf("creating the e2e Organization: %w", requestErr)
+			}
+			defer func() { _ = organizationResponse.Body.Close() }()
+			if organizationResponse.StatusCode != http.StatusCreated {
+				return fmt.Errorf("creating the e2e Organization returned %d",
+					organizationResponse.StatusCode)
+			}
 			return nil
 		}
 	}

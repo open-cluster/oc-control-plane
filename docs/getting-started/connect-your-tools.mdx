@@ -1,0 +1,26 @@
+---
+title: "Connect your tools"
+description: "Add read-only integrations and verify what evidence OpenCluster can retrieve."
+---
+
+An Integration is one configured installation in an Organization. Each Integration exposes bounded read-only Tools; OpenCluster never receives permission to change customer systems.
+
+1. Open **Integrations** and choose a shipped Integration Type.
+2. Enter its non-secret configuration and required credential.
+3. Select **Verify** and review the reported capabilities and limitations.
+4. For Kubernetes, deploy the Relay inside the customer boundary and verify its outbound session.
+
+Credentials are write-only after submission. Webhook secrets are shown once. See the [Integration overview](/integrations/overview) for provider-specific guides.
+
+Verification reports `configured`, `active`, `degraded`, or `failed` with an explanation
+based on observable provider behavior. A webhook Integration remains `configured` until
+the first delivery arrives. A read Integration can be `degraded` when only some declared
+capabilities are available.
+
+For example, connect Generic Webhook, send one firing Alert Event, and verify that its
+status becomes `active`. Disable an Integration to remove it from new Investigations while
+retaining history. Deletion is refused when retained records depend on it.
+
+Provider permissions and data availability limit every Tool; verification does not prove
+that a future Investigation will find a cause. Continue with
+[Run your first investigation](/getting-started/run-your-first-investigation).

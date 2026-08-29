@@ -7,7 +7,7 @@ import (
 )
 
 func TestConfigurationDocumentationNamesEverySupportedEnvironmentKey(t *testing.T) {
-	content, err := os.ReadFile(filepath.Join("..", "..", "docs", "self-hosted", "configuration.mdx"))
+	content, err := os.ReadFile(filepath.Join("..", "..", "docs", "self-hosting", "configuration.mdx"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,6 @@
+**/AGENTS.md
+**/plans/**
+**/artifacts/**
+**/*.tmp
+**/*.log
+**/.DS_Store

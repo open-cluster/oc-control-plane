@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -28,9 +29,32 @@ var docsRoot = filepath.Join(moduleRoot, "docs")
 // .svg", which would exempt every stray diagram export and turn the gate off. A new chrome
 // file has to be added here, and adding one is a decision.
 var docsChrome = map[string]bool{
+	".mintignore":    true,
 	"favicon.svg":    true,
 	"logo/light.svg": true,
 	"logo/dark.svg":  true,
+}
+
+func TestDocsPublicationControlsExist(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		filepath.Join(docsRoot, ".mintignore"),
+		filepath.Join(moduleRoot, "scripts", "validate-docs.mjs"),
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("reading documentation publication control %s: %v", path, err)
+			continue
+		}
+		if len(strings.TrimSpace(string(content))) == 0 {
+			t.Errorf("documentation publication control %s is empty", path)
+		}
+	}
+}
+
+var pagesOutsidePrimaryNavigation = map[string]bool{
+	"feature-availability": true,
 }
 
 // TestProductDocumentationIsMintlifyMDX holds docs/ to the published site's own files. A
@@ -71,6 +95,26 @@ func TestProductDocumentationIsMintlifyMDX(t *testing.T) {
 	}
 }
 
+func TestPublishedDocsExcludePrivateAndRetiredMaterial(t *testing.T) {
+	t.Parallel()
+
+	for page := range docsPages(t) {
+		content, err := os.ReadFile(filepath.Join(docsRoot, page+".mdx"))
+		if err != nil {
+			t.Fatalf("reading docs/%s.mdx: %v", page, err)
+		}
+		text := string(content)
+		for _, forbidden := range []string{
+			"AGENTS.md", "plans/", "operator surface", "webhook-work",
+			"OperatorHandlers", "Environment record",
+		} {
+			if strings.Contains(text, forbidden) {
+				t.Errorf("docs/%s.mdx publishes forbidden material %q", page, forbidden)
+			}
+		}
+	}
+}
+
 // TestDocsNavigationCoversEveryPage proves docs.json and the page tree agree in both
 // directions: a navigation entry naming a page that does not exist is a broken build on
 // the published site, and a page navigation never names is published-but-unreachable —
@@ -92,7 +136,7 @@ func TestDocsNavigationCoversEveryPage(t *testing.T) {
 		}
 	}
 	for page := range existing {
-		if !referenced[page] {
+		if !referenced[page] && !pagesOutsidePrimaryNavigation[page] {
 			t.Errorf("docs/%s.mdx is not reachable from docs.json navigation; add it or "+
 				"delete the page", page)
 		}
@@ -100,6 +144,71 @@ func TestDocsNavigationCoversEveryPage(t *testing.T) {
 
 	for page := range existing {
 		assertFrontmatter(t, page)
+	}
+}
+
+func TestEveryInternalDocumentationLinkResolves(t *testing.T) {
+	t.Parallel()
+
+	pages := docsPages(t)
+	redirects := docsRedirects(t)
+	linkPattern := regexp.MustCompile(`\]\((/[^)#?]*)(?:[?#][^)]*)?\)`)
+	for page := range pages {
+		content, err := os.ReadFile(filepath.Join(docsRoot, page+".mdx"))
+		if err != nil {
+			t.Fatalf("reading docs/%s.mdx: %v", page, err)
+		}
+		for _, match := range linkPattern.FindAllStringSubmatch(string(content), -1) {
+			target := strings.Trim(strings.TrimSuffix(match[1], "/"), "/")
+			if target == "" || pages[target] || redirects["/"+target] {
+				continue
+			}
+			t.Errorf("docs/%s.mdx links to missing internal page %q", page, match[1])
+		}
+	}
+}
+
+func TestQuickstartCoversTheCompleteFirstRun(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile(filepath.Join(docsRoot, "getting-started", "quickstart.mdx"))
+	if err != nil {
+		t.Fatalf("reading Quickstart: %v", err)
+	}
+	text := string(content)
+	for _, required := range []string{
+		"docker compose -f deploy/compose/compose.yaml up --build",
+		"create the first User",
+		"create an Organization",
+		"Generic Webhook",
+		"202 Accepted",
+		"docker compose -f deploy/compose/compose.yaml down",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("Quickstart does not cover %q", required)
+		}
+	}
+}
+
+func TestDockerComposeGuideIsExecutable(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile(filepath.Join(docsRoot, "self-hosting", "docker-compose.mdx"))
+	if err != nil {
+		t.Fatalf("reading Docker Compose guide: %v", err)
+	}
+	text := string(content)
+	for _, required := range []string{
+		"deploy/compose/compose.yaml",
+		"docker compose",
+		"postgres_data",
+		"/healthz",
+		"/readyz",
+		"Troubleshooting",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("Docker Compose guide does not cover %q", required)
+		}
 	}
 }
 
@@ -132,7 +241,7 @@ func TestEveryProviderManifestHasAPage(t *testing.T) {
 // TestIntegrationNavigationUsesProductRoles keeps the integration catalog scannable as
 // it grows: systems are grouped by the role they play in OpenCluster, not published as a
 // flat provider list or an arbitrary vendor taxonomy.
-func TestIntegrationNavigationUsesProductRoles(t *testing.T) {
+func TestDocsNavigationMatchesTheApprovedPublicPlan(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join(docsRoot, "docs.json"))
@@ -143,50 +252,51 @@ func TestIntegrationNavigationUsesProductRoles(t *testing.T) {
 	if err := json.Unmarshal(raw, &site); err != nil {
 		t.Fatalf("docs/docs.json is not valid JSON: %v", err)
 	}
-	integrations, found := navigationGroup(site["navigation"], "Integrations")
-	if !found {
-		t.Fatal("docs.json navigation has no Integrations group")
+	want := []struct {
+		group string
+		pages []string
+	}{
+		{"Get started", []string{"index", "getting-started/quickstart", "getting-started/set-up-opencluster", "getting-started/connect-your-tools", "getting-started/run-your-first-investigation"}},
+		{"Concepts", []string{"concepts/core-concepts", "concepts/alert-events-and-incidents", "concepts/investigations-and-conversations", "concepts/results-evidence-and-actions", "concepts/postmortems"}},
+		{"Integrations", []string{"integrations/overview", "integrations/alerting/generic_webhook", "integrations/alerting/alertmanager", "integrations/infrastructure/kubernetes", "integrations/source-control/github", "integrations/collaboration/slack"}},
+		{"Self-hosting", []string{"self-hosting/docker-compose", "self-hosting/helm", "self-hosting/configuration", "self-hosting/model-providers-and-byok", "self-hosting/upgrade", "self-hosting/backup-and-restore", "self-hosting/troubleshooting"}},
+		{"Security", []string{"security/overview", "security/data-handling", "security/authentication-and-authorization", "security/secrets-and-relay", "security/ai-provider-data-flow"}},
+		{"API reference", []string{"api-reference/overview", "api-reference/authentication-and-organization-context", "api-reference/errors-and-pagination", "api-reference/webhooks", "api-reference/investigation-events", "api-reference/generated-endpoints"}},
+		{"Developers", []string{"developers/architecture", "developers/local-development", "developers/contributing", "developers/repositories"}},
 	}
-
-	want := map[string]string{
-		"Alerting":       "integrations/alerting/alertmanager",
-		"Infrastructure": "integrations/infrastructure/kubernetes",
-		"Collaboration":  "integrations/collaboration/slack",
-		"Source control": "integrations/source-control/github",
+	navigation, ok := site["navigation"].(map[string]any)
+	if !ok {
+		t.Fatal("docs.json navigation is not an object")
 	}
-	for role, page := range want {
-		group, present := navigationGroup(integrations, role)
-		if !present {
-			t.Errorf("Integrations navigation has no %q group", role)
+	groups, ok := navigation["groups"].([]any)
+	if !ok || len(groups) != len(want) {
+		t.Fatalf("docs.json has %d primary groups, want %d", len(groups), len(want))
+	}
+	for index, expected := range want {
+		group, ok := groups[index].(map[string]any)
+		if !ok || group["group"] != expected.group {
+			t.Errorf("navigation group %d = %v, want %q", index, group["group"], expected.group)
 			continue
 		}
-		pages := map[string]bool{}
-		collectPages(group, pages)
-		if !pages[page] {
-			t.Errorf("Integrations > %s does not contain %q", role, page)
+		pages, ok := group["pages"].([]any)
+		if !ok || len(pages) != len(expected.pages) {
+			t.Errorf("%s has %d pages, want %d", expected.group, len(pages), len(expected.pages))
+			continue
 		}
-	}
-}
-
-func navigationGroup(node any, name string) (map[string]any, bool) {
-	switch typed := node.(type) {
-	case map[string]any:
-		if typed["group"] == name {
-			return typed, true
-		}
-		for _, child := range typed {
-			if found, ok := navigationGroup(child, name); ok {
-				return found, true
+		for pageIndex, page := range expected.pages {
+			if expected.group == "API reference" && page == "api-reference/generated-endpoints" {
+				generated, object := pages[pageIndex].(map[string]any)
+				if !object || generated["group"] != "Generated endpoints" ||
+					generated["root"] != page || generated["openapi"] == "" {
+					t.Errorf("API reference generated endpoint entry = %v, want an OpenAPI-backed group rooted at %q", pages[pageIndex], page)
+				}
+				continue
 			}
-		}
-	case []any:
-		for _, child := range typed {
-			if found, ok := navigationGroup(child, name); ok {
-				return found, true
+			if pages[pageIndex] != page {
+				t.Errorf("%s page %d = %v, want %q", expected.group, pageIndex, pages[pageIndex], page)
 			}
 		}
 	}
-	return nil, false
 }
 
 // navigationPages reports every page reference in docs.json's navigation, walking the
@@ -213,11 +323,38 @@ func navigationPages(t *testing.T) map[string]bool {
 	return pages
 }
 
+func docsRedirects(t *testing.T) map[string]bool {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(docsRoot, "docs.json"))
+	if err != nil {
+		t.Fatalf("reading docs/docs.json: %v", err)
+	}
+	var site struct {
+		Redirects []struct {
+			Source string `json:"source"`
+		} `json:"redirects"`
+	}
+	if err := json.Unmarshal(raw, &site); err != nil {
+		t.Fatalf("docs/docs.json is not valid JSON: %v", err)
+	}
+	redirects := make(map[string]bool, len(site.Redirects))
+	for _, redirect := range site.Redirects {
+		redirects[redirect.Source] = true
+	}
+	return redirects
+}
+
 func collectPages(node any, pages map[string]bool) {
 	switch typed := node.(type) {
 	case map[string]any:
 		for key, value := range typed {
 			if key == "global" {
+				continue
+			}
+			if key == "root" {
+				if page, ok := value.(string); ok {
+					pages[page] = true
+				}
 				continue
 			}
 			collectPages(value, pages)

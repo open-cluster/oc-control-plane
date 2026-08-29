@@ -1,0 +1,29 @@
+---
+title: "Overview"
+description: "Understand OpenCluster identity, Organization isolation, read-only access, secrets, and audit controls."
+---
+
+OpenCluster authenticates a Principal, verifies current Organization membership, and checks the route's Permission before tenant-owned logic runs. An Organization identifier is a selector, never authorization by itself.
+
+Integrations expose bounded read-only Tools. The Relay opens an outbound session and keeps cluster credentials inside the customer boundary. Credentials are digested or sealed, sensitive responses are not cached, and audit details remove credential-shaped keys.
+
+Report vulnerabilities through the process in `SECURITY.md`; do not open a public issue containing sensitive details.
+
+## Trust model
+
+The browser and product ingress share one origin. PostgreSQL holds durable product truth.
+Customer Relays initiate outbound, pinned sessions; the control plane never receives
+cluster credentials. Integration and model providers remain external trust boundaries,
+and their returned content is always untrusted input.
+
+For example, selecting another Organization identifier does not grant access: the server
+rechecks current membership before a Tool is offered or a record is read. A Kubernetes
+read can cross the Relay boundary only when the registered capability and namespace
+allow-list both permit it.
+
+Read-only Tools reduce change risk but do not make source data harmless or complete.
+Deployment owners remain responsible for HTTPS, provider terms, retention, backups,
+identity-provider policy, and secret custody. Continue with
+[Authentication and authorization](/security/authentication-and-authorization),
+[Secrets and Relay](/security/secrets-and-relay), and
+[AI provider data flow](/security/ai-provider-data-flow).

@@ -1,0 +1,18 @@
+---
+title: "Investigations and Conversations"
+description: "Understand bounded Investigation turns and multi-turn Conversation continuity."
+---
+
+An Investigation is one immutable evidence-gathering turn. It moves through `queued` and `investigating`, then ends as `needs_input`, `concluded`, `partial`, `cancelled`, or `failed`.
+
+A Conversation is the ordered context a person talks to. Each Message may open a new Investigation. Follow-ups reuse bounded prior Findings and citations without copying raw provider payloads or private model reasoning.
+
+Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
+
+For example, “Why did checkout latency rise?” opens one Investigation. “Does the deploy
+at 09:42 explain it?” becomes a new Message and a new bounded Investigation in the same
+Conversation, retaining prior cited Findings without changing the first result.
+
+An Investigation can remain inconclusive when access, telemetry, time, or spend bounds
+prevent a defensible answer. Review [Results, evidence and actions](/concepts/results-evidence-and-actions)
+before acting on its conclusion.

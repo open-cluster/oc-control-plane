@@ -87,7 +87,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - State-changing proposals always require human approval.
 
 See [SECURITY.md](./SECURITY.md) and the
-[security model](./docs/security/security-model.mdx).
+[security model](./docs/security/overview.mdx).
 
 ## Develop
 
@@ -112,7 +112,8 @@ proof lives in the nested `test/e2e` module.
 - [Contributor requirements](./AGENTS.md)
 
 The Mintlify site is authored in `docs/`. Every shipped Integration must have a navigable
-product page.
+product page. Run `make docs` for navigation, frontmatter, internal-link, publication,
+credential-literal, accessibility, and Integration-page checks; `make verify` includes it.
 
 ## Contributing
 

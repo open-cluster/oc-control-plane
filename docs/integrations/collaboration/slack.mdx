@@ -69,7 +69,7 @@ connected this way keep working unchanged; there is nothing to migrate.
     In OpenCluster, choose **Slack**, enter a name, and paste the token. OpenCluster
     verifies the token with Slack before encrypting and storing it.
 
-    The operator API accepts the configuration key `botToken`. The
+    The product API accepts the configuration key `botToken`. The
     field accepts either token type described on this page.
   </Step>
   <Step title="Grant channel access">
@@ -163,3 +163,12 @@ Paste a new token to replace the credential after it passes live verification. D
 the integration to remove Slack from new investigations while retaining its record.
 Delete it to remove the stored credential; deletion is refused when investigation
 records depend on it. Revoking the token in Slack takes effect independently.
+
+## Availability and project links
+
+Slack is available in OSS v0.1 when the deployment has a Slack App. Slack and its mark
+belong to Salesforce, Inc. Review the [adapter source](https://github.com/open-cluster/oc-control-plane/tree/main/internal/integrations/slack),
+[releases](https://github.com/open-cluster/oc-control-plane/releases), and
+[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
+[Edit this page](https://github.com/open-cluster/oc-control-plane/edit/main/docs/integrations/collaboration/slack.mdx)
+or [report a documentation issue](https://github.com/open-cluster/oc-control-plane/issues/new).

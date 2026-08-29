@@ -1,0 +1,18 @@
+---
+title: "Contributing"
+description: "Find an issue, make a focused change, and submit it with complete verification evidence."
+---
+
+Start with a public issue and confirm the intended behavior before implementation. Follow the repository glossary, write observable tests first, keep Organization isolation explicit, and update only affected documentation.
+
+Run the short suite regularly and `make verify` before opening a pull request. Describe the behavior changed, tests run, security impact, documentation impact, and any remaining limitation.
+
+Read `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` for the complete process.
+
+Use `CONTEXT.md` as the domain glossary and do not restore retired architecture under a
+new spelling. A provider change includes its manifest, observable tests, public
+Integration page, and route/OpenAPI updates when applicable. Database tests use real
+PostgreSQL containers; do not replace those seams with mocks.
+
+Keep pull requests focused and include the exact failing test observed before the fix,
+the final verification commands, security impact, and any intentional limitation.

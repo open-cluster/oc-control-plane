@@ -69,7 +69,7 @@ before storing it.
 
 Create the App in GitHub with the permissions above. It needs no webhook. Generate a
 private key, then set the deployment's App ID and private-key file as described in the
-[configuration reference](/self-hosted/configuration#integrations). For GitHub Enterprise
+[configuration reference](/self-hosting/configuration#integrations). For GitHub Enterprise
 Server, also set the API and web URLs.
 
 To offer **Connect GitHub**, enable **Request user authorization (OAuth) during
@@ -146,3 +146,12 @@ Disable the integration to remove GitHub from new investigations while retaining
 record. Deletion is refused when investigation records depend on it. Uninstalling the App
 in GitHub removes OpenCluster's access immediately and independently; the integration then
 reports that it is no longer installed.
+
+## Availability and project links
+
+GitHub is available in OSS v0.1 when the deployment has a GitHub App. GitHub and its mark
+belong to GitHub, Inc. Review the [adapter source](https://github.com/open-cluster/oc-control-plane/tree/main/internal/integrations/github),
+[releases](https://github.com/open-cluster/oc-control-plane/releases), and
+[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
+[Edit this page](https://github.com/open-cluster/oc-control-plane/edit/main/docs/integrations/source-control/github.mdx)
+or [report a documentation issue](https://github.com/open-cluster/oc-control-plane/issues/new).

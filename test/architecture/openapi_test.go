@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,7 +14,22 @@ import (
 )
 
 type openAPIDocument struct {
-	Paths map[string]openAPIPath `yaml:"paths"`
+	Paths      map[string]openAPIPath `yaml:"paths"`
+	Components struct {
+		Schemas map[string]openAPISchema `yaml:"schemas"`
+	} `yaml:"components"`
+}
+
+type openAPISchema struct {
+	Ref                  string                   `yaml:"$ref"`
+	Type                 string                   `yaml:"type"`
+	AdditionalProperties any                      `yaml:"additionalProperties"`
+	Properties           map[string]openAPISchema `yaml:"properties"`
+	Items                *openAPISchema           `yaml:"items"`
+	Enum                 []string                 `yaml:"enum"`
+	Required             []string                 `yaml:"required"`
+	OneOf                []openAPISchema          `yaml:"oneOf"`
+	Const                string                   `yaml:"const"`
 }
 
 type openAPIPath struct {
@@ -191,6 +207,104 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 		if !ok || operation.Responses[successStatus(key)].Ref != expected {
 			t.Errorf("%s must use its observable response contract %s", key, expected)
 		}
+	}
+}
+
+func TestOpenAPIAdvertisesOnlyShippedProductAuthentication(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read the canonical OpenAPI document: %v", err)
+	}
+	if strings.Contains(string(contents), "BearerToken") {
+		t.Fatal("canonical OpenAPI advertises a general bearer token that v0.1 does not ship")
+	}
+}
+
+func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read the canonical OpenAPI document: %v", err)
+	}
+	var document openAPIDocument
+	if err = yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatalf("parse the canonical OpenAPI document: %v", err)
+	}
+
+	investigation := document.Components.Schemas["Investigation"]
+	for field, schemaName := range map[string]string{
+		"impact": "ImpactAssessment", "findings": "Finding",
+		"hypotheses": "Hypothesis", "actions": "ActionProposal",
+		"limitations": "Limitation",
+	} {
+		property := investigation.Properties[field]
+		if field == "impact" {
+			if property.Ref != "#/components/schemas/"+schemaName {
+				t.Errorf("Investigation.%s = %q, want typed %s", field, property.Ref, schemaName)
+			}
+			continue
+		}
+		if property.Items == nil || property.Items.Ref != "#/components/schemas/"+schemaName {
+			t.Errorf("Investigation.%s does not contain typed %s items", field, schemaName)
+		}
+	}
+	for _, name := range []string{"ImpactAssessment", "Finding", "Hypothesis", "ActionProposal", "Limitation"} {
+		schema, present := document.Components.Schemas[name]
+		closed, isBoolean := schema.AdditionalProperties.(bool)
+		if !present || !isBoolean || closed {
+			t.Errorf("%s must exist and reject undeclared fields", name)
+		}
+	}
+}
+
+func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read the canonical OpenAPI document: %v", err)
+	}
+	var document openAPIDocument
+	if err = yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatalf("parse the canonical OpenAPI document: %v", err)
+	}
+
+	event := document.Components.Schemas["InvestigationActivityEvent"]
+	if len(event.OneOf) != 10 {
+		t.Fatalf("InvestigationActivityEvent has %d variants, want nine shipped events and one fallback", len(event.OneOf))
+	}
+	for _, name := range []string{
+		"StartedInvestigationEvent", "ProgressInvestigationEvent", "ToolStartedInvestigationEvent",
+		"ToolCompletedInvestigationEvent", "AnswerDeltaInvestigationEvent",
+		"HypothesesUpdatedInvestigationEvent", "ConcludedInvestigationEvent",
+		"FailedInvestigationEvent", "CancelledInvestigationEvent", "UnknownInvestigationEvent",
+	} {
+		found := false
+		for _, variant := range event.OneOf {
+			found = found || variant.Ref == "#/components/schemas/"+name
+		}
+		if !found {
+			t.Errorf("InvestigationActivityEvent is missing %s", name)
+		}
+		variant := document.Components.Schemas[name]
+		for _, field := range []string{
+			"schemaVersion", "organizationId", "investigationId", "sequence", "at", "type", "payload",
+		} {
+			if _, present := variant.Properties[field]; !present {
+				t.Errorf("%s omits shipped envelope field %s", name, field)
+			}
+			if !slices.Contains(variant.Required, field) {
+				t.Errorf("%s does not require shipped envelope field %s", name, field)
+			}
+		}
+	}
+	activity := document.Components.Schemas["InvestigationActivity"]
+	items := activity.Properties["items"].Items
+	if items == nil || items.Ref != "#/components/schemas/InvestigationActivityEvent" {
+		t.Error("InvestigationActivity items do not use the discriminated event schema")
 	}
 }
 

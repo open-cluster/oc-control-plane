@@ -357,7 +357,7 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 
 	body := strings.NewReader(`{"organization":"other"}`)
 	request, err := http.NewRequest(http.MethodPost,
-		plane.baseURL+"/api/v1/members", body)
+		plane.baseURL+"/api/v1/local-users", body)
 	if err != nil {
 		t.Fatalf("build body-conflict request: %v", err)
 	}

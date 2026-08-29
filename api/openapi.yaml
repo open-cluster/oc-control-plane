@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: OpenCluster Control Plane API
   version: 0.1.0
-  description: HTTP contract for the OpenCluster control plane operator and inbound webhook surfaces.
+  description: HTTP contract for the OpenCluster product API and inbound webhook endpoints.
   license:
     name: Apache-2.0
 servers:
@@ -46,7 +46,6 @@ x-opencluster-operation-templates:
   authenticated-read: &authenticated-read
     security: &authenticated-security
       - SessionCookie: []
-      - BearerToken: []
     x-opencluster-access: authenticated
     x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
@@ -120,7 +119,7 @@ paths:
       requestBody:
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/LocalCredentialRequest" }
+            schema: { $ref: "#/components/schemas/LocalBootstrapRequest" }
         required: true
       responses:
         "201": { $ref: "#/components/responses/BootstrapCreated" }
@@ -136,7 +135,7 @@ paths:
       requestBody:
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/LocalCredentialRequest" }
+            schema: { $ref: "#/components/schemas/LocalSignInRequest" }
         required: true
       responses:
         "200": { $ref: "#/components/responses/SignIn" }
@@ -236,21 +235,22 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/MemberList" }
         default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/local-users:
     post:
       <<: *privileged-write
-      operationId: createMember
+      operationId: createLocalUser
       tags: [Members]
       requestBody:
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateMemberRequest" }
+            schema: { $ref: "#/components/schemas/CreateLocalUserRequest" }
         required: true
       responses:
         "201": { $ref: "#/components/responses/Member" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/members/{user}:
-    parameters: &user-path
-      - { $ref: "#/components/parameters/UserID" }
+  /api/v1/members/{membership}:
+    parameters: &membership-path
+      - { $ref: "#/components/parameters/MembershipID" }
     patch:
       <<: *privileged-write
       operationId: updateMember
@@ -272,8 +272,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /api/v1/members/{user}/password:
-    parameters: *user-path
+  /api/v1/local-users/{user}/password:
+    parameters:
+      - { $ref: "#/components/parameters/UserID" }
     put:
       <<: *privileged-write
       operationId: replaceMemberPassword
@@ -886,9 +887,6 @@ components:
       type: apiKey
       in: cookie
       name: __Host-oc_session
-    BearerToken:
-      type: http
-      scheme: bearer
     BootstrapToken:
       type: http
       scheme: bearer
@@ -950,6 +948,7 @@ components:
       required: true
       schema: { type: string, minLength: 32, maxLength: 4096 }
     UserID: { name: user, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    MembershipID: { name: membership, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     SessionID: { name: session, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationID: { name: integration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationType: { name: type, in: path, required: true, schema: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" } }
@@ -972,7 +971,7 @@ components:
     NoContent:
       description: The operation completed and has no response body.
     BootstrapCreated:
-      description: Initial identity, Organization, membership, and session created atomically.
+      description: Initial local User and membership-free session created atomically.
       headers:
         Set-Cookie: { schema: { type: string } }
       content:
@@ -1074,14 +1073,21 @@ components:
         error: { type: string, minLength: 1, maxLength: 1024, example: "the selected Organization is not available to this caller" }
         reason: { type: string, enum: [credential_rejected, session_expired, session_revoked] }
         requires: { type: string, minLength: 1, maxLength: 128 }
-    LocalCredentialRequest:
+    LocalBootstrapRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254, example: operator@example.invalid }
+        displayName: { type: string, minLength: 1, maxLength: 256, example: On-call Operator }
+        password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true, example: correct-horse-placeholder }
+    LocalSignInRequest:
       type: object
       additionalProperties: false
       required: [organization, email, password]
       properties:
         organization: { $ref: "#/components/schemas/OrganizationID" }
         email: { type: string, format: email, maxLength: 254, example: operator@example.invalid }
-        displayName: { type: string, minLength: 1, maxLength: 256, example: On-call Operator }
         password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true, example: correct-horse-placeholder }
     Principal:
       type: object
@@ -1097,16 +1103,26 @@ components:
     Organization:
       type: object
       additionalProperties: false
-      required: [id, role]
+      required: [id, displayName, membership]
       properties:
         id: { $ref: "#/components/schemas/OrganizationID" }
+        displayName: { type: string, minLength: 1, maxLength: 256 }
+        membership: { $ref: "#/components/schemas/OrganizationMembership" }
+    OrganizationMembership:
+      type: object
+      additionalProperties: false
+      required: [id, role]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
         role: { type: string, enum: [admin, editor, viewer] }
     Membership:
       type: object
       additionalProperties: false
-      required: [organizationId, role]
+      required: [id, organizationId, displayName, role]
       properties:
+        id: { $ref: "#/components/schemas/UUID" }
         organizationId: { $ref: "#/components/schemas/OrganizationID" }
+        displayName: { type: string, minLength: 1, maxLength: 256 }
         role: { type: string, enum: [admin, editor, viewer] }
     OrganizationList:
       type: object
@@ -1117,9 +1133,10 @@ components:
     CreateOrganizationRequest:
       type: object
       additionalProperties: false
-      required: [organization]
+      required: [displayName]
       properties:
-        organization: { $ref: "#/components/schemas/OrganizationID" }
+        displayName: { type: string, minLength: 1, maxLength: 256 }
+        requestedSlug: { $ref: "#/components/schemas/OrganizationID" }
     Session:
       type: object
       additionalProperties: false
@@ -1163,8 +1180,9 @@ components:
     Member:
       type: object
       additionalProperties: false
-      required: [userId, email, displayName, role, source, active, disabled, createdAt]
+      required: [id, userId, email, displayName, role, source, active, disabled, createdAt]
       properties:
+        id: { $ref: "#/components/schemas/UUID" }
         userId: { $ref: "#/components/schemas/UUID" }
         email: { type: string, format: email, maxLength: 254 }
         displayName: { type: string, minLength: 1, maxLength: 256 }
@@ -1222,13 +1240,11 @@ components:
       properties:
         events: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
         next: { type: string, maxLength: 512 }
-    CreateMemberRequest:
+    CreateLocalUserRequest:
       type: object
       additionalProperties: false
-      required: [identityKind, email, role]
+      required: [email, password, role]
       properties:
-        identityKind: { type: string, enum: [local, oidc] }
-        subject: { type: string, minLength: 1, maxLength: 512 }
         email: { type: string, format: email, maxLength: 254 }
         displayName: { type: string, minLength: 1, maxLength: 256 }
         password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true }
@@ -1543,6 +1559,59 @@ components:
       additionalProperties: false
       required: [clarification]
       properties: { clarification: { type: string, minLength: 1, maxLength: 2048 } }
+    ImpactAssessment:
+      type: object
+      additionalProperties: false
+      required: [status, currentState, affectedServices, affectedUsers, summary, runRefs]
+      properties:
+        status: { type: string, enum: [known, partial, unknown] }
+        currentState: { type: string, maxLength: 4096 }
+        affectedServices: { type: array, items: { type: string, minLength: 1, maxLength: 512 }, uniqueItems: true }
+        affectedUsers: { type: array, items: { type: string, minLength: 1, maxLength: 512 }, uniqueItems: true }
+        summary: { type: string, maxLength: 4096 }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    Finding:
+      type: object
+      additionalProperties: false
+      required: [id, statement, kind, confidence, mechanism, runRefs]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        statement: { type: string, minLength: 1, maxLength: 4096 }
+        kind: { type: string, enum: [cause, trigger, contributing_factor, symptom, propagation, ruled_out, unresolved, observation] }
+        confidence: { type: string, enum: [confirmed, likely, possible] }
+        mechanism: { type: string, maxLength: 4096 }
+        runRefs: { type: array, minItems: 1, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    Hypothesis:
+      type: object
+      additionalProperties: false
+      required: [id, statement, status, test, runRefs]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        statement: { type: string, minLength: 1, maxLength: 4096 }
+        status: { type: string, enum: [exploring, supported, ruled_out, unresolved] }
+        test: { type: string, maxLength: 4096 }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    ActionProposal:
+      type: object
+      additionalProperties: false
+      required: [title, type, rationale, risk, reversible, requiresApproval, verification, runRefs]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 512 }
+        type: { type: string, enum: [mitigate, rollback, verify, fix, monitor] }
+        rationale: { type: string, minLength: 1, maxLength: 512 }
+        risk: { type: string, enum: [low, medium, high] }
+        reversible: { type: boolean }
+        requiresApproval: { type: boolean }
+        verification: { type: string, minLength: 1, maxLength: 512 }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+    Limitation:
+      type: object
+      additionalProperties: false
+      required: [type, statement, runRefs]
+      properties:
+        type: { type: string, enum: [missing_telemetry, missing_access, contradiction, unresolved_assumption, essential_human_input] }
+        statement: { type: string, minLength: 1, maxLength: 4096 }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
     Investigation:
       type: object
       additionalProperties: false
@@ -1556,13 +1625,13 @@ components:
         integrationId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
-        conclusionStatus: { type: string, maxLength: 64 }
+        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
         summary: { type: string, maxLength: 32768 }
-        impact: { type: object, additionalProperties: true }
-        findings: { type: array, items: { type: object, additionalProperties: true } }
-        hypotheses: { type: array, items: { type: object, additionalProperties: true } }
-        actions: { type: array, items: { type: object, additionalProperties: true } }
-        limitations: { type: array, items: { type: object, additionalProperties: true } }
+        impact: { $ref: "#/components/schemas/ImpactAssessment" }
+        findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
+        hypotheses: { type: array, items: { $ref: "#/components/schemas/Hypothesis" } }
+        actions: { type: array, items: { $ref: "#/components/schemas/ActionProposal" } }
+        limitations: { type: array, items: { $ref: "#/components/schemas/Limitation" } }
         humanConfirmationRequired: { type: boolean }
         stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
         error: { type: string, maxLength: 4096 }
@@ -1628,14 +1697,181 @@ components:
       required: [investigationId, items]
       properties:
         investigationId: { $ref: "#/components/schemas/UUID" }
-        items: { type: array, items: { type: object, additionalProperties: true } }
+        items: { type: array, items: { $ref: "#/components/schemas/Hypothesis" } }
+    StartedInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: &investigation-event-required [schemaVersion, organizationId, investigationId, sequence, at, type, payload]
+      properties: &investigation-event-properties
+        schemaVersion: { type: integer, const: 1 }
+        organizationId: { $ref: "#/components/schemas/OrganizationID" }
+        conversationId: { $ref: "#/components/schemas/UUID" }
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        sequence: { type: integer, format: int64, minimum: 1 }
+        at: { $ref: "#/components/schemas/Timestamp" }
+        type: { type: string, const: started }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [subject, sources, state, windowFrom, windowUntil]
+          properties:
+            subject: { type: string, minLength: 1, maxLength: 512 }
+            sources: { type: integer, minimum: 0 }
+            state: { type: string, enum: [waiting, executing] }
+            windowFrom: { $ref: "#/components/schemas/Timestamp" }
+            windowUntil: { $ref: "#/components/schemas/Timestamp" }
+            question: { type: string, maxLength: 512 }
+            turn: { type: integer, minimum: 1 }
+    ProgressInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: progress }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string, minLength: 1, maxLength: 512 } }
+    ToolStartedInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: tool_started }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [ordinal, tool, integrationId, arguments]
+          properties:
+            ordinal: { type: integer, minimum: 1 }
+            tool: { type: string, minLength: 1, maxLength: 512 }
+            integrationId: { type: string, minLength: 1, maxLength: 512 }
+            arguments: { type: object, additionalProperties: true }
+            purpose: { type: string, maxLength: 512 }
+            hypothesisId: { type: string, maxLength: 512 }
+    ToolCompletedInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: tool_completed }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [ordinal, tool, outcome, durationMs]
+          properties:
+            ordinal: { type: integer, minimum: 1 }
+            tool: { type: string, minLength: 1, maxLength: 512 }
+            outcome: { type: string, enum: [succeeded, failed] }
+            durationMs: { type: integer, format: int64, minimum: 0 }
+            integrationId: { $ref: "#/components/schemas/UUID" }
+            summary: { type: string, maxLength: 512 }
+            error: { type: string, maxLength: 4096 }
+            truncated: { type: boolean }
+            windowFrom: { $ref: "#/components/schemas/Timestamp" }
+            windowUntil: { $ref: "#/components/schemas/Timestamp" }
+            sources: { type: array, items: { type: string, maxLength: 2048 } }
+    AnswerDeltaInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: answer_delta }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [text, final]
+          properties:
+            text: { type: string, maxLength: 4096 }
+            final: { type: boolean }
+    HypothesesUpdatedInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: hypotheses_updated }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [version, hypotheses]
+          properties:
+            version: { type: integer, const: 1 }
+            hypotheses: { type: array, maxItems: 8, items: { $ref: "#/components/schemas/Hypothesis" } }
+    ConcludedInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: concluded }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [status, findings]
+          properties:
+            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
+            findings: { type: integer, minimum: 0 }
+            summary: { type: string, maxLength: 512 }
+            stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+    FailedInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: failed }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [reason]
+          properties: { reason: { type: string, minLength: 1, maxLength: 4096 } }
+    CancelledInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type: { type: string, const: cancelled }
+        payload: { type: object, additionalProperties: false }
+    UnknownInvestigationEvent:
+      type: object
+      additionalProperties: false
+      required: *investigation-event-required
+      properties:
+        <<: *investigation-event-properties
+        type:
+          type: string
+          minLength: 1
+          maxLength: 128
+          not: { enum: [started, progress, tool_started, tool_completed, answer_delta, hypotheses_updated, concluded, failed, cancelled] }
+        payload: { type: object, additionalProperties: true }
+    InvestigationActivityEvent:
+      oneOf:
+        - { $ref: "#/components/schemas/StartedInvestigationEvent" }
+        - { $ref: "#/components/schemas/ProgressInvestigationEvent" }
+        - { $ref: "#/components/schemas/ToolStartedInvestigationEvent" }
+        - { $ref: "#/components/schemas/ToolCompletedInvestigationEvent" }
+        - { $ref: "#/components/schemas/AnswerDeltaInvestigationEvent" }
+        - { $ref: "#/components/schemas/HypothesesUpdatedInvestigationEvent" }
+        - { $ref: "#/components/schemas/ConcludedInvestigationEvent" }
+        - { $ref: "#/components/schemas/FailedInvestigationEvent" }
+        - { $ref: "#/components/schemas/CancelledInvestigationEvent" }
+        - { $ref: "#/components/schemas/UnknownInvestigationEvent" }
+      discriminator:
+        propertyName: type
     InvestigationActivity:
       type: object
       additionalProperties: false
       required: [investigationId, items]
       properties:
         investigationId: { $ref: "#/components/schemas/UUID" }
-        items: { type: array, items: { type: object, additionalProperties: false, required: [sequence, at, type], properties: { sequence: { type: integer, format: int64, minimum: 1 }, at: { $ref: "#/components/schemas/Timestamp" }, type: { type: string, minLength: 1, maxLength: 128 }, payload: { type: object, additionalProperties: true } } } }
+        items: { type: array, items: { $ref: "#/components/schemas/InvestigationActivityEvent" } }
     MergeIncidentRequest:
       type: object
       additionalProperties: false
@@ -1823,10 +2059,11 @@ components:
             properties: { status: { const: resolved } }
           then:
             required: [resolvedAt]
+            properties: { resolvedAt: {} }
         - if:
             properties: { status: { const: firing } }
           then:
-            not: { required: [resolvedAt] }
+            not: { required: [resolvedAt], properties: { resolvedAt: {} } }
       properties:
         eventId: { type: string, minLength: 1, maxLength: 256 }
         status: { type: string, enum: [firing, resolved] }

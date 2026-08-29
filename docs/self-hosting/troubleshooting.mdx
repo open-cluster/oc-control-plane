@@ -1,0 +1,22 @@
+---
+title: "Troubleshooting"
+description: "Diagnose readiness, webhook, Relay, provider, and Investigation failures without exposing secrets."
+---
+
+Start with health and readiness, then inspect structured logs using the request or delivery identifier. Never paste cookies, bootstrap tokens, webhook secrets, model keys, or raw customer payloads into an issue.
+
+For webhook failures, distinguish permanent `400` or `401` responses from retryable `429` and `503` responses. For Relay failures, verify outbound connectivity, certificate pins, protocol compatibility, and the closed capability list. For provider failures, check the mounted key file, model name, outbound HTTPS, quota, and timeout.
+
+An Investigation ending `partial` or `needs_input` is an explicit bounded result. Review its limitations before retrying.
+
+Use this order:
+
+1. Check `/healthz`, then `/readyz`.
+2. Correlate the safe request, delivery, Investigation, or Relay identifier in logs.
+3. Verify PostgreSQL and provider network access without printing credentials.
+4. Reproduce with the smallest supported request or one new bounded Investigation.
+
+A failed health probe indicates the process is unavailable. Healthy but not ready points
+to a dependency or startup condition. If only one Integration fails, keep the deployment
+running and use that provider's troubleshooting section; disable it if new reads or
+deliveries must stop while retained history remains available.

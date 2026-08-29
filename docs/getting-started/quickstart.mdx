@@ -1,93 +1,148 @@
 ---
 title: "Quickstart"
-description: "Connect Alertmanager and Slack, deliver an alert, and run your first useful investigation."
+description: "Start OpenCluster, create its first Organization, accept an alert, and inspect an Investigation."
 ---
 
-This path creates an incident from Alertmanager and gives its investigation a Slack
-conversation to inspect.
+This walkthrough starts the complete local stack, accepts a canonical Alert Event, and
+opens the resulting Incident and Investigation. Allow about 15 minutes after the images
+build.
 
 ## Before you start
 
-You need:
+You need Docker with Docker Compose, Git, a browser, port `8080`, and outbound HTTPS
+access to Anthropic or Z.AI. You also need an API key and model identifier for that
+provider. The checked-in Compose stack runs PostgreSQL, the control plane, and the
+frontend; it does not publish the optional Relay unless you enable its profile.
 
-- a running OpenCluster deployment with a model provider configured;
-- an OpenCluster account with the **Admin** role;
-- Prometheus Alertmanager 0.28.0 or later;
-- permission to create and install a Slack app.
+The v0.1 repository does not declare minimum Docker, Compose, Git, CPU, or memory
+versions. Before continuing, confirm `docker compose version` and `git --version` run.
+Treat the absence of qualified minimums as a pre-release limitation, not permission to
+assume an old deployment tool is supported.
 
-If you operate OpenCluster, complete the [self-hosted setup](/self-hosted/overview)
-first.
+OpenCluster v0.1 does not publish a qualified CPU or memory minimum. Docker must have
+enough capacity to build the Go image and run three services; increase its allocation if
+the build or PostgreSQL is terminated for memory pressure. Measure real Investigation
+concurrency before sizing production.
 
-## 1. Connect Alertmanager
+## 1. Create local secret files
 
-In **Integrations**, choose **Prometheus Alertmanager**, enter a name, and create the
-integration. Copy the webhook URL and secret from the response. The secret is shown
-once.
+Clone the repository and create files outside version control for the PostgreSQL
+password, PostgreSQL DSN, one-time bootstrap token, 32-byte encryption key, and model
+provider credential. Each environment variable below names a file; it never contains
+the credential itself.
 
-Add the receiver to Alertmanager and route a test alert to it:
+On Linux or macOS, create the files and export the Compose inputs. Replace the obvious
+placeholders; the password in the DSN must be URL-encoded and equal the PostgreSQL
+password file.
 
-```yaml
-receivers:
-  - name: opencluster
-    webhook_configs:
-      - url: "https://oc.example.com/webhooks/v1/integrations/<integration-id>/alert-events"
-        http_config:
-          http_headers:
-            X-OpenCluster-Token:
-              secrets:
-                - "<webhook-secret>"
+```bash
+install -d -m 700 .secrets
+printf '%s' '<POSTGRES_PASSWORD>' > .secrets/postgres-password
+printf '%s' 'postgresql://opencluster:<URL_ENCODED_PASSWORD>@postgres:5432/opencluster?sslmode=disable' > .secrets/postgres-dsn
+openssl rand -hex 32 > .secrets/bootstrap-token
+openssl rand -out .secrets/encryption-key 32
+printf '%s' '<MODEL_API_KEY>' > .secrets/model-key
+chmod 600 .secrets/*
 
-route:
-  routes:
-    - receiver: opencluster
-      continue: true
+export OPENCLUSTER_POSTGRES_PASSWORD_FILE="$PWD/.secrets/postgres-password"
+export OPENCLUSTER_DATABASE_DSN_FILE="$PWD/.secrets/postgres-dsn"
+export OPENCLUSTER_BOOTSTRAP_TOKEN_FILE="$PWD/.secrets/bootstrap-token"
+export OPENCLUSTER_ENCRYPTION_KEY_FILE="$PWD/.secrets/encryption-key"
+export OPENCLUSTER_AI_API_KEY_FILE="$PWD/.secrets/model-key"
+export OPENCLUSTER_AI_PROVIDER=anthropic
+export OPENCLUSTER_AI_MODEL='<MODEL_ID>'
+export OPENCLUSTER_RUNTIME_UID="$(id -u)"
+export OPENCLUSTER_RUNTIME_GID="$(id -g)"
 ```
 
-Reload Alertmanager. See [Prometheus Alertmanager](/integrations/alerting/alertmanager)
-for routing options and delivery responses.
+Z.AI users set `OPENCLUSTER_AI_PROVIDER=zai` and a supported Z.AI model identifier.
+Docker Desktop users without `id` can set both runtime values to an available numeric
+non-root ID such as `1000`.
 
-## 2. Connect Slack
+The DSN uses the Compose service host `postgres`, database and user `opencluster`. The
+generated bootstrap token is longer than the 32-character minimum, and the encryption
+key is exactly 32 bytes.
 
-Create a Slack app with these bot token scopes:
+## 2. Start OpenCluster
 
-- `channels:read`
-- `channels:history`
-- `users:read`
+From the repository root, export the required `OPENCLUSTER_*` values and run:
 
-Install the app, copy its `xoxb-` token, and paste the token into a new **Slack**
-integration. Invite the app to a public channel used for incident response.
+```bash
+docker compose -f deploy/compose/compose.yaml up --build
+```
 
-Open the integration and select **Verify**. A bot token normally verifies as
-`degraded` because Slack does not grant bots `search:read`; channel and thread reads are
-still available. See [Slack](/integrations/collaboration/slack) for the full access
-model.
+Wait until PostgreSQL is healthy and the `control-plane` and `frontend` services remain
+running:
 
-## 3. Deliver an alert
+```bash
+docker compose -f deploy/compose/compose.yaml ps
+curl --fail http://localhost:8080/healthz
+curl --fail http://localhost:8080/readyz
+```
 
-Fire a test alert. Add a short message about the alert to the Slack channel, including
-the affected service or alert name so the conversation is useful during investigation.
+The service table should show `postgres` as `healthy` and the other two services as
+running. Both probe commands must exit successfully before you continue. Open
+[http://localhost:8080](http://localhost:8080). If a service exits, run
+`docker compose -f deploy/compose/compose.yaml logs <service>` and check the mounted file
+paths before retrying.
 
-Verify the Alertmanager integration. It should report the time of the accepted
-delivery. Open **Incidents** and select the incident created from the alert.
+## 3. Create the first User and Organization
 
-## 4. Run the investigation
+Expand **Set up the first administrator**. Enter the bootstrap token, email, display
+name, and password to create the first User. Bootstrap is deployment-wide and works only
+once; it does not create an Organization.
 
-From the open incident, start an investigation. An **Editor** or **Admin** can start
-one. It runs in the background.
+Enter an Organization display name and submit the next step to create an Organization.
+OpenCluster generates its canonical identifier and gives the first User an **Admin**
+membership. The workspace opens with that Organization selected.
 
-The quickstart succeeds when the finished record shows:
+## 4. Connect a Generic Webhook
 
-- `status: concluded` with no `stoppedBy` value;
-- Slack among the sources made available for the incident;
-- at least one recorded Slack read and its result;
-- cited findings when the recorded reads support a conclusion;
-- unresolved questions when the cause cannot be established.
+In **Integrations**, create a **Generic Webhook** named `Quickstart alerts`. Copy the
+webhook URL and one-time secret immediately. Replace the placeholders below and send a
+firing event:
 
-An investigation may conclude with no findings and still verify this path. That means
-the Slack read completed, but the available data did not support a defensible cause. A
-concluded record with `stoppedBy` is a partial conclusion forced by a configured limit;
-a `failed` record produced no valid conclusion. Neither verifies the quickstart. Use
-[Troubleshooting](/self-hosted/troubleshooting) before trying again.
+```bash
+curl --request POST "http://localhost:8080/webhooks/v1/integrations/<integration-id>/alert-events" \
+  --header "Content-Type: application/json" \
+  --header "X-OpenCluster-Token: <webhook-secret>" \
+  --data '{
+    "eventId":"quickstart-1",
+    "status":"firing",
+    "title":"Checkout latency is high",
+    "severity":"critical",
+    "startedAt":"2026-08-29T10:00:00Z",
+    "deduplicationKey":"quickstart/checkout-latency",
+    "labels":{"service":"checkout"},
+    "annotations":{"summary":"Synthetic quickstart alert"}
+  }'
+```
 
-Next, read [How investigations work](/getting-started/how-investigations-work) or add
-[GitHub](/integrations/source-control/github) for deployment and code context.
+The first valid delivery returns `202 Accepted`; an exact retry returns `200 OK`. A
+`401` means the secret is missing or wrong. A `400` means the JSON does not match the
+canonical schema. See [Generic Webhook](/integrations/alerting/generic_webhook) for all
+fields and retry outcomes.
+
+## 5. Verify the Incident and Investigation
+
+Open **Incidents** and select the Incident created for `Checkout latency is high`. Start
+an Investigation with a question such as “What evidence explains this alert?”
+
+Progress moves from `queued` to `investigating`. A completed run ends as `concluded` or
+`partial` and separates impact, Findings, hypotheses, Action Proposals, and limitations.
+With only a synthetic alert, an inconclusive answer is honest and expected: the result
+should identify missing evidence rather than invent a cause. Every material claim must
+cite a numbered Tool Run.
+
+## Clean up
+
+Stop the stack while retaining the PostgreSQL volume:
+
+```bash
+docker compose -f deploy/compose/compose.yaml down
+```
+
+Do not add `--volumes` unless you intend to erase the local database. Before a production
+deployment, review [Configuration](/self-hosting/configuration),
+[Backup and restore](/self-hosting/backup-and-restore), and the
+[security overview](/security/overview).

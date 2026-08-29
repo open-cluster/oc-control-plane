@@ -1,0 +1,64 @@
+---
+title: "Helm"
+description: "Deploy the control plane on Kubernetes with existing Secrets, probes, and optional Relay TLS."
+---
+
+The chart at `deploy/helm/opencluster` deploys the control plane. Provide PostgreSQL
+separately and route a frontend or ingress to the HTTP Service on the same public origin.
+
+## Prerequisites
+
+You need Kubernetes, Helm 3, a reachable PostgreSQL database, outbound HTTPS access to
+the selected model provider, and two Secrets:
+
+- `opencluster-database` with key `postgres-dsn`;
+- `opencluster-credentials` with keys `operator-token`, `sealing-key`, and `model-key`.
+
+The bootstrap token must be at least 32 characters and the sealing key exactly 32 bytes.
+Do not put their values in Helm values or command history.
+
+## Install
+
+Create a values file with the public URL, released image, model provider, and model:
+
+```yaml
+image:
+  repository: IMAGE_REPOSITORY
+  tag: VERSION
+  pullPolicy: IfNotPresent
+operator:
+  publicURL: https://opencluster.example.com
+model:
+  provider: anthropic
+  name: MODEL_ID
+database:
+  existingSecret: opencluster-database
+credentials:
+  existingSecret: opencluster-credentials
+```
+
+Install from a checkout of the matching release:
+
+```bash
+helm upgrade --install opencluster ./deploy/helm/opencluster \
+  --namespace opencluster --create-namespace --values values.yaml
+kubectl --namespace opencluster rollout status deployment/opencluster-opencluster
+```
+
+The rollout succeeds only after the Pod is ready. Verify `/healthz` and `/readyz`
+through your same-origin ingress, then create the first User and Organization.
+
+## Optional Relay listener
+
+Set `relay.enabled=true`, provide at least one `relay.spkiPins` value, and name a TLS
+Secret in `relay.tls.existingSecret`. The Secret must contain the configured certificate
+and private-key keys. Expose the Relay port only to customer Relays; they initiate the
+connection and pin the control-plane public key.
+
+## Resources and upgrades
+
+The chart intentionally ships no generic CPU or memory requests. Set requests and limits
+from measured Investigation concurrency and provider workloads before production. Back
+up PostgreSQL and retain the sealing key before changing versions. Read the target release
+notes for supported control-plane, frontend, and Relay combinations, then follow
+[Upgrade](/self-hosting/upgrade).

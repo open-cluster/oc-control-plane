@@ -1,0 +1,23 @@
+---
+title: "Postmortems"
+description: "Generate and review conservative draft Postmortems for resolved Incidents."
+---
+
+A Postmortem belongs to one resolved Incident. An operator triggers generation; OpenCluster does not create one automatically.
+
+The draft distinguishes system evidence from Conversation testimony and remains `draft` until a person reviews it. Missing impact, resolution, owner, or deadline facts appear exactly as `Needs human input.` rather than being invented.
+
+Postmortems remain under Incidents in v0.1. Review every section, correct explicit human facts, and then mark the document reviewed.
+
+Generation assembles the executive summary, impact, detection, cited timeline, root
+causes, contributing factors, resolution, what went well or poorly, detection gaps,
+Action Items, and open questions. A correction creates a new revision; marking it
+`reviewed` records the reviewer without turning testimony into system evidence.
+
+For example, Tool Runs may prove when an Alert Event fired and when a deployment changed,
+while an incident commander supplies the customer impact and recovery decision. The
+draft cites the former and labels absent human facts with `Needs human input.`.
+
+A Postmortem is not automatically published, is not an execution plan, and cannot recover
+facts that were never observed or supplied. Resolve the Incident first, generate its
+nested draft, review every uncited statement, and retain human ownership of Action Items.

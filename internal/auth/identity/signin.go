@@ -43,9 +43,13 @@ func (h Handlers) prepareSession(
 ) (session.Token, []byte, session.Session, audit.Detail, error) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	configured, _, err := h.Database.SessionPolicy(ctx, organization)
-	if err != nil {
-		return "", nil, session.Session{}, nil, err
+	var configured time.Duration
+	if !organization.IsEmpty() {
+		var err error
+		configured, _, err = h.Database.SessionPolicy(ctx, organization)
+		if err != nil {
+			return "", nil, session.Session{}, nil, err
+		}
 	}
 	lifetime := session.ClampLifetime(configured)
 	token, digest, err := session.NewToken()

@@ -83,14 +83,14 @@ func TestReleaseHandoffIncludesChangelogMigrationAndEndpointExamples(t *testing.
 
 	for path, markers := range map[string][]string{
 		"CHANGELOG.md": {"## 0.1.0", "OpenAPI", "Relay", "Generic Webhook"},
-		"docs/self-hosted/migration-v0.1.mdx": {
-			"Recreate", "OC_DATABASE_DSN_FILE", "/api/v1", "/webhooks/v1",
+		"docs/self-hosting/upgrade.mdx": {
+			"release notes", "PostgreSQL", "OpenAPI", "rollback",
 		},
 		"docs/api-reference/overview.mdx": {
 			"GET /api/v1/integration-types", "documentationSlug", "capabilities",
 			"GET /api/v1/webhook-deliveries", "POST /api/v1/webhook-deliveries/",
 		},
-		"docs/docs.json": {"self-hosted/migration-v0.1"},
+		"docs/docs.json": {"self-hosting/upgrade"},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
 		if err != nil {
@@ -228,7 +228,7 @@ func TestDeploymentExamplesOfferPinnedTLSRelayAndBehavioralCIGates(t *testing.T)
 		"deploy/helm/opencluster/templates/deployment.yaml": {"name: relay-tls", "name: relay-certificates"},
 		"deploy/helm/opencluster/templates/service.yaml":    {"name: relay-tls"},
 		".github/workflows/ci.yml":                          {"make deploy-verify", "needs.relay-availability.outputs.available"},
-		"Makefile":                                          {"openapi:", "deploy-verify:", "docker compose", "helm lint", "helm template", "docker build", "verify: openapi lint build test vuln licenses deploy-verify"},
+		"Makefile":                                          {"openapi:", "docs:", "deploy-verify:", "docker compose", "helm lint", "helm template", "docker build", "verify: openapi docs lint build test vuln licenses deploy-verify"},
 		"README.md":                                         {"OPENCLUSTER_RELAY_SPKI_PINS", "--profile relay", "relay.enabled=true"},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
@@ -280,10 +280,9 @@ func TestSecurityDocumentationDisclosesLiveReadsScopedRepliesAndCancellation(t *
 	t.Parallel()
 
 	for path, markers := range map[string][]string{
-		"docs/security/security-model.mdx":                {"container logs", "thread replies", "cancelled"},
-		"docs/security/credentials-and-data-access.mdx":   {"container logs", "thread replies", "model provider"},
-		"docs/integrations/collaboration/slack.mdx":       {"chat:write", "app_mentions:read", "groups:history"},
-		"docs/investigations/investigate-an-incident.mdx": {"cancelled", "Cancel"},
+		"docs/security/data-handling.mdx":                       {"container logs", "thread replies", "model provider"},
+		"docs/integrations/collaboration/slack.mdx":             {"chat:write", "app_mentions:read", "groups:history"},
+		"docs/getting-started/run-your-first-investigation.mdx": {"cancelled", "Cancel"},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
 		if err != nil {
@@ -297,8 +296,8 @@ func TestSecurityDocumentationDisclosesLiveReadsScopedRepliesAndCancellation(t *
 		}
 	}
 	for path, forbidden := range map[string][]string{
-		"docs/security/security-model.mdx":                 {"does not write to Slack", "does not hold cluster credentials or perform live investigation reads"},
-		"docs/getting-started/how-investigations-work.mdx": {"does not provide live pod, event, or log reads"},
+		"docs/security/overview.mdx":                         {"does not write to Slack", "does not hold cluster credentials or perform live investigation reads"},
+		"docs/concepts/investigations-and-conversations.mdx": {"does not provide live pod, event, or log reads"},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
 		if err != nil {

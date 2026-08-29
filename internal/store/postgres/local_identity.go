@@ -31,47 +31,33 @@ type LocalIdentity struct {
 	PasswordHash string
 }
 
-func (p *Database) BootstrapLocalAdmin(
-	ctx context.Context, organization tenancy.Organization,
-	email, displayName, passwordHash string, issued session.Session, digest []byte,
-	detail audit.Detail,
-) (User, []authz.Membership, error) {
-	pool, err := p.Pool(organization)
+// BootstrapLocalUser creates the deployment's first local User and a session without an
+// active Organization. The first Organization is created through the authenticated product
+// route, so bootstrap cannot silently choose an Organization identifier for the caller.
+func (p *Database) BootstrapLocalUser(
+	ctx context.Context, email, displayName, passwordHash string, issued session.Session,
+	digest []byte,
+) (User, error) {
+	transaction, err := p.pool.Begin(ctx)
 	if err != nil {
-		return User{}, nil, err
-	}
-	transaction, err := pool.Begin(ctx)
-	if err != nil {
-		return User{}, nil, fmt.Errorf("beginning local bootstrap: %w", err)
+		return User{}, fmt.Errorf("beginning local bootstrap: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	if _, err := transaction.Exec(ctx,
-		`LOCK TABLE organization_membership IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-		return User{}, nil, fmt.Errorf("locking local bootstrap: %w", err)
+	if _, err = transaction.Exec(ctx, `LOCK TABLE app_user IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return User{}, fmt.Errorf("locking local bootstrap: %w", err)
 	}
-	var admins int
-	if err := transaction.QueryRow(ctx, `
-		SELECT count(*) FROM organization_membership membership
-		 JOIN local_password credential ON credential.user_id=membership.user_id
-		 WHERE membership.active AND membership.role = $1`, string(authz.Admin)).Scan(&admins); err != nil {
-		return User{}, nil, fmt.Errorf("checking local bootstrap: %w", err)
+	var users int
+	if err = transaction.QueryRow(ctx, `SELECT count(*) FROM app_user`).Scan(&users); err != nil {
+		return User{}, fmt.Errorf("checking local bootstrap: %w", err)
 	}
-	if admins != 0 {
-		return User{}, nil, ErrLocalBootstrapComplete
-	}
-	if _, err := transaction.Exec(ctx,
-		`INSERT INTO organization (org_id, created_by) VALUES ($1, 'local bootstrap')`,
-		organization.String()); err != nil {
-		if isUniqueViolation(err, "organization_pkey") {
-			return User{}, nil, ErrLocalBootstrapComplete
-		}
-		return User{}, nil, fmt.Errorf("creating the first organization: %w", err)
+	if users != 0 {
+		return User{}, ErrLocalBootstrapComplete
 	}
 
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	var user User
-	if err := transaction.QueryRow(ctx, `
+	if err = transaction.QueryRow(ctx, `
 		INSERT INTO app_user
 			(user_id, issuer, subject, email, email_verified, display_name, last_sign_in)
 		VALUES ($1, $2, $3, $3, TRUE, $4, now())
@@ -79,65 +65,29 @@ func (p *Database) BootstrapLocalAdmin(
 		uuid.New(), LocalIssuer, normalized, displayName).Scan(
 		&user.ID, &user.Issuer, &user.Subject, &user.Email, &user.EmailVerified,
 		&user.DisplayName, &user.CreatedAt); err != nil {
-		return User{}, nil, fmt.Errorf("creating the first local administrator: %w", err)
+		return User{}, fmt.Errorf("creating the first local user: %w", err)
 	}
-	if _, err := transaction.Exec(ctx, `
-		INSERT INTO local_password (user_id, password_hash) VALUES ($1, $2)`,
+	if _, err = transaction.Exec(ctx,
+		`INSERT INTO local_password (user_id, password_hash) VALUES ($1, $2)`,
 		user.ID, passwordHash); err != nil {
-		return User{}, nil, fmt.Errorf("storing the first local password: %w", err)
-	}
-	membershipID := uuid.New()
-	if _, err := transaction.Exec(ctx, `
-		INSERT INTO organization_membership
-			(membership_id, org_id, user_id, role, source, granted_by)
-		VALUES ($1, $2, $3, $4, $5, 'local bootstrap')`,
-		membershipID, organization.String(), user.ID, string(authz.Admin),
-		int16(SourceManual)); err != nil {
-		return User{}, nil, fmt.Errorf("granting the first local administrator: %w", err)
-	}
-	if err := writeEvent(ctx, transaction, audit.Event{
-		Organization: organization.String(),
-		Actor:        audit.System("local bootstrap"),
-		Action:       audit.ActionUserProvisioned,
-		Target:       audit.Target{Kind: audit.TargetMembership, ID: membershipID.String()},
-		Outcome:      audit.OutcomeAllowed,
-		Detail: audit.Detail{
-			"role": string(authz.Admin), "source": SourceManual.String(), "email": normalized,
-		},
-	}); err != nil {
-		return User{}, nil, err
-	}
-	memberships, err := membershipsOf(ctx, transaction, user.ID)
-	if err != nil {
-		return User{}, nil, err
+		return User{}, fmt.Errorf("storing the first local password: %w", err)
 	}
 	issued.UserID = user.ID
-	if err = issueSessionIn(ctx, transaction, organization, issued, digest, audit.Actor{
-		Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: user.DisplayName,
-	}, detail); err != nil {
-		return User{}, nil, err
+	if _, err = transaction.Exec(ctx, `
+		INSERT INTO operator_session (session_id, token_digest, user_id, org_id,
+		                              issued_at, expires_at, last_seen_at, user_agent, address)
+		VALUES ($1, $2, $3, NULL, $4, $5, $4, $6, $7)`,
+		issued.ID, digest, issued.UserID, issued.IssuedAt, issued.ExpiresAt,
+		truncateTo(issued.UserAgent, session.MaxUserAgentLength),
+		truncateTo(issued.Address, session.MaxAddressLength)); err != nil {
+		return User{}, fmt.Errorf("issuing the bootstrap session: %w", err)
 	}
-	if err := transaction.Commit(ctx); err != nil {
-		return User{}, nil, fmt.Errorf("committing local bootstrap: %w", err)
+	// Audit events are Organization-owned records. Bootstrap deliberately has no
+	// Organization yet, so the first auditable Organization mutation is its creation.
+	if err = transaction.Commit(ctx); err != nil {
+		return User{}, fmt.Errorf("committing local bootstrap: %w", err)
 	}
-	return user, memberships, nil
-}
-
-func (p *Database) LocalBootstrapComplete(ctx context.Context, organization tenancy.Organization) (bool, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return false, err
-	}
-	var complete bool
-	err = pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM organization_membership membership
-		JOIN local_password credential ON credential.user_id=membership.user_id
-		WHERE membership.org_id=$1 AND membership.active AND membership.role=$2)`,
-		organization.String(), string(authz.Admin)).Scan(&complete)
-	if err != nil {
-		return false, fmt.Errorf("checking local bootstrap: %w", err)
-	}
-	return complete, nil
+	return user, nil
 }
 
 func (p *Database) LocalIdentityByEmail(

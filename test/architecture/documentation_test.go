@@ -93,6 +93,10 @@ func TestEveryDocumentReferenceResolves(t *testing.T) {
 func unmarkedReferences(line string) []string {
 	var references []string
 	for _, position := range documentPath.FindAllStringIndex(line, -1) {
+		preceding := line[:position[0]]
+		if strings.HasSuffix(preceding, "https://") || strings.HasSuffix(preceding, "http://") {
+			continue
+		}
 		following := strings.TrimLeft(line[position[1]:], "`) ")
 		if strings.HasPrefix(following, frozenRecordMarker) {
 			continue

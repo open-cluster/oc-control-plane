@@ -36,6 +36,7 @@ func (d *Database) OrganizationExists(
 // CreateOrganization records a new Organization and its creator's Admin membership atomically.
 func (d *Database) CreateOrganization(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	displayName string,
 ) (authz.Membership, error) {
 	userID, err := uuid.Parse(principal.ID())
 	if err != nil || principal.Kind() != authz.KindUser {
@@ -52,8 +53,8 @@ func (d *Database) CreateOrganization(
 	defer func() { _ = transaction.Rollback(ctx) }()
 
 	if _, err = transaction.Exec(ctx,
-		`INSERT INTO organization (org_id, created_by) VALUES ($1, $2)`,
-		organization.String(), principal.ID()); err != nil {
+		`INSERT INTO organization (org_id, display_name, created_by) VALUES ($1, $2, $3)`,
+		organization.String(), displayName, principal.ID()); err != nil {
 		if isUniqueViolation(err, "organization_pkey") {
 			return authz.Membership{}, ErrOrganizationExists
 		}
@@ -82,5 +83,7 @@ func (d *Database) CreateOrganization(
 	if err = transaction.Commit(ctx); err != nil {
 		return authz.Membership{}, fmt.Errorf("committing organization creation: %w", err)
 	}
-	return authz.Membership{Organization: organization, Role: authz.Admin}, nil
+	return authz.Membership{
+		ID: membershipID.String(), Organization: organization, Role: authz.Admin,
+	}, nil
 }

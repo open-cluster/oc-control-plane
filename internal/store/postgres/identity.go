@@ -142,10 +142,12 @@ type querier interface {
 // next request rather than at their next sign-in, for every route at once.
 func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Membership, error) {
 	rows, err := on.Query(ctx, `
-		SELECT org_id, role
-		  FROM organization_membership
-		 WHERE user_id = $1 AND active AND role IS NOT NULL
-		 ORDER BY org_id`, user)
+		SELECT membership.membership_id, membership.org_id, organization.display_name,
+		       membership.role
+		  FROM organization_membership membership
+		  JOIN organization ON organization.org_id = membership.org_id
+		 WHERE membership.user_id = $1 AND membership.active AND membership.role IS NOT NULL
+		 ORDER BY membership.org_id`, user)
 	if err != nil {
 		return nil, fmt.Errorf("reading memberships: %w", err)
 	}
@@ -153,8 +155,9 @@ func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Mem
 
 	memberships := make([]authz.Membership, 0, 4)
 	for rows.Next() {
-		var name, role string
-		if err := rows.Scan(&name, &role); err != nil {
+		var membershipID uuid.UUID
+		var name, displayName, role string
+		if err := rows.Scan(&membershipID, &name, &displayName, &role); err != nil {
 			return nil, fmt.Errorf("scanning a membership: %w", err)
 		}
 		organization, err := tenancy.NewOrganization(name)
@@ -168,7 +171,10 @@ func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Mem
 			// direction to fail.
 			continue
 		}
-		memberships = append(memberships, authz.Membership{Organization: organization, Role: parsed})
+		memberships = append(memberships, authz.Membership{
+			ID: membershipID.String(), Organization: organization,
+			DisplayName: displayName, Role: parsed,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading memberships: %w", err)
@@ -305,18 +311,18 @@ func (p *Database) SetMembership(
 // UpdateMembership changes the supported Role and active state in one audited transaction.
 func (p *Database) UpdateMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	user uuid.UUID, wantedRole *authz.Role, wantedActive *bool,
+	membership uuid.UUID, wantedRole *authz.Role, wantedActive *bool,
 ) (Member, error) {
 	return audited(ctx, p, principal, organization, audit.ActionMembershipChanged,
 		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
-			var membership uuid.UUID
+			var user uuid.UUID
 			var currentRole *string
 			var currentActive bool
 			err := transaction.QueryRow(ctx, `
-				SELECT membership_id, role, active
+				SELECT user_id, role, active
 				  FROM organization_membership
-				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
-				organization.String(), user).Scan(&membership, &currentRole, &currentActive)
+				 WHERE org_id = $1 AND membership_id = $2 FOR UPDATE`,
+				organization.String(), membership).Scan(&user, &currentRole, &currentActive)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Member{}, audit.Target{}, nil, ErrMembershipUnknown
 			}
@@ -340,7 +346,7 @@ func (p *Database) UpdateMembership(
 			if _, err = transaction.Exec(ctx, `
 				UPDATE organization_membership
 				   SET role = $3, active = $4, granted_by = $5, updated_at = now()
-				 WHERE org_id = $1 AND user_id = $2`, organization.String(), user, role,
+				 WHERE org_id = $1 AND membership_id = $2`, organization.String(), membership, role,
 				active, principal.ID()); err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("updating a membership: %w", err)
 			}
@@ -390,16 +396,16 @@ func (p *Database) UpdateMembership(
 // identifier nothing resolves.
 func (p *Database) RemoveMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	user uuid.UUID,
+	membership uuid.UUID,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionMembershipRevoked,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
 			var held *string
-			var membership uuid.UUID
+			var user uuid.UUID
 			err := transaction.QueryRow(ctx, `
-				SELECT membership_id, role FROM organization_membership
-				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
-				organization.String(), user).Scan(&membership, &held)
+				SELECT user_id, role FROM organization_membership
+				 WHERE org_id = $1 AND membership_id = $2 FOR UPDATE`,
+				organization.String(), membership).Scan(&user, &held)
 			role := orEmptyText(held)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, ErrMembershipUnknown

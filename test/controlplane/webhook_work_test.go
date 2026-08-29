@@ -146,21 +146,16 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 
 func TestWebhookDeliveryReplayIsRefusedToEditorsAndViewers(t *testing.T) {
 	plane := startIdentityPlane(t)
-	created := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-		"organization": identityOrg, "email": "admin@example.test", "displayName": "Admin",
-		"password": "initial administrator password",
-	}, asBootstrap)
-	if created.status != http.StatusCreated {
-		t.Fatalf("bootstrapping an administrator = %d: %s", created.status, created.body)
-	}
-	admin := sessionCookie(t, created)
+	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
+		"initial administrator password")
 	base := plane.base(identityOrg) + "/webhook-deliveries"
 	for _, role := range []string{"editor", "viewer"} {
 		email := role + "@example.test"
 		password := "a sufficiently long " + role + " password"
-		member := plane.call(t, http.MethodPost, plane.base(identityOrg)+"/members", map[string]any{
-			"identityKind": "local", "email": email, "displayName": role, "role": role, "password": password,
-		}, asSession(admin))
+		member := plane.call(t, http.MethodPost,
+			"http://"+plane.operator+"/api/v1/local-users", map[string]any{
+				"email": email, "displayName": role, "role": role, "password": password,
+			}, asSession(admin), inOrganization(identityOrg))
 		if member.status != http.StatusCreated {
 			t.Fatalf("creating %s = %d: %s", role, member.status, member.body)
 		}

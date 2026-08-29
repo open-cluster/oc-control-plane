@@ -70,7 +70,7 @@ customer Relays initiate outbound connections and pin the configured control-pla
 | `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8080`. |
 | `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. |
 | `OC_AUTH_MODE` | `local` or `oidc`. |
-| `OC_BOOTSTRAP_TOKEN_FILE` | One-time first-Admin bootstrap token file. |
+| `OC_BOOTSTRAP_TOKEN_FILE` | One-time first-User bootstrap token file. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
 | `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. |
@@ -89,11 +89,13 @@ customer Relays initiate outbound connections and pin the configured control-pla
 | `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. |
 
 The OSS binary uses one mounted AI deployment for every Organization. The resolver keeps
-Organization explicit so a separate cloud composition can select managed or encrypted
-Organization BYOK later without changing investigation behavior.
+Organization explicit so a separate hosted composition can select managed or encrypted
+Organization BYOK without changing investigation behavior.
 
 This is a pre-release clean break. Existing databases and configuration from earlier
 builds must be recreated rather than migrated through compatibility settings.
 
 The shared HTTP server allows 10 seconds for headers, 30 seconds to read a request,
-30 seconds to write a response, and 60 seconds for an idle connection.
+30 seconds to write a response, and 60 seconds for an idle connection. Restart after a
+change, then verify `/healthz`, `/readyz`, sign-in, Organization selection, Integration
+verification, and one bounded Investigation.

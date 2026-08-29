@@ -5,17 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
-
-type oidcMemberRequest struct {
-	Subject     string `json:"subject"`
-	Email       string `json:"email,omitempty"`
-	DisplayName string `json:"displayName"`
-	Role        string `json:"role"`
-}
 
 func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
 	organization, ok := h.preAuthenticationOrganization(w, r.URL.Query().Get("organization"))
@@ -82,29 +74,4 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		return
 	}
 	http.Redirect(w, r, h.consoleTarget(flow.ReturnTo), http.StatusFound)
-}
-
-func (h Handlers) createOIDCMemberFrom(
-	w http.ResponseWriter, r *http.Request, principal authz.Principal,
-	organization tenancy.Organization, body oidcMemberRequest,
-) {
-	body.Subject = strings.TrimSpace(body.Subject)
-	body.DisplayName = strings.TrimSpace(body.DisplayName)
-	if body.Subject == "" || len(body.Subject) > 512 || body.DisplayName == "" || len(body.DisplayName) > 256 {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "subject and displayName are required"})
-		return
-	}
-	role, known := authz.ParseRole(body.Role)
-	if !known {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "role must be admin, editor, or viewer"})
-		return
-	}
-	ctx, cancel := contextWithTimeout(r, signInTimeout)
-	defer cancel()
-	member, err := h.Database.CreateOIDCMember(ctx, principal, organization, storage.Identity{Issuer: h.OIDCIssuer, Subject: body.Subject, Email: strings.TrimSpace(body.Email), DisplayName: body.DisplayName}, role)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, memberViewOf(member))
 }

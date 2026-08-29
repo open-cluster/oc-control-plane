@@ -9,11 +9,11 @@ and the stated role permission.
 
 ## Authentication
 
-Use the deployment's browser session or an approved bearer credential:
+Use the opaque browser session issued by local sign-in or generic OIDC. General bearer API tokens are not shipped in v0.1:
 
 ```bash
 curl --fail-with-body \
-  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
   -H "X-OpenCluster-Organization: local" \
   https://oc.example.com/api/v1/incidents
 ```
@@ -44,7 +44,7 @@ availability, Relay and webhook requirements, provider source link, and
 
 ```bash
 curl --fail-with-body \
-  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
   -H "X-OpenCluster-Organization: local" \
   https://oc.example.com/api/v1/integration-types
 ```
@@ -87,7 +87,7 @@ Missing human facts remain `Needs human input.`
 
 ## Webhooks
 
-Inbound integrations use `/webhooks/v1`, not the operator API. Alertmanager sends a
+Inbound integrations use `/webhooks/v1`, not the product API. Alertmanager sends a
 bounded request authenticated by its static `X-OpenCluster-Token`; it does not sign the
 request body. Treat webhook secrets as write-only credentials; OpenCluster shows a newly
 minted secret once.
@@ -101,12 +101,12 @@ resending or re-authenticating the original request:
 
 ```bash
 curl --fail-with-body \
-  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
   -H "X-OpenCluster-Organization: local" \
   "https://oc.example.com/api/v1/webhook-deliveries?status=failed"
 
 curl --fail-with-body -X POST \
-  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
   -H "X-OpenCluster-Organization: local" \
   https://oc.example.com/api/v1/webhook-deliveries/00000000-0000-4000-8000-000000000001/replay
 ```

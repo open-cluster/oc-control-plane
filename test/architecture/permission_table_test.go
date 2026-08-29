@@ -206,7 +206,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 
 	expected := []string{
 		"DELETE /api/v1/integrations/{integration}",
-		"DELETE /api/v1/members/{user}",
+		"DELETE /api/v1/members/{membership}",
 		"DELETE /api/v1/session",
 		"DELETE /api/v1/sessions/{session}",
 		"GET /api/v1/audit-events",
@@ -245,7 +245,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/webhook-deliveries/{delivery}",
 		"PATCH /api/v1/incidents/{incident}/postmortem",
 		"PATCH /api/v1/integrations/{integration}",
-		"PATCH /api/v1/members/{user}",
+		"PATCH /api/v1/members/{membership}",
 		"POST /api/v1/auth/local/bootstrap",
 		"POST /api/v1/auth/local/sign-in",
 		"POST /api/v1/conversations",
@@ -262,12 +262,12 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"POST /api/v1/integrations/{integration}/verify",
 		"POST /api/v1/investigations",
 		"POST /api/v1/investigations/{investigation}/cancel",
-		"POST /api/v1/members",
+		"POST /api/v1/local-users",
 		"POST /api/v1/organizations",
 		"POST /api/v1/relays/bootstrap-tokens",
 		"POST /api/v1/relays/{registration}/clear-conflict",
 		"POST /api/v1/webhook-deliveries/{delivery}/replay",
-		"PUT /api/v1/members/{user}/password",
+		"PUT /api/v1/local-users/{user}/password",
 		"PUT /api/v1/policy",
 	}
 	wanted := make(map[string]bool, len(expected))

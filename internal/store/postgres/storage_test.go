@@ -239,6 +239,8 @@ func TestMigrate_BackfillsEveryHistoricalAcceptedDeliveryWithoutChangingHistory(
 		"0003_generic_webhook_delivery_identity",
 		"0004_conversation_person_history_index",
 		"0005_relay_protocol_version",
+		"0006_bootstrap_session",
+		"0007_organization_display_name",
 	}
 	if !slices.Equal(applied, wantMigrations) {
 		t.Fatalf("upgrade applied %v, want %v", applied, wantMigrations)

@@ -19,5 +19,5 @@ coordinate remediation privately, and publish advisories only when disclosure is
 - Continuous integration runs dependency vulnerability, license, and secret scans using
   pinned tooling and least-privilege workflow permissions.
 
-See [the operator-facing security model](./docs/security/security-model.mdx) and
+See [the public security model](./docs/security/overview.mdx) and
 [architecture and trust boundaries](./ARCHITECTURE.md).

@@ -1,0 +1,22 @@
+---
+title: "Model providers and BYOK"
+description: "Configure deployment-level Anthropic or Z.AI credentials for the OSS edition."
+---
+
+The OSS edition supports deployment-level bring-your-own-key configuration for the shipped Anthropic and Z.AI adapters. Select one provider and model, mount its credential file, and allow outbound HTTPS to that provider.
+
+Set `OC_AI_PROVIDER` to `anthropic` or `zai`, set `OC_AI_MODEL` to an exact model
+identifier supported by that provider, and set `OC_AI_API_KEY_FILE` to a mounted file.
+Restart the control plane, wait for `/readyz`, and run one bounded Investigation. A valid
+startup proves the file can be read; a completed Investigation proves the selected model
+can satisfy the structured contract.
+
+OpenCluster sends bounded Investigation context, Tool summaries, and the structured result contract. It does not persist or expose chain-of-thought. Provider availability, cost, rate limits, retention, and regional processing remain provider responsibilities.
+
+Organization-level BYOK is not part of the OSS v0.1 contract.
+
+If startup reports a missing file, verify the mount and non-root read permission. For
+authentication, quota, rate-limit, or unsupported-model errors, correct the provider
+account or model and retry with a new Investigation. Do not paste the key or raw provider
+payload into logs or issues. Review [AI provider data flow](/security/ai-provider-data-flow)
+before production use.

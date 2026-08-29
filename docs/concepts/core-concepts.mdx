@@ -1,0 +1,26 @@
+---
+title: "Core concepts"
+description: "Understand the records OpenCluster uses to isolate access and explain investigations."
+---
+
+An Organization is the tenant boundary. A User holds an Admin, Editor, or Viewer membership in each Organization they may access.
+
+An Integration is a configured source. It offers bounded read-only Tools. Alert Events create or update provisional Incidents. A Conversation contains Messages and the immutable Investigations those Messages opened.
+
+Investigations record Tool Runs, cited Findings, hypotheses, Action Proposals, and limitations. A Relay performs closed Kubernetes reads from inside the customer boundary. A Postmortem is a human-reviewed draft for one resolved Incident.
+
+## How the records relate
+
+An Alert Event can update one provisional Incident. A person investigates that Incident
+inside a Conversation. Each Message opens a bounded Investigation, whose numbered Tool
+Runs support Findings and Action Proposals. After the Incident resolves, a person may
+generate its draft Postmortem.
+
+For example, an Alertmanager delivery creates an Alert Event and Incident. A Kubernetes
+Integration supplies evidence through Relay; GitHub supplies change evidence. OpenCluster
+cites those reads but does not execute the proposed rollback.
+
+Organization membership limits every product record and Tool. Source access, time
+windows, budgets, and missing telemetry limit what an Investigation can conclude. Start
+with [Incidents and Alert Events](/concepts/alert-events-and-incidents) or
+[Connect your tools](/getting-started/connect-your-tools).
