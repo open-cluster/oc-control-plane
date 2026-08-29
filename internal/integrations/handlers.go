@@ -118,9 +118,10 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 		configured[count.Type] = count.Count
 	}
 
-	views := make([]typeView, 0, len(h.Catalog.All()))
-	for _, definition := range h.Catalog.All() {
-		views = append(views, typeViewOf(definition, configured[definition.ID]))
+	manifests := h.Catalog.Manifests()
+	views := make([]typeView, 0, len(manifests))
+	for _, manifest := range manifests {
+		views = append(views, typeViewOf(manifest, configured[manifest.ID]))
 	}
 	writeJSON(writer, http.StatusOK, typeListView{Types: views})
 }

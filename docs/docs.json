@@ -86,6 +86,7 @@
         "group": "Self-hosted",
         "pages": [
           "self-hosted/overview",
+          "self-hosted/migration-v0.1",
           "self-hosted/configuration",
           "self-hosted/operations",
           "self-hosted/troubleshooting"

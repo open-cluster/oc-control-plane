@@ -19,6 +19,7 @@ type relayView struct {
 	// re-attributing evidence.
 	ClusterFingerprint string     `json:"clusterFingerprint"`
 	RelayVersion       string     `json:"relayVersion"`
+	Compatibility      string     `json:"compatibility"`
 	RegisteredAt       time.Time  `json:"registeredAt"`
 	RevokedAt          *time.Time `json:"revokedAt,omitempty"`
 	// Connected is derived from the durable presence rather than from any one process's session
@@ -130,14 +131,28 @@ type errorView struct {
 	Error string `json:"error"`
 }
 
+type capabilityMetadataView struct {
+	Capabilities []capabilityView `json:"capabilities"`
+}
+
+type capabilityView struct {
+	Key          string `json:"key"`
+	Enabled      bool   `json:"enabled"`
+	Availability string `json:"availability"`
+}
+
 func viewOf(relay storage.RelaySummary) relayView {
 	view := relayView{
 		RegistrationID:     relay.RegistrationID.String(),
 		ClusterFingerprint: relay.ClusterFingerprint,
 		RelayVersion:       relay.RelayVersion,
+		Compatibility:      "unknown",
 		RegisteredAt:       relay.RegisteredAt,
 		Connected:          relay.Connected,
 		Capabilities:       relay.Capabilities,
+	}
+	if relay.ProtocolVersion != 0 {
+		view.Compatibility = "compatible"
 	}
 	if view.Capabilities == nil {
 		view.Capabilities = []string{}

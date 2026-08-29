@@ -4,7 +4,6 @@ FROM golang:1.26-alpine AS build
 RUN apk add --no-cache ca-certificates git
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY third_party/relay-protocol ./third_party/relay-protocol
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /out/controlplane ./cmd/controlplane

@@ -34,6 +34,7 @@ type fleetBody struct {
 		RegistrationID     string     `json:"registrationId"`
 		ClusterFingerprint string     `json:"clusterFingerprint"`
 		RelayVersion       string     `json:"relayVersion"`
+		Compatibility      string     `json:"compatibility"`
 		Connected          bool       `json:"connected"`
 		LastSeenAt         *time.Time `json:"lastSeenAt"`
 		Capabilities       []string   `json:"capabilities"`
@@ -121,6 +122,51 @@ func TestRelayFleet(t *testing.T) {
 				t.Errorf("%s reports connected with no last-seen time",
 					relay.RegistrationID)
 			}
+		}
+	})
+
+	t.Run("protocol compatibility survives registration and remains honest for historical rows", func(t *testing.T) {
+		var listed fleetBody
+		status, body := plane.call(t, http.MethodGet, relays+"?limit=200", nil)
+		if status != http.StatusOK {
+			t.Fatalf("listing relays = %d: %s", status, body)
+		}
+		decodeInto(t, body, &listed)
+		found := false
+		for _, item := range listed.Items {
+			if item.RegistrationID == plane.relay.registration.String() {
+				found = true
+				if item.Compatibility != "compatible" {
+					t.Fatalf("newly registered relay compatibility = %q", item.Compatibility)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("newly registered relay is absent from fleet")
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		database, err := pgx.Connect(ctx, plane.dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = database.Close(ctx) }()
+		if _, err = database.Exec(ctx, `
+			INSERT INTO relay_registration
+				(registration_id, org_id, credential_digest, cluster_fingerprint,
+				 relay_version, capabilities)
+			VALUES (gen_random_uuid(), $1, sha256('historical-protocol'::bytea),
+			        'historical-protocol', '0.0.1', '[]'::jsonb)`, surfaceOrg); err != nil {
+			t.Fatal(err)
+		}
+		status, body = plane.call(t, http.MethodGet, relays+"?search=historical-protocol", nil)
+		if status != http.StatusOK {
+			t.Fatalf("listing historical relay = %d: %s", status, body)
+		}
+		decodeInto(t, body, &listed)
+		if len(listed.Items) != 1 || listed.Items[0].Compatibility != "unknown" {
+			t.Fatalf("historical relay compatibility = %+v", listed.Items)
 		}
 	})
 

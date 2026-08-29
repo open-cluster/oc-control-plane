@@ -460,10 +460,17 @@ func (p *integrationPlane) evalOpenIncident(
 		t.Fatalf("the seeding delivery = %d: %s", status, body)
 	}
 	return evalIncident{
-		ID: p.incidentByTitle(t, alertname), IntegrationID: created.Integration.ID,
+		ID: p.incidentByTitle(t, evalIncidentTitle(alertname)), IntegrationID: created.Integration.ID,
 		Secret: created.WebhookSecret, Alertname: alertname,
 		Labels: withAlertname(labels, alertname), Started: started,
 	}
+}
+
+func evalIncidentTitle(alertname string) string {
+	if alertname == "" {
+		return "unnamed alert"
+	}
+	return alertname
 }
 
 func (p *integrationPlane) evalResolveIncident(t *testing.T, incident evalIncident) {

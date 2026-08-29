@@ -7,9 +7,9 @@
 !internal/**
 !web/
 !web/**
-!third_party/
-!third_party/relay-protocol/
-!third_party/relay-protocol/**
+!deploy/
+!deploy/compose/
+!deploy/compose/frontend-nginx.conf
 **/*_test.go
 **/.env*
 **/*.dsn

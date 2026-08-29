@@ -59,7 +59,7 @@ func viewOfDelivery(delivery storage.WebhookDelivery) deliveryView {
 		ProviderIdentity: delivery.ProviderIdentity, LifecyclePhase: delivery.LifecyclePhase,
 		RequestID: delivery.RequestID, Status: string(delivery.State), Attempts: delivery.Attempts,
 		FailureCategory: delivery.FailureClass,
-		ReceivedAt: delivery.ReceivedAt.UTC().Format(time.RFC3339),
+		ReceivedAt:      delivery.ReceivedAt.UTC().Format(time.RFC3339),
 	}
 	if delivery.LastAttemptAt != nil {
 		formatted := delivery.LastAttemptAt.UTC().Format(time.RFC3339)

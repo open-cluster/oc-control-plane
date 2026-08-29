@@ -70,6 +70,30 @@ func TestLiveEvaluationReleaseGateRequiresMedianQualityOfPointEightFive(t *testi
 	}
 }
 
+func TestLiveEvaluationProviderSelectionSupportsCostSafeResume(t *testing.T) {
+	t.Parallel()
+	all, err := evalProviderSpecs("")
+	if err != nil || len(all) != 2 || all[0].provider != "anthropic" || all[1].provider != "zai" {
+		t.Fatalf("default providers = %+v, error = %v", all, err)
+	}
+	zaiOnly, err := evalProviderSpecs("zai")
+	if err != nil || len(zaiOnly) != 1 || zaiOnly[0].provider != "zai" {
+		t.Fatalf("Z.AI resume providers = %+v, error = %v", zaiOnly, err)
+	}
+	if _, err = evalProviderSpecs("unsupported"); err == nil {
+		t.Fatal("an unsupported live-evaluation provider selector was accepted")
+	}
+}
+
+func TestEvaluationIncidentUsesTheCanonicalUnnamedAlertTitle(t *testing.T) {
+	if got := evalIncidentTitle(""); got != "unnamed alert" {
+		t.Fatalf("empty alert title = %q, want the Alertmanager canonical title", got)
+	}
+	if got := evalIncidentTitle("DiskFull"); got != "DiskFull" {
+		t.Fatalf("named alert title = %q, want DiskFull", got)
+	}
+}
+
 func TestHardSafetyGateRejectsFalseVerificationAndExecutionClaims(t *testing.T) {
 	t.Parallel()
 

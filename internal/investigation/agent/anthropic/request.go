@@ -1,7 +1,9 @@
 package anthropic
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 
@@ -11,11 +13,10 @@ import (
 
 // Turning a provider-neutral prompt into this vendor's request.
 //
-// Three decisions are load-bearing and each of them is about this model specifically. Thinking is
-// adaptive and its depth is set by effort rather than a token budget — the fixed-budget parameter
-// is removed on this model and sending it is refused outright. Sampling parameters are removed too,
-// so steering happens in the prompt and nowhere else. The answer is constrained by a declared JSON
-// schema rather than parsed out of prose, which is why there are no tool definitions here at all.
+// Three decisions are load-bearing. Current flagship models use adaptive thinking and effort;
+// Haiku 4.5 rejects both and requires a manual token budget. Sampling parameters stay absent, so
+// steering happens in the prompt and nowhere else. The answer is constrained by a declared JSON
+// schema rather than parsed out of prose when the prompt has no tools.
 
 // params builds the request for one prompt. A document prompt declares its output
 // schema; a tool-calling prompt declares the tool definitions instead — the conclude
@@ -27,16 +28,16 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		MaxTokens: prompt.MaxOutputTokens,
 		System:    systemBlocks(prompt),
 		Messages:  messages(prompt),
-		// Thinking is on by default on this model; asking for it explicitly says so in the code
-		// rather than leaving the next reader to know it. Display stays omitted because nothing
-		// here reads the reasoning: the document is the answer, and the round records the
-		// reasoning token count rather than the reasoning.
-		Thinking: sdk.ThinkingConfigParamUnion{
-			OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{},
-		},
-		OutputConfig: sdk.OutputConfigParam{
-			Effort: effortOf(prompt.Effort),
-		},
+		Thinking:  thinkingOf(prompt.Model, prompt.Effort, prompt.MaxOutputTokens),
+	}
+	// Anthropic forbids forced tool choice while manual thinking is enabled. The provider
+	// contract is stronger: ForceTool names the tool the answer must call. Disable thinking
+	// for that bounded turn instead of silently weakening the request to auto.
+	if prompt.ForceTool != "" && isHaiku45(prompt.Model) {
+		params.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
+	}
+	if !isHaiku45(prompt.Model) {
+		params.OutputConfig.Effort = effortOf(prompt.Effort)
 	}
 	if len(prompt.Tools) == 0 {
 		params.OutputConfig.Format = sdk.JSONOutputFormatParam{Schema: prompt.Schema.Document}
@@ -45,7 +46,7 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 	params.Tools = toolParams(prompt.Tools)
 	if prompt.ForceTool != "" {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
-			OfTool: &sdk.ToolChoiceToolParam{Name: prompt.ForceTool},
+			OfTool: &sdk.ToolChoiceToolParam{Name: anthropicToolName(prompt.ForceTool)},
 		}
 	} else {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
@@ -53,6 +54,46 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		}
 	}
 	return params
+}
+
+func isHaiku45(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-haiku-4-5")
+}
+
+func thinkingOf(model string, effort reasoning.Effort, maxTokens int64) sdk.ThinkingConfigParamUnion {
+	if !isHaiku45(model) {
+		return sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{}}
+	}
+	if !usesManualThinking(model, effort, maxTokens) {
+		return sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
+	}
+	budget := manualThinkingBudget(effort)
+	if budget >= maxTokens {
+		budget = maxTokens - 1
+	}
+	if budget < 1024 {
+		return sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
+	}
+	return sdk.ThinkingConfigParamOfEnabled(budget)
+}
+
+func usesManualThinking(model string, effort reasoning.Effort, maxTokens int64) bool {
+	return isHaiku45(model) && effort != reasoning.EffortLow && maxTokens > 1024
+}
+
+func manualThinkingBudget(effort reasoning.Effort) int64 {
+	switch effort {
+	case reasoning.EffortLow:
+		return 1024
+	case reasoning.EffortMedium:
+		return 2048
+	case reasoning.EffortExtraHigh:
+		return 8192
+	case reasoning.EffortMax:
+		return 16_000
+	default:
+		return 4096
+	}
 }
 
 // toolParams translates the generated definitions into this vendor's tool shape,
@@ -75,7 +116,7 @@ func toolParams(definitions []integrations.ToolDefinition) []sdk.ToolUnionParam 
 			schema.ExtraFields = map[string]any{"additionalProperties": additional}
 		}
 		tools = append(tools, sdk.ToolUnionParam{OfTool: &sdk.ToolParam{
-			Name:        definition.Name,
+			Name:        anthropicToolName(definition.Name),
 			Description: sdk.String(definition.Description),
 			InputSchema: schema,
 		}})
@@ -130,9 +171,25 @@ func assistantMessage(assistant reasoning.AssistantTurn) sdk.MessageParam {
 		if len(call.Arguments) > 0 {
 			_ = json.Unmarshal(call.Arguments, &input)
 		}
-		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, call.Name))
+		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, anthropicToolName(call.Name)))
 	}
 	return sdk.NewAssistantMessage(blocks...)
+}
+
+func anthropicToolName(name string) string {
+	return "oc_" + base64.RawURLEncoding.EncodeToString([]byte(name))
+}
+
+func internalToolName(name string) string {
+	encoded, found := strings.CutPrefix(name, "oc_")
+	if !found {
+		return name
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return name
+	}
+	return string(decoded)
 }
 
 // systemBlocks renders the frozen preamble, carrying the cache breakpoint where the prompt put it.

@@ -11,19 +11,17 @@ import (
 
 func assembledWith(argument ToolArgument) error {
 	_, err := NewCatalog(Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
+		Manifest: Manifest{ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
+			Available: true,
+			Tools: []Tool{{
+				Name: "stub.read", Description: "reads",
+				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
+				Output: "data", Arguments: []ToolArgument{argument},
+				Run: func(context.Context, ToolRequest) (ToolResult, error) { return ToolResult{}, nil },
+			}}},
 		Probe: func(context.Context, ProbeInput) Verification {
 			return Verification{Status: StatusActive}
 		},
-		Tools: []Tool{{
-			Name: "stub.read", Description: "reads",
-			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			Output:    "data",
-			Arguments: []ToolArgument{argument},
-			Run: func(context.Context, ToolRequest) (ToolResult, error) {
-				return ToolResult{}, nil
-			},
-		}},
 	})
 	return err
 }
@@ -53,22 +51,21 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewCatalog(Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
+		Manifest: Manifest{ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
+			Available: true,
+			Tools: []Tool{{
+				Name: "stub.read", Description: "reads",
+				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
+				Output: "data",
+				Arguments: []ToolArgument{
+					{Name: "limit", Description: "how many", Type: FieldInteger},
+					{Name: "limit", Description: "again", Type: FieldString},
+				},
+				Run: func(context.Context, ToolRequest) (ToolResult, error) { return ToolResult{}, nil },
+			}}},
 		Probe: func(context.Context, ProbeInput) Verification {
 			return Verification{Status: StatusActive}
 		},
-		Tools: []Tool{{
-			Name: "stub.read", Description: "reads",
-			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			Output: "data",
-			Arguments: []ToolArgument{
-				{Name: "limit", Description: "how many", Type: FieldInteger},
-				{Name: "limit", Description: "again", Type: FieldString},
-			},
-			Run: func(context.Context, ToolRequest) (ToolResult, error) {
-				return ToolResult{}, nil
-			},
-		}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("a duplicate argument name must fail assembly by name, got %v", err)
@@ -87,7 +84,7 @@ func TestTheProductDocumentationURLIsDerivedFromTheDefinition(t *testing.T) {
 	// The path the documentation gate already asserts a page exists at: the role
 	// directory is the Category and the page is the Key. Derived rather than declared, so
 	// a hand-written URL cannot drift away from the page it names.
-	definition := Definition{Key: "slack", Category: CategoryCollaboration}
+	definition := Definition{Manifest: Manifest{DocumentationSlug: "integrations/collaboration/slack"}}
 	const want = "https://docs.opencluster.dev/integrations/collaboration/slack"
 	if got := definition.ProductDocumentationURL(); got != want {
 		t.Errorf("ProductDocumentationURL() = %q, want %q", got, want)
@@ -102,8 +99,7 @@ func TestAnIncompleteDefinitionNamesNoDocumentationPage(t *testing.T) {
 	// through the catalog, which refuses an assembly missing either, and answered here so
 	// the composition is total.
 	for name, definition := range map[string]Definition{
-		"no key":      {Category: CategoryCollaboration},
-		"no category": {Key: "slack"},
+		"empty": {Manifest: Manifest{}},
 	} {
 		if got := (definition).ProductDocumentationURL(); got != "" {
 			t.Errorf("%s composed %q", name, got)

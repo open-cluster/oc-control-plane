@@ -61,7 +61,7 @@ type Handlers struct {
 	PublicURL  string
 	ConsoleURL string
 	// MinimumRelayVersion is the floor the fleet summary counts `outdated` against.
-	//Empty means the build states no floor.
+	// Empty means the build states no floor.
 	MinimumRelayVersion string
 }
 
@@ -102,6 +102,7 @@ func (h Handlers) routesOver(built []contributor) authz.Table {
 	const relays = "/api/v1/relays"
 
 	routes := authz.Table{
+		authz.Authenticated(http.MethodGet, "/api/v1/meta", http.HandlerFunc(h.meta)),
 		authz.Privileged(http.MethodGet, relays, authz.RelayRead,
 			http.HandlerFunc(h.listRelays)),
 		// The summary comes BEFORE the fleet in the table for the same reason it comes before it
@@ -130,6 +131,30 @@ func (h Handlers) routesOver(built []contributor) authz.Table {
 		routes = append(routes, contribution.Routes()...)
 	}
 	return routes
+}
+
+// meta reports stable product capabilities without exposing vendor, credential, or
+// deployment configuration. It is authenticated but not Organization-scoped because the
+// answer describes this composition, not tenant-owned state.
+func (h Handlers) meta(writer http.ResponseWriter, _ *http.Request) {
+	capabilities := []capabilityView{
+		{Key: "integration_catalog", Enabled: true, Availability: "available"},
+		{Key: "relay", Enabled: true, Availability: "available"},
+		{Key: "webhook_delivery", Enabled: true, Availability: "available"},
+		{Key: "postmortems", Enabled: true, Availability: "available"},
+		{Key: "investigations", Enabled: h.Investigations != nil && h.Investigations.Investigator != nil,
+			Availability: availabilityOf(h.Investigations != nil && h.Investigations.Investigator != nil)},
+		{Key: "conversations", Enabled: h.ConversationsEnabled,
+			Availability: availabilityOf(h.ConversationsEnabled)},
+	}
+	writeJSON(writer, http.StatusOK, capabilityMetadataView{Capabilities: capabilities})
+}
+
+func availabilityOf(enabled bool) string {
+	if enabled {
+		return "available"
+	}
+	return "unavailable"
 }
 
 // contributors builds every route-owning module this surface composes, ONCE.

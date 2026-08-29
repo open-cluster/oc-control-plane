@@ -23,59 +23,59 @@ const (
 // same kind of thing: a deployment that registered a Slack app offers one-click install
 // and can receive events, and one that did not keeps the pasted-token form and says so.
 func Definition(client *Client, installer *Installer, servesEvents bool) integrations.Definition {
+	connection := connect(installer, client)
 	return integrations.Definition{
-		ID:   integrations.TypeSlack,
-		Key:  "slack",
-		Name: "Slack",
-		Description: "Give investigations read-only access to Slack conversations visible " +
-			"to the connected token and reply to direct app mentions in their original thread.",
-		Logo:             "slack",
-		Category:         integrations.CategoryCollaboration,
-		DocumentationURL: "https://api.slack.com/authentication/token-types#bot",
-		Config: []integrations.Field{
-			{
-				// The field accepts user tokens too, but its name is the key deployed
-				// integrations already store their sealed value under, so it stays.
-				Name:  "botToken",
-				Title: "Slack token",
-				Description: "A bot token (xoxb-…) for public-channel reads, or a user " +
-					"token (xoxp-… or xoxe.xoxp-…) for message search. It is verified live " +
-					"against Slack before being saved, stored sealed, and never shown again.",
-				Type:     integrations.FieldString,
-				Required: true,
-				Secret:   true,
+		Manifest: integrations.Manifest{
+			ID: integrations.TypeSlack, Key: "slack", Name: "Slack",
+			Description: "Give investigations read-only access to Slack conversations visible " +
+				"to the connected token and reply to direct app mentions in their original thread.",
+			Logo: "slack", Category: integrations.CategoryCollaboration, Available: true,
+			SourceURL:         "https://api.slack.com/authentication/token-types#bot",
+			DocumentationSlug: "integrations/collaboration/slack",
+			Config: []integrations.Field{
+				{
+					// The field accepts user tokens too, but its name is the key deployed
+					// integrations already store their sealed value under, so it stays.
+					Name:  "botToken",
+					Title: "Slack token",
+					Description: "A bot token (xoxb-…) for public-channel reads, or a user " +
+						"token (xoxp-… or xoxe.xoxp-…) for message search. It is verified live " +
+						"against Slack before being saved, stored sealed, and never shown again.",
+					Type:     integrations.FieldString,
+					Required: true,
+					Secret:   true,
+				},
+				{
+					// Written by the installation flow, never typed. It is declared because
+					// every configuration key must be, and because an operator reading the
+					// record should be able to see which workspace it names.
+					Name:  TeamIDField,
+					Title: "Workspace ID",
+					Description: "The Slack workspace this integration is installed in, " +
+						"recorded by the connect flow. Not a secret, and not something to " +
+						"fill in by hand.",
+					Type: integrations.FieldString,
+					// Its PRESENCE says this integration is an app installation rather than
+					// a pasted credential.
+					// If it could be typed, an operator could make a pasted token claim an
+					// agent that will never answer.
+					Recorded: true,
+				},
+				{
+					Name:  AppIDField,
+					Title: "Slack app ID",
+					Description: "The Slack app the workspace installed, recorded by the " +
+						"connect flow.",
+					Type:     integrations.FieldString,
+					Recorded: true,
+				},
 			},
-			{
-				// Written by the installation flow, never typed. It is declared because
-				// every configuration key must be, and because an operator reading the
-				// record should be able to see which workspace it names.
-				Name:  TeamIDField,
-				Title: "Workspace ID",
-				Description: "The Slack workspace this integration is installed in, " +
-					"recorded by the connect flow. Not a secret, and not something to " +
-					"fill in by hand.",
-				Type: integrations.FieldString,
-				// Its PRESENCE says this integration is an app installation rather than
-				// a pasted credential.
-				// If it could be typed, an operator could make a pasted token claim an
-				// agent that will never answer.
-				Recorded: true,
-			},
-			{
-				Name:  AppIDField,
-				Title: "Slack app ID",
-				Description: "The Slack app the workspace installed, recorded by the " +
-					"connect flow.",
-				Type:     integrations.FieldString,
-				Recorded: true,
-			},
+			RequiresRelay: false, ReceivesWebhooks: false, SupportsConnect: connection != nil,
+			Tools: tools(client),
 		},
-		RequiresRelay:    false,
-		ReceivesWebhooks: false,
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			return probe(ctx, client, input.Credential)
 		},
-		Tools: tools(client),
 		Inbound: func(integration integrations.Integration) integrations.InboundAvailability {
 			if !servesEvents {
 				return integrations.InboundAvailability{
@@ -91,6 +91,6 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 			}
 			return integrations.InboundAvailability{Available: true}
 		},
-		Connect: connect(installer, client),
+		Connect: connection,
 	}
 }

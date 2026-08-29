@@ -30,35 +30,32 @@ func Definition(executors ...Executor) integrations.Definition {
 		executor = executors[0]
 	}
 	return integrations.Definition{
-		ID:   integrations.TypeKubernetes,
-		Key:  "kubernetes",
-		Name: "Kubernetes",
-		Description: "Give investigations read-only access to Kubernetes workload " +
-			"runtime, namespace events, and bounded container logs through an outbound Relay.",
-		Logo:     "kubernetes",
-		Category: integrations.CategoryInfrastructure,
-		DocumentationURL: "https://kubernetes.io/docs/reference/access-authn-authz/" +
-			"rbac/#role-and-clusterrole",
-		// There is deliberately no "cluster name" field. The Integration is already named
-		// by the operator, and the cluster itself is pinned by the fingerprint the Relay
-		// attested at enrolment — a third name for the same thing is a field that can
-		// disagree with two others.
-		Config: []integrations.Field{
-			{
-				Name: "namespaceAllowList",
-				Title: "Namespaces this integration may read (comma separated; " +
-					"empty means every namespace the Relay's service account can reach)",
-				Description: "A narrowing on top of the Relay's own permissions, never a " +
-					"widening: this cannot grant access the service account does not already have.",
-				Type: integrations.FieldString,
+		Manifest: integrations.Manifest{
+			ID: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes",
+			Description: "Give investigations read-only access to Kubernetes workload " +
+				"runtime, namespace events, and bounded container logs through an outbound Relay.",
+			Logo: "kubernetes", Category: integrations.CategoryInfrastructure, Available: true,
+			SourceURL:         "https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole",
+			DocumentationSlug: "integrations/infrastructure/kubernetes",
+			// There is deliberately no "cluster name" field. The Integration is already named
+			// by the operator, and the cluster itself is pinned by the fingerprint the Relay
+			// attested at enrolment — a third name for the same thing is a field that can
+			// disagree with two others.
+			Config: []integrations.Field{
+				{
+					Name: "namespaceAllowList",
+					Title: "Namespaces this integration may read (comma separated; " +
+						"empty means every namespace the Relay's service account can reach)",
+					Description: "A narrowing on top of the Relay's own permissions, never a " +
+						"widening: this cannot grant access the service account does not already have.",
+					Type: integrations.FieldString,
+				},
 			},
+			// Relay only. A cluster's API server is usually private, which is the whole reason
+			// the Relay exists.
+			RequiresRelay: true, ReceivesWebhooks: false, Tools: tools(executor),
 		},
-		// Relay only. A cluster's API server is usually private, which is the whole reason
-		// the Relay exists.
-		RequiresRelay:    true,
-		ReceivesWebhooks: false,
-		Verify:           verify,
-		Tools:            tools(executor),
+		Verify: verify,
 	}
 }
 

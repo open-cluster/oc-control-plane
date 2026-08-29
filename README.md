@@ -64,12 +64,13 @@ Relay initiates the connection; the control plane never dials into a customer cl
 
 The control plane owns Organizations, Integrations, Alert Events, Incidents,
 Conversations, Investigations, Tool Runs, conclusions, Postmortems, and audit events in
-PostgreSQL. One HTTP listener serves the console, public API, and inbound webhooks. A
-separate gRPC listener accepts outbound Relay sessions.
+PostgreSQL. The supported composition serves the frontend separately and proxies its
+same-origin `/api/v1` and `/webhooks/v1` traffic to the control plane. A separate gRPC
+listener accepts outbound Relay sessions.
 
 Provider adapters offer native read tools behind one provider-independent investigation
 contract. Kubernetes libraries and customer cluster credentials never enter this module;
-the Relay executes the closed capability protocol inside the customer boundary.
+the Relay executes the released, versioned capability protocol inside the customer boundary.
 
 Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 

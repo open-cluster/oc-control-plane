@@ -311,6 +311,11 @@ func providerManifestKeys(t *testing.T) []string {
 		if manifest.Key == "" {
 			t.Fatal("provider manifest has an empty key")
 		}
+		wantSlug := "integrations/" + string(manifest.Category) + "/" + manifest.Key
+		if manifest.DocumentationSlug != wantSlug {
+			t.Errorf("provider manifest %q documentation slug = %q, want %q",
+				manifest.Key, manifest.DocumentationSlug, wantSlug)
+		}
 		keys = append(keys, manifest.Key)
 	}
 	return keys

@@ -34,6 +34,8 @@ const (
 // protocolVersion is the version this control plane speaks and negotiates back.
 const protocolVersion = 1
 
+func supportsProtocol(version uint32) bool { return version >= protocolVersion }
+
 // credentialBytes is the size of the durable credential. It is server-generated and
 // high-entropy, which is why its stored form is a plain digest rather than a slow key
 // derivation: the cost of a derivation would fall on every session establishment, and the
@@ -104,6 +106,10 @@ func (s *RegistrationService) Register(
 		s.audit(ctx, organization.String(), "shed by flood control")
 		return nil, status.Error(codes.ResourceExhausted, "registration temporarily unavailable")
 	}
+	if !supportsProtocol(request.GetProtocolVersion()) {
+		s.audit(ctx, organization.String(), "unsupported protocol version")
+		return nil, status.Error(codes.FailedPrecondition, refusalMessage)
+	}
 
 	credential, digest, err := mintCredential()
 	if err != nil {
@@ -120,6 +126,7 @@ func (s *RegistrationService) Register(
 		CredentialDigest:   digest,
 		ClusterFingerprint: request.GetClusterFingerprint(),
 		RelayVersion:       request.GetRelayVersion(),
+		ProtocolVersion:    request.GetProtocolVersion(),
 		Capabilities:       capabilities,
 	})
 	switch {

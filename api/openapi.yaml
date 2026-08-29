@@ -23,6 +23,7 @@ tags:
   - name: Postmortems
   - name: Webhook Deliveries
   - name: Webhook Intake
+  - name: Metadata
 
 # These anchors keep security policy identical across operations. The bundled release artifact
 # expands them; this file remains the only editable source.
@@ -97,6 +98,18 @@ x-opencluster-operation-templates:
     responses: *authenticated-responses
 
 paths:
+  /api/v1/meta:
+    get:
+      <<: *authenticated-read
+      operationId: getCapabilityMetadata
+      tags: [Metadata]
+      responses:
+        "200":
+          description: Edition-neutral capabilities supported by this deployment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CapabilityMetadataList" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/auth/local/bootstrap:
     post:
       <<: *public-write
@@ -1244,13 +1257,17 @@ components:
     IntegrationType:
       type: object
       additionalProperties: false
-      required: [key, name, description, category, requiresRelay, receivesWebhooks, supportsConnect, configurationSchema, configured]
+      required: [key, name, description, category, available, capabilities, secretFields, documentationSlug, requiresRelay, receivesWebhooks, supportsConnect, configurationSchema, configured]
       properties:
         key: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
         name: { type: string, minLength: 1, maxLength: 128 }
         description: { type: string, minLength: 1, maxLength: 1024 }
         logo: { type: string, maxLength: 128 }
         category: { type: string, enum: [alerting, infrastructure, collaboration, source-control] }
+        available: { type: boolean }
+        capabilities: { type: array, items: { type: string, minLength: 1, maxLength: 128 }, uniqueItems: true }
+        secretFields: { type: array, items: { type: string, minLength: 1, maxLength: 128 }, uniqueItems: true }
+        documentationSlug: { type: string, pattern: "^integrations/[a-z-]+/[a-z][a-z0-9_]{0,63}$" }
         documentationUrl: { type: string, format: uri }
         productDocumentationUrl: { type: string, format: uri-reference }
         requiresRelay: { type: boolean }
@@ -1380,11 +1397,12 @@ components:
     Relay:
       type: object
       additionalProperties: false
-      required: [registrationId, clusterFingerprint, relayVersion, registeredAt, connected, capabilities]
+      required: [registrationId, clusterFingerprint, relayVersion, compatibility, registeredAt, connected, capabilities]
       properties:
         registrationId: { $ref: "#/components/schemas/UUID" }
         clusterFingerprint: { type: string, minLength: 1, maxLength: 256 }
         relayVersion: { type: string, minLength: 1, maxLength: 64 }
+        compatibility: { type: string, enum: [compatible, unknown] }
         registeredAt: { $ref: "#/components/schemas/Timestamp" }
         revokedAt: { $ref: "#/components/schemas/Timestamp" }
         connected: { type: boolean }
@@ -1886,3 +1904,11 @@ components:
         enabled: { type: boolean }
         availability: { type: string, enum: [available, unavailable, degraded] }
         reason: { oneOf: [{ type: string, maxLength: 1024 }, { type: "null" }] }
+    CapabilityMetadataList:
+      type: object
+      additionalProperties: false
+      required: [capabilities]
+      properties:
+        capabilities:
+          type: array
+          items: { $ref: "#/components/schemas/CapabilityMetadata" }

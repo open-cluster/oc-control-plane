@@ -58,5 +58,7 @@ deploy-verify:
 		--set-json 'relay.spkiPins=["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]' \
 		> /dev/null
 	docker build --file deploy/compose/Dockerfile --tag opencluster-control-plane:ci .
+	docker build --file deploy/compose/Frontend.Dockerfile --tag opencluster-frontend:ci .
+	sh scripts/verify-compose-routing.sh
 
 verify: openapi lint build test vuln licenses deploy-verify

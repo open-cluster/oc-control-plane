@@ -192,18 +192,19 @@ func stubType(
 ) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{{
+				Name: "stub.read", Description: "reads",
+				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
+				Output: "items",
+				Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+					return answer(request)
+				},
+			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
-		Tools: []integrations.Tool{{
-			Name: "stub.read", Description: "reads",
-			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			Output: "items",
-			Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-				return answer(request)
-			},
-		}},
 	})
 	if err != nil {
 		t.Fatalf("assembling the stub catalog: %v", err)

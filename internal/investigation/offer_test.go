@@ -34,17 +34,18 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 	t.Parallel()
 
 	definition := integrations.Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{{
+				Name: "stub.read", Description: "reads", WhenToUse: "when asked",
+				WhenNotToUse: "without a question", Permissions: "read", Output: "items",
+				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+					return integrations.ToolResult{}, nil
+				},
+			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
-		Tools: []integrations.Tool{{
-			Name: "stub.read", Description: "reads", WhenToUse: "when asked",
-			WhenNotToUse: "without a question", Permissions: "read", Output: "items",
-			Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-				return integrations.ToolResult{}, nil
-			},
-		}},
 	}
 	catalog, err := integrations.NewCatalog(definition)
 	if err != nil {
@@ -95,28 +96,28 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	t.Parallel()
 
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{
+				{
+					Name: "stub.read", Description: "reads",
+					WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
+					Output: "items",
+					Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+						return integrations.ToolResult{}, nil
+					},
+				},
+				{
+					Name: "stub.search", Description: "searches",
+					WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
+					Output: "matches", Requires: []string{"search:read", "user_token"},
+					Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+						return integrations.ToolResult{}, nil
+					},
+				},
+			}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
-		},
-		Tools: []integrations.Tool{
-			{
-				Name: "stub.read", Description: "reads",
-				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-				Output: "items",
-				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-					return integrations.ToolResult{}, nil
-				},
-			},
-			{
-				Name: "stub.search", Description: "searches",
-				WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
-				Output:   "matches",
-				Requires: []string{"search:read", "user_token"},
-				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-					return integrations.ToolResult{}, nil
-				},
-			},
 		},
 	})
 	if err != nil {
@@ -152,19 +153,19 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	}
 
 	searchOnly := integrations.Definition{
-		ID: 98, Key: "gated", Name: "Gated", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 98, Key: "gated", Name: "Gated",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{{
+				Name: "gated.search", Description: "searches",
+				WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
+				Output: "matches", Requires: []string{"user_token"},
+				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+					return integrations.ToolResult{}, nil
+				},
+			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
-		Tools: []integrations.Tool{{
-			Name: "gated.search", Description: "searches",
-			WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
-			Output:   "matches",
-			Requires: []string{"user_token"},
-			Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-				return integrations.ToolResult{}, nil
-			},
-		}},
 	}
 	gatedCatalog, err := integrations.NewCatalog(searchOnly)
 	if err != nil {
@@ -184,21 +185,22 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 		return integrations.ToolResult{}, nil
 	}
 	definition := integrations.Definition{
-		ID: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 99, Key: "chat", Name: "Chat",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{
+				{
+					Name: "chat.thread", Description: "reads the originating thread",
+					WhenToUse: "for its thread", WhenNotToUse: "for another thread",
+					Permissions: "history", Output: "messages", ConversationScoped: true, Run: read,
+				},
+				{
+					Name: "chat.channel", Description: "reads an entire channel",
+					WhenToUse: "when explicitly granted", WhenNotToUse: "for an implicit mention",
+					Permissions: "history", Output: "messages", Run: read,
+				},
+			}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
-		},
-		Tools: []integrations.Tool{
-			{
-				Name: "chat.thread", Description: "reads the originating thread",
-				WhenToUse: "for its thread", WhenNotToUse: "for another thread",
-				Permissions: "history", Output: "messages", ConversationScoped: true, Run: read,
-			},
-			{
-				Name: "chat.channel", Description: "reads an entire channel",
-				WhenToUse: "when explicitly granted", WhenNotToUse: "for an implicit mention",
-				Permissions: "history", Output: "messages", Run: read,
-			},
 		},
 	}
 	catalog, err := integrations.NewCatalog(definition)

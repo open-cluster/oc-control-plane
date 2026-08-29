@@ -283,10 +283,11 @@ func TestEvalWorldExecutesKubernetesFixturesThroughRelay(t *testing.T) {
 //	OC_EVAL=1 OC_EVAL_ANTHROPIC_MODEL=claude-sonnet-5 \
 //	OC_EVAL_ANTHROPIC_KEY_FILE=/path/to/anthropic-key \
 //	OC_EVAL_ZAI_MODEL=glm-4.7 OC_EVAL_ZAI_KEY_FILE=/path/to/zai-key \
-//	go test -run TestEvalBaseline -timeout 120m ./test/controlplane
+//	go test -run TestEvalBaseline -timeout 4h ./test/controlplane
 //
 // OC_EVAL_LABEL names the capture (default baseline-1-current); OC_EVAL_JUDGE=1 adds
-// the rubric layer.
+// the rubric layer. OC_EVAL_PROVIDER selects one provider only when resuming a timed-out
+// capture; the release evidence still requires a passing artifact from each provider.
 func TestEvalBaseline(t *testing.T) {
 	if os.Getenv("OC_EVAL") != "1" {
 		t.Skip("set OC_EVAL=1 with Anthropic and Z.AI model credentials to run the live release gate")
@@ -320,12 +321,13 @@ func TestEvalBaseline(t *testing.T) {
 				rounds = append(rounds, scores)
 				allScores = append(allScores, scores...)
 			}
-			if err := validateEvalReleaseGate(rounds); err != nil {
-				t.Fatalf("%s live release gate: %v", model.Provider, err)
-			}
 			directory := writeEvalReport(t, filepath.Join("..", "..", "artifacts", "eval"),
 				label+"-"+model.Provider, gitRevision(t), evalAgentRevision(t),
 				model.Provider+"/"+model.Name, allScores, records)
+			if err := validateEvalReleaseGate(rounds); err != nil {
+				t.Fatalf("%s live release gate: %v; report saved under %s",
+					model.Provider, err, directory)
+			}
 			t.Logf("%s evaluation capture filed under %s: %d cases across 3 runs",
 				model.Provider, directory, len(rounds[0]))
 		})
@@ -351,10 +353,37 @@ func evalAgentRevision(t *testing.T) string {
 
 func evalModelsFromEnvironment(t *testing.T) []evalModel {
 	t.Helper()
-	return []evalModel{
-		evalModelFromEnvironment(t, "ANTHROPIC", "anthropic"),
-		evalModelFromEnvironment(t, "ZAI", "zai"),
+	specs, err := evalProviderSpecs(os.Getenv("OC_EVAL_PROVIDER"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	models := make([]evalModel, 0, len(specs))
+	for _, spec := range specs {
+		models = append(models, evalModelFromEnvironment(t, spec.prefix, spec.provider))
+	}
+	return models
+}
+
+type evalProviderSpec struct {
+	prefix   string
+	provider string
+}
+
+func evalProviderSpecs(selected string) ([]evalProviderSpec, error) {
+	available := []evalProviderSpec{
+		{prefix: "ANTHROPIC", provider: "anthropic"},
+		{prefix: "ZAI", provider: "zai"},
+	}
+	selected = strings.TrimSpace(strings.ToLower(selected))
+	if selected == "" {
+		return available, nil
+	}
+	for _, spec := range available {
+		if spec.provider == selected {
+			return []evalProviderSpec{spec}, nil
+		}
+	}
+	return nil, fmt.Errorf("OC_EVAL_PROVIDER must be anthropic or zai, got %q", selected)
 }
 
 func evalModelFromEnvironment(t *testing.T, prefix, provider string) evalModel {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
 )
@@ -385,6 +386,46 @@ func TestComplete_SendsTheDeclaredSchemaEffortAndCacheBreakpoints(t *testing.T) 
 	for _, forbidden := range []string{`"temperature"`, `"top_p"`, `"top_k"`, `"budget_tokens"`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("the request carries %s, which this model rejects", forbidden)
+		}
+	}
+}
+
+func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.T) {
+	round := &transport{responses: []*http.Response{streamed(`{}`, fullUsage, "end_turn", "")}}
+	provider, err := anthropic.New(reasoning.Deployment{
+		Provider: anthropic.Name, Model: "claude-haiku-4-5",
+		Effort: reasoning.EffortMedium, Credential: reasoning.Secret("sk-test-credential"),
+		MaxOutputTokens: 32_000, MaxAttempts: 2, RequestTimeout: 5 * time.Second,
+	}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
+	if err != nil {
+		t.Fatalf("building the Haiku provider: %v", err)
+	}
+	prompt := promptFixture()
+	prompt.Model = "claude-haiku-4-5"
+	prompt.Effort = reasoning.EffortMedium
+	prompt.Tools = []integrations.ToolDefinition{{
+		Name: "conclude", Description: "Conclude the investigation.",
+		InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{},
+			"additionalProperties": false,
+		},
+	}}
+	prompt.ForceTool = "conclude"
+	if _, err := provider.Complete(context.Background(), prompt); err != nil {
+		t.Fatalf("completing with Haiku: %v", err)
+	}
+	body := round.lastBody(t)
+	for _, expected := range []string{
+		`"thinking":{"type":"disabled"}`,
+		`"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("the Haiku request does not carry %s: %s", expected, body)
+		}
+	}
+	for _, unsupported := range []string{`"adaptive"`, `"effort"`, `"budget_tokens"`} {
+		if strings.Contains(body, unsupported) {
+			t.Errorf("the Haiku request carries unsupported %s: %s", unsupported, body)
 		}
 	}
 }

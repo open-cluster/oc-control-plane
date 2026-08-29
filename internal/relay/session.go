@@ -431,7 +431,7 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) erro
 	// about what a message means still exchange messages successfully, and what comes out is
 	// evidence whose provenance nobody can vouch for. The version spoken here is in the
 	// acceptance the relay already holds, so the gap is visible from both ends.
-	if hello.GetProtocolVersion() < protocolVersion {
+	if !supportsProtocol(hello.GetProtocolVersion()) {
 		session.logger.WarnContext(session.ctx, "relay does not speak this protocol version",
 			slog.Uint64("relay_speaks_up_to", uint64(hello.GetProtocolVersion())),
 			slog.Uint64("protocol_version", protocolVersion))

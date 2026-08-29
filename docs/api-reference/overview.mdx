@@ -35,6 +35,23 @@ and records belonging to another Organization both return `404`.
 Listings return `items`, an opaque `next` cursor, and any documented partial fields.
 Pass the returned cursor unchanged.
 
+## Integration catalog
+
+`GET /api/v1/integration-types` returns the Integration Types shipped by this deployment.
+Each entry includes its `capabilities`, configuration schema, write-only field names,
+availability, Relay and webhook requirements, provider source link, and
+`documentationSlug` for the matching OpenCluster setup guide.
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  -H "X-OpenCluster-Organization: local" \
+  https://oc.example.com/api/v1/integration-types
+```
+
+Render forms from `configurationSchema`; never request or display an existing value for a
+field named in `secretFields`.
+
 ## Investigation result
 
 `GET /api/v1/investigations/{investigation}` returns
@@ -77,3 +94,22 @@ minted secret once.
 
 See [Prometheus Alertmanager](/integrations/alerting/alertmanager) for the supported
 payload and delivery responses.
+
+Admins can inspect failed processing with
+`GET /api/v1/webhook-deliveries?status=failed`. A failed delivery can be retried without
+resending or re-authenticating the original request:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  -H "X-OpenCluster-Organization: local" \
+  "https://oc.example.com/api/v1/webhook-deliveries?status=failed"
+
+curl --fail-with-body -X POST \
+  -H "Authorization: Bearer $OPENCLUSTER_TOKEN" \
+  -H "X-OpenCluster-Organization: local" \
+  https://oc.example.com/api/v1/webhook-deliveries/00000000-0000-4000-8000-000000000001/replay
+```
+
+`POST /api/v1/webhook-deliveries/{delivery}/replay` is accepted only for a visible failed
+delivery. Completed work remains complete and the replay is audited.

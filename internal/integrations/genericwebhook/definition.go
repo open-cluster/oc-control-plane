@@ -10,13 +10,13 @@ import (
 // first-class provider integration.
 func Definition() integrations.Definition {
 	return integrations.Definition{
-		ID:               integrations.TypeGenericWebhook,
-		Key:              "generic_webhook",
-		Name:             "Generic Webhook",
-		Description:      "Create incidents from canonical firing and resolved Alert Events delivered through an authenticated webhook.",
-		Category:         integrations.CategoryAlerting,
-		ReceivesWebhooks: true,
-		Verify:           verify,
+		Manifest: integrations.Manifest{
+			ID: integrations.TypeGenericWebhook, Key: "generic_webhook", Name: "Generic Webhook",
+			Description: "Create incidents from canonical firing and resolved Alert Events delivered through an authenticated webhook.",
+			Category:    integrations.CategoryAlerting, Available: true, ReceivesWebhooks: true,
+			DocumentationSlug: "integrations/alerting/generic_webhook",
+		},
+		Verify: verify,
 	}
 }
 

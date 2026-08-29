@@ -59,6 +59,7 @@ type RelayEnrolment struct {
 	CredentialDigest   []byte
 	ClusterFingerprint string
 	RelayVersion       string
+	ProtocolVersion    uint32
 	Capabilities       []byte
 }
 
@@ -188,13 +189,18 @@ type relayRegistration struct {
 
 func insertRegistration(ctx context.Context, transaction pgx.Tx, registration relayRegistration) error {
 	enrolment := registration.enrolment
+	var protocolVersion any
+	if enrolment.ProtocolVersion != 0 {
+		protocolVersion = int64(enrolment.ProtocolVersion)
+	}
 	_, err := transaction.Exec(ctx, `
 		INSERT INTO relay_registration
 			(registration_id, org_id, credential_digest,
-			 cluster_fingerprint, relay_version, capabilities)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+			 cluster_fingerprint, relay_version, protocol_version, capabilities)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		registration.id, registration.organization.String(), enrolment.CredentialDigest,
-		enrolment.ClusterFingerprint, enrolment.RelayVersion, enrolment.Capabilities)
+		enrolment.ClusterFingerprint, enrolment.RelayVersion, protocolVersion,
+		enrolment.Capabilities)
 	if err != nil {
 		return fmt.Errorf("recording relay registration: %w", err)
 	}

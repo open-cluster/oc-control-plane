@@ -148,6 +148,8 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 			"decides whether a User may create another Organization",
 		"GET /api/v1/permissions": "membership is verified for the selected Organization, " +
 			"but reading one's own effective Permissions requires no Permission",
+		"GET /api/v1/meta": "capabilities describe the authenticated deployment rather than " +
+			"tenant-owned state, so no Organization or tenant Permission applies",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
 			"redirect URI, so the path can name no organization and there is no tenant in " +
 			"it to check a membership against. The tenant comes from the single-use flow " +
@@ -228,6 +230,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/investigations/{investigation}/report",
 		"GET /api/v1/investigations/{investigation}/sources",
 		"GET /api/v1/members",
+		"GET /api/v1/meta",
 		"GET /api/v1/organizations",
 		"GET /api/v1/permissions",
 		"GET /api/v1/policy",

@@ -86,7 +86,7 @@ func streamedToolUse(id, name, arguments string) *http.Response {
 
 func TestComplete_SendsTheGeneratedToolDefinitions(t *testing.T) {
 	provider, round := providerUnder(t,
-		streamedToolUse("toolu_1", "slack.list_channels", `{"filter":"incid"}`))
+		streamedToolUse("toolu_1", "oc_c2xhY2subGlzdF9jaGFubmVscw", `{"filter":"incid"}`))
 
 	if _, err := provider.Complete(context.Background(), toolPrompt()); err != nil {
 		t.Fatalf("complete: %v", err)
@@ -110,8 +110,8 @@ func TestComplete_SendsTheGeneratedToolDefinitions(t *testing.T) {
 	if err := json.Unmarshal([]byte(round.lastBody(t)), &sent); err != nil {
 		t.Fatalf("decoding the request: %v", err)
 	}
-	if len(sent.Tools) != 2 || sent.Tools[0].Name != "slack.list_channels" ||
-		sent.Tools[1].Name != "conclude" {
+	if len(sent.Tools) != 2 || sent.Tools[0].Name != "oc_c2xhY2subGlzdF9jaGFubmVscw" ||
+		sent.Tools[1].Name != "oc_Y29uY2x1ZGU" {
 		t.Fatalf("tools = %+v", sent.Tools)
 	}
 	first := sent.Tools[0]
@@ -137,7 +137,7 @@ func TestComplete_SendsTheGeneratedToolDefinitions(t *testing.T) {
 
 func TestComplete_DecodesToolUseIntoCalls(t *testing.T) {
 	provider, _ := providerUnder(t,
-		streamedToolUse("toolu_1", "slack.list_channels", `{"filter":"incid"}`))
+		streamedToolUse("toolu_1", "oc_c2xhY2subGlzdF9jaGFubmVscw", `{"filter":"incid"}`))
 
 	completion, err := provider.Complete(context.Background(), toolPrompt())
 	if err != nil {
@@ -162,8 +162,8 @@ func TestComplete_DecodesToolUseIntoCalls(t *testing.T) {
 
 func TestComplete_ReplaysTheTurnVerbatimWithResults(t *testing.T) {
 	provider, round := providerUnder(t,
-		streamedToolUse("toolu_1", "slack.list_channels", `{"filter":"incid"}`),
-		streamedToolUse("toolu_2", "conclude", `{"findings":[],"next_steps":[]}`))
+		streamedToolUse("toolu_1", "oc_c2xhY2subGlzdF9jaGFubmVscw", `{"filter":"incid"}`),
+		streamedToolUse("toolu_2", "oc_Y29uY2x1ZGU", `{"findings":[],"next_steps":[]}`))
 
 	first, err := provider.Complete(context.Background(), toolPrompt())
 	if err != nil {
@@ -204,7 +204,7 @@ func TestComplete_ReplaysTheTurnVerbatimWithResults(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &sent); err != nil {
 		t.Fatalf("decoding the request: %v", err)
 	}
-	if sent.ToolChoice["type"] != "tool" || sent.ToolChoice["name"] != "conclude" {
+	if sent.ToolChoice["type"] != "tool" || sent.ToolChoice["name"] != "oc_Y29uY2x1ZGU" {
 		t.Errorf("tool_choice = %v; the forced turn names the one callable tool", sent.ToolChoice)
 	}
 	if len(sent.Messages) != 3 {

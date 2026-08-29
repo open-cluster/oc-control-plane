@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -234,8 +235,13 @@ func TestMigrate_BackfillsEveryHistoricalAcceptedDeliveryWithoutChangingHistory(
 	if err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}
-	if len(applied) != 1 || applied[0] != "0003_generic_webhook_delivery_identity" {
-		t.Fatalf("upgrade applied %v, want only 0003", applied)
+	wantMigrations := []string{
+		"0003_generic_webhook_delivery_identity",
+		"0004_conversation_person_history_index",
+		"0005_relay_protocol_version",
+	}
+	if !slices.Equal(applied, wantMigrations) {
+		t.Fatalf("upgrade applied %v, want %v", applied, wantMigrations)
 	}
 	rows, err := connection.Query(ctx, `
 		SELECT outcome, encode(body_digest, 'hex'), provider_identity, lifecycle_phase

@@ -171,19 +171,20 @@ func TestAProviderConversationCarriesItsThreadIntoEveryToolRequest(t *testing.T)
 	}
 	var seen integrations.ToolRequest
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{{
+				Name: "stub.read", Description: "reads its originating thread",
+				WhenToUse: "for this thread", WhenNotToUse: "for another thread",
+				Permissions: "history", Output: "messages", ConversationScoped: true,
+				Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+					seen = request
+					return integrations.ToolResult{Summary: "one thread message"}, nil
+				},
+			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
-		Tools: []integrations.Tool{{
-			Name: "stub.read", Description: "reads its originating thread",
-			WhenToUse: "for this thread", WhenNotToUse: "for another thread",
-			Permissions: "history", Output: "messages", ConversationScoped: true,
-			Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-				seen = request
-				return integrations.ToolResult{Summary: "one thread message"}, nil
-			},
-		}},
 	})
 	if err != nil {
 		t.Fatal(err)

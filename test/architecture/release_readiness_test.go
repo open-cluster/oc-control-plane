@@ -78,6 +78,33 @@ func TestReleaseReadinessIncludesCommunityAndDeploymentContracts(t *testing.T) {
 	}
 }
 
+func TestReleaseHandoffIncludesChangelogMigrationAndEndpointExamples(t *testing.T) {
+	t.Parallel()
+
+	for path, markers := range map[string][]string{
+		"CHANGELOG.md": {"## 0.1.0", "OpenAPI", "Relay", "Generic Webhook"},
+		"docs/self-hosted/migration-v0.1.mdx": {
+			"Recreate", "OC_DATABASE_DSN_FILE", "/api/v1", "/webhooks/v1",
+		},
+		"docs/api-reference/overview.mdx": {
+			"GET /api/v1/integration-types", "documentationSlug", "capabilities",
+			"GET /api/v1/webhook-deliveries", "POST /api/v1/webhook-deliveries/",
+		},
+		"docs/docs.json": {"self-hosted/migration-v0.1"},
+	} {
+		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
+		if err != nil {
+			t.Errorf("reading release handoff %s: %v", path, err)
+			continue
+		}
+		for _, marker := range markers {
+			if !strings.Contains(string(content), marker) {
+				t.Errorf("release handoff %s must include %q", path, marker)
+			}
+		}
+	}
+}
+
 func TestReleaseLicensePermitsOpenSourceSelfHosting(t *testing.T) {
 	t.Parallel()
 	license, err := os.ReadFile(filepath.Join(moduleRoot, "LICENSE"))
@@ -141,14 +168,13 @@ func TestSelfHostedReleaseIncludesSameOriginInvestigationConsole(t *testing.T) {
 	}
 }
 
-func TestOpenSourceBuildIncludesItsProtocolAndBrowserWithoutPrivateCredentials(t *testing.T) {
+func TestOpenSourceBuildUsesTheReleasedProtocolAndIncludesItsBrowserWithoutPrivateCredentials(t *testing.T) {
 	t.Parallel()
 
 	for path, required := range map[string][]string{
-		".dockerignore":             {"!web/", "!web/**", "!third_party/relay-protocol/"},
-		"go.mod":                    {"=> ./third_party/relay-protocol"},
-		"test/e2e/go.mod":           {"=> ../../third_party/relay-protocol"},
-		"deploy/compose/Dockerfile": {"COPY third_party/relay-protocol ./third_party/relay-protocol"},
+		".dockerignore":   {"!web/", "!web/**"},
+		"go.mod":          {"github.com/open-cluster/oc-relay/gen/go v0.4.0"},
+		"test/e2e/go.mod": {"github.com/open-cluster/oc-relay/gen/go v0.4.0"},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
 		if err != nil {
@@ -166,15 +192,26 @@ func TestOpenSourceBuildIncludesItsProtocolAndBrowserWithoutPrivateCredentials(t
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, forbidden := range []string{"type=ssh", "github_known_hosts", "GOPRIVATE"} {
+		for _, forbidden := range []string{
+			"type=ssh", "github_known_hosts", "GOPRIVATE", "third_party/relay-protocol",
+		} {
 			if strings.Contains(string(content), forbidden) {
 				t.Errorf("open-source build input %s still requires private access through %q",
 					path, forbidden)
 			}
 		}
 	}
-	if _, err := os.Stat(filepath.Join(moduleRoot, "third_party", "relay-protocol", "LICENSE")); err != nil {
-		t.Errorf("the bundled Relay protocol must retain its Apache-2.0 license: %v", err)
+	for _, path := range []string{"go.mod", "test/e2e/go.mod"} {
+		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(content), "replace github.com/open-cluster/oc-relay/gen/go") {
+			t.Errorf("%s still replaces the released Relay protocol with a local copy", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(moduleRoot, "third_party", "relay-protocol")); !os.IsNotExist(err) {
+		t.Errorf("the copied Relay protocol still exists; use the released module instead: %v", err)
 	}
 }
 
@@ -202,6 +239,38 @@ func TestDeploymentExamplesOfferPinnedTLSRelayAndBehavioralCIGates(t *testing.T)
 		for _, marker := range markers {
 			if !strings.Contains(string(content), marker) {
 				t.Errorf("Relay deployment contract %s must include %q", path, marker)
+			}
+		}
+	}
+}
+
+func TestComposeShipsASeparateSameOriginFrontend(t *testing.T) {
+	t.Parallel()
+
+	for path, markers := range map[string][]string{
+		"deploy/compose/compose.yaml": {
+			"frontend:", "dockerfile: deploy/compose/Frontend.Dockerfile",
+			`"127.0.0.1:8080:8080"`,
+		},
+		"deploy/compose/Frontend.Dockerfile": {"COPY web/", "frontend-nginx.conf"},
+		"deploy/compose/frontend-nginx.conf": {
+			"location /api/v1/", "location /webhooks/v1/",
+			"location = /healthz", "location = /readyz", "location = /metrics",
+			"proxy_pass http://control-plane:8080", "try_files $uri /index.html",
+		},
+		"Makefile": {"deploy/compose/Frontend.Dockerfile", "opencluster-frontend:ci"},
+		"scripts/verify-compose-routing.sh": {
+			"/api/v1/probe", "/webhooks/v1/probe", "/healthz", "/readyz", "/metrics",
+		},
+	} {
+		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
+		if err != nil {
+			t.Errorf("reading same-origin frontend contract %s: %v", path, err)
+			continue
+		}
+		for _, marker := range markers {
+			if !strings.Contains(string(content), marker) {
+				t.Errorf("same-origin frontend contract %s must include %q", path, marker)
 			}
 		}
 	}

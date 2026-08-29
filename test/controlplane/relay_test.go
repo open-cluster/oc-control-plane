@@ -57,6 +57,18 @@ func TestRelayRegistration(t *testing.T) {
 		},
 	}
 
+	t.Run("an unsupported protocol does not spend the bootstrap token", func(t *testing.T) {
+		unsupported := &relayv1.RegisterRequest{
+			RelayVersion: request.RelayVersion, ClusterFingerprint: request.ClusterFingerprint,
+			Capabilities: request.Capabilities,
+		}
+		if _, err := register(t, client, organization, token, unsupported); err == nil {
+			t.Fatal("an unsupported protocol was registered")
+		} else {
+			requireFailedPrecondition(t, err)
+		}
+	})
+
 	var credential string
 	t.Run("a valid token yields an identity", func(t *testing.T) {
 		response, err := register(t, client, organization, token, request)

@@ -142,7 +142,7 @@ func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
 	for _, block := range message.Content {
 		if use, isUse := block.AsAny().(sdk.ToolUseBlock); isUse {
 			calls = append(calls, reasoning.CompletionCall{
-				ID: use.ID, Name: use.Name, Arguments: use.Input,
+				ID: use.ID, Name: internalToolName(use.Name), Arguments: use.Input,
 			})
 		}
 	}

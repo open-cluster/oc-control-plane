@@ -248,24 +248,24 @@ func TestIncidentPreflightReadsOnlyExactKubernetesIdentifiers(t *testing.T) {
 	}
 	var requested []integrations.ToolRequest
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		ID: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes",
-		Category: integrations.CategoryInfrastructure,
+		Manifest: integrations.Manifest{ID: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes",
+			Category: integrations.CategoryInfrastructure, Available: true,
+			Tools: []integrations.Tool{
+				{Name: "kubernetes.workload.runtime", Description: "runtime", WhenToUse: "exact workload",
+					WhenNotToUse: "discovery", Permissions: "read", Output: "runtime",
+					Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+						requested = append(requested, request)
+						return integrations.ToolResult{Summary: "runtime read"}, nil
+					}},
+				{Name: "kubernetes.namespace.events", Description: "events", WhenToUse: "exact namespace",
+					WhenNotToUse: "discovery", Permissions: "read", Output: "events",
+					Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+						requested = append(requested, request)
+						return integrations.ToolResult{Summary: "events read"}, nil
+					}},
+			}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
-		},
-		Tools: []integrations.Tool{
-			{Name: "kubernetes.workload.runtime", Description: "runtime", WhenToUse: "exact workload",
-				WhenNotToUse: "discovery", Permissions: "read", Output: "runtime",
-				Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-					requested = append(requested, request)
-					return integrations.ToolResult{Summary: "runtime read"}, nil
-				}},
-			{Name: "kubernetes.namespace.events", Description: "events", WhenToUse: "exact namespace",
-				WhenNotToUse: "discovery", Permissions: "read", Output: "events",
-				Run: func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-					requested = append(requested, request)
-					return integrations.ToolResult{Summary: "events read"}, nil
-				}},
 		},
 	})
 	if err != nil {
@@ -541,18 +541,19 @@ func TestAnIntegrationWhoseGrantsSupportNoToolIsNotOffered(t *testing.T) {
 	t.Parallel()
 
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting,
+		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting, Available: true,
+			Tools: []integrations.Tool{{
+				Name: "stub.read", Description: "reads",
+				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
+				Output: "items", Requires: []string{"scope:special"},
+				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+					return integrations.ToolResult{}, nil
+				},
+			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusActive}
 		},
-		Tools: []integrations.Tool{{
-			Name: "stub.read", Description: "reads",
-			WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-			Output: "items", Requires: []string{"scope:special"},
-			Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-				return integrations.ToolResult{}, nil
-			},
-		}},
 	})
 	if err != nil {
 		t.Fatal(err)

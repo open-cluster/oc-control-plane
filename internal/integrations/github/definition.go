@@ -31,33 +31,31 @@ func Definition(app *App, client *Client) integrations.Definition {
 		app: app, client: client, webURL: browserOrigin(client),
 	}
 	return integrations.Definition{
-		ID:   integrations.TypeGitHub,
-		Key:  "github",
-		Name: "GitHub",
-		Description: "Give investigations read-only access to selected repositories for " +
-			"commits, pull requests, CI failures, files, and releases.",
-		Logo:     "github",
-		Category: integrations.CategorySourceControl,
-		DocumentationURL: "https://docs.github.com/apps/using-github-apps/" +
-			"installing-a-github-app-from-a-third-party",
-		// The configuration form is the fallback, not the front door. Where this
-		// deployment registered an installation flow, a customer presses Connect and
-		// never sees this field; where it did not, this is how GitHub is connected.
-		Config: []integrations.Field{
-			{
-				Name:  "installationId",
-				Title: "Installation ID",
-				Description: "The numeric id of the app installation on your account, " +
-					"from the installation's settings page URL. Only needed where this " +
-					"deployment offers no one-click installation. Access follows the " +
-					"repositories that installation selects, by stable ids that survive " +
-					"renames.",
-				Type:     integrations.FieldInteger,
-				Required: true,
+		Manifest: integrations.Manifest{
+			ID: integrations.TypeGitHub, Key: "github", Name: "GitHub",
+			Description: "Give investigations read-only access to selected repositories for " +
+				"commits, pull requests, CI failures, files, and releases.",
+			Logo: "github", Category: integrations.CategorySourceControl, Available: true,
+			SourceURL:         "https://docs.github.com/apps/using-github-apps/installing-a-github-app-from-a-third-party",
+			DocumentationSlug: "integrations/source-control/github",
+			// The configuration form is the fallback, not the front door. Where this
+			// deployment registered an installation flow, a customer presses Connect and
+			// never sees this field; where it did not, this is how GitHub is connected.
+			Config: []integrations.Field{
+				{
+					Name:  "installationId",
+					Title: "Installation ID",
+					Description: "The numeric id of the app installation on your account, " +
+						"from the installation's settings page URL. Only needed where this " +
+						"deployment offers no one-click installation. Access follows the " +
+						"repositories that installation selects, by stable ids that survive " +
+						"renames.",
+					Type:     integrations.FieldInteger,
+					Required: true,
+				},
 			},
+			RequiresRelay: false, ReceivesWebhooks: false, Tools: tools(app, client),
 		},
-		RequiresRelay:    false,
-		ReceivesWebhooks: false,
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			installation, err := installationOf(input.Integration)
 			if err != nil {
@@ -71,7 +69,6 @@ func Definition(app *App, client *Client) integrations.Definition {
 			// and an unknown id when it never did.
 			return probe(ctx, where, installation, input.Integration.VerifyFacts)
 		},
-		Tools: tools(app, client),
 	}
 }
 

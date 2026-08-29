@@ -17,11 +17,15 @@ type errorView struct {
 
 // typeView is one Integration Type as the catalog renders it.
 type typeView struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Logo        string `json:"logo,omitempty"`
-	Category    string `json:"category"`
+	Key               string   `json:"key"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	Logo              string   `json:"logo,omitempty"`
+	Category          string   `json:"category"`
+	Available         bool     `json:"available"`
+	Capabilities      []string `json:"capabilities"`
+	SecretFields      []string `json:"secretFields"`
+	DocumentationSlug string   `json:"documentationSlug"`
 	// DocumentationURL points at the provider's own setup documentation.
 	DocumentationURL string `json:"documentationUrl,omitempty"`
 	// ProductDocumentationURL points at OURS: the page that carries the receiver
@@ -68,9 +72,9 @@ type typeListView struct {
 	Types []typeView `json:"types"`
 }
 
-func typeViewOf(definition Definition, configured int) typeView {
-	tools := make([]toolView, 0, len(definition.Tools))
-	for _, tool := range definition.Tools {
+func typeViewOf(manifest Manifest, configured int) typeView {
+	tools := make([]toolView, 0, len(manifest.Tools))
+	for _, tool := range manifest.Tools {
 		arguments := make([]toolArgumentView, 0, len(tool.Arguments))
 		for _, argument := range tool.Arguments {
 			arguments = append(arguments, toolArgumentView{
@@ -91,17 +95,21 @@ func typeViewOf(definition Definition, configured int) typeView {
 		})
 	}
 	return typeView{
-		Key:                     definition.Key,
-		Name:                    definition.Name,
-		Description:             definition.Description,
-		Logo:                    definition.Logo,
-		Category:                string(definition.Category),
-		DocumentationURL:        definition.DocumentationURL,
-		ProductDocumentationURL: definition.ProductDocumentationURL(),
-		RequiresRelay:           definition.RequiresRelay,
-		ReceivesWebhooks:        definition.ReceivesWebhooks,
-		SupportsConnect:         definition.Connectable(),
-		ConfigurationSchema:     definition.ConfigurationSchema(),
+		Key:                     manifest.Key,
+		Name:                    manifest.Name,
+		Description:             manifest.Description,
+		Logo:                    manifest.Logo,
+		Category:                string(manifest.Category),
+		Available:               manifest.Available,
+		Capabilities:            manifest.Capabilities(),
+		SecretFields:            manifest.SecretFields(),
+		DocumentationSlug:       manifest.DocumentationSlug,
+		DocumentationURL:        manifest.SourceURL,
+		ProductDocumentationURL: manifest.ProductDocumentationURL(),
+		RequiresRelay:           manifest.RequiresRelay,
+		ReceivesWebhooks:        manifest.ReceivesWebhooks,
+		SupportsConnect:         manifest.SupportsConnect,
+		ConfigurationSchema:     manifest.ConfigurationSchema(),
 		Tools:                   tools,
 		Configured:              configured,
 	}

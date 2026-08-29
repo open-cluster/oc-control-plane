@@ -41,11 +41,10 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 // which is the case that cannot proceed without somewhere to seal it.
 func sealingDefinition(authorized *bool) Definition {
 	return Definition{
-		ID: 99, Key: "stub", Name: "Stub", Category: CategoryCollaboration,
-		Config: []Field{{
-			Name: "token", Title: "Token", Description: "a token",
-			Type: FieldString, Required: true, Secret: true,
-		}},
+		Manifest: Manifest{ID: 99, Key: "stub", Name: "Stub", Category: CategoryCollaboration,
+			Available: true, SupportsConnect: true,
+			Config: []Field{{Name: "token", Title: "Token", Description: "a token",
+				Type: FieldString, Required: true, Secret: true}}},
 		Probe: func(context.Context, ProbeInput) Verification {
 			return Verification{Status: StatusActive}
 		},

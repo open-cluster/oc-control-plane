@@ -22,7 +22,10 @@ type RelaySummary struct {
 	RegistrationID     uuid.UUID
 	ClusterFingerprint string
 	RelayVersion       string
-	RegisteredAt       time.Time
+	// ProtocolVersion is zero for registrations created before protocol negotiation was
+	// recorded. Non-zero values were accepted by the compatibility gate at enrolment.
+	ProtocolVersion uint32
+	RegisteredAt    time.Time
 	// RevokedAt is zero for a live registration.
 	RevokedAt time.Time
 	Conflict  SessionConflict
@@ -171,7 +174,8 @@ func (p *Database) ListRelays(
 	// session does not lead a descending page of "least recently seen".
 	statement := fmt.Sprintf(`
 		SELECT registration.registration_id, registration.cluster_fingerprint,
-		       registration.relay_version, registration.created_at, registration.revoked_at,
+		       registration.relay_version, registration.protocol_version,
+		       registration.created_at, registration.revoked_at,
 		       registration.session_conflict_at, registration.session_conflict_hosts,
 		       registration.last_seen_at, registration.session_peer,
 		       %s AS connected,
@@ -267,10 +271,11 @@ func scanRelaySummary(rows pgx.Rows) (RelaySummary, error) {
 		hosts      int
 		lastSeen   *time.Time
 		peer       *string
+		protocol   *int64
 		advertised []byte
 	)
 	if err := rows.Scan(&summary.RegistrationID, &summary.ClusterFingerprint,
-		&summary.RelayVersion, &summary.RegisteredAt, &revokedAt, &conflictAt, &hosts,
+		&summary.RelayVersion, &protocol, &summary.RegisteredAt, &revokedAt, &conflictAt, &hosts,
 		&lastSeen, &peer, &summary.Connected, &advertised); err != nil {
 		return RelaySummary{}, fmt.Errorf("reading a relay: %w", err)
 	}
@@ -285,6 +290,9 @@ func scanRelaySummary(rows pgx.Rows) (RelaySummary, error) {
 	}
 	if peer != nil {
 		summary.SessionPeer = *peer
+	}
+	if protocol != nil {
+		summary.ProtocolVersion = uint32(*protocol)
 	}
 	capabilities, err := decodeStringArray(advertised)
 	if err != nil {

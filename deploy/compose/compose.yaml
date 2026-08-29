@@ -31,8 +31,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./opencluster.yaml:/etc/opencluster/opencluster.yaml:ro
     secrets:
@@ -40,6 +40,25 @@ services:
       - operator_token
       - sealing_key
       - model_key
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  frontend:
+    image: opencluster-frontend:dev
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Frontend.Dockerfile
+    depends_on:
+      - control-plane
+    ports:
+      - "127.0.0.1:8080:8080"
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
     read_only: true
     security_opt:
       - no-new-privileges:true

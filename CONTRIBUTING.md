@@ -11,6 +11,7 @@ Contributors should read [AGENTS.md](./AGENTS.md), use the vocabulary in
 3. Update only the relevant product documentation and run `make verify`.
 4. Open a pull request describing behavior, security impact, and verification.
 
-The Apache-licensed generated Relay protocol is included under `third_party/relay-protocol`,
-so building the control plane requires no private repository access. Dependency additions
-require maintainer review, vulnerability scanning, and a compatible license.
+The Apache-licensed generated Relay protocol is consumed from the public
+`github.com/open-cluster/oc-relay/gen/go` module at a pinned release, so building the control
+plane requires no private repository access. Dependency additions require maintainer review,
+vulnerability scanning, and a compatible license.

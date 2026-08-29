@@ -143,29 +143,7 @@ type InboundAvailability struct {
 // Definition is everything one provider package exports about its Integration Type.
 // Metadata mirrors the seeded integration_type row; behavior is the provider's own.
 type Definition struct {
-	ID          TypeID
-	Key         string
-	Name        string
-	Description string
-	// Logo names an approved mark in the frontend's brand registry. Empty means the
-	// neutral category icon is drawn.
-	Logo     string
-	Category Category
-	// DocumentationURL points at the VENDOR's own setup documentation: Slack's token
-	// types, Prometheus's webhook_config reference, Kubernetes RBAC. Useful, and not the
-	// page an operator setting this up actually needs first.
-	//
-	// Ours is ProductDocumentationURL, and it is derived rather than declared here — see
-	// the method for why a hand-written second URL per provider was the wrong shape.
-	DocumentationURL string
-	// Config is what an Integration of this type is configured with, and the source its
-	// JSON Schema is rendered from.
-	Config []Field
-	// RequiresRelay means an Integration of this type must be bound to a Relay.
-	RequiresRelay bool
-	// ReceivesWebhooks means an Integration of this type is reached inbound: creating one
-	// mints a webhook secret, and the intake surface accepts deliveries for it.
-	ReceivesWebhooks bool
+	Manifest
 	// Verify judges an integration against the facts in VerifyInput. It is pure: the
 	// handler gathers, the definition judges, the store records. A definition declares
 	// exactly one of Verify and Probe.
@@ -174,9 +152,6 @@ type Definition struct {
 	// comes back with what it answered. It is the verification for every outbound type,
 	// because a credential's only honest check is presenting it.
 	Probe func(ctx context.Context, input ProbeInput) Verification
-	// Tools are the bounded reads connecting this type makes available, rendered in the
-	// catalog with the routing guidance each declares.
-	Tools []Tool
 	// Inbound judges a provider-specific interactive endpoint against deployment setup
 	// and recorded installation facts. Nil means the provider declares no such endpoint.
 	Inbound func(Integration) InboundAvailability
@@ -187,16 +162,23 @@ type Definition struct {
 	Connect *Connect
 }
 
-// Manifest is the persisted and displayed metadata owned by a provider. Behavior remains
-// on Definition; this projection is the single input for database reconciliation, docs,
-// and clients that render the catalog.
+// Manifest is the authoritative provider declaration used by runtime routing, database
+// reconciliation, docs, and clients that render the catalog.
 type Manifest struct {
-	ID          TypeID
-	Key         string
-	Name        string
-	Description string
-	Logo        string
-	Category    Category
+	ID                TypeID
+	Key               string
+	Name              string
+	Description       string
+	Logo              string
+	Category          Category
+	Available         bool
+	DocumentationSlug string
+	SourceURL         string
+	ReceivesWebhooks  bool
+	RequiresRelay     bool
+	SupportsConnect   bool
+	Config            []Field
+	Tools             []Tool
 }
 
 // documentationSite is where this product's own documentation is published. One constant,
@@ -207,25 +189,23 @@ const documentationSite = "https://docs.opencluster.dev"
 // ProductDocumentationURL is OUR page for this type — the one that carries the receiver
 // YAML, the header name and the version floor, rather than the vendor's reference.
 //
-// DERIVED, NEVER TYPED. The documentation gate already asserts that every shipped type has
-// a page at docs/integrations/<role>/<key>.mdx, and role is the Category and key is the
-// Key — so the definition already knows where its own page is, and asking each provider to
-// write the URL out again would be asking for the one copy that drifts. A page moved
-// without this being updated fails the gate; a type added without a page fails both the
-// gate and the catalog test.
-func (d Definition) ProductDocumentationURL() string {
-	if d.Key == "" || d.Category == "" {
+// DocumentationSlug is declared beside the rest of the provider metadata and the catalog
+// rejects any non-empty value that differs from integrations/<category>/<key>. The product
+// documentation gate additionally requires every shipped provider to declare that canonical
+// slug and verifies the corresponding page exists.
+func (m Manifest) ProductDocumentationURL() string {
+	if m.DocumentationSlug == "" {
 		return ""
 	}
-	return documentationSite + "/integrations/" + string(d.Category) + "/" + d.Key
+	return documentationSite + "/" + m.DocumentationSlug
 }
 
 // ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
-func (d Definition) ConfigurationSchema() json.RawMessage {
-	properties := make(map[string]any, len(d.Config))
-	required := make([]string, 0, len(d.Config))
+func (m Manifest) ConfigurationSchema() json.RawMessage {
+	properties := make(map[string]any, len(m.Config))
+	required := make([]string, 0, len(m.Config))
 
-	for _, field := range d.Config {
+	for _, field := range m.Config {
 		property := map[string]any{
 			"type":        string(field.Type),
 			"title":       field.Title,
@@ -255,8 +235,8 @@ func (d Definition) ConfigurationSchema() json.RawMessage {
 
 	schema := map[string]any{
 		"$schema": "https://json-schema.org/draft/2020-12/schema",
-		"$id":     "https://opencluster.dev/schemas/integration/" + d.Key + "/configuration.json",
-		"title":   d.Name + " configuration",
+		"$id":     "https://opencluster.dev/schemas/integration/" + m.Key + "/configuration.json",
+		"title":   m.Name + " configuration",
 		"type":    "object",
 		// Closed on purpose. A field a customer invented is a field nothing reads, and
 		// accepting it silently is how a configuration comes to look complete and do
@@ -273,6 +253,26 @@ func (d Definition) ConfigurationSchema() json.RawMessage {
 		return json.RawMessage(`{"error":"this definition's configuration could not be rendered"}`)
 	}
 	return encoded
+}
+
+// Capabilities returns the stable tool names this provider makes available.
+func (m Manifest) Capabilities() []string {
+	capabilities := make([]string, 0, len(m.Tools))
+	for _, tool := range m.Tools {
+		capabilities = append(capabilities, tool.Name)
+	}
+	return capabilities
+}
+
+// SecretFields returns configuration field names whose values are sealed at rest.
+func (m Manifest) SecretFields() []string {
+	fields := make([]string, 0, len(m.Config))
+	for _, field := range m.Config {
+		if field.Secret {
+			fields = append(fields, field.Name)
+		}
+	}
+	return fields
 }
 
 // Field resolves one configuration field by name. It is the single lookup: Declares reads
@@ -346,6 +346,14 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 
 // checkDefinition refuses a definition whose declarations cannot all be true at once.
 func checkDefinition(definition Definition) error {
+	wantDocumentationSlug := "integrations/" + string(definition.Category) + "/" + definition.Key
+	if definition.DocumentationSlug != "" && definition.DocumentationSlug != wantDocumentationSlug {
+		return fmt.Errorf("integration type %q documentation slug is %q, want %q",
+			definition.Key, definition.DocumentationSlug, wantDocumentationSlug)
+	}
+	if definition.SupportsConnect != definition.Connectable() {
+		return fmt.Errorf("integration type %q manifest connect availability does not match its behavior", definition.Key)
+	}
 	if (definition.Verify == nil) == (definition.Probe == nil) {
 		return fmt.Errorf("integration type %q must declare exactly one of Verify and Probe",
 			definition.Key)
@@ -420,9 +428,14 @@ func (c Catalog) All() []Definition { return append([]Definition(nil), c.ordered
 func (c Catalog) Manifests() []Manifest {
 	manifests := make([]Manifest, 0, len(c.ordered))
 	for _, definition := range c.ordered {
-		manifests = append(manifests, Manifest{ID: definition.ID, Key: definition.Key,
-			Name: definition.Name, Description: definition.Description, Logo: definition.Logo,
-			Category: definition.Category})
+		manifest := definition.Manifest
+		manifest.Config = append([]Field(nil), manifest.Config...)
+		manifest.Tools = append([]Tool(nil), manifest.Tools...)
+		for index := range manifest.Tools {
+			manifest.Tools[index].Arguments = append([]ToolArgument(nil), manifest.Tools[index].Arguments...)
+			manifest.Tools[index].Requires = append([]string(nil), manifest.Tools[index].Requires...)
+		}
+		manifests = append(manifests, manifest)
 	}
 	return manifests
 }
