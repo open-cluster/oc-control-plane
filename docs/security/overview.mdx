@@ -1,29 +1,87 @@
 ---
-title: "Overview"
-description: "Understand OpenCluster identity, Organization isolation, read-only access, secrets, and audit controls."
+title: "Security model"
+description: "Understand identity, Organization isolation, data handling, read-only access, secrets, Relay, and model-provider boundaries."
 ---
 
-OpenCluster authenticates a Principal, verifies current Organization membership, and checks the route's Permission before tenant-owned logic runs. An Organization identifier is a selector, never authorization by itself.
+OpenCluster authenticates a Principal, verifies current Organization membership, and
+checks the route's Permission before tenant-owned logic runs. An Organization identifier
+is a selector, never authorization by itself.
 
-Integrations expose bounded read-only Tools. The Relay opens an outbound session and keeps cluster credentials inside the customer boundary. Credentials are digested or sealed, sensitive responses are not cached, and audit details remove credential-shaped keys.
+Report vulnerabilities through the process in `SECURITY.md`; do not open a public issue
+containing sensitive details.
 
-Report vulnerabilities through the process in `SECURITY.md`; do not open a public issue containing sensitive details.
+## Authentication and authorization
 
-## Trust model
+The one-time local bootstrap creates the first User and an opaque cookie session. The
+authenticated User then creates the first Organization. Protect and retire the
+file-backed bootstrap token after its one-time use.
+
+Normal product routes use the opaque `__Host-oc_session` cookie. General bearer API
+tokens are not shipped in OSS v0.1. Unsafe cookie requests require the configured
+same-origin `Origin`; cross-origin and `Origin: null` requests are rejected.
+
+Roles grant fixed Permissions inside an Organization. Missing authentication returns
+`401`, insufficient Permission returns `403`, and inaccessible Organizations and unknown
+tenant records are indistinguishable.
+
+## Trust boundaries
 
 The browser and product ingress share one origin. PostgreSQL holds durable product truth.
 Customer Relays initiate outbound, pinned sessions; the control plane never receives
 cluster credentials. Integration and model providers remain external trust boundaries,
 and their returned content is always untrusted input.
 
-For example, selecting another Organization identifier does not grant access: the server
-rechecks current membership before a Tool is offered or a record is read. A Kubernetes
-read can cross the Relay boundary only when the registered capability and namespace
-allow-list both permit it.
+Selecting another Organization identifier does not grant access: the server rechecks
+current membership before a Tool is offered or a record is read. A Kubernetes read can
+cross the Relay boundary only when the registered capability and namespace allow-list
+both permit it.
 
 Read-only Tools reduce change risk but do not make source data harmless or complete.
-Deployment owners remain responsible for HTTPS, provider terms, retention, backups,
-identity-provider policy, and secret custody. Continue with
-[Authentication and authorization](/security/authentication-and-authorization),
-[Secrets and Relay](/security/secrets-and-relay), and
-[AI provider data flow](/security/ai-provider-data-flow).
+
+## Data handling
+
+OpenCluster stores normalized Alert Events, Incidents, Messages, Investigation events,
+Tool Runs, cited Findings, audit records, and draft Postmortems in PostgreSQL. Tool
+results are bounded and summarized for review. Conversations retain continuity through
+Messages and prior cited Findings. OpenCluster does not persist or expose model
+chain-of-thought.
+
+An Investigation can perform live authorized reads, including bounded Kubernetes
+container logs through Relay and Slack channel or thread messages. A configured Slack App
+can also send originating-thread replies. These reads and replies remain constrained by
+the Integration's verified permissions and the active Organization.
+
+Retention and backup policy are deployment responsibilities in OSS. Protect backups as
+production data and verify retention changes against legal and operational requirements.
+
+## Secrets and Relay
+
+Environment variables name secret files rather than containing credential values.
+Inbound webhook credentials are stored as digests. Presentable Integration credentials
+are sealed and never returned after creation; one-time values must be stored immediately.
+Audit details remove credential-shaped keys.
+
+The Relay initiates its connection from the customer boundary, validates configured SPKI
+pins, and executes only closed protocol capabilities. Kubernetes credentials remain with
+the Relay and never enter the control plane. Read-only capabilities still require
+least-privilege Kubernetes RBAC, network controls, credential rotation, and encryption-key
+custody.
+
+Losing the encryption key leaves product records readable but makes sealed Integration
+credentials unrecoverable. Back it up separately from PostgreSQL.
+
+## Model-provider boundary
+
+For an Investigation, OpenCluster may send the subject, question, bounded time window,
+connected Tool catalog, normalized alert context, bounded prior cited Findings, and
+summarized Tool results to the configured model provider. It does not send Tool
+credentials or publish model chain-of-thought.
+
+The provider returns Tool requests or a structured conclusion. OpenCluster validates
+budgets, citations, enums, and result bounds before persistence. Deployment owners must
+review provider retention, training, regional processing, contractual terms, and the
+source content allowed to cross this boundary.
+
+Deployment owners remain responsible for HTTPS, identity-provider policy, provider terms,
+retention, backups, and secret custody. Use [Configuration](/self-hosting/configuration)
+to apply the shipped controls.

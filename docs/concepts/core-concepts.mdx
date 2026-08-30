@@ -3,24 +3,35 @@ title: "Core concepts"
 description: "Understand the records OpenCluster uses to isolate access and explain investigations."
 ---
 
-An Organization is the tenant boundary. A User holds an Admin, Editor, or Viewer membership in each Organization they may access.
+An Organization is the tenant boundary. A User holds an Admin, Editor, or Viewer
+membership in each Organization they may access. Organization selection is explicit on
+every tenant-owned request.
 
-An Integration is a configured source. It offers bounded read-only Tools. Alert Events create or update provisional Incidents. A Conversation contains Messages and the immutable Investigations those Messages opened.
-
-Investigations record Tool Runs, cited Findings, hypotheses, Action Proposals, and limitations. A Relay performs closed Kubernetes reads from inside the customer boundary. A Postmortem is a human-reviewed draft for one resolved Incident.
+An Integration is one configured source. It offers bounded read-only Tools or accepts
+authenticated Alert Events. A Relay performs closed Kubernetes reads from inside the
+customer boundary and opens an outbound session to the control plane.
 
 ## How the records relate
 
-An Alert Event can update one provisional Incident. A person investigates that Incident
-inside a Conversation. Each Message opens a bounded Investigation, whose numbered Tool
-Runs support Findings and Action Proposals. After the Incident resolves, a person may
-generate its draft Postmortem.
+An Alert Event is one normalized alert occurrence. Redelivery is idempotent, and the
+source timestamp remains distinct from receipt time. Alert Events create or update a
+provisional Incident using the alert source's grouping identity. The Incident remains
+firing while any grouped Alert Event is firing and resolves when none are firing.
+
+Grouping is not a causal claim. Three Alert Events with one Alertmanager grouping key can
+belong to one Incident even when they have different causes. Review grouping before
+treating the Incident as one causal episode.
+
+A person investigates an Incident inside a Conversation. Each Message opens one bounded,
+immutable Investigation. Its numbered Tool Runs support cited Findings and Action
+Proposals. After the Incident resolves, a person may generate and review its draft
+Postmortem.
 
 For example, an Alertmanager delivery creates an Alert Event and Incident. A Kubernetes
 Integration supplies evidence through Relay; GitHub supplies change evidence. OpenCluster
 cites those reads but does not execute the proposed rollback.
 
-Organization membership limits every product record and Tool. Source access, time
-windows, budgets, and missing telemetry limit what an Investigation can conclude. Start
-with [Incidents and Alert Events](/concepts/alert-events-and-incidents) or
-[Connect your tools](/getting-started/connect-your-tools).
+Organization membership limits every product record and Tool. Provider permissions,
+source time windows, budgets, truncation, and missing telemetry limit what an
+Investigation can conclude. Continue with [Investigations and results](/concepts/investigations-and-conversations)
+or [connect your tools](/getting-started/connect-your-tools).

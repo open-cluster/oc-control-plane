@@ -8,3 +8,7 @@ docker run --rm --volume "$(pwd):/work" --workdir /work "$image" \
   lint api/openapi.yaml --format stylish
 docker run --rm --volume "$(pwd):/work" --workdir /work "$image" \
   bundle api/openapi.yaml --output "$output"
+
+# Mintlify needs an absolute server to render copyable request examples. Keep the canonical
+# contract deployment-neutral and specialize only its generated documentation input.
+sed -i '0,/^  - url: \/$/s||  - url: http://localhost:8080\n    description: Local self-hosted deployment|' "$output"

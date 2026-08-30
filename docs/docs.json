@@ -21,31 +21,38 @@
   },
   "navbar": {
     "links": [
-      { "type": "github", "href": "https://github.com/open-cluster/oc-control-plane" },
-      { "label": "Releases", "href": "https://github.com/open-cluster/oc-control-plane/releases" },
-      { "label": "Changelog", "href": "https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md" }
-    ]
+      { "type": "github", "href": "https://github.com/open-cluster/oc-control-plane" }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Quickstart",
+      "href": "/getting-started/quickstart"
+    }
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/open-cluster"
+      "github": "https://github.com/open-cluster",
+      "discord": "https://discord.gg/gj7v8TJCu",
+      "x": "https://x.com/openclusterio"
     },
     "links": [
       {
-        "header": "Project",
+        "header": "Resources",
         "items": [
-          { "label": "Source", "href": "https://github.com/open-cluster/oc-control-plane" },
-          { "label": "Feature availability", "href": "/feature-availability" },
-          { "label": "Releases", "href": "https://github.com/open-cluster/oc-control-plane/releases" },
-          { "label": "Changelog", "href": "https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md" },
-          { "label": "Report a documentation issue", "href": "https://github.com/open-cluster/oc-control-plane/issues/new" }
+          { "label": "Quickstart", "href": "/getting-started/quickstart" },
+          { "label": "API reference", "href": "/api-reference/overview" },
+          { "label": "Security", "href": "/security/overview" }
+        ]
+      },
+      {
+        "header": "Community",
+        "items": [
+          { "label": "GitHub", "href": "https://github.com/open-cluster/oc-control-plane" },
+          { "label": "Contributing", "href": "/developers/contributing" },
+          { "label": "Report issue", "href": "https://github.com/open-cluster/oc-control-plane/issues/new" }
         ]
       }
     ]
-  },
-  "feedback": {
-    "suggestEdit": true,
-    "raiseIssue": true
   },
   "navigation": {
     "groups": [
@@ -53,8 +60,8 @@
         "group": "Get started",
         "pages": [
           "index",
+          "feature-availability",
           "getting-started/quickstart",
-          "getting-started/set-up-opencluster",
           "getting-started/connect-your-tools",
           "getting-started/run-your-first-investigation"
         ]
@@ -63,10 +70,7 @@
         "group": "Concepts",
         "pages": [
           "concepts/core-concepts",
-          "concepts/alert-events-and-incidents",
-          "concepts/investigations-and-conversations",
-          "concepts/results-evidence-and-actions",
-          "concepts/postmortems"
+          "concepts/investigations-and-conversations"
         ]
       },
       {
@@ -86,39 +90,31 @@
           "self-hosting/docker-compose",
           "self-hosting/helm",
           "self-hosting/configuration",
-          "self-hosting/model-providers-and-byok",
-          "self-hosting/upgrade",
-          "self-hosting/backup-and-restore",
           "self-hosting/troubleshooting"
         ]
       },
       {
         "group": "Security",
         "pages": [
-          "security/overview",
-          "security/data-handling",
-          "security/authentication-and-authorization",
-          "security/secrets-and-relay",
-          "security/ai-provider-data-flow"
+          "security/overview"
         ]
       },
       {
         "group": "API reference",
         "pages": [
           "api-reference/overview",
-          "api-reference/authentication-and-organization-context",
-          "api-reference/errors-and-pagination",
-          "api-reference/webhooks",
-          "api-reference/investigation-events"
+          "api-reference/surface",
+          {
+            "group": "Endpoints",
+            "openapi": "api/openapi.yaml"
+          }
         ]
       },
       {
         "group": "Developers",
         "pages": [
           "developers/architecture",
-          "developers/local-development",
-          "developers/contributing",
-          "developers/repositories"
+          "developers/contributing"
         ]
       }
     ]
@@ -131,10 +127,28 @@
     { "source": "/integrations/kubernetes", "destination": "/integrations/infrastructure/kubernetes" },
     { "source": "/integrations/slack", "destination": "/integrations/collaboration/slack" },
     { "source": "/integrations/github", "destination": "/integrations/source-control/github" },
-    { "source": "/security/credentials", "destination": "/security/secrets-and-relay" },
+    { "source": "/security/credentials", "destination": "/security/overview" },
     { "source": "/self-hosted/overview", "destination": "/self-hosting/docker-compose" },
     { "source": "/self-hosted/configuration", "destination": "/self-hosting/configuration" },
-    { "source": "/self-hosted/troubleshooting", "destination": "/self-hosting/troubleshooting" }
+    { "source": "/self-hosted/troubleshooting", "destination": "/self-hosting/troubleshooting" },
+    { "source": "/getting-started/set-up-opencluster", "destination": "/getting-started/quickstart" },
+    { "source": "/concepts/alert-events-and-incidents", "destination": "/concepts/core-concepts" },
+    { "source": "/concepts/results-evidence-and-actions", "destination": "/concepts/investigations-and-conversations" },
+    { "source": "/concepts/postmortems", "destination": "/concepts/investigations-and-conversations" },
+    { "source": "/self-hosting/model-providers-and-byok", "destination": "/self-hosting/configuration" },
+    { "source": "/self-hosting/upgrade", "destination": "/feature-availability" },
+    { "source": "/self-hosting/backup-and-restore", "destination": "/self-hosting/troubleshooting" },
+    { "source": "/security/data-handling", "destination": "/security/overview" },
+    { "source": "/security/authentication-and-authorization", "destination": "/security/overview" },
+    { "source": "/security/secrets-and-relay", "destination": "/security/overview" },
+    { "source": "/security/ai-provider-data-flow", "destination": "/security/overview" },
+    { "source": "/api-reference/authentication-and-organization-context", "destination": "/api-reference/overview" },
+    { "source": "/api-reference/errors-and-pagination", "destination": "/api-reference/overview" },
+    { "source": "/api-reference/webhooks", "destination": "/api-reference/overview" },
+    { "source": "/api-reference/investigation-events", "destination": "/api-reference/overview" },
+    { "source": "/api-reference/generated-endpoints", "destination": "/api-reference/surface" },
+    { "source": "/developers/local-development", "destination": "/developers/contributing" },
+    { "source": "/developers/repositories", "destination": "/developers/contributing" }
   ],
   "contextual": {
     "options": [

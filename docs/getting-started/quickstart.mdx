@@ -96,6 +96,16 @@ Enter an Organization display name and submit the next step to create an Organiz
 OpenCluster generates its canonical identifier and gives the first User an **Admin**
 membership. The workspace opens with that Organization selected.
 
+Verify that the console shows your User, the Organization display name, and the **Admin**
+Role. Bootstrap is complete when a second attempt is refused. If Organization creation
+fails, keep the current session and correct the display name or requested slug; do not
+repeat bootstrap.
+
+The bootstrap token is deployment-wide and accepted only for the first local User. Keep
+it out of command history and remove access to the file after bootstrap succeeds. An
+invalid token is refused, a reused token returns a conflict, and an unsafe cookie-backed
+request without the configured `Origin` is refused.
+
 ## 4. Connect a Generic Webhook
 
 In **Integrations**, create a **Generic Webhook** named `Quickstart alerts`. Copy the
@@ -144,5 +154,5 @@ docker compose -f deploy/compose/compose.yaml down
 
 Do not add `--volumes` unless you intend to erase the local database. Before a production
 deployment, review [Configuration](/self-hosting/configuration),
-[Backup and restore](/self-hosting/backup-and-restore), and the
-[security overview](/security/overview).
+[Troubleshooting](/self-hosting/troubleshooting), and the
+[security model](/security/overview).

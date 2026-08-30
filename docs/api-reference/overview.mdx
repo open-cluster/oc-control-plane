@@ -1,115 +1,128 @@
 ---
-title: "API reference"
-description: "Authenticate, address an Organization, and use OpenCluster's public HTTP endpoints."
+title: "API overview"
+description: "Authenticate, select an Organization, handle errors and pagination, and distinguish product and webhook routes."
 ---
 
-OpenCluster serves JSON over a versioned HTTP API. Every Organization-owned request sends
-one `X-OpenCluster-Organization` header and requires a Principal with current membership
-and the stated role permission.
+OpenCluster serves JSON over the versioned `/api/v1` product API. The canonical contract
+is `api/openapi.yaml`; generated operation pages provide request builders, schemas,
+responses, and cURL examples.
+
+Set the base URL for your deployment:
+
+```bash
+export OPENCLUSTER_URL="https://oc.example.com"
+```
 
 ## Authentication
 
-Use the opaque browser session issued by local sign-in or generic OIDC. General bearer API tokens are not shipped in v0.1:
+Normal product routes authenticate with the opaque `__Host-oc_session` cookie issued by
+local sign-in or generic OIDC. General bearer API tokens are not shipped in OSS v0.1.
+Do not write the session value to generated-client logs.
+
+Bootstrap is the only product setup request that accepts the one-time deployment
+credential as an `Authorization: Bearer` value. Webhook credentials authenticate only
+their `/webhooks/v1` routes.
+
+Unsafe cookie-backed requests also require an `Origin` header exactly matching the
+configured public URL. Same-origin browser clients let the cookie jar manage the
+`HttpOnly`, `Secure` session cookie.
+
+<Warning>
+  Generated cURL examples currently omit this header because the canonical OpenAPI
+  contract records the requirement only as an extension. For `POST`, `PUT`, `PATCH`, and
+  `DELETE` product requests authenticated by the session cookie, add
+  `--header "Origin: $OPENCLUSTER_URL"`. Without it, OpenCluster returns `403`.
+</Warning>
+
+## Select an Organization
+
+Organization-owned operations require exactly one `X-OpenCluster-Organization` header.
+List the Organizations available to the current session and use a returned canonical ID:
+
+```bash
+export ORGANIZATION_ID="$(
+  curl --fail-with-body --silent \
+    --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
+    "$OPENCLUSTER_URL/api/v1/organizations" |
+  jq --raw-output '.organizations[0].id'
+)"
+
+test -n "$ORGANIZATION_ID" && test "$ORGANIZATION_ID" != "null"
+```
+
+Then call an Organization-owned operation:
 
 ```bash
 curl --fail-with-body \
   --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
-  -H "X-OpenCluster-Organization: local" \
-  https://oc.example.com/api/v1/incidents
+  --header "X-OpenCluster-Organization: $ORGANIZATION_ID" \
+  "$OPENCLUSTER_URL/api/v1/incidents"
 ```
 
-Responses containing Organization data use `Cache-Control: no-store`. Unknown records
-and records belonging to another Organization both return `404`.
+The header selects a tenant boundary; it does not grant access. The server validates
+current membership and the operation's Permission. Do not send an Organization identifier
+in both the header and request body unless the generated operation contract explicitly
+requires both values for different purposes.
 
-## Core resources
+## Versioning
 
-| Resource | Endpoints | Minimum role |
+Public product operations use `/api/v1`. Inbound provider routes use `/webhooks/v1` and
+have separate authentication, payload, and retry contracts. Health, readiness, metrics,
+and Relay gRPC traffic are not part of the product OpenAPI surface.
+
+OSS v0.1 is pre-release. Use the OpenAPI document shipped with the exact source or release
+you deploy; do not assume compatibility from a `latest` URL.
+
+## Pagination
+
+Collection operations document a bounded `limit` and an opaque cursor such as `after` or
+`cursor`. Pass the returned `next` value unchanged to the parameter named by that
+operation. An empty or null `next` means the collection is complete.
+
+Do not decode a cursor or construct one from a resource ID.
+
+## Errors
+
+JSON errors contain a safe `error` message and may include a stable `reason` or required
+Permission. Use the HTTP status and request identifier for diagnosis; do not parse the
+message text to make authorization decisions.
+
+| Status | Meaning | Client action |
 | --- | --- | --- |
-| Integrations | `GET/POST /api/v1/integrations` | Viewer to read, Admin to create |
-| Incidents | `GET /api/v1/incidents` | Viewer |
-| Investigations | `GET/POST /api/v1/investigations` | Viewer to read, Editor to open |
-| Conversations | `GET/POST /api/v1/conversations` | Viewer to read, Editor to write |
-| Relays | `GET /api/v1/relays` | Viewer |
-| Audit events | `GET /api/v1/audit-events` | Viewer |
+| `400` | Invalid request | Correct the request; do not retry it unchanged. |
+| `401` | Missing or rejected authentication | Sign in again or correct the route-specific credential. |
+| `403` | Insufficient Permission | Request the required Role; changing the Organization ID does not grant access. |
+| `404` | Unknown or inaccessible resource | Do not use the response to infer another Organization's data. |
+| `409` | State conflict | Refresh the resource and resolve the conflicting state. |
+| `429` | Rate limited | Retry after `Retry-After` when present. |
+| `503` | Temporarily unavailable | Retry with bounded backoff. |
 
-Listings return `items`, an opaque `next` cursor, and any documented partial fields.
-Pass the returned cursor unchanged.
+Responses containing Organization data use `Cache-Control: no-store`.
 
-## Integration catalog
+## Webhook intake
 
-`GET /api/v1/integration-types` returns the Integration Types shipped by this deployment.
-Each entry includes its `capabilities`, configuration schema, write-only field names,
-availability, Relay and webhook requirements, provider source link, and
-`documentationSlug` for the matching OpenCluster setup guide.
+The canonical alert path is
+`POST /webhooks/v1/integrations/{integration}/alert-events`. The Integration selects the
+provider adapter. Generic Webhook and Alertmanager use the one-time
+`X-OpenCluster-Token`; Slack uses its signed provider request.
 
-```bash
-curl --fail-with-body \
-  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
-  -H "X-OpenCluster-Organization: local" \
-  https://oc.example.com/api/v1/integration-types
-```
+`202 Accepted` means a delivery is durable, and an exact retry of an accepted lifecycle
+phase returns `200 OK`. Correct `400`, `401`, and `413` responses before retrying. Retry
+`429` after `Retry-After` and retry `503` with bounded backoff.
 
-Render forms from `configurationSchema`; never request or display an existing value for a
-field named in `secretFields`.
+Use [Generic Webhook](/integrations/alerting/generic_webhook) or
+[Prometheus Alertmanager](/integrations/alerting/alertmanager) for sender setup. Admins
+inspect and replay failed processing through the generated Webhook Delivery operations.
 
-## Investigation result
+## Investigation event streams
 
-`GET /api/v1/investigations/{investigation}` returns
-the lifecycle status, conclusion status, summary, impact, cited findings, final
-hypotheses, action proposals, limitations, spend, and
-`humanConfirmationRequired`.
+Investigation activity uses increasing sequence identifiers. SSE clients reconnect with
+`Last-Event-ID`; comment frames are heartbeats and carry no product event. Store the last
+processed sequence only after handling its event successfully.
 
-Use these related endpoints:
+Terminal events are `concluded`, `failed`, and `cancelled`. Ignore an unknown future event
+type while retaining its envelope so a newer server remains compatible with an older
+client. The generated stream operation documents every currently shipped event payload.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `.../{investigation}/activity` | Ordered progress and hypothesis-update events |
-| `GET` | `.../{investigation}/sources` | Offered sources and numbered Tool Runs |
-| `GET` | `.../{investigation}/hypotheses` | Latest running snapshot or final hypotheses |
-| `POST` | `.../{investigation}/cancel` | Stop active work; Editor or Admin |
-
-## Postmortems
-
-Postmortem routes are under a resolved Incident:
-
-| Method | Path suffix | Outcome |
-| --- | --- | --- |
-| `GET` | `/postmortem` | Read the current draft or reviewed document |
-| `POST` | `/postmortem` | Generate the first draft |
-| `POST` | `/postmortem/regenerate` | Replace it with a higher draft revision |
-| `PATCH` | `/postmortem` | Apply explicit human corrections |
-| `POST` | `/postmortem/review` | Mark the document reviewed |
-
-The full prefix is
-`/api/v1/incidents/{incident}`.
-Generation accepts optional explicit impact, resolution, and retrospective notes.
-Missing human facts remain `Needs human input.`
-
-## Webhooks
-
-Inbound integrations use `/webhooks/v1`, not the product API. Alertmanager sends a
-bounded request authenticated by its static `X-OpenCluster-Token`; it does not sign the
-request body. Treat webhook secrets as write-only credentials; OpenCluster shows a newly
-minted secret once.
-
-See [Prometheus Alertmanager](/integrations/alerting/alertmanager) for the supported
-payload and delivery responses.
-
-Admins can inspect failed processing with
-`GET /api/v1/webhook-deliveries?status=failed`. A failed delivery can be retried without
-resending or re-authenticating the original request:
-
-```bash
-curl --fail-with-body \
-  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
-  -H "X-OpenCluster-Organization: local" \
-  "https://oc.example.com/api/v1/webhook-deliveries?status=failed"
-
-curl --fail-with-body -X POST \
-  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
-  -H "X-OpenCluster-Organization: local" \
-  https://oc.example.com/api/v1/webhook-deliveries/00000000-0000-4000-8000-000000000001/replay
-```
-
-`POST /api/v1/webhook-deliveries/{delivery}/replay` is accepted only for a visible failed
-delivery. Completed work remains complete and the replay is audited.
+Browse the [API surface](/api-reference/surface) or select an individual generated
+method/path entry in the navigation.

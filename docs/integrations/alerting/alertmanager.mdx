@@ -87,6 +87,13 @@ Deliveries can contain at most 2,048 alerts. Only `firing` and `resolved` status
 accepted. If Alertmanager marks a delivery as truncated, OpenCluster records that the
 incident context is incomplete.
 
+## Limitations
+
+Alertmanager supplies alert lifecycle context, not runtime or change evidence. Its
+grouping key determines provisional Incident grouping and does not prove a shared cause.
+Connect Kubernetes, GitHub, or another evidence source when an Investigation needs to
+explain the alert.
+
 ## Troubleshooting
 
 - **Verify shows no delivery:** send a firing test alert and check Alertmanager logs.
@@ -102,12 +109,12 @@ Alertmanager in the same maintenance step. Disable the integration to reject new
 deliveries while retaining incident history. Deletion is refused when retained records
 depend on the integration.
 
-## Availability and project links
+## Next step
+
+Connect an [evidence source](/integrations/overview), then
+[run the first Investigation](/getting-started/run-your-first-investigation) from a test alert.
+
+## Availability
 
 Prometheus Alertmanager is available in OSS v0.1. Alertmanager and its mark belong to the
-Prometheus project. Review the [provider contract](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config),
-[adapter source](https://github.com/open-cluster/oc-control-plane/tree/main/internal/integrations/alertmanager),
-[releases](https://github.com/open-cluster/oc-control-plane/releases), and
-[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
-[Edit this page](https://github.com/open-cluster/oc-control-plane/edit/main/docs/integrations/alerting/alertmanager.mdx)
-or [report a documentation issue](https://github.com/open-cluster/oc-control-plane/issues/new).
+Prometheus project. Review the [provider webhook contract](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config).

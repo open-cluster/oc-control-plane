@@ -113,7 +113,8 @@ proof lives in the nested `test/e2e` module.
 
 The Mintlify site is authored in `docs/`. Every shipped Integration must have a navigable
 product page. Run `make docs` for navigation, frontmatter, internal-link, publication,
-credential-literal, accessibility, and Integration-page checks; `make verify` includes it.
+credential-literal, accessibility, Integration-page, OpenAPI drift, API-surface, and
+configuration-key checks; `make verify` includes it.
 
 ## Contributing
 

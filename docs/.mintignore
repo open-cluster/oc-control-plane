@@ -4,4 +4,3 @@
 **/*.tmp
 **/*.log
 **/.DS_Store
-api-reference/generated-endpoints.mdx

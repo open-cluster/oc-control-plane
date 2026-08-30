@@ -13,6 +13,12 @@ OpenCluster does not run field mappings or transformations.
 - A sender that can set the `X-OpenCluster-Token` header and send JSON.
 - The **Admin** role in OpenCluster.
 
+## Least-privilege access
+
+The sender needs permission only to reach its generated webhook URL and read the
+one-time secret. The credential authenticates this Integration only; it is not a product
+API credential.
+
 ## Connect
 
 Create a **Generic Webhook** integration, then copy its webhook URL and one-time secret.
@@ -55,6 +61,24 @@ Unknown or duplicate fields, invalid UTF-8, trailing JSON, and an Organization i
 are rejected. Annotation text is displayed as untrusted source content. OpenCluster never
 fetches `sourceUrl` during intake.
 
+## Verify
+
+Send one firing event and confirm the response is `202 Accepted`. Open the matching
+Webhook Delivery, Alert Event, and Incident. An exact retry should return `200 OK` without
+creating another lifecycle phase.
+
+## Evidence available
+
+The Alert Event supplies its title, severity, lifecycle timestamps, labels, annotations,
+deduplication key, and optional source URL. It creates Incident context but does not let
+OpenCluster read the sender or the linked source URL during an Investigation.
+
+## Limitations
+
+Generic Webhook performs no field mapping or enrichment. The sender must preserve one
+stable lifecycle identity and canonical schema. Connect a separate evidence Integration
+when an Investigation needs runtime, change, or conversation data.
+
 ## Delivery responses
 
 | Response | Meaning |
@@ -67,14 +91,25 @@ fetches `sourceUrl` during intake.
 | `429` | Retry after the `Retry-After` interval. |
 | `503` | OpenCluster could not record the delivery; retry. |
 
-Rotate the secret if it may have been exposed. Rotation invalidates the old value
-immediately. Disable the integration to stop new deliveries while retaining history.
+## Troubleshooting
 
-## Availability and project links
+- `400`: validate the canonical fields, lifecycle identity, timestamps, and body size.
+- `401`: check the Integration ID and current secret; rotate it if the stored value is
+  uncertain.
+- `429` or `503`: retry with bounded backoff and preserve the same lifecycle identity.
 
-Generic Webhook is available in OSS v0.1 and has no third-party provider mark. Review the
-[adapter source](https://github.com/open-cluster/oc-control-plane/tree/main/internal/integrations/genericwebhook),
-[releases](https://github.com/open-cluster/oc-control-plane/releases), and
-[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
-[Edit this page](https://github.com/open-cluster/oc-control-plane/edit/main/docs/integrations/alerting/generic_webhook.mdx)
-or [report a documentation issue](https://github.com/open-cluster/oc-control-plane/issues/new).
+## Rotate, disable, or remove
+
+Rotate the webhook secret, store the replacement immediately, and update the sender
+before its next delivery. Rotation invalidates the old value. Disable the Integration to
+stop new deliveries while retaining history. Deletion is refused when retained records
+depend on it.
+
+## Next step
+
+Connect an [evidence source](/integrations/overview), then
+[run the first Investigation](/getting-started/run-your-first-investigation) from a test Alert Event.
+
+## Availability
+
+Generic Webhook is available in OSS v0.1 and has no third-party provider mark.
