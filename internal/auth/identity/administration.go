@@ -26,7 +26,10 @@ func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
-	list, err := h.Database.ListMembers(ctx, principal, organization, storage.Page{Limit: pageSize(r), After: r.URL.Query().Get("after")})
+	list, err := h.Database.ListMembers(ctx, principal, organization, storage.Page{
+		Limit: pageSize(r),
+		After: r.URL.Query().Get("after"),
+	})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -35,7 +38,10 @@ func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
 	for _, member := range list.Members {
 		views = append(views, memberViewOf(member))
 	}
-	writeJSON(w, http.StatusOK, memberListView{Members: views, Next: list.Next})
+	writeJSON(w, http.StatusOK, memberListView{
+		Members: views,
+		Next:    list.Next,
+	})
 }
 
 func (h Handlers) setMember(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +127,10 @@ func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: int(session.ClampLifetime(lifetime).Seconds()), AuditRetentionDays: retention, AuditRetentionEnforced: h.RetentionEnforced})
+	writeJSON(w, http.StatusOK, policyView{
+		SessionLifetimeSeconds: int(session.ClampLifetime(lifetime).Seconds()),
+		AuditRetentionDays:     retention,
+		AuditRetentionEnforced: h.RetentionEnforced})
 }
 
 func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {

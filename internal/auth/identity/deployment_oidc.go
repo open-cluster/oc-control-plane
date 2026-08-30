@@ -29,7 +29,13 @@ func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Reque
 		h.fail(w, r, err)
 		return
 	}
-	err = h.Database.StartDeploymentSignIn(ctx, organization, storage.DeploymentSignInFlow{ID: newFlowID(), Organization: organization.String(), CodeVerifier: authorization.CodeVerifier, Nonce: authorization.Nonce, ReturnTo: returnTo, ExpiresAt: nowPlus(flowLifetime)}, authorization.State)
+	err = h.Database.StartDeploymentSignIn(ctx, organization, storage.DeploymentSignInFlow{
+		ID:           newFlowID(),
+		Organization: organization.String(),
+		CodeVerifier: authorization.CodeVerifier,
+		Nonce:        authorization.Nonce,
+		ReturnTo:     returnTo,
+		ExpiresAt:    nowPlus(flowLifetime)}, authorization.State)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -55,12 +61,26 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		h.fail(w, r, err)
 		return
 	}
-	asserted, err := h.OIDC.Exchange(ctx, h.OIDCIssuer, h.OIDCClientID, h.OIDCClientSecret, h.redirectURI(), code, flow.CodeVerifier, flow.Nonce)
+	asserted, err := h.OIDC.Exchange(
+		ctx,
+		h.OIDCIssuer,
+		h.OIDCClientID,
+		h.OIDCClientSecret,
+		h.redirectURI(),
+		code,
+		flow.CodeVerifier,
+		flow.Nonce)
+
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})
 		return
 	}
-	user, memberships, err := h.Database.OIDCIdentity(ctx, organization, storage.Identity{Issuer: asserted.Issuer, Subject: asserted.Subject, Email: asserted.Email, EmailVerified: bool(asserted.EmailVerified), DisplayName: asserted.displayName()})
+	user, memberships, err := h.Database.OIDCIdentity(ctx, organization, storage.Identity{
+		Issuer:        asserted.Issuer,
+		Subject:       asserted.Subject,
+		Email:         asserted.Email,
+		EmailVerified: bool(asserted.EmailVerified),
+		DisplayName:   asserted.displayName()})
 	if err != nil {
 		if errors.Is(err, storage.ErrLocalCredentialUnknown) || errors.Is(err, storage.ErrUserDisabled) {
 			writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})

@@ -1,5 +1,3 @@
-// Package api operator serves the surface an operator uses to see and act on what the control
-// plane knows about their tenant.
 package api
 
 import (
@@ -86,10 +84,6 @@ func (h Handlers) Router() (http.Handler, error) {
 }
 
 // Routes is the whole operator API, assembled from what each contributor declares.
-//
-// This package contributes the relay routes and nothing else. Every other entry comes from the
-// contributor that knows what its routes mean, which is what keeps the permission a route needs
-// next to the code that implements it rather than in a list somebody has to remember to edit.
 func (h Handlers) Routes() authz.Table {
 	return h.routesOver(h.contributors())
 }
@@ -158,17 +152,6 @@ func availabilityOf(enabled bool) string {
 }
 
 // contributors builds every route-owning module this surface composes, ONCE.
-//
-// It exists so that the route table and the deployment's self-description are assembled from
-// the same handler values. Building them twice would let the document describe a listing the
-// served handler does not have — which is precisely the drift the document exists to end.
-//
-// The conversation handlers are built and their routes DECLARED whether or not this
-// deployment serves them, so the route table — which is the API's index and what the gates
-// validate — is the same table in every build. The switch lives in the handlers, which
-// answer 404 while it is off; a table that changed shape with configuration would be a
-// permission matrix nobody could review. What DOES change with the switch is one line of the
-// self-description, which is the honest place for it.
 func (h Handlers) contributors() []contributor {
 	return []contributor{
 		integrations.Handlers{
@@ -209,17 +192,9 @@ func (h Handlers) contributors() []contributor {
 
 // surface reports the whole route table together with what each contributor said about
 // itself, from ONE construction of the contributors.
-//
-// That is the enforcement rather than the claim: both halves are read off the same `built`
-// slice, so a description assembled from different handler values than the ones being served
-// is not a state this function can produce.
 type contributor interface{ Routes() authz.Table }
 
 // correlated mints a request identifier and binds it to the response and the context.
-//
-// It runs before the credential is resolved, so an audit event written for a refusal can name
-// the same identifier the log line for that refusal carries. A client-supplied value is not
-// trusted: it would let a caller collide two unrelated requests in the record.
 func (h Handlers) correlated(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		id := newRequestID()
@@ -229,9 +204,6 @@ func (h Handlers) correlated(next http.Handler) http.Handler {
 	})
 }
 
-// newRequestID mints a correlation identifier. crypto/rand cannot fail in practice, and a
-// request that could not be correlated is not a request worth refusing, so the fallback is a
-// value that is obviously a fallback rather than an error path nobody exercises.
 func newRequestID() string {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
@@ -241,12 +213,6 @@ func newRequestID() string {
 }
 
 // recordRefusal writes an authorization denial to the tenant's record.
-//
-// It is best-effort, and the guard's own documentation says why: a denial has no operation to
-// roll back, so failing the response because the record could not be written would turn an
-// unreachable database into a surface that answers 500 to callers it was correctly refusing.
-// The failure is logged loudly, because a refusal nobody recorded is exactly what story 22 asks
-// to be visible.
 func (h Handlers) recordRefusal(
 	ctx context.Context, organization tenancy.Organization, event audit.Event,
 ) {
@@ -282,9 +248,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 }
 
 // conflictTrail reports what has happened to a relay identity.
-//
-// It is the answer to the question the current state cannot answer: withdrawing a finding
-// destroys it, so without this the second occurrence would look exactly like the first.
 func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -344,12 +307,6 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
-	// Withdrawing the mark is a claim that a credential-theft finding has been dealt with, and
-	// it destroys the finding, so it is recorded as loudly as the finding was — in the log here
-	// and, in the same transaction as the withdrawal itself, in the audit trail.
-	//
-	// This line used to say the surface could report where the claim came from and never who
-	// made it. It can now say both, which is what the whole slice was for.
 	h.Logger.WarnContext(ctx, "session conflict cleared by an operator",
 		slog.String("organization", organization.String()),
 		slog.String("registration_id", registration.String()),

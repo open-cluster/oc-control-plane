@@ -30,11 +30,9 @@ func (h Handlers) Routes() authz.Table {
 	return authz.Table{
 		authz.Privileged(http.MethodGet, base, authz.PostmortemRead, http.HandlerFunc(h.get)),
 		authz.Privileged(http.MethodPost, base, authz.PostmortemWrite, http.HandlerFunc(h.generate)),
-		authz.Privileged(http.MethodPost, base+"/regenerate", authz.PostmortemWrite,
-			http.HandlerFunc(h.regenerate)),
+		authz.Privileged(http.MethodPost, base+"/regenerate", authz.PostmortemWrite, http.HandlerFunc(h.regenerate)),
 		authz.Privileged(http.MethodPatch, base, authz.PostmortemWrite, http.HandlerFunc(h.correct)),
-		authz.Privileged(http.MethodPost, base+"/review", authz.PostmortemWrite,
-			http.HandlerFunc(h.review)),
+		authz.Privileged(http.MethodPost, base+"/review", authz.PostmortemWrite, http.HandlerFunc(h.review)),
 	}
 }
 

@@ -16,11 +16,19 @@ import (
 
 const noWayIn = "no way in is configured here"
 
-func newFlowID() uuid.UUID              { return uuid.New() }
-func nowPlus(d time.Duration) time.Time { return time.Now().Add(d) }
+func newFlowID() uuid.UUID {
+	return uuid.New()
+}
+func nowPlus(d time.Duration) time.Time {
+	return time.Now().Add(d)
+}
 
-func (h Handlers) issueSession(writer http.ResponseWriter, request *http.Request,
-	organization tenancy.Organization, user storage.User, memberships []authz.Membership,
+func (h Handlers) issueSession(
+	writer http.ResponseWriter,
+	request *http.Request,
+	organization tenancy.Organization,
+	user storage.User,
+	memberships []authz.Membership,
 	_ admission,
 ) error {
 	token, digest, issued, detail, err := h.prepareSession(
@@ -39,7 +47,10 @@ func (h Handlers) issueSession(writer http.ResponseWriter, request *http.Request
 }
 
 func (h Handlers) prepareSession(
-	request *http.Request, organization tenancy.Organization, userID uuid.UUID, membershipCount int,
+	request *http.Request,
+	organization tenancy.Organization,
+	userID uuid.UUID,
+	membershipCount int,
 ) (session.Token, []byte, session.Session, audit.Detail, error) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
@@ -65,6 +76,7 @@ func (h Handlers) prepareSession(
 }
 
 func (h Handlers) redirectURI() string {
+
 	return strings.TrimSuffix(h.PublicURL, "/") + Base + "/auth/oidc/callback"
 }
 

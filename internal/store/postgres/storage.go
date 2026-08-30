@@ -1,9 +1,3 @@
-// Package storage owns the control plane's single PostgreSQL connection pool and every
-// query made through it. Organization remains an explicit argument and predicate on
-// tenant-owned data; one database does not weaken tenant isolation.
-//
-// No other package constructs a database connection. The import gates enforce that
-// boundary so a caller cannot bypass Organization-scoped storage behavior.
 package storage
 
 import (

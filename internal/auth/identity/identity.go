@@ -110,10 +110,6 @@ type Handlers struct {
 // Resolve turns whatever a request presents into the principal holding it. It is what the
 // operator surface hands internal/auth/authz, and it is the only place this build decides that a
 // credential is good.
-//
-// A cookie is tried before a bearer token. A browser that holds both is a browser someone has
-// been experimenting in, and preferring the session means the answer matches what
-// GET /api/v1/session says about them.
 func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 	requestID := authz.RequestIDFrom(request.Context())
 
@@ -138,15 +134,6 @@ func (h Handlers) fromSession(
 
 	signedIn, err := h.Database.SessionByToken(ctx, session.Digest(token))
 	if err != nil {
-		// The refusal says WHICH, because story 5 asks that a session which has run out
-		// returns the operator to sign-in with an explanation. A session that EXPIRED and one
-		// an administrator REVOKED lead to different next actions — sign in again, or ask
-		// somebody why you cannot — and a bare 401 tells them neither.
-		//
-		// It is safe to say here: all three answers mean "you are not signed in", and none of
-		// them says anything about a session the caller does not already hold. An unknown
-		// cookie stays the bare rejection, so a guess at somebody else's session learns
-		// nothing from being told it is not expired.
 		switch {
 		case errors.Is(err, session.ErrExpired):
 			return authz.Principal{}, authz.Refusal{Because: authz.ReasonSessionExpired}

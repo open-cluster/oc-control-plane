@@ -49,11 +49,6 @@ const (
 	operatorIdleTimeout  = 60 * time.Second
 )
 
-// Options carries the process facts and boundary replacements supplied by the command or a
-// composed-process test. Production supplies Version and leaves the replacements empty.
-//
-// OnListen lets a test address an ephemeral port without racing the listener. Investigator
-// lets a test use a scripted model boundary instead of a paid provider.
 type Options struct {
 	Version      string
 	OnListen     func(net.Addr)
@@ -68,15 +63,11 @@ type Options struct {
 	GitHubAPIURL      string
 }
 
-// Run assembles and serves the control plane until ctx is cancelled, then drains within
-// the configured timeout. It returns nil on a clean shutdown.
-//
-// Options carries what a test may put in place of the real thing: the address callback, so an
-// ephemeral port can be addressed without racing the listener, and the model boundary,
-// so investigations run against a scripted reasoner instead of a paid provider.
-// Production supplies nothing here.
 func Run(
-	ctx context.Context, cfg config.Config, logOutput io.Writer, options Options,
+	ctx context.Context,
+	cfg config.Config,
+	logOutput io.Writer,
+	options Options,
 ) error {
 	version := strings.TrimSpace(options.Version)
 	if version == "" {
@@ -211,16 +202,6 @@ func Run(
 	// recorded rather than orphaned into a record that says running forever.
 	defer investigations.Drain()
 
-	// The claiming and recovery loops. They live as long as the process: the claimer is
-	// what makes a Conversation turn actually happen — a message opens an investigation
-	// with no lease and answers the person immediately — and the sweeper is what turns a
-	// worker that died into a stated failure rather than a spinner nobody ever stops
-	// watching. Both end with the run context, so shutdown stops looking for work before
-	// Drain waits for what it already holds.
-	//
-	// Only a deployment with a model provider runs them. Claiming work this process could
-	// not investigate would take a lease, fail for the one reason the operator surface
-	// already reports per request, and do it again for every turn.
 	if investigator != nil {
 		go investigations.Claim(ctx)
 		go investigations.Sweep(ctx)
