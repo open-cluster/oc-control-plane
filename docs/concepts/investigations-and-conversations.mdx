@@ -1,9 +1,13 @@
 ---
-title: "Investigations and Conversations"
-description: "Understand bounded Investigation turns and multi-turn Conversation continuity."
+title: "Investigations and results"
+description: "Understand bounded Investigation turns, cited results, proposed actions, and draft Postmortems."
 ---
 
-An Investigation is one immutable evidence-gathering turn. It moves through `queued` and `investigating`, then ends as `needs_input`, `concluded`, `partial`, `cancelled`, or `failed`.
+An Investigation is one immutable evidence-gathering turn. It moves through `queued` and
+`investigating`, then ends as `needs_input`, `concluded`, `partial`, `cancelled`, or
+`failed`.
+
+## Conversations and follow-ups
 
 A Conversation is the ordered context a person talks to. Each Message may open a new Investigation. Follow-ups reuse bounded prior Findings and citations without copying raw provider payloads or private model reasoning.
 
@@ -14,5 +18,43 @@ at 09:42 explain it?” becomes a new Message and a new bounded Investigation in
 Conversation, retaining prior cited Findings without changing the first result.
 
 An Investigation can remain inconclusive when access, telemetry, time, or spend bounds
-prevent a defensible answer. Review [Results, evidence and actions](/concepts/results-evidence-and-actions)
-before acting on its conclusion.
+prevent a defensible answer.
+
+## Findings and citations
+
+A Finding is a factual statement supported by one or more numbered Tool Runs. Its kind
+describes its causal role or identifies it as an observation. Confidence is categorical,
+not an invented percentage. A causal Finding must explain the mechanism that produced
+impact.
+
+Hypotheses remain `exploring`, `supported`, `ruled_out`, or `unresolved`. Supported is
+weaker than verified. Limitations name missing access, telemetry, contradictions,
+unresolved assumptions, or essential human input.
+
+Citations show what OpenCluster read, not that the source was complete or correct. Check
+source timestamps, bounded windows, contradictions, and truncation before accepting a
+Finding.
+
+## Action Proposals
+
+An Action Proposal can describe mitigation, rollback, verification, a permanent fix, or
+monitoring. It states rationale, risk, reversibility, approval needs, verification, and
+supporting Tool Runs. OpenCluster never executes it.
+
+For example, a rollback proposal may cite a Kubernetes Event and a GitHub deployment,
+require human approval, and explain how to verify latency and error rate afterward. The
+citations support the proposal; they do not approve the change.
+
+## Postmortems
+
+A Postmortem belongs to one resolved Incident. A person triggers generation; OpenCluster
+does not create one automatically. The draft distinguishes system evidence from
+Conversation testimony and remains `draft` until reviewed.
+
+Missing impact, resolution, owner, or deadline facts appear as `Needs human input.` rather
+than being invented. A correction creates a new revision, and review records the reviewer
+without turning testimony into system evidence. Postmortems remain nested under Incidents
+in OSS v0.1 and are not automatically published.
+
+Use [Run your first investigation](/getting-started/run-your-first-investigation) for the
+end-to-end procedure.

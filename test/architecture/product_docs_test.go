@@ -19,20 +19,20 @@ import (
 
 // docsRoot is the authoring source of truth for user-facing product documentation,
 // published through Mintlify into the org-level docs site. The convention is permanent:
-// docs/ holds MDX product pages and the site's docs.json, and nothing else — no working
-// notes, no plans, no generated reasoning. Working state stays out of the tree entirely;
+// docs/ holds MDX product pages, docs.json, and only the named publication inputs below —
+// no working notes, plans, or generated reasoning. Working state stays out of the tree;
 // version control is the archive.
 var docsRoot = filepath.Join(moduleRoot, "docs")
 
-// The site chrome, by name. Mintlify publishes docs/ directly from this repository, so the
-// logo and favicon ship beside the content — and they are a NAMED list rather than "any
-// .svg", which would exempt every stray diagram export and turn the gate off. A new chrome
-// file has to be added here, and adding one is a decision.
-var docsChrome = map[string]bool{
-	".mintignore":    true,
-	"favicon.svg":    true,
-	"logo/light.svg": true,
-	"logo/dark.svg":  true,
+// Named publication inputs that are not authored pages. Mintlify publishes docs/ directly
+// from this repository, so chrome and the generated OpenAPI bundle ship beside the content.
+// An explicit list prevents stray assets or generated files from bypassing review.
+var docsPublicationFiles = map[string]bool{
+	".mintignore":      true,
+	"api/openapi.yaml": true,
+	"favicon.svg":      true,
+	"logo/light.svg":   true,
+	"logo/dark.svg":    true,
 }
 
 func TestDocsPublicationControlsExist(t *testing.T) {
@@ -40,6 +40,7 @@ func TestDocsPublicationControlsExist(t *testing.T) {
 
 	for _, path := range []string{
 		filepath.Join(docsRoot, ".mintignore"),
+		filepath.Join(docsRoot, "api", "openapi.yaml"),
 		filepath.Join(moduleRoot, "scripts", "validate-docs.mjs"),
 	} {
 		content, err := os.ReadFile(path)
@@ -53,8 +54,28 @@ func TestDocsPublicationControlsExist(t *testing.T) {
 	}
 }
 
-var pagesOutsidePrimaryNavigation = map[string]bool{
-	"feature-availability": true,
+func TestPublishedOpenAPIBundleIsCheckedForDrift(t *testing.T) {
+	t.Parallel()
+
+	for path, markers := range map[string][]string{
+		"Makefile": {"scripts/openapi.sh docs/api/openapi.yaml", "git diff --exit-code -- docs/api/openapi.yaml"},
+		".github/workflows/docs.yml": {
+			"scripts/openapi.sh docs/api/openapi.yaml",
+			"git diff --exit-code -- docs/api/openapi.yaml",
+			"node scripts/validate-docs.mjs",
+		},
+	} {
+		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
+		if err != nil {
+			t.Errorf("reading OpenAPI documentation gate %s: %v", path, err)
+			continue
+		}
+		for _, marker := range markers {
+			if !strings.Contains(string(content), marker) {
+				t.Errorf("OpenAPI documentation gate %s must include %q", path, marker)
+			}
+		}
+	}
 }
 
 // TestProductDocumentationIsMintlifyMDX holds docs/ to the published site's own files. A
@@ -77,12 +98,12 @@ func TestProductDocumentationIsMintlifyMDX(t *testing.T) {
 		}
 		relative = filepath.ToSlash(relative)
 		switch {
-		case relative == "docs.json" || docsChrome[relative]:
+		case relative == "docs.json" || docsPublicationFiles[relative]:
 		case strings.HasSuffix(relative, ".mdx"):
 			pages++
 		default:
-			t.Errorf("docs/%s is not a product documentation page; docs/ holds MDX pages, "+
-				"docs.json and the named site chrome only, and working artifacts stay out "+
+			t.Errorf("docs/%s is not a product documentation page or named publication input; "+
+				"working artifacts stay out "+
 				"of the tree", relative)
 		}
 		return nil
@@ -136,7 +157,7 @@ func TestDocsNavigationCoversEveryPage(t *testing.T) {
 		}
 	}
 	for page := range existing {
-		if !referenced[page] && !pagesOutsidePrimaryNavigation[page] {
+		if !referenced[page] {
 			t.Errorf("docs/%s.mdx is not reachable from docs.json navigation; add it or "+
 				"delete the page", page)
 		}
@@ -256,13 +277,13 @@ func TestDocsNavigationMatchesTheApprovedPublicPlan(t *testing.T) {
 		group string
 		pages []string
 	}{
-		{"Get started", []string{"index", "getting-started/quickstart", "getting-started/set-up-opencluster", "getting-started/connect-your-tools", "getting-started/run-your-first-investigation"}},
-		{"Concepts", []string{"concepts/core-concepts", "concepts/alert-events-and-incidents", "concepts/investigations-and-conversations", "concepts/results-evidence-and-actions", "concepts/postmortems"}},
+		{"Get started", []string{"index", "feature-availability", "getting-started/quickstart", "getting-started/connect-your-tools", "getting-started/run-your-first-investigation"}},
+		{"Concepts", []string{"concepts/core-concepts", "concepts/investigations-and-conversations"}},
 		{"Integrations", []string{"integrations/overview", "integrations/alerting/generic_webhook", "integrations/alerting/alertmanager", "integrations/infrastructure/kubernetes", "integrations/source-control/github", "integrations/collaboration/slack"}},
-		{"Self-hosting", []string{"self-hosting/docker-compose", "self-hosting/helm", "self-hosting/configuration", "self-hosting/model-providers-and-byok", "self-hosting/upgrade", "self-hosting/backup-and-restore", "self-hosting/troubleshooting"}},
-		{"Security", []string{"security/overview", "security/data-handling", "security/authentication-and-authorization", "security/secrets-and-relay", "security/ai-provider-data-flow"}},
-		{"API reference", []string{"api-reference/overview", "api-reference/authentication-and-organization-context", "api-reference/errors-and-pagination", "api-reference/webhooks", "api-reference/investigation-events", "api-reference/generated-endpoints"}},
-		{"Developers", []string{"developers/architecture", "developers/local-development", "developers/contributing", "developers/repositories"}},
+		{"Self-hosting", []string{"self-hosting/docker-compose", "self-hosting/helm", "self-hosting/configuration", "self-hosting/troubleshooting"}},
+		{"Security", []string{"security/overview"}},
+		{"API reference", []string{"api-reference/overview", "api-reference/surface", "openapi"}},
+		{"Developers", []string{"developers/architecture", "developers/contributing"}},
 	}
 	navigation, ok := site["navigation"].(map[string]any)
 	if !ok {
@@ -284,11 +305,10 @@ func TestDocsNavigationMatchesTheApprovedPublicPlan(t *testing.T) {
 			continue
 		}
 		for pageIndex, page := range expected.pages {
-			if expected.group == "API reference" && page == "api-reference/generated-endpoints" {
+			if expected.group == "API reference" && page == "openapi" {
 				generated, object := pages[pageIndex].(map[string]any)
-				if !object || generated["group"] != "Generated endpoints" ||
-					generated["root"] != page || generated["openapi"] == "" {
-					t.Errorf("API reference generated endpoint entry = %v, want an OpenAPI-backed group rooted at %q", pages[pageIndex], page)
+				if !object || generated["group"] != "Endpoints" || generated["openapi"] != "api/openapi.yaml" {
+					t.Errorf("API reference generated endpoint entry = %v, want an OpenAPI-backed Endpoints group using api/openapi.yaml", pages[pageIndex])
 				}
 				continue
 			}

@@ -31,6 +31,8 @@ openapi:
 	sh scripts/openapi.sh
 
 docs:
+	sh scripts/openapi.sh docs/api/openapi.yaml
+	git diff --exit-code -- docs/api/openapi.yaml
 	node scripts/validate-docs.mjs
 
 build:

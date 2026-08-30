@@ -101,6 +101,7 @@ paths:
     get:
       <<: *authenticated-read
       operationId: getCapabilityMetadata
+      summary: Get capability metadata
       tags: [Metadata]
       responses:
         "200":
@@ -113,6 +114,7 @@ paths:
     post:
       <<: *public-write
       operationId: bootstrapLocalAdmin
+      summary: Bootstrap local admin
       tags: [Authentication]
       security:
         - BootstrapToken: []
@@ -131,6 +133,7 @@ paths:
     post:
       <<: *public-write
       operationId: signInLocal
+      summary: Sign in with local authentication
       tags: [Authentication]
       requestBody:
         content:
@@ -146,6 +149,7 @@ paths:
     get:
       <<: *public-read
       operationId: startOIDCSignIn
+      summary: Start OIDC sign in
       tags: [Authentication]
       parameters:
         - name: organization
@@ -160,6 +164,7 @@ paths:
     get:
       <<: *public-read
       operationId: completeOIDCSignIn
+      summary: Complete OIDC sign in
       tags: [Authentication]
       parameters:
         - { $ref: "#/components/parameters/OAuthCode" }
@@ -172,6 +177,7 @@ paths:
     get:
       <<: *optional-organization-read
       operationId: getSession
+      summary: Get session
       tags: [Sessions]
       responses:
         "200": { $ref: "#/components/responses/Session" }
@@ -180,6 +186,7 @@ paths:
     delete:
       <<: *authenticated-write
       operationId: signOut
+      summary: Sign out
       tags: [Sessions]
       responses:
         "200": { $ref: "#/components/responses/SignOut" }
@@ -188,6 +195,7 @@ paths:
     get:
       <<: *authenticated-read
       operationId: listOrganizations
+      summary: List organizations
       tags: [Organizations]
       responses:
         "200":
@@ -199,6 +207,7 @@ paths:
     post:
       <<: *authenticated-write
       operationId: createOrganization
+      summary: Create organization
       tags: [Organizations]
       requestBody:
         content:
@@ -219,6 +228,7 @@ paths:
     get:
       <<: *organization-read
       operationId: listEffectivePermissions
+      summary: List effective permissions
       tags: [Organizations]
       responses:
         "200": { $ref: "#/components/responses/PermissionList" }
@@ -227,6 +237,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listMembers
+      summary: List members
       tags: [Members]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -239,6 +250,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: createLocalUser
+      summary: Create local user
       tags: [Members]
       requestBody:
         content:
@@ -254,6 +266,7 @@ paths:
     patch:
       <<: *privileged-write
       operationId: updateMember
+      summary: Update member
       tags: [Members]
       requestBody:
         content:
@@ -266,6 +279,7 @@ paths:
     delete:
       <<: *privileged-write
       operationId: removeMember
+      summary: Remove member
       tags: [Members]
       responses:
         "204": { description: Membership removed and its sessions revoked. }
@@ -278,6 +292,7 @@ paths:
     put:
       <<: *privileged-write
       operationId: replaceMemberPassword
+      summary: Replace member password
       tags: [Members]
       requestBody:
         content:
@@ -291,6 +306,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listSessions
+      summary: List sessions
       tags: [Sessions]
       responses:
         "200": { $ref: "#/components/responses/SessionList" }
@@ -301,6 +317,7 @@ paths:
     delete:
       <<: *privileged-write
       operationId: revokeSession
+      summary: Revoke session
       tags: [Sessions]
       responses:
         "204": { description: The named session was revoked. }
@@ -311,6 +328,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getOrganizationPolicy
+      summary: Get organization policy
       tags: [Policy]
       responses:
         "200": { $ref: "#/components/responses/Policy" }
@@ -318,6 +336,7 @@ paths:
     put:
       <<: *privileged-write
       operationId: replaceOrganizationPolicy
+      summary: Replace organization policy
       tags: [Policy]
       requestBody:
         content:
@@ -331,6 +350,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listAuditEvents
+      summary: List audit events
       tags: [Audit]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -343,6 +363,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listIntegrationTypes
+      summary: List integration types
       tags: [Integration Types]
       responses:
         "200": { $ref: "#/components/responses/IntegrationTypeList" }
@@ -353,6 +374,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: startIntegrationConnect
+      summary: Start provider authorization
       tags: [Integration Types]
       responses:
         "200": { $ref: "#/components/responses/ConnectStarted" }
@@ -361,6 +383,7 @@ paths:
     get:
       <<: *authenticated-read
       operationId: completeIntegrationConnect
+      summary: Complete provider authorization
       tags: [Integrations]
       parameters:
         - { $ref: "#/components/parameters/OAuthCode" }
@@ -374,6 +397,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listIntegrations
+      summary: List integrations
       tags: [Integrations]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -385,6 +409,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: createIntegration
+      summary: Create integration
       tags: [Integrations]
       requestBody:
         content:
@@ -403,6 +428,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getIntegration
+      summary: Get integration
       tags: [Integrations]
       responses:
         "200": { $ref: "#/components/responses/Integration" }
@@ -410,6 +436,7 @@ paths:
     patch:
       <<: *privileged-write
       operationId: updateIntegration
+      summary: Update integration
       tags: [Integrations]
       requestBody:
         content:
@@ -422,6 +449,7 @@ paths:
     delete:
       <<: *privileged-write
       operationId: deleteIntegration
+      summary: Delete integration
       tags: [Integrations]
       responses:
         "204": { description: Integration deleted. }
@@ -433,6 +461,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: enableIntegration
+      summary: Enable integration
       tags: [Integrations]
       x-opencluster-idempotency: intrinsic
       responses:
@@ -443,6 +472,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: disableIntegration
+      summary: Disable integration
       tags: [Integrations]
       x-opencluster-idempotency: intrinsic
       responses:
@@ -453,6 +483,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: verifyIntegration
+      summary: Verify integration
       tags: [Integrations]
       responses:
         "200": { $ref: "#/components/responses/Integration" }
@@ -462,6 +493,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: rotateIntegrationWebhookSecret
+      summary: Rotate integration webhook secret
       tags: [Integrations]
       responses:
         "200": { $ref: "#/components/responses/SecretRotated" }
@@ -472,6 +504,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listRelays
+      summary: List relays
       tags: [Relays]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -484,6 +517,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getRelayFleetSummary
+      summary: Get relay fleet summary
       tags: [Relays]
       responses:
         "200": { $ref: "#/components/responses/RelayFleetSummary" }
@@ -492,6 +526,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: issueRelayBootstrapToken
+      summary: Issue relay bootstrap token
       tags: [Relays]
       responses:
         "201": { $ref: "#/components/responses/RelayBootstrapToken" }
@@ -503,6 +538,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listRelayIntegrations
+      summary: List relay integrations
       tags: [Relays]
       responses:
         "200": { $ref: "#/components/responses/RelayIntegrationList" }
@@ -512,6 +548,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listRelayFailures
+      summary: List relay failures
       tags: [Relays]
       responses:
         "200": { $ref: "#/components/responses/RelayFailureList" }
@@ -521,6 +558,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listRelaySessionConflicts
+      summary: List relay session conflicts
       tags: [Relays]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -534,6 +572,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: clearRelaySessionConflict
+      summary: Clear relay session conflict
       tags: [Relays]
       responses:
         "204": { $ref: "#/components/responses/NoContent" }
@@ -542,6 +581,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listIncidents
+      summary: List incidents
       tags: [Incidents]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -556,6 +596,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getIncident
+      summary: Get incident
       tags: [Incidents]
       responses:
         "200": { $ref: "#/components/responses/Incident" }
@@ -565,6 +606,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listIncidentAlertEvents
+      summary: List incident alert events
       tags: [Incidents]
       responses:
         "200": { $ref: "#/components/responses/AlertEventList" }
@@ -574,6 +616,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: mergeIncident
+      summary: Merge incident
       tags: [Incidents]
       requestBody:
         content:
@@ -587,6 +630,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listInvestigations
+      summary: List investigations
       tags: [Investigations]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -598,6 +642,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: openInvestigation
+      summary: Open investigation
       tags: [Investigations]
       requestBody:
         content:
@@ -618,6 +663,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getInvestigation
+      summary: Get investigation
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/InvestigationDetail" }
@@ -627,6 +673,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getInvestigationReport
+      summary: Get investigation report
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/Investigation" }
@@ -636,6 +683,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listInvestigationActivity
+      summary: List investigation activity
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/InvestigationActivity" }
@@ -645,6 +693,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listInvestigationSources
+      summary: List investigation sources
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/InvestigationSources" }
@@ -654,6 +703,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listInvestigationHypotheses
+      summary: List investigation hypotheses
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/InvestigationHypotheses" }
@@ -663,6 +713,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: cancelInvestigation
+      summary: Cancel investigation
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/Investigation" }
@@ -675,6 +726,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: streamInvestigationEvents
+      summary: Stream investigation events
       tags: [Investigations]
       responses:
         "200":
@@ -693,6 +745,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listConversations
+      summary: List conversations
       tags: [Conversations]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -704,6 +757,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: openConversation
+      summary: Open conversation
       tags: [Conversations]
       requestBody:
         content:
@@ -719,6 +773,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getConversation
+      summary: Get conversation
       tags: [Conversations]
       responses:
         "200": { $ref: "#/components/responses/ConversationDetail" }
@@ -728,6 +783,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: appendConversationMessage
+      summary: Append conversation message
       tags: [Conversations]
       requestBody:
         content:
@@ -746,6 +802,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getPostmortem
+      summary: Get postmortem
       tags: [Postmortems]
       responses:
         "200": { $ref: "#/components/responses/Postmortem" }
@@ -753,6 +810,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: generatePostmortem
+      summary: Generate postmortem
       tags: [Postmortems]
       requestBody:
         content:
@@ -765,6 +823,7 @@ paths:
     patch:
       <<: *privileged-write
       operationId: updatePostmortem
+      summary: Update postmortem
       tags: [Postmortems]
       requestBody:
         content:
@@ -779,6 +838,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: regeneratePostmortem
+      summary: Regenerate postmortem
       tags: [Postmortems]
       requestBody:
         content:
@@ -793,6 +853,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: reviewPostmortem
+      summary: Review postmortem
       tags: [Postmortems]
       responses:
         "200": { $ref: "#/components/responses/Postmortem" }
@@ -802,6 +863,7 @@ paths:
       - { $ref: "#/components/parameters/IntegrationID" }
     post:
       operationId: receiveAlertEvents
+      summary: Receive alert events
       tags: [Webhook Intake]
       security:
         - WebhookToken: []
@@ -828,6 +890,7 @@ paths:
   /webhooks/v1/slack/events:
     post:
       operationId: receiveSlackEvent
+      summary: Receive slack event
       tags: [Webhook Intake]
       security:
         - SlackSignature: []
@@ -852,6 +915,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: listWebhookDeliveries
+      summary: List webhook deliveries
       tags: [Webhook Deliveries]
       parameters:
         - { $ref: "#/components/parameters/Organization" }
@@ -867,6 +931,7 @@ paths:
     get:
       <<: *privileged-read
       operationId: getWebhookDelivery
+      summary: Get webhook delivery
       tags: [Webhook Deliveries]
       responses:
         "200": { $ref: "#/components/responses/WebhookDelivery" }
@@ -876,6 +941,7 @@ paths:
     post:
       <<: *privileged-write
       operationId: replayWebhookDelivery
+      summary: Replay webhook delivery
       tags: [Webhook Deliveries]
       responses:
         "204": { $ref: "#/components/responses/NoContent" }

@@ -83,14 +83,14 @@ func TestReleaseHandoffIncludesChangelogMigrationAndEndpointExamples(t *testing.
 
 	for path, markers := range map[string][]string{
 		"CHANGELOG.md": {"## 0.1.0", "OpenAPI", "Relay", "Generic Webhook"},
-		"docs/self-hosting/upgrade.mdx": {
-			"release notes", "PostgreSQL", "OpenAPI", "rollback",
+		"docs/feature-availability.mdx": {
+			"Qualified in-place upgrade path", "Not yet published",
 		},
-		"docs/api-reference/overview.mdx": {
-			"GET /api/v1/integration-types", "documentationSlug", "capabilities",
-			"GET /api/v1/webhook-deliveries", "POST /api/v1/webhook-deliveries/",
+		"docs/api-reference/surface.mdx": {
+			"GET /api/v1/integration-types", "GET /api/v1/webhook-deliveries",
+			"POST /api/v1/webhook-deliveries/{delivery}/replay",
 		},
-		"docs/docs.json": {"self-hosting/upgrade"},
+		"docs/docs.json": {`"openapi": "api/openapi.yaml"`},
 	} {
 		content, err := os.ReadFile(filepath.Join(moduleRoot, filepath.FromSlash(path)))
 		if err != nil {
@@ -280,7 +280,7 @@ func TestSecurityDocumentationDisclosesLiveReadsScopedRepliesAndCancellation(t *
 	t.Parallel()
 
 	for path, markers := range map[string][]string{
-		"docs/security/data-handling.mdx":                       {"container logs", "thread replies", "model provider"},
+		"docs/security/overview.mdx":                            {"container logs", "thread replies", "model provider"},
 		"docs/integrations/collaboration/slack.mdx":             {"chat:write", "app_mentions:read", "groups:history"},
 		"docs/getting-started/run-your-first-investigation.mdx": {"cancelled", "Cancel"},
 	} {

@@ -3,8 +3,11 @@ title: "Helm"
 description: "Deploy the control plane on Kubernetes with existing Secrets, probes, and optional Relay TLS."
 ---
 
-The chart at `deploy/helm/opencluster` deploys the control plane. Provide PostgreSQL
-separately and route a frontend or ingress to the HTTP Service on the same public origin.
+<Warning>
+  The chart at `deploy/helm/opencluster` is not a complete OpenCluster installation. It
+  deploys the control plane only. You must supply PostgreSQL, a frontend, same-origin
+  routing, ingress, and TLS termination.
+</Warning>
 
 ## Prerequisites
 
@@ -14,7 +17,9 @@ the selected model provider, and two Secrets:
 - `opencluster-database` with key `postgres-dsn`;
 - `opencluster-credentials` with keys `operator-token`, `sealing-key`, and `model-key`.
 
-The bootstrap token must be at least 32 characters and the sealing key exactly 32 bytes.
+The shipped chart names these Secret keys `operator-token` and `sealing-key`; they supply
+the administrator bootstrap token and 32-byte credential-encryption key respectively.
+The bootstrap token must be at least 32 characters and the encryption key exactly 32 bytes.
 Do not put their values in Helm values or command history.
 
 ## Install
@@ -45,8 +50,19 @@ helm upgrade --install opencluster ./deploy/helm/opencluster \
 kubectl --namespace opencluster rollout status deployment/opencluster-opencluster
 ```
 
-The rollout succeeds only after the Pod is ready. Verify `/healthz` and `/readyz`
-through your same-origin ingress, then create the first User and Organization.
+## Verify
+
+The rollout proves only that the control-plane component is ready. The installation is
+usable only after the external frontend and ingress route `/api/v1`, `/webhooks/v1`,
+`/healthz`, and `/readyz` to the HTTP Service on the configured public origin. Verify both
+probes through that route:
+
+```bash
+curl --fail https://YOUR-OPENCLUSTER/healthz
+curl --fail https://YOUR-OPENCLUSTER/readyz
+```
+
+Both commands must succeed before the deployment accepts user traffic.
 
 ## Optional Relay listener
 
@@ -58,7 +74,19 @@ connection and pin the control-plane public key.
 ## Resources and upgrades
 
 The chart intentionally ships no generic CPU or memory requests. Set requests and limits
-from measured Investigation concurrency and provider workloads before production. Back
-up PostgreSQL and retain the sealing key before changing versions. Read the target release
-notes for supported control-plane, frontend, and Relay combinations, then follow
-[Upgrade](/self-hosting/upgrade).
+from measured Investigation concurrency and provider workloads before production. OSS
+v0.1 does not publish a qualified in-place upgrade path. Do not infer compatibility from
+image or chart tags; see [Feature availability](/feature-availability).
+
+## Common failure and recovery
+
+If the rollout stalls, inspect
+`kubectl --namespace opencluster describe deployment/opencluster-opencluster` and the
+control-plane Pod logs. Correct missing Secret keys, database reachability, or model
+provider configuration, then rerun the Helm command. A ready Pod does not compensate for
+missing frontend, ingress, or same-origin routing.
+
+## Next step
+
+After the external frontend, ingress, and TLS routing are verified, create the first User
+and Organization and continue with the [Quickstart](/getting-started/quickstart).

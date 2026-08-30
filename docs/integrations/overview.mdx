@@ -1,83 +1,29 @@
 ---
 title: "Integrations"
-description: "Choose systems by the role they play in an OpenCluster investigation."
+description: "Choose the alert and evidence sources needed for an OpenCluster Investigation."
 ---
 
-Integrations either create incident context or make relevant data available during an
-investigation. OpenCluster chooses useful sources as the investigation develops; a
-connected system is not queried on every incident.
+Use at least one alert source to create Incidents and add only the evidence sources your
+on-call team is permitted to read. A connected source is queried only when it is relevant
+to the Investigation and its verified access allows the Tool.
 
-| Role | Integration | What it provides |
-| --- | --- | --- |
-| Alerting | [Prometheus Alertmanager](/integrations/alerting/alertmanager) | Firing and resolved alerts that create and update incidents |
-| Infrastructure | [Kubernetes](/integrations/infrastructure/kubernetes) | Live workload runtime, namespace events, and bounded container logs through an outbound Relay |
-| Collaboration | [Slack](/integrations/collaboration/slack) | Bounded conversation reads and originating-thread replies to direct app mentions |
-| Source control | [GitHub](/integrations/source-control/github) | Read-only repository, change, pull request, CI, file, and release data |
+| What you need | Choose | Evidence or intake | Relay required | Setup guide |
+| --- | --- | --- | --- | --- |
+| Send normalized alerts from another system | Generic Webhook | Canonical firing and resolved Alert Events | No | [Generic Webhook](/integrations/alerting/generic_webhook) |
+| Receive Prometheus alert lifecycles | Prometheus Alertmanager | Grouped firing and resolved alerts | No | [Prometheus Alertmanager](/integrations/alerting/alertmanager) |
+| Inspect cluster runtime state | Kubernetes | Workload state, Events, and bounded pod logs | Yes | [Kubernetes](/integrations/infrastructure/kubernetes) |
+| Compare an Incident with code changes | GitHub | Repositories, commits, pull requests, checks, files, and releases | No | [GitHub](/integrations/source-control/github) |
+| Read operational conversation context | Slack | Bounded channel and thread messages | No | [Slack](/integrations/collaboration/slack) |
 
-Connecting an integration requires **Admin**. Verification records what the granted
-access supports. Investigations only receive Tools whose required grants were verified.
+Creating, changing, verifying, disabling, or removing an Integration requires the Role
+stated by its generated API operation; the console requires an **Admin** for setup. Each
+provider guide gives the least-privilege permissions, exact procedure, verification,
+limitations, rotation, and removal behavior.
 
-Each connected integration reports its Tools one by one, saying for each whether it
-is available and, when it is not, why — a permission the credential never carried, or a
-verification that has not run yet. That answer comes from the same rule that decides what
-an investigation may call, so what you are shown and what the agent can do cannot disagree.
-Inbound webhook behavior, such as Alertmanager deliveries, is reported through Integration
-health rather than represented as a Tool.
+Verification records what the current credential and provider installation make
+available. It does not prove that a future Investigation will contain enough evidence to
+establish a cause. Provider content remains untrusted, and read-only access still requires
+the deployment owner to review retention, network, and credential policy.
 
-The product API exposes these decisions in `toolAvailability`, with each entry naming the
-`tool`, its `available` state, and any refusal `reason`. Inbound event support appears
-separately under `inbound`; neither field grants investigation access.
-
-## What a verification records
-
-Verifying an integration establishes two different kinds of thing, and the catalog keeps them
-apart on purpose.
-
-| | |
-| --- | --- |
-| **Grants** | What the credential is permitted to do. Every decision about which Tools an investigation is offered reads these, and nothing else. |
-| **Facts** | What the verification learned about the installation — which Slack workspace answered and as which bot, which GitHub account is connected and how far its repository grant reaches. |
-
-Facts are for display. They are non-secret by construction, no authorization decision reads
-one, and a credential never becomes one. They exist so a console can name the workspace or
-account an integration is connected to as an attribute you can read at a glance, rather than
-leaving you to find it in a status sentence — which matters the moment you have the same
-integration connected twice.
-
-A verification that could not reach the provider records no facts. A refused token, a rate
-limit and an unreachable vendor establish nothing about an installation, so what the last
-successful verification learned is what stays on the record.
-
-## Where the documentation is
-
-Each type in the catalog names two documentation pages, because they answer different
-questions:
-
-| | |
-| --- | --- |
-| `documentationUrl` | The vendor's own reference — Slack's token types, Prometheus's `webhook_config`, Kubernetes RBAC. |
-| `productDocumentationUrl` | This page's neighbours: how to set the integration up **for OpenCluster**, including the exact configuration to paste and any version floor. |
-
-## How an integration is connected
-
-There are two ways, and which one you get is decided by the deployment, not by the vendor:
-
-| | |
-| --- | --- |
-| **One-click** | You press Connect, approve on the vendor's own site, and come back connected. No credential is ever pasted into OpenCluster. |
-| **Configuration form** | You provide the fields required by that integration. Credentials are verified live before being encrypted; non-secret identifiers are stored as ordinary configuration. |
-
-The integration catalog says which one applies, per type, for **this** deployment: each type
-carries `supportsConnect`, and the types that do not carry a configuration schema describing
-the fields to collect instead.
-
-It is genuinely per-deployment. GitHub offers one-click only where the deployment has been
-given an App to install with; the same GitHub on a self-hosted deployment without one asks
-for the numeric GitHub App installation ID, which is not a credential. So a console must
-read `supportsConnect` and must not assume a vendor
-always has one or the other — that assumption is wrong in both directions today. Anything
-built on it also breaks silently the day a vendor gains a connect flow, rather than simply
-gaining the button.
-
-See [Secrets and Relay](/security/secrets-and-relay) before granting
-access.
+Start with [Connect your tools](/getting-started/connect-your-tools), then run an
+[Investigation](/getting-started/run-your-first-investigation).

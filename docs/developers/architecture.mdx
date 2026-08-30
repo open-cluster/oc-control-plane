@@ -3,7 +3,10 @@ title: "Architecture"
 description: "See the public shape and repository ownership of OpenCluster."
 ---
 
-The control plane owns durable Organizations, Integrations, Alert Events, Incidents, Conversations, Investigations, Findings, audit records, and Postmortems. It serves one product HTTP listener, one webhook listener, and one Relay gRPC listener.
+The control plane owns durable Organizations, Integrations, Alert Events, Incidents,
+Conversations, Investigations, Findings, audit records, and Postmortems. One HTTP server
+handles `/api/v1`, `/webhooks/v1`, health, readiness, and metrics. A separate gRPC
+listener accepts outbound Relay sessions when Relay support is enabled.
 
 The Relay performs closed Kubernetes reads from the customer boundary. Provider adapters remain behind Integration interfaces. PostgreSQL is the deployment truth, and `api/openapi.yaml` is the only editable public HTTP contract.
 
@@ -11,9 +14,13 @@ See the repository `ARCHITECTURE.md` for implementation details.
 
 Product requests authenticate a User, select one Organization, and cross one declared
 route table into a domain handler. Only the PostgreSQL adapter touches deployment data,
-and every Organization-owned query predicates on its identifier. Webhook intake is a
-separate authenticated surface; operational probes remain outside the product contract.
+and every Organization-owned query predicates on its identifier. Webhook intake
+has separate authentication and contracts even though it shares the HTTP server;
+operational probes remain outside the product OpenAPI contract.
 
 The control plane offers closed, read-only Tool capabilities. Provider adapters or Relay
 execute them, and the Investigation engine records bounded Tool Runs and cited results.
-See [Repositories](/developers/repositories) before changing a cross-repository protocol.
+The public control-plane repository owns this documentation and HTTP contract. The
+Apache-licensed Relay protocol is consumed from the pinned
+`github.com/open-cluster/oc-relay/gen/go` module. Review the repository
+`ARCHITECTURE.md` before changing a cross-repository protocol.

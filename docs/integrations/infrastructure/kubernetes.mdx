@@ -54,6 +54,13 @@ failure states; they are never rewritten as evidence that nothing exists.
   </Step>
 </Steps>
 
+## Verify
+
+An `active` result confirms that the selected Relay is connected and all three bounded
+read capabilities are available. A `degraded` result names the unavailable capability.
+Run one read during an Investigation and confirm its Integration, namespace, source read
+time, effective bounds, and truncation status.
+
 ## During investigations
 
 Each enabled, currently verified Kubernetes Integration is offered as its own Source. Two
@@ -64,6 +71,13 @@ and source references.
 If an investigation stops waiting, OpenCluster cancels a read that has not started and asks
 the Relay to stop a read already in progress. The recorded outcome remains available for
 troubleshooting.
+
+## Limitations
+
+The Integration can read only the closed capabilities supported by both the control plane
+and the connected Relay. Kubernetes retention, RBAC, namespace boundaries, and the Relay's
+local ceilings can make a result incomplete. OpenCluster does not read Secret data or
+perform write operations.
 
 ## Troubleshooting
 
@@ -77,17 +91,20 @@ troubleshooting.
   allowed; the list cannot grant service-account access.
 - **A read is truncated:** narrow the namespace, workload, container, or Investigation window.
 
-## Disconnect
+## Rotate or disconnect
 
-Disable the Integration to stop synchronization and new reads while retaining existing
-records. Deletion is refused when retained records depend on it.
+Rotate cluster credentials inside the Relay deployment, reconnect it, and verify the
+Integration before relying on new reads. Disable the Integration to stop synchronization
+and new reads while retaining existing records. Deletion is refused when retained records
+depend on it.
 
-## Availability and project links
+## Next step
+
+Connect an [alert source](/integrations/overview), then
+[run the first Investigation](/getting-started/run-your-first-investigation) with Kubernetes available as evidence.
+
+## Availability
 
 Kubernetes through Relay is available in OSS v0.1. Kubernetes and its mark belong to the
-Cloud Native Computing Foundation. Review the [RBAC contract](https://kubernetes.io/docs/reference/access-authn-authz/rbac/),
-[adapter source](https://github.com/open-cluster/oc-control-plane/tree/main/internal/integrations/kubernetes),
-[releases](https://github.com/open-cluster/oc-control-plane/releases), and
-[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
-[Edit this page](https://github.com/open-cluster/oc-control-plane/edit/main/docs/integrations/infrastructure/kubernetes.mdx)
-or [report a documentation issue](https://github.com/open-cluster/oc-control-plane/issues/new).
+Cloud Native Computing Foundation. Review the
+[Kubernetes RBAC contract](https://kubernetes.io/docs/reference/access-authn-authz/rbac/).

@@ -3,25 +3,64 @@ title: "Run your first investigation"
 description: "Start an Investigation from an Incident or an operational question and review its cited result."
 ---
 
-Open an Incident and select **Investigate**, or ask a question from a new Conversation. An Investigation is one bounded evidence-gathering turn.
+An Investigation is one bounded evidence-gathering turn. This procedure starts one from
+an Incident and checks whether its result is safe to use.
 
-Watch semantic progress while OpenCluster reads connected sources. A finished result contains a summary, impact assessment, Findings, hypotheses, Action Proposals, limitations, and numbered Tool Run citations.
+## Prerequisites
+
+- Complete the [Quickstart](/getting-started/quickstart) or use an existing Incident.
+- Connect and verify the evidence sources relevant to the alert.
+- Confirm the model provider is configured and `/readyz` succeeds.
+
+## Start the Investigation
+
+1. Open the Incident created by an alert.
+2. Select **Investigate**.
+3. Ask a focused question, such as “Did a deployment precede the checkout latency alert?”
+4. Watch progress move from `queued` to `investigating` while OpenCluster reads the
+   connected sources.
+
+You can also ask an operational question from a new Conversation. Each follow-up Message
+creates another immutable Investigation in that Conversation; completed work never
+resumes.
+
+## Understand the result
+
+A finished result separates the summary, impact, Findings, hypotheses, Action Proposals,
+limitations, and numbered Tool Run citations.
+
+- A Finding is trustworthy only to the extent supported by its cited Tool Runs.
+- A supported hypothesis is not a verified cause. Check its mechanism and competing
+  explanations.
+- An Action Proposal is advice, not an executed change. Review its risk, reversibility,
+  approval requirement, citations, and verification procedure.
+- A limitation names evidence OpenCluster could not obtain or a conclusion it could not
+  defend.
+
+For a deployment question, a useful result may cite one GitHub change read and one
+Kubernetes Event read, leave an alternative hypothesis `unresolved`, and propose a
+human-approved rollback with a latency verification check. If either source is
+unavailable, the result must state that limitation instead of claiming a cause.
+
+## Verify the outcome
+
+Open each citation and confirm that its source, time window, and summary support the
+Finding. Review contradictions and truncated Tool Runs. A completed Investigation ends
+as `concluded`, `partial`, `needs_input`, `cancelled`, or `failed`:
+
+| Status | What to do |
+| --- | --- |
+| `concluded` | Review every cited Finding and Action Proposal. |
+| `partial` | Use the valid bounded result, then address the stated budget, access, or evidence limit in a follow-up. |
+| `needs_input` | Supply the requested human information in a new Message. |
+| `cancelled` | Start a new Investigation only if the question is still useful. |
+| `failed` | Correct the reported provider or processing failure before retrying. |
 
 Select **Cancel investigation** when the question is no longer useful. Cancellation is
-best effort: in-flight reads are allowed to stop, the terminal status becomes
-`cancelled`, and no later activity is accepted for that Investigation.
+best effort: in-flight reads may stop, the terminal status becomes `cancelled`, and no
+later activity is accepted for that Investigation.
 
-Verify each material Finding against its cited Tool Run. Treat `partial`, `needs_input`, and inconclusive results as explicit limits, not failures to hide. A follow-up Message creates a new Investigation in the same Conversation; completed work never resumes.
+If an expected source is missing, return to its Integration, run verification, and check
+its permissions. Do not reinterpret an inconclusive result as a cause.
 
-For example, ask whether a deployment preceded a latency alert. A useful result may cite
-one GitHub deployment read and one Kubernetes event read, keep an alternative hypothesis
-`unresolved`, and propose a human-approved rollback with a verification check. If GitHub
-or Kubernetes is unavailable, the result should state that limitation instead of claiming
-a cause.
-
-`failed` means no valid conclusion was recorded. `partial` means a valid bounded result
-was forced by a spend, Tool Run, reasoning-turn, wall-clock, stagnation, or context limit.
-`needs_input` asks for essential human information. Resolve missing access or answer the
-question with a new Message; never edit the completed Investigation.
-
-Next, read [Results, evidence and actions](/concepts/results-evidence-and-actions).
+Next, read [Investigations and results](/concepts/investigations-and-conversations).

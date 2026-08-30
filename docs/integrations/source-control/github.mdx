@@ -69,7 +69,7 @@ before storing it.
 
 Create the App in GitHub with the permissions above. It needs no webhook. Generate a
 private key, then set the deployment's App ID and private-key file as described in the
-[configuration reference](/self-hosting/configuration#integrations). For GitHub Enterprise
+[configuration reference](/self-hosting/configuration#optional-yaml). For GitHub Enterprise
 Server, also set the API and web URLs.
 
 To offer **Connect GitHub**, enable **Request user authorization (OAuth) during
@@ -140,18 +140,25 @@ incident; all repositories and data types are not read automatically.
 - **No repositories:** select at least one repository in the installation settings.
 - **Rate limited:** wait for GitHub's limit to reset, then verify or investigate again.
 
-## Disconnect
+## Rotate or disconnect
+
+For a self-hosted GitHub App, generate a replacement private key, replace the mounted
+private-key file, restart the control plane, and verify the Integration before revoking
+the old key. Replace the OAuth client-secret file and restart before using **Connect
+GitHub** again. Existing Integration reads use installation tokens created from the App
+private key; the OAuth client secret is used only by the connection flow.
 
 Disable the integration to remove GitHub from new investigations while retaining the
 record. Deletion is refused when investigation records depend on it. Uninstalling the App
 in GitHub removes OpenCluster's access immediately and independently; the integration then
 reports that it is no longer installed.
 
-## Availability and project links
+## Next step
+
+Connect an [alert source](/integrations/overview), then
+[run the first Investigation](/getting-started/run-your-first-investigation) with GitHub available as evidence.
+
+## Availability
 
 GitHub is available in OSS v0.1 when the deployment has a GitHub App. GitHub and its mark
-belong to GitHub, Inc. Review the [adapter source](https://github.com/open-cluster/oc-control-plane/tree/main/internal/integrations/github),
-[releases](https://github.com/open-cluster/oc-control-plane/releases), and
-[changelog](https://github.com/open-cluster/oc-control-plane/blob/main/CHANGELOG.md).
-[Edit this page](https://github.com/open-cluster/oc-control-plane/edit/main/docs/integrations/source-control/github.mdx)
-or [report a documentation issue](https://github.com/open-cluster/oc-control-plane/issues/new).
+belong to GitHub, Inc.

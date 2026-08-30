@@ -3,24 +3,45 @@ title: "Connect your tools"
 description: "Add read-only integrations and verify what evidence OpenCluster can retrieve."
 ---
 
-An Integration is one configured installation in an Organization. Each Integration exposes bounded read-only Tools; OpenCluster never receives permission to change customer systems.
+An Integration is one configured installation in an Organization. Choose at least one
+alert source to create Incidents and one evidence source that can help explain them.
+OpenCluster requests read-only access and never changes a connected system.
 
-1. Open **Integrations** and choose a shipped Integration Type.
-2. Enter its non-secret configuration and required credential.
-3. Select **Verify** and review the reported capabilities and limitations.
-4. For Kubernetes, deploy the Relay inside the customer boundary and verify its outbound session.
+| What you need | Integration | Evidence or intake | Relay required | Setup guide |
+| --- | --- | --- | --- | --- |
+| Send canonical alerts from any system | Generic Webhook | Firing and resolved Alert Events | No | [Generic Webhook](/integrations/alerting/generic_webhook) |
+| Receive Prometheus alert lifecycles | Prometheus Alertmanager | Grouped firing and resolved alerts | No | [Prometheus Alertmanager](/integrations/alerting/alertmanager) |
+| Inspect cluster runtime state | Kubernetes | Workloads, Events, and bounded pod logs | Yes | [Kubernetes](/integrations/infrastructure/kubernetes) |
+| Compare incidents with code changes | GitHub | Repositories, commits, pull requests, checks, files, and releases | No | [GitHub](/integrations/source-control/github) |
+| Read incident conversation context | Slack | Bounded channel and thread messages | No | [Slack](/integrations/collaboration/slack) |
 
-Credentials are write-only after submission. Webhook secrets are shown once. See the [Integration overview](/integrations/overview) for provider-specific guides.
+## Prerequisites
 
-Verification reports `configured`, `active`, `degraded`, or `failed` with an explanation
-based on observable provider behavior. A webhook Integration remains `configured` until
-the first delivery arrives. A read Integration can be `degraded` when only some declared
-capabilities are available.
+You need an **Admin** membership in the active Organization and the provider permissions
+listed in the selected setup guide. Kubernetes also requires a deployed Relay with an
+outbound connection to the control plane.
 
-For example, connect Generic Webhook, send one firing Alert Event, and verify that its
-status becomes `active`. Disable an Integration to remove it from new Investigations while
-retaining history. Deletion is refused when retained records depend on it.
+## Connect and verify
 
-Provider permissions and data availability limit every Tool; verification does not prove
-that a future Investigation will find a cause. Continue with
-[Run your first investigation](/getting-started/run-your-first-investigation).
+1. Open **Integrations** and choose the Integration.
+2. Enter the required non-secret configuration and credential, or complete the provider
+   authorization flow when the deployment offers one.
+3. Select **Verify** and review the available evidence and any limitations.
+4. For an inbound alert Integration, send one test delivery.
+
+Credentials are write-only after submission. Webhook secrets are displayed once. A
+successful read Integration becomes `active`; it can be `degraded` when only some
+evidence is available. A webhook Integration remains `configured` until its first valid
+delivery and then becomes `active`.
+
+If verification fails, check the provider URL, credential, least-privilege permissions,
+and network access before replacing the credential. Verification proves current access;
+it does not guarantee that a later Investigation will find enough evidence for a cause.
+
+## Disable, rotate, or remove
+
+Disable an Integration to exclude it from new Investigations while retaining history.
+Replace its credential through the provider guide's rotation procedure. Deletion is
+refused while retained records depend on the Integration.
+
+Next, [run your first investigation](/getting-started/run-your-first-investigation).

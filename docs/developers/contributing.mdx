@@ -1,18 +1,95 @@
 ---
 title: "Contributing"
-description: "Find an issue, make a focused change, and submit it with complete verification evidence."
+description: "Find the right code, run OpenCluster locally, test a focused change, and prepare a pull request."
 ---
 
-Start with a public issue and confirm the intended behavior before implementation. Follow the repository glossary, write observable tests first, keep Organization isolation explicit, and update only affected documentation.
+The public [`open-cluster/oc-control-plane`](https://github.com/open-cluster/oc-control-plane)
+repository owns the HTTP contract, durable domain state, provider Integrations,
+Investigation engine, self-hosting assets, and public documentation. The Relay protocol is
+consumed from the pinned public `github.com/open-cluster/oc-relay/gen/go` module.
 
-Run the short suite regularly and `make verify` before opening a pull request. Describe the behavior changed, tests run, security impact, documentation impact, and any remaining limitation.
+Start with a public issue and confirm the intended behavior before implementation. Read
+`CONTEXT.md` for the domain vocabulary, `CONTRIBUTING.md` for the required workflow, and
+`CODE_OF_CONDUCT.md` before participating.
 
-Read `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` for the complete process.
+## Prerequisites
 
-Use `CONTEXT.md` as the domain glossary and do not restore retired architecture under a
-new spelling. A provider change includes its manifest, observable tests, public
-Integration page, and route/OpenAPI updates when applicable. Database tests use real
-PostgreSQL containers; do not replace those seams with mocks.
+Development requires the Go version declared by `go.mod`, Docker with Docker Compose,
+GNU Make, a POSIX shell for repository scripts, and Helm 3. Docker must be reachable for
+the PostgreSQL integration suite.
 
-Keep pull requests focused and include the exact failing test observed before the fix,
-the final verification commands, security impact, and any intentional limitation.
+Run the pinned analysis-tool installer once:
+
+```bash
+make tools
+```
+
+## Repository layout
+
+| Path | What belongs there |
+| --- | --- |
+| `cmd/` | Shipping process entry points |
+| `internal/app/` | Process composition, listeners, and route assembly |
+| `internal/integrations/` | Provider-independent catalog and provider adapters |
+| `internal/investigation/` | Investigation domain and reasoning boundary |
+| `internal/store/postgres/` | The only deployment PostgreSQL adapter |
+| `api/openapi.yaml` | The only editable public HTTP contract |
+| `deploy/` | Compose and Helm deployment assets |
+| `docs/` | Published Mintlify product documentation |
+| `test/` | Architecture, control-plane, and real-process behavior gates |
+
+Customer cluster access belongs to Relay, not this repository. Do not add Kubernetes
+libraries to the control-plane module.
+
+## Start locally
+
+Follow the [Quickstart](/getting-started/quickstart) to create file-backed secrets and set
+the required environment values. Then start the complete local stack from the repository
+root:
+
+```bash
+docker compose -f deploy/compose/compose.yaml up --build
+```
+
+Verify `http://localhost:8080/healthz` and `http://localhost:8080/readyz` before testing a
+browser or API change.
+
+## Make a focused change
+
+1. Write one failing test at the observable boundary affected by the change.
+2. Make the smallest implementation change that passes it.
+3. Keep Organization selection and PostgreSQL predicates explicit.
+4. Update `api/openapi.yaml` when the public HTTP contract changes.
+5. Update only the affected public documentation. A shipped Integration change includes
+   its provider guide.
+
+Tests assert behavior at real seams, not internal call order. Database tests use real
+PostgreSQL containers; do not replace those boundaries with mocks.
+
+## Verify
+
+Run the short suite regularly:
+
+```bash
+make test-short
+```
+
+Use `make test` for race-enabled unit and PostgreSQL integration tests. Before opening a
+pull request, run the complete gate:
+
+```bash
+make verify
+```
+
+`make verify` checks OpenAPI, documentation, lint, build, tests, vulnerabilities,
+licenses, and deployment assets. The real Relay protocol proof lives in the separate
+`test/e2e` Go module and must not leak its dependencies into the shipping module.
+
+## Pull-request expectations
+
+Keep the pull request focused. Describe the behavior changed, the failing test observed
+before the fix, final verification commands, security impact, documentation impact, and
+any intentional limitation. Confirm that no secret, generated scratch file, or unrelated
+change entered the diff.
+
+See the repository `CONTRIBUTING.md` for licensing and dependency requirements.

@@ -61,6 +61,24 @@ Local authentication is the default. `oidc` adds the configured provider while l
 Admin recovery remains available. Relay is optional and listens separately from HTTP;
 customer Relays initiate outbound connections and pin the configured control-plane key.
 
+## Model provider
+
+OSS v0.1 supports deployment-level Anthropic or Z.AI credentials. Set `OC_AI_PROVIDER`
+to `anthropic` or `zai`, set `OC_AI_MODEL` to an exact model identifier accepted by that
+provider, and set `OC_AI_API_KEY_FILE` to the mounted credential file. Organization-level
+BYOK is not part of the OSS v0.1 contract.
+
+Restart the control plane, wait for `/readyz`, and run one bounded Investigation. Startup
+proves that the file is readable; only a completed Investigation proves that the selected
+provider and model satisfy the structured result contract. For authentication, quota,
+rate-limit, or unsupported-model errors, correct the provider account or model and start
+a new Investigation.
+
+OpenCluster sends bounded Investigation context, Tool summaries, and the structured
+result contract. It does not persist or expose model chain-of-thought. Review the
+[security model](/security/overview) and the provider's retention, regional processing,
+and training terms before production use.
+
 ## Environment reference
 
 | Variable | Purpose |

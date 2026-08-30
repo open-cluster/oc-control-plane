@@ -9,6 +9,16 @@ For webhook failures, distinguish permanent `400` or `401` responses from retrya
 
 An Investigation ending `partial` or `needs_input` is an explicit bounded result. Review its limitations before retrying.
 
+| Symptom | First check | Recovery |
+| --- | --- | --- |
+| `/healthz` fails | Confirm the process and HTTP listener are running. | Inspect startup logs and correct the first fatal configuration error. |
+| `/healthz` passes but `/readyz` fails | Check PostgreSQL and required provider connectivity. | Restore the unavailable dependency, then wait for readiness before serving traffic. |
+| Webhook returns `401` | Check the Integration ID and one-time webhook secret. | Rotate the secret if its value is no longer available; update the sender before retrying. |
+| No Incident appears | Check the Webhook Delivery status and Alert Event schema. | Correct a permanent `400`, or retry a documented retryable response. |
+| Relay is disconnected | Check outbound reachability, SPKI pins, and protocol compatibility. | Correct the endpoint or pins, then reconnect the Relay. |
+| Investigation is `partial` | Read the recorded limitations and Tool Run failures. | Fix missing access or evidence and ask a focused follow-up in a new Message. |
+| Expected GitHub evidence is absent | Run Integration verification and check repository access. | Grant only the required read permission, then verify again. |
+
 Use this order:
 
 1. Check `/healthz`, then `/readyz`.
@@ -20,3 +30,15 @@ A failed health probe indicates the process is unavailable. Healthy but not read
 to a dependency or startup condition. If only one Integration fails, keep the deployment
 running and use that provider's troubleshooting section; disable it if new reads or
 deliveries must stop while retained history remains available.
+
+## Data recovery boundary
+
+PostgreSQL is the durable source of truth. The deployment encryption key is also required
+to recover sealed Integration credentials. Protect database backups as production data
+and keep the encryption key under separate custody; neither belongs in this repository.
+
+OSS v0.1 does not publish a rehearsed backup, restore, or in-place upgrade procedure. Do
+not infer one from image tags. If recovery is required, use a PostgreSQL-consistent method
+supported by your database platform, restore into an isolated deployment running the same
+OpenCluster version, and verify readiness, sign-in, Organization isolation, Integration
+verification, and one new cited Investigation before changing production traffic.

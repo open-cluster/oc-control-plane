@@ -1,0 +1,120 @@
+---
+title: "API surface"
+description: "Scan every public OpenCluster operation by domain before opening its generated reference page."
+---
+
+This index is validated against `api/openapi.yaml`. Select the matching method/path entry
+under **Endpoints** for parameters, request and response schemas, authentication, and a
+cURL starting point. Before calling a state-changing product operation, apply the
+[generated cURL limitation](/api-reference/overview#authentication).
+
+## Metadata
+
+- `GET /api/v1/meta`
+
+## Authentication
+
+- `POST /api/v1/auth/local/bootstrap`
+- `POST /api/v1/auth/local/sign-in`
+- `GET /api/v1/auth/oidc/start`
+- `GET /api/v1/auth/oidc/callback`
+
+## Organizations and permissions
+
+- `GET /api/v1/organizations`
+- `POST /api/v1/organizations`
+- `GET /api/v1/permissions`
+
+## Members
+
+- `GET /api/v1/members`
+- `POST /api/v1/local-users`
+- `PATCH /api/v1/members/{membership}`
+- `DELETE /api/v1/members/{membership}`
+- `PUT /api/v1/local-users/{user}/password`
+
+## Sessions
+
+- `GET /api/v1/session`
+- `DELETE /api/v1/session`
+- `GET /api/v1/sessions`
+- `DELETE /api/v1/sessions/{session}`
+
+## Policy and audit
+
+- `GET /api/v1/policy`
+- `PUT /api/v1/policy`
+- `GET /api/v1/audit-events`
+
+## Integration catalog
+
+- `GET /api/v1/integration-types`
+- `POST /api/v1/integration-types/{type}/connect`
+
+## Integrations
+
+- `GET /api/v1/integrations/connect/callback`
+- `GET /api/v1/integrations`
+- `POST /api/v1/integrations`
+- `GET /api/v1/integrations/{integration}`
+- `PATCH /api/v1/integrations/{integration}`
+- `DELETE /api/v1/integrations/{integration}`
+- `POST /api/v1/integrations/{integration}/enable`
+- `POST /api/v1/integrations/{integration}/disable`
+- `POST /api/v1/integrations/{integration}/verify`
+- `POST /api/v1/integrations/{integration}/rotate-webhook-secret`
+
+## Relays
+
+- `GET /api/v1/relays`
+- `GET /api/v1/relays/summary`
+- `POST /api/v1/relays/bootstrap-tokens`
+- `GET /api/v1/relays/{registration}/integrations`
+- `GET /api/v1/relays/{registration}/failures`
+- `GET /api/v1/relays/{registration}/session-conflicts`
+- `POST /api/v1/relays/{registration}/clear-conflict`
+
+## Incidents
+
+- `GET /api/v1/incidents`
+- `GET /api/v1/incidents/{incident}`
+- `GET /api/v1/incidents/{incident}/alert-events`
+- `POST /api/v1/incidents/{incident}/merge`
+
+## Investigations
+
+- `GET /api/v1/investigations`
+- `POST /api/v1/investigations`
+- `GET /api/v1/investigations/{investigation}`
+- `GET /api/v1/investigations/{investigation}/report`
+- `GET /api/v1/investigations/{investigation}/activity`
+- `GET /api/v1/investigations/{investigation}/sources`
+- `GET /api/v1/investigations/{investigation}/hypotheses`
+- `POST /api/v1/investigations/{investigation}/cancel`
+- `GET /api/v1/investigations/{investigation}/events`
+
+## Conversations
+
+- `GET /api/v1/conversations`
+- `POST /api/v1/conversations`
+- `GET /api/v1/conversations/{conversation}`
+- `POST /api/v1/conversations/{conversation}/messages`
+
+## Postmortems
+
+- `GET /api/v1/incidents/{incident}/postmortem`
+- `POST /api/v1/incidents/{incident}/postmortem`
+- `PATCH /api/v1/incidents/{incident}/postmortem`
+- `POST /api/v1/incidents/{incident}/postmortem/regenerate`
+- `POST /api/v1/incidents/{incident}/postmortem/review`
+
+## Webhook intake
+
+- `POST /webhooks/v1/integrations/{integration}/alert-events`
+- `POST /webhooks/v1/slack/events`
+
+## Webhook deliveries
+
+- `GET /api/v1/webhook-deliveries`
+- `GET /api/v1/webhook-deliveries/{delivery}`
+- `POST /api/v1/webhook-deliveries/{delivery}/replay`

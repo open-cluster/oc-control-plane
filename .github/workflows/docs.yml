@@ -9,9 +9,9 @@ name: docs
 on:
   push:
     branches: [ main ]
-    paths: [ 'docs/**', '.github/workflows/docs.yml' ]
+    paths: [ 'docs/**', 'api/openapi.yaml', 'scripts/openapi.sh', 'scripts/validate-docs.mjs', 'Makefile', '.github/workflows/docs.yml' ]
   pull_request:
-    paths: [ 'docs/**', '.github/workflows/docs.yml' ]
+    paths: [ 'docs/**', 'api/openapi.yaml', 'scripts/openapi.sh', 'scripts/validate-docs.mjs', 'Makefile', '.github/workflows/docs.yml' ]
 
 permissions:
   contents: read
@@ -28,10 +28,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Verify generated OpenAPI reference
+        run: |
+          sh scripts/openapi.sh docs/api/openapi.yaml
+          git diff --exit-code -- docs/api/openapi.yaml
+
+      - name: Validate documentation contracts
+        run: node scripts/validate-docs.mjs
+
       - name: Validate the Mintlify build
         working-directory: docs
         run: npx --yes mint@${MINT_VERSION} validate
 
       - name: Check for broken links
         working-directory: docs
-        run: npx --yes mint@${MINT_VERSION} broken-links
+        run: npx --yes mint@${MINT_VERSION} broken-links --check-anchors --check-redirects
