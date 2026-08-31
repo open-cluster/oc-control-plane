@@ -63,11 +63,6 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 		sessionViewOf(principal, email, expires, authenticationMethod, active))
 }
 
-// signOut ends the caller's own session on the server.
-//
-// The row is deleted and the cookie is cleared in the same response, so the credential is dead
-// before the response is written rather than merely unusable by a well-behaved browser. That is
-// what makes the answer a true statement rather than the reassurance it used to be.
 func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -92,10 +87,6 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 
 	organization, ok := h.callersOrganization(principal)
 	if !ok {
-		// A signed-in person with no membership anywhere has a session and no tenant to record
-		// the sign-out against. Deleting the row still has to happen, and it happens through
-		// the database the session was issued in — which is the one their memberships would
-		// have named. With none, the row expires on its own and the cookie is already cleared.
 		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 		return
 	}
@@ -111,10 +102,6 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 }
 
 // callersOrganization picks a tenant to resolve the caller's database from.
-//
-// Any membership will do: the database is a property of the organization, and a person with
-// memberships in two database holds a session row in the one they signed in through. The
-// first is taken because Memberships is sorted, so the choice is the same on every request.
 func (h Handlers) callersOrganization(principal authz.Principal) (tenancy.Organization, bool) {
 	memberships := principal.Memberships()
 	if len(memberships) == 0 {

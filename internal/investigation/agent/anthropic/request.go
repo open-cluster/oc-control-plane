@@ -24,7 +24,7 @@ import (
 // things about one answer.
 func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 	params := sdk.MessageNewParams{
-		Model:     sdk.Model(prompt.Model),
+		Model:     prompt.Model,
 		MaxTokens: prompt.MaxOutputTokens,
 		System:    systemBlocks(prompt),
 		Messages:  messages(prompt),

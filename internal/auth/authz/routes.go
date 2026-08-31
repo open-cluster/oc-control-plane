@@ -14,7 +14,7 @@ const (
 	// accessUnset is the zero value and is never a legal route. It exists so that a Route
 	// built by literal — which the unexported fields already prevent outside this package —
 	// would still fail validation rather than default to something.
-	accessUnset Access = iota
+	AccessUnset Access = iota
 	// AccessPublic is reachable with no credential at all. The sign-in redirect and its
 	// callback are the whole set, and the gate in test/architecture holds them to a named list.
 	AccessPublic
@@ -28,7 +28,7 @@ const (
 
 func (a Access) String() string {
 	switch a {
-	case accessUnset:
+	case AccessUnset:
 		return "unset"
 	case AccessPublic:
 		return "public"

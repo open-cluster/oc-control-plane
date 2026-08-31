@@ -10,16 +10,6 @@ import (
 // one-line change rather than a search.
 const Base = "/api/v1"
 
-// Routes is this capability's contribution to the operator API's index.
-//
-// Every entry states how it is reached by which constructor built it. Privileged takes the
-// permission positionally, so a route added without one does not compile — that is the
-// mechanism behind "a new route without a declared permission cannot ship", and the gate in
-// test/architecture is the second half of it.
-//
-// The three public routes are the whole unauthenticated surface of this product, and each is
-// public because a caller who is not signed in is precisely who needs it. The gate holds them
-// to a named list, so a fourth fails the build until somebody records why it exists.
 func (h Handlers) Routes() authz.Table {
 	table := authz.Table{
 		authz.Public(http.MethodPost, Base+"/auth/local/bootstrap",

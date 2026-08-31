@@ -57,10 +57,6 @@ func contextWithTimeout(
 }
 
 // caller resolves the principal the guard put on this request.
-//
-// A handler behind the guard always has one; the absence is a route mounted outside the table,
-// which is a programming error rather than a runtime condition. It answers 500 with a log line
-// rather than panicking, so the failure is one route rather than the process.
 func (h Handlers) caller(
 	writer http.ResponseWriter, request *http.Request,
 ) (authz.Principal, bool) {

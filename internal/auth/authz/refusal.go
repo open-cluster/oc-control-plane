@@ -11,9 +11,7 @@ import (
 )
 
 var (
-	// ErrNoCredential reports a request that presented no supported credential.
-	ErrNoCredential = errors.New("no credential presented")
-	// ErrCredentialRejected reports a presented credential that cannot authenticate.
+	ErrNoCredential       = errors.New("no credential presented")
 	ErrCredentialRejected = errors.New("credential rejected")
 )
 
