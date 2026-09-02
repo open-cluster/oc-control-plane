@@ -12,17 +12,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// THE EVENT STREAM — what a reader sees while an investigation runs.
-//
-// Without it an investigation is opaque until it ends: a surface can poll the running
-// record and whatever provenance has been written, and "OpenCluster is reading commits for
-// checkout-api" has nothing to travel on. These events are what it travels on.
-//
-// NO MODEL CHAIN OF THOUGHT EVER ENTERS ONE. Every payload is composed HERE, from facts
-// the control plane already holds — which tool is about to run against which integration,
-// what that tool's own summary said, which ceiling fired. No prompt asks the model to
-// narrate, which is the cheapest possible answer to "never expose the reasoning": there is
-// nothing to sanitize because nothing private is ever asked for.
+// Event payloads contain platform-composed facts, never model reasoning or transcript data.
 
 // EventType is one kind of semantic fact. Persisted as the integer in the column; the
 // values are frozen. New semantic facts append values without reinterpreting historical
@@ -95,7 +85,18 @@ type Event struct {
 // eventTextBound caps any single string a payload carries. Progress lines are composed
 // here and are short by construction; the bound is what stops a provider's own summary
 // from being the exception.
-const eventTextBound = 512
+const (
+	eventTextBound    = 512
+	maxRunErrorLength = 1024
+)
+
+func bounded(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
+}
 
 // EventSink is where events are written. It is declared here, in the domain's vocabulary,
 // and implemented by storage.
@@ -140,6 +141,22 @@ type stream struct {
 	// investigation — a reader that saw a terminal event may stop, and an event arriving
 	// afterwards would mean it stopped too early.
 	closed bool
+}
+
+// EventStream writes sanitized semantic progress for one Investigation.
+type EventStream = stream
+
+func NewEventStream(
+	sink EventSink, telemetry *Telemetry, organization tenancy.Organization,
+	investigation uuid.UUID,
+) *EventStream {
+	return newStream(sink, telemetry, organization, investigation)
+}
+
+func (s *stream) Emit(
+	ctx context.Context, eventType EventType, payload map[string]any,
+) error {
+	return s.emit(ctx, eventType, payload)
 }
 
 // newStream begins one investigation's event stream. A nil sink produces a stream that
@@ -392,6 +409,32 @@ func answerDeltaPayload(text string, final bool) map[string]any {
 		"text":  bounded(text, maxAnswerDeltaBound),
 		"final": final,
 	}
+}
+
+func StartedPayload(opened Investigation, sources int, executing bool) map[string]any {
+	return startedPayload(opened, sources, executing)
+}
+
+func ToolStartedPayload(run ToolRun, integration string) map[string]any {
+	return toolStartedPayload(run, integration)
+}
+
+func ToolCompletedPayload(run ToolRun) map[string]any { return toolCompletedPayload(run) }
+
+func ProgressPayload(text string) map[string]any { return progressPayload(text) }
+
+func HypothesesUpdatedPayload(hypotheses []HypothesisResult) map[string]any {
+	return hypothesesUpdatedPayload(hypotheses)
+}
+
+func ConcludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
+	return concludedPayload(conclusion, stoppedBy)
+}
+
+func FailedPayload(reason string) map[string]any { return failedPayload(reason) }
+
+func AnswerDeltaPayload(text string, final bool) map[string]any {
+	return answerDeltaPayload(text, final)
 }
 
 // maxAnswerDeltaBound lets one delta carry the whole answer, since today's providers

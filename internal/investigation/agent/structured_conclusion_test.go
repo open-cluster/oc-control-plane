@@ -1,4 +1,4 @@
-package reasoning
+package agent
 
 import (
 	"encoding/json"

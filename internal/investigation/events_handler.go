@@ -14,18 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// THE EVENT STREAM AS A SURFACE.
-//
-// Server-sent events over plain HTTP, and no WebSocket. The traffic is one-directional —
-// the platform tells a reader what happened — and every command this product takes is
-// already an ordinary request. A bidirectional transport would be a second protocol to
-// authorize, proxy and debug for a direction nothing uses.
-//
-// Replay and follow are ONE path. A reader asks for everything after a sequence it already
-// has; that is answered from the table, and only then does the connection start following.
-// So a first connection, a reconnect after a dropped socket, and a connection that landed
-// on a different replica are the same code, which is the only way all three stay correct.
-
 const (
 	// eventPollInterval is how often a following connection looks for more. There is no
 	// pub/sub here on purpose: a poll against a primary-key range scan is cheap, and the

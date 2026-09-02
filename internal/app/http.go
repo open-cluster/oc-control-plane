@@ -186,7 +186,7 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		Investigations:          process.investigations,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		ConversationsEnabled:    true,
-		MaxWaitingTurns:         defaultOrgWaitingInvestigations,
+		MaxWaitingTurns:         cfg.MaxPendingInvestigationsPerOrganization,
 		IntakeBaseURL:           cfg.OperatorPublicURL,
 		PublicURL:               cfg.OperatorPublicURL,
 		ConsoleURL:              cfg.OperatorPublicURL,

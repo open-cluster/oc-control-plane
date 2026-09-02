@@ -136,6 +136,7 @@ func (h Handlers) Routes() authz.Table {
 		Logger:     h.Logger,
 		Events:     h.Database,
 		WindowLead: h.InvestigationWindowLead,
+		MaxPending: h.MaxWaitingTurns,
 	}.Routes()...)
 	routes = append(routes, conversation.Handlers{
 		Store:           h.Database,
@@ -161,8 +162,8 @@ func (h Handlers) meta(writer http.ResponseWriter, _ *http.Request) {
 		{Key: "relay", Enabled: true, Availability: "available"},
 		{Key: "webhook_delivery", Enabled: true, Availability: "available"},
 		{Key: "postmortems", Enabled: true, Availability: "available"},
-		{Key: "investigations", Enabled: h.Investigations != nil && h.Investigations.Investigator != nil,
-			Availability: availabilityOf(h.Investigations != nil && h.Investigations.Investigator != nil)},
+		{Key: "investigations", Enabled: h.Investigations != nil && h.Investigations.Agent != nil,
+			Availability: availabilityOf(h.Investigations != nil && h.Investigations.Agent != nil)},
 		{Key: "conversations", Enabled: h.ConversationsEnabled,
 			Availability: availabilityOf(h.ConversationsEnabled)},
 	}

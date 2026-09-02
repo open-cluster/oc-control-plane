@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/zai"
 )
 

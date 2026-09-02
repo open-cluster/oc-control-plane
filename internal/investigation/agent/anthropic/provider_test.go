@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
 )
 

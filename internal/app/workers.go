@@ -26,6 +26,12 @@ import (
 const auditPruneInterval = time.Hour
 
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
+	if process.investigations.Agent != nil {
+		group.Go(func() error {
+			process.investigations.Run(ctx)
+			return nil
+		})
+	}
 	startWebhookWork(ctx, group, process)
 	startAuditPruner(ctx, group, process)
 	startChangeLedgerPruner(ctx, group, process)
@@ -39,7 +45,7 @@ func startWebhookWork(ctx context.Context, group *errgroup.Group, process assemb
 		Handlers: webhooks.WorkHandlers{
 			storage.WebhookWorkAlert: alertwork.WorkHandler{
 				Database: process.database, WindowLead: defaultInvestigationWindowLead,
-				MaxWaitingTurns: defaultOrgWaitingInvestigations,
+				MaxWaitingTurns: process.config.MaxPendingInvestigationsPerOrganization,
 			},
 			storage.WebhookWorkSlack: slackwork.WorkHandler{
 				Work: process.database,
@@ -48,7 +54,7 @@ func startWebhookWork(ctx context.Context, group *errgroup.Group, process assemb
 					Client: slackClient, Sealer: process.sealer,
 				},
 				WindowLead:      defaultInvestigationWindowLead,
-				MaxWaitingTurns: defaultOrgWaitingInvestigations,
+				MaxWaitingTurns: process.config.MaxPendingInvestigationsPerOrganization,
 				Logger:          process.logger,
 			},
 		},
@@ -115,7 +121,7 @@ func slackAgent(cfg config.Config) *webhooks.SlackAgent {
 			return true
 		},
 		WindowLead:      defaultInvestigationWindowLead,
-		MaxWaitingTurns: defaultOrgWaitingInvestigations,
+		MaxWaitingTurns: cfg.MaxPendingInvestigationsPerOrganization,
 	}
 }
 

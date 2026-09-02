@@ -1,4 +1,4 @@
-package investigation
+package agent
 
 import (
 	"context"
@@ -6,28 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The offer's derivations: grant-filtered tool availability and the subject terms the
-// handlers match questions against.
-
-func TestSubjectTermsDropNoiseAndDuplicates(t *testing.T) {
-	t.Parallel()
-
-	terms := subjectTerms("What is wrong with the payments PAYMENTS pod?", "payments")
-	joined := strings.Join(terms, " ")
-	if strings.Count(joined, "payments") != 1 {
-		t.Errorf("terms = %v; duplicates must collapse", terms)
-	}
-	for _, noise := range []string{"what", "the", "is"} {
-		if strings.Contains(" "+joined+" ", " "+noise+" ") {
-			t.Errorf("terms = %v carry the noise word %q", terms, noise)
-		}
-	}
-	if !strings.Contains(joined, "pod") {
-		t.Errorf("terms = %v; a three-letter identifier is signal", terms)
-	}
+func stubIntegration(name string) integrations.Integration {
+	return integrations.Integration{ID: uuid.New(), Type: 99, Name: name}
 }
 
 func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *testing.T) {

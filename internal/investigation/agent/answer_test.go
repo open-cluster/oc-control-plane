@@ -1,17 +1,12 @@
-package investigation
+package agent
 
 import (
 	"strings"
 	"testing"
 	"time"
-)
 
-// THE BOUNDED ANSWER.
-//
-// The direct answer is bounded where it is persisted, and nowhere else: an over-length
-// answer is not malformed, so it must not fail an investigation whose reads all
-// succeeded. What a bound must never do is let a cut read as an ending — an answer that
-// stops mid-sentence with no mark is indistinguishable from one that finished.
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
+)
 
 func TestAnAnswerInsideTheBoundIsUntouched(t *testing.T) {
 	t.Parallel()
@@ -73,7 +68,7 @@ func tail(text string) string {
 func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
 	t.Parallel()
 
-	payload := toolCompletedPayload(ToolRun{
+	payload := investigation.ToolCompletedPayload(ToolRun{
 		Ordinal: 1, Tool: "github.list_repositories", Outcome: RunSucceeded,
 		Summary: "1 repositories matched",
 		// The bound in force, as every run carries — but this read did not filter by it.
@@ -92,7 +87,7 @@ func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
 	t.Parallel()
 
 	from := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
-	payload := toolCompletedPayload(ToolRun{
+	payload := investigation.ToolCompletedPayload(ToolRun{
 		Ordinal: 1, Tool: "github.read_commits", Outcome: RunSucceeded,
 		Summary: "0 commits in the window", WindowFrom: from,
 		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),

@@ -6,35 +6,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-type blockingInvestigator struct {
+type blockingAgentMain struct {
 	started chan struct{}
 }
 
-func (b *blockingInvestigator) OpenExchange(
-	context.Context, investigation.Orientation,
-) (investigation.Exchange, error) {
-	return b, nil
-}
-
-func (b *blockingInvestigator) Next(
-	ctx context.Context, _ []investigation.CallResult, _ bool, _ string,
-) (investigation.Move, error) {
+func (b *blockingAgentMain) Run(
+	ctx context.Context, _ tenancy.Organization, _ investigation.Investigation,
+) error {
 	select {
 	case b.started <- struct{}{}:
 	default:
 	}
 	<-ctx.Done()
-	return investigation.Move{}, ctx.Err()
+	return ctx.Err()
 }
 
 func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedOperatorSurface(t *testing.T) {
 	t.Parallel()
 
-	model := &blockingInvestigator{started: make(chan struct{}, 1)}
-	plane, _ := autonomousPlaneWith(t, model, 0)
+	model := &blockingAgentMain{started: make(chan struct{}, 1)}
+	plane, _ := agentPlane(t, model)
 	incident := plane.openIncident(t, "CheckoutLatency", "cancel-running")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
 		map[string]any{"incidentId": incident})
@@ -49,6 +44,16 @@ func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedOperatorSurface(t
 	case <-model.started:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the investigation never reached its active model exchange")
+	}
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
+		map[string]any{"incidentId": incident})
+	if status != http.StatusAccepted {
+		t.Fatalf("work was refused merely because the worker was busy: %d: %s", status, body)
+	}
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations",
+		map[string]any{"incidentId": incident})
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("work above the pending backlog was not refused: %d: %s", status, body)
 	}
 	path := plane.base(surfaceOrg) + "/investigations/" + opened.ID + "/cancel"
 	status, body = plane.call(t, http.MethodPost, path, nil)

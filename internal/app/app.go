@@ -30,15 +30,13 @@ import (
 const readHeaderTimeout = 10 * time.Second
 
 const (
-	defaultServiceName                 = "oc-control-plane"
-	defaultShutdownTimeout             = 15 * time.Second
-	defaultInventoryInterval           = 5 * time.Minute
-	defaultChangeRetentionDays         = 90
-	defaultInvestigationWindowLead     = 2 * time.Hour
-	defaultOrgConcurrentInvestigations = 4
-	defaultOrgWaitingInvestigations    = 16
-	defaultContextThresholdPercent     = 50
-	defaultModelSpendCeilingCents      = 500
+	defaultServiceName             = "oc-control-plane"
+	defaultShutdownTimeout         = 15 * time.Second
+	defaultInventoryInterval       = 5 * time.Minute
+	defaultChangeRetentionDays     = 90
+	defaultInvestigationWindowLead = 2 * time.Hour
+	defaultContextThresholdPercent = 50
+	defaultModelSpendCeilingCents  = 500
 )
 
 // Bounds on connections to the shared HTTP surface. Route owners retain their own body and
@@ -52,7 +50,8 @@ const (
 type Options struct {
 	Version      string
 	OnListen     func(net.Addr)
-	Investigator investigation.Investigator
+	Agent        investigation.Agent
+	Model        agent.Model
 	ModelEffort  string
 	ModelBaseURL string
 	// InventoryInterval replaces the production cadence in composed-process tests.
@@ -162,51 +161,39 @@ func Run(
 		}
 	}
 
-	// The model boundary: a test's scripted investigator outranks configuration, and a
-	// deployment that configured no model provider cannot investigate — the surface
-	// says so per request rather than the process refusing to serve everything else it
-	// can do.
-	investigator := options.Investigator
-	if investigator == nil && cfg.ModelProvider != "" {
-		if investigator, err = modelBoundary(cfg, catalog, logger, options); err != nil {
+	investigationAgent := options.Agent
+	var configuredAgent *agent.Agent
+	if investigationAgent == nil && cfg.ModelProvider != "" {
+		if configuredAgent, err = modelBoundary(cfg, catalog, logger, options); err != nil {
 			return err
 		}
 	}
+	if configuredAgent != nil {
+		configuredAgent.Store = database
+		configuredAgent.Catalog = catalog
+		configuredAgent.Sealer = sealer
+		configuredAgent.Events = database
+		configuredAgent.RuntimeTelemetry = investigation.NewTelemetry(logger)
+		configuredAgent.Logger = logger
+		configuredAgent.MaxToolRuns = options.MaxToolRuns
+		configuredAgent.MaxTurns = options.MaxTurns
+		configuredAgent.ContextBudget = agent.ContextBudget(cfg.ModelName, 0,
+			defaultContextThresholdPercent)
+		configuredAgent.ContextCeiling = agent.ContextCeiling(cfg.ModelName, 0)
+		configuredAgent.ModelName = cfg.ModelName
+		configuredAgent.SpendCeilingMicroCents = microCentsOf(defaultModelSpendCeilingCents)
+		investigationAgent = configuredAgent
+	}
 
 	investigations := &investigation.Runner{
-		Events:        database,
-		Store:         database,
-		Leases:        database,
-		Catalog:       catalog,
-		Sealer:        sealer,
-		Investigator:  investigator,
-		MaxToolRuns:   options.MaxToolRuns,
-		MaxTurns:      options.MaxTurns,
-		OrgConcurrent: defaultOrgConcurrentInvestigations,
-		WindowLead:    defaultInvestigationWindowLead,
-		// The context budget is computed HERE, where the model is known, and handed to the
-		// domain as a number. internal/investigation must never learn what a vendor is,
-		// and "how big is this model's window" is a vendor fact.
-		ContextBudget: reasoning.ContextBudget(cfg.ModelName, 0,
-			defaultContextThresholdPercent),
-		// The ceiling is the same window without the soft threshold applied, so it always
-		// sits above the budget. The distance between them is the room a compaction buys
-		// the turn that performed it.
-		ContextCeiling:         reasoning.ContextCeiling(cfg.ModelName, 0),
-		ModelName:              cfg.ModelName,
-		Telemetry:              investigation.NewTelemetry(logger),
-		Logger:                 logger,
-		SpendCeilingMicroCents: microCentsOf(defaultModelSpendCeilingCents),
+		Store:      database,
+		Agent:      investigationAgent,
+		Workers:    cfg.InvestigationWorkers,
+		MaxPending: cfg.MaxPendingInvestigationsPerOrganization,
+		WindowLead: defaultInvestigationWindowLead,
+		Telemetry:  investigation.NewTelemetry(logger),
+		Logger:     logger,
 	}
-	// Drained on the way out: an investigation mid-flight is failed with the reason
-	// recorded rather than orphaned into a record that says running forever.
-	defer investigations.Drain()
-
-	if investigator != nil {
-		go investigations.Claim(ctx)
-		go investigations.Sweep(ctx)
-	}
-
 	return serve(ctx, assembled{
 		config:            cfg,
 		logger:            logger,
@@ -225,39 +212,40 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 	return seal.NewKeyring(seal.Key{ID: "primary", Material: cfg.SealingKey})
 }
 
-// modelBoundary builds the configured deployment's Exchange driver. Everything
-// that could be wrong with the model configuration is refused HERE, at startup: an
-// unimplemented provider, an unpriced model, an effort level nothing recognises, a
-// provider nobody consented to.
+// modelBoundary validates and builds the configured model-backed agent.
 func modelBoundary(
 	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger, options Options,
-) (investigation.Investigator, error) {
-	deployment := reasoning.Deployment{
+) (*agent.Agent, error) {
+	deployment := agent.Deployment{
 		Provider:               cfg.ModelProvider,
 		Model:                  cfg.ModelName,
-		Effort:                 reasoning.Effort(options.ModelEffort),
+		Effort:                 agent.Effort(options.ModelEffort),
 		BaseURL:                options.ModelBaseURL,
-		Credential:             reasoning.Secret(cfg.ModelKey),
+		Credential:             agent.Secret(cfg.ModelKey),
 		SpendCeilingMicroCents: microCentsOf(defaultModelSpendCeilingCents),
 	}.WithDefaults()
 	if err := deployment.Validate(); err != nil {
 		return nil, err
 	}
-	provider, err := providers.Open(deployment, providers.Options{})
+	model := options.Model
+	if model == nil {
+		var openErr error
+		model, openErr = providers.Open(deployment, providers.Options{})
+		if openErr != nil {
+			return nil, openErr
+		}
+	}
+	built, err := agent.NewAgent(deployment, model,
+		agent.DefaultTariff(), agent.ConsentTo(cfg.ModelProvider))
 	if err != nil {
 		return nil, err
 	}
-	agent, err := reasoning.NewAgent(deployment, provider,
-		reasoning.DefaultTariff(), reasoning.ConsentTo(cfg.ModelProvider))
-	if err != nil {
-		return nil, err
-	}
-	revision := reasoning.AgentRevision(catalog.Tools())
-	agent.Instrument(reasoning.NewTelemetry(logger, revision))
+	revision := agent.AgentRevision(catalog.Tools())
+	built.Instrument(agent.NewTelemetry(logger, revision))
 	logger.Info("model boundary configured",
 		slog.String("deployment", deployment.String()),
 		slog.String("agent_revision", revision))
-	return agent, nil
+	return built, nil
 }
 
 // microCentsOf converts a configured whole-cent figure into the integer micro-cents

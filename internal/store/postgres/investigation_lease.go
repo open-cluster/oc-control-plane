@@ -14,18 +14,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The investigation lease. Every timestamp here is the SERVER's clock — now() in the
-// statement, never a value a worker computed — so a worker with a skewed clock cannot hold
-// a lease longer than it was given or lose one it still has.
-var _ investigation.Leases = (*Database)(nil)
-
-// ClaimInvestigation leases the oldest waiting investigation this worker may take.
-//
-// The per-organization ceiling is a subquery over the candidate's own tenant rather than a
-// number the caller tracks, because the number has to be true across every replica and no
-// process can see the others. Two claimers racing can still overshoot it by one — each
-// counts before the other commits — which is the same bounded race the process-wide
-// ceiling has always had, and is bounded again by every investigation's own budgets.
+// ClaimInvestigation leases the oldest waiting investigation.
 func (p *Database) ClaimInvestigation(
 	ctx context.Context, claim investigation.Claim,
 ) (tenancy.Organization, investigation.Investigation, bool, error) {
@@ -38,20 +27,11 @@ func (p *Database) ClaimInvestigation(
 			         FROM investigation waiting
 			        WHERE waiting.status       = 1
 			          AND waiting.lease_worker = ''
-			          AND (SELECT count(*)
-			                 FROM investigation executing
-			                WHERE executing.org_id           = waiting.org_id
-			                  AND executing.status           = 1
-			                  AND executing.lease_worker    <> ''
-			                  AND executing.lease_expires_at > now()) < $3
-			        -- Oldest first, so work is taken up in the order it was asked for.
 			        ORDER BY waiting.created_at, waiting.investigation_id
 			        LIMIT 1
-			        -- Concurrent claimers take different work instead of blocking on each
-			        -- other, which is what lets a deployment add a replica and go faster.
 			        FOR UPDATE SKIP LOCKED)
 			RETURNING org_id, `+investigationColumns,
-		claim.Worker, claim.LeaseFor.String(), claim.OrgConcurrent)
+		claim.Worker, claim.LeaseFor.String())
 
 	var organization string
 	claimed, err := scanClaimedInvestigation(row, &organization)
@@ -69,34 +49,6 @@ func (p *Database) ClaimInvestigation(
 	}
 	claimed.OrgID = organization
 	return named, claimed, true, nil
-}
-
-// TakeLease claims one named investigation for the path that already holds the record it
-// just created. It refuses one somebody else holds, and one that has already ended.
-func (p *Database) TakeLease(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	claim investigation.Claim,
-) (bool, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return false, err
-	}
-	tag, err := pool.Exec(ctx, `
-		UPDATE investigation
-		   SET lease_worker       = $3,
-		       lease_expires_at   = now() + $4::interval
-		 WHERE investigation_id = $1
-		   AND org_id           = $2
-		   AND status           = 1
-		   -- An unheld lease, or one that has already lapsed. A live lease belongs to
-		   -- somebody, and taking it would be the double execution the fence exists to
-		   -- prevent.
-		   AND (lease_worker = '' OR lease_expires_at <= now())`,
-		id, organization.String(), claim.Worker, claim.LeaseFor.String())
-	if err != nil {
-		return false, fmt.Errorf("taking an investigation lease: %w", err)
-	}
-	return tag.RowsAffected() == 1, nil
 }
 
 // Heartbeat renews a lease this worker holds.

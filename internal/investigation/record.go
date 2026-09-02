@@ -1,16 +1,4 @@
-// Package investigation owns the investigation domain: opening one from an alert incident
-// or an operator's question, offering every grant-supported connected source to an
-// autonomous Exchange, running bounded read tools against them, and persisting
-// OPERATIONAL PROVENANCE — what was triggered, which integrations were offered, which
-// tools ran over which window, what each returned or failed with, and the findings with
-// their sources.
-//
-// What is deliberately NOT here is an AI chain of thought. No hypothesis, no evidence
-// stance, no coverage certificate is persisted: the reasoner's working is its own, and
-// what an operator audits is what was actually done and found.
-//
-// The model boundary is declared here and implemented elsewhere; this package never
-// imports a reasoning package and never learns that a vendor exists.
+// Package investigation owns durable Investigation state and provenance.
 package investigation
 
 import (
@@ -79,6 +67,7 @@ var (
 	ErrUnknown             = errors.New("investigation unknown")
 	ErrAlreadyEnded        = errors.New("investigation has already ended")
 	ErrIncidentUnknown     = errors.New("incident unknown")
+	ErrQueueFull           = errors.New("this organization has too many investigations waiting")
 	ErrReasonerUnavailable = errors.New("the reasoning boundary is unavailable")
 	ErrBadCursor           = errors.New("after is not a page position from a previous response")
 )
@@ -271,7 +260,7 @@ type ToolCall struct {
 type Store interface {
 	// CreateInvestigation records one, born running.
 	CreateInvestigation(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		wanted NewInvestigation) (Investigation, error)
+		wanted NewInvestigation, maxPending int) (Investigation, error)
 	// Investigation reads one, scoped to the tenant.
 	Investigation(ctx context.Context, org tenancy.Organization,
 		id uuid.UUID) (Investigation, error)
@@ -320,13 +309,4 @@ type Store interface {
 	// already names the runs that established it, and those runs are still in the record.
 	ConversationBrief(ctx context.Context, org tenancy.Organization,
 		conversation uuid.UUID, tail int) (Brief, error)
-	// DrainConversation opens the next turn of a conversation from whatever messages
-	// arrived while this one was running, and reports whether one opened. It is called at
-	// the terminal boundary — the "next safe point" — because that is the moment a second
-	// agent can start without two of them writing one context.
-	//
-	// Nothing queued means nothing opens, which is the ordinary end of every turn nobody
-	// interrupted. lead is how far back the new turn's window reaches.
-	DrainConversation(ctx context.Context, org tenancy.Organization,
-		conversation uuid.UUID, lead time.Duration) (bool, error)
 }

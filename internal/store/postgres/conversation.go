@@ -264,50 +264,83 @@ func (p *Database) AppendMessage(
 		func(ctx context.Context, transaction pgx.Tx) (
 			conversation.Message, audit.Target, audit.Detail, error,
 		) {
-			state, err := lockConversation(ctx, transaction, organization, id)
+			written, err := appendMessage(ctx, transaction, organization, id, said)
 			if err != nil {
 				return conversation.Message{}, audit.Target{}, nil, err
 			}
-			if state != conversation.StateOpen {
-				return conversation.Message{}, audit.Target{}, nil, conversation.ErrClosed
-			}
-
-			row := transaction.QueryRow(ctx, `
-				INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
-				                                  actor_kind, actor_id, actor_display, text)
-				SELECT $1, $2,
-				       coalesce((SELECT max(sequence)
-				                   FROM conversation_message
-				                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
-				       $3, $4, $5, $6, $7
-				RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
-				          investigation_id, created_at`,
-				id, organization.String(), int16(said.Role), int16(said.ActorKind),
-				said.ActorID, said.ActorDisplay, said.Text)
-
-			written, err := scanMessage(row)
-			if err != nil {
-				return conversation.Message{}, audit.Target{}, nil,
-					fmt.Errorf("appending a message: %w", err)
-			}
-
-			if _, err := transaction.Exec(ctx, `
-				UPDATE conversation
-				   SET last_activity_at = now()
-				 WHERE conversation_id = $1 AND org_id = $2`,
-				id, organization.String()); err != nil {
-				return conversation.Message{}, audit.Target{}, nil,
-					fmt.Errorf("stamping a conversation: %w", err)
-			}
-
-			// The message TEXT is deliberately not in the audit detail. It is a
-			// customer's own words, it can be eight kilobytes of them, and the record
-			// exists to answer who said something rather than to hold a second copy of
-			// what they said — the transcript is the copy.
 			return written,
 				audit.Target{Kind: audit.TargetConversation, ID: id.String()},
 				audit.Detail{"sequence": written.Sequence}, nil
 		})
+}
+
+type acceptedMessage struct {
+	message conversation.Message
+	turn    conversation.Turn
+	opened  bool
+}
+
+func (p *Database) AppendMessageAndOpenTurn(
+	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	id uuid.UUID, said conversation.NewMessage, lead time.Duration, maxPending int,
+) (conversation.Message, conversation.Turn, bool, error) {
+	accepted, err := audited(ctx, p, principal, organization, audit.ActionConversationMessage,
+		func(ctx context.Context, transaction pgx.Tx) (
+			acceptedMessage, audit.Target, audit.Detail, error,
+		) {
+			if err := reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
+				if errors.Is(err, ErrWebhookWorkCapacity) {
+					return acceptedMessage{}, audit.Target{}, nil, conversation.ErrQueueFull
+				}
+				return acceptedMessage{}, audit.Target{}, nil, err
+			}
+			written, err := appendMessage(ctx, transaction, organization, id, said)
+			if err != nil {
+				return acceptedMessage{}, audit.Target{}, nil, err
+			}
+			turn, opened, err := openTurn(ctx, transaction, organization, id, lead)
+			if err != nil {
+				return acceptedMessage{}, audit.Target{}, nil, err
+			}
+			return acceptedMessage{message: written, turn: turn, opened: opened},
+				audit.Target{Kind: audit.TargetConversation, ID: id.String()},
+				audit.Detail{"sequence": written.Sequence}, nil
+		})
+	return accepted.message, accepted.turn, accepted.opened, err
+}
+
+func appendMessage(
+	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	id uuid.UUID, said conversation.NewMessage,
+) (conversation.Message, error) {
+	state, err := lockConversation(ctx, transaction, organization, id)
+	if err != nil {
+		return conversation.Message{}, err
+	}
+	if state != conversation.StateOpen {
+		return conversation.Message{}, conversation.ErrClosed
+	}
+	row := transaction.QueryRow(ctx, `
+		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
+		                                  actor_kind, actor_id, actor_display, text)
+		SELECT $1, $2,
+		       coalesce((SELECT max(sequence) FROM conversation_message
+		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
+		       $3, $4, $5, $6, $7
+		RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
+		          investigation_id, created_at`,
+		id, organization.String(), int16(said.Role), int16(said.ActorKind),
+		said.ActorID, said.ActorDisplay, said.Text)
+	written, err := scanMessage(row)
+	if err != nil {
+		return conversation.Message{}, fmt.Errorf("appending a message: %w", err)
+	}
+	if _, err := transaction.Exec(ctx, `
+		UPDATE conversation SET last_activity_at = now()
+		 WHERE conversation_id = $1 AND org_id = $2`, id, organization.String()); err != nil {
+		return conversation.Message{}, fmt.Errorf("stamping a conversation: %w", err)
+	}
+	return written, nil
 }
 
 // WaitingTurns counts this organization's investigations that are running and unleased —
@@ -379,10 +412,90 @@ func (p *Database) OpenTurn(
 // wrong.
 func (p *Database) DrainConversation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	lead time.Duration,
+	lead time.Duration, maxPending int,
 ) (bool, error) {
-	_, opened, err := p.OpenTurn(ctx, organization, id, lead)
-	return opened, err
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return false, err
+	}
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	if err = reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
+		if errors.Is(err, ErrWebhookWorkCapacity) {
+			return false, conversation.ErrQueueFull
+		}
+		return false, err
+	}
+	_, opened, err := openTurn(ctx, transaction, organization, id, lead)
+	if err != nil || !opened {
+		return false, err
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return true, nil
+}
+
+// DrainQueuedConversation retries durable Conversation messages whose terminal drain met
+// a full Organization backlog. The candidate read is unlocked; the Organization advisory
+// lock is always taken before openTurn locks the Conversation row, matching every ingress path.
+func (p *Database) DrainQueuedConversation(
+	ctx context.Context, lead time.Duration, maxPending int,
+) (bool, error) {
+	transaction, err := p.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	var organizationID string
+	var conversationID uuid.UUID
+	err = transaction.QueryRow(ctx, `
+		SELECT conversation.org_id, conversation.conversation_id
+		  FROM conversation
+		  JOIN conversation_message message
+		    ON message.org_id = conversation.org_id
+		   AND message.conversation_id = conversation.conversation_id
+		   AND message.investigation_id IS NULL AND message.role = 1
+		 WHERE conversation.state = 1
+		   AND NOT EXISTS (
+		       SELECT 1 FROM investigation
+		        WHERE investigation.org_id = conversation.org_id
+		          AND investigation.conversation_id = conversation.conversation_id
+		          AND investigation.status = 1)
+		   AND ($1 <= 0 OR (
+		       SELECT count(*) FROM investigation waiting
+		        WHERE waiting.org_id = conversation.org_id
+		          AND waiting.status = 1 AND waiting.lease_worker = '') < $1)
+		 ORDER BY message.created_at, conversation.conversation_id
+		 LIMIT 1`, maxPending).Scan(&organizationID, &conversationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("finding queued Conversation work: %w", err)
+	}
+	organization, err := tenancy.NewOrganization(organizationID)
+	if err != nil {
+		return false, fmt.Errorf("queued Conversation has invalid Organization: %w", err)
+	}
+	if err = reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
+		if errors.Is(err, ErrWebhookWorkCapacity) {
+			return false, nil
+		}
+		return false, err
+	}
+	_, opened, err := openTurn(ctx, transaction, organization, conversationID, lead)
+	if err != nil || !opened {
+		return false, err
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return true, nil
 }
 
 // openTurn is the whole of opening a turn, inside somebody else's transaction: the

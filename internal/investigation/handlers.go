@@ -33,9 +33,10 @@ const (
 
 // Handlers is this domain surface's dependencies.
 type Handlers struct {
-	Store  Store
-	Runner *Runner
-	Logger *slog.Logger
+	Store      Store
+	Runner     *Runner
+	Logger     *slog.Logger
+	MaxPending int
 	// Events replays what an investigation has already emitted, for the stream route.
 	// Nil serves that one route a plain refusal and leaves everything else working.
 	Events EventReader
@@ -93,15 +94,9 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	if h.Runner == nil || h.Runner.Investigator == nil {
+	if h.Runner == nil || h.Runner.Agent == nil {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
-		return
-	}
-	if h.Runner.AtCapacity() {
-		writeJSON(writer, http.StatusTooManyRequests, errorView{
-			Error: "this deployment is already running its limit of investigations; wait " +
-				"for one to end and open this again"})
 		return
 	}
 	var asked openRequest
@@ -125,7 +120,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusOK, clarificationView{Clarification: clarification})
 		return
 	}
-
 	window := windowOf(trigger, h.WindowLead)
 	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, NewInvestigation{
 		IncidentID:    trigger.IncidentID,
@@ -135,7 +129,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		WindowFrom:    window.from,
 		WindowUntil:   window.until,
 		CreatedBy:     principal.ID(),
-	})
+	}, h.MaxPending)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -145,7 +139,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		slog.String("investigation_id", opened.ID.String()),
 		slog.String("incident_id", trigger.IncidentID.String()))
 
-	h.Runner.Start(organization, opened)
 	writeJSON(writer, http.StatusAccepted, investigationViewOf(opened))
 }
 
@@ -610,6 +603,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "investigation not found"})
 	case errors.Is(err, ErrIncidentUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
+	case errors.Is(err, ErrQueueFull):
+		writeJSON(writer, http.StatusTooManyRequests, errorView{
+			Error: "this Organization has reached its pending Investigation limit; wait for work to start and try again"})
 	case errors.Is(err, ErrAlreadyEnded):
 		writeJSON(writer, http.StatusConflict, errorView{Error: "investigation has already ended"})
 	case errors.Is(err, ErrBadCursor):

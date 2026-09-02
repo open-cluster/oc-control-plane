@@ -1,4 +1,4 @@
-package reasoning
+package agent
 
 import (
 	"context"
@@ -82,7 +82,7 @@ func (t *Telemetry) AgentRevision() string {
 // complete runs one provider call inside its span and emits the call's telemetry. It is
 // the one wrapper around Provider.Complete, so no call can happen unobserved.
 func (t *Telemetry) complete(
-	ctx context.Context, provider Provider, deployment Deployment, rate Rate,
+	ctx context.Context, provider Model, deployment Deployment, rate Rate,
 	prompt Prompt,
 ) (Completion, error) {
 	if t == nil {

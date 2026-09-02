@@ -32,12 +32,18 @@ const investigationColumns = `investigation_id, incident_id, integration_id, que
 // provenance, which is a record of its own.
 func (p *Database) CreateInvestigation(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	wanted investigation.NewInvestigation,
+	wanted investigation.NewInvestigation, maxPending int,
 ) (investigation.Investigation, error) {
 	return audited(ctx, p, principal, organization, audit.ActionInvestigationOpened,
 		func(ctx context.Context, transaction pgx.Tx) (
 			investigation.Investigation, audit.Target, audit.Detail, error,
 		) {
+			if err := reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
+				if errors.Is(err, ErrWebhookWorkCapacity) {
+					return investigation.Investigation{}, audit.Target{}, nil, investigation.ErrQueueFull
+				}
+				return investigation.Investigation{}, audit.Target{}, nil, err
+			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO investigation (investigation_id, org_id, incident_id,
 				                           integration_id, question, subject,

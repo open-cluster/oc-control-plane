@@ -1,4 +1,4 @@
-package investigation
+package agent
 
 import (
 	"sort"

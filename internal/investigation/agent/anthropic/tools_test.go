@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Native tool calling on the wire: the definitions generated from the one declarative

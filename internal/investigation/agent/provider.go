@@ -1,4 +1,4 @@
-package reasoning
+package agent
 
 import (
 	"context"
@@ -7,16 +7,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// Provider is one vendor's deployment, reduced to what reasoning actually asks of it.
+// Model performs one provider completion.
 //
 // It is deliberately small. A provider does not hold a conversation, manage an investigation,
 // decide when to stop or interpret evidence: it is handed a rendered prompt and a declared output
 // schema, and returns a document. Everything else in this package is the same for every vendor,
 // which is what keeps a second adapter to one directory.
-type Provider interface {
-	// Name identifies the vendor in configuration and telemetry. It is stable and
-	// lower-case: it is written into records that outlive this build.
-	Name() string
+type Model interface {
 	// Complete asks for one document.
 	//
 	// The returned Completion is populated even when the error is non-nil, because a refused or

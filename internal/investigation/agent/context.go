@@ -1,4 +1,4 @@
-package investigation
+package agent
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // MEASURING A TURN'S CONTEXT.
@@ -50,9 +51,9 @@ func briefTokens(brief Brief) int {
 // A brief that cannot be read narrows the turn rather than failing it, exactly as the
 // trigger and the ledger already do: a follow-up that has lost its memory is worse than one
 // that has it, and better than none at all.
-func (r *Runner) conversationBrief(
+func (r *Agent) conversationBrief(
 	ctx context.Context, organization tenancy.Organization, opened Investigation,
-	_ *stream,
+	_ *investigation.EventStream,
 ) *Brief {
 	if opened.ConversationID == uuid.Nil {
 		return nil

@@ -1,4 +1,4 @@
-package reasoning
+package agent
 
 import (
 	"strings"
@@ -23,7 +23,7 @@ func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
 	from := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	until := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 
-	turn := renderResult(investigation.CallResult{
+	turn := renderResult(toolFeedback{
 		CallID: "call-1",
 		Run: investigation.ToolRun{
 			Ordinal:       1,
@@ -54,7 +54,7 @@ func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
 func TestARunWithNoWindowStatesNone(t *testing.T) {
 	t.Parallel()
 
-	turn := renderResult(investigation.CallResult{
+	turn := renderResult(toolFeedback{
 		CallID: "call-1",
 		Run: investigation.ToolRun{
 			Ordinal:   1,

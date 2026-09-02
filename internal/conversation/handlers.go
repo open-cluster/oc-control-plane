@@ -185,23 +185,11 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	})
 }
 
-// append records one message and tries to open a turn from the queue. The ceiling is
-// checked BEFORE the message is written, so a refusal leaves nothing behind.
 func (h Handlers) append(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, text string,
 ) (Message, *turnView, bool, error) {
-	if h.MaxWaitingTurns > 0 {
-		waiting, err := h.Store.WaitingTurns(ctx, organization)
-		if err != nil {
-			return Message{}, nil, false, err
-		}
-		if waiting >= h.MaxWaitingTurns {
-			return Message{}, nil, false, ErrQueueFull
-		}
-	}
-
-	said, err := h.Store.AppendMessage(ctx, principal, organization, id, NewMessage{
+	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
 		Role:      RolePerson,
 		ActorKind: ActorPrincipal,
 		// Both bounded here rather than left to the column. A principal's identifier and
@@ -211,21 +199,9 @@ func (h Handlers) append(
 		ActorID:      boundedRunes(principal.ID(), MaxActorIDLength),
 		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
-	})
+	}, h.WindowLead, h.MaxWaitingTurns)
 	if err != nil {
 		return Message{}, nil, false, err
-	}
-
-	turn, opened, err := h.Store.OpenTurn(ctx, organization, id, h.WindowLead)
-	if err != nil {
-		// The message is recorded and the turn is not. That is recoverable and the queue
-		// is where it recovers: the next drain or the next message takes it up. Failing
-		// the request would tell the person their message was lost when it was not.
-		h.Logger.ErrorContext(ctx, "a message was recorded but its turn could not open",
-			slog.String("org_id", organization.String()),
-			slog.String("conversation_id", id.String()),
-			slog.String("error", err.Error()))
-		return said, nil, true, nil
 	}
 	if !opened {
 		return said, nil, true, nil

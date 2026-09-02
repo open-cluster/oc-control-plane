@@ -25,6 +25,9 @@ ai:
   provider: "anthropic"
   model: "MODEL_ID"
   api_key_file: "/run/opencluster/credentials/model-key"
+investigation:
+  workers: 8
+  max_pending_per_organization: 100
 ```
 
 Pass the file with `--config /etc/opencluster/opencluster.yaml` or `OC_CONFIG_FILE`.
@@ -97,6 +100,8 @@ and training terms before production use.
 | `OC_AI_PROVIDER` | Native AI provider: `anthropic` or `zai`. |
 | `OC_AI_MODEL` | Exact model identifier. |
 | `OC_AI_API_KEY_FILE` | AI provider credential file. |
+| `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
+| `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |
 | `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. |
 | `OC_LOG_LEVEL` | Log level; default `info`. |
 | `OC_OTLP_ENDPOINT` | Optional OTLP collector host and port. |

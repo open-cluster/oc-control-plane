@@ -10,17 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// THE INVESTIGATION RUNTIME'S TELEMETRY, AND WHAT IT DELIBERATELY OMITS.
-//
-// What a platform engineer needs is the shape of degradation before a customer reports it:
-// how long work waits before anything picks it up, how long a person stares at nothing
-// before the first sign of life, how long the whole thing takes, how often memory has to be
-// consolidated and whether that is working, and how often a worker died.
-//
-// NO ORGANIZATION LABEL ON ANY INSTRUMENT. Tenant identity belongs on spans and in logs,
-// where it can be looked up for one customer; on a metric it is unbounded cardinality that
-// grows with the business. Every attribute here is one of this build's own bounded strings
-// — an outcome word, a stop reason — and never anything a customer or a vendor supplied.
+// Metrics omit Organization and other unbounded customer- or vendor-supplied labels.
 
 const meterName = "github.com/open-cluster/oc-control-plane/internal/investigation"
 
@@ -36,6 +26,12 @@ type Telemetry struct {
 	toolDuration  metric.Float64Histogram
 	recovered     metric.Int64Counter
 }
+
+func (t *Telemetry) Ended(duration time.Duration, status, stoppedBy string) {
+	t.ended(duration, status, stoppedBy)
+}
+
+func (t *Telemetry) RanTool(run ToolRun) { t.ranTool(run) }
 
 // NewTelemetry builds the instruments. A failure to construct one is logged and leaves it
 // nil — telemetry that refused to start would take investigations with it.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Which failure is which, because they call for different things from different people.
