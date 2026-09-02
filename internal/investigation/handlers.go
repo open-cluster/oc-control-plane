@@ -74,10 +74,6 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// Describe is this domain surface's contribution to the deployment's self-description.
-//
-// The event stream carries no body and is not a listing: it is one investigation's own
-// events as they happen, not a page of rows a caller narrows.
 // openRequest is what starts an investigation: an incident, or a question in the
 // operator's own words.
 type openRequest struct {

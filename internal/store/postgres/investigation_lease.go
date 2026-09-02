@@ -32,8 +32,7 @@ func (p *Database) ClaimInvestigation(
 	row := p.pool.QueryRow(ctx, `
 			UPDATE investigation
 			   SET lease_worker       = $1,
-			       lease_expires_at   = now() + $2::interval,
-			       lease_heartbeat_at = now()
+			       lease_expires_at   = now() + $2::interval
 			 WHERE investigation_id = (
 			       SELECT waiting.investigation_id
 			         FROM investigation waiting
@@ -85,8 +84,7 @@ func (p *Database) TakeLease(
 	tag, err := pool.Exec(ctx, `
 		UPDATE investigation
 		   SET lease_worker       = $3,
-		       lease_expires_at   = now() + $4::interval,
-		       lease_heartbeat_at = now()
+		       lease_expires_at   = now() + $4::interval
 		 WHERE investigation_id = $1
 		   AND org_id           = $2
 		   AND status           = 1
@@ -117,8 +115,7 @@ func (p *Database) Heartbeat(
 	}
 	tag, err := pool.Exec(ctx, `
 		UPDATE investigation
-		   SET lease_expires_at   = now() + $4::interval,
-		       lease_heartbeat_at = now()
+		   SET lease_expires_at = now() + $4::interval
 		 WHERE investigation_id = $1
 		   AND org_id           = $2
 		   AND status           = 1

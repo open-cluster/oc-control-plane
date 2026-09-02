@@ -3,12 +3,11 @@ package storage_test
 import (
 	"context"
 	"os"
-	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -20,6 +19,23 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestMigrationSetIsOneCleanPreReleaseBaseline(t *testing.T) {
+	t.Parallel()
+
+	if got := storage.MigrationCount(); got != 1 {
+		t.Fatalf("migration count = %d, want one clean pre-release baseline", got)
+	}
+	body, err := os.ReadFile("migrations/0001_baseline.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dead := range []string{"conversation_summary", "lease_heartbeat_at", "investigation_tool_run_capability"} {
+		if strings.Contains(string(body), dead) {
+			t.Errorf("baseline still contains removed schema %q", dead)
+		}
+	}
+}
 
 // postgresDSN starts one Postgres and returns a DSN for the default database. Integration
 // tests share nothing but the server; each test creates its own database so they stay
@@ -186,119 +202,6 @@ func TestMigrate_AddsGenericWebhookDeliveryIdentity(t *testing.T) {
 	}
 	if columns != 3 {
 		t.Errorf("delivery identity column count = %d, want 3", columns)
-	}
-}
-
-func TestMigrate_BackfillsEveryHistoricalAcceptedDeliveryWithoutChangingHistory(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	dsn := postgresDSN(t)
-	connection, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = connection.Close(ctx) }()
-	for _, name := range []string{"0001_baseline.sql", "0002_organization.sql"} {
-		body, readErr := os.ReadFile("migrations/" + name)
-		if readErr != nil {
-			t.Fatalf("read %s: %v", name, readErr)
-		}
-		if _, err = connection.Exec(ctx, string(body)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
-	}
-	if _, err = connection.Exec(ctx, `
-		CREATE TABLE schema_migration
-		(
-			version text PRIMARY KEY,
-			applied_at timestamptz NOT NULL DEFAULT now()
-		);
-		INSERT INTO schema_migration (version) VALUES ('0001_baseline'), ('0002_organization');
-		INSERT INTO organization (org_id, created_by) VALUES ('upgrade-org', 'migration test');
-		INSERT INTO integration (integration_id, org_id, integration_type_id, name) VALUES
-			('00000000-0000-0000-0000-000000000101', 'upgrade-org', 1, 'Historical Alertmanager'),
-			('00000000-0000-0000-0000-000000000104', 'upgrade-org', 3, 'Historical Slack');
-		INSERT INTO integration_delivery
-			(delivery_id, org_id, integration_id, outcome, body_digest, reason) VALUES
-			('10000000-0000-0000-0000-000000000001', 'upgrade-org',
-			 '00000000-0000-0000-0000-000000000101', 1, decode(repeat('a1', 32), 'hex'), ''),
-			('10000000-0000-0000-0000-000000000002', 'upgrade-org',
-			 '00000000-0000-0000-0000-000000000104', 1, decode(repeat('b2', 32), 'hex'), ''),
-			('10000000-0000-0000-0000-000000000003', 'upgrade-org',
-			 '00000000-0000-0000-0000-000000000101', 2, NULL, ''),
-			('10000000-0000-0000-0000-000000000004', 'upgrade-org',
-			 '00000000-0000-0000-0000-000000000104', 3, NULL, 'unauthorized')`); err != nil {
-		t.Fatalf("seed pre-0003 history: %v", err)
-	}
-	database := openDatabaseForTest(t, dsn)
-	applied, err := database.Migrate(ctx)
-	if err != nil {
-		t.Fatalf("upgrade: %v", err)
-	}
-	wantMigrations := []string{
-		"0003_generic_webhook_delivery_identity",
-		"0004_conversation_person_history_index",
-		"0005_relay_protocol_version",
-		"0006_bootstrap_session",
-		"0007_organization_display_name",
-	}
-	if !slices.Equal(applied, wantMigrations) {
-		t.Fatalf("upgrade applied %v, want %v", applied, wantMigrations)
-	}
-	rows, err := connection.Query(ctx, `
-		SELECT outcome, encode(body_digest, 'hex'), provider_identity, lifecycle_phase
-		  FROM integration_delivery ORDER BY delivery_id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var found int
-	for rows.Next() {
-		var outcome int
-		var digest, identity, phase *string
-		if err = rows.Scan(&outcome, &digest, &identity, &phase); err != nil {
-			t.Fatal(err)
-		}
-		found++
-		if outcome == 1 {
-			if digest == nil || identity == nil || *identity != *digest || phase == nil || *phase != "" {
-				t.Errorf("accepted history was not safely backfilled: digest=%v identity=%v phase=%v",
-					digest, identity, phase)
-			}
-		} else if identity != nil || phase != nil {
-			t.Errorf("nonaccepted outcome %d gained identity=%v phase=%v", outcome, identity, phase)
-		}
-	}
-	if err = rows.Err(); err != nil || found != 4 {
-		t.Fatalf("preserved history count=%d error=%v", found, err)
-	}
-	if _, err = connection.Exec(ctx, `
-		INSERT INTO integration_delivery
-			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity, lifecycle_phase)
-		VALUES (gen_random_uuid(), 'upgrade-org', '00000000-0000-0000-0000-000000000101',
-			1, decode(repeat('c3', 32), 'hex'), repeat('a1', 32), '')`); err == nil {
-		t.Fatal("the upgraded identity index accepted a conflicting historical identity")
-	}
-	if _, err = connection.Exec(ctx, `
-		INSERT INTO integration_delivery
-			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity, lifecycle_phase)
-		VALUES (gen_random_uuid(), 'upgrade-org', '00000000-0000-0000-0000-000000000101',
-			1, decode(repeat('c3', 32), 'hex'), repeat('a1', 32), 'resolved')`); err != nil {
-		t.Fatalf("the upgraded identity index refused a distinct lifecycle phase: %v", err)
-	}
-	if _, err = connection.Exec(ctx, `
-		INSERT INTO integration_delivery
-			(delivery_id, org_id, integration_id, outcome, provider_identity, lifecycle_phase)
-		VALUES (gen_random_uuid(), 'upgrade-org', '00000000-0000-0000-0000-000000000101',
-			2, 'must-not-survive', '')`); err == nil {
-		t.Fatal("the upgraded constraints accepted identity on a duplicate attempt")
-	}
-}
-
-func TestMigrationCountIncludesGenericWebhookDeliveryIdentity(t *testing.T) {
-	t.Parallel()
-	if got := storage.MigrationCount(); got < 3 {
-		t.Errorf("MigrationCount() = %d, want at least 3", got)
 	}
 }
 

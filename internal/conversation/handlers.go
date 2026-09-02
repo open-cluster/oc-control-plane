@@ -59,24 +59,6 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// SurfaceName is what this optional surface is called in the deployment's
-// self-description. Exported because a client keys off it and a name spelled twice is a
-// surface a console silently stops finding.
-const SurfaceName = "conversations"
-
-// Describe is this capability's contribution to the deployment's self-description.
-//
-// The SURFACE is the point. Conversations are off by default and answer 404 when off,
-// which is right — a deployment with them off does not have this surface, and answering
-// "not implemented" would advertise one that is coming. But a console deciding whether
-// "Investigate this incident" opens a Conversation or a single-shot Investigation could
-// only probe and read a 404, which cannot be told from a wrong identifier or an older
-// build. Saying so plainly is what stops a 404 being the discovery mechanism.
-//
-// The listing and the bodies are declared whether or not this deployment serves them, for
-// the same reason the ROUTES are: the contract of a surface does not change with the
-// switch, only whether it is reachable, and a document that changed shape with
-// configuration would be one nobody could review.
 // openRequest starts a conversation: a subject, optionally the incident it is about, and
 // optionally the first thing to say.
 type openRequest struct {

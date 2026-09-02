@@ -286,36 +286,6 @@ COMMENT ON TABLE public.conversation_message IS 'The authoritative transcript, i
 
 
 --
--- Name: conversation_summary; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.conversation_summary (
-    conversation_id uuid NOT NULL,
-    org_id text NOT NULL,
-    version integer NOT NULL,
-    covers_through_message_sequence bigint NOT NULL,
-    summary jsonb DEFAULT '{}'::jsonb NOT NULL,
-    tokens_before integer DEFAULT 0 NOT NULL,
-    tokens_after integer DEFAULT 0 NOT NULL,
-    model text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT conversation_summary_covers_through_message_sequence_check CHECK ((covers_through_message_sequence >= 0)),
-    CONSTRAINT conversation_summary_model_check CHECK ((length(model) <= 128)),
-    CONSTRAINT conversation_summary_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
-    CONSTRAINT conversation_summary_tokens_after_check CHECK ((tokens_after >= 0)),
-    CONSTRAINT conversation_summary_tokens_before_check CHECK ((tokens_before >= 0)),
-    CONSTRAINT conversation_summary_version_check CHECK ((version >= 1))
-);
-
-
---
--- Name: TABLE conversation_summary; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.conversation_summary IS 'The structured running summary older turns compact into. Never authoritative; conversation_message is.';
-
-
---
 -- Name: deployment_sign_in_flow; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -524,6 +494,9 @@ CREATE TABLE public.integration_delivery (
     alert_event_count integer DEFAULT 0 NOT NULL,
     truncated integer DEFAULT 0 NOT NULL,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
+    provider_identity text,
+    lifecycle_phase text,
+    request_id text DEFAULT ''::text NOT NULL,
     CONSTRAINT integration_delivery_accepted_carries_a_digest CHECK (((outcome <> 1) OR (body_digest IS NOT NULL))),
     CONSTRAINT integration_delivery_alert_event_count_check CHECK ((alert_event_count >= 0)),
     CONSTRAINT integration_delivery_body_digest_check CHECK (((body_digest IS NULL) OR (length(body_digest) = 32))),
@@ -531,7 +504,12 @@ CREATE TABLE public.integration_delivery (
     CONSTRAINT integration_delivery_outcome_check CHECK ((outcome = ANY (ARRAY[1, 2, 3]))),
     CONSTRAINT integration_delivery_reason_check CHECK ((length(reason) <= 64)),
     CONSTRAINT integration_delivery_states_a_reason_exactly_when_it_refused CHECK (((outcome = 3) = (reason <> ''::text))),
-    CONSTRAINT integration_delivery_truncated_check CHECK ((truncated >= 0))
+    CONSTRAINT integration_delivery_truncated_check CHECK ((truncated >= 0)),
+    CONSTRAINT integration_delivery_accepted_carries_provider_identity CHECK (((outcome <> 1) OR ((provider_identity IS NOT NULL) AND (lifecycle_phase IS NOT NULL)))),
+    CONSTRAINT integration_delivery_nonaccepted_has_no_provider_identity CHECK (((outcome = 1) OR ((provider_identity IS NULL) AND (lifecycle_phase IS NULL)))),
+    CONSTRAINT integration_delivery_provider_identity_check CHECK (((provider_identity IS NULL) OR ((length(provider_identity) >= 1) AND (length(provider_identity) <= 256)))),
+    CONSTRAINT integration_delivery_lifecycle_phase_check CHECK (((lifecycle_phase IS NULL) OR (lifecycle_phase = ANY (ARRAY[''::text, 'firing'::text, 'resolved'::text])))),
+    CONSTRAINT integration_delivery_request_id_check CHECK ((length(request_id) <= 128))
 );
 
 
@@ -625,7 +603,6 @@ CREATE TABLE public.investigation (
     turn smallint,
     lease_worker text DEFAULT ''::text NOT NULL,
     lease_expires_at timestamp with time zone,
-    lease_heartbeat_at timestamp with time zone,
     webhook_work_id uuid,
     cancel_requested_at timestamp with time zone,
     cancelled_by text DEFAULT ''::text NOT NULL,
@@ -702,13 +679,6 @@ COMMENT ON COLUMN public.investigation.lease_expires_at IS 'When the claim lapse
 
 
 --
--- Name: COLUMN investigation.lease_heartbeat_at; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.lease_heartbeat_at IS 'When the holder last said it was still working.';
-
-
---
 -- Name: investigation_event; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -765,7 +735,6 @@ CREATE TABLE public.investigation_tool_run (
     org_id text NOT NULL,
     integration_id uuid,
     ordinal smallint NOT NULL,
-    capability text DEFAULT ''::text NOT NULL,
     tool text NOT NULL,
     arguments jsonb DEFAULT '{}'::jsonb NOT NULL,
     window_from timestamp with time zone NOT NULL,
@@ -779,7 +748,6 @@ CREATE TABLE public.investigation_tool_run (
     finished_at timestamp with time zone NOT NULL,
     purpose text DEFAULT ''::text NOT NULL,
     hypothesis_id text DEFAULT ''::text NOT NULL,
-    CONSTRAINT investigation_tool_run_capability_check CHECK ((length(capability) <= 128)),
     CONSTRAINT investigation_tool_run_error_check CHECK ((length(error) <= 1024)),
     CONSTRAINT investigation_tool_run_failure_states_a_reason CHECK (((outcome = 2) = (error <> ''::text))),
     CONSTRAINT investigation_tool_run_ordinal_check CHECK ((ordinal >= 1)),
@@ -795,13 +763,6 @@ CREATE TABLE public.investigation_tool_run (
 --
 
 COMMENT ON TABLE public.investigation_tool_run IS 'Every tool execution an investigation performed, succeeded or failed alike, with its scope and what came back.';
-
-
---
--- Name: COLUMN investigation_tool_run.capability; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation_tool_run.capability IS 'Legacy compatibility field. New writes leave it empty; Tool is the investigation operation.';
 
 
 --
@@ -832,7 +793,7 @@ CREATE TABLE public.operator_session (
     session_id uuid NOT NULL,
     token_digest bytea NOT NULL,
     user_id uuid NOT NULL,
-    org_id text NOT NULL,
+    org_id text,
     issued_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -854,6 +815,24 @@ CREATE TABLE public.operator_session (
 --
 
 COMMENT ON TABLE public.operator_session IS 'A signed-in operator. Only the digest of the cookie value is held; sign-out deletes the row.';
+
+COMMENT ON COLUMN public.operator_session.org_id IS 'Organization selected when the session was issued; NULL until the bootstrapped User creates the first Organization.';
+
+
+--
+-- Name: organization; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization (
+    org_id text NOT NULL,
+    display_name text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT organization_pkey PRIMARY KEY (org_id),
+    CONSTRAINT organization_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
+    CONSTRAINT organization_display_name_check CHECK (((length(display_name) >= 1) AND (length(display_name) <= 256))),
+    CONSTRAINT organization_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 256)))
+);
 
 
 --
@@ -1000,6 +979,7 @@ CREATE TABLE public.relay_registration (
     credential_digest bytea NOT NULL,
     cluster_fingerprint text NOT NULL,
     relay_version text NOT NULL,
+    protocol_version bigint,
     capabilities jsonb NOT NULL,
     revoked_at timestamp with time zone,
     session_conflict_at timestamp with time zone,
@@ -1012,7 +992,8 @@ CREATE TABLE public.relay_registration (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT relay_registration_credential_digest_check CHECK ((length(credential_digest) = 32)),
     CONSTRAINT relay_registration_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
-    CONSTRAINT relay_registration_session_peer_check CHECK (((session_peer IS NULL) OR (length(session_peer) <= 256)))
+    CONSTRAINT relay_registration_session_peer_check CHECK (((session_peer IS NULL) OR (length(session_peer) <= 256))),
+    CONSTRAINT relay_registration_protocol_version_check CHECK (((protocol_version IS NULL) OR ((protocol_version >= 1) AND (protocol_version <= 4294967295))))
 );
 
 
@@ -1242,14 +1223,6 @@ ALTER TABLE ONLY public.conversation_message
 
 ALTER TABLE ONLY public.conversation
     ADD CONSTRAINT conversation_pkey PRIMARY KEY (conversation_id);
-
-
---
--- Name: conversation_summary conversation_summary_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_summary
-    ADD CONSTRAINT conversation_summary_pkey PRIMARY KEY (org_id, conversation_id, version);
 
 
 --
@@ -1624,6 +1597,8 @@ CREATE INDEX conversation_incident_idx ON public.conversation USING btree (incid
 
 CREATE INDEX conversation_message_queued_idx ON public.conversation_message USING btree (org_id, conversation_id, sequence) WHERE (investigation_id IS NULL);
 
+CREATE INDEX conversation_message_person_history_idx ON public.conversation_message USING btree (org_id, conversation_id, sequence) WHERE (role = 1);
+
 
 --
 -- Name: conversation_org_idx; Type: INDEX; Schema: public; Owner: -
@@ -1668,10 +1643,10 @@ CREATE INDEX integration_delivery_accepted_idx ON public.integration_delivery US
 
 
 --
--- Name: integration_delivery_accepted_is_unique; Type: INDEX; Schema: public; Owner: -
+-- Name: integration_delivery_accepted_provider_identity_is_unique; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX integration_delivery_accepted_is_unique ON public.integration_delivery USING btree (integration_id, body_digest) WHERE (outcome = 1);
+CREATE UNIQUE INDEX integration_delivery_accepted_provider_identity_is_unique ON public.integration_delivery USING btree (integration_id, provider_identity, lifecycle_phase) WHERE (outcome = 1);
 
 
 --
@@ -1924,14 +1899,6 @@ ALTER TABLE ONLY public.conversation_message
 
 ALTER TABLE ONLY public.conversation_message
     ADD CONSTRAINT conversation_message_names_an_org_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id);
-
-
---
--- Name: conversation_summary conversation_summary_belongs_to_its_conversation; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.conversation_summary
-    ADD CONSTRAINT conversation_summary_belongs_to_its_conversation FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id) ON DELETE CASCADE;
 
 
 --
@@ -2218,4 +2185,5 @@ VALUES
     (1, 'alertmanager', 'Prometheus Alertmanager', 'Create incidents from firing and resolved Alertmanager alerts delivered through an authenticated webhook.', 'alertmanager', 'alerting'),
     (2, 'kubernetes', 'Kubernetes', 'Give investigations read-only access to Kubernetes workload runtime, namespace events, and bounded container logs through an outbound Relay.', 'kubernetes', 'infrastructure'),
     (3, 'slack', 'Slack', 'Give investigations read-only access to Slack conversations visible to the connected token and reply to direct app mentions in their original thread.', 'slack', 'collaboration'),
-    (4, 'github', 'GitHub', 'Give investigations read-only access to selected repositories for commits, pull requests, CI failures, files, and releases.', 'github', 'source-control');
+    (4, 'github', 'GitHub', 'Give investigations read-only access to selected repositories for commits, pull requests, CI failures, files, and releases.', 'github', 'source-control'),
+    (5, 'generic_webhook', 'Generic Webhook', 'Create incidents from canonical firing and resolved Alert Events delivered through an authenticated webhook.', '', 'alerting');

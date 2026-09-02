@@ -18,7 +18,7 @@ import (
 // and compares it against the union of the map, in both directions.
 
 // githubPage is the published page whose permission table this gate holds.
-var githubPage = filepath.Join(docsRoot, "integrations", "source-control", "github.mdx")
+var githubPage = filepath.Join(moduleRoot, "docs", "integrations", "source-control", "github.mdx")
 
 func TestTheDocumentedGitHubPermissionsAreExactlyTheOnesTheToolsNeed(t *testing.T) {
 	t.Parallel()
