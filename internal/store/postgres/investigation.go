@@ -32,12 +32,18 @@ const investigationColumns = `investigation_id, incident_id, integration_id, que
 // provenance, which is a record of its own.
 func (p *Database) CreateInvestigation(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	wanted investigation.NewInvestigation,
+	wanted investigation.NewInvestigation, maxPending int,
 ) (investigation.Investigation, error) {
 	return audited(ctx, p, principal, organization, audit.ActionInvestigationOpened,
 		func(ctx context.Context, transaction pgx.Tx) (
 			investigation.Investigation, audit.Target, audit.Detail, error,
 		) {
+			if err := reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
+				if errors.Is(err, ErrWebhookWorkCapacity) {
+					return investigation.Investigation{}, audit.Target{}, nil, investigation.ErrQueueFull
+				}
+				return investigation.Investigation{}, audit.Target{}, nil, err
+			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO investigation (investigation_id, org_id, incident_id,
 				                           integration_id, question, subject,
@@ -118,7 +124,7 @@ func (p *Database) InvestigationProvenance(
 	}
 
 	runRows, err := pool.Query(ctx, `
-		SELECT integration_id, ordinal, capability, tool, purpose, hypothesis_id, arguments,
+		SELECT integration_id, ordinal, tool, purpose, hypothesis_id, arguments,
 		       window_from, window_until, outcome, truncated, summary, sources, error,
 		       started_at, finished_at
 		  FROM investigation_tool_run
@@ -132,13 +138,12 @@ func (p *Database) InvestigationProvenance(
 	runs := make([]investigation.ToolRun, 0, 8)
 	for runRows.Next() {
 		var (
-			run              investigation.ToolRun
-			integrationID    *uuid.UUID
-			legacyCapability string
-			arguments        []byte
-			runSources       []byte
+			run           investigation.ToolRun
+			integrationID *uuid.UUID
+			arguments     []byte
+			runSources    []byte
 		)
-		if err := runRows.Scan(&integrationID, &run.Ordinal, &legacyCapability,
+		if err := runRows.Scan(&integrationID, &run.Ordinal,
 			&run.Tool, &run.Purpose, &run.HypothesisID, &arguments,
 			&run.WindowFrom, &run.WindowUntil, &run.Outcome,
 			&run.Truncated, &run.Summary, &runSources, &run.Error,
@@ -271,14 +276,14 @@ func (p *Database) RecordToolRun(
 	}
 	_, err = pool.Exec(ctx, `
 		INSERT INTO investigation_tool_run (investigation_id, org_id,
-		                                    integration_id, ordinal, capability, tool,
+		                                    integration_id, ordinal, tool,
 		                                    purpose, hypothesis_id, arguments,
 		                                    window_from, window_until,
 		                                    outcome, truncated, summary, sources, error,
 		                                    started_at, finished_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		id, organization.String(), nullableUUID(run.IntegrationID), run.Ordinal,
-		"", run.Tool, run.Purpose, run.HypothesisID, arguments, run.WindowFrom, run.WindowUntil,
+		run.Tool, run.Purpose, run.HypothesisID, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
 		run.StartedAt, run.FinishedAt)
 	if err != nil {

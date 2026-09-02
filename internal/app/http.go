@@ -10,10 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"google.golang.org/grpc"
-
-	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
@@ -24,7 +21,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
-	"github.com/open-cluster/oc-control-plane/internal/relay"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	"github.com/open-cluster/oc-control-plane/web"
 )
@@ -85,25 +81,13 @@ func serve(ctx context.Context, process assembled) error {
 		process.onListen(listener.Addr())
 	}
 
-	// The retention pruner is not a listener: it applies the schedule each tenant declared
-	// for its own record. It is stopped with the process and nothing waits for it, because
-	// the work it does is bounded per batch and the next instance simply continues.
-	pruners := startAuditPruner(process)
-	defer pruners.stop()
-
-	webhookWork := startWebhookWork(process)
-	defer webhookWork.stop()
-
-	// The change ledger ages out on its own schedule, independent of the audit record's:
-	// it is derived operational context, and what bounds it is the deployment's retention
-	// rather than a tenant's declaration.
-	ledgerPruners := startChangeLedgerPruner(process)
-	defer ledgerPruners.stop()
-
-	// Answering back in Slack. Started only where this deployment receives events at all,
-	// because a worker sweeping for deliveries nobody can create is a query on a loop.
-	slackReplies := startSlackReplies(process)
-	defer slackReplies.stop()
+	workerCtx, stopWorkers := context.WithCancel(ctx)
+	workers, workerCtx := errgroup.WithContext(workerCtx)
+	startWorkers(workerCtx, workers, process)
+	defer func() {
+		stopWorkers()
+		_ = workers.Wait()
+	}()
 
 	select {
 	case serveErr := <-failed:
@@ -178,43 +162,6 @@ func logMigrations(logger *slog.Logger, applied []string) {
 	logger.Info("migrations applied", slog.Any("versions", applied))
 }
 
-// startRelayEndpoint listens for relays when one is configured. A configuration with no relay
-// address returns nothing to stop, which is correct for a deployment that serves no relays yet
-// rather than a reason to fail.
-//
-// A serve error goes to the same channel the HTTP server uses, so either surface failing
-// ends the process rather than leaving it half-serving.
-func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint, error) {
-	cfg := process.config
-	if cfg.RelayAddress == "" {
-		return nil, nil
-	}
-
-	listener, err := net.Listen("tcp", cfg.RelayAddress)
-	if err != nil {
-		return nil, fmt.Errorf("listening for relays on %s: %w", cfg.RelayAddress, err)
-	}
-
-	endpoint := &relayEndpoint{
-		server:   grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler())),
-		sessions: relay.NewSessionService(process.database, process.logger, process.inventoryInterval),
-	}
-	relayv1.RegisterRelayRegistrationServiceServer(endpoint.server,
-		relay.NewRegistrationService(process.database, cfg.RelaySPKIPins, process.logger))
-	relayv1.RegisterRelaySessionServiceServer(endpoint.server, endpoint.sessions)
-
-	process.logger.Info("listening for relays",
-		slog.String("address", listener.Addr().String()))
-
-	go func() {
-		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
-			!errors.Is(serveErr, grpc.ErrServerStopped) {
-			failed <- serveErr
-		}
-	}()
-	return endpoint, nil
-}
-
 // operatorRouter assembles the authenticated operator route table.
 func operatorRouter(process assembled) (http.Handler, error) {
 	cfg := process.config
@@ -239,7 +186,7 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		Investigations:          process.investigations,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		ConversationsEnabled:    true,
-		MaxWaitingTurns:         defaultOrgWaitingInvestigations,
+		MaxWaitingTurns:         cfg.MaxPendingInvestigationsPerOrganization,
 		IntakeBaseURL:           cfg.OperatorPublicURL,
 		PublicURL:               cfg.OperatorPublicURL,
 		ConsoleURL:              cfg.OperatorPublicURL,

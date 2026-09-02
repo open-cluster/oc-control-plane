@@ -275,24 +275,9 @@ type Store interface {
 	// ConversationDetail reads one with its messages and its turns.
 	ConversationDetail(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		messages int) (Detail, error)
-	// AppendMessage writes one message at the next sequence and stamps the
-	// conversation's activity. It does NOT open a turn.
-	AppendMessage(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		id uuid.UUID, said NewMessage) (Message, error)
-	// OpenTurn opens the next turn from whatever messages are queued, and attaches them
-	// to it. The second return is false when a turn is already running for this
-	// conversation — the single-writer invariant refusing, which is not an error: the
-	// messages stay queued and the drain at the running turn's terminal takes them up.
-	// It is also false when nothing is queued, which a drain finding an empty queue is.
-	//
-	// lead is how far before the incident began the turn's window reaches back. A
-	// conversation naming no incident gets a window of that length ending now.
-	OpenTurn(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		lead time.Duration) (Turn, bool, error)
-	// WaitingTurns counts this organization's turns that are open and unclaimed. It is
-	// the queue, and the ceiling on it is what keeps overload boring: work above the
-	// ceiling is refused with a plain reason rather than queued without bound.
-	WaitingTurns(ctx context.Context, org tenancy.Organization) (int, error)
+	AppendMessageAndOpenTurn(ctx context.Context, who authz.Principal,
+		org tenancy.Organization, id uuid.UUID, said NewMessage, lead time.Duration,
+		maxPending int) (Message, Turn, bool, error)
 }
 
 // Bounded cuts text to what a column will hold, at a rune boundary.

@@ -18,7 +18,9 @@ import (
 
 // Defaults for the optional settings.
 const (
-	defaultAuthenticationMode = "local"
+	defaultAuthenticationMode                     = "local"
+	defaultInvestigationWorkers                   = 8
+	defaultInvestigationMaxPendingPerOrganization = 100
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
@@ -30,6 +32,7 @@ var SupportedEnvironmentKeys = []string{
 	EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile,
 	EnvRelayAddress, EnvRelaySPKIPins,
 	EnvModelProvider, EnvModelName, EnvModelKeyFile,
+	EnvInvestigationWorkers, EnvInvestigationMaxPendingPerOrganization,
 	EnvSealingKeyFile,
 	EnvLogLevel, EnvOTLPEndpoint,
 	EnvSlackClientID, EnvSlackClientSecretFile, EnvSlackSigningSecretFile,
@@ -37,27 +40,29 @@ var SupportedEnvironmentKeys = []string{
 }
 
 const (
-	EnvHTTPAddress            = "OC_SERVER_ADDRESS"
-	EnvOperatorPublicURL      = "OC_PUBLIC_URL"
-	EnvDatabaseDSNFile        = "OC_DATABASE_DSN_FILE"
-	EnvAuthenticationMode     = "OC_AUTH_MODE"
-	EnvOperatorTokenFile      = "OC_BOOTSTRAP_TOKEN_FILE"
-	EnvOIDCIssuer             = "OC_OIDC_ISSUER"
-	EnvOIDCClientID           = "OC_OIDC_CLIENT_ID"
-	EnvOIDCClientSecretFile   = "OC_OIDC_CLIENT_SECRET_FILE"
-	EnvRelayAddress           = "OC_RELAY_ADDRESS"
-	EnvRelaySPKIPins          = "OC_RELAY_SPKI_PINS"
-	EnvModelProvider          = "OC_AI_PROVIDER"
-	EnvModelName              = "OC_AI_MODEL"
-	EnvModelKeyFile           = "OC_AI_API_KEY_FILE"
-	EnvSealingKeyFile         = "OC_ENCRYPTION_KEY_FILE"
-	EnvLogLevel               = "OC_LOG_LEVEL"
-	EnvOTLPEndpoint           = "OC_OTLP_ENDPOINT"
-	EnvSlackClientID          = "OC_SLACK_CLIENT_ID"
-	EnvSlackClientSecretFile  = "OC_SLACK_CLIENT_SECRET_FILE"
-	EnvSlackSigningSecretFile = "OC_SLACK_SIGNING_SECRET_FILE"
-	EnvGitHubAppID            = "OC_GITHUB_APP_ID"
-	EnvGitHubAppKeyFile       = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
+	EnvHTTPAddress                            = "OC_SERVER_ADDRESS"
+	EnvOperatorPublicURL                      = "OC_PUBLIC_URL"
+	EnvDatabaseDSNFile                        = "OC_DATABASE_DSN_FILE"
+	EnvAuthenticationMode                     = "OC_AUTH_MODE"
+	EnvOperatorTokenFile                      = "OC_BOOTSTRAP_TOKEN_FILE"
+	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
+	EnvOIDCClientID                           = "OC_OIDC_CLIENT_ID"
+	EnvOIDCClientSecretFile                   = "OC_OIDC_CLIENT_SECRET_FILE"
+	EnvRelayAddress                           = "OC_RELAY_ADDRESS"
+	EnvRelaySPKIPins                          = "OC_RELAY_SPKI_PINS"
+	EnvModelProvider                          = "OC_AI_PROVIDER"
+	EnvModelName                              = "OC_AI_MODEL"
+	EnvModelKeyFile                           = "OC_AI_API_KEY_FILE"
+	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
+	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
+	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
+	EnvLogLevel                               = "OC_LOG_LEVEL"
+	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
+	EnvSlackClientID                          = "OC_SLACK_CLIENT_ID"
+	EnvSlackClientSecretFile                  = "OC_SLACK_CLIENT_SECRET_FILE"
+	EnvSlackSigningSecretFile                 = "OC_SLACK_SIGNING_SECRET_FILE"
+	EnvGitHubAppID                            = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKeyFile                       = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 )
 
 // Config is the validated process configuration.
@@ -138,14 +143,19 @@ type Config struct {
 	ModelProvider string
 	ModelName     string
 	ModelKey      string
+
+	InvestigationWorkers                    int
+	MaxPendingInvestigationsPerOrganization int
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
 // value, failing on the first problem and naming the offending variable.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	cfg := Config{
-		HTTPAddress:        ":8080",
-		AuthenticationMode: defaultAuthenticationMode,
+		HTTPAddress:                             ":8080",
+		AuthenticationMode:                      defaultAuthenticationMode,
+		InvestigationWorkers:                    defaultInvestigationWorkers,
+		MaxPendingInvestigationsPerOrganization: defaultInvestigationMaxPendingPerOrganization,
 	}
 
 	var err error
@@ -195,8 +205,31 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = modelDeployment(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
+	if cfg.InvestigationWorkers, err = positiveInteger(
+		lookup, EnvInvestigationWorkers, defaultInvestigationWorkers); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxPendingInvestigationsPerOrganization, err = positiveInteger(
+		lookup, EnvInvestigationMaxPendingPerOrganization,
+		defaultInvestigationMaxPendingPerOrganization); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
+}
+
+func positiveInteger(
+	lookup func(string) (string, bool), key string, fallback int,
+) (int, error) {
+	raw, ok := lookup(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return value, nil
 }
 
 func authentication(lookup func(string) (string, bool), cfg *Config) error {

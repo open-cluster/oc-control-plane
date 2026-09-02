@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/zai"
 )
@@ -16,7 +16,7 @@ type Options struct {
 
 func Open(
 	deployment reasoning.Deployment, options Options,
-) (reasoning.Provider, error) {
+) (reasoning.Model, error) {
 	switch deployment.Provider {
 	case anthropic.Name:
 		return anthropic.New(deployment, anthropic.Options{HTTPClient: options.HTTPClient})

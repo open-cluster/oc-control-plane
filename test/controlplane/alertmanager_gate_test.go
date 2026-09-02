@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,25 +116,26 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 	}
 	decodeInto(t, body, &opened)
 	gate.awaitInvestigation(t, opened.ID)
-
-	trigger := gate.investigator.orientation.Trigger
-	if trigger == nil {
-		t.Fatal("the investigation started with no trigger; an incident from an alert must " +
-			"begin with what the alert said")
+	var promptText strings.Builder
+	select {
+	case prompt := <-gate.prompts:
+		for _, block := range append(prompt.System, prompt.Content...) {
+			promptText.WriteString(block.Text)
+			promptText.WriteByte('\n')
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the Investigation completed without a Model prompt")
 	}
-	if trigger.Title != alertname {
-		t.Errorf("the trigger is titled %q, want %q", trigger.Title, alertname)
-	}
-	if trigger.Labels["namespace"] != "payments" {
-		t.Errorf("the trigger carries labels %v, want the alert's own", trigger.Labels)
-	}
-	if trigger.Annotations["runbook_url"] == "" || trigger.Annotations["dashboard_url"] == "" {
-		t.Errorf("the trigger carries annotations %v, want the runbook and dashboard the "+
-			"operator's alerting already knew", trigger.Annotations)
-	}
-	if trigger.GeneratorURL == "" {
-		t.Error("the trigger carries no generator url, so the investigation cannot point " +
-			"back at where the alert came from")
+	for _, carried := range []string{
+		alertname,
+		"payments",
+		"https://runbooks.acme.example/" + alertname,
+		"https://grafana.acme.example/d/" + alertname,
+		"https://prometheus.acme.example/graph?g0.expr=up",
+	} {
+		if !strings.Contains(promptText.String(), carried) {
+			t.Errorf("the Model prompt did not contain Alertmanager context %q", carried)
+		}
 	}
 
 	// A resolution closes the incident the firing opened rather than opening a second one.

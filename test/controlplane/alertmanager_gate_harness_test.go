@@ -25,6 +25,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
@@ -50,24 +51,27 @@ type alertmanagerGate struct {
 	secret       string
 	recorder     *intakeRecorder
 	alertmanager string
-	investigator *scriptedInvestigatorMain
+	prompts      <-chan modelagent.Prompt
 }
 
 func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	t.Helper()
 
-	investigator := &scriptedInvestigatorMain{exchange: &scriptedExchangeMain{}}
 	operatorAddress := freeAddress(t)
 	intakeAddress := operatorAddress
 	var dsn string
+	prompts := make(chan modelagent.Prompt, 1)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPAddress = operatorAddress
 		cfg.HTTPAddress = intakeAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.OperatorTokenOrganization = surfaceOrg
+		cfg.ModelProvider = "zai"
+		cfg.ModelName = "glm-4.7"
+		cfg.ModelKey = "scripted-model-key"
 		dsn = cfg.DatabaseDSN
-	}, app.Options{Investigator: investigator})
+	}, app.Options{Model: concludingModel{prompts: prompts}})
 
 	surface := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress, dsn: dsn,
@@ -86,7 +90,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 		secret:           created.WebhookSecret,
 		recorder:         recorder,
 		alertmanager:     startAlertmanagerContainer(t, configuration, recorder.port(t)),
-		investigator:     investigator,
+		prompts:          prompts,
 	}
 }
 

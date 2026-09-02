@@ -1,37 +1,43 @@
-package reasoning
+package agent
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
-// THE EXCHANGE DRIVER — the autonomous implementation of the investigation
-// domain's Investigator boundary. One Exchange per investigation: the frozen preamble and
-// the orientation render once and cache; each turn replays the transcript and appends
-// the newest results; the provider's native tool calling carries the calls, and the
-// conclude tool's call IS the conclusion. Every attempt is priced, a refusal is named
-// and never read as an answer, and a malformed document gets exactly one in-deployment
-// retry.
-
-// Agent builds Exchanges against one configured deployment. Validated at startup:
-// a deployment nobody consented to is a refusal whoever configured it reads, not a
-// 03:00 failure.
+// Agent runs investigations against one validated model deployment.
 type Agent struct {
-	provider   Provider
+	model      Model
 	deployment Deployment
 	rate       Rate
 	telemetry  *Telemetry
+
+	Store                  investigation.Store
+	Catalog                integrations.Catalog
+	Sealer                 seal.Sealer
+	Events                 investigation.EventSink
+	RuntimeTelemetry       *investigation.Telemetry
+	Logger                 *slog.Logger
+	MaxToolRuns            int
+	MaxTurns               int
+	ContextBudget          int
+	ContextCeiling         int
+	ModelName              string
+	SpendCeilingMicroCents int64
 }
 
 // NewAgent validates the deployment against consent and the rate table and binds it to
 // its provider.
 func NewAgent(
-	deployment Deployment, provider Provider, tariff Tariff, consent Consent,
+	deployment Deployment, model Model, tariff Tariff, consent Consent,
 ) (*Agent, error) {
 	if !consent.Permits(deployment.Provider) {
 		return nil, fmt.Errorf("%w: %s is configured and not consented to; evidence may "+
@@ -42,27 +48,24 @@ func NewAgent(
 	if err != nil {
 		return nil, err
 	}
-	return &Agent{provider: provider, deployment: deployment, rate: rate}, nil
+	return &Agent{model: model, deployment: deployment, rate: rate}, nil
 }
 
 // Instrument attaches the per-call telemetry. Without it the agent still works and
 // emits nothing, which is only right for tests.
 func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
 
-// OpenExchange starts one investigation's Exchange. The tool definitions are
-// generated here from the orientation's own sources — the one declarative contract,
-// never a second hand-written representation — deduplicated by name, since two
-// integrations of one type declare the same tools.
-func (a *Agent) OpenExchange(
-	_ context.Context, orientation investigation.Orientation,
-) (investigation.Exchange, error) {
+// openSession builds the model transcript and its available Tools.
+func (a *Agent) openSession(
+	_ context.Context, orientation orientation,
+) (*session, error) {
 	runs := 0
 	for _, run := range orientation.Preflight {
 		if run.Ordinal > runs {
 			runs = run.Ordinal
 		}
 	}
-	return &exchange{
+	return &session{
 		agent:       a,
 		task:        taskInstruction(orientation),
 		orientation: renderOrientation(orientation),
@@ -71,35 +74,29 @@ func (a *Agent) OpenExchange(
 	}, nil
 }
 
-// exchange is one investigation's running exchange with the model. Not safe for concurrent use;
-// one investigation runs its turns in sequence.
-type exchange struct {
+// session is one investigation's sequential model transcript.
+type session struct {
 	agent       *Agent
 	task        string
 	orientation string
 	tools       []integrations.ToolDefinition
 	turns       []Turn
-	// opening is an instruction that arrived before any turn existed — an Exchange
-	// forced to conclude from the start. It renders as a volatile block after the
-	// cached orientation, because a transcript cannot open with an empty assistant
-	// message.
+	// opening carries a forced-conclusion instruction before the first model turn.
 	opening string
 	// runs is the highest run ordinal fed back so far: the ordinal universe a
 	// conclusion may cite. A maximum rather than a count, so a transcript whose
 	// ordinals are not dense still cites only runs that happened.
 	runs int
-	// spent accumulates this Exchange's cost, for the spend-ceiling backstop. The
-	// loop enforces the ceiling as product behavior; this refusal firing means a loop
-	// forgot its own check.
+	// spent backs up the loop's spend ceiling at the model boundary.
 	spent investigation.Spend
 }
 
 // Next feeds the previous move's results and asks for the next move.
-func (e *exchange) Next(
-	ctx context.Context, results []investigation.CallResult, mustConclude bool,
+func (e *session) next(
+	ctx context.Context, results []toolFeedback, mustConclude bool,
 	reason string,
-) (investigation.Move, error) {
-	move := investigation.Move{}
+) (modelMove, error) {
+	move := modelMove{}
 
 	// The spend-ceiling backstop: the concluding turn is always
 	// allowed, because a partial conclusion costs one more call and refusing it would
@@ -121,9 +118,9 @@ func (e *exchange) Next(
 	// One in-deployment retry for an answer that broke its contract, plus one forced
 	// re-ask when a plain answer arrived instead of a call: the same model usually
 	// produces a well-formed move the second time.
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		completion, err := e.agent.telemetry.complete(
-			ctx, e.agent.provider, e.agent.deployment, e.agent.rate, e.prompt(forced))
+			ctx, e.agent.model, e.agent.deployment, e.agent.rate, e.prompt(forced))
 		turnSpend := spendOf(e.agent.rate, completion.Usage)
 		move.Spend = move.Spend.Add(turnSpend)
 		e.spent = e.spent.Add(turnSpend)
@@ -176,7 +173,7 @@ func (e *exchange) Next(
 }
 
 // appendResults attaches the newest results to the turn that asked for them.
-func (e *exchange) appendResults(results []investigation.CallResult) {
+func (e *session) appendResults(results []toolFeedback) {
 	if len(results) == 0 {
 		return
 	}
@@ -198,7 +195,7 @@ func (e *exchange) appendResults(results []investigation.CallResult) {
 
 // instruct appends trailing user text to the newest turn — the forced-conclusion
 // reason, or the re-ask after a plain answer.
-func (e *exchange) instruct(instruction string) {
+func (e *session) instruct(instruction string) {
 	if len(e.turns) == 0 {
 		e.opening = instruction
 		return
@@ -208,7 +205,7 @@ func (e *exchange) instruct(instruction string) {
 
 // remember appends the completion as an assistant turn, verbatim where the vendor
 // needs it verbatim.
-func (e *exchange) remember(completion Completion) {
+func (e *session) remember(completion Completion) {
 	e.turns = append(e.turns, Turn{Assistant: AssistantTurn{
 		Text:  string(completion.Document),
 		Calls: completion.ToolCalls,
@@ -220,7 +217,7 @@ func (e *exchange) remember(completion Completion) {
 // transcript, and the tool set. The forced turn withdraws every tool but conclude —
 // the strongest form of "no further reads": a read is not discouraged, it is not
 // offered.
-func (e *exchange) prompt(forced bool) Prompt {
+func (e *session) prompt(forced bool) Prompt {
 	prompt := Prompt{
 		Model: e.agent.deployment.Model,
 		System: []Block{
@@ -249,7 +246,7 @@ func (e *exchange) prompt(forced bool) Prompt {
 // order follows the orientation's stable source order, so the definition set — and the
 // agent revision derived over it — is stable run to run.
 func exchangeTools(
-	orientation investigation.Orientation,
+	orientation orientation,
 ) []integrations.ToolDefinition {
 	seen := map[string]bool{}
 	var definitions []integrations.ToolDefinition
@@ -303,15 +300,15 @@ func splitCalls(calls []CompletionCall) (reads []CompletionCall, conclude *Compl
 // agentCalls translates completion calls into the domain's shape, decoding each call's
 // arguments. Arguments that are not an object reach the tool as empty and are refused
 // there, where the refusal is a recorded run.
-func agentCalls(calls []CompletionCall) []investigation.AgentCall {
-	translated := make([]investigation.AgentCall, 0, len(calls))
+func agentCalls(calls []CompletionCall) []toolCall {
+	translated := make([]toolCall, 0, len(calls))
 	for _, call := range calls {
 		arguments := map[string]any{}
 		if len(call.Arguments) > 0 {
 			_ = json.Unmarshal(call.Arguments, &arguments)
 		}
-		translatedCall := investigation.AgentCall{ID: call.ID, Tool: call.Name}
-		if call.Name == investigation.UpdateHypothesesToolName {
+		translatedCall := toolCall{ID: call.ID, Tool: call.Name}
+		if call.Name == UpdateHypothesesToolName {
 			translatedCall.Arguments = arguments
 		} else {
 			translatedCall.Purpose, _ = arguments["purpose"].(string)
@@ -376,14 +373,6 @@ func decodeConclusion(
 			"the conclusion is not the declared document: %w", err)
 	}
 
-	// An over-length answer is deliberately NOT refused here. It is well formed and too
-	// long, which is not malformed output, and refusing it fails the whole investigation
-	// — discarding every read that already succeeded because the last step was verbose.
-	// The answer is bounded once, where it is persisted.
-	//
-	// Malformed rather than tolerated, because the decode path already retries once and
-	// the same model usually answers the second time. Accepting silence would hand
-	// somebody who asked a question a causal-findings document and no reply.
 	if strings.TrimSpace(decoded.Summary) == "" {
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the conclusion summary is empty")
@@ -577,12 +566,7 @@ func unknownImpactSummary(summary string) bool {
 }
 
 func oneOf(value string, allowed []string) bool {
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowed, value)
 }
 
 // maxStatementLength bounds one finding. Enforced here rather than in the schema because

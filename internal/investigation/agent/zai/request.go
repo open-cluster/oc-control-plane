@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Turning a provider-neutral prompt into this vendor's request.

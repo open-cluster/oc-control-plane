@@ -8,7 +8,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Normalizing this vendor's usage, finish reasons and failures into the shared vocabulary.

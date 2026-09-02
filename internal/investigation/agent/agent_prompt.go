@@ -1,4 +1,4 @@
-package reasoning
+package agent
 
 import (
 	"sort"
@@ -9,14 +9,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// THE AUTONOMOUS PROMPT — the conversational investigator's frozen preamble and its
-// orientation message.
-//
-// Stable principles live in the cached preamble; everything incident-specific lives in
-// the orientation; tool contracts live in the native definitions and nowhere else — the
-// orientation names which tools each source offers and never restates what a tool does,
-// because a second statement is the drift the generated definitions exist to end.
-// Caching follows this semantic design, never dictates it.
+// Stable instructions, investigation context, and generated Tool definitions form the prompt.
 
 const (
 	SafetyPolicyVersion    = "1"
@@ -113,7 +106,7 @@ Concluding:
 - If reads are over and questions remain, record what is open as unresolved findings and
   name the read that would settle each.`
 
-func taskInstruction(orientation investigation.Orientation) string {
+func taskInstruction(orientation orientation) string {
 	task := "incident_triage"
 	objective := "Establish current impact, likely causes, and the safest next evidence or action."
 	switch {
@@ -136,7 +129,7 @@ const ConcludeToolName = "conclude"
 
 func UpdateHypothesesDefinition() integrations.ToolDefinition {
 	return integrations.ToolDefinition{
-		Name: investigation.UpdateHypothesesToolName,
+		Name: UpdateHypothesesToolName,
 		Description: "Publish the complete current hypothesis snapshot for operators. " +
 			"Use stable IDs and replace the prior snapshot. This is local semantic state, " +
 			"not an external read and not private reasoning.",
@@ -227,7 +220,7 @@ func limitationSchema() map[string]any {
 // metadata, the connected sources with the tool names each offers, the ledger's workload
 // digest, and — for a Conversation turn — the brief of what has already been said and
 // established. Everything here already sat in the platform; nothing was fetched to say it.
-func renderOrientation(orientation investigation.Orientation) string {
+func renderOrientation(orientation orientation) string {
 	out := &strings.Builder{}
 	// Which kind of turn this is, stated rather than left to be inferred from the absence
 	// of an alert block further down. An absence is the weakest signal a model has, and
@@ -285,7 +278,7 @@ func renderOrientation(orientation investigation.Orientation) string {
 	if len(orientation.Preflight) > 0 {
 		out.WriteString("\nSELECTIVE PREFLIGHT READS, ordinary Tool Runs available for citation:\n")
 		for _, run := range orientation.Preflight {
-			rendered := renderResult(investigation.CallResult{CallID: "preflight", Run: run})
+			rendered := renderResult(toolFeedback{CallID: "preflight", Run: run})
 			out.WriteString(rendered.Content)
 		}
 	}
@@ -300,7 +293,7 @@ func renderOrientation(orientation investigation.Orientation) string {
 // makes it an incident; an operator's question with no alert makes it a question; a
 // question asked about an open incident is both, and the preamble says the answer comes
 // first. A turn with neither is an incident by construction — an incident opened one.
-func turnKind(orientation investigation.Orientation) string {
+func turnKind(orientation orientation) string {
 	hasAlert := orientation.Trigger != nil
 	hasQuestion := strings.TrimSpace(orientation.Question) != ""
 	switch {
@@ -328,7 +321,7 @@ func writeSortedPairs(out *strings.Builder, prefix string, pairs map[string]stri
 
 // renderResult writes one run's answer as a tool result. The ordinal leads because it
 // is what a finding cites; content is bounded by the per-run ceiling.
-func renderResult(result investigation.CallResult) ToolResultTurn {
+func renderResult(result toolFeedback) ToolResultTurn {
 	run := result.Run
 	if result.Semantic {
 		if run.Outcome == investigation.RunFailed {

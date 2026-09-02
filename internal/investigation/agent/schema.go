@@ -1,4 +1,4 @@
-package reasoning
+package agent
 
 // THE CONCLUSION'S SCHEMA VOCABULARY, AND WHAT IT MAKES UNSTATEABLE.
 //

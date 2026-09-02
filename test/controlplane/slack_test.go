@@ -121,13 +121,6 @@ func newVendorFake(t *testing.T, accepts string) *vendorFake {
 	return fake
 }
 
-// serveChannels teaches the fake a conversations.list answer.
-func (f *vendorFake) serveChannels(body string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.channels = body
-}
-
 func (f *vendorFake) accept(token string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

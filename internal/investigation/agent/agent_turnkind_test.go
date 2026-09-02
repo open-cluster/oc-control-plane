@@ -1,10 +1,9 @@
-package reasoning
+package agent
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"time"
 )
 
 // INCIDENT TURNS AND QUESTION TURNS.
@@ -42,7 +41,7 @@ func TestThePreambleNamesBothKindsOfTurn(t *testing.T) {
 func TestAQuestionTurnIsNamedAsOneInTheOrientation(t *testing.T) {
 	t.Parallel()
 
-	rendered := renderOrientation(investigation.Orientation{
+	rendered := renderOrientation(orientation{
 		Subject:     "which revision is deployed",
 		Question:    "Which revision of checkout-api is running?",
 		WindowFrom:  testOrientation().WindowFrom,
@@ -51,6 +50,13 @@ func TestAQuestionTurnIsNamedAsOneInTheOrientation(t *testing.T) {
 
 	if !strings.Contains(rendered, "TURN: question") {
 		t.Errorf("a turn with a question and no alert does not say so:\n%s", rendered)
+	}
+}
+
+func testOrientation() orientation {
+	return orientation{
+		Subject: "checkout latency", Trigger: &Trigger{Title: "checkout latency"},
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
 	}
 }
 

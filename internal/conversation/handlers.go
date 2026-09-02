@@ -59,24 +59,6 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// SurfaceName is what this optional surface is called in the deployment's
-// self-description. Exported because a client keys off it and a name spelled twice is a
-// surface a console silently stops finding.
-const SurfaceName = "conversations"
-
-// Describe is this capability's contribution to the deployment's self-description.
-//
-// The SURFACE is the point. Conversations are off by default and answer 404 when off,
-// which is right — a deployment with them off does not have this surface, and answering
-// "not implemented" would advertise one that is coming. But a console deciding whether
-// "Investigate this incident" opens a Conversation or a single-shot Investigation could
-// only probe and read a 404, which cannot be told from a wrong identifier or an older
-// build. Saying so plainly is what stops a 404 being the discovery mechanism.
-//
-// The listing and the bodies are declared whether or not this deployment serves them, for
-// the same reason the ROUTES are: the contract of a surface does not change with the
-// switch, only whether it is reachable, and a document that changed shape with
-// configuration would be one nobody could review.
 // openRequest starts a conversation: a subject, optionally the incident it is about, and
 // optionally the first thing to say.
 type openRequest struct {
@@ -203,23 +185,11 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	})
 }
 
-// append records one message and tries to open a turn from the queue. The ceiling is
-// checked BEFORE the message is written, so a refusal leaves nothing behind.
 func (h Handlers) append(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID, text string,
 ) (Message, *turnView, bool, error) {
-	if h.MaxWaitingTurns > 0 {
-		waiting, err := h.Store.WaitingTurns(ctx, organization)
-		if err != nil {
-			return Message{}, nil, false, err
-		}
-		if waiting >= h.MaxWaitingTurns {
-			return Message{}, nil, false, ErrQueueFull
-		}
-	}
-
-	said, err := h.Store.AppendMessage(ctx, principal, organization, id, NewMessage{
+	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
 		Role:      RolePerson,
 		ActorKind: ActorPrincipal,
 		// Both bounded here rather than left to the column. A principal's identifier and
@@ -229,21 +199,9 @@ func (h Handlers) append(
 		ActorID:      boundedRunes(principal.ID(), MaxActorIDLength),
 		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
-	})
+	}, h.WindowLead, h.MaxWaitingTurns)
 	if err != nil {
 		return Message{}, nil, false, err
-	}
-
-	turn, opened, err := h.Store.OpenTurn(ctx, organization, id, h.WindowLead)
-	if err != nil {
-		// The message is recorded and the turn is not. That is recoverable and the queue
-		// is where it recovers: the next drain or the next message takes it up. Failing
-		// the request would tell the person their message was lost when it was not.
-		h.Logger.ErrorContext(ctx, "a message was recorded but its turn could not open",
-			slog.String("org_id", organization.String()),
-			slog.String("conversation_id", id.String()),
-			slog.String("error", err.Error()))
-		return said, nil, true, nil
 	}
 	if !opened {
 		return said, nil, true, nil

@@ -1,21 +1,5 @@
-# Secret scanning configuration.
-#
-# The default rule set is kept in full and NOTHING is disabled. The single entry below
-# accepts ONE historical commit's finding, and the reason it has to exist is structural:
-# the gate scans `--all --full-history`, so a value that ever entered a commit is found in
-# that commit's patch forever. Deleting it from the working tree does not help, and the
-# alternatives are rewriting published history or dropping the history scan.
-#
-# What was found: commit 67c5226e added a test fixture that wrote the literal text
-# "-----BEGIN RSA PRIVATE KEY-----" to a temporary file, to prove configuration refuses a
-# GitHub App key it cannot use. Configuration never parses that file — it checks the file
-# is non-empty and hands the bytes on — so the fixture never needed to resemble a key, and
-# it no longer does. No key material was ever present: the string was the header alone.
-#
-# Scoped to the COMMIT rather than to the rule, the file or a pattern. A rule allowlist
-# would stop private keys being detected; a path allowlist would let a real key hide in
-# that file; a regex allowlist would accept the same text anywhere, forever. A commit is
-# the one thing that cannot grow: this patch is written, and nothing new can enter it.
+# Keep the default rules. Historical fixture exceptions are commit-scoped; .secrets is the
+# ignored local mount that intentionally contains development credentials.
 
 title = "OpenCluster secret scanning"
 
@@ -24,7 +8,7 @@ useDefault = true
 
 [allowlist]
 description = """
-Two test fixtures, each accepted only for the one historical patch that carries it.
+Two test fixtures are accepted only for the historical patches that carry them.
 
 The first wrote a bare PEM header — the header alone, never any key material — to prove
 configuration refuses a GitHub App key it cannot use.
@@ -38,12 +22,11 @@ entries exist because the gate scans --all --full-history, so a value that ever 
 commit is found in that commit's patch forever, and a gate that is permanently red is a gate
 nobody reads — which is how a REAL leak comes to be ignored.
 
-Scoped to COMMITS rather than to a rule, a file or a pattern. A rule allowlist would stop
-these secret kinds being detected anywhere; a path allowlist would let a real secret hide in
-those files; a regex allowlist would accept the same text everywhere, forever. A commit is the
-one thing that cannot grow: those patches are written, and nothing new can enter them.
+The ignored .secrets directory is also excluded because it is the documented local mount for
+real development credentials; tracked source and every other untracked path remain scanned.
 """
 commits = [
     "67c5226e73a60a3f4ba5490acaa5738520d890d2",
     "ac84de66d70be95301602e12b4328193d1c8e71e",
 ]
+paths = ['''^\.secrets[\\/]''']

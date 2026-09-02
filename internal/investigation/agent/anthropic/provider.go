@@ -17,7 +17,7 @@ import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Name is how this provider is written in configuration and telemetry.
@@ -76,8 +76,6 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 }
 
 // Name identifies this vendor.
-func (p *Provider) Name() string { return Name }
-
 // Complete asks for one document.
 //
 // Every request streams. The output ceiling has to be generous because thinking and answer text

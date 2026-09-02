@@ -5,18 +5,8 @@ import (
 	"strings"
 )
 
-// THE CONVERSATION BRIEF — what a follow-up turn knows that a first turn does not.
-//
-// A turn opens its own Exchange from nothing; the Conversation is what carries continuity
-// between them. The brief is that continuity, and it is assembled ONLY from what the
-// platform already holds: a verbatim tail of what was actually said and the prior turns'
-// findings with their citations expressed as REFERENCES — the turn and
-// the run ordinal — never as copied tool payloads.
-//
-// Copying payloads would be the obvious thing and the wrong one. A finding already carries
-// the ordinals of the runs that established it, and those runs are still in the record; a
-// second copy of what they returned would double every long conversation's context to say
-// something the citation already says.
+// Brief is bounded durable context carried between Conversation turns. It references
+// prior Tool Runs instead of copying their payloads.
 
 // The brief's own bounds. Every one is here because a conversation that has run for hours
 // must not assemble an orientation that grows without limit.

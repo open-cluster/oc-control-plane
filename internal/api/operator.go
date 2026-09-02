@@ -83,16 +83,8 @@ func (h Handlers) Router() (http.Handler, error) {
 	return h.correlated(router), nil
 }
 
-// Routes is the whole operator API, assembled from what each contributor declares.
+// Routes is the whole operator API.
 func (h Handlers) Routes() authz.Table {
-	return h.routesOver(h.contributors())
-}
-
-// routesOver assembles the table from contributors that have ALREADY been built, so the
-// route table and the self-description can be produced from one construction of them. See
-// surface: a description assembled from different handler values than the ones being served
-// is the drift the description exists to end, and building them twice is how that happens.
-func (h Handlers) routesOver(built []contributor) authz.Table {
 	const relays = "/api/v1/relays"
 
 	routes := authz.Table{
@@ -121,9 +113,43 @@ func (h Handlers) routesOver(built []contributor) authz.Table {
 	}
 
 	routes = append(routes, h.Identity.Routes()...)
-	for _, contribution := range built {
-		routes = append(routes, contribution.Routes()...)
-	}
+	routes = append(routes, integrations.Handlers{
+		Store:         h.Database,
+		Catalog:       h.Catalog,
+		Logger:        h.Logger,
+		Sealer:        h.Sealer,
+		IntakeBaseURL: h.IntakeBaseURL,
+		PublicURL:     h.PublicURL,
+		ConsoleURL:    h.ConsoleURL,
+	}.Routes()...)
+	routes = append(routes, incident.Handlers{
+		Store:  h.Database,
+		Logger: h.Logger,
+	}.Routes()...)
+	routes = append(routes, postmortem.Handlers{
+		Service: postmortem.Service{Store: h.Database},
+		Logger:  h.Logger,
+	}.Routes()...)
+	routes = append(routes, investigation.Handlers{
+		Store:      h.Database,
+		Runner:     h.Investigations,
+		Logger:     h.Logger,
+		Events:     h.Database,
+		WindowLead: h.InvestigationWindowLead,
+		MaxPending: h.MaxWaitingTurns,
+	}.Routes()...)
+	routes = append(routes, conversation.Handlers{
+		Store:           h.Database,
+		Logger:          h.Logger,
+		Enabled:         h.ConversationsEnabled,
+		WindowLead:      h.InvestigationWindowLead,
+		MaxWaitingTurns: h.MaxWaitingTurns,
+	}.Routes()...)
+	routes = append(routes, webhooks.DeliveryHandlers{
+		Database: h.Database,
+		Logger:   h.Logger,
+		Counters: webhooks.NewWorkInstruments(h.Logger),
+	}.Routes()...)
 	return routes
 }
 
@@ -136,8 +162,8 @@ func (h Handlers) meta(writer http.ResponseWriter, _ *http.Request) {
 		{Key: "relay", Enabled: true, Availability: "available"},
 		{Key: "webhook_delivery", Enabled: true, Availability: "available"},
 		{Key: "postmortems", Enabled: true, Availability: "available"},
-		{Key: "investigations", Enabled: h.Investigations != nil && h.Investigations.Investigator != nil,
-			Availability: availabilityOf(h.Investigations != nil && h.Investigations.Investigator != nil)},
+		{Key: "investigations", Enabled: h.Investigations != nil && h.Investigations.Agent != nil,
+			Availability: availabilityOf(h.Investigations != nil && h.Investigations.Agent != nil)},
 		{Key: "conversations", Enabled: h.ConversationsEnabled,
 			Availability: availabilityOf(h.ConversationsEnabled)},
 	}
@@ -150,49 +176,6 @@ func availabilityOf(enabled bool) string {
 	}
 	return "unavailable"
 }
-
-// contributors builds every route-owning module this surface composes, ONCE.
-func (h Handlers) contributors() []contributor {
-	return []contributor{
-		integrations.Handlers{
-			Store:         h.Database,
-			Catalog:       h.Catalog,
-			Logger:        h.Logger,
-			Sealer:        h.Sealer,
-			IntakeBaseURL: h.IntakeBaseURL,
-			PublicURL:     h.PublicURL,
-			ConsoleURL:    h.ConsoleURL,
-		},
-		incident.Handlers{
-			Store:  h.Database,
-			Logger: h.Logger,
-		},
-		postmortem.Handlers{
-			Service: postmortem.Service{Store: h.Database},
-			Logger:  h.Logger,
-		},
-		investigation.Handlers{
-			Store:      h.Database,
-			Runner:     h.Investigations,
-			Logger:     h.Logger,
-			Events:     h.Database,
-			WindowLead: h.InvestigationWindowLead,
-		},
-		conversation.Handlers{
-			Store:           h.Database,
-			Logger:          h.Logger,
-			Enabled:         h.ConversationsEnabled,
-			WindowLead:      h.InvestigationWindowLead,
-			MaxWaitingTurns: h.MaxWaitingTurns,
-		},
-		webhooks.DeliveryHandlers{Database: h.Database, Logger: h.Logger,
-			Counters: webhooks.NewWorkInstruments(h.Logger)},
-	}
-}
-
-// surface reports the whole route table together with what each contributor said about
-// itself, from ONE construction of the contributors.
-type contributor interface{ Routes() authz.Table }
 
 // correlated mints a request identifier and binds it to the response and the context.
 func (h Handlers) correlated(next http.Handler) http.Handler {

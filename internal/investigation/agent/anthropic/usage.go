@@ -3,7 +3,7 @@ package anthropic
 import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Normalizing this vendor's usage and stop reasons into the shared vocabulary.

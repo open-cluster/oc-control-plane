@@ -46,6 +46,7 @@ type fileDocument struct {
 	Database       fileDatabase       `yaml:"database"`
 	Authentication fileAuthentication `yaml:"authentication"`
 	Relay          fileRelay          `yaml:"relay"`
+	Investigation  fileInvestigation  `yaml:"investigation"`
 	AI             fileAI             `yaml:"ai"`
 	Telemetry      fileTelemetry      `yaml:"telemetry"`
 	Slack          fileSlack          `yaml:"slack"`
@@ -72,6 +73,10 @@ type fileOIDC struct {
 type fileRelay struct {
 	Address  string   `yaml:"address"`
 	SPKIPins []string `yaml:"spki_pins"`
+}
+type fileInvestigation struct {
+	Workers          *int `yaml:"workers"`
+	MaxPendingPerOrganization *int `yaml:"max_pending_per_organization"`
 }
 type fileAI struct {
 	Provider   string `yaml:"provider"`
@@ -131,6 +136,9 @@ func (d fileDocument) environment() map[string]string {
 	if len(d.Relay.SPKIPins) > 0 {
 		values[EnvRelaySPKIPins] = encodeList(d.Relay.SPKIPins)
 	}
+	setInteger(values, EnvInvestigationWorkers, d.Investigation.Workers)
+	setInteger(values, EnvInvestigationMaxPendingPerOrganization,
+		d.Investigation.MaxPendingPerOrganization)
 	set(values, EnvModelProvider, d.AI.Provider)
 	set(values, EnvModelName, d.AI.Model)
 	set(values, EnvModelKeyFile, d.AI.APIKeyFile)
@@ -143,6 +151,13 @@ func (d fileDocument) environment() map[string]string {
 	set(values, EnvGitHubAppKeyFile, d.GitHub.AppPrivateKeyFile)
 	return values
 }
+
+func setInteger(values map[string]string, key string, value *int) {
+	if value != nil {
+		values[key] = fmt.Sprint(*value)
+	}
+}
+
 func set(values map[string]string, key, value string) {
 	if strings.TrimSpace(value) != "" {
 		values[key] = value

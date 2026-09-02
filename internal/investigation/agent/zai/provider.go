@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
 // Name is how this provider is written in configuration and telemetry.
@@ -79,8 +79,6 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 }
 
 // Name identifies this vendor.
-func (p *Provider) Name() string { return Name }
-
 // retryBackoff separates one attempt from the next. Long enough for a transient
 // upstream failure to pass, short enough that MaxAttempts stays inside the round's
 // deadline.

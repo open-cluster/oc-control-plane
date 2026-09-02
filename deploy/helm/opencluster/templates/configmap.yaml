@@ -16,6 +16,9 @@ data:
       provider: {{ .Values.model.provider | quote }}
       model: {{ .Values.model.name | quote }}
       api_key_file: "/run/opencluster/credentials/{{ .Values.credentials.modelKey }}"
+    investigation:
+      workers: {{ .Values.investigation.workers }}
+      max_pending_per_organization: {{ .Values.investigation.maxPendingPerOrganization }}
     {{- if .Values.relay.enabled }}
     relay:
       address: ":{{ .Values.relay.internalPort }}"

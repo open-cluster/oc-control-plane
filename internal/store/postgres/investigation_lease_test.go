@@ -20,9 +20,9 @@ import (
 // process that has already lost its claim. None of that can be observed from inside one
 // process, so none of it is tested there.
 
-func aClaim(worker string, concurrent int) investigation.Claim {
+func aClaim(worker string) investigation.Claim {
 	return investigation.Claim{
-		Worker: worker, LeaseFor: turnWindowLead, OrgConcurrent: concurrent,
+		Worker: worker, LeaseFor: turnWindowLead,
 	}
 }
 
@@ -81,7 +81,7 @@ func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 				// A ceiling above the whole set, so what is being tested is the claim and
 				// not the backpressure beside it.
 				_, investigationRecord, took, err := database.ClaimInvestigation(
-					context.Background(), aClaim(name, turns+1))
+					context.Background(), aClaim(name))
 				if err != nil {
 					t.Errorf("%s: claiming: %v", name, err)
 					return
@@ -113,58 +113,52 @@ func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 	}
 }
 
-// The per-organization ceiling is what stops one tenant consuming the whole deployment.
-// Work above it is not dropped and not refused here — it simply stays unclaimed, which IS
-// the queue, and is claimed when room appears.
-func TestAnOrganizationsConcurrencyCeilingHoldsBackTheRest(t *testing.T) {
+func TestInvestigationsAreClaimedOldestFirst(t *testing.T) {
 	t.Parallel()
-
 	database, organization := migratedDatabase(t)
-
-	var turns []uuid.UUID
-	for range 4 {
+	var opened []uuid.UUID
+	for range 3 {
 		conversation := openConversation(t, database, organization, "checkout is slow")
 		say(t, database, organization, conversation.ID, "what changed?")
 		turn, took, err := database.OpenTurn(context.Background(), organization,
 			conversation.ID, turnWindowLead)
 		if err != nil || !took {
-			t.Fatalf("opening a turn: took=%v err=%v", took, err)
+			t.Fatalf("opening turn: took=%v err=%v", took, err)
 		}
-		turns = append(turns, turn.InvestigationID)
+		opened = append(opened, turn.InvestigationID)
+		time.Sleep(time.Millisecond)
 	}
-
-	const ceiling = 2
-	for taken := range ceiling {
-		if _, _, took, err := database.ClaimInvestigation(context.Background(),
-			aClaim("worker-a", ceiling)); err != nil || !took {
-			t.Fatalf("claim %d: took=%v err=%v", taken, took, err)
+	for index, want := range opened {
+		_, claimed, took, err := database.ClaimInvestigation(context.Background(), aClaim("worker"))
+		if err != nil || !took {
+			t.Fatalf("claim %d: took=%v err=%v", index, took, err)
+		}
+		if claimed.ID != want {
+			t.Fatalf("claim %d = %s, want oldest %s", index, claimed.ID, want)
 		}
 	}
+}
 
-	// The ceiling is now reached, so nothing more may be claimed for this tenant even
-	// though two turns are still waiting.
-	if _, _, took, err := database.ClaimInvestigation(context.Background(),
-		aClaim("worker-b", ceiling)); err != nil || took {
-		t.Fatalf("a claim past the ceiling was allowed: took=%v err=%v", took, err)
+func TestHeartbeatIsFencedByWorkerIdentity(t *testing.T) {
+	t.Parallel()
+	database, organization := migratedDatabase(t)
+	conversation := openConversation(t, database, organization, "checkout is slow")
+	say(t, database, organization, conversation.ID, "what changed?")
+	turn, took, err := database.OpenTurn(context.Background(), organization,
+		conversation.ID, turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
-
-	waiting, err := database.WaitingTurns(context.Background(), organization)
-	if err != nil {
-		t.Fatalf("counting: %v", err)
+	if _, _, took, err = database.ClaimInvestigation(context.Background(), aClaim("worker-a")); err != nil || !took {
+		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
-	if waiting != len(turns)-ceiling {
-		t.Errorf("%d waiting, want %d; work above the ceiling stays queued rather than "+
-			"being dropped", waiting, len(turns)-ceiling)
+	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
+		turn.InvestigationID, aClaim("worker-b")); heartbeatErr != nil || held {
+		t.Fatalf("another worker renewed the lease: held=%v err=%v", held, heartbeatErr)
 	}
-
-	// When room appears, the queue moves.
-	if err = database.ConcludeInvestigation(context.Background(), organization, turns[0],
-		conclusionSaying("done"), "", investigation.Spend{}); err != nil {
-		t.Fatalf("concluding: %v", err)
-	}
-	if _, _, took, claimErr := database.ClaimInvestigation(context.Background(),
-		aClaim("worker-b", ceiling)); claimErr != nil || !took {
-		t.Errorf("nothing was claimable after room appeared: took=%v err=%v", took, claimErr)
+	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
+		turn.InvestigationID, aClaim("worker-a")); heartbeatErr != nil || !held {
+		t.Fatalf("the holder could not renew its lease: held=%v err=%v", held, heartbeatErr)
 	}
 }
 
@@ -184,7 +178,7 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 	}
 
 	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-that-dies", 4)); err != nil || !took {
+		aClaim("worker-that-dies")); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
 	// The worker got as far as saying it had started, and then stopped existing.
@@ -258,7 +252,7 @@ func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
 	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-that-dies", 4)); err != nil || !took {
+		aClaim("worker-that-dies")); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
 	expireInvestigationLease(t, database, organization, turn.InvestigationID)
@@ -268,70 +262,8 @@ func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 	}
 
 	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-b", 4)); err != nil || took {
+		aClaim("worker-b")); err != nil || took {
 		t.Errorf("a recovered investigation was claimed again: took=%v err=%v", took, err)
-	}
-}
-
-// THE FENCE. A worker whose lease was swept and re-claimed cannot renew it. It learns from
-// the database that it is no longer the holder, rather than carrying on writing for work
-// somebody else now owns.
-func TestAWorkerThatLostItsLeaseCannotRenewIt(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization,
-		conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a turn: took=%v err=%v", took, err)
-	}
-
-	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-a", 4)); err != nil || !took {
-		t.Fatalf("claiming: took=%v err=%v", took, err)
-	}
-	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-a", 4)); heartbeatErr != nil || !held {
-		t.Fatalf("the holder could not renew: held=%v err=%v", held, heartbeatErr)
-	}
-
-	// worker-a stalls; its lease lapses and worker-b takes over.
-	expireInvestigationLease(t, database, organization, turn.InvestigationID)
-	if taken, takeErr := database.TakeLease(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-b", 4)); takeErr != nil || !taken {
-		t.Fatalf("the lapsed lease could not be taken over: taken=%v err=%v", taken, takeErr)
-	}
-
-	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-a", 4)); heartbeatErr != nil || held {
-		t.Errorf("the worker that lost the lease renewed it anyway: held=%v err=%v",
-			held, heartbeatErr)
-	}
-}
-
-// A live lease is not takeable. Taking one would be exactly the double execution the whole
-// mechanism exists to prevent.
-func TestALiveLeaseCannotBeTakenFromItsHolder(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization,
-		conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a turn: took=%v err=%v", took, err)
-	}
-	if taken, takeErr := database.TakeLease(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-a", 4)); takeErr != nil || !taken {
-		t.Fatalf("the first take failed: taken=%v err=%v", taken, takeErr)
-	}
-
-	if taken, takeErr := database.TakeLease(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-b", 4)); takeErr != nil || taken {
-		t.Errorf("a live lease was taken from its holder: taken=%v err=%v", taken, takeErr)
 	}
 }
 
@@ -349,7 +281,7 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
 	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-a", 4)); err != nil || !took {
+		aClaim("worker-a")); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
 
@@ -361,7 +293,7 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 
 	// Nothing to renew, and nothing for the sweeper to find.
 	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-a", 4)); heartbeatErr != nil || held {
+		turn.InvestigationID, aClaim("worker-a")); heartbeatErr != nil || held {
 		t.Errorf("a concluded investigation still holds a lease: held=%v err=%v",
 			held, heartbeatErr)
 	}
