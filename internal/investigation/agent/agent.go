@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -117,7 +118,7 @@ func (e *session) next(
 	// One in-deployment retry for an answer that broke its contract, plus one forced
 	// re-ask when a plain answer arrived instead of a call: the same model usually
 	// produces a well-formed move the second time.
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		completion, err := e.agent.telemetry.complete(
 			ctx, e.agent.model, e.agent.deployment, e.agent.rate, e.prompt(forced))
 		turnSpend := spendOf(e.agent.rate, completion.Usage)
@@ -372,14 +373,6 @@ func decodeConclusion(
 			"the conclusion is not the declared document: %w", err)
 	}
 
-	// An over-length answer is deliberately NOT refused here. It is well formed and too
-	// long, which is not malformed output, and refusing it fails the whole investigation
-	// — discarding every read that already succeeded because the last step was verbose.
-	// The answer is bounded once, where it is persisted.
-	//
-	// Malformed rather than tolerated, because the decode path already retries once and
-	// the same model usually answers the second time. Accepting silence would hand
-	// somebody who asked a question a causal-findings document and no reply.
 	if strings.TrimSpace(decoded.Summary) == "" {
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the conclusion summary is empty")
@@ -573,12 +566,7 @@ func unknownImpactSummary(summary string) bool {
 }
 
 func oneOf(value string, allowed []string) bool {
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowed, value)
 }
 
 // maxStatementLength bounds one finding. Enforced here rather than in the schema because

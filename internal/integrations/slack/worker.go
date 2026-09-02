@@ -152,10 +152,6 @@ func (w Worker) Run(ctx context.Context) {
 		}
 		wait := interval
 		if worked {
-			// Something is streaming, so look again soon — but not immediately. This IS
-			// the interval half of the flush boundary: it bounds how often any one reply
-			// can call Slack, and a loop that looked again with no wait would call per
-			// batch as fast as the database could answer.
 			wait = flushInterval
 		}
 		select {
