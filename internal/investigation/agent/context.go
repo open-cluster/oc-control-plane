@@ -27,7 +27,7 @@ func EstimateTokens(text string) int {
 // briefTokens estimates what a brief will cost a turn. Findings are counted by their
 // statements rather than by the evidence behind them, because the evidence is a reference
 // and never travels.
-func briefTokens(brief Brief) int {
+func briefTokens(brief investigation.Brief) int {
 	total := EstimateTokens(brief.Subject)
 	for _, message := range brief.Recent {
 		total += EstimateTokens(message.Text) + EstimateTokens(message.Actor)
@@ -52,14 +52,14 @@ func briefTokens(brief Brief) int {
 // trigger and the ledger already do: a follow-up that has lost its memory is worse than one
 // that has it, and better than none at all.
 func (r *Agent) conversationBrief(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
+	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
 	_ *investigation.EventStream,
-) *Brief {
+) *investigation.Brief {
 	if opened.ConversationID == uuid.Nil {
 		return nil
 	}
 	brief, err := r.Store.ConversationBrief(ctx, organization, opened.ConversationID,
-		BriefRecentMessages)
+		investigation.BriefRecentMessages)
 	if err != nil {
 		r.Logger.Warn("a conversation's brief could not be read; this turn runs without it",
 			slog.String("conversation_id", opened.ConversationID.String()),

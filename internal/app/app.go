@@ -172,7 +172,6 @@ func Run(
 		configuredAgent.Store = database
 		configuredAgent.Catalog = catalog
 		configuredAgent.Sealer = sealer
-		configuredAgent.Events = database
 		configuredAgent.RuntimeTelemetry = investigation.NewTelemetry(logger)
 		configuredAgent.Logger = logger
 		configuredAgent.MaxToolRuns = options.MaxToolRuns

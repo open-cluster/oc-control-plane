@@ -43,7 +43,7 @@ func droppedRun(opened investigation.Investigation, call investigation.ToolCall,
 		Arguments:   call.Arguments,
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
-		Outcome:     RunFailed,
+		Outcome:     investigation.RunFailed,
 		Error:       reason,
 		StartedAt:   now,
 		FinishedAt:  now,
@@ -54,7 +54,8 @@ func droppedRun(opened investigation.Investigation, call investigation.ToolCall,
 // a read that failed is provenance too, and often the provenance that matters.
 func (r *Agent) execute(
 	ctx context.Context, opened investigation.Investigation, selected []selection,
-	credentials *credentialCache, brief *Brief, call investigation.ToolCall, ordinal int,
+	credentials *credentialCache, brief *investigation.Brief,
+	call investigation.ToolCall, ordinal int,
 ) (investigation.ToolRun, error) {
 	run := investigation.ToolRun{
 		Ordinal:     ordinal,
@@ -67,7 +68,7 @@ func (r *Agent) execute(
 
 	source, tool, offered := toolNamed(selected, call.Tool)
 	if !offered {
-		run.Outcome = RunFailed
+		run.Outcome = investigation.RunFailed
 		run.Error = "not one of the tools the selected sources offer"
 		run.FinishedAt = time.Now().UTC()
 		return run, nil
@@ -76,7 +77,7 @@ func (r *Agent) execute(
 
 	credential, err := credentials.open(ctx, source.integration)
 	if err != nil {
-		run.Outcome = RunFailed
+		run.Outcome = investigation.RunFailed
 		run.Error = "the integration's credential could not be opened"
 		run.FinishedAt = time.Now().UTC()
 		if errors.Is(err, errCredentialAudit) {
@@ -102,11 +103,11 @@ func (r *Agent) execute(
 	result, err := tool.Run(runCtx, request)
 	run.FinishedAt = time.Now().UTC()
 	if err != nil {
-		run.Outcome = RunFailed
+		run.Outcome = investigation.RunFailed
 		run.Error = boundText(err.Error(), maxRunErrorLength)
 		return run, nil
 	}
-	run.Outcome = RunSucceeded
+	run.Outcome = investigation.RunSucceeded
 	// A windowed tool reports the window it ACTUALLY read, which is not what was asked
 	// for whenever the clamp narrowed it — including a call phrased with no window at
 	// all. A tool that reads no window leaves the investigation's own in place, so the
@@ -122,22 +123,19 @@ func (r *Agent) execute(
 	return run, nil
 }
 
-// fail ends the investigation with the reason, writing inside a detached window so a
-// cancelled run can still say why it stopped. The terminal event is written in the same
-// window and for the same reason: a reader left watching a spinner forever is exactly the
-// failure this is here to prevent.
-func (r *Agent) fail(
+// persistFailure writes one terminal failure inside a detached window so cancellation
+// cannot erase the reason the run stopped.
+func (r *Agent) persistFailure(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	events *investigation.EventStream, reason string, spend investigation.Spend,
-) error {
+	reason string, spend investigation.Spend,
+) (string, error) {
 	writeCtx, done := terminalWriteWindow(ctx)
 	defer done()
 	reason = boundText(reason, maxRunErrorLength)
 	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, spend); err != nil {
-		return fmt.Errorf("recording investigation failure: %w", err)
+		return reason, fmt.Errorf("recording investigation failure: %w", err)
 	}
-	r.announce(writeCtx, events, investigation.EventFailed, investigation.FailedPayload(reason))
-	return nil
+	return reason, nil
 }
 
 // announce writes one event and swallows the failure into a log line.

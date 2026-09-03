@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 func stubIntegration(name string) integrations.Integration {
@@ -194,7 +195,7 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 	}
 	origin := stubIntegration("Origin workspace")
 	other := stubIntegration("Other workspace")
-	brief := &Brief{
+	brief := &investigation.Brief{
 		OriginIntegrationID: origin.ID.String(),
 		OriginChannel:       "C-INCIDENT",
 		OriginThread:        "1710000000.1",
