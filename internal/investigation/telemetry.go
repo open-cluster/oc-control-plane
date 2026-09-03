@@ -21,7 +21,6 @@ type Telemetry struct {
 
 	queueWait     metric.Float64Histogram
 	firstProgress metric.Float64Histogram
-	firstAnswer   metric.Float64Histogram
 	duration      metric.Float64Histogram
 	toolDuration  metric.Float64Histogram
 	recovered     metric.Int64Counter
@@ -52,13 +51,6 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 		metric.WithDescription("Seconds from claim to the first event a reader sees."),
 		metric.WithUnit("s")); err != nil {
 		logger.Warn("investigation progress metric unavailable",
-			slog.String("error", err.Error()))
-	}
-	if built.firstAnswer, err = meter.Float64Histogram(
-		"oc.investigation.time_to_first_answer",
-		metric.WithDescription("Seconds from claim to the first answer text emitted."),
-		metric.WithUnit("s")); err != nil {
-		logger.Warn("investigation answer metric unavailable",
 			slog.String("error", err.Error()))
 	}
 	if built.duration, err = meter.Float64Histogram("oc.investigation.duration",
@@ -98,14 +90,6 @@ func (t *Telemetry) firstEvent(since time.Duration) {
 		return
 	}
 	t.firstProgress.Record(context.Background(), since.Seconds())
-}
-
-// firstAnswerText records how long a reader waited before the answer began.
-func (t *Telemetry) firstAnswerText(since time.Duration) {
-	if t == nil || t.firstAnswer == nil {
-		return
-	}
-	t.firstAnswer.Record(context.Background(), since.Seconds())
 }
 
 // ended records one whole investigation, labelled by how it ended and by the ceiling that

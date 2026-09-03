@@ -277,9 +277,10 @@ func aTurn() []investigation.Event {
 		progressed(1, investigation.EventStarted, nil),
 		progressed(2, investigation.EventToolCompleted,
 			map[string]any{"summary": "read 40 commits on checkout-api"}),
-		progressed(3, investigation.EventAnswerDelta, map[string]any{"text": "The deploy at "}),
-		progressed(4, investigation.EventAnswerDelta, map[string]any{"text": "14:02 is the cause."}),
-		progressed(5, investigation.EventConcluded, map[string]any{"answer": ""}),
+		progressed(3, investigation.EventProgress, map[string]any{"message": "Checking impact"}),
+		progressed(4, investigation.EventHypothesesUpdated, map[string]any{"version": 1}),
+		progressed(5, investigation.EventConcluded,
+			map[string]any{"summary": "The deploy at 14:02 is the cause."}),
 	}
 }
 
@@ -313,11 +314,9 @@ func TestOneTurnIsOneStreamOpenedOnceAndClosedOnce(t *testing.T) {
 	}
 }
 
-func TestAnAnswerIsCoalescedRatherThanSentPerToken(t *testing.T) {
+func TestAConcludedSummaryIsTheFinalAnswer(t *testing.T) {
 	t.Parallel()
 
-	// Two deltas arriving in one batch reach Slack as one call. A worker that called per
-	// delta would be rate-limited into failure by its own enthusiasm.
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn())
 	worker.answer(context.Background(), state.reply)
@@ -334,7 +333,7 @@ func TestAnAnswerIsCoalescedRatherThanSentPerToken(t *testing.T) {
 	}
 }
 
-func TestAFinalAnswerLinksTheInvestigationAndItsSources(t *testing.T) {
+func TestAFinalAnswerLinksOnlyTheInvestigation(t *testing.T) {
 	t.Parallel()
 
 	fake := newSlackCallLog(t, true)
@@ -347,12 +346,8 @@ func TestAFinalAnswerLinksTheInvestigationAndItsSources(t *testing.T) {
 		state.reply.Investigation.String()) {
 		t.Errorf("the final answer has no stable Investigation link: %q", whole)
 	}
-	if !strings.Contains(whole, "/organizations/org-a/investigations/"+
-		state.reply.Investigation.String()+"/sources") {
-		t.Errorf("the final answer has no Investigation Sources link: %q", whole)
-	}
-	if strings.Contains(whole, "/organizations/org-a/integrations/") {
-		t.Errorf("the Sources link points to Integration setup instead of Investigation evidence: %q", whole)
+	if strings.Contains(whole, "/sources") {
+		t.Errorf("the final answer still links a retired Sources view: %q", whole)
 	}
 }
 
@@ -487,21 +482,6 @@ func TestAFailedTurnSaysSoInTheThreadRatherThanGoingQuiet(t *testing.T) {
 	whole := strings.Join(fake.carried(), "")
 	if !strings.Contains(whole, "no integration could be read") {
 		t.Errorf("a failed turn said %q, which does not tell the thread anything", whole)
-	}
-}
-
-func TestNoModelReasoningCanReachAThread(t *testing.T) {
-	t.Parallel()
-
-	// The event stream carries no chain of thought by construction, and this is the
-	// mechanical half of that promise: an event kind this build does not render puts
-	// nothing in the thread.
-	rendered := Render([]investigation.Event{
-		progressed(1, investigation.EventCompacted,
-			map[string]any{"text": "internal memory decision"}),
-	})
-	if rendered.Text != "" || len(rendered.Progress) != 0 {
-		t.Errorf("an internal event rendered into the thread: %+v", rendered)
 	}
 }
 

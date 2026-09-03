@@ -184,10 +184,10 @@ func TestWebhookWorkOpensExactlyOneInvestigationAcrossEffectReplay(t *testing.T)
 	pool, _ := database.Pool(organization)
 	seeded := uuid.New()
 	if _, err = pool.Exec(context.Background(), `
-		INSERT INTO investigation (investigation_id, org_id, incident_id, integration_id,
-		                           subject, window_from, window_until, created_by, webhook_work_id)
-		VALUES ($1,$2,$3,$4,'API unavailable',$5,$6,'webhook',$7)`, seeded,
-		organization.String(), work.IncidentID, integration, started.Add(-time.Hour), started, work.ID); err != nil {
+		INSERT INTO investigation (investigation_id, org_id, incident_id, subject,
+		                           window_from, window_until, created_by, webhook_work_id)
+		VALUES ($1,$2,$3,'API unavailable',$4,$5,'webhook',$6)`, seeded,
+		organization.String(), work.IncidentID, started.Add(-time.Hour), started, work.ID); err != nil {
 		t.Fatalf("seeding prior effect: %v", err)
 	}
 	got, err := database.ApplyAlertWebhookWork(context.Background(), organization, work, time.Hour, 0)

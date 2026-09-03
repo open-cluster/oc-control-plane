@@ -66,23 +66,10 @@ func Render(events []investigation.Event) Rendered {
 			if line := payloadText(event, "summary", "message", "tool", "name"); line != "" {
 				rendered.Progress = append(rendered.Progress, line)
 			}
-		case investigation.EventAnswerDelta:
-			// UNTRIMMED, unlike everything else here. A delta is a fragment of one
-			// sentence, and the whitespace at its edges is the space between two words:
-			// trimming it joins "The deploy at " to "14:02" as "The deploy at14:02".
-			text.WriteString(payloadRaw(event, "text", "delta", "message"))
-		case investigation.EventCompacted:
-			// An internal memory decision. It is real and it is not something the person
-			// who asked a question in Slack has any use for.
 		case investigation.EventConcluded:
 			rendered.Done = true
 			rendered.Status = "Answered"
-			// A conclusion may carry the whole answer where no deltas were streamed —
-			// a cached or short turn — and appending it is what stops such a turn showing
-			// a status and no answer.
-			if text.Len() == 0 {
-				text.WriteString(payloadText(event, "answer", "text", "message"))
-			}
+			text.WriteString(payloadText(event, "summary"))
 		case investigation.EventFailed:
 			rendered.Done, rendered.Failed = true, true
 			rendered.Status = "Could not finish"
@@ -110,17 +97,6 @@ func payloadText(event investigation.Event, keys ...string) string {
 			if trimmed := strings.TrimSpace(value); trimmed != "" {
 				return trimmed
 			}
-		}
-	}
-	return ""
-}
-
-// payloadRaw reads the same keys and keeps the value exactly as it is. It is for answer text,
-// where the edges of a fragment are the spaces between words.
-func payloadRaw(event investigation.Event, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := event.Payload[key].(string); ok && value != "" {
-			return value
 		}
 	}
 	return ""

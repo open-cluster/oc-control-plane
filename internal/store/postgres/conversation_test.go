@@ -452,7 +452,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("recording Ada's run: %v", err)
 	}
-	_, recordedRuns, err := database.InvestigationProvenance(context.Background(),
+	recordedRuns, err := database.InvestigationToolRuns(context.Background(),
 		organization, adaTurn.InvestigationID)
 	if err != nil {
 		t.Fatalf("reading Ada's provenance: %v", err)

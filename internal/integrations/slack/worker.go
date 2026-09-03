@@ -338,8 +338,7 @@ func (w Worker) navigation(_ context.Context, reply Reply) string {
 	organization := url.PathEscape(reply.Organization.String())
 	investigationURL := base + "/organizations/" + organization + "/investigations/" +
 		reply.Investigation.String()
-	return "<" + investigationURL + "|Open Investigation> · <" + investigationURL +
-		"/sources|Open Sources>"
+	return "<" + investigationURL + "|Open Investigation>"
 }
 
 // credential opens the bot token this reply answers with.

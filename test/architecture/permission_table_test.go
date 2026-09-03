@@ -224,11 +224,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/integrations/{integration}",
 		"GET /api/v1/investigations",
 		"GET /api/v1/investigations/{investigation}",
-		"GET /api/v1/investigations/{investigation}/activity",
 		"GET /api/v1/investigations/{investigation}/events",
-		"GET /api/v1/investigations/{investigation}/hypotheses",
-		"GET /api/v1/investigations/{investigation}/report",
-		"GET /api/v1/investigations/{investigation}/sources",
 		"GET /api/v1/members",
 		"GET /api/v1/meta",
 		"GET /api/v1/organizations",
@@ -571,9 +567,9 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		{"GET /api/v1/investigations",
 			"investigations list as operational records, newest first"},
 		{"POST /api/v1/investigations",
-			"an investigation opens from an incident or a plain-language question"},
+			"a direct investigation opens from an Incident"},
 		{"GET /api/v1/investigations/{investigation}",
-			"one investigation carries its whole provenance: sources, runs, findings, spend"},
+			"one Investigation carries its conclusion and durable Tool Runs"},
 	} {
 		if !served[wanted.key] {
 			t.Errorf("%s is not served; %s", wanted.key, wanted.reason)

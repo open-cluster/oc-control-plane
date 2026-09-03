@@ -109,10 +109,10 @@ func (d *Database) ApplyAlertWebhookWork(
 		investigationID = uuid.New()
 		if _, err = tx.Exec(ctx, `
 			INSERT INTO investigation
-				(investigation_id, org_id, incident_id, integration_id, subject,
-				 window_from, window_until, created_by, webhook_work_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'webhook', $8)`, investigationID,
-			work.Organization.String(), work.IncidentID, work.IntegrationID, title,
+				(investigation_id, org_id, incident_id, subject, window_from,
+				 window_until, created_by, webhook_work_id)
+			VALUES ($1, $2, $3, $4, $5, $6, 'webhook', $7)`, investigationID,
+			work.Organization.String(), work.IncidentID, title,
 			firstSeen.Add(-windowLead), lastSeen, work.ID); err != nil {
 			return uuid.Nil, fmt.Errorf("opening alert investigation: %w", err)
 		}

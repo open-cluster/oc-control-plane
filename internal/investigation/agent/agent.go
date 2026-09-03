@@ -22,7 +22,6 @@ type Store interface {
 	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error)
 	ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error)
 	WorkloadInventory(context.Context, tenancy.Organization, int) ([]string, error)
-	RecordSource(context.Context, tenancy.Organization, uuid.UUID, investigation.Source) error
 	RecordToolRun(context.Context, tenancy.Organization, uuid.UUID, investigation.ToolRun) error
 	RecordCredentialUnseal(context.Context, tenancy.Organization, uuid.UUID, string) error
 	AppendEvent(context.Context, tenancy.Organization, uuid.UUID, investigation.Event) error
