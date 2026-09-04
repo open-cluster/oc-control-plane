@@ -14,21 +14,15 @@ package health
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
-
-// RequestIDHeader carries the correlation identifier for one request. An inbound value is
-// deliberately NOT trusted: a client-supplied identifier would let a caller collide two
-// unrelated requests in the logs, so one is always minted here and echoed back.
-const RequestIDHeader = "X-Request-Id"
 
 // readinessTimeout bounds the dependency check so a hung database makes readiness fail
 // rather than making the readiness endpoint itself hang.
@@ -56,18 +50,13 @@ func (h Handlers) Router() http.Handler {
 	return mux
 }
 
-// instrumented wraps one route with tracing, request correlation, and access logging.
 func (h Handlers) instrumented(route string, next http.Handler) http.Handler {
-	return otelhttp.NewHandler(h.correlated(next), route)
+	return otelhttp.NewHandler(correlation.Middleware(h.logged(next)), route)
 }
 
-// correlated mints a request identifier, binds it to the response and to a logger carrying
-// the trace identifiers, and records the outcome.
-func (h Handlers) correlated(next http.Handler) http.Handler {
+func (h Handlers) logged(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestID := newRequestID()
-		writer.Header().Set(RequestIDHeader, requestID)
-
+		requestID := correlation.From(request.Context())
 		logger := observability.LoggerFor(request.Context(), h.Logger, requestID)
 		recorder := &statusRecorder{ResponseWriter: writer, status: http.StatusOK}
 		started := time.Now()
@@ -112,18 +101,6 @@ func writeStatus(writer http.ResponseWriter, code int, status string) {
 	_, _ = writer.Write([]byte(`{"status":"` + status + `"}`))
 }
 
-// newRequestID mints a correlation identifier. crypto/rand cannot fail in practice, and a
-// correlation identifier is not a security boundary, so an exhausted entropy pool degrades
-// to a constant rather than failing the request.
-func newRequestID() string {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "unavailable"
-	}
-	return hex.EncodeToString(raw[:])
-}
-
-// statusRecorder captures the status code for the access log.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int

@@ -29,6 +29,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -111,7 +112,7 @@ type Handlers struct {
 // operator surface hands internal/auth/authz, and it is the only place this build decides that a
 // credential is good.
 func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
-	requestID := authz.RequestIDFrom(request.Context())
+	requestID := correlation.From(request.Context())
 
 	if token, present := session.FromRequest(request); present {
 		principal, err := h.fromSession(request, token)

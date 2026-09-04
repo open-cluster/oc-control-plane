@@ -65,6 +65,14 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		listed.Items[0].FailureClass != "provider-work-failed" || listed.Items[0].Status != "failed" {
 		t.Fatalf("failed delivery listing = %+v", listed.Items)
 	}
+	status, body = plane.call(t, http.MethodGet, base+"?status=failed", nil)
+	if status != http.StatusOK {
+		t.Fatalf("filtering failed deliveries = %d: %s", status, body)
+	}
+	decodeInto(t, body, &listed)
+	if len(listed.Items) != 1 || listed.Items[0].Status != "failed" {
+		t.Errorf("failed status filter returned %+v", listed.Items)
+	}
 	if status, body = plane.call(t, http.MethodGet, base+"?cursor=invalid", nil); status != http.StatusBadRequest {
 		t.Fatalf("a malformed terminal-work cursor = %d: %s", status, body)
 	}

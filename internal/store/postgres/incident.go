@@ -171,12 +171,10 @@ func (p *Database) QueryIncidents(
 
 	order, known := incidentOrderings[query.Sort]
 	if !known {
-		// Unreachable while the handler refuses an unoffered sort, and checked anyway: a sort
-		// resolved from an empty string would order rows by whatever the planner chose, and the
-		// cursor would resume from a position in an order nobody asked for.
 		return incident.Page{}, fmt.Errorf("incident listing cannot order by %q", query.Sort)
 	}
-	cursorValue, cursorID, err := decodeSortCursor(query.Cursor)
+	scope := sortScope(query.Sort, query.Descending)
+	cursorValue, cursorID, err := decodeSortCursor(query.Cursor, scope)
 	if err != nil {
 		return incident.Page{}, incident.ErrBadCursor
 	}
@@ -194,8 +192,6 @@ func (p *Database) QueryIncidents(
 		add("status = $%d", int16(query.Status))
 	}
 	if query.Search != "" {
-		// Title and the source's own grouping key, because an operator arriving from their own
-		// alerting holds the second and an operator reading the console holds the first.
 		arguments = append(arguments, "%"+strings.ToLower(query.Search)+"%")
 		where = append(where, fmt.Sprintf(
 			"(lower(title) LIKE $%d OR lower(grouping_key) LIKE $%d)",
@@ -215,8 +211,6 @@ func (p *Database) QueryIncidents(
 	limit := pageLimit(query.Limit)
 	arguments = append(arguments, limit+1)
 
-	// One row past the limit is fetched so the cursor is issued only when there genuinely is a
-	// next page. A listing that always offered one would let a caller page forever.
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+incidentColumns+`
 		  FROM incident e
@@ -238,7 +232,7 @@ func (p *Database) QueryIncidents(
 		}
 		if len(page.Incidents) == limit {
 			last := page.Incidents[len(page.Incidents)-1]
-			page.Next = encodeSortCursor(order.render(last), last.ID)
+			page.Next = encodeSortCursor(scope, order.render(last), last.ID)
 			break
 		}
 		page.Incidents = append(page.Incidents, item)
@@ -249,11 +243,6 @@ func (p *Database) QueryIncidents(
 	return page, nil
 }
 
-// episodeOrderings is what the listing may be ordered by, with the codec for resuming each.
-//
-// The rendering lives beside the column deliberately: a second switch on the same field names is
-// the shape of change where one edit lands and the other does not, and the symptom is a cursor
-// that resumes from the wrong place rather than an error anybody sees.
 var incidentOrderings = map[string]struct {
 	column string
 	cast   string
@@ -317,7 +306,7 @@ func (p *Database) IncidentAlertEvents(
 		return incident.AlertEventList{}, err
 	}
 
-	after, afterID, err := decodeCursor(page.After)
+	after, afterID, err := decodeCursor(page.After, "startedAt")
 	if err != nil {
 		return incident.AlertEventList{}, incident.ErrBadCursor
 	}
@@ -355,7 +344,7 @@ func (p *Database) IncidentAlertEvents(
 		}
 		if len(list.AlertEvents) == limit {
 			last := list.AlertEvents[len(list.AlertEvents)-1]
-			list.Next = encodeCursor(last.StartedAt, last.ID)
+			list.Next = encodeCursor("startedAt", last.StartedAt, last.ID)
 			break
 		}
 		list.AlertEvents = append(list.AlertEvents, alertEvent)

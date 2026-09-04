@@ -108,7 +108,7 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			return database.RemoveMembership(ctx, stranger, organization, somebody)
 		},
 		"ListSessions": func() error {
-			_, err := database.ListSessions(ctx, stranger, organization)
+			_, err := database.ListSessions(ctx, stranger, organization, storage.Page{})
 			return err
 		},
 		"RevokeSessionsOf": func() error {

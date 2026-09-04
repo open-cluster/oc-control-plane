@@ -11,6 +11,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -71,7 +72,7 @@ func (h Handlers) prepareSession(
 	issued := session.Session{ID: uuid.New(), UserID: userID, Organization: organization.String(),
 		IssuedAt: now, ExpiresAt: now.Add(lifetime), UserAgent: request.UserAgent(), Address: request.RemoteAddr}
 	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
-		"memberships": membershipCount, "requestId": authz.RequestIDFrom(request.Context())}
+		"memberships": membershipCount, "requestId": correlation.From(request.Context())}
 	return token, digest, issued, detail, nil
 }
 

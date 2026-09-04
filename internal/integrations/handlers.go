@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -95,8 +95,14 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// Describe is this domain surface's contribution to the deployment's self-description.
 func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
+	query, err := listing.Parse(request.URL.Query(), listing.Spec{
+		DefaultSort: listing.Sort{Field: "key"},
+	})
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return
+	}
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -118,20 +124,22 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 		configured[count.Type] = count.Count
 	}
 
-	manifests := h.Catalog.Manifests()
+	manifests, next, err := listing.Cut(h.Catalog.Manifests(), query)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return
+	}
 	views := make([]typeView, 0, len(manifests))
 	for _, manifest := range manifests {
 		views = append(views, typeViewOf(manifest, configured[manifest.ID]))
 	}
-	writeJSON(writer, http.StatusOK, typeListView{Types: views})
+	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.Continuation(next)})
 }
 
-// listSpec is what the integrations listing accepts, in the one table contract every
-// listing on this surface speaks.
-var listSpec = table.Spec{
+var listSpec = listing.Spec{
 	Searchable:  true,
 	Sortable:    []string{"createdAt"},
-	DefaultSort: table.Sort{Field: "createdAt", Descending: true},
+	DefaultSort: listing.Sort{Field: "createdAt", Descending: true},
 	Filters:     []string{"type", "relay", "disabled"},
 }
 
@@ -161,9 +169,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range listed.Integrations {
 		views = append(views, h.viewOf(found))
 	}
-	// No total: counting a cursor-paginated listing costs a second scan of everything the
-	// filters matched, and a fabricated count is worse than an absent one.
-	writeJSON(writer, http.StatusOK, table.Answer(views, listed.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
 }
 
 // createRequest is what an operator submits.
@@ -786,9 +792,9 @@ func checkFieldValue(field Field, value any) string {
 func (h Handlers) listQuery(
 	writer http.ResponseWriter, request *http.Request,
 ) (Query, bool) {
-	parsed, err := table.Parse(request.URL.Query(), listSpec)
+	parsed, err := listing.Parse(request.URL.Query(), listSpec)
 	if err != nil {
-		if table.Refused(err) {
+		if listing.Refused(err) {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 			return Query{}, false
 		}
@@ -801,6 +807,7 @@ func (h Handlers) listQuery(
 	query := Query{
 		Page:   Page{Limit: parsed.Limit, After: parsed.Cursor},
 		Search: parsed.Search,
+		Sort:   parsed.Sort.Field, Descending: parsed.Sort.Descending,
 	}
 	if key := parsed.Filter("type"); key != "" {
 		definition, known := h.Catalog.Lookup(key)
@@ -820,6 +827,11 @@ func (h Handlers) listQuery(
 		query.Relay = relay
 	}
 	if named := parsed.Filter("disabled"); named != "" {
+		if named != "true" && named != "false" {
+			writeJSON(writer, http.StatusBadRequest,
+				errorView{Error: "disabled must be true or false"})
+			return Query{}, false
+		}
 		disabled := named == "true"
 		query.Disabled = &disabled
 	}

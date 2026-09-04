@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -16,6 +17,12 @@ type memberRequest struct {
 }
 
 func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
+	query, ok := listQuery(w, r, listing.Spec{
+		DefaultSort: listing.Sort{Field: "createdAt"},
+	})
+	if !ok {
+		return
+	}
 	principal, ok := h.caller(w, r)
 	if !ok {
 		return
@@ -27,8 +34,8 @@ func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
 	list, err := h.Database.ListMembers(ctx, principal, organization, storage.Page{
-		Limit: pageSize(r),
-		After: r.URL.Query().Get("after"),
+		Limit: query.Limit,
+		After: query.Cursor,
 	})
 	if err != nil {
 		h.fail(w, r, err)

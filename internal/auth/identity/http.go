@@ -7,11 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	authsession "github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -31,6 +31,15 @@ func writeJSON(writer http.ResponseWriter, status int, body any) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(body)
+}
+
+func listQuery(writer http.ResponseWriter, request *http.Request, spec listing.Spec) (listing.Query, bool) {
+	query, err := listing.Parse(request.URL.Query(), spec)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return listing.Query{}, false
+	}
+	return query, true
 }
 
 // decode reads a JSON body, answering the caller itself on a refusal so a handler either has a
@@ -142,7 +151,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			errorView{Error: "the identity provider could not be reached"})
 	case errors.Is(err, storage.ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "after is not a page position from a previous response"})
+			errorView{Error: "cursor is not a page position from a previous response"})
 	case errors.Is(err, storage.ErrAuditFailed):
 		// The operation was rolled back because it could not be recorded. Saying so is the
 		// point: an operator who was told "it worked" about a change with no audit row would
@@ -158,14 +167,4 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
-}
-
-// pageSize reads how many were asked for. An unreadable value is not an error: the bound is
-// the point, and storage clamps whatever arrives.
-func pageSize(request *http.Request) int {
-	size, err := strconv.Atoi(request.URL.Query().Get("limit"))
-	if err != nil {
-		return 0
-	}
-	return size
 }

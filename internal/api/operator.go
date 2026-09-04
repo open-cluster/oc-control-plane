@@ -2,22 +2,20 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
-	"github.com/open-cluster/oc-control-plane/internal/health"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -78,9 +76,7 @@ func (h Handlers) Router() (http.Handler, error) {
 		return nil, err
 	}
 
-	/* Correlation wraps the whole surface, so the identifier exists before the credential is
-	   resolved and every audit event a request produces can name the log lines it produced. */
-	return h.correlated(router), nil
+	return correlation.Middleware(router), nil
 }
 
 // Routes is the whole operator API.
@@ -177,24 +173,6 @@ func availabilityOf(enabled bool) string {
 	return "unavailable"
 }
 
-// correlated mints a request identifier and binds it to the response and the context.
-func (h Handlers) correlated(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		id := newRequestID()
-		writer.Header().Set(health.RequestIDHeader, id)
-		next.ServeHTTP(writer, request.WithContext(
-			authz.WithRequestID(request.Context(), id)))
-	})
-}
-
-func newRequestID() string {
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "uncorrelated"
-	}
-	return hex.EncodeToString(raw)
-}
-
 // recordRefusal writes an authorization denial to the tenant's record.
 func (h Handlers) recordRefusal(
 	ctx context.Context, organization tenancy.Organization, event audit.Event,
@@ -230,8 +208,13 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	}
 }
 
-// conflictTrail reports what has happened to a relay identity.
 func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Request) {
+	query, ok := h.query(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "sequence", Descending: true},
+	})
+	if !ok {
+		return
+	}
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -244,7 +227,7 @@ func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Reques
 	defer cancel()
 
 	trail, err := h.Database.SessionConflictTrail(ctx, principal, organization, registration,
-		storage.Page{Limit: pageSize(request), After: request.URL.Query().Get("after")})
+		storage.Page{Limit: query.Limit, After: query.Cursor})
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -353,14 +336,4 @@ func (h Handlers) relay(
 		return tenancy.Organization{}, uuid.UUID{}, false
 	}
 	return organization, registration, true
-}
-
-// pageSize reads how many relays were asked for. An unreadable value is not an error: the
-// bound is the point, and storage clamps whatever arrives.
-func pageSize(request *http.Request) int {
-	size, err := strconv.Atoi(request.URL.Query().Get("limit"))
-	if err != nil {
-		return 0
-	}
-	return size
 }

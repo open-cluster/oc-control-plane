@@ -168,6 +168,25 @@ func TestRelayFleet(t *testing.T) {
 		if len(listed.Items) != 1 || listed.Items[0].Compatibility != "unknown" {
 			t.Fatalf("historical relay compatibility = %+v", listed.Items)
 		}
+
+		status, body = plane.call(t, http.MethodGet, relays+"?version=0.0.1", nil)
+		if status != http.StatusOK {
+			t.Fatalf("filtering by version = %d: %s", status, body)
+		}
+		decodeInto(t, body, &listed)
+		if len(listed.Items) != 1 || listed.Items[0].RelayVersion != "0.0.1" {
+			t.Errorf("version filter returned %+v", listed.Items)
+		}
+
+		status, body = plane.call(t, http.MethodGet,
+			relays+"?capability="+capabilityUnderTest, nil)
+		if status != http.StatusOK {
+			t.Fatalf("filtering by capability = %d: %s", status, body)
+		}
+		decodeInto(t, body, &listed)
+		if len(listed.Items) != 1 || listed.Items[0].RegistrationID != plane.relay.registration.String() {
+			t.Errorf("capability filter returned %+v", listed.Items)
+		}
 	})
 
 	t.Run("a relay's integrations are what disabling it would cost", func(t *testing.T) {
@@ -240,6 +259,15 @@ func TestRelayFleet(t *testing.T) {
 				t.Errorf("sort=%s = %d: %s", field, status, body)
 			}
 		}
+		var ascending, descending fleetBody
+		_, body := plane.call(t, http.MethodGet, relays+"?sort=fingerprint", nil)
+		decodeInto(t, body, &ascending)
+		_, body = plane.call(t, http.MethodGet, relays+"?sort=-fingerprint", nil)
+		decodeInto(t, body, &descending)
+		if len(ascending.Items) < 2 || len(ascending.Items) != len(descending.Items) ||
+			ascending.Items[0].RegistrationID != descending.Items[len(descending.Items)-1].RegistrationID {
+			t.Errorf("fingerprint sort did not reverse the rows")
+		}
 	})
 
 	t.Run("a tampered cursor is refused rather than silently starting over", func(t *testing.T) {
@@ -251,10 +279,10 @@ func TestRelayFleet(t *testing.T) {
 		}
 	})
 
-	t.Run("a limit above the ceiling is clamped rather than refused", func(t *testing.T) {
+	t.Run("a limit above the ceiling is refused", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, relays+"?limit=100000", nil)
-		if status != http.StatusOK {
-			t.Errorf("an oversized limit = %d, want it clamped and served: %s", status, body)
+		if status != http.StatusBadRequest {
+			t.Errorf("an oversized limit = %d, want 400: %s", status, body)
 		}
 	})
 

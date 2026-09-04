@@ -255,7 +255,7 @@ func (p *Database) RelayFailures(
 		return RelayFailureList{}, err
 	}
 	limit := pageLimit(page.Limit)
-	after, afterID, err := decodeCursor(page.After)
+	after, afterID, err := decodeCursor(page.After, "-at")
 	if err != nil {
 		return RelayFailureList{}, err
 	}
@@ -286,7 +286,7 @@ func (p *Database) RelayFailures(
 		}
 		if len(list.Failures) == limit {
 			last := list.Failures[limit-1]
-			list.Next = encodeCursor(last.At, last.JobID)
+			list.Next = encodeCursor("-at", last.At, last.JobID)
 			break
 		}
 		failure.Cancelled = JobStatus(status) == JobCancelled

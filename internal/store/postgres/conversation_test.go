@@ -420,6 +420,37 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	}
 }
 
+func TestConversationListingAppliesAscendingSortAcrossPages(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	first := openConversation(t, database, organization, "first")
+	second := openConversation(t, database, organization, "second")
+
+	page, err := database.QueryConversations(context.Background(), ownerOf(t, organization),
+		organization, conversation.Page{Limit: 1, Sort: "lastActivityAt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Conversations) != 1 || page.Conversations[0].ID != first.ID || page.Next == "" {
+		t.Fatalf("first page = %+v", page)
+	}
+	if _, err = database.QueryConversations(context.Background(), ownerOf(t, organization),
+		organization, conversation.Page{
+			Limit: 1, Sort: "lastActivityAt", Descending: true, After: page.Next,
+		}); !errors.Is(err, conversation.ErrBadCursor) {
+		t.Fatalf("cursor reused with another order = %v, want ErrBadCursor", err)
+	}
+	page, err = database.QueryConversations(context.Background(), ownerOf(t, organization),
+		organization, conversation.Page{Limit: 1, Sort: "lastActivityAt", After: page.Next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Conversations) != 1 || page.Conversations[0].ID != second.ID {
+		t.Fatalf("second page = %+v", page)
+	}
+}
+
 // EPISODE-LEVEL SHARING, AND ITS BOUNDARY.
 //
 // Two people narrowing one incident hold separate conversations. They share the incident's

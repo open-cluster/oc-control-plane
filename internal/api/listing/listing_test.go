@@ -1,4 +1,4 @@
-package table_test
+package listing_test
 
 import (
 	"encoding/json"
@@ -6,14 +6,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	table "github.com/open-cluster/oc-control-plane/internal/api/listing"
 )
-
-// The contract is one shape for every list endpoint, so these tests are written against the
-// contract rather than against any endpoint that speaks it. What they hold is the four
-// properties a client can depend on without reading a handler: an unknown sort is refused, a
-// limit above the ceiling is clamped, an absent total is null rather than zero, and a listing
-// with nothing in it encodes as an empty array rather than as null.
 
 var connections = table.Spec{
 	Searchable:  true,
@@ -40,7 +34,6 @@ func TestAnAbsentQueryIsTheDefaultOrderAndSize(t *testing.T) {
 	}
 }
 
-// A signed field name is the whole ordering vocabulary: "name" ascending, "-name" descending.
 func TestSortIsASignedFieldName(t *testing.T) {
 	t.Parallel()
 
@@ -50,8 +43,6 @@ func TestSortIsASignedFieldName(t *testing.T) {
 	}{
 		{"name", table.Sort{Field: "name"}},
 		{"-name", table.Sort{Field: "name", Descending: true}},
-		{"+name", table.Sort{Field: "name"}},
-		{" -createdAt ", table.Sort{Field: "createdAt", Descending: true}},
 	} {
 		query, err := table.Parse(url.Values{"sort": {want.asked}}, connections)
 		if err != nil {
@@ -63,8 +54,16 @@ func TestSortIsASignedFieldName(t *testing.T) {
 	}
 }
 
-// Refused rather than ignored. A sort silently dropped returns rows in an order the caller did
-// not ask for and has no way to notice, which during an incident is a list that looks sorted.
+func TestMalformedSortsAreRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, asked := range []string{"+name", " name", "name ", "-", "--name", ""} {
+		if _, err := table.Parse(url.Values{"sort": {asked}}, connections); err == nil {
+			t.Errorf("sort=%q was accepted", asked)
+		}
+	}
+}
+
 func TestAnUnknownSortFieldIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -77,8 +76,6 @@ func TestAnUnknownSortFieldIsRefused(t *testing.T) {
 	}
 }
 
-// A filter nobody serves is refused for the same reason: narrowed by nothing looks exactly
-// like narrowed by everything.
 func TestAnUnknownFilterIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -98,29 +95,34 @@ func TestSearchIsRefusedWhereItIsNotOffered(t *testing.T) {
 	}
 }
 
-// Clamped, not refused. A caller asking for more than the ceiling wants as much as they can
-// have, and answering 400 to that is a client that has to learn a number to work at all.
-func TestALimitAboveTheCeilingIsClampedAndOneBelowTheFloorIsTheDefault(t *testing.T) {
+func TestDefaultSortNeedNotBeClientSelectable(t *testing.T) {
 	t.Parallel()
 
-	for _, want := range []struct {
-		asked string
-		limit int
-	}{
-		{"10", 10},
-		{"100000", table.MaxLimit},
-		{"0", table.DefaultLimit},
-		{"-4", table.DefaultLimit},
-		{"not a number", table.DefaultLimit},
-		{"", table.DefaultLimit},
-	} {
-		query, err := table.Parse(url.Values{"limit": {want.asked}}, connections)
-		if err != nil {
-			t.Fatalf("limit=%q: %v", want.asked, err)
+	fixed := table.Spec{DefaultSort: table.Sort{Field: "createdAt", Descending: true}}
+	query, err := table.Parse(url.Values{}, fixed)
+	if err != nil {
+		t.Fatalf("parsing fixed ordering: %v", err)
+	}
+	if query.Sort != fixed.DefaultSort {
+		t.Fatalf("sort = %+v, want %+v", query.Sort, fixed.DefaultSort)
+	}
+	if _, err = table.Parse(url.Values{"sort": {"createdAt"}}, fixed); !errors.Is(err, table.ErrUnknownSort) {
+		t.Fatalf("client-selected fixed sort = %v, want ErrUnknownSort", err)
+	}
+}
+
+func TestMalformedLimitsAreRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, asked := range []string{"100000", "0", "-4", "not a number", ""} {
+		if _, err := table.Parse(url.Values{"limit": {asked}}, connections); err == nil {
+			t.Errorf("limit=%q was accepted", asked)
 		}
-		if query.Limit != want.limit {
-			t.Errorf("limit=%q resolved to %d, want %d", want.asked, query.Limit, want.limit)
-		}
+	}
+
+	query, err := table.Parse(url.Values{"limit": {"10"}}, connections)
+	if err != nil || query.Limit != 10 {
+		t.Fatalf("limit=10 resolved to %d, %v", query.Limit, err)
 	}
 }
 
@@ -128,7 +130,7 @@ func TestFiltersAreReadableByName(t *testing.T) {
 	t.Parallel()
 
 	query, err := table.Parse(url.Values{
-		"integration": {"kubernetes", "alertmanager"},
+		"integration": {"kubernetes"},
 		"search":      {"  production  "},
 		"cursor":      {"abc"},
 	}, connections)
@@ -137,9 +139,6 @@ func TestFiltersAreReadableByName(t *testing.T) {
 	}
 	if got := query.Filter("integration"); got != "kubernetes" {
 		t.Errorf("Filter(integration) = %q, want the first value", got)
-	}
-	if got := query.FilterAll("integration"); len(got) != 2 {
-		t.Errorf("FilterAll(integration) = %v, want both values", got)
 	}
 	if query.Filter("environmentId") != "" {
 		t.Error("an absent filter reports a value")
@@ -152,9 +151,38 @@ func TestFiltersAreReadableByName(t *testing.T) {
 	}
 }
 
-// The envelope is the other half of the contract. total is NULLABLE because a cursor-paginated
-// query over a large table cannot always answer it cheaply, and a fabricated count is worse
-// than an absent one.
+func TestDuplicateScalarParametersAreRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"search", "sort", "limit", "cursor", "integration"} {
+		values := url.Values{name: {"name", "createdAt"}}
+		if _, err := table.Parse(values, connections); err == nil {
+			t.Errorf("duplicate %s was accepted", name)
+		}
+	}
+}
+
+func TestBlankScalarParametersAreRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"search", "sort", "limit", "cursor", "integration"} {
+		if _, err := table.Parse(url.Values{name: {"  "}}, connections); err == nil {
+			t.Errorf("blank %s was accepted", name)
+		}
+	}
+}
+
+func TestSearchAndCursorAreBounded(t *testing.T) {
+	t.Parallel()
+
+	if _, err := table.Parse(url.Values{"search": {string(make([]byte, 257))}}, connections); err == nil {
+		t.Error("oversized search was accepted")
+	}
+	if _, err := table.Parse(url.Values{"cursor": {string(make([]byte, 513))}}, connections); err == nil {
+		t.Error("oversized cursor was accepted")
+	}
+}
+
 func TestTheEnvelopeEncodesAnAbsentTotalAsNullAndNoItemsAsAnEmptyArray(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +199,8 @@ func TestTheEnvelopeEncodesAnAbsentTotalAsNullAndNoItemsAsAnEmptyArray(t *testin
 func TestTheEnvelopeCarriesTheCountItActuallyHas(t *testing.T) {
 	t.Parallel()
 
-	answer := table.Answer([]string{"a", "b"}, "next-page", table.Counted(2))
+	total := 2
+	answer := table.Answer([]string{"a", "b"}, "next-page", &total)
 	encoded, err := json.Marshal(answer)
 	if err != nil {
 		t.Fatalf("encoding: %v", err)
@@ -182,9 +211,6 @@ func TestTheEnvelopeCarriesTheCountItActuallyHas(t *testing.T) {
 	}
 }
 
-// A compiled listing pages like every other one. The alternative was an exemption — "this
-// listing ignores cursor because it is short" — and a caller who paged it would get page one
-// back forever with no way to tell that from having reached the end.
 func TestCutWalksAnInMemoryListingExactlyOnce(t *testing.T) {
 	t.Parallel()
 
@@ -240,8 +266,24 @@ func TestCutRefusesATamperedCursor(t *testing.T) {
 	}
 }
 
-// partial is how the backend says "I served this column with no data, and here is why", which
-// is what lets a console render one honest notice instead of a column of "Not reported".
+func TestCutCursorIsBoundToItsOrdering(t *testing.T) {
+	t.Parallel()
+
+	query, err := table.Parse(url.Values{"limit": {"1"}}, connections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, next, err := table.Cut([]int{1, 2}, query)
+	if err != nil || next == "" {
+		t.Fatalf("first page next=%q err=%v", next, err)
+	}
+	query.Cursor = next
+	query.Sort = table.Sort{Field: "name"}
+	if _, _, err = table.Cut([]int{1, 2}, query); !errors.Is(err, table.ErrBadCursor) {
+		t.Fatalf("cursor reused with another order = %v, want ErrBadCursor", err)
+	}
+}
+
 func TestPartialNamesTheFieldAndTheReason(t *testing.T) {
 	t.Parallel()
 

@@ -11,21 +11,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// Page is which slice of a listing to return. It is not relay-specific: every paged read on
-// this surface takes the same shape, and naming it for the first caller would have made
-// "Relay" mean something it does not the moment the second one arrived.
+// Page identifies a bounded continuation request.
 type Page struct {
-	// Limit is how many to return. Zero means the default rather than none: a caller that names
-	// no size wants the list, and answering with one row would hide the very findings this is
-	// read for.
 	Limit int
-	// After resumes from a previous page's Next. An empty value starts at the beginning.
 	After string
 }
 
-// Bounds on a page. An operator asking for everything still gets a bounded answer,
-// because an unbounded list is a query whose cost belongs to whoever calls it most — and the
-// cursor is what makes that bound a page rather than a ceiling on what can ever be seen.
 const (
 	defaultPageSize = 50
 	maxPageSize     = 200
@@ -34,8 +25,6 @@ const (
 // ErrBadCursor reports a resume point that did not come from a previous page.
 var ErrBadCursor = errors.New("cursor is not a page position")
 
-// pageLimit resolves how many rows to return. A caller that named nothing gets the default,
-// not the minimum.
 func pageLimit(asked int) int {
 	if asked <= 0 {
 		return defaultPageSize
@@ -43,17 +32,12 @@ func pageLimit(asked int) int {
 	return min(asked, maxPageSize)
 }
 
-// encodeCursor renders a page position. It is opaque on purpose: a caller that took it apart
-// would be depending on the ordering rather than on the cursor, and the ordering is ours.
-func encodeCursor(at time.Time, id uuid.UUID) string {
+func encodeCursor(scope string, at time.Time, id uuid.UUID) string {
 	return base64.RawURLEncoding.EncodeToString(
-		[]byte(strconv.FormatInt(at.UnixNano(), 10) + ":" + id.String()))
+		[]byte("@" + scope + ":" + strconv.FormatInt(at.UnixNano(), 10) + ":" + id.String()))
 }
 
-// decodeCursor reads a page position back. An empty cursor is the start of the list, which is
-// not an error; anything unreadable is, because silently starting over would show an operator
-// the first page again and let them believe they had seen the last.
-func decodeCursor(cursor string) (*time.Time, *uuid.UUID, error) {
+func decodeCursor(cursor, scope string) (*time.Time, *uuid.UUID, error) {
 	if cursor == "" {
 		return nil, nil, nil
 	}
@@ -61,7 +45,11 @@ func decodeCursor(cursor string) (*time.Time, *uuid.UUID, error) {
 	if err != nil {
 		return nil, nil, ErrBadCursor
 	}
-	nanos, identifier, found := strings.Cut(string(raw), ":")
+	body, marked := strings.CutPrefix(string(raw), "@"+scope+":")
+	if !marked {
+		return nil, nil, ErrBadCursor
+	}
+	nanos, identifier, found := strings.Cut(body, ":")
 	if !found {
 		return nil, nil, ErrBadCursor
 	}
@@ -77,22 +65,18 @@ func decodeCursor(cursor string) (*time.Time, *uuid.UUID, error) {
 	return &at, &id, nil
 }
 
-// encodeSortCursor renders a page position for a listing ordered by a field the caller chose.
-//
-// It is a third codec beside the timestamp and ordinal ones because the ordering it resumes is
-// genuinely different: the key may be a version string, a name or a fingerprint, and rendering
-// those through a timestamp codec would either fail or, worse, round-trip to something that
-// compares differently than it sorted. The value travels as text and the query casts it back to
-// the type of the column it compares against, which is the same expression that produced the
-// order.
-func encodeSortCursor(value string, id uuid.UUID) string {
-	return base64.RawURLEncoding.EncodeToString([]byte("~" + value + id.String()))
+func sortScope(field string, descending bool) string {
+	if descending {
+		return "-" + field
+	}
+	return field
 }
 
-// decodeSortCursor reads such a position back. An empty cursor is the start of the listing,
-// which is not an error; anything unreadable is, because silently starting over would show an
-// operator the first page again and let them believe they had seen the last.
-func decodeSortCursor(cursor string) (string, *uuid.UUID, error) {
+func encodeSortCursor(scope, value string, id uuid.UUID) string {
+	return base64.RawURLEncoding.EncodeToString([]byte("~" + scope + ":" + value + id.String()))
+}
+
+func decodeSortCursor(cursor, scope string) (string, *uuid.UUID, error) {
 	if cursor == "" {
 		return "", nil, nil
 	}
@@ -100,14 +84,10 @@ func decodeSortCursor(cursor string) (string, *uuid.UUID, error) {
 	if err != nil {
 		return "", nil, ErrBadCursor
 	}
-	body, marked := strings.CutPrefix(string(raw), "~")
+	body, marked := strings.CutPrefix(string(raw), "~"+scope+":")
 	if !marked {
 		return "", nil, ErrBadCursor
 	}
-	// Split from the RIGHT rather than on a separator. A sort key is a customer's own text — a
-	// Integration name, a cluster fingerprint — so any byte chosen to divide the two halves is a
-	// byte a name could contain. The identifier is a fixed-width UUID, so the boundary is
-	// arithmetic and there is nothing to escape.
 	const identifierLength = 36
 	if len(body) < identifierLength {
 		return "", nil, ErrBadCursor
@@ -121,9 +101,22 @@ func decodeSortCursor(cursor string) (string, *uuid.UUID, error) {
 	return value, &id, nil
 }
 
-// decodeStringArray reads a JSONB array of strings into a slice, flattening null to empty. A
-// caller asking what a relay serves should get a list they can range over rather than one they
-// have to nil-check.
+func encodeTimeSortCursor(scope string, at time.Time, id uuid.UUID) string {
+	return encodeSortCursor(scope, at.Format(time.RFC3339Nano), id)
+}
+
+func decodeTimeSortCursor(cursor, scope string) (*time.Time, *uuid.UUID, error) {
+	value, id, err := decodeSortCursor(cursor, scope)
+	if err != nil || id == nil {
+		return nil, id, err
+	}
+	at, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil, nil, ErrBadCursor
+	}
+	return &at, id, nil
+}
+
 func decodeStringArray(raw []byte) ([]string, error) {
 	if len(raw) == 0 {
 		return []string{}, nil
