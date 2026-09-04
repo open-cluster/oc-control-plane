@@ -8,15 +8,6 @@ import (
 	"strings"
 )
 
-// The operator surface's own settings: the bootstrap credential and its scope, where the
-// surface and its console are reachable from a browser, and the key presentable
-// credentials are sealed under.
-//
-// They are here rather than in config.go because they are one subject and because config.go
-// was past the length this repository wants a file to be. Nothing about the parsing differs;
-// what changed is that the settings deciding WHO MAY REACH THE PRODUCT are read in one place a
-// reviewer can hold in their head.
-
 // minOperatorTokenLength is the shortest token the operator surface will accept.
 //
 // The surface it guards reads across every tenant this instance serves, so a token short

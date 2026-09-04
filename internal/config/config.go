@@ -1,8 +1,3 @@
-// Package config loads and validates the control plane's process configuration from the
-// environment. Configuration is non-secret with one deliberate exception: the database
-// connection string carries a password, so configuration names a file holding the DSN rather
-// than the DSN itself. No environment value ever carries a credential, and no error ever
-// quotes a DSN file's contents — a failed start must not write a password into a log.
 package config
 
 import (
@@ -16,7 +11,6 @@ import (
 	"strings"
 )
 
-// Defaults for the optional settings.
 const (
 	defaultAuthenticationMode                     = "local"
 	defaultInvestigationWorkers                   = 8
@@ -24,20 +18,32 @@ const (
 	defaultModelContextWindowTokens               = 128_000
 )
 
-// Environment variable names, listed once so errors and documentation cannot drift.
 var SupportedEnvironmentKeys = []string{
 	EnvConfigFile,
-	EnvHTTPAddress, EnvOperatorPublicURL,
+	EnvHTTPAddress,
+	EnvOperatorPublicURL,
 	EnvDatabaseDSNFile,
-	EnvAuthenticationMode, EnvOperatorTokenFile,
-	EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile,
-	EnvRelayAddress, EnvRelaySPKIPins,
-	EnvModelProvider, EnvModelName, EnvModelKeyFile, EnvModelContextWindowSize,
-	EnvInvestigationWorkers, EnvInvestigationMaxPendingPerOrganization,
+	EnvAuthenticationMode,
+	EnvOperatorTokenFile,
+	EnvOIDCIssuer,
+	EnvOIDCClientID,
+	EnvOIDCClientSecretFile,
+	EnvRelayAddress,
+	EnvRelaySPKIPins,
+	EnvModelProvider,
+	EnvModelName,
+	EnvModelKeyFile,
+	EnvModelContextWindowSize,
+	EnvInvestigationWorkers,
+	EnvInvestigationMaxPendingPerOrganization,
 	EnvSealingKeyFile,
-	EnvLogLevel, EnvOTLPEndpoint,
-	EnvSlackClientID, EnvSlackClientSecretFile, EnvSlackSigningSecretFile,
-	EnvGitHubAppID, EnvGitHubAppKeyFile,
+	EnvLogLevel,
+	EnvOTLPEndpoint,
+	EnvSlackClientID,
+	EnvSlackClientSecretFile,
+	EnvSlackSigningSecretFile,
+	EnvGitHubAppID,
+	EnvGitHubAppKeyFile,
 }
 
 const (
@@ -80,10 +86,8 @@ type Config struct {
 	// is the correct default for a process with no collector configured.
 	OTLPEndpoint string
 
-	// RelayAddress is the listen address for the Relay endpoint, which is deliberately
-	// separate from the HTTP surface: it speaks a different protocol to a different kind of
-	// caller, and sharing a port would put the two behind one set of middleware. Empty
-	// disables it, which is correct for a deployment that serves no relays.
+	// RelayAddress is the listen address for the Relay endpoint,
+	// which is deliberately separate from the HTTP surface;
 	RelayAddress string
 
 	// RelaySPKIPins are this control plane's own public key digests, handed to a Relay at
@@ -94,12 +98,6 @@ type Config struct {
 	// OperatorTokenDigest is the SHA-256 of the bootstrap token. The token is read from the file
 	// the operator named, reduced to this, and discarded: the process holds no copy of it, so
 	// there is nothing here to log or echo by accident.
-	//
-	// It is what the old shared operator token became. The difference is the whole point: it is
-	// bound to the organization and role below rather than reaching every tenant. Its limits are
-	// worth stating rather than implying — it has no expiry and no revocation row, because it
-	// exists only to bootstrap a deployment. Revoking it means changing the mounted file and
-	// restarting.
 	OperatorTokenDigest []byte
 
 	// OperatorTokenOrganization is the one tenant the bootstrap credential reaches.
@@ -173,6 +171,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.DatabaseDSN == "" {
+
 		return Config{}, fmt.Errorf("%s is required", EnvDatabaseDSNFile)
 	}
 	if cfg.OTLPEndpoint, err = optionalHostPort(lookup, EnvOTLPEndpoint); err != nil {
@@ -209,16 +208,19 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = modelDeployment(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
-	if cfg.ModelContextWindowTokens, err = positiveInteger(
-		lookup, EnvModelContextWindowSize, defaultModelContextWindowTokens); err != nil {
+
+	if cfg.ModelContextWindowTokens, err = positiveInteger(lookup,
+		EnvModelContextWindowSize,
+		defaultModelContextWindowTokens); err != nil {
 		return Config{}, err
 	}
-	if cfg.InvestigationWorkers, err = positiveInteger(
-		lookup, EnvInvestigationWorkers, defaultInvestigationWorkers); err != nil {
+	if cfg.InvestigationWorkers, err = positiveInteger(lookup,
+		EnvInvestigationWorkers,
+		defaultInvestigationWorkers); err != nil {
 		return Config{}, err
 	}
-	if cfg.MaxPendingInvestigationsPerOrganization, err = positiveInteger(
-		lookup, EnvInvestigationMaxPendingPerOrganization,
+	if cfg.MaxPendingInvestigationsPerOrganization, err = positiveInteger(lookup,
+		EnvInvestigationMaxPendingPerOrganization,
 		defaultInvestigationMaxPendingPerOrganization); err != nil {
 		return Config{}, err
 	}
@@ -322,9 +324,6 @@ func optionalHostPort(lookup func(string) (string, bool), key string) (string, e
 	return value, nil
 }
 
-// validateHostPort accepts only a bare listen or dial address: an optional host with no
-// scheme and no path, plus a usable port. net.SplitHostPort alone would accept
-// "http://host:8080" by splitting on the scheme's colon.
 func validateHostPort(address string) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -344,16 +343,12 @@ func validateHostPort(address string) error {
 }
 
 // modelDeployment reads the model settings. A provider set demands a model name and a
-// key: half a deployment would serve an investigations surface that fails on first use,
-// and whoever set one variable is still reading when this refuses. What the values MEAN —
-// a provider this build implements, an effort level it recognises — is judged at the
-// composition root, which owns that vocabulary.
+// key: half a deployment would serve an investigations surface that fails on first use
 func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 	provider, _ := lookup(EnvModelProvider)
 	cfg.ModelProvider = strings.TrimSpace(provider)
 	name, _ := lookup(EnvModelName)
 	cfg.ModelName = strings.TrimSpace(name)
-
 	path, _ := lookup(EnvModelKeyFile)
 	path = strings.TrimSpace(path)
 	if cfg.ModelProvider == "" {
@@ -377,10 +372,7 @@ func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 	return nil
 }
 
-// gitHubApp reads the deployment's GitHub App credential: both halves or neither. Half a
-// credential would serve a catalog whose GitHub entry can never work, and the person who
-// set one variable is still reading when this refuses. The key file's contents never
-// appear in an error.
+// gitHubApp reads the deployment's GitHub App credential;
 func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 	id, _ := lookup(EnvGitHubAppID)
 	id = strings.TrimSpace(id)

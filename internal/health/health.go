@@ -1,15 +1,3 @@
-// Package health serves the operational surface every deployment needs whether or not any
-// domain is exposed: liveness, readiness, and the metrics scrape, with the request
-// correlation those routes run under.
-//
-// It is named after what it does rather than after being an HTTP layer. Each capability
-// serves its own surface — intake, the operator surface, the relay endpoint — and a package
-// named for the layer would collect them, which is the grouping ADR-016 exists to prevent.
-//
-// The package deliberately does not import internal/store/postgres. It depends on the BEHAVIOUR
-// it needs (can the databases be reached?) rather than on the type that provides it, which
-// keeps database access inside the package that owns database resolution. The import gate
-// in test/architecture enforces this.
 package health
 
 import (
@@ -82,15 +70,10 @@ func (h Handlers) correlated(next http.Handler) http.Handler {
 	})
 }
 
-// live reports process health only. It must not consult a dependency: a liveness probe
-// that fails on a database outage tells the orchestrator to restart a healthy process,
-// turning a dependency incident into a crash loop.
 func (h Handlers) live(writer http.ResponseWriter, _ *http.Request) {
 	writeStatus(writer, http.StatusOK, "ok")
 }
 
-// ready reports whether this instance can serve traffic. Unlike liveness it consults
-// dependencies, and it recovers on its own once they return — no restart required.
 func (h Handlers) ready(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readinessTimeout)
 	defer cancel()
@@ -112,9 +95,6 @@ func writeStatus(writer http.ResponseWriter, code int, status string) {
 	_, _ = writer.Write([]byte(`{"status":"` + status + `"}`))
 }
 
-// newRequestID mints a correlation identifier. crypto/rand cannot fail in practice, and a
-// correlation identifier is not a security boundary, so an exhausted entropy pool degrades
-// to a constant rather than failing the request.
 func newRequestID() string {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -140,8 +120,6 @@ func withLogger(ctx context.Context, logger *slog.Logger) context.Context {
 	return context.WithValue(ctx, loggerKey{}, logger)
 }
 
-// loggerFrom returns the request's correlated logger, falling back to the base logger when
-// called outside a request.
 func loggerFrom(ctx context.Context, fallback *slog.Logger) *slog.Logger {
 	if logger, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
 		return logger
