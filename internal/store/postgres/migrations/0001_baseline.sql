@@ -404,7 +404,17 @@ CREATE TABLE public.investigation_event (
     org_id text NOT NULL,
     sequence bigint NOT NULL,
     at timestamp with time zone DEFAULT now() NOT NULL,
-    -- Type: 1 - started, 2 - progress, 3 - tool_started, 4 - tool_completed, 5 - retired, 6 - concluded, 7 - failed, 8 - retired, 9 - cancelled, 10 - hypotheses_updated
+    -- Type:
+        -- 1 - started,
+        -- 2 - progress,
+        -- 3 - tool_started,
+        -- 4 - tool_completed,
+        -- 5 - retired,
+        -- 6 - concluded,
+        -- 7 - failed,
+        -- 8 - retired,
+        -- 9 - canceled,
+        -- 10 - hypotheses_updated
     type smallint NOT NULL,
     payload jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT investigation_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),

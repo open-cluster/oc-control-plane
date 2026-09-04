@@ -227,6 +227,7 @@ func modelBoundary(
 		return nil, err
 	}
 	model := options.Model
+
 	if model == nil {
 		var openErr error
 		model, openErr = providers.Open(deployment, providers.Options{})
