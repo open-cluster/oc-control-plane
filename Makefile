@@ -14,7 +14,7 @@ LICENSE_FLAGS := --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC
 
 tools:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	go install github.com/gitleaks/gitleaks/v8@$(GITLEAKS_VERSION)
+	go install github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION)
 
 release-tools: tools
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
