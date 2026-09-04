@@ -15,12 +15,6 @@ type errorView struct {
 	Error string `json:"error"`
 }
 
-// clarificationView is the answer to a question that could not be tied to one incident:
-// one plain-language question back, and nothing opened.
-type clarificationView struct {
-	Clarification string `json:"clarification"`
-}
-
 type findingView struct {
 	ID        string `json:"id"`
 	Statement string `json:"statement"`
@@ -33,10 +27,9 @@ type findingView struct {
 	RunRefs []int `json:"runRefs"`
 }
 
-type spendView struct {
+type usageView struct {
 	InputTokens  int64 `json:"inputTokens"`
 	OutputTokens int64 `json:"outputTokens"`
-	MicroCents   int64 `json:"microCents"`
 }
 
 type investigationView struct {
@@ -45,7 +38,6 @@ type investigationView struct {
 	Subject                   string             `json:"subject"`
 	Question                  string             `json:"question,omitempty"`
 	IncidentID                string             `json:"incidentId,omitempty"`
-	IntegrationID             string             `json:"integrationId,omitempty"`
 	WindowFrom                string             `json:"windowFrom"`
 	WindowUntil               string             `json:"windowUntil"`
 	ConclusionStatus          ConclusionStatus   `json:"conclusionStatus,omitempty"`
@@ -62,17 +54,10 @@ type investigationView struct {
 	// freely.
 	StoppedBy   string    `json:"stoppedBy,omitempty"`
 	Error       string    `json:"error,omitempty"`
-	Spend       spendView `json:"spend"`
+	Usage       usageView `json:"usage"`
 	CreatedBy   string    `json:"createdBy,omitempty"`
 	CreatedAt   string    `json:"createdAt"`
 	ConcludedAt string    `json:"concludedAt,omitempty"`
-}
-
-type sourceView struct {
-	IntegrationID string `json:"integrationId"`
-	Rank          int    `json:"rank"`
-	Reason        string `json:"reason"`
-	SelectedAt    string `json:"selectedAt"`
 }
 
 type runView struct {
@@ -93,19 +78,10 @@ type runView struct {
 	FinishedAt    string         `json:"finishedAt"`
 }
 
-// detailView is one investigation with its whole provenance beside it: what was
-// selected, what ran, what came of each.
+// detailView is one Investigation with the durable Tool Runs that support it.
 type detailView struct {
 	investigationView
-	Sources []sourceView `json:"sources"`
-	Runs    []runView    `json:"runs"`
-}
-
-type activityView struct {
-	Sequence int64          `json:"sequence"`
-	At       string         `json:"at"`
-	Type     string         `json:"type"`
-	Payload  map[string]any `json:"payload,omitempty"`
+	Runs []runView `json:"runs"`
 }
 
 func investigationViewOf(found Investigation) investigationView {
@@ -137,19 +113,14 @@ func investigationViewOf(found Investigation) investigationView {
 		HumanConfirmationRequired: humanConfirmationRequired,
 		StoppedBy:                 found.StoppedBy,
 		Error:                     found.Error,
-		Spend: spendView{
-			InputTokens:  found.Spend.InputTokens,
-			OutputTokens: found.Spend.OutputTokens,
-			MicroCents:   found.Spend.MicroCents,
+		Usage: usageView{
+			InputTokens: found.Spend.InputTokens, OutputTokens: found.Spend.OutputTokens,
 		},
 		CreatedBy: found.CreatedBy,
 		CreatedAt: stamp(found.CreatedAt),
 	}
 	if found.IncidentID != uuid.Nil {
 		view.IncidentID = found.IncidentID.String()
-	}
-	if found.IntegrationID != uuid.Nil {
-		view.IntegrationID = found.IntegrationID.String()
 	}
 	if !found.ConcludedAt.IsZero() {
 		view.ConcludedAt = stamp(found.ConcludedAt)
@@ -183,19 +154,10 @@ func publicStatus(found Investigation) string {
 	}
 }
 
-func detailViewOf(found Investigation, sources []Source, runs []ToolRun) detailView {
+func detailViewOf(found Investigation, runs []ToolRun) detailView {
 	view := detailView{
 		investigationView: investigationViewOf(found),
-		Sources:           make([]sourceView, 0, len(sources)),
 		Runs:              make([]runView, 0, len(runs)),
-	}
-	for _, source := range sources {
-		view.Sources = append(view.Sources, sourceView{
-			IntegrationID: source.IntegrationID.String(),
-			Rank:          source.Rank,
-			Reason:        source.Reason,
-			SelectedAt:    stamp(source.SelectedAt),
-		})
 	}
 	for _, run := range runs {
 		rendered := runView{

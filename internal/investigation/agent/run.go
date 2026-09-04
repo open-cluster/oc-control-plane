@@ -49,7 +49,7 @@ const UpdateHypothesesToolName = "update_hypotheses"
 type runState struct {
 	organization tenancy.Organization
 	opened       investigation.Investigation
-	offered      []investigation.OfferedSource
+	offered      []offeredSource
 	brief        *investigation.Brief
 	events       *investigation.EventStream
 	credentials  *credentialCache
@@ -79,10 +79,15 @@ type orientation struct {
 	WindowFrom  time.Time
 	WindowUntil time.Time
 	Trigger     *investigation.Trigger
-	Sources     []investigation.OfferedSource
+	Sources     []offeredSource
 	Inventory   []string
 	Preflight   []investigation.ToolRun
 	Brief       *investigation.Brief
+}
+
+type offeredSource struct {
+	Integration integrations.Integration
+	Tools       []integrations.Tool
 }
 
 type toolCall struct {
@@ -108,7 +113,9 @@ type modelMove struct {
 func (r *Agent) Run(
 	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
 ) error {
-	events := investigation.NewEventStream(r.Store, r.RuntimeTelemetry, organization, opened.ID)
+	events := investigation.NewEventStream(
+		r.Store.AppendEvent, r.RuntimeTelemetry, organization, opened.ID,
+	)
 	startedAt := time.Now()
 	failRun := func(reason string, spend investigation.Spend) error {
 		safeReason, err := r.persistFailure(ctx, organization, opened.ID, reason, spend)
@@ -129,7 +136,7 @@ func (r *Agent) Run(
 	brief := r.conversationBrief(ctx, organization, opened, events)
 	offered := offeredSourcesForConversation(r.Catalog, candidates, brief)
 	if opened.ConversationID != uuid.Nil && brief == nil {
-		var safe []investigation.OfferedSource
+		var safe []offeredSource
 		for _, source := range offered {
 			conversationProvider := false
 			for _, tool := range source.Tools {
@@ -145,18 +152,7 @@ func (r *Agent) Run(
 		offered = safe
 	}
 	r.announce(ctx, events, investigation.EventStarted,
-		investigation.StartedPayload(opened, len(offered), true))
-	for rank, source := range offered {
-		recorded := investigation.Source{
-			IntegrationID: source.Integration.ID,
-			Rank:          rank + 1,
-			Reason:        "offered to the autonomous investigator",
-			SelectedAt:    time.Now().UTC(),
-		}
-		if err := r.Store.RecordSource(ctx, organization, opened.ID, recorded); err != nil {
-			return failRun("the offer could not be recorded", investigation.Spend{})
-		}
-	}
+		investigation.StartedPayload(opened, true))
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
 	state := &runState{
@@ -381,10 +377,6 @@ func (r *Agent) Run(
 				conclusion, stoppedBy, state.spend); err != nil {
 				done()
 				return fmt.Errorf("recording investigation conclusion: %w", err)
-			}
-			if conclusion.Summary != "" {
-				r.announce(writeCtx, events, investigation.EventAnswerDelta,
-					investigation.AnswerDeltaPayload(conclusion.Summary, true))
 			}
 			r.announce(writeCtx, events, investigation.EventConcluded,
 				investigation.ConcludedPayload(conclusion, stoppedBy))
@@ -659,7 +651,7 @@ func hypothesisStatusAllowed(status investigation.HypothesisStatus) bool {
 // the model chose into a sentence the platform is supposed to have authored, which is the
 // one thing this stream promises never to carry. So a name is only spoken when it is one
 // this deployment actually offers; anything else is described rather than quoted.
-func offeredName(offeredSources []investigation.OfferedSource, tool string) string {
+func offeredName(offeredSources []offeredSource, tool string) string {
 	if _, _, offered := toolNamed(selections(offeredSources), tool); offered {
 		return tool
 	}
@@ -716,8 +708,8 @@ func failureReason(err error) string {
 // reality.
 func offeredSources(
 	catalog integrations.Catalog, candidates []integrations.Integration,
-) []investigation.OfferedSource {
-	var sources []investigation.OfferedSource
+) []offeredSource {
+	var sources []offeredSource
 	for _, candidate := range candidates {
 		definition, known := catalog.ByID(candidate.Type)
 		if !known {
@@ -727,7 +719,7 @@ func offeredSources(
 		if len(tools) == 0 {
 			continue
 		}
-		sources = append(sources, investigation.OfferedSource{Integration: candidate, Tools: tools})
+		sources = append(sources, offeredSource{Integration: candidate, Tools: tools})
 	}
 	bindDuplicateToolNames(sources)
 	sortSourcesByName(sources)
@@ -739,7 +731,7 @@ func offeredSources(
 // installation of the originating provider and its broader reads are not implied.
 func offeredSourcesForConversation(
 	catalog integrations.Catalog, candidates []integrations.Integration, brief *investigation.Brief,
-) []investigation.OfferedSource {
+) []offeredSource {
 	if brief == nil || brief.OriginIntegrationID == "" ||
 		brief.OriginChannel == "" || brief.OriginThread == "" {
 		return offeredSources(catalog, candidates)
@@ -765,7 +757,7 @@ func offeredSourcesForConversation(
 		}
 	}
 
-	var scoped []investigation.OfferedSource
+	var scoped []offeredSource
 	for _, source := range offeredSources(catalog, allowed) {
 		if source.Integration.Type != originType {
 			scoped = append(scoped, source)
@@ -788,7 +780,7 @@ func offeredSourcesForConversation(
 // bindDuplicateToolNames keeps two Integrations of one type independently reachable. A
 // single Integration retains the provider's stable Tool name; only collisions gain the
 // full Integration identity, so model APIs receive deterministic unique names.
-func bindDuplicateToolNames(sources []investigation.OfferedSource) {
+func bindDuplicateToolNames(sources []offeredSource) {
 	counts := map[string]int{}
 	for _, source := range sources {
 		for _, tool := range source.Tools {
@@ -929,7 +921,7 @@ func boundActions(actions []investigation.ActionProposal) []investigation.Action
 // orientation, never fails the investigation.
 func (r *Agent) orientation(
 	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
-	offered []investigation.OfferedSource, brief *investigation.Brief,
+	offered []offeredSource, brief *investigation.Brief,
 ) orientation {
 	oriented := orientation{
 		Subject:     opened.Subject,
@@ -954,7 +946,7 @@ func (r *Agent) orientation(
 }
 
 // selections adapts the offered sources to the executor's shape.
-func selections(offered []investigation.OfferedSource) []selection {
+func selections(offered []offeredSource) []selection {
 	selections := make([]selection, 0, len(offered))
 	for _, source := range offered {
 		selections = append(selections, selection{

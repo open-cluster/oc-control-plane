@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -19,31 +18,33 @@ import (
 )
 
 const (
-	readTimeout         = 15 * time.Second
-	maxRequestBytes     = 16 << 10
-	maxHypothesisEvents = 500
-	// maxQuestionLength bounds an operator's question. Long enough for a sentence with
-	// identifiers in it; anything past this is a paste, not a question.
-	maxQuestionLength = 1024
-	// subjectCandidates bounds how many open incidents a question is matched against.
-	subjectCandidates = 20
-	// clarifyWith bounds how many incident titles a clarification names.
-	clarifyWith = 3
+	readTimeout     = 15 * time.Second
+	maxRequestBytes = 16 << 10
 )
 
 // Handlers is this domain surface's dependencies.
 type Handlers struct {
-	Store      Store
+	Store      HTTPStore
 	Runner     *Runner
 	Logger     *slog.Logger
 	MaxPending int
-	// Events replays what an investigation has already emitted, for the stream route.
-	// Nil serves that one route a plain refusal and leaves everything else working.
-	Events EventReader
 	// WindowLead widens an investigation's window before the incident began: the change
 	// that caused an incident usually landed before it fired. Configuration, because the
 	// right lead follows an organization's deploy cadence, not a constant.
 	WindowLead time.Duration
+}
+
+// HTTPStore is the durable state used by the Investigation operator surface.
+type HTTPStore interface {
+	CreateInvestigation(context.Context, authz.Principal, tenancy.Organization,
+		NewInvestigation, int) (Investigation, error)
+	Investigation(context.Context, tenancy.Organization, uuid.UUID) (Investigation, error)
+	InvestigationToolRuns(context.Context, tenancy.Organization, uuid.UUID) ([]ToolRun, error)
+	QueryInvestigations(context.Context, authz.Principal, tenancy.Organization, Query) (List, error)
+	CancelInvestigation(context.Context, authz.Principal, tenancy.Organization,
+		uuid.UUID) (Investigation, error)
+	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (Trigger, error)
+	Events(context.Context, tenancy.Organization, uuid.UUID, int64, int) ([]Event, error)
 }
 
 // Routes is this domain surface's contribution to the operator API's index.
@@ -57,14 +58,6 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.open)),
 		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}",
 			authz.InvestigationRead, http.HandlerFunc(h.read)),
-		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/report",
-			authz.InvestigationRead, http.HandlerFunc(h.report)),
-		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/activity",
-			authz.InvestigationRead, http.HandlerFunc(h.activity)),
-		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/sources",
-			authz.InvestigationRead, http.HandlerFunc(h.sources)),
-		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/hypotheses",
-			authz.InvestigationRead, http.HandlerFunc(h.hypotheses)),
 		authz.Privileged(http.MethodPost, base+"/investigations/{investigation}/cancel",
 			authz.InvestigationCancel, http.HandlerFunc(h.cancel)),
 		// Watching an investigation run is reading it. There is no second permission,
@@ -75,16 +68,13 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// openRequest is what starts an investigation: an incident, or a question in the
-// operator's own words.
+// openRequest is what starts a direct investigation.
 type openRequest struct {
 	IncidentID string `json:"incidentId"`
-	Question   string `json:"question"`
 }
 
-// open starts an investigation and answers 202 with the running record; the runner fills
-// it in the background. A question that cannot be tied to one incident answers 200 with
-// ONE plain-language clarification instead — never an internal scope concept.
+// open starts an investigation for one Incident and answers 202 with the running record;
+// the runner fills it in the background.
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -107,7 +97,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	trigger, clarification, refusal, err := h.resolveTrigger(ctx, organization, asked)
+	trigger, refusal, err := h.resolveTrigger(ctx, organization, asked)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -116,19 +106,13 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
 		return
 	}
-	if clarification != "" {
-		writeJSON(writer, http.StatusOK, clarificationView{Clarification: clarification})
-		return
-	}
 	window := windowOf(trigger, h.WindowLead)
 	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, NewInvestigation{
-		IncidentID:    trigger.IncidentID,
-		IntegrationID: trigger.IntegrationID,
-		Question:      strings.TrimSpace(asked.Question),
-		Subject:       subjectOf(trigger),
-		WindowFrom:    window.from,
-		WindowUntil:   window.until,
-		CreatedBy:     principal.ID(),
+		IncidentID:  trigger.IncidentID,
+		Subject:     subjectOf(trigger),
+		WindowFrom:  window.from,
+		WindowUntil: window.until,
+		CreatedBy:   principal.ID(),
 	}, h.MaxPending)
 	if err != nil {
 		h.fail(writer, request, err)
@@ -142,117 +126,29 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusAccepted, investigationViewOf(opened))
 }
 
-// resolveTrigger turns the request into the incident the investigation is about. An
-// incident id is taken as given; a question is matched against the organization's open
-// incidents, and genuine ambiguity produces one clarification in plain language.
+// resolveTrigger turns the required identifier into the Incident the Investigation is about.
 func (h Handlers) resolveTrigger(
 	ctx context.Context, organization tenancy.Organization, asked openRequest,
-) (Trigger, string, string, error) {
+) (Trigger, string, error) {
 	incidentID := strings.TrimSpace(asked.IncidentID)
-	question := strings.TrimSpace(asked.Question)
-
-	switch {
-	case incidentID != "" && question != "":
-		return Trigger{}, "", "give an incidentId or a question, not both", nil
-	case incidentID != "":
-		id, parsed := parseIdentity(incidentID)
-		if !parsed {
-			return Trigger{}, "", "incidentId is not an identity", nil
-		}
-		trigger, err := h.Store.TriggerIncident(ctx, organization, id)
-		if err != nil {
-			return Trigger{}, "", "", err
-		}
-		return trigger, "", "", nil
-	case question == "":
-		return Trigger{}, "", "give an incidentId or a question", nil
-	case len(question) > maxQuestionLength:
-		return Trigger{}, "", "the question must be at most 1024 characters", nil
+	if incidentID == "" {
+		return Trigger{}, "give an incidentId", nil
 	}
-
-	candidates, err := h.Store.OpenTriggers(ctx, organization, subjectCandidates)
+	id, parsed := parseIdentity(incidentID)
+	if !parsed {
+		return Trigger{}, "incidentId is not an identity", nil
+	}
+	trigger, err := h.Store.TriggerIncident(ctx, organization, id)
 	if err != nil {
-		return Trigger{}, "", "", err
+		return Trigger{}, "", err
 	}
-	matched := matchQuestion(question, candidates)
-	switch len(matched) {
-	case 1:
-		trigger := matched[0]
-		return trigger, "", "", nil
-	case 0:
-		return Trigger{}, clarifyNothingMatched(candidates), "", nil
-	default:
-		return Trigger{}, clarifyAmbiguous(matched), "", nil
-	}
+	return trigger, "", nil
 }
 
 // parseIdentity reads a caller-supplied identifier, reporting only whether it is one.
 func parseIdentity(value string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(value)
 	return id, err == nil
-}
-
-// matchQuestion scores the question's terms against each open incident's title and
-// labels, returning the best scorers. Deterministic and dumb on purpose: the answer to
-// ambiguity is a clarifying question, not a guess.
-func matchQuestion(question string, candidates []Trigger) []Trigger {
-	terms := subjectTerms(question)
-	best := 0
-	var matched []Trigger
-	for _, candidate := range candidates {
-		var haystack strings.Builder
-		haystack.WriteString(strings.ToLower(candidate.Title))
-		for key, value := range candidate.Labels {
-			haystack.WriteString(" " + strings.ToLower(key) + " " + strings.ToLower(value))
-		}
-		score := 0
-		for _, term := range terms {
-			if strings.Contains(haystack.String(), term) {
-				score++
-			}
-		}
-		switch {
-		case score == 0:
-			continue
-		case score > best:
-			best = score
-			matched = matched[:0]
-			matched = append(matched, candidate)
-		case score == best:
-			matched = append(matched, candidate)
-		}
-	}
-	sort.SliceStable(matched, func(i, j int) bool {
-		return matched[i].LastSeenAt.After(matched[j].LastSeenAt)
-	})
-	return matched
-}
-
-// clarifyNothingMatched asks the one question that gets the investigation somewhere.
-func clarifyNothingMatched(candidates []Trigger) string {
-	if len(candidates) == 0 {
-		return "there are no open incidents to tie that to; which service or alert is " +
-			"this about?"
-	}
-	return "I could not tie that to an open incident; is it about " +
-		titleList(candidates) + ", or something else?"
-}
-
-func clarifyAmbiguous(matched []Trigger) string {
-	return "that could be about more than one open incident; which one do you mean: " +
-		titleList(matched) + "?"
-}
-
-func titleList(triggers []Trigger) string {
-	shown := len(triggers)
-	if shown > clarifyWith {
-		shown = clarifyWith
-	}
-	titles := make([]string, 0, shown)
-	for _, trigger := range triggers[:shown] {
-		titles = append(titles, `"`+trigger.Title+`"`)
-	}
-	return strings.Join(titles, ", ")
 }
 
 // maxSubjectLength mirrors the schema's own bound on the subject column.
@@ -363,12 +259,12 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
-	sources, runs, err := h.Store.InvestigationProvenance(ctx, organization, id)
+	runs, err := h.Store.InvestigationToolRuns(ctx, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, detailViewOf(found, sources, runs))
+	writeJSON(writer, http.StatusOK, detailViewOf(found, runs))
 }
 
 func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
@@ -382,14 +278,7 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 	}
 	ctx, done := context.WithTimeout(request.Context(), readTimeout)
 	defer done()
-	canceller, supported := h.Store.(interface {
-		CancelInvestigation(context.Context, authz.Principal, tenancy.Organization, uuid.UUID) (Investigation, error)
-	})
-	if !supported {
-		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "investigation cancellation is unavailable"})
-		return
-	}
-	ended, err := canceller.CancelInvestigation(ctx, principal, organization, id)
+	ended, err := h.Store.CancelInvestigation(ctx, principal, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -398,142 +287,6 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 		h.Runner.Cancel(id)
 	}
 	writeJSON(writer, http.StatusOK, investigationViewOf(ended))
-}
-
-func (h Handlers) report(writer http.ResponseWriter, request *http.Request) {
-	if _, ok := h.caller(writer, request); !ok {
-		return
-	}
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ctx, done := context.WithTimeout(request.Context(), readTimeout)
-	defer done()
-	found, err := h.Store.Investigation(ctx, organization, id)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, investigationViewOf(found))
-}
-
-func (h Handlers) sources(writer http.ResponseWriter, request *http.Request) {
-	if _, ok := h.caller(writer, request); !ok {
-		return
-	}
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ctx, done := context.WithTimeout(request.Context(), readTimeout)
-	defer done()
-	found, err := h.Store.Investigation(ctx, organization, id)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	sources, runs, err := h.Store.InvestigationProvenance(ctx, organization, id)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	detail := detailViewOf(found, sources, runs)
-	writeJSON(writer, http.StatusOK, struct {
-		InvestigationID string       `json:"investigationId"`
-		Sources         []sourceView `json:"sources"`
-		Runs            []runView    `json:"runs"`
-	}{InvestigationID: found.ID.String(), Sources: detail.Sources, Runs: detail.Runs})
-}
-
-func (h Handlers) hypotheses(writer http.ResponseWriter, request *http.Request) {
-	if _, ok := h.caller(writer, request); !ok {
-		return
-	}
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ctx, done := context.WithTimeout(request.Context(), readTimeout)
-	defer done()
-	found, err := h.Store.Investigation(ctx, organization, id)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	items := found.Conclusion.Hypotheses
-	if found.Status == StatusRunning && h.Events != nil {
-		events, eventErr := h.Events.Events(ctx, organization, id, 0, maxHypothesisEvents)
-		if eventErr != nil {
-			h.fail(writer, request, eventErr)
-			return
-		}
-		items = latestHypothesisSnapshot(events)
-	}
-	writeJSON(writer, http.StatusOK, struct {
-		InvestigationID string             `json:"investigationId"`
-		Items           []HypothesisResult `json:"items"`
-	}{InvestigationID: id.String(), Items: items})
-}
-
-func latestHypothesisSnapshot(events []Event) []HypothesisResult {
-	for index := len(events) - 1; index >= 0; index-- {
-		if events[index].Type != EventHypothesesUpdated {
-			continue
-		}
-		document, err := json.Marshal(events[index].Payload)
-		if err != nil {
-			continue
-		}
-		var snapshot struct {
-			Version    int                `json:"version"`
-			Hypotheses []HypothesisResult `json:"hypotheses"`
-		}
-		if err := json.Unmarshal(document, &snapshot); err != nil ||
-			snapshot.Version != HypothesisSnapshotVersion {
-			continue
-		}
-		if snapshot.Hypotheses == nil {
-			return []HypothesisResult{}
-		}
-		return snapshot.Hypotheses
-	}
-	return []HypothesisResult{}
-}
-
-func (h Handlers) activity(writer http.ResponseWriter, request *http.Request) {
-	if _, ok := h.caller(writer, request); !ok {
-		return
-	}
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	if h.Events == nil {
-		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "investigation activity is unavailable"})
-		return
-	}
-	ctx, done := context.WithTimeout(request.Context(), readTimeout)
-	defer done()
-	if _, err := h.Store.Investigation(ctx, organization, id); err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	events, err := h.Events.Events(ctx, organization, id, 0, 100)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	items := make([]activityView, 0, len(events))
-	for _, event := range events {
-		items = append(items, activityView{
-			Sequence: event.Sequence, At: stamp(event.At), Type: event.Type.String(), Payload: event.Payload,
-		})
-	}
-	writeJSON(writer, http.StatusOK, struct {
-		InvestigationID string         `json:"investigationId"`
-		Items           []activityView `json:"items"`
-	}{InvestigationID: id.String(), Items: items})
 }
 
 func (h Handlers) caller(
@@ -622,34 +375,4 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
-}
-
-// subjectTerms reduces the subject and question to the words worth matching: lower-cased,
-// punctuation split, short noise words dropped. Deliberately dumb — a stemmer or an
-// embedding here would make the matching unexplainable, and the explanation is the point.
-func subjectTerms(parts ...string) []string {
-	seen := map[string]bool{}
-	var terms []string
-	for _, part := range parts {
-		for _, word := range strings.FieldsFunc(strings.ToLower(part), func(r rune) bool {
-			letter := 'a' <= r && r <= 'z'
-			digit := '0' <= r && r <= '9'
-			return !letter && !digit && r != '-' && r != '_'
-		}) {
-			if len(word) < 3 || noiseWords[word] || seen[word] {
-				continue
-			}
-			seen[word] = true
-			terms = append(terms, word)
-		}
-	}
-	return terms
-}
-
-// noiseWords are the words that match everything and select nothing.
-var noiseWords = map[string]bool{
-	"the": true, "and": true, "for": true, "with": true, "what": true, "why": true,
-	"how": true, "is": true, "are": true, "was": true, "has": true, "have": true,
-	"our": true, "this": true, "that": true, "not": true, "you": true, "about": true,
-	"happening": true, "wrong": true, "down": true, "broken": true,
 }

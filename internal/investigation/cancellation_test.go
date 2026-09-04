@@ -28,20 +28,29 @@ func TestInvestigationCancellationIsAnExplicitAuthorizedOperatorRoute(t *testing
 	t.Fatal("running investigations expose no authenticated cancellation route")
 }
 
-func TestInvestigationReportActivityAndSourcesAreAuthorizedReadViews(t *testing.T) {
+func TestInvestigationRoutesAreTheCanonicalFive(t *testing.T) {
 	t.Parallel()
 
-	base := "/api/v1/investigations/{investigation}"
-	for _, suffix := range []string{"/report", "/activity", "/sources", "/hypotheses"} {
-		found := false
-		for _, route := range (Handlers{}).Routes() {
-			if route.Method() == http.MethodGet && route.Pattern() == base+suffix &&
-				route.Permission() == authz.InvestigationRead {
-				found = true
-			}
+	want := map[string]authz.Permission{
+		"GET /api/v1/investigations":                         authz.InvestigationRead,
+		"POST /api/v1/investigations":                        authz.InvestigationOpen,
+		"GET /api/v1/investigations/{investigation}":         authz.InvestigationRead,
+		"POST /api/v1/investigations/{investigation}/cancel": authz.InvestigationCancel,
+		"GET /api/v1/investigations/{investigation}/events":  authz.InvestigationRead,
+	}
+	routes := (Handlers{}).Routes()
+	if len(routes) != len(want) {
+		t.Fatalf("investigation routes = %d, want %d", len(routes), len(want))
+	}
+	for _, route := range routes {
+		key := route.Method() + " " + route.Pattern()
+		permission, ok := want[key]
+		if !ok {
+			t.Errorf("unexpected investigation route %s", key)
+			continue
 		}
-		if !found {
-			t.Errorf("investigation transparency view %s is absent or incorrectly authorized", suffix)
+		if route.Permission() != permission {
+			t.Errorf("%s permission = %q, want %q", key, route.Permission(), permission)
 		}
 	}
 }

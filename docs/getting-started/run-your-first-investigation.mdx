@@ -1,6 +1,6 @@
 ---
 title: "Run your first investigation"
-description: "Start an Investigation from an Incident or an operational question and review its cited result."
+description: "Start an Investigation from an Incident and review its cited result."
 ---
 
 An Investigation is one bounded evidence-gathering turn. This procedure starts one from
@@ -16,8 +16,7 @@ an Incident and checks whether its result is safe to use.
 
 1. Open the Incident created by an alert.
 2. Select **Investigate**.
-3. Ask a focused question, such as “Did a deployment precede the checkout latency alert?”
-4. Watch progress move from `queued` to `investigating` while OpenCluster reads the
+3. Watch progress move from `queued` to `investigating` while OpenCluster reads the
    connected sources.
 
 You can also ask an operational question from a new Conversation. Each follow-up Message
@@ -57,8 +56,7 @@ as `concluded`, `partial`, `needs_input`, `cancelled`, or `failed`:
 | `failed` | Correct the reported provider or processing failure before retrying. |
 
 Select **Cancel investigation** when the question is no longer useful. Cancellation is
-best effort: in-flight reads may stop, the terminal status becomes `cancelled`, and no
-later activity is accepted for that Investigation.
+best effort: in-flight reads may stop and the terminal status becomes `cancelled`.
 
 If an expected source is missing, return to its Integration, run verification, and check
 its permissions. Do not reinterpret an inconclusive result as a cause.

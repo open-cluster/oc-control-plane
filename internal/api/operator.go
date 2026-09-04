@@ -134,7 +134,6 @@ func (h Handlers) Routes() authz.Table {
 		Store:      h.Database,
 		Runner:     h.Investigations,
 		Logger:     h.Logger,
-		Events:     h.Database,
 		WindowLead: h.InvestigationWindowLead,
 		MaxPending: h.MaxWaitingTurns,
 	}.Routes()...)

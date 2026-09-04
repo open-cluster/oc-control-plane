@@ -16,20 +16,18 @@ import (
 
 // EventType is one kind of semantic fact. Persisted as the integer in the column; the
 // values are frozen. New semantic facts append values without reinterpreting historical
-// rows; the retired compaction value remains readable for backward compatibility.
+// rows; retired values remain gaps.
 type EventType int16
 
 const (
-	EventStarted EventType = iota + 1
-	EventProgress
-	EventToolStarted
-	EventToolCompleted
-	EventAnswerDelta
-	EventConcluded
-	EventFailed
-	EventCompacted
-	EventCancelled
-	EventHypothesesUpdated
+	EventStarted           EventType = 1
+	EventProgress          EventType = 2
+	EventToolStarted       EventType = 3
+	EventToolCompleted     EventType = 4
+	EventConcluded         EventType = 6
+	EventFailed            EventType = 7
+	EventCancelled         EventType = 9
+	EventHypothesesUpdated EventType = 10
 )
 
 func (t EventType) String() string {
@@ -42,14 +40,10 @@ func (t EventType) String() string {
 		return "tool_started"
 	case EventToolCompleted:
 		return "tool_completed"
-	case EventAnswerDelta:
-		return "answer_delta"
 	case EventConcluded:
 		return "concluded"
 	case EventFailed:
 		return "failed"
-	case EventCompacted:
-		return "compacted"
 	case EventCancelled:
 		return "cancelled"
 	case EventHypothesesUpdated:
@@ -98,23 +92,6 @@ func bounded(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// EventSink is where events are written. It is declared here, in the domain's vocabulary,
-// and implemented by storage.
-type EventSink interface {
-	// AppendEvent writes one event at the sequence it carries. The primary key refuses a
-	// position twice, which is the backstop against a double-claim.
-	AppendEvent(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
-		event Event) error
-}
-
-// EventReader is how a surface replays what has already happened.
-type EventReader interface {
-	// Events reports this investigation's events after a sequence, in order, bounded.
-	// after of zero is from the beginning.
-	Events(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
-		after int64, limit int) ([]Event, error)
-}
-
 // stream is one investigation's writer. The sequence counter is in-process because the
 // LEASE is exclusive: there is exactly one writer per investigation, and the primary key
 // catches the case where that turns out to be false.
@@ -123,20 +100,17 @@ type EventReader interface {
 // stream is how a run is watched, not what it is: losing a progress line is a worse
 // experience, and failing the investigation for it would be a worse outcome.
 type stream struct {
-	sink          EventSink
+	appendEvent   func(context.Context, tenancy.Organization, uuid.UUID, Event) error
 	organization  tenancy.Organization
 	investigation uuid.UUID
 	telemetry     *Telemetry
-	// startedAt is when this stream began, which is when the run did. The two
-	// time-to-first measurements are taken from it.
+	// startedAt is when this stream began, which is when the run did.
 	startedAt time.Time
 
 	mu       sync.Mutex
 	sequence int64
-	// sawFirst and sawAnswer make the two time-to-first measurements happen once each,
-	// which is what "first" means.
-	sawFirst  bool
-	sawAnswer bool
+	// sawFirst makes the time-to-first measurement happen once.
+	sawFirst bool
 	// closed is set by the terminal event. After it, nothing more is written for this
 	// investigation — a reader that saw a terminal event may stop, and an event arriving
 	// afterwards would mean it stopped too early.
@@ -147,10 +121,11 @@ type stream struct {
 type EventStream = stream
 
 func NewEventStream(
-	sink EventSink, telemetry *Telemetry, organization tenancy.Organization,
+	appendEvent func(context.Context, tenancy.Organization, uuid.UUID, Event) error,
+	telemetry *Telemetry, organization tenancy.Organization,
 	investigation uuid.UUID,
 ) *EventStream {
-	return newStream(sink, telemetry, organization, investigation)
+	return newStream(appendEvent, telemetry, organization, investigation)
 }
 
 func (s *stream) Emit(
@@ -159,14 +134,15 @@ func (s *stream) Emit(
 	return s.emit(ctx, eventType, payload)
 }
 
-// newStream begins one investigation's event stream. A nil sink produces a stream that
-// silently discards, which is what a test with no interest in events should get.
+// newStream begins one investigation's event stream. A nil appender produces a stream
+// that silently discards, which is what a test with no interest in events should get.
 func newStream(
-	sink EventSink, telemetry *Telemetry, organization tenancy.Organization,
+	appendEvent func(context.Context, tenancy.Organization, uuid.UUID, Event) error,
+	telemetry *Telemetry, organization tenancy.Organization,
 	investigation uuid.UUID,
 ) *stream {
 	return &stream{
-		sink: sink, telemetry: telemetry, organization: organization,
+		appendEvent: appendEvent, telemetry: telemetry, organization: organization,
 		investigation: investigation, startedAt: time.Now(),
 	}
 }
@@ -175,7 +151,7 @@ func newStream(
 func (s *stream) emit(
 	ctx context.Context, eventType EventType, payload map[string]any,
 ) error {
-	if s == nil || s.sink == nil {
+	if s == nil || s.appendEvent == nil {
 		return nil
 	}
 	s.mu.Lock()
@@ -197,20 +173,12 @@ func (s *stream) emit(
 	// meter cannot hold up the writer.
 	firstEvent := !s.sawFirst
 	s.sawFirst = true
-	firstAnswer := eventType == EventAnswerDelta && !s.sawAnswer
-	if firstAnswer {
-		s.sawAnswer = true
-	}
 	s.mu.Unlock()
 
 	if firstEvent {
 		s.telemetry.firstEvent(time.Since(s.startedAt))
 	}
-	if firstAnswer {
-		s.telemetry.firstAnswerText(time.Since(s.startedAt))
-	}
-
-	return s.sink.AppendEvent(ctx, s.organization, s.investigation, event)
+	return s.appendEvent(ctx, s.organization, s.investigation, event)
 }
 
 // safePayload drops credential-shaped keys, mechanically, by the SAME rule the audit path
@@ -289,10 +257,9 @@ const maxPayloadEntries = audit.MaxDetailEntries
 // startedPayload opens the stream: what this investigation is about, and whether it is
 // executing or still waiting. The lease is what distinguishes those, and both are
 // `running`, so the first event is where a reader learns which.
-func startedPayload(opened Investigation, sources int, executing bool) map[string]any {
+func startedPayload(opened Investigation, executing bool) map[string]any {
 	payload := map[string]any{
 		"subject":     bounded(opened.Subject, eventTextBound),
-		"sources":     sources,
 		"state":       "waiting",
 		"windowFrom":  opened.WindowFrom.UTC().Format(time.RFC3339),
 		"windowUntil": opened.WindowUntil.UTC().Format(time.RFC3339),
@@ -386,7 +353,7 @@ func concludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
 		"findings": len(conclusion.Findings),
 	}
 	if conclusion.Summary != "" {
-		payload["summary"] = bounded(conclusion.Summary, eventTextBound)
+		payload["summary"] = bounded(conclusion.Summary, MaxSummaryLength)
 	}
 	if stoppedBy != "" {
 		payload["stoppedBy"] = stoppedBy
@@ -400,19 +367,8 @@ func failedPayload(reason string) map[string]any {
 	return map[string]any{"reason": bounded(reason, maxRunErrorLength)}
 }
 
-// answerDeltaPayload carries a coalesced checkpoint of the answer, never a token. Where a
-// provider streams, deltas are buffered and flushed on a boundary; where it does not — and
-// none does today — one chunk is emitted at conclusion. Individual token deltas are never
-// persisted, because a table with one row per token is a table nobody can read.
-func answerDeltaPayload(text string, final bool) map[string]any {
-	return map[string]any{
-		"text":  bounded(text, maxAnswerDeltaBound),
-		"final": final,
-	}
-}
-
-func StartedPayload(opened Investigation, sources int, executing bool) map[string]any {
-	return startedPayload(opened, sources, executing)
+func StartedPayload(opened Investigation, executing bool) map[string]any {
+	return startedPayload(opened, executing)
 }
 
 func ToolStartedPayload(run ToolRun, integration string) map[string]any {
@@ -432,11 +388,3 @@ func ConcludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
 }
 
 func FailedPayload(reason string) map[string]any { return failedPayload(reason) }
-
-func AnswerDeltaPayload(text string, final bool) map[string]any {
-	return answerDeltaPayload(text, final)
-}
-
-// maxAnswerDeltaBound lets one delta carry the whole answer, since today's providers
-// deliver it at once.
-const maxAnswerDeltaBound = MaxSummaryLength

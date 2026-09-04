@@ -42,7 +42,7 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	if h.Events == nil {
+	if h.Store == nil {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment does not serve the investigation event stream"})
 		return
@@ -99,7 +99,7 @@ func (h Handlers) follow(
 
 	for {
 		readCtx, cancel := context.WithTimeout(request.Context(), readTimeout)
-		events, err := h.Events.Events(readCtx, organization, found.ID, after, 0)
+		events, err := h.Store.Events(readCtx, organization, found.ID, after, 0)
 		cancel()
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "an investigation event stream could not be read",

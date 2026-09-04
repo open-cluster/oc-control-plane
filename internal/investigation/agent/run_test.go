@@ -37,7 +37,6 @@ type records struct {
 	candidate   integrations.Integration
 	trigger     investigation.Trigger
 	brief       investigation.Brief
-	sources     []investigation.Source
 	runs        []investigation.ToolRun
 	unseals     int
 	toolUsed    bool
@@ -51,12 +50,6 @@ type records struct {
 	spend       investigation.Spend
 }
 
-func (r *records) RecordSource(_ context.Context, _ tenancy.Organization, _ uuid.UUID, source investigation.Source) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.sources = append(r.sources, source)
-	return nil
-}
 func (r *records) RecordToolRun(_ context.Context, _ tenancy.Organization, _ uuid.UUID, run investigation.ToolRun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -171,8 +164,8 @@ func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment", WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if store.status != investigation.StatusConcluded || len(store.sources) != 1 || len(store.runs) != 1 {
-		t.Fatalf("status=%s sources=%d runs=%d", store.status, len(store.sources), len(store.runs))
+	if store.status != investigation.StatusConcluded || len(store.runs) != 1 {
+		t.Fatalf("status=%s runs=%d", store.status, len(store.runs))
 	}
 }
 

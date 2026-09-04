@@ -559,7 +559,7 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 		!strings.Contains(body, "OpenCluster Control Plane") {
 		t.Errorf("GET browser application = %d, body %q", status, body)
 	}
-	if status, body := plane.get(t, "/organizations/local/investigations/example/sources"); status != http.StatusOK || !strings.Contains(body, "OpenCluster Control Plane") {
+	if status, body := plane.get(t, "/organizations/local/investigations/example"); status != http.StatusOK || !strings.Contains(body, "OpenCluster Control Plane") {
 		t.Errorf("GET browser deep link = %d, body %q", status, body)
 	}
 

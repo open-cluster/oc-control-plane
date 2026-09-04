@@ -436,11 +436,7 @@ func (p *Database) DeleteIntegration(
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM change_ledger
 				         WHERE org_id = $2 AND integration_id = $1),
-				       (SELECT count(*) FROM investigation
-				         WHERE org_id = $2 AND integration_id = $1)
-				       + (SELECT count(*) FROM investigation_source
-				           WHERE org_id = $2 AND integration_id = $1)
-				       + (SELECT count(*) FROM investigation_tool_run
+				       (SELECT count(*) FROM investigation_tool_run
 				           WHERE org_id = $2 AND integration_id = $1)`,
 				id, organization.String()).Scan(&alertEvents, &jobs, &ledger, &investigations)
 			if err != nil {

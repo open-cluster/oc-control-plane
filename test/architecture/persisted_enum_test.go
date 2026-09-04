@@ -103,11 +103,10 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"EventProgress", int(investigation.EventProgress), 2},
 		{"EventToolStarted", int(investigation.EventToolStarted), 3},
 		{"EventToolCompleted", int(investigation.EventToolCompleted), 4},
-		{"EventAnswerDelta", int(investigation.EventAnswerDelta), 5},
 		{"EventConcluded", int(investigation.EventConcluded), 6},
 		{"EventFailed", int(investigation.EventFailed), 7},
-		{"EventCompacted", int(investigation.EventCompacted), 8},
 		{"EventCancelled", int(investigation.EventCancelled), 9},
+		{"EventHypothesesUpdated", int(investigation.EventHypothesesUpdated), 10},
 
 		// The change ledger's vocabulary. The baseline exclusion in every change query is
 		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
@@ -141,6 +140,22 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 			t.Errorf("%s is %d and is stored as %d; the value is persisted in a column and, for "+
 				"some of these, written as a literal in SQL, so changing it rewrites what every "+
 				"existing row means", constant.name, constant.got, constant.fixed)
+		}
+	}
+}
+
+func TestRetiredInvestigationEventNumbersAreNeverReused(t *testing.T) {
+	t.Parallel()
+
+	active := []int{
+		int(investigation.EventStarted), int(investigation.EventProgress),
+		int(investigation.EventToolStarted), int(investigation.EventToolCompleted),
+		int(investigation.EventConcluded), int(investigation.EventFailed),
+		int(investigation.EventCancelled), int(investigation.EventHypothesesUpdated),
+	}
+	for _, retired := range []int{5, 8} {
+		if containsValue(active, retired) {
+			t.Errorf("retired Investigation event number %d was reused", retired)
 		}
 	}
 }

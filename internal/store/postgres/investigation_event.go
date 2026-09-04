@@ -15,10 +15,6 @@ import (
 // because persistence is what makes reconnect and replica change THE SAME code path: a
 // reader that lost its connection and one that landed on a different process both ask for
 // what comes after a sequence, and both are answered from here.
-var (
-	_ investigation.EventSink   = (*Database)(nil)
-	_ investigation.EventReader = (*Database)(nil)
-)
 
 // maxEventPage bounds one replay read, so a long investigation is drained in pages rather
 // than in one answer nobody sized.
@@ -80,6 +76,7 @@ func (p *Database) Events(
 		SELECT sequence, at, type, payload
 		  FROM investigation_event
 		 WHERE org_id = $1 AND investigation_id = $2 AND sequence > $3
+		   AND type NOT IN (5, 8)
 		 ORDER BY sequence
 		 LIMIT $4`, organization.String(), id, after, limit)
 	if err != nil {
