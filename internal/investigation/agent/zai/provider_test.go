@@ -180,8 +180,7 @@ func TestComplete_DoesNotRetryARejectedRequest(t *testing.T) {
 	calls := round.calls
 	round.mutex.Unlock()
 	if calls != 1 {
-		t.Errorf("a rejected request was tried %d times; every retry would fail "+
-			"identically and spend money doing it", calls)
+		t.Errorf("a rejected request was tried %d times; every retry would fail identically", calls)
 	}
 }
 
@@ -218,9 +217,7 @@ func TestComplete_TakesCachedTokensOutOfTheInputTotalAndReportsNoCacheWrite(t *t
 	}
 	usage := answer.Usage
 
-	// Cached tokens are part of the prompt total on this vendor. Leaving them in would charge the
-	// cached portion at the full input rate, which is the exact mistake four-rate pricing exists
-	// to prevent.
+	// Cached tokens are part of the prompt total on this vendor, so input excludes them.
 	if usage.Input.Or(0) != 1000 {
 		t.Errorf("input tokens are %d, want the prompt total minus the cached part",
 			usage.Input.Or(0))
@@ -233,9 +230,6 @@ func TestComplete_TakesCachedTokensOutOfTheInputTotalAndReportsNoCacheWrite(t *t
 	// indistinguishable from a vendor that never reported one.
 	if usage.CacheWrite.Reported {
 		t.Error("a cache-write figure this vendor never reports is recorded as measured")
-	}
-	if usage.Billable() != 1000+300+4000 {
-		t.Errorf("billable tokens are %d", usage.Billable())
 	}
 }
 

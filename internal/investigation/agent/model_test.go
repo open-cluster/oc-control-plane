@@ -1,6 +1,8 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestModelEndpointAllowsPlaintextOnlyOnLoopback(t *testing.T) {
 	for _, scenario := range []struct {

@@ -1,8 +1,6 @@
-// Package investigation owns durable Investigation state and provenance.
 package investigation
 
 import (
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,7 +21,6 @@ const (
 // text, frozen like an enum: the operator view and its clients key on these words.
 // Empty means the model concluded freely.
 const (
-	StoppedBySpend         = "spend"
 	StoppedByToolRuns      = "tool_runs"
 	StoppedByReasonerTurns = "reasoner_turns"
 	StoppedByWallClock     = "wall_clock"
@@ -56,15 +53,6 @@ type RunOutcome int16
 const (
 	RunSucceeded RunOutcome = iota + 1
 	RunFailed
-)
-
-var (
-	ErrUnknown             = errors.New("investigation unknown")
-	ErrAlreadyEnded        = errors.New("investigation has already ended")
-	ErrIncidentUnknown     = errors.New("incident unknown")
-	ErrQueueFull           = errors.New("this organization has too many investigations waiting")
-	ErrReasonerUnavailable = errors.New("the reasoning boundary is unavailable")
-	ErrBadCursor           = errors.New("after is not a page position from a previous response")
 )
 
 // Finding is one thing the investigation established, tied to the runs that support it.
@@ -127,24 +115,22 @@ var (
 	}
 )
 
-// Spend is what the reasoning behind an investigation consumed.
-type Spend struct {
+// Usage is the aggregate model tokens consumed by an Investigation.
+type Usage struct {
 	InputTokens  int64
 	OutputTokens int64
-	MicroCents   int64
 }
 
-// Add accumulates another call's spend.
-func (s Spend) Add(other Spend) Spend {
-	return Spend{
-		InputTokens:  s.InputTokens + other.InputTokens,
-		OutputTokens: s.OutputTokens + other.OutputTokens,
-		MicroCents:   s.MicroCents + other.MicroCents,
+// Add accumulates another model call's usage.
+func (u Usage) Add(other Usage) Usage {
+	return Usage{
+		InputTokens:  u.InputTokens + other.InputTokens,
+		OutputTokens: u.OutputTokens + other.OutputTokens,
 	}
 }
 
 // Investigation is the slim record: the trigger, the subject, the window, the lifecycle,
-// what it found and what it cost. Everything else an auditor needs is the provenance
+// what it found and its token usage. Everything else an auditor needs is the provenance
 // beside it.
 type Investigation struct {
 	ID             uuid.UUID
@@ -161,7 +147,7 @@ type Investigation struct {
 	Conclusion     Conclusion
 	StoppedBy      string
 	Error          string
-	Spend          Spend
+	Usage          Usage
 	CreatedBy      string
 	CreatedAt      time.Time
 	ConcludedAt    time.Time

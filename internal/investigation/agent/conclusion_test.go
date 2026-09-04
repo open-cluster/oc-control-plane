@@ -2,11 +2,10 @@ package agent
 
 import (
 	"encoding/json"
-	"strings"
-	"testing"
-
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/test/eval"
+	"strings"
+	"testing"
 )
 
 func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testing.T) {

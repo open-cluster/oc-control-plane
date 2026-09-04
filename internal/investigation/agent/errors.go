@@ -10,14 +10,11 @@ import (
 var ErrModelUnavailable = investigation.ErrReasonerUnavailable
 
 var (
-	ErrRefused        = errors.New("the model provider declined the request")
-	ErrOutage         = errors.New("the model provider is unreachable")
-	ErrRejected       = errors.New("the model provider rejected the request as malformed")
-	ErrMalformed      = errors.New("the model's answer did not satisfy the declared schema")
-	ErrTimeout        = errors.New("the model provider did not answer within the deadline")
-	ErrCeilingReached = errors.New("the reasoning cost ceiling has been reached")
-	ErrUnpriced       = errors.New("no rate is declared for this model")
-	ErrNotConsented   = errors.New("this deployment has not consented to this model provider")
+	ErrRefused   = errors.New("the model provider declined the request")
+	ErrOutage    = errors.New("the model provider is unreachable")
+	ErrRejected  = errors.New("the model provider rejected the request as malformed")
+	ErrMalformed = errors.New("the model's answer did not satisfy the declared schema")
+	ErrTimeout   = errors.New("the model provider did not answer within the deadline")
 )
 
 // Outcome is which named failure happened.
@@ -29,8 +26,6 @@ const (
 	OutcomeRejected
 	OutcomeMalformed
 	OutcomeTimeout
-	OutcomeCeilingReached
-	OutcomeNotConsented
 )
 
 func (o Outcome) String() string {
@@ -45,10 +40,6 @@ func (o Outcome) String() string {
 		return "malformed_output"
 	case OutcomeTimeout:
 		return "timeout"
-	case OutcomeCeilingReached:
-		return "cost_ceiling_reached"
-	case OutcomeNotConsented:
-		return "not_consented"
 	default:
 		return "unrecognised"
 	}
@@ -68,10 +59,6 @@ func (o Outcome) sentinel() error {
 		return ErrMalformed
 	case OutcomeTimeout:
 		return ErrTimeout
-	case OutcomeCeilingReached:
-		return ErrCeilingReached
-	case OutcomeNotConsented:
-		return ErrNotConsented
 	default:
 		return nil
 	}

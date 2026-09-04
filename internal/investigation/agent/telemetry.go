@@ -15,8 +15,7 @@ import (
 // PER-CALL REASONING TELEMETRY, AND WHY IT IS NOT A TABLE.
 //
 // Everything a debugging engineer wants per model call — provider, the model that
-// answered, request identifier, stop reason, latency, token decomposition, spend, the
-// agent revision — is telemetry with no product consumer, so it lands in the existing
+// answered, request identifier, stop reason, latency, and token decomposition — lands in the existing
 // observability stack: one span and one structured log line per Provider.Complete,
 // plus low-cardinality instruments. The one per-investigation product fact, stopped_by,
 // is a column; nothing else is.
@@ -29,39 +28,37 @@ import (
 // metric found in a dashboard leads back to the code that emits it.
 const meterName = "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 
-// Telemetry emits the per-call signal. Built once at startup with the derived agent
-// revision; a nil *Telemetry disables observation without disabling reasoning.
+// Telemetry emits the per-call signal. A nil *Telemetry disables observation without
+// disabling reasoning.
 type Telemetry struct {
-	logger   *slog.Logger
-	tracer   trace.Tracer
-	revision string
+	logger *slog.Logger
+	tracer trace.Tracer
 
+	calls   metric.Int64Counter
 	tokens  metric.Int64Counter
-	spend   metric.Int64Counter
 	latency metric.Float64Histogram
 }
 
 // NewTelemetry builds the instruments. A failure to construct one is logged and leaves
 // it nil — every emit tolerates that, because telemetry that refuses to start would
 // take investigations with it.
-func NewTelemetry(logger *slog.Logger, agentRevision string) *Telemetry {
+func NewTelemetry(logger *slog.Logger) *Telemetry {
 	meter := otel.Meter(meterName)
 	built := &Telemetry{
-		logger:   logger,
-		tracer:   otel.Tracer(meterName),
-		revision: agentRevision,
+		logger: logger,
+		tracer: otel.Tracer(meterName),
 	}
 
 	var err error
+	if built.calls, err = meter.Int64Counter("oc.reasoning.calls",
+		metric.WithDescription("Model calls attempted."),
+		metric.WithUnit("{call}")); err != nil {
+		logger.Warn("reasoning call metric unavailable", slog.String("error", err.Error()))
+	}
 	if built.tokens, err = meter.Int64Counter("oc.reasoning.tokens",
 		metric.WithDescription("Tokens consumed by reasoner calls, by kind."),
 		metric.WithUnit("{token}")); err != nil {
 		logger.Warn("reasoning token metric unavailable", slog.String("error", err.Error()))
-	}
-	if built.spend, err = meter.Int64Counter("oc.reasoning.spend",
-		metric.WithDescription("Integer micro-cents spent on reasoner calls."),
-		metric.WithUnit("{microcent}")); err != nil {
-		logger.Warn("reasoning spend metric unavailable", slog.String("error", err.Error()))
 	}
 	if built.latency, err = meter.Float64Histogram("oc.reasoning.call_duration",
 		metric.WithDescription("Wall-clock duration of one provider call."),
@@ -71,19 +68,10 @@ func NewTelemetry(logger *slog.Logger, agentRevision string) *Telemetry {
 	return built
 }
 
-// AgentRevision reports the revision this telemetry stamps on every call.
-func (t *Telemetry) AgentRevision() string {
-	if t == nil {
-		return ""
-	}
-	return t.revision
-}
-
 // complete runs one provider call inside its span and emits the call's telemetry. It is
 // the one wrapper around Provider.Complete, so no call can happen unobserved.
 func (t *Telemetry) complete(
-	ctx context.Context, provider Model, deployment Deployment, rate Rate,
-	prompt Prompt,
+	ctx context.Context, provider Model, deployment Deployment, prompt Prompt,
 ) (Completion, error) {
 	if t == nil {
 		return provider.Complete(ctx, prompt)
@@ -99,7 +87,6 @@ func (t *Telemetry) complete(
 	ctx, span := t.tracer.Start(ctx, "reasoning.complete", trace.WithAttributes(
 		attribute.String("oc.reasoning.provider", deployment.Provider),
 		attribute.String("oc.reasoning.model", deployment.Model),
-		attribute.String("oc.reasoning.agent_revision", t.revision),
 	))
 	defer span.End()
 
@@ -107,19 +94,17 @@ func (t *Telemetry) complete(
 	completion, err := provider.Complete(ctx, prompt)
 	elapsed := time.Since(started)
 
-	cost := rate.Cost(completion.Usage)
 	span.SetAttributes(
 		attribute.String("oc.reasoning.model_answered", completion.Model),
 		attribute.String("oc.reasoning.request_id", completion.RequestID),
 		attribute.String("oc.reasoning.stop", completion.Stop.String()),
-		attribute.Int64("oc.reasoning.spend_microcents", cost),
 	)
 
 	if t.latency != nil {
 		t.latency.Record(ctx, elapsed.Seconds(), measured)
 	}
-	if t.spend != nil {
-		t.spend.Add(ctx, cost, measured)
+	if t.calls != nil {
+		t.calls.Add(ctx, 1, measured)
 	}
 	if t.tokens != nil {
 		for kind, count := range map[string]Count{
@@ -149,8 +134,6 @@ func (t *Telemetry) complete(
 		slog.Int64("cache_read_tokens", completion.Usage.CacheRead.Or(0)),
 		slog.Int64("cache_write_tokens", completion.Usage.CacheWrite.Or(0)),
 		slog.Int64("reasoning_tokens", completion.Usage.Reasoning.Or(0)),
-		slog.Int64("spend_microcents", cost),
-		slog.String("agent_revision", t.revision),
 	}
 	if err != nil {
 		span.SetStatus(codes.Error, "the provider call failed")

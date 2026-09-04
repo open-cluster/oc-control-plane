@@ -3686,7 +3686,6 @@ components:
         stoppedBy:
           type: string
           enum:
-            - spend
             - tool_runs
             - reasoner_turns
             - wall_clock
@@ -4149,7 +4148,6 @@ components:
             stoppedBy:
               type: string
               enum:
-                - spend
                 - tool_runs
                 - reasoner_turns
                 - wall_clock
@@ -4439,7 +4437,6 @@ components:
         stoppedBy:
           type: string
           enum:
-            - spend
             - tool_runs
             - reasoner_turns
             - wall_clock

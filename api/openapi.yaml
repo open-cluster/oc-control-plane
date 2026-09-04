@@ -1648,7 +1648,7 @@ components:
         actions: { type: array, items: { $ref: "#/components/schemas/ActionProposal" } }
         limitations: { type: array, items: { $ref: "#/components/schemas/Limitation" } }
         humanConfirmationRequired: { type: boolean }
-        stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
         error: { type: string, maxLength: 4096 }
         usage: { type: object, additionalProperties: false, required: [inputTokens, outputTokens], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 } } }
         createdBy: { type: string, maxLength: 256 }
@@ -1793,7 +1793,7 @@ components:
             status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
             findings: { type: integer, minimum: 0 }
             summary: { type: string, maxLength: 512 }
-            stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+            stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
     FailedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -1902,7 +1902,7 @@ components:
         turn: { type: integer, minimum: 1 }
         status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
         answer: { type: string, maxLength: 32768 }
-        stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
         error: { type: string, maxLength: 4096 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
         concludedAt: { $ref: "#/components/schemas/Timestamp" }

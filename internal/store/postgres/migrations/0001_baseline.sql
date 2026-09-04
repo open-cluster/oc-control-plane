@@ -31,7 +31,7 @@ CREATE TABLE public.alert_event (
     org_id text NOT NULL,
     integration_id uuid NOT NULL,
     source_key text NOT NULL,
-    -- Status: 1 - firing, 2 - resolved
+    -- 1 - firing, 2 - resolved
     status smallint NOT NULL,
     title text NOT NULL,
     summary text NOT NULL,
@@ -204,7 +204,7 @@ CREATE TABLE public.incident (
     grouping_key text NOT NULL,
     grouping_basis smallint NOT NULL,
     title text NOT NULL,
-    -- Status: 1 - open, 2 - resolved
+    -- 1 - open, 2 - resolved
     status smallint NOT NULL,
     first_seen_at timestamp with time zone NOT NULL,
     last_seen_at timestamp with time zone NOT NULL,
@@ -240,7 +240,7 @@ CREATE TABLE public.integration (
     webhook_secret_rotated_at timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     relay_id uuid,
-    -- Status: 1 - configured, 2 - active, 3 - degraded, 4 - failed
+    -- 1 - configured, 2 - active, 3 - degraded, 4 - failed
     status smallint DEFAULT 1 NOT NULL,
     last_verified_at timestamp with time zone,
     verify_note text DEFAULT ''::text NOT NULL,
@@ -359,13 +359,12 @@ CREATE TABLE public.investigation (
     subject text NOT NULL,
     window_from timestamp with time zone NOT NULL,
     window_until timestamp with time zone NOT NULL,
-    -- Status: 1 - running, 2 - concluded, 3 - failed, 4 - cancelled
+    -- 1 - running, 2 - concluded, 3 - failed, 4 - cancelled
     status smallint DEFAULT 1 NOT NULL,
     conclusion jsonb DEFAULT '{}'::jsonb NOT NULL,
     error text DEFAULT ''::text NOT NULL,
     spend_input_tokens bigint DEFAULT 0 NOT NULL,
     spend_output_tokens bigint DEFAULT 0 NOT NULL,
-    spend_micro_cents bigint DEFAULT 0 NOT NULL,
     created_by text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     concluded_at timestamp with time zone,
@@ -388,7 +387,6 @@ CREATE TABLE public.investigation (
     CONSTRAINT investigation_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
     CONSTRAINT investigation_question_check CHECK ((length(question) <= 1024)),
     CONSTRAINT investigation_spend_input_tokens_check CHECK ((spend_input_tokens >= 0)),
-    CONSTRAINT investigation_spend_micro_cents_check CHECK ((spend_micro_cents >= 0)),
     CONSTRAINT investigation_spend_output_tokens_check CHECK ((spend_output_tokens >= 0)),
     CONSTRAINT investigation_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4]))),
     CONSTRAINT investigation_stop_is_a_conclusion CHECK (((stopped_by = ''::text) OR (status = 2))),
@@ -404,17 +402,8 @@ CREATE TABLE public.investigation_event (
     org_id text NOT NULL,
     sequence bigint NOT NULL,
     at timestamp with time zone DEFAULT now() NOT NULL,
-    -- Type:
-        -- 1 - started,
-        -- 2 - progress,
-        -- 3 - tool_started,
-        -- 4 - tool_completed,
-        -- 5 - retired,
-        -- 6 - concluded,
-        -- 7 - failed,
-        -- 8 - retired,
-        -- 9 - canceled,
-        -- 10 - hypotheses_updated
+    -- 1 - started, 2 - progress, 3 - tool_started, 4 - tool_completed, 5 - retired
+    -- 6 - concluded, 7 - failed, 8 - retired, 9 - cancelled, 10 - hypotheses_updated
     type smallint NOT NULL,
     payload jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT investigation_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
@@ -554,7 +543,7 @@ CREATE TABLE public.relay_job (
     capability_id text NOT NULL,
     capability_version integer NOT NULL,
     arguments bytea NOT NULL,
-    -- Status: 0 - pending, 1 - leased, 2 - succeeded, 3 - failed, 4 - cancelled
+    -- 0 - pending, 1 - leased, 2 - succeeded, 3 - failed, 4 - cancelled
     status smallint DEFAULT 0 NOT NULL,
     lease_session uuid,
     lease_epoch bigint DEFAULT 0 NOT NULL,
@@ -637,7 +626,7 @@ CREATE TABLE public.slack_reply (
     thread_ts text NOT NULL,
     stream_ts text DEFAULT ''::text NOT NULL,
     native boolean DEFAULT false NOT NULL,
-    -- Status: 1 - pending, 2 - delivering, 3 - delivered, 4 - failed
+    -- 1 - pending, 2 - delivering, 3 - delivered, 4 - failed
     status smallint DEFAULT 1 NOT NULL,
     last_sequence bigint DEFAULT 0 NOT NULL,
     attempts integer DEFAULT 0 NOT NULL,
@@ -660,7 +649,7 @@ CREATE TABLE public.webhook_work (
     work_id uuid NOT NULL,
     org_id text NOT NULL,
     kind smallint NOT NULL,
-    -- Status: 1 - ready, 2 - leased, 3 - retry, 4 - terminal, 5 - complete
+    -- 1 - ready, 2 - leased, 3 - retry, 4 - terminal, 5 - complete
     status smallint DEFAULT 1 NOT NULL,
     delivery_id uuid NOT NULL,
     integration_id uuid NOT NULL,

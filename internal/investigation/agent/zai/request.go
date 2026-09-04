@@ -24,8 +24,7 @@ type request struct {
 	Model     string    `json:"model"`
 	Messages  []message `json:"messages"`
 	MaxTokens int64     `json:"max_tokens"`
-	// Stream is explicitly false. The usage figures arrive complete in one body this way, and a
-	// cost figure that is silently absent disables the cost ceiling without saying so.
+	// Stream is explicitly false because usage figures arrive complete only in the final body.
 	Stream          bool            `json:"stream"`
 	Thinking        *thinking       `json:"thinking,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`

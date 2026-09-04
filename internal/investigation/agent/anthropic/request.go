@@ -214,7 +214,7 @@ func systemBlocks(prompt reasoning.Prompt) []sdk.TextBlockParam {
 //
 // Ordering is the whole game. Nothing volatile may appear before the last cached block, because
 // caching is a prefix match and a byte that moves anywhere in the prefix invalidates everything
-// after it — silently, and at full price.
+// after it without notice.
 func contentBlocks(prompt reasoning.Prompt) []sdk.ContentBlockParamUnion {
 	blocks := make([]sdk.ContentBlockParamUnion, 0, len(prompt.Content))
 	for _, block := range prompt.Content {

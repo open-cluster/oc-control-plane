@@ -4,17 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type directHTTPStore struct {
@@ -105,7 +103,7 @@ func TestCanonicalInvestigationDetailContainsOnlyTheInvestigationAndToolRuns(t *
 		Store: directHTTPStore{
 			found: Investigation{
 				ID: id, Status: StatusRunning,
-				Spend: Spend{InputTokens: 10, MicroCents: 25},
+				Usage: Usage{InputTokens: 10},
 			},
 			runs: []ToolRun{{IntegrationID: integrationID, Ordinal: 1, Tool: "read"}},
 		},
@@ -144,6 +142,54 @@ func TestCanonicalInvestigationDetailContainsOnlyTheInvestigationAndToolRuns(t *
 	for _, retired := range []string{"sources", "integrationId", "spend"} {
 		if _, ok := detail[retired]; ok {
 			t.Errorf("canonical detail still contains retired field %q", retired)
+		}
+	}
+}
+
+func TestInvestigationCancellationIsAnExplicitAuthorizedOperatorRoute(t *testing.T) {
+	t.Parallel()
+
+	const pattern = "/api/v1/investigations/{investigation}/cancel"
+	for _, route := range (Handlers{}).Routes() {
+		if route.Method() != http.MethodPost || route.Pattern() != pattern {
+			continue
+		}
+		if route.Permission() != authz.Permission("investigation.cancel") {
+			t.Fatalf("cancellation permission = %q, want investigation.cancel", route.Permission())
+		}
+		if !authz.Grants(authz.Admin, route.Permission()) ||
+			!authz.Grants(authz.Editor, route.Permission()) ||
+			authz.Grants(authz.Viewer, route.Permission()) {
+			t.Fatal("cancellation must be granted to administrators and editors, never viewers")
+		}
+		return
+	}
+	t.Fatal("running investigations expose no authenticated cancellation route")
+}
+
+func TestInvestigationRoutesAreTheCanonicalFive(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]authz.Permission{
+		"GET /api/v1/investigations":                         authz.InvestigationRead,
+		"POST /api/v1/investigations":                        authz.InvestigationOpen,
+		"GET /api/v1/investigations/{investigation}":         authz.InvestigationRead,
+		"POST /api/v1/investigations/{investigation}/cancel": authz.InvestigationCancel,
+		"GET /api/v1/investigations/{investigation}/events":  authz.InvestigationRead,
+	}
+	routes := (Handlers{}).Routes()
+	if len(routes) != len(want) {
+		t.Fatalf("investigation routes = %d, want %d", len(routes), len(want))
+	}
+	for _, route := range routes {
+		key := route.Method() + " " + route.Pattern()
+		permission, ok := want[key]
+		if !ok {
+			t.Errorf("unexpected investigation route %s", key)
+			continue
+		}
+		if route.Permission() != permission {
+			t.Errorf("%s permission = %q, want %q", key, route.Permission(), permission)
 		}
 	}
 }
