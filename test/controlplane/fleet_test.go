@@ -160,6 +160,13 @@ func TestRelayFleet(t *testing.T) {
 			        'historical-protocol', '0.0.1', '[]'::jsonb)`, surfaceOrg); err != nil {
 			t.Fatal(err)
 		}
+		if _, err = database.Exec(ctx, `
+			UPDATE relay_registration
+			SET last_seen_at = CASE WHEN registration_id = $2 THEN now() - interval '2 minutes'
+			                        ELSE now() - interval '1 minute' END
+			WHERE org_id = $1`, surfaceOrg, plane.relay.registration); err != nil {
+			t.Fatal(err)
+		}
 		status, body = plane.call(t, http.MethodGet, relays+"?search=historical-protocol", nil)
 		if status != http.StatusOK {
 			t.Fatalf("listing historical relay = %d: %s", status, body)
@@ -167,6 +174,25 @@ func TestRelayFleet(t *testing.T) {
 		decodeInto(t, body, &listed)
 		if len(listed.Items) != 1 || listed.Items[0].Compatibility != "unknown" {
 			t.Fatalf("historical relay compatibility = %+v", listed.Items)
+		}
+
+		status, body = plane.call(t, http.MethodGet, relays+"?version=0.0.1", nil)
+		if status != http.StatusOK {
+			t.Fatalf("filtering by version = %d: %s", status, body)
+		}
+		decodeInto(t, body, &listed)
+		if len(listed.Items) != 1 || listed.Items[0].RelayVersion != "0.0.1" {
+			t.Errorf("version filter returned %+v", listed.Items)
+		}
+
+		status, body = plane.call(t, http.MethodGet,
+			relays+"?capability="+capabilityUnderTest, nil)
+		if status != http.StatusOK {
+			t.Fatalf("filtering by capability = %d: %s", status, body)
+		}
+		decodeInto(t, body, &listed)
+		if len(listed.Items) != 1 || listed.Items[0].RegistrationID != plane.relay.registration.String() {
+			t.Errorf("capability filter returned %+v", listed.Items)
 		}
 	})
 
@@ -232,12 +258,28 @@ func TestRelayFleet(t *testing.T) {
 			relays+"?sort=-credentialDigest", nil); status != http.StatusBadRequest {
 			t.Errorf("sorting by an unoffered field = %d, want 400", status)
 		}
-		for _, field := range []string{
-			"registeredAt", "-registeredAt", "lastSeenAt", "version", "-fingerprint",
-		} {
+		for _, field := range []string{"registeredAt", "lastSeenAt", "version", "fingerprint"} {
+			var ascending, descending fleetBody
 			status, body := plane.call(t, http.MethodGet, relays+"?sort="+field, nil)
 			if status != http.StatusOK {
-				t.Errorf("sort=%s = %d: %s", field, status, body)
+				t.Fatalf("sort=%s = %d: %s", field, status, body)
+			}
+			decodeInto(t, body, &ascending)
+			status, body = plane.call(t, http.MethodGet, relays+"?sort=-"+field, nil)
+			if status != http.StatusOK {
+				t.Fatalf("sort=-%s = %d: %s", field, status, body)
+			}
+			decodeInto(t, body, &descending)
+			if len(ascending.Items) < 2 || len(ascending.Items) != len(descending.Items) {
+				t.Fatalf("sort=%s returned %d rows ascending and %d descending",
+					field, len(ascending.Items), len(descending.Items))
+			}
+			for index := range ascending.Items {
+				opposite := len(descending.Items) - index - 1
+				if ascending.Items[index].RegistrationID != descending.Items[opposite].RegistrationID {
+					t.Errorf("sort=%s did not reverse the rows", field)
+					break
+				}
 			}
 		}
 	})
@@ -251,10 +293,10 @@ func TestRelayFleet(t *testing.T) {
 		}
 	})
 
-	t.Run("a limit above the ceiling is clamped rather than refused", func(t *testing.T) {
+	t.Run("a limit above the ceiling is refused", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, relays+"?limit=100000", nil)
-		if status != http.StatusOK {
-			t.Errorf("an oversized limit = %d, want it clamped and served: %s", status, body)
+		if status != http.StatusBadRequest {
+			t.Errorf("an oversized limit = %d, want 400: %s", status, body)
 		}
 	})
 

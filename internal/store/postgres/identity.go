@@ -193,7 +193,7 @@ func (p *Database) ListMembers(
 	if err != nil {
 		return MemberList{}, err
 	}
-	after, afterID, err := decodeCursor(page.After)
+	after, afterID, err := decodeCursor(page.After, "createdAt")
 	if err != nil {
 		return MemberList{}, err
 	}
@@ -234,7 +234,7 @@ func (p *Database) ListMembers(
 		member.ExternalID = orEmptyText(external)
 		if len(members) == limit {
 			last := members[limit-1]
-			next = encodeCursor(last.CreatedAt, last.MembershipID)
+			next = encodeCursor("createdAt", last.CreatedAt, last.MembershipID)
 			break
 		}
 		member.Source = MembershipSource(source)

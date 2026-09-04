@@ -47,7 +47,7 @@ type WebhookDeliveryPage struct {
 func (d *Database) WebhookDeliveries(
 	ctx context.Context, organization tenancy.Organization, state WebhookDeliveryState, page Page,
 ) (WebhookDeliveryPage, error) {
-	after, afterID, err := decodeCursor(page.After)
+	after, afterID, err := decodeCursor(page.After, "-receivedAt")
 	if err != nil {
 		return WebhookDeliveryPage{}, ErrBadCursor
 	}
@@ -84,7 +84,7 @@ func (d *Database) WebhookDeliveries(
 	if len(found) > limit {
 		last := found[limit-1]
 		result.Deliveries = found[:limit]
-		result.Next = encodeCursor(last.ReceivedAt, last.ID)
+		result.Next = encodeCursor("-receivedAt", last.ReceivedAt, last.ID)
 	}
 	return result, nil
 }

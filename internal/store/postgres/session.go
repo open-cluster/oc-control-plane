@@ -267,32 +267,42 @@ func (p *Database) RevokeSessionsOf(
 		})
 }
 
-// ListSessions reports the live sessions in an organization, so an administrator can see what
-// they would be ending before they end it.
+type SessionList struct {
+	Sessions []session.Session
+	Next     string
+}
+
 func (p *Database) ListSessions(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-) ([]session.Session, error) {
+	page Page,
+) (SessionList, error) {
 	if !principal.MemberOf(organization) {
-		return nil, ErrNotAMember
+		return SessionList{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return nil, err
+		return SessionList{}, err
 	}
+	after, afterID, err := decodeCursor(page.After, "-lastSeenAt")
+	if err != nil {
+		return SessionList{}, err
+	}
+	limit := pageLimit(page.Limit)
 
 	rows, err := pool.Query(ctx, `
 		SELECT session_id, user_id, issued_at, expires_at, last_seen_at, revoked_at,
 		       user_agent, address
 		  FROM operator_session
 		 WHERE org_id = $1 AND revoked_at IS NULL AND expires_at > now()
-		 ORDER BY last_seen_at DESC
-		 LIMIT $2`, organization.String(), maxPageSize)
+		   AND ($2::timestamptz IS NULL OR (last_seen_at, session_id) < ($2, $3))
+		 ORDER BY last_seen_at DESC, session_id DESC
+		 LIMIT $4`, organization.String(), after, afterID, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("reading sessions: %w", err)
+		return SessionList{}, fmt.Errorf("reading sessions: %w", err)
 	}
 	defer rows.Close()
 
-	sessions := make([]session.Session, 0, 8)
+	list := SessionList{Sessions: make([]session.Session, 0, limit)}
 	for rows.Next() {
 		var (
 			live    session.Session
@@ -300,18 +310,23 @@ func (p *Database) ListSessions(
 		)
 		if err := rows.Scan(&live.ID, &live.UserID, &live.IssuedAt, &live.ExpiresAt,
 			&live.LastSeenAt, &revoked, &live.UserAgent, &live.Address); err != nil {
-			return nil, fmt.Errorf("scanning a session: %w", err)
+			return SessionList{}, fmt.Errorf("scanning a session: %w", err)
 		}
 		if revoked != nil {
 			live.RevokedAt = *revoked
 		}
 		live.Organization = organization.String()
-		sessions = append(sessions, live)
+		if len(list.Sessions) == limit {
+			last := list.Sessions[limit-1]
+			list.Next = encodeCursor("-lastSeenAt", last.LastSeenAt, last.ID)
+			break
+		}
+		list.Sessions = append(list.Sessions, live)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading sessions: %w", err)
+		return SessionList{}, fmt.Errorf("reading sessions: %w", err)
 	}
-	return sessions, nil
+	return list, nil
 }
 
 // SweepExpiredSessions removes sessions nobody can use. Expired rows authenticate nothing, so

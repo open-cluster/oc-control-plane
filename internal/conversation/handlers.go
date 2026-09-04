@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -210,13 +210,10 @@ func (h Handlers) append(
 	return said, &rendered, false, nil
 }
 
-// listSpec is the shared table contract this listing speaks. What is NOT declared here is
-// refused rather than ignored, which is what stops a caller narrowing by something the
-// query does not apply and reading the unnarrowed answer as though it had.
-var listSpec = table.Spec{
+var listSpec = listing.Spec{
 	Searchable:  true,
 	Sortable:    []string{"lastActivityAt"},
-	DefaultSort: table.Sort{Field: "lastActivityAt", Descending: true},
+	DefaultSort: listing.Sort{Field: "lastActivityAt", Descending: true},
 	Filters:     []string{"incidentId", "state"},
 }
 
@@ -225,9 +222,9 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, err := table.Parse(request.URL.Query(), listSpec)
+	parsed, err := listing.Parse(request.URL.Query(), listSpec)
 	if err != nil {
-		if table.Refused(err) {
+		if listing.Refused(err) {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 			return
 		}
@@ -238,7 +235,10 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	page := Page{Limit: parsed.Limit, After: parsed.Cursor, Search: parsed.Search}
+	page := Page{
+		Limit: parsed.Limit, After: parsed.Cursor, Search: parsed.Search,
+		Sort: parsed.Sort.Field, Descending: parsed.Sort.Descending,
+	}
 	if incident := parsed.Filter("incidentId"); incident != "" {
 		id, parseErr := uuid.Parse(incident)
 		if parseErr != nil {
@@ -272,7 +272,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range listed.Conversations {
 		views = append(views, conversationViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, table.Answer(views, listed.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
 }
 
 // read answers one conversation with its recent transcript and every turn it opened —

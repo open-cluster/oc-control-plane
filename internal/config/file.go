@@ -75,7 +75,7 @@ type fileRelay struct {
 	SPKIPins []string `yaml:"spki_pins"`
 }
 type fileInvestigation struct {
-	Workers          *int `yaml:"workers"`
+	Workers                   *int `yaml:"workers"`
 	MaxPendingPerOrganization *int `yaml:"max_pending_per_organization"`
 }
 type fileAI struct {

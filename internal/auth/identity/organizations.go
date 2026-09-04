@@ -4,11 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -25,6 +27,11 @@ type organizationView struct {
 
 type organizationListView struct {
 	Organizations []organizationView `json:"organizations"`
+	Next          *string            `json:"next"`
+}
+
+var organizationsListSpec = listing.Spec{
+	DefaultSort: listing.Sort{Field: "id"},
 }
 
 type createOrganizationRequest struct {
@@ -33,13 +40,22 @@ type createOrganizationRequest struct {
 }
 
 func (h Handlers) organizations(writer http.ResponseWriter, request *http.Request) {
+	query, ok := listQuery(writer, request, organizationsListSpec)
+	if !ok {
+		return
+	}
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
 	}
 	memberships := principal.Memberships()
-	views := make([]organizationView, 0, len(memberships))
-	for _, membership := range memberships {
+	page, next, err := listing.Cut(memberships, query)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return
+	}
+	views := make([]organizationView, 0, len(page))
+	for _, membership := range page {
 		view := organizationView{
 			ID: membership.Organization.String(), DisplayName: membership.DisplayName,
 		}
@@ -47,7 +63,9 @@ func (h Handlers) organizations(writer http.ResponseWriter, request *http.Reques
 		view.Membership.Role = string(membership.Role)
 		views = append(views, view)
 	}
-	writeJSON(writer, http.StatusOK, organizationListView{Organizations: views})
+	writeJSON(writer, http.StatusOK, organizationListView{
+		Organizations: views, Next: listing.Continuation(next),
+	})
 }
 
 func (h Handlers) createOrganization(writer http.ResponseWriter, request *http.Request) {
@@ -146,6 +164,12 @@ func organizationSlug(displayName, requested string) (string, error) {
 }
 
 func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request) {
+	query, ok := listQuery(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "name"},
+	})
+	if !ok {
+		return
+	}
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -165,9 +189,16 @@ func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request)
 			permissions = append(permissions, string(permission))
 		}
 	}
+	slices.Sort(permissions)
+	permissions, next, err := listing.Cut(permissions, query)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"organizationId": organization.String(),
 		"role":           string(role),
 		"permissions":    permissions,
+		"next":           listing.Continuation(next),
 	})
 }

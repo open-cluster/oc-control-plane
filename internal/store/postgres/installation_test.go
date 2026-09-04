@@ -44,6 +44,39 @@ func connectSlack(
 		})
 }
 
+func TestIntegrationListingAppliesAscendingSortAcrossPages(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	first, err := connectSlack(t, database, organization, "first", slackInstallation("T0FIRST"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := connectSlack(t, database, organization, "second", slackInstallation("T0SECOND"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := database.QueryIntegrations(context.Background(), ownerOf(t, organization),
+		organization, integrations.Query{Page: integrations.Page{Limit: 1}, Sort: "createdAt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Integrations) != 1 || page.Integrations[0].ID != first.ID || page.Next == "" {
+		t.Fatalf("first page = %+v", page)
+	}
+	page, err = database.QueryIntegrations(context.Background(), ownerOf(t, organization),
+		organization, integrations.Query{
+			Page: integrations.Page{Limit: 1, After: page.Next}, Sort: "createdAt",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Integrations) != 1 || page.Integrations[0].ID != second.ID {
+		t.Fatalf("second page = %+v", page)
+	}
+}
+
 func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	t.Parallel()
 

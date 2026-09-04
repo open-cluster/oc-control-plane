@@ -79,7 +79,6 @@ func (p *Database) Conversation(
 	return found, nil
 }
 
-// QueryConversations reports a page, most recently active first.
 func (p *Database) QueryConversations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	page conversation.Page,
@@ -91,8 +90,18 @@ func (p *Database) QueryConversations(
 	if err != nil {
 		return conversation.List{}, err
 	}
+	sortField := page.Sort
+	descending := page.Descending
+	if sortField == "" {
+		sortField = "lastActivityAt"
+		descending = true
+	}
+	if sortField != "lastActivityAt" {
+		return conversation.List{}, fmt.Errorf("conversation listing cannot order by %q", sortField)
+	}
+	scope := sortScope(sortField, descending)
 	limit := pageLimit(page.Limit)
-	cursorAt, cursorID, err := decodeCursor(page.After)
+	cursorAt, cursorID, err := decodeTimeSortCursor(page.After, scope)
 	if err != nil {
 		return conversation.List{}, conversation.ErrBadCursor
 	}
@@ -101,14 +110,15 @@ func (p *Database) QueryConversations(
 	narrowing := ""
 	if cursorID != nil {
 		arguments = append(arguments, *cursorAt, *cursorID)
+		comparison := ">"
+		if descending {
+			comparison = "<"
+		}
 		narrowing = fmt.Sprintf(
-			" AND (last_activity_at, conversation_id) < ($%d, $%d)",
-			len(arguments)-1, len(arguments))
+			" AND (last_activity_at, conversation_id) %s ($%d, $%d)",
+			comparison, len(arguments)-1, len(arguments))
 	}
 	if page.Search != "" {
-		// Case-insensitive containment on the subject. Deliberately dumb: a caller who
-		// typed part of a subject wants the conversations whose subject contains it, and
-		// anything cleverer would be an ordering nobody could explain.
 		arguments = append(arguments, "%"+page.Search+"%")
 		narrowing += fmt.Sprintf(" AND subject ILIKE $%d", len(arguments))
 	}
@@ -121,12 +131,16 @@ func (p *Database) QueryConversations(
 		narrowing += fmt.Sprintf(" AND state = $%d", len(arguments))
 	}
 
-	rows, err := pool.Query(ctx, `
+	direction := "ASC"
+	if descending {
+		direction = "DESC"
+	}
+	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+conversationColumns+`
 		  FROM conversation
 		 WHERE org_id = $1`+narrowing+`
-		 ORDER BY last_activity_at DESC, conversation_id DESC
-		 LIMIT $2`, arguments...)
+		 ORDER BY last_activity_at %s, conversation_id %s
+		 LIMIT $2`, direction, direction), arguments...)
 	if err != nil {
 		return conversation.List{}, fmt.Errorf("listing conversations: %w", err)
 	}
@@ -142,7 +156,7 @@ func (p *Database) QueryConversations(
 		}
 		if len(list.Conversations) == limit {
 			last := list.Conversations[limit-1]
-			list.Next = encodeCursor(last.LastActivityAt, last.ID)
+			list.Next = encodeTimeSortCursor(scope, last.LastActivityAt, last.ID)
 			break
 		}
 		list.Conversations = append(list.Conversations, found)

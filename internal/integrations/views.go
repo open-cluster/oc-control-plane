@@ -70,6 +70,7 @@ type toolArgumentView struct {
 
 type typeListView struct {
 	Types []typeView `json:"types"`
+	Next  *string    `json:"next"`
 }
 
 func typeViewOf(manifest Manifest, configured int) typeView {

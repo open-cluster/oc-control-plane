@@ -45,19 +45,3 @@ func ActiveOrganizationFrom(ctx context.Context) (tenancy.Organization, bool) {
 	organization, ok := ctx.Value(activeOrganizationKey{}).(tenancy.Organization)
 	return organization, ok && !organization.IsEmpty()
 }
-
-// requestIDKey is where the operator surface's correlation identifier lives.
-type requestIDKey struct{}
-
-// WithRequestID returns a context carrying the identifier that ties this request's audit
-// events to its log lines. The surface's own middleware sets it, once, before anything else
-// runs; a handler that could set one could break the correlation it exists to provide.
-func WithRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, requestIDKey{}, id)
-}
-
-// RequestIDFrom reports this request's correlation identifier, or "" outside the surface.
-func RequestIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(requestIDKey{}).(string)
-	return id
-}

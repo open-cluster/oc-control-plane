@@ -16,7 +16,8 @@ import (
 type openAPIDocument struct {
 	Paths      map[string]openAPIPath `yaml:"paths"`
 	Components struct {
-		Schemas map[string]openAPISchema `yaml:"schemas"`
+		Schemas    map[string]openAPISchema    `yaml:"schemas"`
+		Parameters map[string]openAPIParameter `yaml:"parameters"`
 	} `yaml:"components"`
 }
 
@@ -30,6 +31,17 @@ type openAPISchema struct {
 	Required             []string                 `yaml:"required"`
 	OneOf                []openAPISchema          `yaml:"oneOf"`
 	Const                string                   `yaml:"const"`
+	Minimum              *int                     `yaml:"minimum"`
+	Maximum              *int                     `yaml:"maximum"`
+	MinLength            *int                     `yaml:"minLength"`
+	MaxLength            *int                     `yaml:"maxLength"`
+	Pattern              string                   `yaml:"pattern"`
+}
+
+type openAPIParameter struct {
+	Name   string        `yaml:"name"`
+	In     string        `yaml:"in"`
+	Schema openAPISchema `yaml:"schema"`
 }
 
 type openAPIPath struct {
@@ -206,6 +218,94 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 		operation, ok := operationFor(document, method, path)
 		if !ok || operation.Responses[successStatus(key)].Ref != expected {
 			t.Errorf("%s must use its observable response contract %s", key, expected)
+		}
+	}
+}
+
+func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document openAPIDocument
+	if err = yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	paged := []string{"Cursor", "Limit"}
+	expected := map[string][]string{
+		"listOrganizations":         paged,
+		"listEffectivePermissions":  paged,
+		"listMembers":               paged,
+		"listSessions":              paged,
+		"listAuditEvents":           paged,
+		"listIntegrationTypes":      paged,
+		"listIntegrations":          append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),
+		"listRelays":                append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
+		"listRelayIntegrations":     paged,
+		"listRelayFailures":         paged,
+		"listRelaySessionConflicts": paged,
+		"listIncidents":             append(slices.Clone(paged), "IncidentSearch", "IncidentSort", "IncidentIntegrationFilter", "IncidentStatusFilter"),
+		"listIncidentAlertEvents":   paged,
+		"listInvestigations":        append(slices.Clone(paged), "InvestigationIncidentFilter"),
+		"listConversations":         append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
+		"listWebhookDeliveries":     append(slices.Clone(paged), "WebhookDeliveryStatus"),
+	}
+
+	for pathName, path := range document.Paths {
+		for _, entry := range path.operations() {
+			operation := *entry.operation
+			want, listed := expected[operation.OperationID]
+			if !listed {
+				continue
+			}
+			var got []string
+			for _, parameter := range append(path.Parameters, operation.Parameters...) {
+				name := strings.TrimPrefix(parameter.Ref, "#/components/parameters/")
+				switch name {
+				case "", "Organization", "OptionalOrganization", "UserID", "MembershipID",
+					"SessionID", "IntegrationID", "IntegrationType", "RelayRegistrationID",
+					"IncidentID", "InvestigationID", "ConversationID", "WebhookDeliveryID":
+					continue
+				}
+				got = append(got, name)
+			}
+			slices.Sort(got)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s %s parameters = %v, want %v", entry.method, pathName, got, want)
+			}
+			delete(expected, operation.OperationID)
+		}
+	}
+	if len(expected) != 0 {
+		t.Errorf("missing list operations: %v", expected)
+	}
+
+	limit := document.Components.Parameters["Limit"].Schema
+	cursor := document.Components.Parameters["Cursor"].Schema
+	if limit.Minimum == nil || *limit.Minimum != 1 || limit.Maximum == nil || *limit.Maximum != 200 {
+		t.Errorf("limit bounds = %v..%v, want 1..200", limit.Minimum, limit.Maximum)
+	}
+	if cursor.MinLength == nil || *cursor.MinLength != 1 ||
+		cursor.MaxLength == nil || *cursor.MaxLength != 512 {
+		t.Errorf("cursor bounds = %v..%v, want 1..512", cursor.MinLength, cursor.MaxLength)
+	}
+	for _, name := range []string{
+		"IntegrationSearch", "RelaySearch", "IncidentSearch", "ConversationSearch",
+	} {
+		search := document.Components.Parameters[name].Schema
+		if search.MinLength == nil || *search.MinLength != 1 ||
+			search.MaxLength == nil || *search.MaxLength != 256 {
+			t.Errorf("%s bounds = %v..%v, want 1..256", name, search.MinLength, search.MaxLength)
+		}
+	}
+	for _, name := range []string{"RelayVersionFilter", "RelayCapabilityFilter"} {
+		filter := document.Components.Parameters[name].Schema
+		if filter.Pattern != `^\S(?:.*\S)?$` {
+			t.Errorf("%s pattern = %q, want no surrounding whitespace", name, filter.Pattern)
 		}
 	}
 }

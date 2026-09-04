@@ -248,8 +248,6 @@ func TestOperatorSurface(t *testing.T) {
 	t.Run("a long history pages without losing or repeating an entry", func(t *testing.T) {
 		trailURL := base + "/relays/" + relay.registration.String() + "/session-conflicts"
 
-		// Enough entries that a page cannot hold them. Off-by-one is the whole failure mode of
-		// a keyset cursor, and it shows up as an entry that is skipped rather than as an error.
 		for range 3 {
 			if err := database.RecordSessionConflict(
 				context.Background(), owner, relay.registration, 2); err != nil {
@@ -278,7 +276,7 @@ func TestOperatorSurface(t *testing.T) {
 			if page.Next == "" {
 				break
 			}
-			url = trailURL + "?limit=2&after=" + page.Next
+			url = trailURL + "?limit=2&cursor=" + page.Next
 		}
 
 		if len(paged) != len(whole.Events) {

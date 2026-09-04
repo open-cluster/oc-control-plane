@@ -3,6 +3,8 @@ package identity
 import (
 	"net/http"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
+
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 )
 
@@ -13,6 +15,12 @@ import (
 // opens. The events are returned newest first and paged, because the answer to "who disabled
 // this Integration and when" is found by reading backwards from now.
 func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {
+	query, ok := listQuery(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "occurredAt", Descending: true},
+	})
+	if !ok {
+		return
+	}
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -25,8 +33,8 @@ func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request)
 	defer cancel()
 
 	list, err := h.Database.AuditEvents(ctx, principal, organization, audit.Page{
-		Limit: pageSize(request),
-		After: request.URL.Query().Get("after"),
+		Limit: query.Limit,
+		After: query.Cursor,
 	})
 	if err != nil {
 		h.fail(writer, request, err)

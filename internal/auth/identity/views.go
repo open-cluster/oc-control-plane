@@ -153,6 +153,7 @@ type liveSessionView struct {
 
 type liveSessionListView struct {
 	Sessions []liveSessionView `json:"sessions"`
+	Next     *string           `json:"next"`
 }
 
 func liveSessionViewOf(live session.Session) liveSessionView {
