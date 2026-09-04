@@ -24,7 +24,7 @@ var _ investigation.HTTPStore = (*Database)(nil)
 const investigationColumns = `investigation_id, incident_id, question,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
-	       spend_output_tokens, spend_micro_cents, created_by, created_at, concluded_at,
+	       spend_output_tokens, created_by, created_at, concluded_at,
 	       lease_worker <> '' AND lease_expires_at > now()`
 
 // CreateInvestigation records one, born running. Opening is an operator act and lands in
@@ -248,28 +248,28 @@ func (p *Database) RecordToolRun(
 	return nil
 }
 
-// ConcludeInvestigation ends one with its concluding document and spend. stoppedBy
+// ConcludeInvestigation ends one with its concluding document and token usage. stoppedBy
 // names the ceiling that forced the concluding turn, empty when the model concluded
 // freely.
 func (p *Database) ConcludeInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	conclusion investigation.Conclusion, stoppedBy string, spend investigation.Spend,
+	conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage,
 ) error {
 	encoded, err := json.Marshal(conclusion)
 	if err != nil {
 		return fmt.Errorf("encoding conclusion: %w", err)
 	}
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", spend)
+		encoded, stoppedBy, "", usage)
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
 func (p *Database) FailInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	reason string, spend investigation.Spend,
+	reason string, usage investigation.Usage,
 ) error {
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
-		[]byte("{}"), "", reason, spend)
+		[]byte("{}"), "", reason, usage)
 }
 
 // CancelInvestigation ends active work and records the operator action atomically.
@@ -339,7 +339,7 @@ func (p *Database) CancelInvestigation(
 func (p *Database) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
-	spend investigation.Spend,
+	usage investigation.Usage,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -353,7 +353,6 @@ func (p *Database) endInvestigation(
 		       error               = $6,
 		       spend_input_tokens  = $7,
 		       spend_output_tokens = $8,
-		       spend_micro_cents   = $9,
 		       concluded_at        = now(),
 		       -- The lease goes with the ending. A terminal investigation is nobody's to
 		       -- hold, and leaving one behind would make the sweeper reason about work
@@ -362,7 +361,7 @@ func (p *Database) endInvestigation(
 		       lease_expires_at    = NULL
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1`,
 		id, organization.String(), status, conclusion, stoppedBy,
-		reason, spend.InputTokens, spend.OutputTokens, spend.MicroCents)
+		reason, usage.InputTokens, usage.OutputTokens)
 	if err != nil {
 		return fmt.Errorf("ending an investigation: %w", err)
 	}
@@ -452,8 +451,8 @@ func scanInvestigation(row scanned, organization string) (investigation.Investig
 	if err := row.Scan(&found.ID, &incidentID, &found.Question,
 		&conversationID, &turn, &found.Subject, &found.WindowFrom, &found.WindowUntil,
 		&found.Status, &conclusion, &found.StoppedBy,
-		&found.Error, &found.Spend.InputTokens,
-		&found.Spend.OutputTokens, &found.Spend.MicroCents, &found.CreatedBy,
+		&found.Error, &found.Usage.InputTokens,
+		&found.Usage.OutputTokens, &found.CreatedBy,
 		&found.CreatedAt, &concludedAt, &found.Executing); err != nil {
 		return investigation.Investigation{}, err
 	}

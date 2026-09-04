@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,10 +31,98 @@ type Provider struct {
 	deployment reasoning.Deployment
 }
 
+func usageOf(usage sdk.Usage) reasoning.TokenUsage {
+	normalized := reasoning.TokenUsage{
+		Input:      reasoning.Counted(usage.InputTokens),
+		Output:     reasoning.Counted(usage.OutputTokens),
+		CacheWrite: reasoning.Counted(usage.CacheCreationInputTokens),
+		CacheRead:  reasoning.Counted(usage.CacheReadInputTokens),
+		Reasoning:  reasoning.Unreported(),
+	}
+	if usage.OutputTokensDetails.JSON.ThinkingTokens.Valid() {
+		normalized.Reasoning = reasoning.Counted(usage.OutputTokensDetails.ThinkingTokens)
+	} else if usage.OutputTokensDetails.ThinkingTokens > 0 {
+		normalized.Reasoning = reasoning.Counted(usage.OutputTokensDetails.ThinkingTokens)
+	}
+	return normalized
+}
+
+func stopOf(reason sdk.StopReason) reasoning.Stop {
+	switch reason {
+	case sdk.StopReasonRefusal:
+		return reasoning.StopRefused
+	case sdk.StopReasonMaxTokens, sdk.StopReasonModelContextWindowExceeded:
+		return reasoning.StopTruncated
+	case sdk.StopReasonToolUse:
+		return reasoning.StopToolUse
+	default:
+		return reasoning.StopComplete
+	}
+}
+
+func refused(provider, model string, details sdk.RefusalStopDetails) error {
+	failure := reasoning.Failed(reasoning.OutcomeRefused, provider, model,
+		"the provider's own safeguards declined this request")
+	failure.Category = string(details.Category)
+	if explanation := details.Explanation; explanation != "" {
+		failure.Detail = explanation
+	}
+	return failure
+}
+
+func classify(provider, model string, status int, identifier string, cause error) error {
+	detail := fmt.Sprintf("the provider answered %d", status)
+	if identifier != "" {
+		detail += " (request " + identifier + ")"
+	}
+
+	switch {
+	case status == http.StatusTooManyRequests:
+		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
+			detail+": rate limited past the retries this deployment allows", cause)
+	case status >= 500:
+		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
+			detail+": the provider failed on its own side", cause)
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return reasoning.FailedBecause(reasoning.OutcomeRejected, provider, model,
+			detail+": the credential was not accepted", cause)
+	case status == http.StatusNotFound:
+		return reasoning.FailedBecause(reasoning.OutcomeRejected, provider, model,
+			detail+": the model identifier is not one this provider serves", cause)
+	case status == http.StatusRequestEntityTooLarge:
+		return reasoning.FailedBecause(reasoning.OutcomeRejected, provider, model,
+			detail+": the request was larger than the provider accepts", cause)
+	case status >= 400:
+		return reasoning.FailedBecause(reasoning.OutcomeRejected, provider, model,
+			detail+": the provider refused the request as malformed", cause)
+	default:
+		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model, detail, cause)
+	}
+}
+
+func transportFailure(provider, model string, cause error) error {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return reasoning.FailedBecause(reasoning.OutcomeTimeout, provider, model,
+			"the round's deadline was reached before the provider answered", cause)
+	case errors.Is(cause, context.Canceled):
+		return reasoning.FailedBecause(reasoning.OutcomeTimeout, provider, model,
+			"the investigation was cancelled while waiting for the provider", cause)
+	}
+
+	var timeout net.Error
+	if errors.As(cause, &timeout) && timeout.Timeout() {
+		return reasoning.FailedBecause(reasoning.OutcomeTimeout, provider, model,
+			"the provider did not answer within this deployment's request timeout", cause)
+	}
+	return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
+		"the provider could not be reached", cause)
+}
+
 // Options is what a caller may put in place of the real thing. There is exactly one entry and it
 // is the HTTP round-tripper, which is the seam every test in this package uses: the suite never
-// reaches the network, because a test that called the real API would be non-deterministic, priced
-// and offline-hostile.
+// reaches the network, because a test that called the real API would be non-deterministic and
+// offline-hostile.
 type Options struct {
 	HTTPClient *http.Client
 }
@@ -101,7 +191,7 @@ func (p *Provider) Complete(
 
 	// Built before the error is returned, not instead of it. A stream that failed partway still
 	// consumed whatever it had already reported, and returning an empty completion here would
-	// under-report the spend of exactly the calls most likely to be retried.
+	// under-report usage for exactly the calls most likely to be retried.
 	completion := reasoning.Completion{
 		Model:     answeringModel(message, prompt.Model),
 		RequestID: captured.value(),

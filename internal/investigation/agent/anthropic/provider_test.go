@@ -209,12 +209,6 @@ func TestComplete_ReturnsTheDocumentAndNormalizesUsage(t *testing.T) {
 	if !usage.Reasoning.Reported || usage.Reasoning.Tokens != 120 {
 		t.Errorf("reasoning tokens are wrong: %+v", usage.Reasoning)
 	}
-	// Reasoning tokens sit INSIDE the output total on this provider. Adding them would bill every
-	// round that thought twice in this system's own figures.
-	if usage.Billable() != 1000+250+300+4000 {
-		t.Errorf("billable tokens are %d, want reasoning tokens not added on top",
-			usage.Billable())
-	}
 }
 
 func TestComplete_AReasoningFigureTheProviderDidNotReportIsAbsentRatherThanZero(t *testing.T) {

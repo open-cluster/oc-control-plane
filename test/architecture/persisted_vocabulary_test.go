@@ -63,14 +63,12 @@ func TestTheHonestStopsAreFrozen(t *testing.T) {
 	t.Parallel()
 
 	assertVocabulary(t, "the stopped_by vocabulary", []string{
-		investigation.StoppedBySpend,
 		investigation.StoppedByToolRuns,
 		investigation.StoppedByReasonerTurns,
 		investigation.StoppedByWallClock,
 		investigation.StoppedByStagnation,
 		investigation.StoppedByContext,
 	}, []string{
-		"spend",
 		"tool_runs",
 		"reasoner_turns",
 		"wall_clock",

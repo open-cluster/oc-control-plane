@@ -4,7 +4,7 @@
 //
 // What it deliberately does NOT own is the investigation. A turn opens one, and one is
 // exactly what it always was — a bounded answer with its own offered sources, tool runs,
-// findings, citations, ceilings and spend. This package carries the CONTINUITY between
+// findings, citations, and ceilings. This package carries the CONTINUITY between
 // turns and nothing else.
 //
 // Like every other capability here it is a leaf: it declares what it needs from durable

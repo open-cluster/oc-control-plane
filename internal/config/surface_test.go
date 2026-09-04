@@ -16,7 +16,7 @@ func TestSupportedEnvironmentSurfaceIsSmallAndProductFacing(t *testing.T) {
 		"OC_AUTH_MODE", "OC_BOOTSTRAP_TOKEN_FILE",
 		"OC_OIDC_ISSUER", "OC_OIDC_CLIENT_ID", "OC_OIDC_CLIENT_SECRET_FILE",
 		"OC_RELAY_ADDRESS", "OC_RELAY_SPKI_PINS",
-		"OC_AI_PROVIDER", "OC_AI_MODEL", "OC_AI_API_KEY_FILE",
+		"OC_AI_PROVIDER", "OC_AI_MODEL", "OC_AI_API_KEY_FILE", "OC_AI_CONTEXT_WINDOW_SIZE",
 		"OC_INVESTIGATION_WORKERS", "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION",
 		"OC_ENCRYPTION_KEY_FILE",
 		"OC_LOG_LEVEL", "OC_OTLP_ENDPOINT",
@@ -26,8 +26,8 @@ func TestSupportedEnvironmentSurfaceIsSmallAndProductFacing(t *testing.T) {
 	if !reflect.DeepEqual(SupportedEnvironmentKeys, want) {
 		t.Fatalf("supported environment keys = %#v, want %#v", SupportedEnvironmentKeys, want)
 	}
-	if len(SupportedEnvironmentKeys) > 24 {
-		t.Fatalf("supported environment surface has %d keys, maximum is 24", len(SupportedEnvironmentKeys))
+	if len(SupportedEnvironmentKeys) > 25 {
+		t.Fatalf("supported environment surface has %d keys, maximum is 25", len(SupportedEnvironmentKeys))
 	}
 }
 

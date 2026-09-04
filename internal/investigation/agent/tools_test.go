@@ -2,15 +2,168 @@ package agent
 
 import (
 	"context"
+	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
+
+func TestAnAnswerInsideTheBoundIsUntouched(t *testing.T) {
+	t.Parallel()
+
+	answer := "checkout-api is running v2.14.1."
+	if got := boundedSummary(answer); got != answer {
+		t.Errorf("boundedSummary(%q) = %q; a short summary must be left exactly alone",
+			answer, got)
+	}
+}
+
+func TestABoundedAnswerSaysItWasCut(t *testing.T) {
+	t.Parallel()
+
+	got := boundedSummary(strings.Repeat("a", investigation.MaxSummaryLength+500))
+
+	if len([]rune(got)) > investigation.MaxSummaryLength {
+		t.Errorf("boundedAnswer returned %d runes, past the bound of %d",
+			len([]rune(got)), investigation.MaxSummaryLength)
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Errorf("a cut answer does not say it was cut, so it reads as a complete "+
+			"one; tail = %q", tail(got))
+	}
+	if !strings.HasPrefix(got, "aaa") {
+		t.Error("the answer's own words did not survive the cut")
+	}
+}
+
+// The mark is only worth its characters if it is inside the bound: appending it after
+// truncating to the ceiling would put the result back over.
+func TestTheCutMarkIsInsideTheBound(t *testing.T) {
+	t.Parallel()
+
+	for _, over := range []int{1, 2, 500, investigation.MaxSummaryLength} {
+		got := boundedSummary(strings.Repeat("b", investigation.MaxSummaryLength+over))
+		if len([]rune(got)) > investigation.MaxSummaryLength {
+			t.Errorf("over by %d: returned %d runes, past the bound of %d",
+				over, len([]rune(got)), investigation.MaxSummaryLength)
+		}
+	}
+}
+
+func tail(text string) string {
+	runes := []rune(text)
+	if len(runes) <= 80 {
+		return text
+	}
+	return string(runes[len(runes)-80:])
+}
+
+// A READ REPORTS A WINDOW ONLY WHEN IT USED ONE.
+//
+// Every run carries the window in force, because the record's column is NOT NULL and the
+// bound is real. But a repository listing is not filtered by time, and an event that hands
+// a reader a window beside it answers "did this read cover my period?" wrongly rather than
+// not at all. Only a read that actually filtered by the window reports one.
+
+func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
+	t.Parallel()
+
+	payload := investigation.ToolCompletedPayload(investigation.ToolRun{
+		Ordinal: 1, Tool: "github.list_repositories", Outcome: investigation.RunSucceeded,
+		Summary: "1 repositories matched",
+		// The bound in force, as every run carries — but this read did not filter by it.
+		WindowFrom:    time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC),
+		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
+		WindowApplied: false,
+	})
+
+	if _, present := payload["windowFrom"]; present {
+		t.Errorf("a listing that filtered by no window reports one: %v",
+			payload["windowFrom"])
+	}
+}
+
+func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
+	payload := investigation.ToolCompletedPayload(investigation.ToolRun{
+		Ordinal: 1, Tool: "github.read_commits", Outcome: investigation.RunSucceeded,
+		Summary: "0 commits in the window", WindowFrom: from,
+		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
+		WindowApplied: true,
+	})
+
+	if payload["windowFrom"] != from.Format(time.RFC3339) {
+		t.Errorf("windowFrom = %v; a windowed read must say what it covered",
+			payload["windowFrom"])
+	}
+}
+
+// THE WINDOW A READ ACTUALLY COVERED.
+//
+// Every windowed read is clamped into the investigation's own window, including one the
+// model phrased with no window at all. A model that is not told which window it got reads
+// an empty result as a fact about the estate rather than about the bounds it was given —
+// which is how "no commits in the last two hours" becomes "the repository has no commits".
+// The rendered run states the window beside the arguments the model asked with, so a
+// narrowing is visible by comparison.
+
+func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	until := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+
+	turn := renderResult(toolFeedback{
+		CallID: "call-1",
+		Run: investigation.ToolRun{
+			Ordinal:       1,
+			Tool:          "github.read_commits",
+			Arguments:     map[string]any{"repositoryId": 42},
+			Outcome:       investigation.RunSucceeded,
+			Summary:       "0 commits",
+			WindowFrom:    from,
+			WindowUntil:   until,
+			WindowApplied: true,
+			Content:       []any{},
+		},
+	})
+
+	if !strings.Contains(turn.Content, stamp(from)) ||
+		!strings.Contains(turn.Content, stamp(until)) {
+		t.Errorf("the run does not say which window it covered:\n%s", turn.Content)
+	}
+	if !strings.Contains(turn.Content, "WINDOW:") {
+		t.Errorf("the window is not labelled, so it reads as an arbitrary pair of "+
+			"timestamps:\n%s", turn.Content)
+	}
+}
+
+// A read that carries no window of its own — a repository listing, a pull request by
+// number — must not grow a window line. Stating a window on a read that has none would
+// tell the model its answer was bounded in time when it was not.
+func TestARunWithNoWindowStatesNone(t *testing.T) {
+	t.Parallel()
+
+	turn := renderResult(toolFeedback{
+		CallID: "call-1",
+		Run: investigation.ToolRun{
+			Ordinal:   1,
+			Tool:      "github.list_repositories",
+			Arguments: map[string]any{},
+			Outcome:   investigation.RunSucceeded,
+			Summary:   "1 repositories matched",
+			Content:   []any{},
+		},
+	})
+
+	if strings.Contains(turn.Content, "WINDOW:") {
+		t.Errorf("a read with no window claims one:\n%s", turn.Content)
+	}
+}
 
 func stubIntegration(name string) integrations.Integration {
 	return integrations.Integration{ID: uuid.New(), Type: 99, Name: name}

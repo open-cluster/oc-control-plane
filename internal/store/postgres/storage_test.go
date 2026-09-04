@@ -32,7 +32,7 @@ func TestMigrationSetIsOneCleanPreReleaseBaseline(t *testing.T) {
 	}
 	for _, dead := range []string{
 		"conversation_summary", "lease_heartbeat_at", "investigation_tool_run_capability",
-		"investigation_source",
+		"investigation_source", "spend_micro_cents",
 	} {
 		if strings.Contains(string(body), dead) {
 			t.Errorf("baseline still contains removed schema %q", dead)
@@ -44,8 +44,9 @@ func TestMigrationSetIsOneCleanPreReleaseBaseline(t *testing.T) {
 		}
 	}
 	for _, vocabulary := range []string{
-		"-- Status: 1 - running, 2 - concluded, 3 - failed, 4 - cancelled",
-		"-- Type: 1 - started, 2 - progress, 3 - tool_started, 4 - tool_completed, 5 - retired, 6 - concluded, 7 - failed, 8 - retired, 9 - cancelled, 10 - hypotheses_updated",
+		"-- 1 - running, 2 - concluded, 3 - failed, 4 - cancelled",
+		"-- 1 - started, 2 - progress, 3 - tool_started, 4 - tool_completed, 5 - retired",
+		"-- 6 - concluded, 7 - failed, 8 - retired, 9 - cancelled, 10 - hypotheses_updated",
 	} {
 		if !strings.Contains(string(body), vocabulary) {
 			t.Errorf("baseline does not document persisted vocabulary %q", vocabulary)

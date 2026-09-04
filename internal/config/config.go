@@ -21,6 +21,7 @@ const (
 	defaultAuthenticationMode                     = "local"
 	defaultInvestigationWorkers                   = 8
 	defaultInvestigationMaxPendingPerOrganization = 100
+	defaultModelContextWindowTokens               = 128_000
 )
 
 // Environment variable names, listed once so errors and documentation cannot drift.
@@ -31,7 +32,7 @@ var SupportedEnvironmentKeys = []string{
 	EnvAuthenticationMode, EnvOperatorTokenFile,
 	EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile,
 	EnvRelayAddress, EnvRelaySPKIPins,
-	EnvModelProvider, EnvModelName, EnvModelKeyFile,
+	EnvModelProvider, EnvModelName, EnvModelKeyFile, EnvModelContextWindowSize,
 	EnvInvestigationWorkers, EnvInvestigationMaxPendingPerOrganization,
 	EnvSealingKeyFile,
 	EnvLogLevel, EnvOTLPEndpoint,
@@ -53,6 +54,7 @@ const (
 	EnvModelProvider                          = "OC_AI_PROVIDER"
 	EnvModelName                              = "OC_AI_MODEL"
 	EnvModelKeyFile                           = "OC_AI_API_KEY_FILE"
+	EnvModelContextWindowSize                 = "OC_AI_CONTEXT_WINDOW_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
@@ -140,9 +142,10 @@ type Config struct {
 	// The model deployment. ModelProvider empty means this deployment cannot investigate,
 	// and opening one is refused with that reason. The credential travels as a file's
 	// contents, never as an environment value.
-	ModelProvider string
-	ModelName     string
-	ModelKey      string
+	ModelProvider            string
+	ModelName                string
+	ModelKey                 string
+	ModelContextWindowTokens int
 
 	InvestigationWorkers                    int
 	MaxPendingInvestigationsPerOrganization int
@@ -156,6 +159,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		AuthenticationMode:                      defaultAuthenticationMode,
 		InvestigationWorkers:                    defaultInvestigationWorkers,
 		MaxPendingInvestigationsPerOrganization: defaultInvestigationMaxPendingPerOrganization,
+		ModelContextWindowTokens:                defaultModelContextWindowTokens,
 	}
 
 	var err error
@@ -203,6 +207,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if err = modelDeployment(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.ModelContextWindowTokens, err = positiveInteger(
+		lookup, EnvModelContextWindowSize, defaultModelContextWindowTokens); err != nil {
 		return Config{}, err
 	}
 	if cfg.InvestigationWorkers, err = positiveInteger(

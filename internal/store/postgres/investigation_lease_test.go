@@ -287,7 +287,7 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 
 	if err = database.ConcludeInvestigation(context.Background(), organization,
 		turn.InvestigationID, conclusionSaying("done"), "",
-		investigation.Spend{}); err != nil {
+		investigation.Usage{}); err != nil {
 		t.Fatalf("concluding: %v", err)
 	}
 
@@ -309,5 +309,46 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 	if recovered != 0 {
 		t.Errorf("%d concluded investigations were 'recovered'; a terminal one is already "+
 			"recorded and re-running it is the duplicate the fence prevents", recovered)
+	}
+}
+
+func TestTerminalInvestigationUsageRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	for _, test := range []struct {
+		name string
+		end  func(uuid.UUID, investigation.Usage) error
+	}{
+		{name: "concluded", end: func(id uuid.UUID, usage investigation.Usage) error {
+			return database.ConcludeInvestigation(context.Background(), organization, id,
+				conclusionSaying("done"), "", usage)
+		}},
+		{name: "failed", end: func(id uuid.UUID, usage investigation.Usage) error {
+			return database.FailInvestigation(context.Background(), organization, id,
+				"provider unavailable", usage)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conversation := openConversation(t, database, organization, test.name)
+			say(t, database, organization, conversation.ID, "what happened?")
+			turn, took, err := database.OpenTurn(context.Background(), organization,
+				conversation.ID, turnWindowLead)
+			if err != nil || !took {
+				t.Fatalf("opening a turn: took=%v err=%v", took, err)
+			}
+			want := investigation.Usage{InputTokens: 34, OutputTokens: 21}
+			if err = test.end(turn.InvestigationID, want); err != nil {
+				t.Fatal(err)
+			}
+			found, err := database.Investigation(context.Background(), organization,
+				turn.InvestigationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found.Usage != want {
+				t.Fatalf("usage=%+v, want %+v", found.Usage, want)
+			}
+		})
 	}
 }

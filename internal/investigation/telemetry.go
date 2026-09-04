@@ -11,11 +11,8 @@ import (
 )
 
 // Metrics omit Organization and other unbounded customer- or vendor-supplied labels.
-
 const meterName = "github.com/open-cluster/oc-control-plane/internal/investigation"
 
-// Telemetry emits the runtime's signal. A nil *Telemetry measures nothing and breaks
-// nothing, which is what a unit test should get.
 type Telemetry struct {
 	logger *slog.Logger
 
@@ -92,7 +89,7 @@ func (t *Telemetry) firstEvent(since time.Duration) {
 	t.firstProgress.Record(context.Background(), since.Seconds())
 }
 
-// ended records one whole investigation, labelled by how it ended and by the ceiling that
+// ended records one whole investigation, labeled by how it ended and by the ceiling that
 // forced it — both this build's own frozen words.
 func (t *Telemetry) ended(since time.Duration, outcome, stoppedBy string) {
 	if t == nil || t.duration == nil {

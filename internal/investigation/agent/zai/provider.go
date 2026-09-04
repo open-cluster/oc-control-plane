@@ -13,7 +13,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -40,6 +42,108 @@ type Provider struct {
 	client     *http.Client
 	endpoint   string
 	deployment reasoning.Deployment
+}
+
+func usageOf(reported usage) reasoning.TokenUsage {
+	normalized := reasoning.TokenUsage{
+		Input:      reasoning.Counted(reported.PromptTokens),
+		Output:     reasoning.Counted(reported.CompletionTokens),
+		CacheWrite: reasoning.Unreported(),
+		CacheRead:  reasoning.Unreported(),
+		Reasoning:  reasoning.Unreported(),
+	}
+	if details := reported.PromptTokensDetails; details != nil {
+		cached := details.CachedTokens
+		if cached > reported.PromptTokens {
+			cached = reported.PromptTokens
+		}
+		normalized.CacheRead = reasoning.Counted(cached)
+		normalized.Input = reasoning.Counted(reported.PromptTokens - cached)
+	}
+	if details := reported.CompletionTokensDetails; details != nil {
+		normalized.Reasoning = reasoning.Counted(details.ReasoningTokens)
+	}
+	return normalized
+}
+
+func stopOf(reason string) reasoning.Stop {
+	switch reason {
+	case "sensitive":
+		return reasoning.StopRefused
+	case "length", "model_context_window_exceeded":
+		return reasoning.StopTruncated
+	case "tool_calls":
+		return reasoning.StopToolUse
+	default:
+		return reasoning.StopComplete
+	}
+}
+
+func classify(model string, status int, identifier string, payload []byte) error {
+	detail := fmt.Sprintf("the provider answered %d", status)
+	if identifier != "" {
+		detail += " (request " + identifier + ")"
+	}
+	if message := errorMessage(payload); message != "" {
+		detail += ": " + message
+	}
+
+	switch {
+	case status == http.StatusTooManyRequests:
+		return reasoning.Failed(reasoning.OutcomeOutage, Name, model, detail+": rate limited")
+	case status >= 500:
+		return reasoning.Failed(reasoning.OutcomeOutage, Name, model,
+			detail+": the provider failed on its own side")
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return reasoning.Failed(reasoning.OutcomeRejected, Name, model,
+			detail+": the credential was not accepted")
+	case status == http.StatusNotFound:
+		return reasoning.Failed(reasoning.OutcomeRejected, Name, model,
+			detail+": the model identifier is not one this provider serves")
+	case status >= 400:
+		return reasoning.Failed(reasoning.OutcomeRejected, Name, model, detail)
+	default:
+		return reasoning.Failed(reasoning.OutcomeOutage, Name, model, detail)
+	}
+}
+
+func errorMessage(payload []byte) string {
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return ""
+	}
+	switch {
+	case envelope.Error.Message != "" && envelope.Error.Code != "":
+		return envelope.Error.Code + " " + envelope.Error.Message
+	case envelope.Error.Message != "":
+		return envelope.Error.Message
+	default:
+		return envelope.Error.Code
+	}
+}
+
+func transportFailure(model string, cause error) error {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return reasoning.FailedBecause(reasoning.OutcomeTimeout, Name, model,
+			"the round's deadline was reached before the provider answered", cause)
+	case errors.Is(cause, context.Canceled):
+		return reasoning.FailedBecause(reasoning.OutcomeTimeout, Name, model,
+			"the investigation was cancelled while waiting for the provider", cause)
+	}
+
+	var timeout net.Error
+	if errors.As(cause, &timeout) && timeout.Timeout() {
+		return reasoning.FailedBecause(reasoning.OutcomeTimeout, Name, model,
+			"the provider did not answer within this deployment's request timeout", cause)
+	}
+	return reasoning.FailedBecause(reasoning.OutcomeOutage, Name, model,
+		"the provider could not be reached", cause)
 }
 
 // Options is what a caller may put in place of the real thing. There is exactly one entry and it
@@ -90,16 +194,14 @@ const retryBackoff = 500 * time.Millisecond
 // rejected identically every time, and a refusal or malformed answer is the caller's to
 // judge. The call is deliberately non-streamed: this vendor reports token usage in one
 // body on a non-streaming call, while on a streamed call the figures arrive in a final
-// chunk this adapter would have to assume was sent. A cost figure that is silently
-// absent is worse than a slower call. And because this vendor offers a JSON output MODE
-// rather than schema enforcement, the schema is rendered into the prompt and the answer
-// is validated by the caller — the guarantee survives, it just costs a retry instead of
-// being free.
+// chunk this adapter would have to assume was sent. Because this vendor offers a JSON
+// output mode rather than schema enforcement, the schema is rendered into the prompt
+// and the caller validates the answer.
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
 	// Checked before anything is encoded or sent. A round whose deadline has already passed must
-	// not spend money on an answer nobody is waiting for, and the transport cannot be relied on to
+	// not continue an answer nobody is waiting for, and the transport cannot be relied on to
 	// notice: it is asked to send a request, not to decide whether one is still wanted.
 	if err := ctx.Err(); err != nil {
 		return reasoning.Completion{}, transportFailure(prompt.Model, err)

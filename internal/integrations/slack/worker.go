@@ -428,9 +428,6 @@ func (w Worker) retry(ctx context.Context, reply Reply, note string) {
 // backoff is bounded exponential with jitter. The jitter matters: a Slack outage fails every
 // reply at once, and without it they would all come back at once too.
 func backoff(attempts int) time.Duration {
-	wait := retryBase << min(attempts, 6)
-	if wait > retryCeiling {
-		wait = retryCeiling
-	}
+	wait := min(retryBase<<min(attempts, 6), retryCeiling)
 	return wait + time.Duration(rand.Int64N(int64(wait/2)+1))
 }

@@ -479,6 +479,63 @@ func TestAgentRunOwnsTheOnlyOrchestrationLoop(t *testing.T) {
 	}
 }
 
+func TestInvestigationRuntimeHasNoRetiredBillingOrPolicyMachinery(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{
+		filepath.Join(moduleRoot, "internal", "investigation"),
+		filepath.Join(moduleRoot, "internal", "app"),
+		filepath.Join(moduleRoot, "internal", "store", "postgres"),
+		filepath.Join(moduleRoot, "api", "openapi.yaml"),
+		filepath.Join(moduleRoot, "docs", "api", "openapi.yaml"),
+		filepath.Join(moduleRoot, "test", "eval"),
+	}
+	forbidden := []string{
+		"type Spend struct", "MicroCents", "type Tariff struct", "type Rate struct",
+		"type Consent struct", "type DeploymentResolver interface",
+		"type StaticDeploymentResolver", "func ContextBudget", "contextWindows",
+		"func AgentRevision", "spend_micro_cents", "oc.reasoning.spend", "- spend",
+	}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() {
+			assertNoRetiredInvestigationTerms(t, path, forbidden)
+			continue
+		}
+		err = filepath.WalkDir(path, func(candidate string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || strings.HasSuffix(candidate, "_test.go") ||
+				(!strings.HasSuffix(candidate, ".go") &&
+					!strings.HasSuffix(candidate, ".json") && !strings.HasSuffix(candidate, ".sql")) {
+				return nil
+			}
+			assertNoRetiredInvestigationTerms(t, candidate, forbidden)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertNoRetiredInvestigationTerms(t *testing.T, path string, forbidden []string) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, term := range forbidden {
+		if strings.Contains(string(body), term) {
+			t.Errorf("%s still contains retired Investigation term %q", path, term)
+		}
+	}
+}
+
 func takesRunState(function *ast.FuncDecl) bool {
 	if function.Type.Params == nil {
 		return false

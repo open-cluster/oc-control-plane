@@ -19,7 +19,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/providers"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/zai"
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
@@ -35,8 +36,6 @@ const (
 	defaultInventoryInterval       = 5 * time.Minute
 	defaultChangeRetentionDays     = 90
 	defaultInvestigationWindowLead = 2 * time.Hour
-	defaultContextThresholdPercent = 50
-	defaultModelSpendCeilingCents  = 500
 )
 
 // Bounds on connections to the shared HTTP surface. Route owners retain their own body and
@@ -164,7 +163,7 @@ func Run(
 	investigationAgent := options.Agent
 	var configuredAgent *agent.Agent
 	if investigationAgent == nil && cfg.ModelProvider != "" {
-		if configuredAgent, err = modelBoundary(cfg, catalog, logger, options); err != nil {
+		if configuredAgent, err = modelBoundary(cfg, logger, options); err != nil {
 			return err
 		}
 	}
@@ -176,11 +175,7 @@ func Run(
 		configuredAgent.Logger = logger
 		configuredAgent.MaxToolRuns = options.MaxToolRuns
 		configuredAgent.MaxTurns = options.MaxTurns
-		configuredAgent.ContextBudget = agent.ContextBudget(cfg.ModelName, 0,
-			defaultContextThresholdPercent)
-		configuredAgent.ContextCeiling = agent.ContextCeiling(cfg.ModelName, 0)
-		configuredAgent.ModelName = cfg.ModelName
-		configuredAgent.SpendCeilingMicroCents = microCentsOf(defaultModelSpendCeilingCents)
+		configuredAgent.ContextWindowTokens = cfg.ModelContextWindowTokens
 		investigationAgent = configuredAgent
 	}
 
@@ -212,44 +207,43 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 }
 
 // modelBoundary validates and builds the configured model-backed agent.
-func modelBoundary(
-	cfg config.Config, catalog integrations.Catalog, logger *slog.Logger, options Options,
-) (*agent.Agent, error) {
+func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*agent.Agent, error) {
 	deployment := agent.Deployment{
-		Provider:               cfg.ModelProvider,
-		Model:                  cfg.ModelName,
-		Effort:                 agent.Effort(options.ModelEffort),
-		BaseURL:                options.ModelBaseURL,
-		Credential:             agent.Secret(cfg.ModelKey),
-		SpendCeilingMicroCents: microCentsOf(defaultModelSpendCeilingCents),
+		Provider:   cfg.ModelProvider,
+		Model:      cfg.ModelName,
+		Effort:     agent.Effort(options.ModelEffort),
+		BaseURL:    options.ModelBaseURL,
+		Credential: agent.Secret(cfg.ModelKey),
 	}.WithDefaults()
 	if err := deployment.Validate(); err != nil {
 		return nil, err
 	}
 	model := options.Model
+
 	if model == nil {
 		var openErr error
-		model, openErr = providers.Open(deployment, providers.Options{})
+		switch deployment.Provider {
+		case anthropic.Name:
+			model, openErr = anthropic.New(deployment, anthropic.Options{})
+		case zai.Name:
+			model, openErr = zai.New(deployment, zai.Options{})
+		default:
+			return nil, fmt.Errorf("%q is not a model provider this build serves; it serves [%s, %s]",
+				deployment.Provider, anthropic.Name, zai.Name)
+		}
 		if openErr != nil {
 			return nil, openErr
 		}
 	}
-	built, err := agent.NewAgent(deployment, model,
-		agent.DefaultTariff(), agent.ConsentTo(cfg.ModelProvider))
+	built, err := agent.NewAgent(deployment, model)
 	if err != nil {
 		return nil, err
 	}
-	revision := agent.AgentRevision(catalog.Tools())
-	built.Instrument(agent.NewTelemetry(logger, revision))
+	built.Instrument(agent.NewTelemetry(logger))
 	logger.Info("model boundary configured",
-		slog.String("deployment", deployment.String()),
-		slog.String("agent_revision", revision))
+		slog.String("deployment", deployment.String()))
 	return built, nil
 }
-
-// microCentsOf converts a configured whole-cent figure into the integer micro-cents
-// every spend record counts in.
-func microCentsOf(cents int) int64 { return int64(cents) * 1_000_000 }
 
 func inventoryInterval(replacement time.Duration) time.Duration {
 	if replacement > 0 {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,61 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
+
+// The offer: which connected sources an investigation may read. Availability derives
+// from each Integration's verified grants — fail closed, never a routed subset — and
+// the investigator itself decides which offered sources to actually read.
+
+// selection is one offered integration in the executor's shape.
+type selection struct {
+	integration integrations.Integration
+	tools       []integrations.Tool
+}
+
+// agentCalls translates provider calls into the executor's shape. Invalid arguments
+// remain empty so the attempted call can be refused and recorded as a Tool Run.
+func agentCalls(calls []CompletionCall) []toolCall {
+	translated := make([]toolCall, 0, len(calls))
+	for _, call := range calls {
+		arguments := map[string]any{}
+		if len(call.Arguments) > 0 {
+			_ = json.Unmarshal(call.Arguments, &arguments)
+		}
+		translatedCall := toolCall{ID: call.ID, Tool: call.Name}
+		if call.Name == UpdateHypothesesToolName {
+			translatedCall.Arguments = arguments
+		} else {
+			translatedCall.Purpose, _ = arguments["purpose"].(string)
+			translatedCall.HypothesisID, _ = arguments["hypothesisId"].(string)
+			translatedCall.Arguments, _ = arguments["input"].(map[string]any)
+			if translatedCall.Arguments == nil {
+				translatedCall.Arguments = map[string]any{}
+			}
+		}
+		translated = append(translated, translatedCall)
+	}
+	return translated
+}
+
+// offeredTools filters a definition's tools to those this integration's verified
+// grants support. Fail closed: a tool whose Requires are not all recorded is absent
+// from the investigation's set, never a call that always fails — which is how a pasted
+// bot token stops being offered user-token-only search.
+func offeredTools(
+	definition integrations.Definition, candidate integrations.Integration,
+) []integrations.Tool {
+	// Delegated, never reimplemented. The same rule answers the operator surface's
+	// Tool availability, and two copies of it would let what an operator is shown
+	// disagree with what the investigator may actually call.
+	return integrations.SupportedTools(definition, candidate)
+}
+
+// sortSourcesByName keeps the offer order stable run to run.
+func sortSourcesByName(sources []offeredSource) {
+	sort.SliceStable(sources, func(i, j int) bool {
+		return sources[i].Integration.Name < sources[j].Integration.Name
+	})
+}
 
 const (
 	runTimeout        = 30 * time.Second
@@ -127,12 +183,12 @@ func (r *Agent) execute(
 // cannot erase the reason the run stopped.
 func (r *Agent) persistFailure(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	reason string, spend investigation.Spend,
+	reason string, usage investigation.Usage,
 ) (string, error) {
 	writeCtx, done := terminalWriteWindow(ctx)
 	defer done()
 	reason = boundText(reason, maxRunErrorLength)
-	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, spend); err != nil {
+	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, usage); err != nil {
 		return reason, fmt.Errorf("recording investigation failure: %w", err)
 	}
 	return reason, nil
@@ -159,8 +215,6 @@ func (r *Agent) announce(
 // leak and no prompt surface to review.
 func ceilingProgress(stoppedBy string) string {
 	switch stoppedBy {
-	case investigation.StoppedBySpend:
-		return "Stopping the reads: the investigation reached its spend ceiling"
 	case investigation.StoppedByToolRuns:
 		return "Stopping the reads: the investigation used its read budget"
 	case investigation.StoppedByReasonerTurns:

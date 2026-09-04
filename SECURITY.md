@@ -14,8 +14,8 @@ coordinate remediation privately, and publish advisories only when disclosure is
 - The control plane never accesses customer clusters; the separately deployed Relay does.
 - Credentials arrive through mounted files, are encrypted when recoverable, and are
   excluded from audit details and logs.
-- Operator requests require explicit route permissions; model providers receive evidence
-  only after deployment-level provider consent.
+- Operator requests require explicit route permissions; only the configured model provider
+  receives investigation evidence.
 - Continuous integration runs dependency vulnerability, license, and secret scans using
   pinned tooling and least-privilege workflow permissions.
 
