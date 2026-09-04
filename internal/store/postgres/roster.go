@@ -28,14 +28,12 @@ type RelaySummary struct {
 	Capabilities       []string
 }
 
-// RelayRoster is a page of an organization's relay identities.
 type RelayRoster struct {
 	Relays []RelaySummary
 	Next   string
 	Total  *int
 }
 
-// RelayQuery contains the supported Relay list capabilities.
 type RelayQuery struct {
 	Page           Page
 	Search         string
@@ -58,7 +56,6 @@ var relayOrderings = map[string]struct {
 	"fingerprint":  {"registration.cluster_fingerprint", "text"},
 }
 
-// ListRelays returns a filtered, ordered page of Relay identities.
 func (p *Database) ListRelays(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query RelayQuery,

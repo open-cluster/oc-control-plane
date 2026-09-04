@@ -24,13 +24,11 @@ var (
 	ErrInvalidQuery  = errors.New("query parameters must be scalar")
 )
 
-// Sort is a public field and direction.
 type Sort struct {
 	Field      string
 	Descending bool
 }
 
-// Spec declares one collection's query capabilities.
 type Spec struct {
 	Searchable  bool
 	Sortable    []string
@@ -38,7 +36,6 @@ type Spec struct {
 	Filters     []string
 }
 
-// Query is a parsed collection request.
 type Query struct {
 	Search  string
 	Sort    Sort
@@ -107,7 +104,6 @@ func Parse(values url.Values, spec Spec) (Query, error) {
 	return query, nil
 }
 
-// Refused reports a caller error.
 func Refused(err error) bool {
 	return errors.Is(err, ErrUnknownSort) || errors.Is(err, ErrUnknownFilter) ||
 		errors.Is(err, ErrBadCursor) || errors.Is(err, ErrInvalidLimit) ||

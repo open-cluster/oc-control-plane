@@ -35,6 +35,7 @@ type openAPISchema struct {
 	Maximum              *int                     `yaml:"maximum"`
 	MinLength            *int                     `yaml:"minLength"`
 	MaxLength            *int                     `yaml:"maxLength"`
+	Pattern              string                   `yaml:"pattern"`
 }
 
 type openAPIParameter struct {
@@ -288,8 +289,9 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 	if limit.Minimum == nil || *limit.Minimum != 1 || limit.Maximum == nil || *limit.Maximum != 200 {
 		t.Errorf("limit bounds = %v..%v, want 1..200", limit.Minimum, limit.Maximum)
 	}
-	if cursor.MaxLength == nil || *cursor.MaxLength != 512 {
-		t.Errorf("cursor maxLength = %v, want 512", cursor.MaxLength)
+	if cursor.MinLength == nil || *cursor.MinLength != 1 ||
+		cursor.MaxLength == nil || *cursor.MaxLength != 512 {
+		t.Errorf("cursor bounds = %v..%v, want 1..512", cursor.MinLength, cursor.MaxLength)
 	}
 	for _, name := range []string{
 		"IntegrationSearch", "RelaySearch", "IncidentSearch", "ConversationSearch",
@@ -298,6 +300,12 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 		if search.MinLength == nil || *search.MinLength != 1 ||
 			search.MaxLength == nil || *search.MaxLength != 256 {
 			t.Errorf("%s bounds = %v..%v, want 1..256", name, search.MinLength, search.MaxLength)
+		}
+	}
+	for _, name := range []string{"RelayVersionFilter", "RelayCapabilityFilter"} {
+		filter := document.Components.Parameters[name].Schema
+		if filter.Pattern != `^\S(?:.*\S)?$` {
+			t.Errorf("%s pattern = %q, want no surrounding whitespace", name, filter.Pattern)
 		}
 	}
 }

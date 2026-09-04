@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -188,6 +189,7 @@ func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request)
 			permissions = append(permissions, string(permission))
 		}
 	}
+	slices.Sort(permissions)
 	permissions, next, err := listing.Cut(permissions, query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})

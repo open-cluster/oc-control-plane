@@ -2,11 +2,28 @@ package controlplane
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+func TestEffectivePermissionsUseTheirDeclaredOrder(t *testing.T) {
+	plane := startIntegrationPlane(t)
+	status, body := plane.call(t, http.MethodGet,
+		plane.base(surfaceOrg)+"/permissions?limit=200", nil)
+	if status != http.StatusOK {
+		t.Fatalf("listing permissions = %d: %s", status, body)
+	}
+	var page struct {
+		Permissions []string `json:"permissions"`
+	}
+	decodeInto(t, body, &page)
+	if !slices.IsSorted(page.Permissions) {
+		t.Errorf("permissions are not ordered by name: %v", page.Permissions)
+	}
+}
 
 func TestIntegrationListingAppliesDocumentedCapabilities(t *testing.T) {
 	plane := startIntegrationPlane(t)
@@ -43,15 +60,13 @@ func TestIntegrationListingAppliesDocumentedCapabilities(t *testing.T) {
 	if items := list("?search=Alpha"); len(items) != 1 || items[0].ID != alpha.Integration.ID {
 		t.Errorf("search returned %+v", items)
 	}
-	for _, item := range list("?type=kubernetes") {
-		if item.Type != "kubernetes" {
-			t.Errorf("type filter returned %q", item.Type)
-		}
+	typed := list("?type=kubernetes")
+	if len(typed) != 1 || typed[0].Type != "kubernetes" {
+		t.Errorf("type filter returned %+v", typed)
 	}
-	for _, item := range list("?relay=" + plane.relay.registration.String()) {
-		if item.RelayID != plane.relay.registration.String() {
-			t.Errorf("relay filter returned relay %q", item.RelayID)
-		}
+	bound := list("?relay=" + plane.relay.registration.String())
+	if len(bound) != 1 || bound[0].RelayID != plane.relay.registration.String() {
+		t.Errorf("relay filter returned %+v", bound)
 	}
 	disabled := list("?disabled=true")
 	if len(disabled) != 1 || disabled[0].ID != zulu.Integration.ID {

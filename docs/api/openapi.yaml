@@ -1562,6 +1562,7 @@ components:
       description: Opaque resume position returned in the preceding page's next field.
       schema:
         type: string
+        minLength: 1
         maxLength: 512
     Limit:
       name: limit
@@ -1695,18 +1696,22 @@ components:
       name: version
       in: query
       required: false
+      description: Exact Relay version without surrounding whitespace.
       schema:
         type: string
         minLength: 1
         maxLength: 128
+        pattern: ^\S(?:.*\S)?$
     RelayCapabilityFilter:
       name: capability
       in: query
       required: false
+      description: Exact capability identifier without surrounding whitespace.
       schema:
         type: string
         minLength: 1
         maxLength: 128
+        pattern: ^\S(?:.*\S)?$
     IncidentIntegrationFilter:
       name: integrationId
       in: query
