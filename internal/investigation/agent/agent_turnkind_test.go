@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // INCIDENT TURNS AND QUESTION TURNS.
@@ -55,7 +57,7 @@ func TestAQuestionTurnIsNamedAsOneInTheOrientation(t *testing.T) {
 
 func testOrientation() orientation {
 	return orientation{
-		Subject: "checkout latency", Trigger: &Trigger{Title: "checkout latency"},
+		Subject: "checkout latency", Trigger: &investigation.Trigger{Title: "checkout latency"},
 		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
 	}
 }

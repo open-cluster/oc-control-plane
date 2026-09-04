@@ -8,10 +8,28 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
+
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
+
+// Store is the durable state Agent.Run consumes.
+type Store interface {
+	InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error)
+	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error)
+	ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error)
+	WorkloadInventory(context.Context, tenancy.Organization, int) ([]string, error)
+	RecordSource(context.Context, tenancy.Organization, uuid.UUID, investigation.Source) error
+	RecordToolRun(context.Context, tenancy.Organization, uuid.UUID, investigation.ToolRun) error
+	RecordCredentialUnseal(context.Context, tenancy.Organization, uuid.UUID, string) error
+	AppendEvent(context.Context, tenancy.Organization, uuid.UUID, investigation.Event) error
+	ConcludeInvestigation(context.Context, tenancy.Organization, uuid.UUID,
+		investigation.Conclusion, string, investigation.Spend) error
+	FailInvestigation(context.Context, tenancy.Organization, uuid.UUID, string, investigation.Spend) error
+}
 
 // Agent runs investigations against one validated model deployment.
 type Agent struct {
@@ -20,10 +38,9 @@ type Agent struct {
 	rate       Rate
 	telemetry  *Telemetry
 
-	Store                  investigation.Store
+	Store                  Store
 	Catalog                integrations.Catalog
 	Sealer                 seal.Sealer
-	Events                 investigation.EventSink
 	RuntimeTelemetry       *investigation.Telemetry
 	Logger                 *slog.Logger
 	MaxToolRuns            int
@@ -54,192 +71,6 @@ func NewAgent(
 // Instrument attaches the per-call telemetry. Without it the agent still works and
 // emits nothing, which is only right for tests.
 func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
-
-// openSession builds the model transcript and its available Tools.
-func (a *Agent) openSession(
-	_ context.Context, orientation orientation,
-) (*session, error) {
-	runs := 0
-	for _, run := range orientation.Preflight {
-		if run.Ordinal > runs {
-			runs = run.Ordinal
-		}
-	}
-	return &session{
-		agent:       a,
-		task:        taskInstruction(orientation),
-		orientation: renderOrientation(orientation),
-		tools:       exchangeTools(orientation),
-		runs:        runs,
-	}, nil
-}
-
-// session is one investigation's sequential model transcript.
-type session struct {
-	agent       *Agent
-	task        string
-	orientation string
-	tools       []integrations.ToolDefinition
-	turns       []Turn
-	// opening carries a forced-conclusion instruction before the first model turn.
-	opening string
-	// runs is the highest run ordinal fed back so far: the ordinal universe a
-	// conclusion may cite. A maximum rather than a count, so a transcript whose
-	// ordinals are not dense still cites only runs that happened.
-	runs int
-	// spent backs up the loop's spend ceiling at the model boundary.
-	spent investigation.Spend
-}
-
-// Next feeds the previous move's results and asks for the next move.
-func (e *session) next(
-	ctx context.Context, results []toolFeedback, mustConclude bool,
-	reason string,
-) (modelMove, error) {
-	move := modelMove{}
-
-	// The spend-ceiling backstop: the concluding turn is always
-	// allowed, because a partial conclusion costs one more call and refusing it would
-	// turn every reached ceiling into a failure.
-	if ceiling := e.agent.deployment.SpendCeilingMicroCents; ceiling > 0 &&
-		e.spent.MicroCents >= ceiling && !mustConclude {
-		return move, Failed(OutcomeCeilingReached, e.agent.deployment.Provider,
-			e.agent.deployment.Model, fmt.Sprintf(
-				"the investigation has spent %d micro-cents against a ceiling of %d "+
-					"and may only conclude", e.spent.MicroCents, ceiling))
-	}
-
-	e.appendResults(results)
-	forced := mustConclude
-	if forced {
-		e.instruct(concludeInstruction(reason))
-	}
-
-	// One in-deployment retry for an answer that broke its contract, plus one forced
-	// re-ask when a plain answer arrived instead of a call: the same model usually
-	// produces a well-formed move the second time.
-	for attempt := range 2 {
-		completion, err := e.agent.telemetry.complete(
-			ctx, e.agent.model, e.agent.deployment, e.agent.rate, e.prompt(forced))
-		turnSpend := spendOf(e.agent.rate, completion.Usage)
-		move.Spend = move.Spend.Add(turnSpend)
-		e.spent = e.spent.Add(turnSpend)
-		if err != nil {
-			return move, err
-		}
-
-		switch completion.Stop {
-		case StopRefused:
-			return move, Failed(OutcomeRefused, e.agent.deployment.Provider,
-				completion.Model, "the provider's safeguards declined the investigation")
-		case StopTruncated:
-			continue
-		}
-
-		reads, conclude := splitCalls(completion.ToolCalls)
-		// Reads win when both arrive: findings stated while asking for more reads are
-		// findings the reads were meant to establish. The forced turn accepts only the
-		// conclusion.
-		if len(reads) > 0 && !mustConclude {
-			e.remember(completion)
-			move.Calls = agentCalls(reads)
-			return move, nil
-		}
-		if conclude != nil {
-			conclusion, decodeErr := decodeConclusion(conclude.Arguments, e.runs, false)
-			if decodeErr != nil {
-				if attempt == 0 {
-					continue
-				}
-				return move, Failed(OutcomeMalformed, e.agent.deployment.Provider,
-					completion.Model, decodeErr.Error())
-			}
-			move.Conclusion = &conclusion
-			return move, nil
-		}
-
-		// No usable call. A plain answer means the model is done reading: remember the
-		// turn and re-ask once with the conclude tool forced.
-		if attempt == 0 {
-			e.remember(completion)
-			e.instruct(concludeInstruction(reason))
-			forced = true
-			continue
-		}
-	}
-	return move, Failed(OutcomeMalformed, e.agent.deployment.Provider,
-		e.agent.deployment.Model,
-		"the answer was truncated or carried no usable call twice")
-}
-
-// appendResults attaches the newest results to the turn that asked for them.
-func (e *session) appendResults(results []toolFeedback) {
-	if len(results) == 0 {
-		return
-	}
-	rendered := make([]ToolResultTurn, 0, len(results))
-	for _, result := range results {
-		rendered = append(rendered, renderResult(result))
-		if !result.Semantic && result.Run.Ordinal > e.runs {
-			e.runs = result.Run.Ordinal
-		}
-	}
-	if len(e.turns) == 0 {
-		// Results with no assistant turn cannot happen through the loop; keeping them
-		// as a bare turn preserves the transcript's honesty anyway.
-		e.turns = append(e.turns, Turn{Results: rendered})
-		return
-	}
-	e.turns[len(e.turns)-1].Results = append(e.turns[len(e.turns)-1].Results, rendered...)
-}
-
-// instruct appends trailing user text to the newest turn — the forced-conclusion
-// reason, or the re-ask after a plain answer.
-func (e *session) instruct(instruction string) {
-	if len(e.turns) == 0 {
-		e.opening = instruction
-		return
-	}
-	e.turns[len(e.turns)-1].Instruction = instruction
-}
-
-// remember appends the completion as an assistant turn, verbatim where the vendor
-// needs it verbatim.
-func (e *session) remember(completion Completion) {
-	e.turns = append(e.turns, Turn{Assistant: AssistantTurn{
-		Text:  string(completion.Document),
-		Calls: completion.ToolCalls,
-		Raw:   completion.Raw,
-	}})
-}
-
-// prompt renders this turn's request: the frozen preamble, the cached orientation, the
-// transcript, and the tool set. The forced turn withdraws every tool but conclude —
-// the strongest form of "no further reads": a read is not discouraged, it is not
-// offered.
-func (e *session) prompt(forced bool) Prompt {
-	prompt := Prompt{
-		Model: e.agent.deployment.Model,
-		System: []Block{
-			{Text: safetyPolicy, Cache: true},
-			{Text: e.task, Cache: true},
-		},
-		Content:         []Block{{Text: e.orientation, Cache: true}},
-		Tools:           e.tools,
-		Turns:           e.turns,
-		MaxOutputTokens: e.agent.deployment.MaxOutputTokens,
-		Effort:          e.agent.deployment.Effort,
-	}
-	if e.opening != "" {
-		prompt.Content = append(prompt.Content, Block{Text: e.opening})
-	}
-	if forced {
-		// exchangeTools puts conclude last, so the last definition IS conclude.
-		prompt.Tools = e.tools[len(e.tools)-1:]
-		prompt.ForceTool = ConcludeToolName
-	}
-	return prompt
-}
 
 // exchangeTools generates the native definitions: every offered tool once, then
 // conclude last — the forced concluding turn depends on conclude's position. Definition

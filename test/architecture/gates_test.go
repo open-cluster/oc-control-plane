@@ -438,6 +438,102 @@ func TestReasoningOrchestrationDependsOnNoAdapter(t *testing.T) {
 	}
 }
 
+// Agent.Run owns turn advancement, retries, and limit decisions. A second controller
+// makes contributors reconstruct one state machine across several receivers.
+func TestAgentRunOwnsTheOnlyOrchestrationLoop(t *testing.T) {
+	t.Parallel()
+
+	forbiddenTypes := map[string]bool{"loop": true, "session": true}
+	forbiddenMethods := map[string]bool{"converse": true, "nextmove": true}
+	files := parseProductionFiles(t,
+		filepath.Join(moduleRoot, "internal", "investigation", "agent"))
+
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			switch declared := declaration.(type) {
+			case *ast.GenDecl:
+				for _, specification := range declared.Specs {
+					typeSpec, ok := specification.(*ast.TypeSpec)
+					if ok && forbiddenTypes[strings.ToLower(typeSpec.Name.Name)] {
+						t.Errorf("agent declares %s; Agent.Run must own the only orchestration loop",
+							typeSpec.Name.Name)
+					}
+				}
+			case *ast.FuncDecl:
+				name := strings.ToLower(declared.Name.Name)
+				receiver := strings.ToLower(receiverType(declared))
+				if forbiddenMethods[name] || name == "next" && receiver == "session" {
+					t.Errorf("agent declares %s.%s; Agent.Run must own turn advancement",
+						receiverType(declared), declared.Name.Name)
+				}
+				if receiver == "runstate" {
+					t.Errorf("agent declares behavior on runState; it must remain data-only")
+				}
+				if declared.Name.Name != "Run" && takesRunState(declared) &&
+					resultCount(declared) > 1 {
+					t.Errorf("agent declares controller-shaped helper %s over runState; "+
+						"Agent.Run must own orchestration decisions", declared.Name.Name)
+				}
+			}
+		}
+	}
+}
+
+func takesRunState(function *ast.FuncDecl) bool {
+	if function.Type.Params == nil {
+		return false
+	}
+	for _, parameter := range function.Type.Params.List {
+		if strings.EqualFold(typeExpression(parameter.Type), "runState") {
+			return true
+		}
+	}
+	return false
+}
+
+func resultCount(function *ast.FuncDecl) int {
+	if function.Type.Results == nil {
+		return 0
+	}
+	total := 0
+	for _, result := range function.Type.Results.List {
+		if len(result.Names) == 0 {
+			total++
+		} else {
+			total += len(result.Names)
+		}
+	}
+	return total
+}
+
+// Durable Investigation vocabulary remains visibly owned by the Investigation package.
+func TestAgentDoesNotAliasInvestigationTypes(t *testing.T) {
+	t.Parallel()
+
+	files := parseProductionFiles(t,
+		filepath.Join(moduleRoot, "internal", "investigation", "agent"))
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			declared, ok := declaration.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, specification := range declared.Specs {
+				typeSpec, ok := specification.(*ast.TypeSpec)
+				if !ok || !typeSpec.Assign.IsValid() {
+					continue
+				}
+				selector, ok := typeSpec.Type.(*ast.SelectorExpr)
+				owner, owned := selector.X.(*ast.Ident)
+				if ok && owned && owner.Name == "investigation" {
+					t.Errorf("agent aliases investigation.%s as %s; qualify the durable type at use sites",
+						selector.Sel.Name, typeSpec.Name.Name)
+				}
+			}
+		}
+	}
+}
+
 // vendorModules are the third-party model clients this build may hold. Each one is permitted in
 // exactly one adapter package and nowhere else.
 var vendorModules = []string{"anthropic-sdk-go", "openai", "generative-ai-go", "openrouter"}

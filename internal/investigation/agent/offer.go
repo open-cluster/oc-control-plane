@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // The offer: which connected sources an investigation may read. Availability derives
@@ -30,7 +31,7 @@ func offeredTools(
 }
 
 // sortSourcesByName keeps the offer order stable run to run.
-func sortSourcesByName(sources []OfferedSource) {
+func sortSourcesByName(sources []investigation.OfferedSource) {
 	sort.SliceStable(sources, func(i, j int) bool {
 		return sources[i].Integration.Name < sources[j].Integration.Name
 	})

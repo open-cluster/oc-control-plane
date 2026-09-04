@@ -42,22 +42,94 @@ var errProvenance = errors.New("a tool run could not be recorded")
 // errNoConclusion marks a model that ignored a forced conclusion.
 var errNoConclusion = errors.New("the reasoner did not conclude when required to")
 
+const UpdateHypothesesToolName = "update_hypotheses"
+
+// runState is the private data carried by Agent.Run. It has no behavior so the state
+// machine remains visible in Run.
+type runState struct {
+	organization tenancy.Organization
+	opened       investigation.Investigation
+	offered      []investigation.OfferedSource
+	brief        *investigation.Brief
+	events       *investigation.EventStream
+	credentials  *credentialCache
+	maxRuns      int
+	maxTurns     int
+	budget       int
+	ceiling      int
+	carried      int
+
+	runs               []investigation.ToolRun
+	executedIdentities map[string]int
+	executed           int
+	turns              int
+	spend              investigation.Spend
+
+	task            string
+	orientationText string
+	tools           []integrations.ToolDefinition
+	transcript      []Turn
+	opening         string
+	highestOrdinal  int
+}
+
+type orientation struct {
+	Subject     string
+	Question    string
+	WindowFrom  time.Time
+	WindowUntil time.Time
+	Trigger     *investigation.Trigger
+	Sources     []investigation.OfferedSource
+	Inventory   []string
+	Preflight   []investigation.ToolRun
+	Brief       *investigation.Brief
+}
+
+type toolCall struct {
+	ID           string
+	Tool         string
+	Purpose      string
+	HypothesisID string
+	Arguments    map[string]any
+}
+
+type toolFeedback struct {
+	CallID   string
+	Run      investigation.ToolRun
+	Semantic bool
+}
+
+type modelMove struct {
+	Calls      []toolCall
+	Conclusion *investigation.Conclusion
+}
+
 // Run performs one investigation through a durable terminal result.
 func (r *Agent) Run(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
+	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
 ) error {
-	events := investigation.NewEventStream(r.Events, r.RuntimeTelemetry, organization, opened.ID)
+	events := investigation.NewEventStream(r.Store, r.RuntimeTelemetry, organization, opened.ID)
 	startedAt := time.Now()
+	failRun := func(reason string, spend investigation.Spend) error {
+		safeReason, err := r.persistFailure(ctx, organization, opened.ID, reason, spend)
+		if err != nil {
+			return err
+		}
+		writeCtx, done := terminalWriteWindow(ctx)
+		defer done()
+		r.announce(writeCtx, events, investigation.EventFailed,
+			investigation.FailedPayload(safeReason))
+		return nil
+	}
 
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
-		return r.fail(ctx, organization, opened.ID, events,
-			"the connected sources could not be read", Spend{})
+		return failRun("the connected sources could not be read", investigation.Spend{})
 	}
 	brief := r.conversationBrief(ctx, organization, opened, events)
 	offered := offeredSourcesForConversation(r.Catalog, candidates, brief)
 	if opened.ConversationID != uuid.Nil && brief == nil {
-		var safe []OfferedSource
+		var safe []investigation.OfferedSource
 		for _, source := range offered {
 			conversationProvider := false
 			for _, tool := range source.Tools {
@@ -72,23 +144,22 @@ func (r *Agent) Run(
 		}
 		offered = safe
 	}
-	r.announce(ctx, events, EventStarted, investigation.StartedPayload(opened, len(offered), true))
+	r.announce(ctx, events, investigation.EventStarted,
+		investigation.StartedPayload(opened, len(offered), true))
 	for rank, source := range offered {
-		recorded := Source{
+		recorded := investigation.Source{
 			IntegrationID: source.Integration.ID,
 			Rank:          rank + 1,
 			Reason:        "offered to the autonomous investigator",
 			SelectedAt:    time.Now().UTC(),
 		}
 		if err := r.Store.RecordSource(ctx, organization, opened.ID, recorded); err != nil {
-			return r.fail(ctx, organization, opened.ID, events,
-				"the offer could not be recorded", Spend{})
+			return failRun("the offer could not be recorded", investigation.Spend{})
 		}
 	}
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
-	loop := &loop{
-		runner:       r,
+	state := &runState{
 		organization: organization,
 		opened:       opened,
 		offered:      offered,
@@ -104,42 +175,360 @@ func (r *Agent) Run(
 		ceiling:            r.ContextCeiling,
 		executedIdentities: map[string]int{},
 	}
-	if loop.maxRuns <= 0 {
-		loop.maxRuns = defaultMaxToolRuns
+	if state.maxRuns <= 0 {
+		state.maxRuns = defaultMaxToolRuns
 	}
-	if loop.maxTurns <= 0 {
-		loop.maxTurns = defaultMaxTurns
+	if state.maxTurns <= 0 {
+		state.maxTurns = defaultMaxTurns
 	}
 	for _, call := range preflightCalls(oriented) {
-		result, _, preflightErr := loop.executeCall(ctx, call)
-		if preflightErr != nil {
-			return r.fail(ctx, organization, opened.ID, events,
-				"preflight provenance could not be recorded", loop.spend)
+		identity := callIdentityOf(call)
+		var run investigation.ToolRun
+		executedRead := false
+		switch {
+		case state.executedIdentities[identity] != 0:
+			run = suppressedRun(opened, call, len(state.runs)+1,
+				state.executedIdentities[identity])
+			r.announce(ctx, events, investigation.EventProgress, investigation.ProgressPayload(
+				"Skipped a repeat of "+offeredName(offered, call.Tool)+
+					"; the earlier read already answers it"))
+		case state.executed >= state.maxRuns:
+			run = droppedRun(opened,
+				investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
+				len(state.runs)+1, fmt.Sprintf(
+					"not executed: the investigation's read budget of %d was exhausted",
+					state.maxRuns))
+			r.announce(ctx, events, investigation.EventProgress, investigation.ProgressPayload(
+				"Did not run "+offeredName(offered, call.Tool)+"; the read budget is exhausted"))
+		default:
+			ordinal := len(state.runs) + 1
+			r.announceToolStarted(ctx, state, call, ordinal)
+			var executeErr error
+			run, executeErr = r.execute(ctx, opened, selections(offered),
+				state.credentials, brief,
+				investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
+			if executeErr != nil {
+				return failRun("preflight provenance could not be recorded", state.spend)
+			}
+			r.announce(ctx, events, investigation.EventToolCompleted,
+				investigation.ToolCompletedPayload(run))
+			r.RuntimeTelemetry.RanTool(run)
+			state.executed++
+			executedRead = true
 		}
-		oriented.Preflight = append(oriented.Preflight, result.Run)
+		run.Purpose = boundText(call.Purpose, eventTextBound)
+		run.HypothesisID = boundText(call.HypothesisID, eventTextBound)
+		if preflightErr := r.recordToolRun(ctx, state, run); preflightErr != nil {
+			return failRun("preflight provenance could not be recorded", state.spend)
+		}
+		if executedRead {
+			state.executedIdentities[identity] = run.Ordinal
+		}
+		oriented.Preflight = append(oriented.Preflight, run)
 	}
-	exchange, err := r.openSession(ctx, oriented)
-	if err != nil {
-		return r.fail(ctx, organization, opened.ID, events, reasonerFailure(err), loop.spend)
-	}
+	state.task = taskInstruction(oriented)
+	state.orientationText = renderOrientation(oriented)
+	state.tools = exchangeTools(oriented)
+	state.carried = orientationTokens(oriented)
 
-	// The orientation is what the transcript opens with, so it is what the turn's own
-	// context starts at. Everything read afterwards adds to it.
-	loop.carried = orientationTokens(oriented)
+	var results []toolFeedback
+	stagnant := 0
+	stoppedBy := ""
+	for turn := 1; ; turn++ {
+		if err := ctx.Err(); err != nil {
+			terminalErr := failRun(failureReason(err), state.spend)
+			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
+			return terminalErr
+		}
+		state.turns++
+		if stoppedBy == "" {
+			switch {
+			case r.SpendCeilingMicroCents > 0 &&
+				state.spend.MicroCents >= r.SpendCeilingMicroCents:
+				stoppedBy = investigation.StoppedBySpend
+			case state.executed >= state.maxRuns:
+				stoppedBy = investigation.StoppedByToolRuns
+			case turn > state.maxTurns:
+				stoppedBy = investigation.StoppedByReasonerTurns
+			case wallClockAlmostOver(ctx, wallClockReserve):
+				stoppedBy = investigation.StoppedByWallClock
+			case stagnant >= maxStagnantTurns:
+				stoppedBy = investigation.StoppedByStagnation
+			case state.ceiling > 0 && state.carried >= state.ceiling:
+				stoppedBy = investigation.StoppedByContext
+			}
+			if stoppedBy != "" {
+				r.announce(ctx, events, investigation.EventProgress,
+					investigation.ProgressPayload(ceilingProgress(stoppedBy)))
+			}
+		}
 
-	conclusion, stoppedBy, err := loop.converse(ctx, exchange)
-	if err != nil {
-		terminalErr := r.fail(ctx, organization, opened.ID, events, failureReason(err), loop.spend)
-		r.RuntimeTelemetry.Ended(time.Since(startedAt), StatusFailed.String(), "")
-		return terminalErr
+		mustConclude := stoppedBy != "" || len(state.offered) == 0
+		reason := concludeReason(stoppedBy, len(state.offered))
+		if ceiling := r.deployment.SpendCeilingMicroCents; ceiling > 0 &&
+			state.spend.MicroCents >= ceiling && !mustConclude {
+			err = Failed(OutcomeCeilingReached, r.deployment.Provider,
+				r.deployment.Model, fmt.Sprintf(
+					"the investigation has spent %d micro-cents against a ceiling of %d "+
+						"and may only conclude", state.spend.MicroCents, ceiling))
+			terminalErr := failRun(failureReason(err), state.spend)
+			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
+			return terminalErr
+		}
+
+		if len(results) > 0 {
+			rendered := make([]ToolResultTurn, 0, len(results))
+			for _, result := range results {
+				rendered = append(rendered, renderResult(result))
+				if !result.Semantic && result.Run.Ordinal > state.highestOrdinal {
+					state.highestOrdinal = result.Run.Ordinal
+				}
+			}
+			if len(state.transcript) == 0 {
+				state.transcript = append(state.transcript, Turn{Results: rendered})
+			} else {
+				last := len(state.transcript) - 1
+				state.transcript[last].Results = append(state.transcript[last].Results, rendered...)
+			}
+		}
+		forced := mustConclude
+		if forced {
+			instruction := concludeInstruction(reason)
+			if len(state.transcript) == 0 {
+				state.opening = instruction
+			} else {
+				state.transcript[len(state.transcript)-1].Instruction = instruction
+			}
+		}
+
+		move := modelMove{}
+		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
+		for attempt := range 2 {
+			completion, completeErr := r.telemetry.complete(
+				moveCtx, r.model, r.deployment, r.rate, modelPrompt(r, state, forced))
+			state.spend = state.spend.Add(spendOf(r.rate, completion.Usage))
+			if completeErr != nil {
+				err = completeErr
+				break
+			}
+
+			switch completion.Stop {
+			case StopRefused:
+				err = Failed(OutcomeRefused, r.deployment.Provider,
+					completion.Model, "the provider's safeguards declined the investigation")
+			case StopTruncated:
+				continue
+			}
+			if err != nil {
+				break
+			}
+
+			reads, conclude := splitCalls(completion.ToolCalls)
+			if len(reads) > 0 && !mustConclude {
+				state.transcript = append(state.transcript, Turn{Assistant: AssistantTurn{
+					Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
+				}})
+				move.Calls = agentCalls(reads)
+				break
+			}
+			if conclude != nil {
+				conclusion, decodeErr := decodeConclusion(
+					conclude.Arguments, state.highestOrdinal, false)
+				if decodeErr != nil {
+					if attempt == 0 {
+						continue
+					}
+					err = Failed(OutcomeMalformed, r.deployment.Provider,
+						completion.Model, decodeErr.Error())
+					break
+				}
+				move.Conclusion = &conclusion
+				break
+			}
+
+			if attempt == 0 {
+				state.transcript = append(state.transcript, Turn{Assistant: AssistantTurn{
+					Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
+				}})
+				instruction := concludeInstruction(reason)
+				state.transcript[len(state.transcript)-1].Instruction = instruction
+				forced = true
+				continue
+			}
+			err = Failed(OutcomeMalformed, r.deployment.Provider, r.deployment.Model,
+				"the answer was truncated or carried no usable call twice")
+		}
+		done()
+		if err == nil && move.Conclusion == nil && len(move.Calls) == 0 {
+			err = Failed(OutcomeMalformed, r.deployment.Provider, r.deployment.Model,
+				"the answer was truncated or carried no usable call twice")
+		}
+		if err != nil {
+			terminalErr := failRun(failureReason(err), state.spend)
+			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
+			return terminalErr
+		}
+		if move.Conclusion != nil {
+			conclusion := *move.Conclusion
+			if citation := checkCitations(conclusion.Findings, len(state.runs)); citation != "" {
+				return failRun(citation, state.spend)
+			}
+			conclusion.Summary = boundedSummary(conclusion.Summary)
+			conclusion.Actions = boundActions(conclusion.Actions)
+
+			writeCtx, done := terminalWriteWindow(ctx)
+			if err := r.Store.ConcludeInvestigation(writeCtx, organization, opened.ID,
+				conclusion, stoppedBy, state.spend); err != nil {
+				done()
+				return fmt.Errorf("recording investigation conclusion: %w", err)
+			}
+			if conclusion.Summary != "" {
+				r.announce(writeCtx, events, investigation.EventAnswerDelta,
+					investigation.AnswerDeltaPayload(conclusion.Summary, true))
+			}
+			r.announce(writeCtx, events, investigation.EventConcluded,
+				investigation.ConcludedPayload(conclusion, stoppedBy))
+			r.Logger.Info("investigation concluded",
+				slog.String("investigation_id", opened.ID.String()),
+				slog.Int("turns", state.turns),
+				slog.Int("tool_runs", state.executed),
+				slog.String("stopped_by", stoppedBy),
+				slog.Int64("spend_microcents", state.spend.MicroCents))
+			done()
+			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusConcluded.String(), stoppedBy)
+			return nil
+		}
+		if mustConclude {
+			terminalErr := failRun(errNoConclusion.Error(), state.spend)
+			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
+			return terminalErr
+		}
+
+		results = make([]toolFeedback, 0, len(move.Calls))
+		freshRead := false
+		for _, call := range move.Calls {
+			result := toolFeedback{CallID: call.ID}
+			fresh := false
+			if call.Tool == UpdateHypothesesToolName {
+				result.Semantic = true
+				result.Run = investigation.ToolRun{
+					Tool: UpdateHypothesesToolName, Outcome: investigation.RunSucceeded,
+					Summary: "hypothesis snapshot accepted",
+				}
+				snapshot, snapshotErr := decodeHypothesisSnapshot(call.Arguments, len(state.runs))
+				if snapshotErr != nil {
+					result.Run.Outcome = investigation.RunFailed
+					result.Run.Error = snapshotErr.Error()
+				} else {
+					result.Run.Content = map[string]any{"accepted": true}
+					r.announce(ctx, events, investigation.EventHypothesesUpdated,
+						investigation.HypothesesUpdatedPayload(snapshot))
+				}
+				state.carried += runTokens(result.Run)
+				results = append(results, result)
+				continue
+			}
+
+			var run investigation.ToolRun
+			executedRead := false
+			if strings.TrimSpace(call.Purpose) == "" {
+				now := time.Now().UTC()
+				run = investigation.ToolRun{
+					Ordinal: len(state.runs) + 1, Tool: call.Tool, Arguments: call.Arguments,
+					HypothesisID: boundText(call.HypothesisID, eventTextBound),
+					WindowFrom:   opened.WindowFrom, WindowUntil: opened.WindowUntil,
+					Outcome:   investigation.RunFailed,
+					Error:     "not executed: an external read requires a purpose",
+					StartedAt: now, FinishedAt: now,
+				}
+			} else {
+				identity := callIdentityOf(call)
+				switch {
+				case state.executedIdentities[identity] != 0:
+					run = suppressedRun(opened, call, len(state.runs)+1,
+						state.executedIdentities[identity])
+					r.announce(ctx, events, investigation.EventProgress,
+						investigation.ProgressPayload(
+							"Skipped a repeat of "+offeredName(offered, call.Tool)+
+								"; the earlier read already answers it"))
+				case state.executed >= state.maxRuns:
+					run = droppedRun(opened,
+						investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
+						len(state.runs)+1, fmt.Sprintf(
+							"not executed: the investigation's read budget of %d was exhausted",
+							state.maxRuns))
+					r.announce(ctx, events, investigation.EventProgress,
+						investigation.ProgressPayload(
+							"Did not run "+offeredName(offered, call.Tool)+
+								"; the read budget is exhausted"))
+				default:
+					ordinal := len(state.runs) + 1
+					r.announceToolStarted(ctx, state, call, ordinal)
+					var executeErr error
+					run, executeErr = r.execute(ctx, opened, selections(offered),
+						state.credentials, brief,
+						investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
+						ordinal)
+					if executeErr != nil {
+						terminalErr := failRun(failureReason(executeErr), state.spend)
+						r.RuntimeTelemetry.Ended(time.Since(startedAt),
+							investigation.StatusFailed.String(), "")
+						return terminalErr
+					}
+					r.announce(ctx, events, investigation.EventToolCompleted,
+						investigation.ToolCompletedPayload(run))
+					r.RuntimeTelemetry.RanTool(run)
+					state.executed++
+					fresh = run.Outcome == investigation.RunSucceeded
+					executedRead = true
+				}
+				run.Purpose = boundText(call.Purpose, eventTextBound)
+				run.HypothesisID = boundText(call.HypothesisID, eventTextBound)
+				if executedRead {
+					state.executedIdentities[identity] = run.Ordinal
+				}
+			}
+			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
+				terminalErr := failRun(failureReason(recordErr), state.spend)
+				r.RuntimeTelemetry.Ended(time.Since(startedAt),
+					investigation.StatusFailed.String(), "")
+				return terminalErr
+			}
+			result.Run = run
+			freshRead = freshRead || fresh
+			state.carried += runTokens(result.Run)
+			results = append(results, result)
+		}
+		if freshRead {
+			stagnant = 0
+		} else {
+			stagnant++
+		}
 	}
-	err = r.conclude(ctx, organization, opened.ID, events, conclusion,
-		len(loop.runs), loop.turns, loop.executed, stoppedBy, loop.spend)
-	if err != nil {
-		return err
+}
+
+// modelPrompt renders the immutable orientation and the transcript Agent.Run owns.
+func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
+	prompt := Prompt{
+		Model: r.deployment.Model,
+		System: []Block{
+			{Text: safetyPolicy, Cache: true},
+			{Text: state.task, Cache: true},
+		},
+		Content:         []Block{{Text: state.orientationText, Cache: true}},
+		Tools:           state.tools,
+		Turns:           state.transcript,
+		MaxOutputTokens: r.deployment.MaxOutputTokens,
+		Effort:          r.deployment.Effort,
 	}
-	r.RuntimeTelemetry.Ended(time.Since(startedAt), StatusConcluded.String(), stoppedBy)
-	return nil
+	if state.opening != "" {
+		prompt.Content = append(prompt.Content, Block{Text: state.opening})
+	}
+	if forced {
+		prompt.Tools = state.tools[len(state.tools)-1:]
+		prompt.ForceTool = ConcludeToolName
+	}
+	return prompt
 }
 
 func preflightCalls(oriented orientation) []toolCall {
@@ -201,212 +590,31 @@ func exactKubernetesIdentifier(value string) bool {
 	return true
 }
 
-// loop is one investigation's execution state: the ordinal space, the
-// duplicate map, the read budget and the spend.
-type loop struct {
-	runner       *Agent
-	organization tenancy.Organization
-	opened       Investigation
-	offered      []OfferedSource
-	brief        *Brief
-	events       *investigation.EventStream
-	credentials  *credentialCache
-	maxRuns      int
-	maxTurns     int
-	// budget is how many tokens of transcript this turn may accumulate before the
-	// concluding turn is forced. Zero means no budget.
-	budget int
-	// ceiling is the total this turn may carry before its conclusion is forced. It sits
-	// above budget so a bounded Conversation orientation still leaves room for Tools and
-	// the concluding answer.
-	ceiling int
-	// carried is the running estimate of what this turn's transcript costs: the
-	// orientation it opened with, plus every result fed back since.
-	carried int
-
-	runs               []ToolRun
-	executedIdentities map[string]int
-	executed           int
-	turns              int
-	spend              Spend
-}
-
-// converse drives the model to its conclusion: moves in, executions out, until
-// the model concludes or a ceiling forces it to.
-func (l *loop) converse(
-	ctx context.Context, exchange *session,
-) (Conclusion, string, error) {
-	var results []toolFeedback
-	stagnant := 0
-	stoppedBy := ""
-
-	for turn := 1; ; turn++ {
-		// Cancellation is checked HERE rather than left to the model boundary to notice.
-		// The run is cancelled when this worker's lease is lost, and whether it actually
-		// stops must not depend on a vendor adapter honouring a context — a worker that
-		// kept reading for an investigation another worker now owns is the exact thing
-		// the fence exists to prevent.
-		if err := ctx.Err(); err != nil {
-			return Conclusion{}, "", err
-		}
-		l.turns++
-		if stoppedBy == "" {
-			if stoppedBy = l.firedCeiling(ctx, turn, stagnant); stoppedBy != "" {
-				l.runner.announce(ctx, l.events, EventProgress,
-					investigation.ProgressPayload(ceilingProgress(stoppedBy)))
-			}
-		}
-		mustConclude := stoppedBy != "" || len(l.offered) == 0
-
-		move, moveErr := l.nextMove(ctx, exchange, results, mustConclude,
-			concludeReason(stoppedBy, len(l.offered)))
-		l.spend = l.spend.Add(move.Spend)
-		if moveErr != nil {
-			return Conclusion{}, "", moveErr
-		}
-
-		if move.Conclusion != nil {
-			return *move.Conclusion, stoppedBy, nil
-		}
-		if mustConclude {
-			return Conclusion{}, "", errNoConclusion
-		}
-
-		// A fresh slice prevents a model adapter from retaining mutable feedback.
-		results = make([]toolFeedback, 0, len(move.Calls))
-		freshRead := false
-		for _, call := range move.Calls {
-			result, fresh, err := l.executeCall(ctx, call)
-			if err != nil {
-				return Conclusion{}, "", err
-			}
-			if fresh {
-				freshRead = true
-			}
-			l.carried += runTokens(result.Run)
-			results = append(results, result)
-		}
-		if freshRead {
-			stagnant = 0
-		} else {
-			stagnant++
-		}
-	}
-}
-
-// executeCall performs one proposed call and records it, whatever became of it: an
-// identical repeat is suppressed with the original named, a call past the read budget
-// is dropped visibly, and everything else executes as a read. The second return says
-// whether the call produced fresh evidence — what the stagnation guard counts.
-func (l *loop) executeCall(
-	ctx context.Context, call toolCall,
-) (toolFeedback, bool, error) {
-	if call.Tool == UpdateHypothesesToolName {
-		snapshot, err := decodeHypothesisSnapshot(call.Arguments, len(l.runs))
-		result := toolFeedback{CallID: call.ID, Semantic: true, Run: ToolRun{
-			Tool: UpdateHypothesesToolName, Outcome: RunSucceeded,
-			Summary: "hypothesis snapshot accepted",
-		}}
-		if err != nil {
-			result.Run.Outcome = RunFailed
-			result.Run.Error = err.Error()
-			// The validation failure is a semantic tool result for the model, not a loop failure.
-			return result, false, nil //nolint:nilerr
-		}
-		result.Run.Content = map[string]any{"accepted": true}
-		l.runner.announce(ctx, l.events, EventHypothesesUpdated,
-			investigation.HypothesesUpdatedPayload(snapshot))
-		return result, false, nil
-	}
-	if strings.TrimSpace(call.Purpose) == "" {
-		now := time.Now().UTC()
-		run := ToolRun{
-			Ordinal: l.nextOrdinal(), Tool: call.Tool, Arguments: call.Arguments,
-			HypothesisID: boundText(call.HypothesisID, eventTextBound),
-			WindowFrom:   l.opened.WindowFrom, WindowUntil: l.opened.WindowUntil,
-			Outcome: RunFailed, Error: "not executed: an external read requires a purpose",
-			StartedAt: now, FinishedAt: now,
-		}
-		if err := l.record(ctx, run); err != nil {
-			return toolFeedback{}, false, err
-		}
-		return toolFeedback{CallID: call.ID, Run: run}, false, nil
-	}
-
-	identity := callIdentityOf(call)
-	fresh := false
-	executedRead := false
-	var run ToolRun
-
-	switch {
-	case l.executedIdentities[identity] != 0:
-		run = suppressedRun(l.opened, call, l.nextOrdinal(), l.executedIdentities[identity])
-		// A suppressed repeat is not a read, so it is not a tool event. It is still worth
-		// saying: somebody watching should see that the agent asked for something it
-		// already had, rather than a silent pause.
-		l.runner.announce(ctx, l.events, EventProgress, investigation.ProgressPayload(
-			"Skipped a repeat of "+l.offeredName(call.Tool)+
-				"; the earlier read already answers it"))
-	case l.executed >= l.maxRuns:
-		run = droppedRun(l.opened, ToolCall{Tool: call.Tool, Arguments: call.Arguments},
-			l.nextOrdinal(), fmt.Sprintf(
-				"not executed: the investigation's read budget of %d was exhausted",
-				l.maxRuns))
-		l.runner.announce(ctx, l.events, EventProgress, investigation.ProgressPayload(
-			"Did not run "+l.offeredName(call.Tool)+"; the read budget is exhausted"))
-	default:
-		ordinal := l.nextOrdinal()
-		l.announceToolStarted(ctx, call, ordinal)
-		var executeErr error
-		run, executeErr = l.runner.execute(ctx, l.opened, selections(l.offered), l.credentials, l.brief,
-			ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
-		if executeErr != nil {
-			return toolFeedback{}, false, executeErr
-		}
-		l.runner.announce(ctx, l.events, EventToolCompleted, investigation.ToolCompletedPayload(run))
-		l.runner.RuntimeTelemetry.RanTool(run)
-		l.executed++
-		// An honest empty answer is still a fresh read — "nothing changed in the
-		// window" is information, and a loop that punished it as stagnation would rush
-		// exactly the investigations that should rule things out.
-		fresh = run.Outcome == RunSucceeded
-		executedRead = true
-	}
-	run.Purpose = boundText(call.Purpose, eventTextBound)
-	run.HypothesisID = boundText(call.HypothesisID, eventTextBound)
-
-	if err := l.record(ctx, run); err != nil {
-		return toolFeedback{}, false, err
-	}
-	if executedRead {
-		l.executedIdentities[identity] = run.Ordinal
-	}
-	return toolFeedback{CallID: call.ID, Run: run}, fresh, nil
-}
-
-func decodeHypothesisSnapshot(arguments map[string]any, runs int) ([]HypothesisResult, error) {
+func decodeHypothesisSnapshot(
+	arguments map[string]any, runs int,
+) ([]investigation.HypothesisResult, error) {
 	document, err := json.Marshal(arguments)
 	if err != nil {
 		return nil, fmt.Errorf("encoding the hypothesis snapshot: %w", err)
 	}
 	var input struct {
 		Hypotheses []struct {
-			ID        string           `json:"id"`
-			Statement string           `json:"statement"`
-			Status    HypothesisStatus `json:"status"`
-			Test      string           `json:"test"`
-			RunRefs   []int            `json:"run_refs"`
+			ID        string                         `json:"id"`
+			Statement string                         `json:"statement"`
+			Status    investigation.HypothesisStatus `json:"status"`
+			Test      string                         `json:"test"`
+			RunRefs   []int                          `json:"run_refs"`
 		} `json:"hypotheses"`
 	}
 	if err := json.Unmarshal(document, &input); err != nil {
 		return nil, fmt.Errorf("the hypothesis snapshot is not the declared document: %w", err)
 	}
-	if len(input.Hypotheses) > MaxHypothesisSnapshotItems {
+	if len(input.Hypotheses) > investigation.MaxHypothesisSnapshotItems {
 		return nil, fmt.Errorf("the hypothesis snapshot has %d items; the limit is %d",
-			len(input.Hypotheses), MaxHypothesisSnapshotItems)
+			len(input.Hypotheses), investigation.MaxHypothesisSnapshotItems)
 	}
 	seen := make(map[string]bool, len(input.Hypotheses))
-	result := make([]HypothesisResult, 0, len(input.Hypotheses))
+	result := make([]investigation.HypothesisResult, 0, len(input.Hypotheses))
 	for _, hypothesis := range input.Hypotheses {
 		if strings.TrimSpace(hypothesis.ID) == "" || strings.TrimSpace(hypothesis.Statement) == "" ||
 			strings.TrimSpace(hypothesis.Test) == "" {
@@ -426,7 +634,7 @@ func decodeHypothesisSnapshot(arguments map[string]any, runs int) ([]HypothesisR
 					hypothesis.ID, run, runs)
 			}
 		}
-		result = append(result, HypothesisResult{
+		result = append(result, investigation.HypothesisResult{
 			ID:        boundText(hypothesis.ID, eventTextBound),
 			Statement: boundText(hypothesis.Statement, eventTextBound), Status: hypothesis.Status,
 			Test: boundText(hypothesis.Test, eventTextBound), RunRefs: hypothesis.RunRefs,
@@ -435,8 +643,8 @@ func decodeHypothesisSnapshot(arguments map[string]any, runs int) ([]HypothesisR
 	return result, nil
 }
 
-func hypothesisStatusAllowed(status HypothesisStatus) bool {
-	for _, allowed := range HypothesisStatuses {
+func hypothesisStatusAllowed(status investigation.HypothesisStatus) bool {
+	for _, allowed := range investigation.HypothesisStatuses {
 		if string(status) == allowed {
 			return true
 		}
@@ -451,8 +659,8 @@ func hypothesisStatusAllowed(status HypothesisStatus) bool {
 // the model chose into a sentence the platform is supposed to have authored, which is the
 // one thing this stream promises never to carry. So a name is only spoken when it is one
 // this deployment actually offers; anything else is described rather than quoted.
-func (l *loop) offeredName(tool string) string {
-	if _, _, offered := toolNamed(selections(l.offered), tool); offered {
+func offeredName(offeredSources []investigation.OfferedSource, tool string) string {
+	if _, _, offered := toolNamed(selections(offeredSources), tool); offered {
 		return tool
 	}
 	return "a tool that is not offered"
@@ -461,72 +669,37 @@ func (l *loop) offeredName(tool string) string {
 // announceToolStarted says which read is about to happen and where it is going, resolving
 // the integration from the offered sources with the same lookup the execution itself uses,
 // so the event names the source the read actually reaches.
-func (l *loop) announceToolStarted(
-	ctx context.Context, call toolCall, ordinal int,
+func (r *Agent) announceToolStarted(
+	ctx context.Context, state *runState, call toolCall, ordinal int,
 ) {
 	integration, name := "", ""
-	if source, _, offered := toolNamed(selections(l.offered), call.Tool); offered {
+	if source, _, offered := toolNamed(selections(state.offered), call.Tool); offered {
 		integration = source.integration.ID.String()
 		name = source.integration.Name
 	}
-	payload := investigation.ToolStartedPayload(ToolRun{
+	payload := investigation.ToolStartedPayload(investigation.ToolRun{
 		Ordinal: ordinal, Tool: call.Tool, Purpose: call.Purpose,
 		HypothesisID: call.HypothesisID, Arguments: call.Arguments,
 	}, integration)
 	if name != "" {
 		payload["integration"] = name
 	}
-	l.runner.announce(ctx, l.events, EventToolStarted, payload)
+	r.announce(ctx, state.events, investigation.EventToolStarted, payload)
 }
 
 // record writes one run into the provenance, in ordinal order.
-func (l *loop) record(ctx context.Context, run ToolRun) error {
-	l.runs = append(l.runs, run)
-	if err := l.runner.Store.RecordToolRun(
-		ctx, l.organization, l.opened.ID, run); err != nil {
+func (r *Agent) recordToolRun(
+	ctx context.Context, state *runState, run investigation.ToolRun,
+) error {
+	state.runs = append(state.runs, run)
+	if run.Ordinal > state.highestOrdinal {
+		state.highestOrdinal = run.Ordinal
+	}
+	if err := r.Store.RecordToolRun(
+		ctx, state.organization, state.opened.ID, run); err != nil {
 		return errProvenance
 	}
 	return nil
-}
-
-// nextOrdinal is the ordinal the next recorded run takes.
-func (l *loop) nextOrdinal() int { return len(l.runs) + 1 }
-
-// firedCeiling names the ceiling that ends the reads now, empty when none has. Checked
-// in cost order; which one fired is recorded, and the model is told why its reads are
-// over — the reason is part of the prompt.
-func (l *loop) firedCeiling(ctx context.Context, turn, stagnant int) string {
-	switch {
-	case l.runner.SpendCeilingMicroCents > 0 &&
-		l.spend.MicroCents >= l.runner.SpendCeilingMicroCents:
-		return StoppedBySpend
-	case l.executed >= l.maxRuns:
-		return StoppedByToolRuns
-	case turn > l.maxTurns:
-		return StoppedByReasonerTurns
-	case wallClockAlmostOver(ctx, wallClockReserve):
-		return StoppedByWallClock
-	case stagnant >= maxStagnantTurns:
-		return StoppedByStagnation
-	// The transcript alone would outgrow the model's working budget. Within one turn
-	// there is no surgery: per-result caps already bound each read, and if the whole
-	// still crosses the line the conclusion is FORCED rather than the turn failing or
-	// being silently cut. One mechanism, at one level, is the whole design.
-	case l.ceiling > 0 && l.carried >= l.ceiling:
-		return StoppedByContext
-	default:
-		return ""
-	}
-}
-
-// nextMove asks the model for its next move under the per-turn deadline.
-func (l *loop) nextMove(
-	ctx context.Context, exchange *session, results []toolFeedback,
-	mustConclude bool, reason string,
-) (modelMove, error) {
-	moveCtx, done := context.WithTimeout(ctx, decideTimeout)
-	defer done()
-	return exchange.next(moveCtx, results, mustConclude, reason)
 }
 
 // failureReason renders a model error as the recordable failure reason: the
@@ -538,55 +711,13 @@ func failureReason(err error) string {
 	return reasonerFailure(err)
 }
 
-// conclude checks the conclusion and writes it, with the ceiling that forced it —
-// empty when the model concluded freely. The scale of the run — turns taken,
-// reads executed — is context-size instrumentation, emitted here because the loop is
-// the only place that knows both numbers.
-func (r *Agent) conclude(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	events *investigation.EventStream, conclusion Conclusion, runs, turns, executed int, stoppedBy string,
-	spend Spend,
-) error {
-	if citation := checkCitations(conclusion.Findings, runs); citation != "" {
-		return r.fail(ctx, organization, id, events, citation, spend)
-	}
-	// Bounded ONCE, here, before anything reads it. The record, the streamed checkpoint and
-	// the terminal event all carry the answer, and bounding them separately is how a reader
-	// watching the stream sees a cut nobody marked while the stored answer says it was cut.
-	conclusion.Summary = boundedSummary(conclusion.Summary)
-	conclusion.Actions = boundActions(conclusion.Actions)
-
-	writeCtx, done := terminalWriteWindow(ctx)
-	defer done()
-	if err := r.Store.ConcludeInvestigation(writeCtx, organization, id,
-		conclusion, stoppedBy, spend); err != nil {
-		return fmt.Errorf("recording investigation conclusion: %w", err)
-	}
-	// The answer as one checkpoint, then the terminal event. Today's providers deliver the
-	// concluding document whole, so there is one delta and it is final; the shape is the
-	// streaming one, so a provider that later delivers it in pieces changes nothing a
-	// reader has to learn.
-	if conclusion.Summary != "" {
-		r.announce(writeCtx, events, EventAnswerDelta,
-			investigation.AnswerDeltaPayload(conclusion.Summary, true))
-	}
-	r.announce(writeCtx, events, EventConcluded, investigation.ConcludedPayload(conclusion, stoppedBy))
-	r.Logger.Info("investigation concluded",
-		slog.String("investigation_id", id.String()),
-		slog.Int("turns", turns),
-		slog.Int("tool_runs", executed),
-		slog.String("stopped_by", stoppedBy),
-		slog.Int64("spend_microcents", spend.MicroCents))
-	return nil
-}
-
 // offeredSources is every enabled candidate whose verified grants support at least one
 // tool, in stable name order: the investigator's whole universe, derived from verified
 // reality.
 func offeredSources(
 	catalog integrations.Catalog, candidates []integrations.Integration,
-) []OfferedSource {
-	var sources []OfferedSource
+) []investigation.OfferedSource {
+	var sources []investigation.OfferedSource
 	for _, candidate := range candidates {
 		definition, known := catalog.ByID(candidate.Type)
 		if !known {
@@ -596,7 +727,7 @@ func offeredSources(
 		if len(tools) == 0 {
 			continue
 		}
-		sources = append(sources, OfferedSource{Integration: candidate, Tools: tools})
+		sources = append(sources, investigation.OfferedSource{Integration: candidate, Tools: tools})
 	}
 	bindDuplicateToolNames(sources)
 	sortSourcesByName(sources)
@@ -607,8 +738,8 @@ func offeredSources(
 // originating thread. Other provider categories remain available, while another
 // installation of the originating provider and its broader reads are not implied.
 func offeredSourcesForConversation(
-	catalog integrations.Catalog, candidates []integrations.Integration, brief *Brief,
-) []OfferedSource {
+	catalog integrations.Catalog, candidates []integrations.Integration, brief *investigation.Brief,
+) []investigation.OfferedSource {
 	if brief == nil || brief.OriginIntegrationID == "" ||
 		brief.OriginChannel == "" || brief.OriginThread == "" {
 		return offeredSources(catalog, candidates)
@@ -634,7 +765,7 @@ func offeredSourcesForConversation(
 		}
 	}
 
-	var scoped []OfferedSource
+	var scoped []investigation.OfferedSource
 	for _, source := range offeredSources(catalog, allowed) {
 		if source.Integration.Type != originType {
 			scoped = append(scoped, source)
@@ -657,7 +788,7 @@ func offeredSourcesForConversation(
 // bindDuplicateToolNames keeps two Integrations of one type independently reachable. A
 // single Integration retains the provider's stable Tool name; only collisions gain the
 // full Integration identity, so model APIs receive deterministic unique names.
-func bindDuplicateToolNames(sources []OfferedSource) {
+func bindDuplicateToolNames(sources []investigation.OfferedSource) {
 	counts := map[string]int{}
 	for _, source := range sources {
 		for _, tool := range source.Tools {
@@ -677,15 +808,17 @@ func bindDuplicateToolNames(sources []OfferedSource) {
 // suppressedRun records an identical repeat that was not re-executed, with an in-band
 // note the model reads in its next turn: where the original result sits, and the
 // allowed next moves.
-func suppressedRun(opened Investigation, call toolCall, ordinal, original int) ToolRun {
+func suppressedRun(
+	opened investigation.Investigation, call toolCall, ordinal, original int,
+) investigation.ToolRun {
 	now := time.Now().UTC()
-	return ToolRun{
+	return investigation.ToolRun{
 		Ordinal:     ordinal,
 		Tool:        call.Tool,
 		Arguments:   call.Arguments,
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
-		Outcome:     RunFailed,
+		Outcome:     investigation.RunFailed,
 		Error: fmt.Sprintf("not executed: identical to run %d, whose result is already "+
 			"above; call a different tool, or the same tool with different arguments, "+
 			"to gather new evidence — or conclude", original),
@@ -731,7 +864,7 @@ func orientationTokens(oriented orientation) int {
 // runTokens estimates what feeding one result back costs. The CONTENT is what fills a
 // transcript — the summary is one line and the payload is everything the vendor returned —
 // so it is what the estimate is mostly of.
-func runTokens(run ToolRun) int {
+func runTokens(run investigation.ToolRun) int {
 	total := EstimateTokens(run.Tool) + EstimateTokens(run.Summary) +
 		EstimateTokens(run.Error)
 	for _, source := range run.Sources {
@@ -751,17 +884,17 @@ func concludeReason(stoppedBy string, offered int) string {
 		return "No readable sources are connected. Conclude from the subject alone."
 	}
 	switch stoppedBy {
-	case StoppedBySpend:
+	case investigation.StoppedBySpend:
 		return "The investigation's spend ceiling was reached."
-	case StoppedByToolRuns:
+	case investigation.StoppedByToolRuns:
 		return "The investigation's read budget was exhausted."
-	case StoppedByReasonerTurns:
+	case investigation.StoppedByReasonerTurns:
 		return "The investigation's turn budget was exhausted."
-	case StoppedByWallClock:
+	case investigation.StoppedByWallClock:
 		return "The investigation's time is nearly over."
-	case StoppedByStagnation:
+	case investigation.StoppedByStagnation:
 		return "Your recent reads produced no new evidence."
-	case StoppedByContext:
+	case investigation.StoppedByContext:
 		return "This turn has filled the working context available to it."
 	default:
 		return ""
@@ -777,15 +910,15 @@ func wallClockAlmostOver(ctx context.Context, reserve time.Duration) bool {
 
 // boundActions keeps proposed actions inside the record's bounds; the decode
 // side enforces the same limits, so this is the runner's own defensive copy of them.
-func boundActions(actions []ActionProposal) []ActionProposal {
-	if len(actions) > MaxConclusionActions {
-		actions = actions[:MaxConclusionActions]
+func boundActions(actions []investigation.ActionProposal) []investigation.ActionProposal {
+	if len(actions) > investigation.MaxConclusionActions {
+		actions = actions[:investigation.MaxConclusionActions]
 	}
-	kept := make([]ActionProposal, 0, len(actions))
+	kept := make([]investigation.ActionProposal, 0, len(actions))
 	for _, action := range actions {
-		action.Title = boundText(action.Title, MaxActionTextLength)
-		action.Rationale = boundText(action.Rationale, MaxActionTextLength)
-		action.Verification = boundText(action.Verification, MaxActionTextLength)
+		action.Title = boundText(action.Title, investigation.MaxActionTextLength)
+		action.Rationale = boundText(action.Rationale, investigation.MaxActionTextLength)
+		action.Verification = boundText(action.Verification, investigation.MaxActionTextLength)
 		kept = append(kept, action)
 	}
 	return kept
@@ -795,8 +928,8 @@ func boundActions(actions []ActionProposal) []ActionProposal {
 // holds. The trigger and the inventory are best-effort — an unreadable one narrows the
 // orientation, never fails the investigation.
 func (r *Agent) orientation(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
-	offered []OfferedSource, brief *Brief,
+	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
+	offered []investigation.OfferedSource, brief *investigation.Brief,
 ) orientation {
 	oriented := orientation{
 		Subject:     opened.Subject,
@@ -821,7 +954,7 @@ func (r *Agent) orientation(
 }
 
 // selections adapts the offered sources to the executor's shape.
-func selections(offered []OfferedSource) []selection {
+func selections(offered []investigation.OfferedSource) []selection {
 	selections := make([]selection, 0, len(offered))
 	for _, source := range offered {
 		selections = append(selections, selection{

@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -46,31 +45,12 @@ type records struct {
 	status      investigation.Status
 	terminalErr error
 	auditErr    error
+	eventErr    error
 	failure     string
 	stoppedBy   string
 	spend       investigation.Spend
 }
 
-type failingEvents struct{}
-
-func (failingEvents) AppendEvent(
-	context.Context, tenancy.Organization, uuid.UUID, investigation.Event,
-) error {
-	return errors.New("event store unavailable")
-}
-
-func (r *records) CreateInvestigation(context.Context, authz.Principal, tenancy.Organization, investigation.NewInvestigation, int) (investigation.Investigation, error) {
-	return investigation.Investigation{}, errors.New("unused")
-}
-func (r *records) Investigation(context.Context, tenancy.Organization, uuid.UUID) (investigation.Investigation, error) {
-	return investigation.Investigation{}, errors.New("unused")
-}
-func (r *records) InvestigationProvenance(context.Context, tenancy.Organization, uuid.UUID) ([]investigation.Source, []investigation.ToolRun, error) {
-	return nil, nil, errors.New("unused")
-}
-func (r *records) QueryInvestigations(context.Context, authz.Principal, tenancy.Organization, investigation.Query) (investigation.List, error) {
-	return investigation.List{}, errors.New("unused")
-}
 func (r *records) RecordSource(_ context.Context, _ tenancy.Organization, _ uuid.UUID, source investigation.Source) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -107,9 +87,6 @@ func (r *records) TriggerIncident(context.Context, tenancy.Organization, uuid.UU
 	}
 	return r.trigger, nil
 }
-func (r *records) OpenTriggers(context.Context, tenancy.Organization, int) ([]investigation.Trigger, error) {
-	return nil, errors.New("unused")
-}
 func (r *records) InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error) {
 	return []integrations.Integration{r.candidate}, nil
 }
@@ -124,6 +101,11 @@ func (r *records) WorkloadInventory(context.Context, tenancy.Organization, int) 
 }
 func (r *records) ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error) {
 	return r.brief, nil
+}
+func (r *records) AppendEvent(
+	context.Context, tenancy.Organization, uuid.UUID, investigation.Event,
+) error {
+	return r.eventErr
 }
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {
 	t.Helper()
@@ -399,12 +381,14 @@ func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
 
 func TestRunDurablyRecordsRefusalAndTruncation(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		stop      Stop
-		wantCalls int
+		name        string
+		stop        Stop
+		wantCalls   int
+		wantFailure string
 	}{
 		{name: "refusal", stop: StopRefused, wantCalls: 1},
-		{name: "truncation", stop: StopTruncated, wantCalls: 2},
+		{name: "truncation", stop: StopTruncated, wantCalls: 2,
+			wantFailure: "truncated or carried no usable call twice"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &records{}
@@ -421,7 +405,8 @@ func TestRunDurablyRecordsRefusalAndTruncation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if store.status != investigation.StatusFailed || model.calls != test.wantCalls ||
-				store.spend.InputTokens != int64(7*test.wantCalls) {
+				store.spend.InputTokens != int64(7*test.wantCalls) ||
+				test.wantFailure != "" && !strings.Contains(store.failure, test.wantFailure) {
 				t.Fatalf("status=%s calls=%d spend=%+v", store.status, model.calls, store.spend)
 			}
 		})
@@ -683,7 +668,7 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 }
 
 func TestRunKeepsADurableConclusionWhenEventsFail(t *testing.T) {
-	store := &records{}
+	store := &records{eventErr: errors.New("event store unavailable")}
 	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
@@ -693,7 +678,6 @@ func TestRunKeepsADurableConclusionWhenEventsFail(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	agent.Events = failingEvents{}
 	organization, _ := tenancy.NewOrganization("org-test")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
