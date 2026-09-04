@@ -160,6 +160,13 @@ func TestRelayFleet(t *testing.T) {
 			        'historical-protocol', '0.0.1', '[]'::jsonb)`, surfaceOrg); err != nil {
 			t.Fatal(err)
 		}
+		if _, err = database.Exec(ctx, `
+			UPDATE relay_registration
+			SET last_seen_at = CASE WHEN registration_id = $2 THEN now() - interval '2 minutes'
+			                        ELSE now() - interval '1 minute' END
+			WHERE org_id = $1`, surfaceOrg, plane.relay.registration); err != nil {
+			t.Fatal(err)
+		}
 		status, body = plane.call(t, http.MethodGet, relays+"?search=historical-protocol", nil)
 		if status != http.StatusOK {
 			t.Fatalf("listing historical relay = %d: %s", status, body)
@@ -251,22 +258,29 @@ func TestRelayFleet(t *testing.T) {
 			relays+"?sort=-credentialDigest", nil); status != http.StatusBadRequest {
 			t.Errorf("sorting by an unoffered field = %d, want 400", status)
 		}
-		for _, field := range []string{
-			"registeredAt", "-registeredAt", "lastSeenAt", "version", "-fingerprint",
-		} {
+		for _, field := range []string{"registeredAt", "lastSeenAt", "version", "fingerprint"} {
+			var ascending, descending fleetBody
 			status, body := plane.call(t, http.MethodGet, relays+"?sort="+field, nil)
 			if status != http.StatusOK {
-				t.Errorf("sort=%s = %d: %s", field, status, body)
+				t.Fatalf("sort=%s = %d: %s", field, status, body)
 			}
-		}
-		var ascending, descending fleetBody
-		_, body := plane.call(t, http.MethodGet, relays+"?sort=fingerprint", nil)
-		decodeInto(t, body, &ascending)
-		_, body = plane.call(t, http.MethodGet, relays+"?sort=-fingerprint", nil)
-		decodeInto(t, body, &descending)
-		if len(ascending.Items) < 2 || len(ascending.Items) != len(descending.Items) ||
-			ascending.Items[0].RegistrationID != descending.Items[len(descending.Items)-1].RegistrationID {
-			t.Errorf("fingerprint sort did not reverse the rows")
+			decodeInto(t, body, &ascending)
+			status, body = plane.call(t, http.MethodGet, relays+"?sort=-"+field, nil)
+			if status != http.StatusOK {
+				t.Fatalf("sort=-%s = %d: %s", field, status, body)
+			}
+			decodeInto(t, body, &descending)
+			if len(ascending.Items) < 2 || len(ascending.Items) != len(descending.Items) {
+				t.Fatalf("sort=%s returned %d rows ascending and %d descending",
+					field, len(ascending.Items), len(descending.Items))
+			}
+			for index := range ascending.Items {
+				opposite := len(descending.Items) - index - 1
+				if ascending.Items[index].RegistrationID != descending.Items[opposite].RegistrationID {
+					t.Errorf("sort=%s did not reverse the rows", field)
+					break
+				}
+			}
 		}
 	})
 

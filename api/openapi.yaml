@@ -1033,7 +1033,7 @@ components:
       in: query
       required: false
       description: Opaque resume position returned in the preceding page's next field.
-      schema: { type: string, maxLength: 512 }
+      schema: { type: string, minLength: 1, maxLength: 512 }
     Limit:
       name: limit
       in: query
@@ -1107,12 +1107,14 @@ components:
       name: version
       in: query
       required: false
-      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Exact Relay version without surrounding whitespace.
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: '^\S(?:.*\S)?$' }
     RelayCapabilityFilter:
       name: capability
       in: query
       required: false
-      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Exact capability identifier without surrounding whitespace.
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: '^\S(?:.*\S)?$' }
     IncidentIntegrationFilter:
       name: integrationId
       in: query

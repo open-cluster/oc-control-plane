@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Page identifies a bounded continuation request.
 type Page struct {
 	Limit int
 	After string
@@ -22,7 +21,6 @@ const (
 	maxPageSize     = 200
 )
 
-// ErrBadCursor reports a resume point that did not come from a previous page.
 var ErrBadCursor = errors.New("cursor is not a page position")
 
 func pageLimit(asked int) int {
