@@ -105,11 +105,9 @@ func serve(ctx context.Context, process assembled) error {
 	// HTTP drain spend the whole budget and leave relay sessions none of it, and would make a
 	// shutdown take twice as long as it was configured to.
 	var stopped sync.WaitGroup
-	stopped.Add(1)
-	go func() {
-		defer stopped.Done()
+	stopped.Go(func() {
 		relays.stop(defaultShutdownTimeout, logger)
-	}()
+	})
 
 	err = server.Shutdown(drainCtx)
 	stopped.Wait()
@@ -197,12 +195,6 @@ func operatorRouter(process assembled) (http.Handler, error) {
 }
 
 // operatorIdentity assembles who may reach the operator surface.
-//
-// Everything that could be wrong with the identity configuration is refused HERE, at startup,
-// where the person who wrote it is still the person reading the error: a bootstrap role that
-// names no role this build has, a key of the wrong length, a console on a plaintext origin. A
-// deployment that started with an unusable identity configuration would look healthy and
-// authenticate nobody, and this is the last moment anyone can be told.
 func operatorIdentity(process assembled) (identity.Handlers, error) {
 	cfg := process.config
 	handlers := identity.Handlers{

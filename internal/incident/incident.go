@@ -1,21 +1,3 @@
-// Package incident owns the operational incident AlertEvents group into.
-//
-// An Incident is one durable operational incident: the thing twenty notifications about one
-// failure are twenty notifications ABOUT. It is provisional grouping and not causal truth, which
-// is why it may be merged without anything being rewritten, and why every incident records the
-// basis on which it was grouped.
-//
-// THE GROUPING IDENTITY IS THE SOURCE'S OWN. Nothing here is inferred from a AlertEvent's labels.
-// Deriving an incident from what an alert says about a namespace or a pod would mean deciding that
-// the object one system names one way and another names another are the same thing — canonical
-// resource identity, which does not exist in this product and has one line of design behind it.
-// What this uses instead is what the customer's own alerting already decided belonged together,
-// and a source that supplies no such identity gets one incident per alert: a wrong split leaves a
-// redundant record, and a wrong merge produces an investigation with an incoherent scope.
-//
-// This package declares its own Store and does not import persistence, so the capability owns its
-// vocabulary and persistence depends on it (ADR-017). The routes live on the operator surface,
-// which already owns who may reach them; this package owns what they mean.
 package incident
 
 import (
@@ -25,30 +7,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// The refusals this capability produces.
 var (
-	// ErrUnknown reports an incident this organization does not have. It is one answer for "no such
-	// incident" and "that incident is another tenant's", because telling them apart would let a
-	// caller compose path parameters until one of them landed.
-	ErrUnknown = errors.New("incident incident unknown")
-	// ErrMerge reports a merge that would not mean anything. It names which of the reasons applies,
-	// because the caller is an operator correcting a grouping and a refusal nobody can act on is a
-	// defect.
-	ErrMerge = errors.New("these incidents cannot be merged")
-	// ErrAlreadyInvestigated reports an incident that already has its Investigation. Repeated
-	// notifications about one failure must not fragment into many cases, so the second request is
-	// refused rather than quietly opening one.
-	ErrAlreadyInvestigated = errors.New("this incident already has an investigation")
-	// ErrBadCursor reports a resume point that did not come from a previous page. It is this
-	// package's value rather than persistence's, so a handler can recognise it without importing
-	// the layer that produced it (ADR-017).
+	ErrUnknown   = errors.New("incident unknown")
+	ErrMerge     = errors.New("these incidents cannot be merged")
 	ErrBadCursor = errors.New("cursor is not a page position")
 )
 
-// Status is where an incident has got to. There are two: it is happening, or every AlertEvent in it
-// stopped. Anything richer belongs to the Investigation attached to it.
-//
-// The values are persisted and frozen by a gate in test/architecture.
 type Status int16
 
 const (
@@ -67,8 +31,6 @@ func (s Status) String() string {
 	}
 }
 
-// ParseStatus reads a status a caller asked to filter by. It is exact rather than forgiving: a
-// filter resolved from a value nobody typed narrows a listing in a way nobody chose.
 func ParseStatus(value string) (Status, bool) {
 	switch value {
 	case "open":
