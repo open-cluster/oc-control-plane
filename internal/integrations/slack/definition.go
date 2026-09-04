@@ -14,14 +14,6 @@ const (
 	SearchMessages     = "slack.search_messages"
 )
 
-// Definition is what this provider exports to the catalog. Metadata mirrors the seeded
-// integration_type row; a test proves the two agree.
-//
-// The client is passed in because its base URL is deployment configuration: production
-// reaches the vendor, a test reaches a fake, and the code in between is the same either
-// way — that is the provider transport seam. The installer and the signing secret are the
-// same kind of thing: a deployment that registered a Slack app offers one-click install
-// and can receive events, and one that did not keeps the pasted-token form and says so.
 func Definition(client *Client, installer *Installer, servesEvents bool) integrations.Definition {
 	connection := connect(installer, client)
 	return integrations.Definition{
@@ -70,8 +62,10 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 					Recorded: true,
 				},
 			},
-			RequiresRelay: false, ReceivesWebhooks: false, SupportsConnect: connection != nil,
-			Tools: tools(client),
+			RequiresRelay:    false,
+			ReceivesWebhooks: false,
+			SupportsConnect:  connection != nil,
+			Tools:            tools(client),
 		},
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			return probe(ctx, client, input.Credential)

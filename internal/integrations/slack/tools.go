@@ -9,19 +9,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The four read-only tools. Every bound here is named rather than implied, every
-// truncation is flagged honestly: a long thread is read from its newest end with the
-// flag saying so, message authors are resolved to names, and every message carries a
-// permalink an operator can follow.
-
-// The named bounds. The maxima follow the vendor's own page ceilings; the defaults are
-// sized for an investigation reading context, not for export.
 const (
 	maxChannelsPerList     = 200
 	defaultChannelsPerList = 100
-	// maxChannelPages bounds the listing walk. Five vendor pages of 200 cover any
-	// workspace an investigation plausibly reads; past that the result flags truncation
-	// rather than scanning on.
 	maxChannelPages        = 5
 	maxMessagesPerRead     = 200
 	defaultMessagesPerRead = 100

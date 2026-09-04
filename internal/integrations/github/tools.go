@@ -10,25 +10,15 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The listing tools of the causal workflow: find the repository, read its history.
-// Repositories are addressed by their stable numeric ids — never by name, which a
-// rename would break mid-incident — and every bound is named, with truncation flagged
-// from the vendor's own pagination. The deep reads live in tools_reads.go.
-
-// The named bounds. GitHub's page ceiling is 100 everywhere; the defaults are sized for
-// an investigation reading change context, not for export.
 const (
 	maxItemsPerRead     = 100
 	defaultRepositories = 50
 	defaultCommits      = 30
-	// maxRepositoryPages bounds the listing walk a name filter runs inside, so a match
-	// beyond page one is still found without scanning a giant installation forever.
-	maxRepositoryPages = 5
+	maxRepositoryPages  = 5
 )
 
 // tools is the declared set of bounded GitHub reads:
-// the eight steps of the causal workflow, from finding the repository to reading what
-// shipped.
+// the eight steps of the causal workflow, from finding the repository to reading what shipped.
 func tools(app *App, client *Client) []integrations.Tool {
 	return []integrations.Tool{
 		listRepositoriesTool(app, client),
