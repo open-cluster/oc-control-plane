@@ -13,11 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// Which vendor and which model answer, as configuration rather than as constants.
-//
-// A model is a deployment choice that moves with availability and regional obligations. Keeping
-// it in configuration avoids compiling an operational choice into a release.
-
 // Secret is a credential that must never be rendered.
 //
 // String, GoString and the JSON form are all the same fixed placeholder, so a credential cannot
@@ -41,9 +36,7 @@ func (s Secret) Empty() bool                { return strings.TrimSpace(string(s)
 type Deployment struct {
 	// Provider names the adapter that serves this deployment.
 	Provider string
-	// Model is the exact identifier, complete as written. No suffix is appended: a constructed
-	// identifier is a 404 at best and a different model at worst.
-	Model string
+	Model    string
 	// Effort is how hard to think, the primary resource and latency lever.
 	Effort Effort
 	// MaxOutputTokens bounds one answer. It is set generously where thinking and answer share the
@@ -63,16 +56,10 @@ type Deployment struct {
 	MaxAttempts int
 }
 
-// Bounds that are safe rather than ambitious. A deployment that names none of them gets these,
-// and every one of them is a restriction rather than a target.
 const (
 	defaultMaxOutputTokens = 32_000
-	// Sized by measurement rather than by taste. A model that thinks before answering has been
-	// observed taking over two minutes on a single conclusion, and a timeout that fires on a
-	// provider which is working reports an outage that never happened — which sends someone to
-	// look at a healthy vendor while the real answer was one minute away.
-	defaultRequestTimeout = 5 * time.Minute
-	defaultMaxAttempts    = 3
+	defaultRequestTimeout  = 5 * time.Minute
+	defaultMaxAttempts     = 3
 )
 
 // WithDefaults fills what an operator did not name. It never loosens what they did.
@@ -125,8 +112,7 @@ func (d Deployment) Validate() error {
 	return nil
 }
 
-// String renders a deployment for a log line. The credential is a Secret, so it cannot appear
-// here even if this method is later changed to print the whole struct.
+// String renders a deployment for a log line. The credential is a Secret, so it cannot appear here.
 func (d Deployment) String() string {
 	return fmt.Sprintf("%s/%s effort=%s max_output=%d", d.Provider, d.Model, d.Effort,
 		d.MaxOutputTokens)
@@ -136,8 +122,7 @@ func (d Deployment) String() string {
 //
 // It is deliberately small. A provider does not hold a conversation, manage an investigation,
 // decide when to stop or interpret evidence: it is handed a rendered prompt and a declared output
-// schema, and returns a document. Everything else in this package is the same for every vendor,
-// which is what keeps a second adapter to one directory.
+// schema, and returns a document.
 type Model interface {
 	// Complete asks for one document.
 	//
@@ -312,13 +297,6 @@ func (e Effort) Valid() bool {
 		return false
 	}
 }
-
-// What one call consumed.
-//
-// The distinction this file exists to keep is between a figure of zero and no figure at all. Zero
-// is a measurement — the cache missed. Absent is the lack of one — the provider never said.
-// Collapsing them makes a cache that stopped working indistinguishable from a provider that does
-// not report caching, and the first is an incident while the second is a Tuesday.
 
 // Count is a token figure and whether the provider actually reported it.
 type Count struct {

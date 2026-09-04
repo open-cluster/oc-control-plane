@@ -60,9 +60,6 @@ func (h Handlers) Routes() authz.Table {
 			authz.InvestigationRead, http.HandlerFunc(h.read)),
 		authz.Privileged(http.MethodPost, base+"/investigations/{investigation}/cancel",
 			authz.InvestigationCancel, http.HandlerFunc(h.cancel)),
-		// Watching an investigation run is reading it. There is no second permission,
-		// because the stream says nothing the finished record will not say — it says it
-		// while there is still something to watch.
 		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/events",
 			authz.InvestigationRead, http.HandlerFunc(h.streamEvents)),
 	}
