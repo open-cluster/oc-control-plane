@@ -203,8 +203,6 @@ func (p *Database) Integration(
 	return found, nil
 }
 
-// QueryIntegrations returns an organization's Integrations, narrowed and paged by the
-// database, newest first.
 func (p *Database) QueryIntegrations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query integrations.Query,
@@ -216,8 +214,18 @@ func (p *Database) QueryIntegrations(
 	if err != nil {
 		return integrations.List{}, err
 	}
+	sortField := query.Sort
+	descending := query.Descending
+	if sortField == "" {
+		sortField = "createdAt"
+		descending = true
+	}
+	if sortField != "createdAt" {
+		return integrations.List{}, fmt.Errorf("integration listing cannot order by %q", sortField)
+	}
+	scope := sortScope(sortField, descending)
 	limit := pageLimit(query.Page.Limit)
-	cursorAt, cursorID, err := decodeCursor(query.Page.After)
+	cursorAt, cursorID, err := decodeTimeSortCursor(query.Page.After, scope)
 	if err != nil {
 		return integrations.List{}, integrations.ErrBadCursor
 	}
@@ -247,18 +255,28 @@ func (p *Database) QueryIntegrations(
 	}
 	if cursorID != nil {
 		arguments = append(arguments, *cursorAt, *cursorID)
+		comparison := ">"
+		if descending {
+			comparison = "<"
+		}
 		where = append(where, fmt.Sprintf(
-			"(created_at, integration_id) < ($%d, $%d)", len(arguments)-1, len(arguments)))
+			"(created_at, integration_id) %s ($%d, $%d)", comparison,
+			len(arguments)-1, len(arguments)))
 	}
 	arguments = append(arguments, limit+1)
+	direction := "ASC"
+	if descending {
+		direction = "DESC"
+	}
 
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT %s
 		  FROM integration
 		 WHERE %s
-		 ORDER BY created_at DESC, integration_id DESC
+		 ORDER BY created_at %s, integration_id %s
 		 LIMIT $%d`,
-		integrationColumns, strings.Join(where, "\n   AND "), len(arguments)), arguments...)
+		integrationColumns, strings.Join(where, "\n   AND "), direction, direction,
+		len(arguments)), arguments...)
 	if err != nil {
 		return integrations.List{}, fmt.Errorf("listing integrations: %w", err)
 	}
@@ -272,7 +290,7 @@ func (p *Database) QueryIntegrations(
 		}
 		if len(list.Integrations) == limit {
 			last := list.Integrations[limit-1]
-			list.Next = encodeCursor(last.CreatedAt, last.ID)
+			list.Next = encodeTimeSortCursor(scope, last.CreatedAt, last.ID)
 			break
 		}
 		list.Integrations = append(list.Integrations, found)

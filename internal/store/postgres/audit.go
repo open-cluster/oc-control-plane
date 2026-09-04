@@ -162,7 +162,7 @@ func (p *Database) AuditEvents(
 	if err != nil {
 		return audit.List{}, err
 	}
-	before, beforeID, err := decodeCursor(page.After)
+	before, beforeID, err := decodeCursor(page.After, "-occurredAt")
 	if err != nil {
 		return audit.List{}, err
 	}
@@ -207,7 +207,7 @@ func (p *Database) AuditEvents(
 			return audit.List{}, fmt.Errorf("scanning an audit event: %w", err)
 		}
 		if len(events) == limit {
-			next = encodeCursor(lastAt, lastID)
+			next = encodeCursor("-occurredAt", lastAt, lastID)
 			break
 		}
 		recorded.ID = id.String()

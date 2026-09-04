@@ -26,7 +26,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/health"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 )
 
 // TestMain establishes goroutine-leak detection for the whole package, so the discipline
@@ -555,14 +555,6 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 	if status, _ := plane.get(t, "/api/v1/session"); status != http.StatusUnauthorized {
 		t.Errorf("GET /api/v1/session = %d, want authentication refusal from the operator router", status)
 	}
-	if status, body := plane.get(t, "/"); status != http.StatusOK ||
-		!strings.Contains(body, "OpenCluster Control Plane") {
-		t.Errorf("GET browser application = %d, body %q", status, body)
-	}
-	if status, body := plane.get(t, "/organizations/local/investigations/example"); status != http.StatusOK || !strings.Contains(body, "OpenCluster Control Plane") {
-		t.Errorf("GET browser deep link = %d, body %q", status, body)
-	}
-
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		plane.baseURL+"/webhooks/v1/integrations/not-an-id/alert-events", strings.NewReader("{}"))
 	if err != nil {
@@ -725,7 +717,7 @@ func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
 	}
 	// A client-supplied identifier must not be trusted: it would let a caller collide two
 	// unrelated requests in the logs.
-	request.Header.Set(health.RequestIDHeader, "attacker-supplied")
+	request.Header.Set(correlation.Header, "attacker-supplied")
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -734,7 +726,7 @@ func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
 	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, response.Body)
 
-	requestID := response.Header.Get(health.RequestIDHeader)
+	requestID := response.Header.Get(correlation.Header)
 	if requestID == "" {
 		t.Fatal("the response must carry a request identifier")
 	}

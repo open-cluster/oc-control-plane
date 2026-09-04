@@ -225,22 +225,14 @@ func boundedRunes(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// Page is a position in a listing, with what the caller narrowed it by.
-//
-// Narrowing happens in the DATABASE. A listing that answered everything and left a console
-// to filter it would be one whose paging lies — page one of a hundred conversations
-// filtered down to three is not three conversations, it is however many of the first
-// hundred matched.
 type Page struct {
-	Limit int
-	After string
-	// Search narrows by subject, case-insensitively. Empty means no narrowing.
-	Search string
-	// Incident narrows to the conversations about one incident incident, which is how two
-	// people looking at the same incident find each other's. Zero means no narrowing.
-	Incident uuid.UUID
-	// State narrows to open or closed conversations. Zero means either.
-	State State
+	Limit      int
+	After      string
+	Sort       string
+	Descending bool
+	Search     string
+	Incident   uuid.UUID
+	State      State
 }
 
 // List is a page of an organization's conversations, most recently active first.

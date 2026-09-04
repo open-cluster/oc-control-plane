@@ -269,7 +269,9 @@ type Page struct {
 
 // Query is what a caller may narrow a listing by. Every field is applied by the database.
 type Query struct {
-	Page Page
+	Page       Page
+	Sort       string
+	Descending bool
 	// Type narrows to one Integration Type; zero means all.
 	Type TypeID
 	// Relay narrows to the Integrations one Relay serves, which is what disabling it would

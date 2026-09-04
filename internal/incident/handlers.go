@@ -5,27 +5,18 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// The routes an operator reads and corrects a grouping through.
-//
-// They live on the operator surface, which already owns who may reach them. This package owns what
-// they mean and what they return.
-
 const (
-	// readTimeout bounds one read, so a query cannot outlive the attention of whoever made it.
-	readTimeout = 15 * time.Second
-	// mergeTimeout is longer because a merge writes, and a write that times out halfway is worse
-	// than one that takes a moment.
+	readTimeout  = 15 * time.Second
 	mergeTimeout = 30 * time.Second
 )
 
@@ -55,19 +46,10 @@ func (h Handlers) Routes() authz.Table {
 	}
 }
 
-// Describe is this capability's contribution to the deployment's self-description.
-//
-// The listing carries the SAME spec value the handler parses with, and the body names the
-// type the handler decodes into, so neither can drift from what is actually served.
-// episodesSpec is what the incident listing accepts.
-//
-// The grouping key is searchable because it is what an operator arrives holding: they were paged
-// by their own alerting, which named the group, and being unable to find the incident by it would
-// mean reading the list.
-var incidentsSpec = table.Spec{
+var incidentsSpec = listing.Spec{
 	Searchable:  true,
 	Sortable:    []string{"lastSeenAt", "firstSeenAt", "title", "alertEventCount"},
-	DefaultSort: table.Sort{Field: "lastSeenAt", Descending: true},
+	DefaultSort: listing.Sort{Field: "lastSeenAt", Descending: true},
 	Filters:     []string{"integrationId", "status"},
 }
 
@@ -76,11 +58,11 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, ok := h.query(writer, request, incidentsSpec)
+	parsedQuery, ok := h.query(writer, request, incidentsSpec)
 	if !ok {
 		return
 	}
-	narrowed, ok := h.narrowing(writer, parsed)
+	narrowed, ok := h.narrowing(writer, parsedQuery)
 	if !ok {
 		return
 	}
@@ -97,9 +79,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range page.Incidents {
 		views = append(views, viewOf(found))
 	}
-	// No total. Counting a cursor-paginated listing costs a second scan of everything the filters
-	// matched, and a null count is worth more than a number somebody would trust.
-	writeJSON(writer, http.StatusOK, table.Answer(views, page.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.Answer(views, page.Next, nil))
 }
 
 func (h Handlers) incident(writer http.ResponseWriter, request *http.Request) {
@@ -119,6 +99,12 @@ func (h Handlers) incident(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request) {
+	query, ok := h.query(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "startedAt"},
+	})
+	if !ok {
+		return
+	}
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -126,7 +112,9 @@ func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	list, err := h.Store.IncidentAlertEvents(ctx, organization, id, pageOf(request))
+	list, err := h.Store.IncidentAlertEvents(ctx, organization, id, AlertEventPage{
+		Limit: query.Limit, After: query.Cursor,
+	})
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -136,7 +124,7 @@ func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request)
 	for _, found := range list.AlertEvents {
 		views = append(views, alertEventViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, table.Answer(views, list.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.Answer(views, list.Next, nil))
 }
 
 // merge records that two incidents an operator is looking at are one incident.
@@ -190,13 +178,7 @@ func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, viewOf(surviving))
 }
 
-// narrowing turns the parsed query into what the store needs, refusing every filter value that
-// could never match.
-//
-// A value nobody serves is REFUSED rather than narrowed to nothing. An empty page is exactly what
-// "this tenant has no resolved incidents" looks like, so a caller who wrote `resolvd` would read a
-// correct-looking answer to a question they did not ask.
-func (h Handlers) narrowing(writer http.ResponseWriter, query table.Query) (Query, bool) {
+func (h Handlers) narrowing(writer http.ResponseWriter, query listing.Query) (Query, bool) {
 	narrowed := Query{
 		Search:     query.Search,
 		Sort:       query.Sort.Field,
@@ -227,21 +209,21 @@ func (h Handlers) narrowing(writer http.ResponseWriter, query table.Query) (Quer
 }
 
 func (h Handlers) query(
-	writer http.ResponseWriter, request *http.Request, spec table.Spec,
-) (table.Query, bool) {
-	parsed, err := table.Parse(request.URL.Query(), spec)
+	writer http.ResponseWriter,
+	request *http.Request,
+	spec listing.Spec,
+) (listing.Query, bool) {
+	parsed, err := listing.Parse(request.URL.Query(), spec)
 	if err != nil {
-		if table.Refused(err) {
+		if listing.Refused(err) {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
-			return table.Query{}, false
+			return listing.Query{}, false
 		}
-		// A Spec whose own default sort it does not offer is a programming error rather than a
-		// caller's mistake, so it is logged as one and answered as one.
 		h.Logger.ErrorContext(request.Context(), "a listing declares a query it cannot serve",
 			slog.String("path", request.URL.Path),
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return table.Query{}, false
+		return listing.Query{}, false
 	}
 	return parsed, true
 }
@@ -329,12 +311,4 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
-}
-
-func pageOf(request *http.Request) AlertEventPage {
-	page := AlertEventPage{After: request.URL.Query().Get("cursor")}
-	if size, err := strconv.Atoi(request.URL.Query().Get("limit")); err == nil {
-		page.Limit = size
-	}
-	return page
 }

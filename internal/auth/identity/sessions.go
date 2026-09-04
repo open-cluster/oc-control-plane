@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -113,6 +114,12 @@ func (h Handlers) callersOrganization(principal authz.Principal) (tenancy.Organi
 // listSessions reports what is live in a tenant, so an administrator can see what they would
 // be ending before they end it.
 func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request) {
+	query, ok := listQuery(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "lastSeenAt", Descending: true},
+	})
+	if !ok {
+		return
+	}
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -124,16 +131,20 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	live, err := h.Database.ListSessions(ctx, principal, organization)
+	live, err := h.Database.ListSessions(ctx, principal, organization, storage.Page{
+		Limit: query.Limit, After: query.Cursor,
+	})
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	views := make([]liveSessionView, 0, len(live))
-	for _, found := range live {
+	views := make([]liveSessionView, 0, len(live.Sessions))
+	for _, found := range live.Sessions {
 		views = append(views, liveSessionViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, liveSessionListView{Sessions: views})
+	writeJSON(writer, http.StatusOK, liveSessionListView{
+		Sessions: views, Next: listing.Continuation(live.Next),
+	})
 }
 
 func (h Handlers) revokeSession(writer http.ResponseWriter, request *http.Request) {

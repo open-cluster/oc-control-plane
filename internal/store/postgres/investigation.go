@@ -162,7 +162,7 @@ func (p *Database) QueryInvestigations(
 		return investigation.List{}, err
 	}
 	limit := pageLimit(page.Limit)
-	cursorAt, cursorID, err := decodeCursor(page.After)
+	cursorAt, cursorID, err := decodeCursor(page.After, "-createdAt")
 	if err != nil {
 		return investigation.List{}, investigation.ErrBadCursor
 	}
@@ -202,7 +202,7 @@ func (p *Database) QueryInvestigations(
 		}
 		if len(list.Investigations) == limit {
 			last := list.Investigations[limit-1]
-			list.Next = encodeCursor(last.CreatedAt, last.ID)
+			list.Next = encodeCursor("-createdAt", last.CreatedAt, last.ID)
 			break
 		}
 		list.Investigations = append(list.Investigations, found)

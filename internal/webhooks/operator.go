@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	table "github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -21,9 +21,8 @@ type DeliveryHandlers struct {
 	Counters WorkInstruments
 }
 
-var deliverySpec = table.Spec{
-	Sortable:    []string{"receivedAt"},
-	DefaultSort: table.Sort{Field: "receivedAt", Descending: true},
+var deliverySpec = listing.Spec{
+	DefaultSort: listing.Sort{Field: "receivedAt", Descending: true},
 	Filters:     []string{"status"},
 }
 
@@ -77,14 +76,9 @@ func (h DeliveryHandlers) list(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	query, err := table.Parse(request.URL.Query(), deliverySpec)
+	query, err := listing.Parse(request.URL.Query(), deliverySpec)
 	if err != nil {
 		writeDeliveryJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if !query.Sort.Descending {
-		writeDeliveryJSON(writer, http.StatusBadRequest,
-			map[string]string{"error": "webhook deliveries support descending receivedAt order only"})
 		return
 	}
 	state := storage.WebhookDeliveryState(query.Filter("status"))
@@ -109,7 +103,7 @@ func (h DeliveryHandlers) list(writer http.ResponseWriter, request *http.Request
 	for _, delivery := range page.Deliveries {
 		views = append(views, viewOfDelivery(delivery))
 	}
-	writeDeliveryJSON(writer, http.StatusOK, table.Answer(views, page.Next, nil))
+	writeDeliveryJSON(writer, http.StatusOK, listing.Answer(views, page.Next, nil))
 }
 
 func validDeliveryState(state storage.WebhookDeliveryState) bool {

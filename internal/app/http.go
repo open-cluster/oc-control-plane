@@ -22,7 +22,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
-	"github.com/open-cluster/oc-control-plane/web"
 )
 
 // serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
@@ -148,7 +147,6 @@ func httpRoutes(process assembled) (http.Handler, error) {
 	mux.HandleFunc("/operator", http.NotFound)
 	mux.HandleFunc("/intake/", http.NotFound)
 	mux.HandleFunc("/intake", http.NotFound)
-	mux.Handle("/", web.Handler())
 	return mux, nil
 }
 

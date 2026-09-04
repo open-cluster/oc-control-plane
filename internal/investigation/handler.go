@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/pagination"
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -178,14 +178,9 @@ func windowOf(trigger Trigger, lead time.Duration) window {
 	return window{from: trigger.FirstSeenAt.Add(-lead), until: until}
 }
 
-// listSpec is the shared table contract this listing speaks.
-var listSpec = table.Spec{
-	Sortable:    []string{"createdAt"},
-	DefaultSort: table.Sort{Field: "createdAt", Descending: true},
-	// "Everything opened from this incident" is the question an operator arrives holding
-	// after being paged. Serving it here rather than letting a client narrow a page keeps
-	// the answer the same on page one and page nine.
-	Filters: []string{"incidentId"},
+var listSpec = listing.Spec{
+	DefaultSort: listing.Sort{Field: "createdAt", Descending: true},
+	Filters:     []string{"incidentId"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -197,9 +192,9 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, err := table.Parse(request.URL.Query(), listSpec)
+	parsed, err := listing.Parse(request.URL.Query(), listSpec)
 	if err != nil {
-		if table.Refused(err) {
+		if listing.Refused(err) {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 			return
 		}
@@ -217,9 +212,6 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	if raw := parsed.Filter("incidentId"); raw != "" {
 		incident, parseErr := uuid.Parse(raw)
 		if parseErr != nil {
-			// Refused rather than passed to the database: a value that is not an
-			// identifier cannot match anything, and answering an empty page would tell a
-			// caller their typo was a real incident with nothing in it.
 			writeJSON(writer, http.StatusBadRequest, errorView{
 				Error: "incidentId is not an identifier"})
 			return
@@ -236,7 +228,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range listed.Investigations {
 		views = append(views, investigationViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, table.Answer(views, listed.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
 }
 
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {

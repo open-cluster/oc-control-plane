@@ -205,6 +205,9 @@ paths:
       summary: List organizations
       tags:
         - Organizations
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
     post:
       security:
         - SessionCookie: []
@@ -247,6 +250,8 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/PermissionList'
@@ -266,7 +271,7 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/After'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -388,6 +393,8 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/SessionList'
@@ -475,7 +482,7 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/After'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -496,6 +503,8 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/IntegrationTypeList'
@@ -562,6 +571,11 @@ paths:
         - $ref: '#/components/parameters/Organization'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/IntegrationSearch'
+        - $ref: '#/components/parameters/IntegrationSort'
+        - $ref: '#/components/parameters/IntegrationTypeFilter'
+        - $ref: '#/components/parameters/RelayFilter'
+        - $ref: '#/components/parameters/DisabledFilter'
       responses:
         '200':
           $ref: '#/components/responses/IntegrationList'
@@ -768,6 +782,11 @@ paths:
         - $ref: '#/components/parameters/Organization'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RelaySearch'
+        - $ref: '#/components/parameters/RelaySort'
+        - $ref: '#/components/parameters/RelayStateFilter'
+        - $ref: '#/components/parameters/RelayVersionFilter'
+        - $ref: '#/components/parameters/RelayCapabilityFilter'
       responses:
         '200':
           $ref: '#/components/responses/RelayList'
@@ -829,6 +848,8 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/RelayIntegrationList'
@@ -850,6 +871,8 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/RelayFailureList'
@@ -871,7 +894,7 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/After'
+        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -915,6 +938,10 @@ paths:
         - $ref: '#/components/parameters/Organization'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/IncidentSearch'
+        - $ref: '#/components/parameters/IncidentSort'
+        - $ref: '#/components/parameters/IncidentIntegrationFilter'
+        - $ref: '#/components/parameters/IncidentStatusFilter'
       responses:
         '200':
           $ref: '#/components/responses/IncidentList'
@@ -957,6 +984,8 @@ paths:
       x-opencluster-idempotency: not-applicable
       parameters:
         - $ref: '#/components/parameters/Organization'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/AlertEventList'
@@ -1005,6 +1034,7 @@ paths:
         - $ref: '#/components/parameters/Organization'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/InvestigationIncidentFilter'
       responses:
         '200':
           $ref: '#/components/responses/InvestigationList'
@@ -1143,6 +1173,10 @@ paths:
         - $ref: '#/components/parameters/Organization'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/ConversationSearch'
+        - $ref: '#/components/parameters/ConversationSort'
+        - $ref: '#/components/parameters/ConversationIncidentFilter'
+        - $ref: '#/components/parameters/ConversationStateFilter'
       responses:
         '200':
           $ref: '#/components/responses/ConversationList'
@@ -1521,13 +1555,6 @@ components:
       schema:
         $ref: '#/components/schemas/OrganizationID'
       example: acme-production
-    After:
-      name: after
-      in: query
-      required: false
-      schema:
-        type: string
-        maxLength: 512
     Cursor:
       name: cursor
       in: query
@@ -1545,6 +1572,177 @@ components:
         minimum: 1
         maximum: 200
         default: 50
+    IntegrationSearch:
+      name: search
+      in: query
+      required: false
+      description: Case-insensitive containment search over the Integration name.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    RelaySearch:
+      name: search
+      in: query
+      required: false
+      description: Case-insensitive containment search over the Relay identifier, fingerprint, and version.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    IncidentSearch:
+      name: search
+      in: query
+      required: false
+      description: Case-insensitive containment search over the Incident title and source grouping key.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    ConversationSearch:
+      name: search
+      in: query
+      required: false
+      description: Case-insensitive containment search over the Conversation subject.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    IntegrationSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - createdAt
+          - -createdAt
+    RelaySort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - registeredAt
+          - -registeredAt
+          - lastSeenAt
+          - -lastSeenAt
+          - version
+          - -version
+          - fingerprint
+          - -fingerprint
+    IncidentSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - lastSeenAt
+          - -lastSeenAt
+          - firstSeenAt
+          - -firstSeenAt
+          - title
+          - -title
+          - alertEventCount
+          - -alertEventCount
+    ConversationSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - lastActivityAt
+          - -lastActivityAt
+    IntegrationTypeFilter:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - alertmanager
+          - generic_webhook
+          - github
+          - kubernetes
+          - slack
+    RelayFilter:
+      name: relay
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/UUID'
+    DisabledFilter:
+      name: disabled
+      in: query
+      required: false
+      schema:
+        type: boolean
+    RelayStateFilter:
+      name: state
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - connected
+          - disconnected
+          - revoked
+          - degraded
+    RelayVersionFilter:
+      name: version
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    RelayCapabilityFilter:
+      name: capability
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    IncidentIntegrationFilter:
+      name: integrationId
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/UUID'
+    IncidentStatusFilter:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - open
+          - resolved
+    InvestigationIncidentFilter:
+      name: incidentId
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/UUID'
+    ConversationIncidentFilter:
+      name: incidentId
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/UUID'
+    ConversationStateFilter:
+      name: state
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - open
+          - closed
     LastEventID:
       name: Last-Event-ID
       in: header
@@ -2146,11 +2344,17 @@ components:
       additionalProperties: false
       required:
         - organizations
+        - next
       properties:
         organizations:
           type: array
           items:
             $ref: '#/components/schemas/Organization'
+        next:
+          oneOf:
+            - type: string
+              maxLength: 512
+            - type: 'null'
     CreateOrganizationRequest:
       type: object
       additionalProperties: false
@@ -2237,6 +2441,7 @@ components:
         - organizationId
         - role
         - permissions
+        - next
       properties:
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
@@ -2253,6 +2458,11 @@ components:
             minLength: 1
             maxLength: 128
           uniqueItems: true
+        next:
+          oneOf:
+            - type: string
+              maxLength: 512
+            - type: 'null'
     Member:
       type: object
       additionalProperties: false
@@ -2344,11 +2554,17 @@ components:
       additionalProperties: false
       required:
         - sessions
+        - next
       properties:
         sessions:
           type: array
           items:
             $ref: '#/components/schemas/LiveSession'
+        next:
+          oneOf:
+            - type: string
+              maxLength: 512
+            - type: 'null'
     AuditEvent:
       type: object
       additionalProperties: false
@@ -2579,11 +2795,17 @@ components:
       additionalProperties: false
       required:
         - types
+        - next
       properties:
         types:
           type: array
           items:
             $ref: '#/components/schemas/IntegrationType'
+        next:
+          oneOf:
+            - type: string
+              maxLength: 512
+            - type: 'null'
     ConnectStarted:
       type: object
       additionalProperties: false
@@ -3193,6 +3415,7 @@ components:
       additionalProperties: false
       required:
         - events
+        - next
       properties:
         events:
           type: array
