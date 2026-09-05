@@ -66,7 +66,6 @@ func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 		investigation.EventProgress,
 		investigation.EventToolStarted,
 		investigation.EventToolCompleted,
-		investigation.EventAnswerDelta,
 		investigation.EventHypothesesUpdated,
 		investigation.EventConcluded,
 		investigation.EventFailed,
@@ -135,6 +134,45 @@ func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
 		events[0].Payload["future"] != "preserved" ||
 		events[1].Type != investigation.EventProgress {
 		t.Fatalf("future event corrupted history: %+v", events)
+	}
+}
+
+func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database, organization := migratedDatabase(t)
+	id := aTurn(t, database, organization)
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sequence, eventType := range []int16{1, 5, 2, 8, 6} {
+		if _, err = pool.Exec(ctx, `
+			INSERT INTO investigation_event
+				(org_id, investigation_id, sequence, type, payload, at)
+			VALUES ($1, $2, $3, $4, '{}', now())`,
+			organization.String(), id, sequence+1, eventType); err != nil {
+			t.Fatalf("seeding event %d: %v", sequence+1, err)
+		}
+	}
+
+	events, err := database.Events(ctx, organization, id, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("replay returned %d active events, want 3: %+v", len(events), events)
+	}
+	wantSequences := []int64{1, 3, 5}
+	wantTypes := []investigation.EventType{
+		investigation.EventStarted, investigation.EventProgress, investigation.EventConcluded,
+	}
+	for index := range events {
+		if events[index].Sequence != wantSequences[index] || events[index].Type != wantTypes[index] {
+			t.Errorf("event %d = sequence %d type %s, want sequence %d type %s", index,
+				events[index].Sequence, events[index].Type, wantSequences[index], wantTypes[index])
+		}
 	}
 }
 

@@ -79,9 +79,10 @@ type fileInvestigation struct {
 	MaxPendingPerOrganization *int `yaml:"max_pending_per_organization"`
 }
 type fileAI struct {
-	Provider   string `yaml:"provider"`
-	Model      string `yaml:"model"`
-	APIKeyFile string `yaml:"api_key_file"`
+	Provider            string `yaml:"provider"`
+	Model               string `yaml:"model"`
+	APIKeyFile          string `yaml:"api_key_file"`
+	ContextWindowTokens *int   `yaml:"context_window_tokens"`
 }
 type fileTelemetry struct {
 	LogLevel     string `yaml:"log_level"`
@@ -142,6 +143,7 @@ func (d fileDocument) environment() map[string]string {
 	set(values, EnvModelProvider, d.AI.Provider)
 	set(values, EnvModelName, d.AI.Model)
 	set(values, EnvModelKeyFile, d.AI.APIKeyFile)
+	setInteger(values, EnvModelContextWindowSize, d.AI.ContextWindowTokens)
 	set(values, EnvLogLevel, d.Telemetry.LogLevel)
 	set(values, EnvOTLPEndpoint, d.Telemetry.OTLPEndpoint)
 	set(values, EnvSlackClientID, d.Slack.ClientID)

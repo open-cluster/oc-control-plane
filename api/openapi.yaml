@@ -692,7 +692,6 @@ paths:
             schema: { $ref: "#/components/schemas/OpenInvestigationRequest" }
         required: true
       responses:
-        "200": { $ref: "#/components/responses/Clarification" }
         "202": { $ref: "#/components/responses/Investigation" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -709,46 +708,6 @@ paths:
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/InvestigationDetail" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/investigations/{investigation}/report:
-    parameters: *investigation-path
-    get:
-      <<: *privileged-read
-      operationId: getInvestigationReport
-      summary: Get investigation report
-      tags: [Investigations]
-      responses:
-        "200": { $ref: "#/components/responses/Investigation" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/investigations/{investigation}/activity:
-    parameters: *investigation-path
-    get:
-      <<: *privileged-read
-      operationId: listInvestigationActivity
-      summary: List investigation activity
-      tags: [Investigations]
-      responses:
-        "200": { $ref: "#/components/responses/InvestigationActivity" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/investigations/{investigation}/sources:
-    parameters: *investigation-path
-    get:
-      <<: *privileged-read
-      operationId: listInvestigationSources
-      summary: List investigation sources
-      tags: [Investigations]
-      responses:
-        "200": { $ref: "#/components/responses/InvestigationSources" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/investigations/{investigation}/hypotheses:
-    parameters: *investigation-path
-    get:
-      <<: *privileged-read
-      operationId: listInvestigationHypotheses
-      summary: List investigation hypotheses
-      tags: [Investigations]
-      responses:
-        "200": { $ref: "#/components/responses/InvestigationHypotheses" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/investigations/{investigation}/cancel:
     parameters: *investigation-path
@@ -779,7 +738,7 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
-              example: "id: 42\nevent: activity\ndata: {\"kind\":\"observation\"}\n\n: heartbeat\n\n"
+              example: "id: 1\nevent: started\ndata: {\"schemaVersion\":1,\"type\":\"started\"}\n\n: heartbeat\n\n"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1226,13 +1185,9 @@ components:
     IncidentList: { description: Incidents., content: { application/json: { schema: { $ref: "#/components/schemas/IncidentList" } } } }
     Incident: { description: Incident., content: { application/json: { schema: { $ref: "#/components/schemas/Incident" } } } }
     AlertEventList: { description: Alert Events in an Incident., content: { application/json: { schema: { $ref: "#/components/schemas/AlertEventList" } } } }
-    Clarification: { description: A question needed before an Investigation can be opened., content: { application/json: { schema: { $ref: "#/components/schemas/Clarification" } } } }
     InvestigationList: { description: Investigations., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationList" } } } }
     Investigation: { description: Investigation., content: { application/json: { schema: { $ref: "#/components/schemas/Investigation" } } } }
-    InvestigationDetail: { description: Investigation with sources and Tool Runs., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationDetail" } } } }
-    InvestigationActivity: { description: Investigation activity., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationActivity" } } } }
-    InvestigationSources: { description: Investigation sources., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationSources" } } } }
-    InvestigationHypotheses: { description: Investigation hypotheses., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationHypotheses" } } } }
+    InvestigationDetail: { description: Investigation with durable Tool Runs., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationDetail" } } } }
     ConversationList: { description: Conversations., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationList" } } } }
     ConversationOpened: { description: "Conversation opened, with an optional first Message and turn.", content: { application/json: { schema: { $ref: "#/components/schemas/ConversationOpened" } } } }
     ConversationDetail: { description: Conversation with Messages and turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationDetail" } } } }
@@ -1766,11 +1721,6 @@ components:
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/AlertEvent" } }
-    Clarification:
-      type: object
-      additionalProperties: false
-      required: [clarification]
-      properties: { clarification: { type: string, minLength: 1, maxLength: 2048 } }
     ImpactAssessment:
       type: object
       additionalProperties: false
@@ -1827,14 +1777,13 @@ components:
     Investigation:
       type: object
       additionalProperties: false
-      required: [id, status, subject, windowFrom, windowUntil, impact, findings, hypotheses, actions, limitations, humanConfirmationRequired, spend, createdAt]
+      required: [id, status, subject, windowFrom, windowUntil, impact, findings, hypotheses, actions, limitations, humanConfirmationRequired, usage, createdAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
         status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
         subject: { type: string, minLength: 1, maxLength: 1024 }
         question: { type: string, maxLength: 8192 }
         incidentId: { $ref: "#/components/schemas/UUID" }
-        integrationId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
         conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
@@ -1845,9 +1794,9 @@ components:
         actions: { type: array, items: { $ref: "#/components/schemas/ActionProposal" } }
         limitations: { type: array, items: { $ref: "#/components/schemas/Limitation" } }
         humanConfirmationRequired: { type: boolean }
-        stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
         error: { type: string, maxLength: 4096 }
-        spend: { type: object, additionalProperties: false, required: [inputTokens, outputTokens, microCents], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 }, microCents: { type: integer, format: int64, minimum: 0 } } }
+        usage: { type: object, additionalProperties: false, required: [inputTokens, outputTokens], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 } } }
         createdBy: { type: string, maxLength: 256 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
         concludedAt: { $ref: "#/components/schemas/Timestamp" }
@@ -1858,15 +1807,6 @@ components:
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Investigation" } }
-    InvestigationSource:
-      type: object
-      additionalProperties: false
-      required: [integrationId, rank, reason, selectedAt]
-      properties:
-        integrationId: { $ref: "#/components/schemas/UUID" }
-        rank: { type: integer, minimum: 1 }
-        reason: { type: string, maxLength: 2048 }
-        selectedAt: { $ref: "#/components/schemas/Timestamp" }
     ToolRun:
       type: object
       additionalProperties: true
@@ -1891,25 +1831,9 @@ components:
       allOf:
         - { $ref: "#/components/schemas/Investigation" }
         - type: object
-          required: [sources, runs]
+          required: [runs]
           properties:
-            sources: { type: array, items: { $ref: "#/components/schemas/InvestigationSource" } }
             runs: { type: array, items: { $ref: "#/components/schemas/ToolRun" } }
-    InvestigationSources:
-      type: object
-      additionalProperties: false
-      required: [investigationId, sources, runs]
-      properties:
-        investigationId: { $ref: "#/components/schemas/UUID" }
-        sources: { type: array, items: { $ref: "#/components/schemas/InvestigationSource" } }
-        runs: { type: array, items: { $ref: "#/components/schemas/ToolRun" } }
-    InvestigationHypotheses:
-      type: object
-      additionalProperties: false
-      required: [investigationId, items]
-      properties:
-        investigationId: { $ref: "#/components/schemas/UUID" }
-        items: { type: array, items: { $ref: "#/components/schemas/Hypothesis" } }
     StartedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -1925,10 +1849,9 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [subject, sources, state, windowFrom, windowUntil]
+          required: [subject, state, windowFrom, windowUntil]
           properties:
             subject: { type: string, minLength: 1, maxLength: 512 }
-            sources: { type: integer, minimum: 0 }
             state: { type: string, enum: [waiting, executing] }
             windowFrom: { $ref: "#/components/schemas/Timestamp" }
             windowUntil: { $ref: "#/components/schemas/Timestamp" }
@@ -1981,26 +1904,12 @@ components:
             outcome: { type: string, enum: [succeeded, failed] }
             durationMs: { type: integer, format: int64, minimum: 0 }
             integrationId: { $ref: "#/components/schemas/UUID" }
-            summary: { type: string, maxLength: 512 }
+            summary: { type: string, maxLength: 4096 }
             error: { type: string, maxLength: 4096 }
             truncated: { type: boolean }
             windowFrom: { $ref: "#/components/schemas/Timestamp" }
             windowUntil: { $ref: "#/components/schemas/Timestamp" }
             sources: { type: array, items: { type: string, maxLength: 2048 } }
-    AnswerDeltaInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: answer_delta }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [text, final]
-          properties:
-            text: { type: string, maxLength: 4096 }
-            final: { type: boolean }
     HypothesesUpdatedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -2030,7 +1939,7 @@ components:
             status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
             findings: { type: integer, minimum: 0 }
             summary: { type: string, maxLength: 512 }
-            stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+            stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
     FailedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -2061,15 +1970,14 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          not: { enum: [started, progress, tool_started, tool_completed, answer_delta, hypotheses_updated, concluded, failed, cancelled] }
+          not: { enum: [started, progress, tool_started, tool_completed, hypotheses_updated, concluded, failed, cancelled] }
         payload: { type: object, additionalProperties: true }
-    InvestigationActivityEvent:
+    InvestigationEvent:
       oneOf:
         - { $ref: "#/components/schemas/StartedInvestigationEvent" }
         - { $ref: "#/components/schemas/ProgressInvestigationEvent" }
         - { $ref: "#/components/schemas/ToolStartedInvestigationEvent" }
         - { $ref: "#/components/schemas/ToolCompletedInvestigationEvent" }
-        - { $ref: "#/components/schemas/AnswerDeltaInvestigationEvent" }
         - { $ref: "#/components/schemas/HypothesesUpdatedInvestigationEvent" }
         - { $ref: "#/components/schemas/ConcludedInvestigationEvent" }
         - { $ref: "#/components/schemas/FailedInvestigationEvent" }
@@ -2077,13 +1985,6 @@ components:
         - { $ref: "#/components/schemas/UnknownInvestigationEvent" }
       discriminator:
         propertyName: type
-    InvestigationActivity:
-      type: object
-      additionalProperties: false
-      required: [investigationId, items]
-      properties:
-        investigationId: { $ref: "#/components/schemas/UUID" }
-        items: { type: array, items: { $ref: "#/components/schemas/InvestigationActivityEvent" } }
     MergeIncidentRequest:
       type: object
       additionalProperties: false
@@ -2094,12 +1995,9 @@ components:
     OpenInvestigationRequest:
       type: object
       additionalProperties: false
+      required: [incidentId]
       properties:
         incidentId: { $ref: "#/components/schemas/UUID" }
-        question: { type: string, minLength: 1, maxLength: 8192 }
-      anyOf:
-        - required: [incidentId]
-        - required: [question]
     OpenConversationRequest:
       type: object
       additionalProperties: false
@@ -2150,7 +2048,7 @@ components:
         turn: { type: integer, minimum: 1 }
         status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
         answer: { type: string, maxLength: 32768 }
-        stoppedBy: { type: string, enum: [spend, tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
         error: { type: string, maxLength: 4096 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
         concludedAt: { $ref: "#/components/schemas/Timestamp" }

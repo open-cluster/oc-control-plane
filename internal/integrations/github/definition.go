@@ -54,7 +54,9 @@ func Definition(app *App, client *Client) integrations.Definition {
 					Required: true,
 				},
 			},
-			RequiresRelay: false, ReceivesWebhooks: false, Tools: tools(app, client),
+			RequiresRelay:    false,
+			ReceivesWebhooks: false,
+			Tools:            tools(app, client),
 		},
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			installation, err := installationOf(input.Integration)

@@ -122,7 +122,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, investigation.Conclusion{Summary: "done"}, "", investigation.Spend{}); err != nil {
+		turn.InvestigationID, investigation.Conclusion{Summary: "done"}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.CreateInvestigation(context.Background(), principal, organization,

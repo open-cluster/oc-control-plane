@@ -16,7 +16,6 @@ func TestEveryDocumentedEventHasItsExactSSEWireName(t *testing.T) {
 		{EventProgress, "progress"},
 		{EventToolStarted, "tool_started"},
 		{EventToolCompleted, "tool_completed"},
-		{EventAnswerDelta, "answer_delta"},
 		{EventHypothesesUpdated, "hypotheses_updated"},
 		{EventConcluded, "concluded"},
 		{EventFailed, "failed"},
@@ -33,6 +32,11 @@ func TestEveryDocumentedEventHasItsExactSSEWireName(t *testing.T) {
 		if !strings.Contains(body, "event: "+event.name+"\n") ||
 			!strings.Contains(body, `"type":"`+event.name+`"`) {
 			t.Errorf("%s serialized with the wrong wire name:\n%s", event.name, body)
+		}
+	}
+	for _, retired := range []EventType{5, 8} {
+		if retired.String() != "unrecognised" {
+			t.Errorf("retired event type %d is still active as %q", retired, retired.String())
 		}
 	}
 }

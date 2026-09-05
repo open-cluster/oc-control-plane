@@ -50,6 +50,9 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 		t.Fatalf("investigation defaults = workers %d pending %d",
 			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
 	}
+	if cfg.ModelContextWindowTokens != 128_000 {
+		t.Fatalf("model context window default = %d", cfg.ModelContextWindowTokens)
+	}
 }
 
 func TestLoadInvestigationLimitsFromEnvironment(t *testing.T) {
@@ -63,6 +66,18 @@ func TestLoadInvestigationLimitsFromEnvironment(t *testing.T) {
 	if cfg.InvestigationWorkers != 3 || cfg.MaxPendingInvestigationsPerOrganization != 40 {
 		t.Fatalf("investigation limits = workers %d pending %d",
 			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
+	}
+}
+
+func TestLoadModelContextWindowFromEnvironment(t *testing.T) {
+	values := essentialEnvironment(t)
+	values[EnvModelContextWindowSize] = "200000"
+	cfg, err := Load(lookup(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelContextWindowTokens != 200_000 {
+		t.Fatalf("model context window = %d", cfg.ModelContextWindowTokens)
 	}
 }
 
@@ -105,12 +120,44 @@ func TestLoadProcessReadsInvestigationLimitsFromYAML(t *testing.T) {
 	}
 }
 
+func TestLoadProcessReadsModelContextWindowFromYAML(t *testing.T) {
+	dsn := secretFile(t, "postgres://user:password@localhost/opencluster")
+	path := filepath.Join(t.TempDir(), "opencluster.yaml")
+	document := "database:\n  dsn_file: " + dsn +
+		"\nai:\n  context_window_tokens: 256000\n"
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadProcess(nil, lookup(map[string]string{
+		EnvConfigFile: path, EnvOperatorTokenFile: secretFile(t, strings.Repeat("b", 32)),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelContextWindowTokens != 256_000 {
+		t.Fatalf("model context window = %d", cfg.ModelContextWindowTokens)
+	}
+}
+
 func TestLoadRejectsNonPositiveInvestigationLimits(t *testing.T) {
 	for _, key := range []string{EnvInvestigationWorkers, EnvInvestigationMaxPendingPerOrganization} {
 		t.Run(key, func(t *testing.T) {
 			values := essentialEnvironment(t)
 			values[key] = "0"
 			if _, err := Load(lookup(values)); err == nil || !strings.Contains(err.Error(), key) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidModelContextWindow(t *testing.T) {
+	for _, value := range []string{"0", "-1", "not-a-number"} {
+		t.Run(value, func(t *testing.T) {
+			values := essentialEnvironment(t)
+			values[EnvModelContextWindowSize] = value
+			if _, err := Load(lookup(values)); err == nil ||
+				!strings.Contains(err.Error(), EnvModelContextWindowSize) {
 				t.Fatalf("error = %v", err)
 			}
 		})

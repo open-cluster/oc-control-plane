@@ -87,7 +87,7 @@ func TestDefinitionWithoutArgumentsRequiresNothing(t *testing.T) {
 }
 
 func TestDefinitionRendersDeterministically(t *testing.T) {
-	// The definition set feeds the derived agent revision, so its bytes must not move
+	// Provider prompt caches depend on these bytes remaining stable.
 	// between renders of the same declaration.
 	first, err := json.Marshal(definedTool().Definition())
 	if err != nil {

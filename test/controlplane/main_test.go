@@ -555,14 +555,6 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 	if status, _ := plane.get(t, "/api/v1/session"); status != http.StatusUnauthorized {
 		t.Errorf("GET /api/v1/session = %d, want authentication refusal from the operator router", status)
 	}
-	if status, body := plane.get(t, "/"); status != http.StatusOK ||
-		!strings.Contains(body, "OpenCluster Control Plane") {
-		t.Errorf("GET browser application = %d, body %q", status, body)
-	}
-	if status, body := plane.get(t, "/organizations/local/investigations/example/sources"); status != http.StatusOK || !strings.Contains(body, "OpenCluster Control Plane") {
-		t.Errorf("GET browser deep link = %d, body %q", status, body)
-	}
-
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		plane.baseURL+"/webhooks/v1/integrations/not-an-id/alert-events", strings.NewReader("{}"))
 	if err != nil {

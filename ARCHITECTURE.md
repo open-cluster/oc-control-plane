@@ -54,7 +54,7 @@ The following path is the primary product walkthrough.
 
 ## Postmortem workflow
 
-Resolving an Incident only marks it eligible; no draft and no model spend happens
+Resolving an Incident only marks it eligible; no draft and no model execution happens
 automatically. An authorized operator requests the first draft. The separate Postmortem
 domain gathers the Incident’s Alert Events and timestamps, Tool Runs, cited Findings,
 Investigation events, linked Conversation messages, resolution state, and explicit
@@ -73,8 +73,7 @@ reviewed and records the reviewer and time.
 
 The reasoning input is split into independently versioned safety policy, task instruction,
 structured Investigation bundle, native read tools, local hypothesis-update tool, and
-result schema. A derived agent revision covers the complete semantic contract without
-pinning an exact full-prompt string.
+result schema.
 
 The conclusion decoder rejects invalid status combinations, nonexistent citations,
 causal Findings without mechanisms, unsafe action approval claims, and invented impact.

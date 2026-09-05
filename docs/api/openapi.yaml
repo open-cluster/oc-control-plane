@@ -1054,8 +1054,6 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Organization'
       responses:
-        '200':
-          $ref: '#/components/responses/Clarification'
         '202':
           $ref: '#/components/responses/Investigation'
         '400':
@@ -1097,90 +1095,6 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: getInvestigation
       summary: Get investigation
-      tags:
-        - Investigations
-  /api/v1/investigations/{investigation}/report:
-    parameters:
-      - $ref: '#/components/parameters/InvestigationID'
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-      responses:
-        '200':
-          $ref: '#/components/responses/Investigation'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: getInvestigationReport
-      summary: Get investigation report
-      tags:
-        - Investigations
-  /api/v1/investigations/{investigation}/activity:
-    parameters:
-      - $ref: '#/components/parameters/InvestigationID'
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-      responses:
-        '200':
-          $ref: '#/components/responses/InvestigationActivity'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: listInvestigationActivity
-      summary: List investigation activity
-      tags:
-        - Investigations
-  /api/v1/investigations/{investigation}/sources:
-    parameters:
-      - $ref: '#/components/parameters/InvestigationID'
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-      responses:
-        '200':
-          $ref: '#/components/responses/InvestigationSources'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: listInvestigationSources
-      summary: List investigation sources
-      tags:
-        - Investigations
-  /api/v1/investigations/{investigation}/hypotheses:
-    parameters:
-      - $ref: '#/components/parameters/InvestigationID'
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-      responses:
-        '200':
-          $ref: '#/components/responses/InvestigationHypotheses'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: listInvestigationHypotheses
-      summary: List investigation hypotheses
       tags:
         - Investigations
   /api/v1/investigations/{investigation}/cancel:
@@ -1231,9 +1145,9 @@ paths:
               schema:
                 type: string
               example: |+
-                id: 42
-                event: activity
-                data: {"kind":"observation"}
+                id: 1
+                event: started
+                data: {"schemaVersion":1,"type":"started"}
 
                 : heartbeat
 
@@ -2107,12 +2021,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AlertEventList'
-    Clarification:
-      description: A question needed before an Investigation can be opened.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Clarification'
     InvestigationList:
       description: Investigations.
       content:
@@ -2126,29 +2034,11 @@ components:
           schema:
             $ref: '#/components/schemas/Investigation'
     InvestigationDetail:
-      description: Investigation with sources and Tool Runs.
+      description: Investigation with durable Tool Runs.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/InvestigationDetail'
-    InvestigationActivity:
-      description: Investigation activity.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvestigationActivity'
-    InvestigationSources:
-      description: Investigation sources.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvestigationSources'
-    InvestigationHypotheses:
-      description: Investigation hypotheses.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvestigationHypotheses'
     ConversationList:
       description: Conversations.
       content:
@@ -3750,16 +3640,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AlertEvent'
-    Clarification:
-      type: object
-      additionalProperties: false
-      required:
-        - clarification
-      properties:
-        clarification:
-          type: string
-          minLength: 1
-          maxLength: 2048
     ImpactAssessment:
       type: object
       additionalProperties: false
@@ -3973,7 +3853,7 @@ components:
         - actions
         - limitations
         - humanConfirmationRequired
-        - spend
+        - usage
         - createdAt
       properties:
         id:
@@ -3996,8 +3876,6 @@ components:
           type: string
           maxLength: 8192
         incidentId:
-          $ref: '#/components/schemas/UUID'
-        integrationId:
           $ref: '#/components/schemas/UUID'
         windowFrom:
           $ref: '#/components/schemas/Timestamp'
@@ -4036,7 +3914,6 @@ components:
         stoppedBy:
           type: string
           enum:
-            - spend
             - tool_runs
             - reasoner_turns
             - wall_clock
@@ -4045,23 +3922,18 @@ components:
         error:
           type: string
           maxLength: 4096
-        spend:
+        usage:
           type: object
           additionalProperties: false
           required:
             - inputTokens
             - outputTokens
-            - microCents
           properties:
             inputTokens:
               type: integer
               format: int64
               minimum: 0
             outputTokens:
-              type: integer
-              format: int64
-              minimum: 0
-            microCents:
               type: integer
               format: int64
               minimum: 0
@@ -4108,25 +3980,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Investigation'
-    InvestigationSource:
-      type: object
-      additionalProperties: false
-      required:
-        - integrationId
-        - rank
-        - reason
-        - selectedAt
-      properties:
-        integrationId:
-          $ref: '#/components/schemas/UUID'
-        rank:
-          type: integer
-          minimum: 1
-        reason:
-          type: string
-          maxLength: 2048
-        selectedAt:
-          $ref: '#/components/schemas/Timestamp'
     ToolRun:
       type: object
       additionalProperties: true
@@ -4188,48 +4041,12 @@ components:
         - $ref: '#/components/schemas/Investigation'
         - type: object
           required:
-            - sources
             - runs
           properties:
-            sources:
-              type: array
-              items:
-                $ref: '#/components/schemas/InvestigationSource'
             runs:
               type: array
               items:
                 $ref: '#/components/schemas/ToolRun'
-    InvestigationSources:
-      type: object
-      additionalProperties: false
-      required:
-        - investigationId
-        - sources
-        - runs
-      properties:
-        investigationId:
-          $ref: '#/components/schemas/UUID'
-        sources:
-          type: array
-          items:
-            $ref: '#/components/schemas/InvestigationSource'
-        runs:
-          type: array
-          items:
-            $ref: '#/components/schemas/ToolRun'
-    InvestigationHypotheses:
-      type: object
-      additionalProperties: false
-      required:
-        - investigationId
-        - items
-      properties:
-        investigationId:
-          $ref: '#/components/schemas/UUID'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Hypothesis'
     StartedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -4265,7 +4082,6 @@ components:
           additionalProperties: false
           required:
             - subject
-            - sources
             - state
             - windowFrom
             - windowUntil
@@ -4274,9 +4090,6 @@ components:
               type: string
               minLength: 1
               maxLength: 512
-            sources:
-              type: integer
-              minimum: 0
             state:
               type: string
               enum:
@@ -4450,7 +4263,7 @@ components:
               $ref: '#/components/schemas/UUID'
             summary:
               type: string
-              maxLength: 512
+              maxLength: 4096
             error:
               type: string
               maxLength: 4096
@@ -4465,48 +4278,6 @@ components:
               items:
                 type: string
                 maxLength: 2048
-    AnswerDeltaInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required:
-        - schemaVersion
-        - organizationId
-        - investigationId
-        - sequence
-        - at
-        - type
-        - payload
-      properties:
-        schemaVersion:
-          type: integer
-          const: 1
-        organizationId:
-          $ref: '#/components/schemas/OrganizationID'
-        conversationId:
-          $ref: '#/components/schemas/UUID'
-        investigationId:
-          $ref: '#/components/schemas/UUID'
-        sequence:
-          type: integer
-          format: int64
-          minimum: 1
-        at:
-          $ref: '#/components/schemas/Timestamp'
-        type:
-          type: string
-          const: answer_delta
-        payload:
-          type: object
-          additionalProperties: false
-          required:
-            - text
-            - final
-          properties:
-            text:
-              type: string
-              maxLength: 4096
-            final:
-              type: boolean
     HypothesesUpdatedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -4605,7 +4376,6 @@ components:
             stoppedBy:
               type: string
               enum:
-                - spend
                 - tool_runs
                 - reasoner_turns
                 - wall_clock
@@ -4721,7 +4491,6 @@ components:
               - progress
               - tool_started
               - tool_completed
-              - answer_delta
               - hypotheses_updated
               - concluded
               - failed
@@ -4729,13 +4498,12 @@ components:
         payload:
           type: object
           additionalProperties: true
-    InvestigationActivityEvent:
+    InvestigationEvent:
       oneOf:
         - $ref: '#/components/schemas/StartedInvestigationEvent'
         - $ref: '#/components/schemas/ProgressInvestigationEvent'
         - $ref: '#/components/schemas/ToolStartedInvestigationEvent'
         - $ref: '#/components/schemas/ToolCompletedInvestigationEvent'
-        - $ref: '#/components/schemas/AnswerDeltaInvestigationEvent'
         - $ref: '#/components/schemas/HypothesesUpdatedInvestigationEvent'
         - $ref: '#/components/schemas/ConcludedInvestigationEvent'
         - $ref: '#/components/schemas/FailedInvestigationEvent'
@@ -4743,19 +4511,6 @@ components:
         - $ref: '#/components/schemas/UnknownInvestigationEvent'
       discriminator:
         propertyName: type
-    InvestigationActivity:
-      type: object
-      additionalProperties: false
-      required:
-        - investigationId
-        - items
-      properties:
-        investigationId:
-          $ref: '#/components/schemas/UUID'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/InvestigationActivityEvent'
     MergeIncidentRequest:
       type: object
       additionalProperties: false
@@ -4772,18 +4527,11 @@ components:
     OpenInvestigationRequest:
       type: object
       additionalProperties: false
+      required:
+        - incidentId
       properties:
         incidentId:
           $ref: '#/components/schemas/UUID'
-        question:
-          type: string
-          minLength: 1
-          maxLength: 8192
-      anyOf:
-        - required:
-            - incidentId
-        - required:
-            - question
     OpenConversationRequest:
       type: object
       additionalProperties: false
@@ -4917,7 +4665,6 @@ components:
         stoppedBy:
           type: string
           enum:
-            - spend
             - tool_runs
             - reasoner_turns
             - wall_clock

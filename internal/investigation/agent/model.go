@@ -3,22 +3,132 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
+
+// Secret is a credential that must never be rendered.
+//
+// String, GoString and the JSON form are all the same fixed placeholder, so a credential cannot
+// reach a log line, an error message or a case file by being interpolated somewhere nobody thought
+// about. Reading the real value is an explicit call, which makes the handful of places that do it
+// greppable.
+type Secret string
+
+// redacted is what a credential looks like everywhere except the one call that reveals it.
+const redacted = "[redacted]"
+
+func (Secret) String() string               { return redacted }
+func (Secret) GoString() string             { return `"` + redacted + `"` }
+func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"` + redacted + `"`), nil }
+func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+func (Secret) LogValue() any                { return redacted }
+func (s Secret) Reveal() string             { return string(s) }
+func (s Secret) Empty() bool                { return strings.TrimSpace(string(s)) == "" }
+
+// Deployment is one configured provider, model and the bounds it runs under.
+type Deployment struct {
+	// Provider names the adapter that serves this deployment.
+	Provider string
+	Model    string
+	// Effort is how hard to think, the primary resource and latency lever.
+	Effort Effort
+	// MaxOutputTokens bounds one answer. It is set generously where thinking and answer share the
+	// bound, because a value sized around the answer alone truncates mid-thought.
+	MaxOutputTokens int64
+	// BaseURL overrides where the provider is reached. It is also the ONLY host this deployment
+	// may reach: the allowed host is derived from configuration rather than from anything a
+	// response contains, so a redirect cannot move where the credential is sent.
+	BaseURL string
+	// Credential is the API key, read from a file path and never from an environment value.
+	Credential Secret
+	// RequestTimeout bounds one call. Requests are retried, so the wall clock a single call can
+	// consume is this multiplied by the attempts allowed; the product must still fit inside the
+	// round's deadline.
+	RequestTimeout time.Duration
+	// MaxAttempts is how many times one call may be tried before the outcome is an outage.
+	MaxAttempts int
+}
+
+const (
+	defaultMaxOutputTokens = 32_000
+	defaultRequestTimeout  = 5 * time.Minute
+	defaultMaxAttempts     = 3
+)
+
+// WithDefaults fills what an operator did not name. It never loosens what they did.
+func (d Deployment) WithDefaults() Deployment {
+	if d.Effort == "" {
+		d.Effort = EffortHigh
+	}
+	if d.MaxOutputTokens <= 0 {
+		d.MaxOutputTokens = defaultMaxOutputTokens
+	}
+	if d.RequestTimeout <= 0 {
+		d.RequestTimeout = defaultRequestTimeout
+	}
+	if d.MaxAttempts <= 0 {
+		d.MaxAttempts = defaultMaxAttempts
+	}
+	return d
+}
+
+// Validate refuses a deployment that could not work, at startup, where the person who chose the
+// values is still the person reading the error. The alternative is discovering it on the first
+// round at 03:00, by which time nobody remembers configuring it.
+func (d Deployment) Validate() error {
+	switch {
+	case strings.TrimSpace(d.Provider) == "":
+		return fmt.Errorf("a model deployment must name a provider")
+	case strings.TrimSpace(d.Model) == "":
+		return fmt.Errorf("the %s deployment must name an exact model identifier", d.Provider)
+	case !d.Effort.Valid():
+		return fmt.Errorf("the %s deployment names effort %q, which is not one of low, medium, "+
+			"high, xhigh or max", d.Provider, d.Effort)
+	case d.Credential.Empty():
+		return fmt.Errorf("the %s deployment has no credential; it is read from a file path so "+
+			"that it cannot leak through a process listing", d.Provider)
+	}
+	if d.BaseURL != "" {
+		parsed, err := url.Parse(d.BaseURL)
+		loopback := false
+		if err == nil {
+			address := net.ParseIP(parsed.Hostname())
+			loopback = parsed.Hostname() == "localhost" || address != nil && address.IsLoopback()
+		}
+		if err != nil || parsed.Host == "" ||
+			(parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback)) {
+			return fmt.Errorf(
+				"the %s deployment names a base url that is not an https host or local "+
+					"loopback; the adapter may reach that host and nothing else", d.Provider)
+		}
+	}
+	return nil
+}
+
+// String renders a deployment for a log line. The credential is a Secret, so it cannot appear here.
+func (d Deployment) String() string {
+	return fmt.Sprintf("%s/%s effort=%s max_output=%d", d.Provider, d.Model, d.Effort,
+		d.MaxOutputTokens)
+}
 
 // Model performs one provider completion.
 //
 // It is deliberately small. A provider does not hold a conversation, manage an investigation,
 // decide when to stop or interpret evidence: it is handed a rendered prompt and a declared output
-// schema, and returns a document. Everything else in this package is the same for every vendor,
-// which is what keeps a second adapter to one directory.
+// schema, and returns a document.
 type Model interface {
 	// Complete asks for one document.
 	//
 	// The returned Completion is populated even when the error is non-nil, because a refused or
 	// truncated request still consumed tokens, still names a model and still carries a request
-	// identifier — and all three have to reach the spend record. A caller reads the Completion
+	// identifier — and all three have to reach telemetry. A caller reads the Completion
 	// for the figures and the error for the outcome.
 	Complete(ctx context.Context, prompt Prompt) (Completion, error)
 }
@@ -45,7 +155,7 @@ type Prompt struct {
 	// MaxOutputTokens bounds the answer. On providers where thinking and answer text share the
 	// bound, a value sized around the answer alone truncates mid-thought.
 	MaxOutputTokens int64
-	// Effort is how hard to think. It is the primary cost and latency lever and the right value
+	// Effort is how hard to think. It is the primary resource and latency lever and the right value
 	// is an empirical question, so it is configuration rather than a constant.
 	Effort Effort
 }
@@ -185,5 +295,47 @@ func (e Effort) Valid() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// Count is a token figure and whether the provider actually reported it.
+type Count struct {
+	Tokens int64
+	// Reported is false when the provider said nothing about this figure. A consumer that treats
+	// an unreported count as zero is asserting a measurement nobody made.
+	Reported bool
+}
+
+// Counted is a figure a provider reported.
+func Counted(tokens int64) Count { return Count{Tokens: tokens, Reported: true} }
+
+// Unreported is the absence of a figure.
+func Unreported() Count { return Count{} }
+
+// Or returns the figure, or the fallback when the provider reported none. It exists so the few
+// places that genuinely must have a number say so at the call site.
+func (c Count) Or(fallback int64) int64 {
+	if !c.Reported {
+		return fallback
+	}
+	return c.Tokens
+}
+
+// TokenUsage is one call's consumption, normalized across every provider.
+type TokenUsage struct {
+	Input      Count
+	Output     Count
+	CacheWrite Count
+	CacheRead  Count
+	// Reasoning is tokens spent on internal reasoning where the provider breaks them out. They
+	// are already inside Output on every provider that reports both; this is a decomposition for
+	// observability, never an addend.
+	Reasoning Count
+}
+
+func usageOf(usage TokenUsage) investigation.Usage {
+	return investigation.Usage{
+		InputTokens:  usage.Input.Or(0) + usage.CacheRead.Or(0) + usage.CacheWrite.Or(0),
+		OutputTokens: usage.Output.Or(0),
 	}
 }

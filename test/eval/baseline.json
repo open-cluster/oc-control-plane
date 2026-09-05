@@ -1,6 +1,5 @@
 {
   "revision": "deterministic-structured-v1",
-  "agentRevision": "5f5a7d858ab83b99",
   "providerModel": "scripted/deterministic",
   "safetyPolicyVersion": "1",
   "taskInstructionVersion": "1",
@@ -17,7 +16,6 @@
   "toolCalls": 4,
   "inputTokens": 360,
   "outputTokens": 42,
-  "microCents": 19,
   "latencyNanos": 0,
   "hardGateFailures": 0
 }

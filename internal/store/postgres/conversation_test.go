@@ -236,7 +236,7 @@ func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 
 	if err = database.ConcludeInvestigation(context.Background(), organization,
 		first.InvestigationID, conclusionSaying("nothing changed"), "",
-		investigation.Spend{}); err != nil {
+		investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the first turn: %v", err)
 	}
 
@@ -483,7 +483,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("recording Ada's run: %v", err)
 	}
-	_, recordedRuns, err := database.InvestigationProvenance(context.Background(),
+	recordedRuns, err := database.InvestigationToolRuns(context.Background(),
 		organization, adaTurn.InvestigationID)
 	if err != nil {
 		t.Fatalf("reading Ada's provenance: %v", err)
@@ -506,7 +506,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 				Type:      investigation.LimitationEssentialHumanInput,
 				Statement: "ADA-PRIVATE-LIMITATION: ask the payments on-call",
 			}},
-		}, "", investigation.Spend{}); err != nil {
+		}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding Ada's turn: %v", err)
 	}
 	adaBrief, err := database.ConversationBrief(context.Background(), organization, ada.ID, 50)
@@ -608,7 +608,7 @@ func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
 			Actions: []investigation.ActionProposal{
 				{Title: "roll back the 14:02 deploy"}, {Title: "watch the latency panel"},
 			},
-		}, "", investigation.Spend{}); err != nil {
+		}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding: %v", err)
 	}
 
@@ -641,7 +641,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
 		turn.InvestigationID, investigation.Conclusion{Summary: "completed", Findings: findings},
-		"", investigation.Spend{}); err != nil {
+		"", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the turn: %v", err)
 	}
 	brief, err := database.ConversationBrief(context.Background(), organization, opened.ID, 20)
@@ -666,7 +666,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 			Summary: "later finding", Findings: []investigation.Finding{
 				{Statement: "newest-turn-finding", Sources: []int{1}},
 			},
-		}, "", investigation.Spend{}); err != nil {
+		}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the later turn: %v", err)
 	}
 	brief, err = database.ConversationBrief(context.Background(), organization, opened.ID, 20)
@@ -701,7 +701,7 @@ func TestConversationBriefPreservesLimitationsAndOperatorStatementsBeyondOneHund
 					Statement: "database wait telemetry is unavailable"},
 				{Type: investigation.LimitationMissingAccess,
 					Statement: strings.Repeat("x", investigation.BriefMessageBound+25)},
-			}}, "", investigation.Spend{}); err != nil {
+			}}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding first turn: %v", err)
 	}
 	for sequence := 1; sequence <= 100; sequence++ {

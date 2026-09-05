@@ -1,14 +1,3 @@
-// Package authz owns who a caller is and what they may do.
-//
-// WHO: a Principal, built with the same discipline tenancy.Organization is built with —
-// unexported fields, one constructor, validation inside it — so a store function can trust the
-// value it receives.
-//
-// WHAT THEY MAY DO: the permission vocabulary, the seven roles as a compiled table, the route
-// table every route on the operator surface registers in as (method, pattern, permission), and
-// the one middleware that reads it. Router builds the mux from that table, so the decision is
-// made in a single place — a second copy of an authorization decision is a second place for it
-// to be wrong.
 package authz
 
 import (

@@ -18,13 +18,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The investigation capability owns its vocabulary; this file is its persistence.
-var _ investigation.Store = (*Database)(nil)
+// The Investigation capability owns its vocabulary; this file is its persistence.
+var _ investigation.HTTPStore = (*Database)(nil)
 
-const investigationColumns = `investigation_id, incident_id, integration_id, question,
+const investigationColumns = `investigation_id, incident_id, question,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
-	       spend_output_tokens, spend_micro_cents, created_by, created_at, concluded_at,
+	       spend_output_tokens, created_by, created_at, concluded_at,
 	       lease_worker <> '' AND lease_expires_at > now()`
 
 // CreateInvestigation records one, born running. Opening is an operator act and lands in
@@ -46,12 +46,12 @@ func (p *Database) CreateInvestigation(
 			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO investigation (investigation_id, org_id, incident_id,
-				                           integration_id, question, subject,
-				                           window_from, window_until, created_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				                           question, subject, window_from, window_until,
+				                           created_by)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				RETURNING `+investigationColumns,
 				uuid.New(), organization.String(), nullableUUID(wanted.IncidentID),
-				nullableUUID(wanted.IntegrationID), wanted.Question, wanted.Subject,
+				wanted.Question, wanted.Subject,
 				wanted.WindowFrom, wanted.WindowUntil, wanted.CreatedBy)
 
 			created, err := scanInvestigation(row, organization.String())
@@ -91,36 +91,13 @@ func (p *Database) Investigation(
 	return found, nil
 }
 
-// InvestigationProvenance reads the sources and runs beside one investigation.
-func (p *Database) InvestigationProvenance(
+// InvestigationToolRuns reads the durable Tool Runs beside one Investigation.
+func (p *Database) InvestigationToolRuns(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-) ([]investigation.Source, []investigation.ToolRun, error) {
+) ([]investigation.ToolRun, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	sourceRows, err := pool.Query(ctx, `
-		SELECT integration_id, rank, reason, selected_at
-		  FROM investigation_source
-		 WHERE investigation_id = $1 AND org_id = $2
-		 ORDER BY rank`, id, organization.String())
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading an investigation's sources: %w", err)
-	}
-	defer sourceRows.Close()
-
-	sources := make([]investigation.Source, 0, 4)
-	for sourceRows.Next() {
-		var source investigation.Source
-		if err := sourceRows.Scan(&source.IntegrationID, &source.Rank, &source.Reason,
-			&source.SelectedAt); err != nil {
-			return nil, nil, fmt.Errorf("scanning a source: %w", err)
-		}
-		sources = append(sources, source)
-	}
-	if err := sourceRows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("reading an investigation's sources: %w", err)
+		return nil, err
 	}
 
 	runRows, err := pool.Query(ctx, `
@@ -131,7 +108,7 @@ func (p *Database) InvestigationProvenance(
 		 WHERE investigation_id = $1 AND org_id = $2
 		 ORDER BY ordinal`, id, organization.String())
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading an investigation's runs: %w", err)
+		return nil, fmt.Errorf("reading an investigation's runs: %w", err)
 	}
 	defer runRows.Close()
 
@@ -148,27 +125,27 @@ func (p *Database) InvestigationProvenance(
 			&run.WindowFrom, &run.WindowUntil, &run.Outcome,
 			&run.Truncated, &run.Summary, &runSources, &run.Error,
 			&run.StartedAt, &run.FinishedAt); err != nil {
-			return nil, nil, fmt.Errorf("scanning a tool run: %w", err)
+			return nil, fmt.Errorf("scanning a tool run: %w", err)
 		}
 		if integrationID != nil {
 			run.IntegrationID = *integrationID
 		}
 		if len(arguments) > 0 {
 			if err := json.Unmarshal(arguments, &run.Arguments); err != nil {
-				return nil, nil, fmt.Errorf("decoding a run's arguments: %w", err)
+				return nil, fmt.Errorf("decoding a run's arguments: %w", err)
 			}
 		}
 		if len(runSources) > 0 {
 			if err := json.Unmarshal(runSources, &run.Sources); err != nil {
-				return nil, nil, fmt.Errorf("decoding a run's sources: %w", err)
+				return nil, fmt.Errorf("decoding a run's sources: %w", err)
 			}
 		}
 		runs = append(runs, run)
 	}
 	if err := runRows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("reading an investigation's runs: %w", err)
+		return nil, fmt.Errorf("reading an investigation's runs: %w", err)
 	}
-	return sources, runs, nil
+	return runs, nil
 }
 
 // QueryInvestigations reports a page, newest first.
@@ -236,27 +213,6 @@ func (p *Database) QueryInvestigations(
 	return list, nil
 }
 
-// RecordSource writes one offered source.
-func (p *Database) RecordSource(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	source investigation.Source,
-) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	_, err = pool.Exec(ctx, `
-		INSERT INTO investigation_source (investigation_id, org_id, integration_id,
-		                                  rank, reason, selected_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, organization.String(), source.IntegrationID, source.Rank, source.Reason,
-		source.SelectedAt)
-	if err != nil {
-		return fmt.Errorf("recording a routed source: %w", err)
-	}
-	return nil
-}
-
 // RecordToolRun writes one execution as it finished.
 func (p *Database) RecordToolRun(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
@@ -292,28 +248,28 @@ func (p *Database) RecordToolRun(
 	return nil
 }
 
-// ConcludeInvestigation ends one with its concluding document and spend. stoppedBy
+// ConcludeInvestigation ends one with its concluding document and token usage. stoppedBy
 // names the ceiling that forced the concluding turn, empty when the model concluded
 // freely.
 func (p *Database) ConcludeInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	conclusion investigation.Conclusion, stoppedBy string, spend investigation.Spend,
+	conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage,
 ) error {
 	encoded, err := json.Marshal(conclusion)
 	if err != nil {
 		return fmt.Errorf("encoding conclusion: %w", err)
 	}
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", spend)
+		encoded, stoppedBy, "", usage)
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
 func (p *Database) FailInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
-	reason string, spend investigation.Spend,
+	reason string, usage investigation.Usage,
 ) error {
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
-		[]byte("{}"), "", reason, spend)
+		[]byte("{}"), "", reason, usage)
 }
 
 // CancelInvestigation ends active work and records the operator action atomically.
@@ -383,7 +339,7 @@ func (p *Database) CancelInvestigation(
 func (p *Database) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
-	spend investigation.Spend,
+	usage investigation.Usage,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -397,7 +353,6 @@ func (p *Database) endInvestigation(
 		       error               = $6,
 		       spend_input_tokens  = $7,
 		       spend_output_tokens = $8,
-		       spend_micro_cents   = $9,
 		       concluded_at        = now(),
 		       -- The lease goes with the ending. A terminal investigation is nobody's to
 		       -- hold, and leaving one behind would make the sweeper reason about work
@@ -406,7 +361,7 @@ func (p *Database) endInvestigation(
 		       lease_expires_at    = NULL
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1`,
 		id, organization.String(), status, conclusion, stoppedBy,
-		reason, spend.InputTokens, spend.OutputTokens, spend.MicroCents)
+		reason, usage.InputTokens, usage.OutputTokens)
 	if err != nil {
 		return fmt.Errorf("ending an investigation: %w", err)
 	}
@@ -452,39 +407,6 @@ func (p *Database) TriggerIncident(
 	return trigger, nil
 }
 
-// OpenTriggers reports the organization's open incidents, newest activity first, for
-// inferring a question's subject.
-func (p *Database) OpenTriggers(
-	ctx context.Context, organization tenancy.Organization, limit int,
-) ([]investigation.Trigger, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := pool.Query(ctx, `
-		SELECT `+triggerColumns+`
-		 WHERE e.org_id = $1 AND e.status = 1 AND e.superseded_by IS NULL
-		 ORDER BY e.last_seen_at DESC
-		 LIMIT $2`, organization.String(), limit)
-	if err != nil {
-		return nil, fmt.Errorf("listing open incidents: %w", err)
-	}
-	defer rows.Close()
-
-	triggers := make([]investigation.Trigger, 0, limit)
-	for rows.Next() {
-		trigger, scanErr := scanTrigger(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("scanning an open incident: %w", scanErr)
-		}
-		triggers = append(triggers, trigger)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing open incidents: %w", err)
-	}
-	return triggers, nil
-}
-
 // InvestigationCandidates reports the enabled integrations an investigation may be offered.
 func (p *Database) InvestigationCandidates(
 	ctx context.Context, organization tenancy.Organization,
@@ -521,17 +443,16 @@ func scanInvestigation(row scanned, organization string) (investigation.Investig
 	var (
 		found          = investigation.Investigation{OrgID: organization}
 		incidentID     *uuid.UUID
-		integrationID  *uuid.UUID
 		conversationID *uuid.UUID
 		turn           *int
 		conclusion     []byte
 		concludedAt    *time.Time
 	)
-	if err := row.Scan(&found.ID, &incidentID, &integrationID, &found.Question,
+	if err := row.Scan(&found.ID, &incidentID, &found.Question,
 		&conversationID, &turn, &found.Subject, &found.WindowFrom, &found.WindowUntil,
 		&found.Status, &conclusion, &found.StoppedBy,
-		&found.Error, &found.Spend.InputTokens,
-		&found.Spend.OutputTokens, &found.Spend.MicroCents, &found.CreatedBy,
+		&found.Error, &found.Usage.InputTokens,
+		&found.Usage.OutputTokens, &found.CreatedBy,
 		&found.CreatedAt, &concludedAt, &found.Executing); err != nil {
 		return investigation.Investigation{}, err
 	}
@@ -543,9 +464,6 @@ func scanInvestigation(row scanned, organization string) (investigation.Investig
 	}
 	if incidentID != nil {
 		found.IncidentID = *incidentID
-	}
-	if integrationID != nil {
-		found.IntegrationID = *integrationID
 	}
 	if concludedAt != nil {
 		found.ConcludedAt = *concludedAt

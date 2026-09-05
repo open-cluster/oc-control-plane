@@ -25,6 +25,7 @@ ai:
   provider: "anthropic"
   model: "MODEL_ID"
   api_key_file: "/run/opencluster/credentials/model-key"
+  context_window_tokens: 128000
 investigation:
   workers: 8
   max_pending_per_organization: 100
@@ -100,6 +101,7 @@ and training terms before production use.
 | `OC_AI_PROVIDER` | Native AI provider: `anthropic` or `zai`. |
 | `OC_AI_MODEL` | Exact model identifier. |
 | `OC_AI_API_KEY_FILE` | AI provider credential file. |
+| `OC_AI_CONTEXT_WINDOW_SIZE` | Model context-window size in tokens; default `128000`. |
 | `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
 | `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |
 | `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. |
@@ -111,9 +113,7 @@ and training terms before production use.
 | `OC_GITHUB_APP_ID` | Deployment GitHub App ID. |
 | `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. |
 
-The OSS binary uses one mounted AI deployment for every Organization. The resolver keeps
-Organization explicit so a separate hosted composition can select managed or encrypted
-Organization BYOK without changing investigation behavior.
+The OSS binary uses one mounted AI deployment for every Organization.
 
 This is a pre-release clean break. Existing databases and configuration from earlier
 builds must be recreated rather than migrated through compatibility settings.

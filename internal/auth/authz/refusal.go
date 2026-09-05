@@ -15,15 +15,11 @@ var (
 	ErrCredentialRejected = errors.New("credential rejected")
 )
 
-// Reason is the safe client-facing category for an authentication refusal.
 type Reason string
 
 const (
-	// ReasonRejected reveals no detail about why a presented credential was unusable.
-	ReasonRejected Reason = "credential_rejected"
-	// ReasonSessionExpired tells the holder of a known session to sign in again.
+	ReasonRejected       Reason = "credential_rejected"
 	ReasonSessionExpired Reason = "session_expired"
-	// ReasonSessionRevoked tells the holder that the known session was ended deliberately.
 	ReasonSessionRevoked Reason = "session_revoked"
 )
 

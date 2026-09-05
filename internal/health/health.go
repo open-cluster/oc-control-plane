@@ -1,15 +1,3 @@
-// Package health serves the operational surface every deployment needs whether or not any
-// domain is exposed: liveness, readiness, and the metrics scrape, with the request
-// correlation those routes run under.
-//
-// It is named after what it does rather than after being an HTTP layer. Each capability
-// serves its own surface — intake, the operator surface, the relay endpoint — and a package
-// named for the layer would collect them, which is the grouping ADR-016 exists to prevent.
-//
-// The package deliberately does not import internal/store/postgres. It depends on the BEHAVIOUR
-// it needs (can the databases be reached?) rather than on the type that provides it, which
-// keeps database access inside the package that owns database resolution. The import gate
-// in test/architecture enforces this.
 package health
 
 import (
@@ -24,24 +12,14 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
-// readinessTimeout bounds the dependency check so a hung database makes readiness fail
-// rather than making the readiness endpoint itself hang.
 const readinessTimeout = 3 * time.Second
 
-// Handlers is the HTTP surface's dependencies.
 type Handlers struct {
-	// Ready reports whether dependencies are reachable. A non-nil error means unready.
-	Ready func(context.Context) error
-	// Metrics serves the scrape endpoint.
+	Ready   func(context.Context) error
 	Metrics http.Handler
-	// Logger is the base logger; per-request correlation is layered on top of it.
-	Logger *slog.Logger
+	Logger  *slog.Logger
 }
 
-// Router returns the HTTP surface with correlation, tracing, and logging applied.
-//
-// Metrics are served OUTSIDE the tracing middleware: a scrape every fifteen seconds would
-// otherwise produce a trace every fifteen seconds forever, which is noise that costs money.
 func (h Handlers) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", h.instrumented("healthz", http.HandlerFunc(h.live)))
@@ -71,15 +49,10 @@ func (h Handlers) logged(next http.Handler) http.Handler {
 	})
 }
 
-// live reports process health only. It must not consult a dependency: a liveness probe
-// that fails on a database outage tells the orchestrator to restart a healthy process,
-// turning a dependency incident into a crash loop.
 func (h Handlers) live(writer http.ResponseWriter, _ *http.Request) {
 	writeStatus(writer, http.StatusOK, "ok")
 }
 
-// ready reports whether this instance can serve traffic. Unlike liveness it consults
-// dependencies, and it recovers on its own once they return — no restart required.
 func (h Handlers) ready(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readinessTimeout)
 	defer cancel()
@@ -117,8 +90,6 @@ func withLogger(ctx context.Context, logger *slog.Logger) context.Context {
 	return context.WithValue(ctx, loggerKey{}, logger)
 }
 
-// loggerFrom returns the request's correlated logger, falling back to the base logger when
-// called outside a request.
 func loggerFrom(ctx context.Context, fallback *slog.Logger) *slog.Logger {
 	if logger, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
 		return logger

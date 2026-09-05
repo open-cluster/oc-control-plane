@@ -1,16 +1,9 @@
-// Package investigation owns durable Investigation state and provenance.
 package investigation
 
 import (
-	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
 // Status is where an investigation has got to. Persisted as the integer in the column;
@@ -28,7 +21,6 @@ const (
 // text, frozen like an enum: the operator view and its clients key on these words.
 // Empty means the model concluded freely.
 const (
-	StoppedBySpend         = "spend"
 	StoppedByToolRuns      = "tool_runs"
 	StoppedByReasonerTurns = "reasoner_turns"
 	StoppedByWallClock     = "wall_clock"
@@ -61,15 +53,6 @@ type RunOutcome int16
 const (
 	RunSucceeded RunOutcome = iota + 1
 	RunFailed
-)
-
-var (
-	ErrUnknown             = errors.New("investigation unknown")
-	ErrAlreadyEnded        = errors.New("investigation has already ended")
-	ErrIncidentUnknown     = errors.New("incident unknown")
-	ErrQueueFull           = errors.New("this organization has too many investigations waiting")
-	ErrReasonerUnavailable = errors.New("the reasoning boundary is unavailable")
-	ErrBadCursor           = errors.New("after is not a page position from a previous response")
 )
 
 // Finding is one thing the investigation established, tied to the runs that support it.
@@ -132,30 +115,27 @@ var (
 	}
 )
 
-// Spend is what the reasoning behind an investigation consumed.
-type Spend struct {
+// Usage is the aggregate model tokens consumed by an Investigation.
+type Usage struct {
 	InputTokens  int64
 	OutputTokens int64
-	MicroCents   int64
 }
 
-// Add accumulates another call's spend.
-func (s Spend) Add(other Spend) Spend {
-	return Spend{
-		InputTokens:  s.InputTokens + other.InputTokens,
-		OutputTokens: s.OutputTokens + other.OutputTokens,
-		MicroCents:   s.MicroCents + other.MicroCents,
+// Add accumulates another model call's usage.
+func (u Usage) Add(other Usage) Usage {
+	return Usage{
+		InputTokens:  u.InputTokens + other.InputTokens,
+		OutputTokens: u.OutputTokens + other.OutputTokens,
 	}
 }
 
 // Investigation is the slim record: the trigger, the subject, the window, the lifecycle,
-// what it found and what it cost. Everything else an auditor needs is the provenance
+// what it found and its token usage. Everything else an auditor needs is the provenance
 // beside it.
 type Investigation struct {
 	ID             uuid.UUID
 	OrgID          string
 	IncidentID     uuid.UUID
-	IntegrationID  uuid.UUID
 	Question       string
 	ConversationID uuid.UUID
 	Turn           int
@@ -167,18 +147,10 @@ type Investigation struct {
 	Conclusion     Conclusion
 	StoppedBy      string
 	Error          string
-	Spend          Spend
+	Usage          Usage
 	CreatedBy      string
 	CreatedAt      time.Time
 	ConcludedAt    time.Time
-}
-
-// Source is one integration the investigation was offered, with the reason recorded.
-type Source struct {
-	IntegrationID uuid.UUID
-	Rank          int
-	Reason        string
-	SelectedAt    time.Time
 }
 
 type ToolRun struct {
@@ -206,13 +178,12 @@ type ToolRun struct {
 
 // NewInvestigation is what a create records.
 type NewInvestigation struct {
-	IncidentID    uuid.UUID
-	IntegrationID uuid.UUID
-	Question      string
-	Subject       string
-	WindowFrom    time.Time
-	WindowUntil   time.Time
-	CreatedBy     string
+	IncidentID  uuid.UUID
+	Question    string
+	Subject     string
+	WindowFrom  time.Time
+	WindowUntil time.Time
+	CreatedBy   string
 }
 
 // Trigger is what an incident contributes when it starts an investigation.
@@ -246,67 +217,7 @@ type List struct {
 	Next           string
 }
 
-type OfferedSource struct {
-	Integration integrations.Integration
-	Tools       []integrations.Tool
-}
-
 type ToolCall struct {
 	Tool      string
 	Arguments map[string]any
-}
-
-// Store is everything the Investigation domain needs from durable state.
-type Store interface {
-	// CreateInvestigation records one, born running.
-	CreateInvestigation(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		wanted NewInvestigation, maxPending int) (Investigation, error)
-	// Investigation reads one, scoped to the tenant.
-	Investigation(ctx context.Context, org tenancy.Organization,
-		id uuid.UUID) (Investigation, error)
-	// InvestigationProvenance reads the sources and runs beside one investigation.
-	InvestigationProvenance(ctx context.Context, org tenancy.Organization,
-		id uuid.UUID) ([]Source, []ToolRun, error)
-	// QueryInvestigations reports a page, newest first, narrowed by the query.
-	QueryInvestigations(ctx context.Context, who authz.Principal, org tenancy.Organization,
-		query Query) (List, error)
-	// RecordSource writes one offered source.
-	RecordSource(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		source Source) error
-	// RecordToolRun writes one execution as it finished.
-	RecordToolRun(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		run ToolRun) error
-	// ConcludeInvestigation ends one with its concluding document and spend. stoppedBy
-	// names the ceiling that forced the concluding turn, empty when the model concluded
-	// freely. The document travels whole because its three parts are written together
-	// and mean nothing apart.
-	ConcludeInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		conclusion Conclusion, stoppedBy string, spend Spend) error
-	// FailInvestigation ends one with the reason it could not conclude.
-	FailInvestigation(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		reason string, spend Spend) error
-	// TriggerIncident reads what an incident contributes to the investigation it starts.
-	TriggerIncident(ctx context.Context, org tenancy.Organization,
-		incident uuid.UUID) (Trigger, error)
-	// OpenTriggers reports the organization's open incidents, for inferring a question's
-	// subject. Bounded: subject inference reads recent context, not history.
-	OpenTriggers(ctx context.Context, org tenancy.Organization, limit int) ([]Trigger, error)
-	// InvestigationCandidates reports the enabled integrations an investigation may be
-	// offered, with their sealed credentials for the runs.
-	InvestigationCandidates(ctx context.Context, org tenancy.Organization,
-	) ([]integrations.Integration, error)
-	// RecordCredentialUnseal writes the audit event for one credential unseal, before
-	// the credential is used; a use that cannot be recorded does not happen.
-	RecordCredentialUnseal(ctx context.Context, org tenancy.Organization, id uuid.UUID,
-		purpose string) error
-	// WorkloadInventory reads a bounded digest of the change ledger's current workload
-	// identities — a navigation index for the autonomous orientation, never evidence.
-	WorkloadInventory(ctx context.Context, org tenancy.Organization,
-		limit int) ([]string, error)
-	// ConversationBrief reads what a conversation contributes to its next turn: the
-	// bounded verbatim tail of what was said and prior turns' cited findings.
-	// Never copied tool payloads — a finding
-	// already names the runs that established it, and those runs are still in the record.
-	ConversationBrief(ctx context.Context, org tenancy.Organization,
-		conversation uuid.UUID, tail int) (Brief, error)
 }

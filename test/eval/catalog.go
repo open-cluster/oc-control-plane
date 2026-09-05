@@ -19,7 +19,6 @@ var fixtureFiles embed.FS
 
 type Baseline struct {
 	Revision               string  `json:"revision"`
-	AgentRevision          string  `json:"agentRevision"`
 	ProviderModel          string  `json:"providerModel"`
 	SafetyPolicyVersion    string  `json:"safetyPolicyVersion"`
 	TaskInstructionVersion string  `json:"taskInstructionVersion"`
@@ -36,7 +35,6 @@ type Baseline struct {
 	ToolCalls              int     `json:"toolCalls"`
 	InputTokens            int64   `json:"inputTokens"`
 	OutputTokens           int64   `json:"outputTokens"`
-	MicroCents             int64   `json:"microCents"`
 	LatencyNanos           int64   `json:"latencyNanos"`
 	HardGateFailures       int     `json:"hardGateFailures"`
 }

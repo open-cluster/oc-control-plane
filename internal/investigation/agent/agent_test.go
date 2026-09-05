@@ -5,18 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
 type scriptedModel struct {
@@ -37,7 +35,6 @@ type records struct {
 	candidate   integrations.Integration
 	trigger     investigation.Trigger
 	brief       investigation.Brief
-	sources     []investigation.Source
 	runs        []investigation.ToolRun
 	unseals     int
 	toolUsed    bool
@@ -48,37 +45,31 @@ type records struct {
 	eventErr    error
 	failure     string
 	stoppedBy   string
-	spend       investigation.Spend
+	usage       investigation.Usage
 }
 
-func (r *records) RecordSource(_ context.Context, _ tenancy.Organization, _ uuid.UUID, source investigation.Source) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.sources = append(r.sources, source)
-	return nil
-}
 func (r *records) RecordToolRun(_ context.Context, _ tenancy.Organization, _ uuid.UUID, run investigation.ToolRun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.runs = append(r.runs, run)
 	return nil
 }
-func (r *records) ConcludeInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, conclusion investigation.Conclusion, stoppedBy string, spend investigation.Spend) error {
+func (r *records) ConcludeInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.terminalErr != nil {
 		return r.terminalErr
 	}
-	r.conclusion, r.status, r.stoppedBy, r.spend = conclusion, investigation.StatusConcluded, stoppedBy, spend
+	r.conclusion, r.status, r.stoppedBy, r.usage = conclusion, investigation.StatusConcluded, stoppedBy, usage
 	return nil
 }
-func (r *records) FailInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, reason string, spend investigation.Spend) error {
+func (r *records) FailInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, reason string, usage investigation.Usage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.terminalErr != nil {
 		return r.terminalErr
 	}
-	r.status, r.failure, r.spend = investigation.StatusFailed, reason, spend
+	r.status, r.failure, r.usage = investigation.StatusFailed, reason, usage
 	return nil
 }
 func (r *records) TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error) {
@@ -145,6 +136,37 @@ func configuredTestAgent(t *testing.T, store *records, model Model, catalog inte
 	return &Agent{model: model, deployment: Deployment{Provider: "scripted", Model: "test", MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
 }
 
+func TestRunAcceptsAModelIdentifierWithoutALocalLookupEntry(t *testing.T) {
+	store := &records{}
+	model := &scriptedModel{next: func(_ int, _ Prompt) (Completion, error) {
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
+		}}}, nil
+	}}
+	built, err := NewAgent(Deployment{
+		Provider: "anthropic", Model: "claude-future-release", MaxOutputTokens: 1_024,
+	}, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built.Store = store
+	built.Catalog = testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{}, nil
+		})
+	built.Logger = slog.New(slog.DiscardHandler)
+	built.ContextWindowTokens = 128_000
+
+	organization, _ := tenancy.NewOrganization("org-test")
+	if err = built.Run(context.Background(), organization,
+		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != 1 || store.status != investigation.StatusConcluded {
+		t.Fatalf("model calls=%d status=%s", model.calls, store.status)
+	}
+}
+
 func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
 	catalog := testCatalog(t, func(_ context.Context, _ integrations.ToolRequest) (integrations.ToolResult, error) {
@@ -171,8 +193,8 @@ func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment", WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if store.status != investigation.StatusConcluded || len(store.sources) != 1 || len(store.runs) != 1 {
-		t.Fatalf("status=%s sources=%d runs=%d", store.status, len(store.sources), len(store.runs))
+	if store.status != investigation.StatusConcluded || len(store.runs) != 1 {
+		t.Fatalf("status=%s runs=%d", store.status, len(store.runs))
 	}
 }
 
@@ -363,9 +385,13 @@ func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
 	store := &records{}
 	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "bad", Name: ConcludeToolName, Arguments: json.RawMessage(`{"status":"wrong"}`)}}}, nil
+			return Completion{Stop: StopToolUse,
+				Usage:     TokenUsage{Input: Counted(5), Output: Counted(2)},
+				ToolCalls: []CompletionCall{{ID: "bad", Name: ConcludeToolName, Arguments: json.RawMessage(`{"status":"wrong"}`)}}}, nil
 		}
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
+		return Completion{Stop: StopToolUse,
+			Usage:     TokenUsage{Input: Counted(7), Output: Counted(3)},
+			ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
@@ -376,6 +402,9 @@ func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
 	}
 	if model.calls != 2 || store.status != investigation.StatusConcluded {
 		t.Fatalf("calls=%d status=%s", model.calls, store.status)
+	}
+	if store.usage != (investigation.Usage{InputTokens: 12, OutputTokens: 5}) {
+		t.Fatalf("usage=%+v", store.usage)
 	}
 }
 
@@ -393,7 +422,9 @@ func TestRunDurablyRecordsRefusalAndTruncation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := &records{}
 			model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-				return Completion{Stop: test.stop, Usage: TokenUsage{Input: Counted(7)}}, nil
+				return Completion{Stop: test.stop, Usage: TokenUsage{
+					Input: Counted(7), Output: Counted(3),
+				}}, nil
 			}}
 			agent := configuredTestAgent(t, store, model, testCatalog(t,
 				func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
@@ -405,9 +436,10 @@ func TestRunDurablyRecordsRefusalAndTruncation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if store.status != investigation.StatusFailed || model.calls != test.wantCalls ||
-				store.spend.InputTokens != int64(7*test.wantCalls) ||
+				store.usage.InputTokens != int64(7*test.wantCalls) ||
+				store.usage.OutputTokens != int64(3*test.wantCalls) ||
 				test.wantFailure != "" && !strings.Contains(store.failure, test.wantFailure) {
-				t.Fatalf("status=%s calls=%d spend=%+v", store.status, model.calls, store.spend)
+				t.Fatalf("status=%s calls=%d usage=%+v", store.status, model.calls, store.usage)
 			}
 		})
 	}
@@ -600,6 +632,32 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 	}
 }
 
+func TestRunReservesTheDeploymentOutputFromTheContextWindow(t *testing.T) {
+	store := &records{}
+	model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
+		if prompt.ForceTool != ConcludeToolName {
+			t.Fatal("context window did not reserve the deployment's maximum output")
+		}
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
+		}}}, nil
+	}}
+	agent := configuredTestAgent(t, store, model, testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{}, nil
+		}))
+	agent.ContextWindowTokens = 1_026
+
+	organization, _ := tenancy.NewOrganization("org-test")
+	if err := agent.Run(context.Background(), organization,
+		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.stoppedBy != investigation.StoppedByContext {
+		t.Fatalf("stopped_by=%q, want %q", store.stoppedBy, investigation.StoppedByContext)
+	}
+}
+
 func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -611,11 +669,6 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 	}{
 		{name: "tool budget", want: investigation.StoppedByToolRuns,
 			configure: func(a *Agent) { a.MaxToolRuns = 1 }},
-		{name: "spend", want: investigation.StoppedBySpend,
-			configure: func(a *Agent) {
-				a.SpendCeilingMicroCents = 1
-				a.rate.Input = 1_000_000
-			}, usage: TokenUsage{Input: Counted(1)}},
 		{name: "stagnation", want: investigation.StoppedByStagnation,
 			arguments: json.RawMessage(`{"input":{}}`)},
 		{name: "wall clock", want: investigation.StoppedByWallClock,
@@ -623,7 +676,9 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 				return context.WithTimeout(context.Background(), time.Minute)
 			}},
 		{name: "context", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.ContextCeiling = 1 }},
+			configure: func(a *Agent) { a.ContextWindowTokens = 1_025 }},
+		{name: "context exhausted by reserved output", want: investigation.StoppedByContext,
+			configure: func(a *Agent) { a.ContextWindowTokens = 1_024 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

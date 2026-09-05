@@ -8,24 +8,11 @@ import (
 	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-// Turning a provider-neutral prompt into this vendor's request.
-//
-// The interesting part is what this adapter has to do that the other one does not. This vendor's
-// JSON mode returns valid JSON but does not enforce a schema, so the schema is rendered into the
-// prompt here — at the very end, after everything cacheable, because a schema appended before the
-// cache boundary would move bytes in the prefix.
-//
-// Doing it here rather than in the shared prompt keeps the workaround with the provider that
-// is missing the capability, so a vendor that enforces schemas is not charged for one that
-// does not.
-
-// request is this vendor's chat completion body.
 type request struct {
 	Model     string    `json:"model"`
 	Messages  []message `json:"messages"`
 	MaxTokens int64     `json:"max_tokens"`
-	// Stream is explicitly false. The usage figures arrive complete in one body this way, and a
-	// cost figure that is silently absent disables the cost ceiling without saying so.
+	// Stream is explicitly false because usage figures arrive complete only in the final body.
 	Stream          bool            `json:"stream"`
 	Thinking        *thinking       `json:"thinking,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`

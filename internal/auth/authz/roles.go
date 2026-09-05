@@ -7,40 +7,24 @@ import "strings"
 type Role string
 
 const (
-	// Admin runs the tenant: identity configuration, members, sessions, tokens,
-	// integrations, relays and the record.
-	Admin Role = "admin"
-	// Editor operates the estate during an incident — verifying integrations, turning one
-	// off and back on, correcting an incident grouping — and cannot change who may sign in
-	// or extend the estate.
+	Admin  Role = "admin"
 	Editor Role = "editor"
-	// Viewer is read-only across the tenant's operational record.
 	Viewer Role = "viewer"
 )
 
-// roles is the declared set, in the order the product presents them: most privileged
-// first, so a list rendered from this reads as a ladder.
 var roles = []Role{Admin, Editor, Viewer}
 
-// Roles returns the roles this build declares.
 func Roles() []Role { return append([]Role(nil), roles...) }
 
-// KnownRole reports whether a value names a role this build has.
 func KnownRole(role Role) bool {
 	return slices.Contains(roles, role)
 }
 
-// ParseRole resolves what a database column or a group map said. An unrecognised value is
-// refused rather than defaulted: defaulting up is a privilege escalation and defaulting
-// down is a silent lockout, and both are worse than saying the value is not a role.
 func ParseRole(value string) (Role, bool) {
 	role := Role(strings.TrimSpace(value))
 	return role, KnownRole(role)
 }
 
-// reads are the permissions that change nothing. The set is declared rather than derived
-// from the name, because "integration.webhook-secret.rotate" reads like a noun and is a
-// mutation.
 var reads = map[Permission]bool{
 	IntegrationRead:   true,
 	RelayRead:         true,
@@ -97,8 +81,6 @@ func Grants(role Role, permission Permission) bool { return granted[role][permis
 // Grants reports whether this role holds a permission.
 func (r Role) Grants(permission Permission) bool { return Grants(r, permission) }
 
-// PermissionsOf returns what a role holds, in the declared order, so a surface that lists
-// a role's permissions renders the same list every time.
 func PermissionsOf(role Role) []Permission {
 	held := granted[role]
 	listed := make([]Permission, 0, len(held))

@@ -1,11 +1,3 @@
--- OpenCluster control-plane baseline schema.
--- This is the final schema for a new pre-release database; earlier development schemas must be recreated.
-
---
---
-
-
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -16,10 +8,6 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
-
---
--- Name: audit_event_is_append_only(); Type: FUNCTION; Schema: public; Owner: -
---
 
 CREATE FUNCTION public.audit_event_is_append_only() RETURNS trigger
     LANGUAGE plpgsql
@@ -34,20 +22,16 @@ BEGIN
 END;
 $$;
 
-
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
-
---
--- Name: alert_event; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.alert_event (
     alert_event_id uuid NOT NULL,
     org_id text NOT NULL,
     integration_id uuid NOT NULL,
     source_key text NOT NULL,
+    -- 1 - firing, 2 - resolved
     status smallint NOT NULL,
     title text NOT NULL,
     summary text NOT NULL,
@@ -69,18 +53,6 @@ CREATE TABLE public.alert_event (
     CONSTRAINT alert_event_title_check CHECK ((length(title) <= 512))
 );
 
-
---
--- Name: TABLE alert_event; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.alert_event IS 'Normalised alerts. Nothing downstream can tell which system delivered one.';
-
-
---
--- Name: app_user; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.app_user (
     user_id uuid NOT NULL,
     issuer text NOT NULL,
@@ -97,18 +69,6 @@ CREATE TABLE public.app_user (
     CONSTRAINT app_user_issuer_check CHECK (((length(issuer) >= 1) AND (length(issuer) <= 512))),
     CONSTRAINT app_user_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 256)))
 );
-
-
---
--- Name: TABLE app_user; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.app_user IS 'A person who may sign in. Deployment-wide; identity is the issuer and subject together.';
-
-
---
--- Name: audit_event; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.audit_event (
     event_id uuid NOT NULL,
@@ -136,18 +96,6 @@ CREATE TABLE public.audit_event (
     CONSTRAINT audit_event_target_kind_check CHECK ((length(target_kind) <= 64))
 );
 
-
---
--- Name: TABLE audit_event; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.audit_event IS 'Append-only. The database refuses an UPDATE and a DELETE; retention pruning must declare itself in its transaction.';
-
-
---
--- Name: change_ledger; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.change_ledger (
     entry_id bigint NOT NULL,
     org_id text NOT NULL,
@@ -171,18 +119,6 @@ CREATE TABLE public.change_ledger (
     CONSTRAINT change_ledger_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128)))
 );
 
-
---
--- Name: TABLE change_ledger; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.change_ledger IS 'Workload revisions and configuration changes, continuously persisted because they decay at the source. Declared intent and identity only; a navigation index, never evidence.';
-
-
---
--- Name: change_ledger_entry_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
 ALTER TABLE public.change_ledger ALTER COLUMN entry_id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.change_ledger_entry_id_seq
     START WITH 1
@@ -191,11 +127,6 @@ ALTER TABLE public.change_ledger ALTER COLUMN entry_id ADD GENERATED ALWAYS AS I
     NO MAXVALUE
     CACHE 1
 );
-
-
---
--- Name: change_ledger_scope; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.change_ledger_scope (
     integration_id uuid NOT NULL,
@@ -213,18 +144,6 @@ CREATE TABLE public.change_ledger_scope (
     CONSTRAINT change_ledger_scope_requested_interval_seconds_check CHECK ((requested_interval_seconds > 0))
 );
 
-
---
--- Name: TABLE change_ledger_scope; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.change_ledger_scope IS 'One integration''s synchronization state: coverage boundaries and freshness, so an empty window is answerable as "nothing changed" or "nobody was watching" — never silently.';
-
-
---
--- Name: conversation; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.conversation (
     conversation_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -241,18 +160,6 @@ CREATE TABLE public.conversation (
     CONSTRAINT conversation_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 512))),
     CONSTRAINT conversation_surface_check CHECK ((surface = ANY (ARRAY[1, 2])))
 );
-
-
---
--- Name: TABLE conversation; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.conversation IS 'One multi-turn context a person talks to: organization-scoped, optionally about an incident, holding messages and the investigations its turns opened.';
-
-
---
--- Name: conversation_message; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.conversation_message (
     conversation_id uuid NOT NULL,
@@ -277,18 +184,6 @@ CREATE TABLE public.conversation_message (
     CONSTRAINT conversation_message_text_check CHECK (((length(text) >= 1) AND (length(text) <= 8192)))
 );
 
-
---
--- Name: TABLE conversation_message; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.conversation_message IS 'The authoritative transcript, in order, with who said each thing. Never edited or deleted by compaction; untrusted for its whole life.';
-
-
---
--- Name: deployment_sign_in_flow; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.deployment_sign_in_flow (
     flow_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -302,18 +197,6 @@ CREATE TABLE public.deployment_sign_in_flow (
     CONSTRAINT deployment_sign_in_flow_state_digest_check CHECK ((octet_length(state_digest) = 32))
 );
 
-
---
--- Name: TABLE deployment_sign_in_flow; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.deployment_sign_in_flow IS 'Short-lived PKCE, nonce, and state records for the deployment OIDC provider.';
-
-
---
--- Name: incident; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.incident (
     incident_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -321,6 +204,7 @@ CREATE TABLE public.incident (
     grouping_key text NOT NULL,
     grouping_basis smallint NOT NULL,
     title text NOT NULL,
+    -- 1 - open, 2 - resolved
     status smallint NOT NULL,
     first_seen_at timestamp with time zone NOT NULL,
     last_seen_at timestamp with time zone NOT NULL,
@@ -344,25 +228,6 @@ CREATE TABLE public.incident (
     CONSTRAINT incident_title_check CHECK ((length(title) <= 512))
 );
 
-
---
--- Name: TABLE incident; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.incident IS 'One operational incident, grouped from Alert Events by the identity their own source supplied. Provisional grouping, not causal truth: revisable by a merge that rewrites nothing.';
-
-
---
--- Name: COLUMN incident.superseded_by; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.incident.superseded_by IS 'The incident an operator merged this one into. Both records survive; nothing is rewritten.';
-
-
---
--- Name: integration; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.integration (
     integration_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -375,6 +240,7 @@ CREATE TABLE public.integration (
     webhook_secret_rotated_at timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     relay_id uuid,
+    -- 1 - configured, 2 - active, 3 - degraded, 4 - failed
     status smallint DEFAULT 1 NOT NULL,
     last_verified_at timestamp with time zone,
     verify_note text DEFAULT ''::text NOT NULL,
@@ -401,60 +267,6 @@ CREATE TABLE public.integration (
     CONSTRAINT integration_webhook_secret_is_whole CHECK ((((webhook_secret_digest IS NULL) AND (webhook_secret_fingerprint IS NULL) AND (webhook_secret_created_at IS NULL)) OR ((webhook_secret_digest IS NOT NULL) AND (webhook_secret_fingerprint IS NOT NULL) AND (webhook_secret_created_at IS NOT NULL))))
 );
 
-
---
--- Name: TABLE integration; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.integration IS 'One configured installation belonging to an organization. org_id is the boundary and the Relay binding says where work runs.';
-
-
---
--- Name: COLUMN integration.webhook_secret_fingerprint; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.integration.webhook_secret_fingerprint IS 'A minted identity for the live webhook secret. Not derived from it: a truncated hash would let a dump confirm a guess offline.';
-
-
---
--- Name: COLUMN integration.credential_sealed; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.integration.credential_sealed IS 'Outbound credential, AES-256-GCM sealed under the deployment sealing key. Write-only after entry; no API returns it.';
-
-
---
--- Name: COLUMN integration.credential_fingerprint; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.integration.credential_fingerprint IS 'A minted identity for the live credential. Not derived from it: a derived value would let a dump confirm a guess offline.';
-
-
---
--- Name: COLUMN integration.verify_grants; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.integration.verify_grants IS 'Facts the probe verified about the credential (scopes, token type); tool availability derives from them.';
-
-
---
--- Name: COLUMN integration.verify_facts; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.integration.verify_facts IS 'Non-secret facts the probe established (account, selection, reach); for display and support, never authorization.';
-
-
---
--- Name: COLUMN integration.credential_key_id; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.integration.credential_key_id IS 'Non-secret key identifier from the credential envelope; NULL only for the version-1 compatibility envelope.';
-
-
---
--- Name: integration_connect_flow; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.integration_connect_flow (
     flow_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -471,18 +283,6 @@ CREATE TABLE public.integration_connect_flow (
     CONSTRAINT integration_connect_flow_return_to_check CHECK ((length(return_to) <= 512)),
     CONSTRAINT integration_connect_flow_state_digest_check CHECK ((length(state_digest) = 32))
 );
-
-
---
--- Name: TABLE integration_connect_flow; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.integration_connect_flow IS 'One provider installation flow in progress. Digest only; single-use; the organization it names is the authority.';
-
-
---
--- Name: integration_delivery; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.integration_delivery (
     delivery_id uuid NOT NULL,
@@ -512,18 +312,6 @@ CREATE TABLE public.integration_delivery (
     CONSTRAINT integration_delivery_request_id_check CHECK ((length(request_id) <= 128))
 );
 
-
---
--- Name: TABLE integration_delivery; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.integration_delivery IS 'Every webhook delivery attempt that reached a real integration. Accepted rows are the idempotence key; the rest are the health record.';
-
-
---
--- Name: integration_installation; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.integration_installation (
     integration_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -547,11 +335,6 @@ CREATE TABLE public.integration_installation (
     CONSTRAINT integration_installation_workspace_check CHECK (((length(workspace) >= 1) AND (length(workspace) <= 64)))
 );
 
-
---
--- Name: integration_type; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.integration_type (
     integration_type_id smallint NOT NULL,
     key text NOT NULL,
@@ -568,33 +351,20 @@ CREATE TABLE public.integration_type (
     CONSTRAINT integration_type_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128)))
 );
 
-
---
--- Name: TABLE integration_type; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.integration_type IS 'Product-owned reference data: the kinds of tool OpenCluster supports. Seeded by migration; behavior lives in provider Go code keyed by the stable key.';
-
-
---
--- Name: investigation; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.investigation (
     investigation_id uuid NOT NULL,
     org_id text NOT NULL,
     incident_id uuid,
-    integration_id uuid,
     question text DEFAULT ''::text NOT NULL,
     subject text NOT NULL,
     window_from timestamp with time zone NOT NULL,
     window_until timestamp with time zone NOT NULL,
+    -- 1 - running, 2 - concluded, 3 - failed, 4 - cancelled
     status smallint DEFAULT 1 NOT NULL,
     conclusion jsonb DEFAULT '{}'::jsonb NOT NULL,
     error text DEFAULT ''::text NOT NULL,
     spend_input_tokens bigint DEFAULT 0 NOT NULL,
     spend_output_tokens bigint DEFAULT 0 NOT NULL,
-    spend_micro_cents bigint DEFAULT 0 NOT NULL,
     created_by text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     concluded_at timestamp with time zone,
@@ -617,7 +387,6 @@ CREATE TABLE public.investigation (
     CONSTRAINT investigation_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
     CONSTRAINT investigation_question_check CHECK ((length(question) <= 1024)),
     CONSTRAINT investigation_spend_input_tokens_check CHECK ((spend_input_tokens >= 0)),
-    CONSTRAINT investigation_spend_micro_cents_check CHECK ((spend_micro_cents >= 0)),
     CONSTRAINT investigation_spend_output_tokens_check CHECK ((spend_output_tokens >= 0)),
     CONSTRAINT investigation_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4]))),
     CONSTRAINT investigation_stop_is_a_conclusion CHECK (((stopped_by = ''::text) OR (status = 2))),
@@ -628,107 +397,19 @@ CREATE TABLE public.investigation (
     CONSTRAINT investigation_window_ends_after_it_starts CHECK ((window_until >= window_from))
 );
 
-
---
--- Name: TABLE investigation; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.investigation IS 'One investigation: trigger, subject, window, lifecycle, structured conclusion, and spend. Provenance lives beside it; no chain of thought is stored.';
-
-
---
--- Name: COLUMN investigation.conclusion; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.conclusion IS 'Structured conclusion: status, summary, impact, findings, hypotheses, action proposals, and limitations.';
-
-
---
--- Name: COLUMN investigation.stopped_by; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.stopped_by IS 'The ceiling that forced the concluding turn, empty when the model concluded freely.';
-
-
---
--- Name: COLUMN investigation.conversation_id; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.conversation_id IS 'The conversation this investigation is a turn of; NULL for a single-shot investigation.';
-
-
---
--- Name: COLUMN investigation.turn; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.turn IS 'This investigation''s one-based position among its conversation''s turns.';
-
-
---
--- Name: COLUMN investigation.lease_worker; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.lease_worker IS 'The worker executing this turn; empty when the investigation is waiting to be claimed.';
-
-
---
--- Name: COLUMN investigation.lease_expires_at; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.investigation.lease_expires_at IS 'When the claim lapses if the worker stops heartbeating. Server clock, never a worker''s.';
-
-
---
--- Name: investigation_event; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.investigation_event (
     investigation_id uuid NOT NULL,
     org_id text NOT NULL,
     sequence bigint NOT NULL,
     at timestamp with time zone DEFAULT now() NOT NULL,
+    -- 1 - started, 2 - progress, 3 - tool_started, 4 - tool_completed, 5 - retired
+    -- 6 - concluded, 7 - failed, 8 - retired, 9 - cancelled, 10 - hypotheses_updated
     type smallint NOT NULL,
     payload jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT investigation_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
     CONSTRAINT investigation_event_sequence_check CHECK ((sequence >= 1)),
     CONSTRAINT investigation_event_type_check CHECK (((type >= 1) AND (type <= 10)))
 );
-
-
---
--- Name: TABLE investigation_event; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.investigation_event IS 'The ordered semantic events of one investigation, for replay and live following. Platform-composed facts only; never a model''s reasoning, a credential or a raw tool payload.';
-
-
---
--- Name: investigation_source; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.investigation_source (
-    investigation_id uuid NOT NULL,
-    org_id text NOT NULL,
-    integration_id uuid NOT NULL,
-    rank smallint NOT NULL,
-    reason text NOT NULL,
-    selected_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT investigation_source_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128))),
-    CONSTRAINT investigation_source_rank_check CHECK ((rank >= 1)),
-    CONSTRAINT investigation_source_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 512)))
-);
-
-
---
--- Name: TABLE investigation_source; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.investigation_source IS 'The context router''s selection, in rank order, each with the reason it was chosen.';
-
-
---
--- Name: investigation_tool_run; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.investigation_tool_run (
     investigation_id uuid NOT NULL,
@@ -757,18 +438,6 @@ CREATE TABLE public.investigation_tool_run (
     CONSTRAINT investigation_tool_run_tool_check CHECK (((length(tool) >= 1) AND (length(tool) <= 128)))
 );
 
-
---
--- Name: TABLE investigation_tool_run; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.investigation_tool_run IS 'Every tool execution an investigation performed, succeeded or failed alike, with its scope and what came back.';
-
-
---
--- Name: local_password; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.local_password (
     user_id uuid NOT NULL,
     password_hash text NOT NULL,
@@ -776,18 +445,6 @@ CREATE TABLE public.local_password (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT local_password_password_hash_check CHECK (((length(password_hash) >= 32) AND (length(password_hash) <= 512)))
 );
-
-
---
--- Name: TABLE local_password; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.local_password IS 'Argon2id password verifiers for local users. The encoded verifier contains versioned parameters and no recoverable password.';
-
-
---
--- Name: operator_session; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.operator_session (
     session_id uuid NOT NULL,
@@ -809,20 +466,6 @@ CREATE TABLE public.operator_session (
     CONSTRAINT operator_session_user_agent_check CHECK ((length(user_agent) <= 256))
 );
 
-
---
--- Name: TABLE operator_session; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.operator_session IS 'A signed-in operator. Only the digest of the cookie value is held; sign-out deletes the row.';
-
-COMMENT ON COLUMN public.operator_session.org_id IS 'Organization selected when the session was issued; NULL until the bootstrapped User creates the first Organization.';
-
-
---
--- Name: organization; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.organization (
     org_id text NOT NULL,
     display_name text NOT NULL,
@@ -833,11 +476,6 @@ CREATE TABLE public.organization (
     CONSTRAINT organization_display_name_check CHECK (((length(display_name) >= 1) AND (length(display_name) <= 256))),
     CONSTRAINT organization_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 256)))
 );
-
-
---
--- Name: organization_membership; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.organization_membership (
     membership_id uuid NOT NULL,
@@ -857,18 +495,6 @@ CREATE TABLE public.organization_membership (
     CONSTRAINT organization_membership_source_check CHECK ((source = ANY (ARRAY[1, 2, 3])))
 );
 
-
---
--- Name: TABLE organization_membership; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.organization_membership IS 'Which tenant a person may see and as what. The role is on the membership, not the user.';
-
-
---
--- Name: organization_policy; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.organization_policy (
     org_id text NOT NULL,
     session_lifetime_seconds integer DEFAULT 0 NOT NULL,
@@ -880,11 +506,6 @@ CREATE TABLE public.organization_policy (
     CONSTRAINT organization_policy_session_lifetime_seconds_check CHECK ((session_lifetime_seconds >= 0)),
     CONSTRAINT organization_policy_updated_by_check CHECK ((length(updated_by) <= 256))
 );
-
-
---
--- Name: postmortem; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.postmortem (
     incident_id uuid NOT NULL,
@@ -903,11 +524,6 @@ CREATE TABLE public.postmortem (
     CONSTRAINT postmortem_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'reviewed'::text])))
 );
 
-
---
--- Name: relay_bootstrap_token; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.relay_bootstrap_token (
     token_digest bytea NOT NULL,
     org_id text NOT NULL,
@@ -919,18 +535,6 @@ CREATE TABLE public.relay_bootstrap_token (
     CONSTRAINT relay_bootstrap_token_token_digest_check CHECK ((length(token_digest) = 32))
 );
 
-
---
--- Name: TABLE relay_bootstrap_token; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.relay_bootstrap_token IS 'Single-use enrolment tokens, stored as digests. Consumption and issuance commit together.';
-
-
---
--- Name: relay_job; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.relay_job (
     job_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -939,6 +543,7 @@ CREATE TABLE public.relay_job (
     capability_id text NOT NULL,
     capability_version integer NOT NULL,
     arguments bytea NOT NULL,
+    -- 0 - pending, 1 - leased, 2 - succeeded, 3 - failed, 4 - cancelled
     status smallint DEFAULT 0 NOT NULL,
     lease_session uuid,
     lease_epoch bigint DEFAULT 0 NOT NULL,
@@ -953,25 +558,6 @@ CREATE TABLE public.relay_job (
     CONSTRAINT relay_job_status_check CHECK (((status >= 0) AND (status <= 4))),
     CONSTRAINT relay_job_terminal_is_stamped CHECK (((status = ANY (ARRAY[2, 3, 4])) = (terminal_at IS NOT NULL)))
 );
-
-
---
--- Name: TABLE relay_job; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.relay_job IS 'Durable job truth. Leases are server-clock and fenced by (lease_session, lease_epoch).';
-
-
---
--- Name: COLUMN relay_job.lease_epoch; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.relay_job.lease_epoch IS 'Generation of the current lease. A result echoing an older generation is refused, never recorded.';
-
-
---
--- Name: relay_registration; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.relay_registration (
     registration_id uuid NOT NULL,
@@ -996,18 +582,6 @@ CREATE TABLE public.relay_registration (
     CONSTRAINT relay_registration_protocol_version_check CHECK (((protocol_version IS NULL) OR ((protocol_version >= 1) AND (protocol_version <= 4294967295))))
 );
 
-
---
--- Name: TABLE relay_registration; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.relay_registration IS 'Durable relay identities. The credential is returned once at enrolment and never read back.';
-
-
---
--- Name: relay_session_conflict_event; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.relay_session_conflict_event (
     event_id bigint NOT NULL,
     org_id text NOT NULL,
@@ -1022,18 +596,6 @@ CREATE TABLE public.relay_session_conflict_event (
     CONSTRAINT relay_session_conflict_event_org_id_check CHECK (((length(org_id) >= 1) AND (length(org_id) <= 128)))
 );
 
-
---
--- Name: TABLE relay_session_conflict_event; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.relay_session_conflict_event IS 'Append-only trail of contested relay identities and of the withdrawals that acknowledged them.';
-
-
---
--- Name: relay_session_conflict_event_event_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
 ALTER TABLE public.relay_session_conflict_event ALTER COLUMN event_id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.relay_session_conflict_event_event_id_seq
     START WITH 1
@@ -1042,11 +604,6 @@ ALTER TABLE public.relay_session_conflict_event ALTER COLUMN event_id ADD GENERA
     NO MAXVALUE
     CACHE 1
 );
-
-
---
--- Name: slack_conversation; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.slack_conversation (
     conversation_id uuid NOT NULL,
@@ -1060,11 +617,6 @@ CREATE TABLE public.slack_conversation (
     CONSTRAINT slack_conversation_thread_ts_check CHECK (((length(thread_ts) >= 1) AND (length(thread_ts) <= 64)))
 );
 
-
---
--- Name: slack_reply; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.slack_reply (
     investigation_id uuid NOT NULL,
     org_id text NOT NULL,
@@ -1074,6 +626,7 @@ CREATE TABLE public.slack_reply (
     thread_ts text NOT NULL,
     stream_ts text DEFAULT ''::text NOT NULL,
     native boolean DEFAULT false NOT NULL,
+    -- 1 - pending, 2 - delivering, 3 - delivered, 4 - failed
     status smallint DEFAULT 1 NOT NULL,
     last_sequence bigint DEFAULT 0 NOT NULL,
     attempts integer DEFAULT 0 NOT NULL,
@@ -1092,22 +645,11 @@ CREATE TABLE public.slack_reply (
     CONSTRAINT slack_reply_thread_ts_check CHECK (((length(thread_ts) >= 1) AND (length(thread_ts) <= 64)))
 );
 
-
---
--- Name: TABLE slack_reply; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.slack_reply IS 'Outbound delivery of one investigation into one Slack thread. Its cursor only moves forward, so a retry appends what was missed rather than reposting what was seen. A failure here is never a failure of the investigation.';
-
-
---
--- Name: webhook_work; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.webhook_work (
     work_id uuid NOT NULL,
     org_id text NOT NULL,
     kind smallint NOT NULL,
+    -- 1 - ready, 2 - leased, 3 - retry, 4 - terminal, 5 - complete
     status smallint DEFAULT 1 NOT NULL,
     delivery_id uuid NOT NULL,
     integration_id uuid NOT NULL,
@@ -1136,1037 +678,348 @@ CREATE TABLE public.webhook_work (
     CONSTRAINT webhook_work_status_check CHECK ((status = ANY (ARRAY[1, 2, 3, 4, 5])))
 );
 
-
---
--- Name: alert_event alert_event_incident_is_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.alert_event
     ADD CONSTRAINT alert_event_incident_is_unique UNIQUE (integration_id, source_key, started_at);
-
-
---
--- Name: alert_event alert_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.alert_event
     ADD CONSTRAINT alert_event_pkey PRIMARY KEY (alert_event_id);
 
-
---
--- Name: app_user app_user_identity_is_the_issuer_and_subject; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.app_user
     ADD CONSTRAINT app_user_identity_is_the_issuer_and_subject UNIQUE (issuer, subject);
-
-
---
--- Name: app_user app_user_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.app_user
     ADD CONSTRAINT app_user_pkey PRIMARY KEY (user_id);
 
-
---
--- Name: audit_event audit_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.audit_event
     ADD CONSTRAINT audit_event_pkey PRIMARY KEY (event_id);
-
-
---
--- Name: change_ledger change_ledger_entry_is_unique_per_observation; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.change_ledger
     ADD CONSTRAINT change_ledger_entry_is_unique_per_observation UNIQUE (integration_id, object_uid, observed_revision);
 
-
---
--- Name: change_ledger change_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.change_ledger
     ADD CONSTRAINT change_ledger_pkey PRIMARY KEY (entry_id);
-
-
---
--- Name: change_ledger_scope change_ledger_scope_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.change_ledger_scope
     ADD CONSTRAINT change_ledger_scope_pkey PRIMARY KEY (integration_id);
 
-
---
--- Name: conversation conversation_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.conversation
     ADD CONSTRAINT conversation_identity_is_org_scoped UNIQUE (org_id, conversation_id);
-
-
---
--- Name: conversation_message conversation_message_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.conversation_message
     ADD CONSTRAINT conversation_message_pkey PRIMARY KEY (org_id, conversation_id, sequence);
 
-
---
--- Name: conversation conversation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.conversation
     ADD CONSTRAINT conversation_pkey PRIMARY KEY (conversation_id);
-
-
---
--- Name: deployment_sign_in_flow deployment_sign_in_flow_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.deployment_sign_in_flow
     ADD CONSTRAINT deployment_sign_in_flow_pkey PRIMARY KEY (flow_id);
 
-
---
--- Name: deployment_sign_in_flow deployment_sign_in_flow_state_digest_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.deployment_sign_in_flow
     ADD CONSTRAINT deployment_sign_in_flow_state_digest_key UNIQUE (state_digest);
-
-
---
--- Name: incident incident_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.incident
     ADD CONSTRAINT incident_identity_is_org_scoped UNIQUE (org_id, incident_id);
 
-
---
--- Name: incident incident_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.incident
     ADD CONSTRAINT incident_pkey PRIMARY KEY (incident_id);
-
-
---
--- Name: integration_connect_flow integration_connect_flow_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration_connect_flow
     ADD CONSTRAINT integration_connect_flow_pkey PRIMARY KEY (flow_id);
 
-
---
--- Name: integration_connect_flow integration_connect_flow_state_is_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration_connect_flow
     ADD CONSTRAINT integration_connect_flow_state_is_unique UNIQUE (state_digest);
-
-
---
--- Name: integration_delivery integration_delivery_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration_delivery
     ADD CONSTRAINT integration_delivery_identity_is_org_scoped UNIQUE (org_id, delivery_id);
 
-
---
--- Name: integration_delivery integration_delivery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration_delivery
     ADD CONSTRAINT integration_delivery_pkey PRIMARY KEY (delivery_id);
-
-
---
--- Name: integration integration_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration
     ADD CONSTRAINT integration_identity_is_org_scoped UNIQUE (org_id, integration_id);
 
-
---
--- Name: integration_installation integration_installation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration_installation
     ADD CONSTRAINT integration_installation_pkey PRIMARY KEY (integration_id);
-
-
---
--- Name: integration integration_name_is_unique_per_org; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration
     ADD CONSTRAINT integration_name_is_unique_per_org UNIQUE (org_id, name);
 
-
---
--- Name: integration integration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration
     ADD CONSTRAINT integration_pkey PRIMARY KEY (integration_id);
-
-
---
--- Name: integration_type integration_type_key_key; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration_type
     ADD CONSTRAINT integration_type_key_key UNIQUE (key);
 
-
---
--- Name: integration_type integration_type_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration_type
     ADD CONSTRAINT integration_type_pkey PRIMARY KEY (integration_type_id);
-
-
---
--- Name: investigation_event investigation_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.investigation_event
     ADD CONSTRAINT investigation_event_pkey PRIMARY KEY (investigation_id, sequence);
 
-
---
--- Name: investigation investigation_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.investigation
     ADD CONSTRAINT investigation_identity_is_org_scoped UNIQUE (org_id, investigation_id);
-
-
---
--- Name: investigation investigation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.investigation
     ADD CONSTRAINT investigation_pkey PRIMARY KEY (investigation_id);
 
-
---
--- Name: investigation_source investigation_source_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.investigation_source
-    ADD CONSTRAINT investigation_source_pkey PRIMARY KEY (investigation_id, integration_id);
-
-
---
--- Name: investigation_tool_run investigation_tool_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.investigation_tool_run
     ADD CONSTRAINT investigation_tool_run_pkey PRIMARY KEY (investigation_id, ordinal);
-
-
---
--- Name: investigation investigation_turn_is_unique_in_its_conversation; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.investigation
     ADD CONSTRAINT investigation_turn_is_unique_in_its_conversation UNIQUE (org_id, conversation_id, turn);
 
-
---
--- Name: local_password local_password_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.local_password
     ADD CONSTRAINT local_password_pkey PRIMARY KEY (user_id);
-
-
---
--- Name: operator_session operator_session_digest_is_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.operator_session
     ADD CONSTRAINT operator_session_digest_is_unique UNIQUE (token_digest);
 
-
---
--- Name: operator_session operator_session_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.operator_session
     ADD CONSTRAINT operator_session_pkey PRIMARY KEY (session_id);
-
-
---
--- Name: organization_membership organization_membership_is_one_per_tenant; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.organization_membership
     ADD CONSTRAINT organization_membership_is_one_per_tenant UNIQUE (org_id, user_id);
 
-
---
--- Name: organization_membership organization_membership_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.organization_membership
     ADD CONSTRAINT organization_membership_pkey PRIMARY KEY (membership_id);
-
-
---
--- Name: organization_policy organization_policy_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.organization_policy
     ADD CONSTRAINT organization_policy_pkey PRIMARY KEY (org_id);
 
-
---
--- Name: postmortem postmortem_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.postmortem
     ADD CONSTRAINT postmortem_pkey PRIMARY KEY (org_id, incident_id);
-
-
---
--- Name: relay_bootstrap_token relay_bootstrap_token_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.relay_bootstrap_token
     ADD CONSTRAINT relay_bootstrap_token_pkey PRIMARY KEY (token_digest);
 
-
---
--- Name: relay_job relay_job_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.relay_job
     ADD CONSTRAINT relay_job_pkey PRIMARY KEY (job_id);
-
-
---
--- Name: relay_registration relay_registration_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.relay_registration
     ADD CONSTRAINT relay_registration_identity_is_org_scoped UNIQUE (org_id, registration_id);
 
-
---
--- Name: relay_registration relay_registration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.relay_registration
     ADD CONSTRAINT relay_registration_pkey PRIMARY KEY (registration_id);
-
-
---
--- Name: relay_session_conflict_event relay_session_conflict_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.relay_session_conflict_event
     ADD CONSTRAINT relay_session_conflict_event_pkey PRIMARY KEY (event_id);
 
-
---
--- Name: slack_conversation slack_conversation_is_one_thread; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.slack_conversation
     ADD CONSTRAINT slack_conversation_is_one_thread UNIQUE (integration_id, channel_id, thread_ts);
-
-
---
--- Name: slack_conversation slack_conversation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.slack_conversation
     ADD CONSTRAINT slack_conversation_pkey PRIMARY KEY (conversation_id);
 
-
---
--- Name: slack_reply slack_reply_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.slack_reply
     ADD CONSTRAINT slack_reply_pkey PRIMARY KEY (investigation_id);
-
-
---
--- Name: webhook_work webhook_work_identity_is_org_scoped; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.webhook_work
     ADD CONSTRAINT webhook_work_identity_is_org_scoped UNIQUE (org_id, work_id);
 
-
---
--- Name: webhook_work webhook_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.webhook_work
     ADD CONSTRAINT webhook_work_pkey PRIMARY KEY (work_id);
 
-
---
--- Name: alert_event_incident_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX alert_event_incident_idx ON public.alert_event USING btree (incident_id, started_at DESC);
-
-
---
--- Name: alert_event_org_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX alert_event_org_idx ON public.alert_event USING btree (org_id, received_at DESC);
 
-
---
--- Name: alert_event_source_key_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX alert_event_source_key_idx ON public.alert_event USING btree (integration_id, source_key, started_at DESC);
-
-
---
--- Name: app_user_email_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX app_user_email_idx ON public.app_user USING btree (lower(email));
 
-
---
--- Name: audit_event_actor_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX audit_event_actor_idx ON public.audit_event USING btree (org_id, actor_id, occurred_at DESC);
-
-
---
--- Name: audit_event_org_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX audit_event_org_idx ON public.audit_event USING btree (org_id, occurred_at DESC, event_id DESC);
 
-
---
--- Name: audit_event_target_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX audit_event_target_idx ON public.audit_event USING btree (org_id, target_kind, target_id, occurred_at DESC);
-
-
---
--- Name: change_ledger_retention_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX change_ledger_retention_idx ON public.change_ledger USING btree (org_id, received_at);
 
-
---
--- Name: change_ledger_window_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX change_ledger_window_idx ON public.change_ledger USING btree (integration_id, namespace, observed_at);
 
-
---
--- Name: conversation_incident_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX conversation_incident_idx ON public.conversation USING btree (incident_id) WHERE (incident_id IS NOT NULL);
-
-
---
--- Name: conversation_message_queued_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX conversation_message_queued_idx ON public.conversation_message USING btree (org_id, conversation_id, sequence) WHERE (investigation_id IS NULL);
 
 CREATE INDEX conversation_message_person_history_idx ON public.conversation_message USING btree (org_id, conversation_id, sequence) WHERE (role = 1);
 
-
---
--- Name: conversation_org_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX conversation_org_idx ON public.conversation USING btree (org_id, last_activity_at DESC, conversation_id DESC);
-
-
---
--- Name: deployment_sign_in_flow_expiry; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX deployment_sign_in_flow_expiry ON public.deployment_sign_in_flow USING btree (expires_at);
 
-
---
--- Name: incident_open_key_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE UNIQUE INDEX incident_open_key_idx ON public.incident USING btree (integration_id, grouping_key) WHERE (status = 1);
-
-
---
--- Name: incident_org_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX incident_org_idx ON public.incident USING btree (org_id, last_seen_at DESC, incident_id DESC);
 
-
---
--- Name: integration_connect_flow_expiry_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX integration_connect_flow_expiry_idx ON public.integration_connect_flow USING btree (expires_at);
-
-
---
--- Name: integration_delivery_accepted_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX integration_delivery_accepted_idx ON public.integration_delivery USING btree (integration_id, received_at DESC) WHERE (outcome = 1);
 
-
---
--- Name: integration_delivery_accepted_provider_identity_is_unique; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE UNIQUE INDEX integration_delivery_accepted_provider_identity_is_unique ON public.integration_delivery USING btree (integration_id, provider_identity, lifecycle_phase) WHERE (outcome = 1);
-
-
---
--- Name: integration_delivery_integration_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX integration_delivery_integration_idx ON public.integration_delivery USING btree (org_id, integration_id, received_at DESC, delivery_id DESC);
 
-
---
--- Name: integration_installation_is_one_workspace; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE UNIQUE INDEX integration_installation_is_one_workspace ON public.integration_installation USING btree (integration_type_id, application, enterprise, workspace);
-
-
---
--- Name: integration_org_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX integration_org_idx ON public.integration USING btree (org_id, created_at DESC);
 
-
---
--- Name: integration_relay_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX integration_relay_idx ON public.integration USING btree (org_id, relay_id) WHERE (relay_id IS NOT NULL);
-
-
---
--- Name: investigation_claimable_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX investigation_claimable_idx ON public.investigation USING btree (org_id, created_at, investigation_id) WHERE (status = 1);
 
-
---
--- Name: investigation_incident_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX investigation_incident_idx ON public.investigation USING btree (incident_id) WHERE (incident_id IS NOT NULL);
-
-
---
--- Name: investigation_lease_expiry_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX investigation_lease_expiry_idx ON public.investigation USING btree (lease_expires_at) WHERE ((status = 1) AND (lease_worker <> ''::text));
 
-
---
--- Name: investigation_one_running_per_conversation; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE UNIQUE INDEX investigation_one_running_per_conversation ON public.investigation USING btree (org_id, conversation_id) WHERE ((conversation_id IS NOT NULL) AND (status = 1));
-
-
---
--- Name: investigation_org_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX investigation_org_idx ON public.investigation USING btree (org_id, created_at DESC, investigation_id DESC);
 
-
---
--- Name: investigation_webhook_work_is_unique; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE UNIQUE INDEX investigation_webhook_work_is_unique ON public.investigation USING btree (org_id, webhook_work_id) WHERE (webhook_work_id IS NOT NULL);
-
-
---
--- Name: operator_session_expiry_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX operator_session_expiry_idx ON public.operator_session USING btree (expires_at);
 
-
---
--- Name: operator_session_user_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX operator_session_user_idx ON public.operator_session USING btree (user_id, issued_at DESC);
-
-
---
--- Name: organization_membership_external_id_is_unique_per_org; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE UNIQUE INDEX organization_membership_external_id_is_unique_per_org ON public.organization_membership USING btree (org_id, external_id) WHERE (external_id IS NOT NULL);
 
-
---
--- Name: organization_membership_org_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX organization_membership_org_idx ON public.organization_membership USING btree (org_id, created_at DESC);
-
-
---
--- Name: organization_membership_user_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX organization_membership_user_idx ON public.organization_membership USING btree (user_id);
 
-
---
--- Name: relay_job_active_investigation_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX relay_job_active_investigation_idx ON public.relay_job USING btree (org_id, investigation_id) WHERE ((investigation_id IS NOT NULL) AND (status = ANY (ARRAY[0, 1])));
-
-
---
--- Name: relay_job_claimable_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX relay_job_claimable_idx ON public.relay_job USING btree (org_id, registration_id, status, lease_expires_at) WHERE (status = ANY (ARRAY[0, 1]));
 
-
---
--- Name: relay_registration_org_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX relay_registration_org_idx ON public.relay_registration USING btree (org_id, created_at DESC);
-
-
---
--- Name: relay_registration_presence_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX relay_registration_presence_idx ON public.relay_registration USING btree (org_id, last_seen_at DESC);
 
-
---
--- Name: relay_session_conflict_event_registration_idx; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX relay_session_conflict_event_registration_idx ON public.relay_session_conflict_event USING btree (org_id, registration_id, event_id DESC);
-
-
---
--- Name: slack_conversation_by_thread; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX slack_conversation_by_thread ON public.slack_conversation USING btree (integration_id, channel_id, thread_ts);
 
-
---
--- Name: slack_reply_due; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE INDEX slack_reply_due ON public.slack_reply USING btree (next_attempt_at, investigation_id) WHERE (status = ANY (ARRAY[1, 2]));
-
-
---
--- Name: webhook_work_ready_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX webhook_work_ready_idx ON public.webhook_work USING btree (available_at, created_at, work_id) WHERE (status = ANY (ARRAY[1, 2, 3]));
 
-
---
--- Name: webhook_work_source_effect_is_unique; Type: INDEX; Schema: public; Owner: -
---
-
 CREATE UNIQUE INDEX webhook_work_source_effect_is_unique ON public.webhook_work USING btree (org_id, kind, delivery_id, COALESCE(incident_id, conversation_id), COALESCE(message_sequence, (0)::bigint));
-
-
---
--- Name: webhook_work_terminal_idx; Type: INDEX; Schema: public; Owner: -
---
 
 CREATE INDEX webhook_work_terminal_idx ON public.webhook_work USING btree (org_id, updated_at DESC, work_id DESC) WHERE (status = 4);
 
-
---
--- Name: audit_event audit_event_refuses_delete; Type: TRIGGER; Schema: public; Owner: -
---
-
 CREATE TRIGGER audit_event_refuses_delete BEFORE DELETE ON public.audit_event FOR EACH STATEMENT EXECUTE FUNCTION public.audit_event_is_append_only();
-
-
---
--- Name: audit_event audit_event_refuses_truncate; Type: TRIGGER; Schema: public; Owner: -
---
 
 CREATE TRIGGER audit_event_refuses_truncate BEFORE TRUNCATE ON public.audit_event FOR EACH STATEMENT EXECUTE FUNCTION public.audit_event_is_append_only();
 
-
---
--- Name: audit_event audit_event_refuses_update; Type: TRIGGER; Schema: public; Owner: -
---
-
 CREATE TRIGGER audit_event_refuses_update BEFORE UPDATE ON public.audit_event FOR EACH STATEMENT EXECUTE FUNCTION public.audit_event_is_append_only();
-
-
---
--- Name: alert_event alert_event_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.alert_event
     ADD CONSTRAINT alert_event_incident_id_fkey FOREIGN KEY (incident_id) REFERENCES public.incident(incident_id);
 
-
---
--- Name: alert_event alert_event_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.alert_event
     ADD CONSTRAINT alert_event_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: change_ledger change_ledger_integration_is_in_the_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.change_ledger
     ADD CONSTRAINT change_ledger_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
 
-
---
--- Name: change_ledger_scope change_ledger_scope_integration_is_in_the_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.change_ledger_scope
     ADD CONSTRAINT change_ledger_scope_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: conversation conversation_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.conversation
     ADD CONSTRAINT conversation_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
 
-
---
--- Name: conversation_message conversation_message_belongs_to_its_conversation; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.conversation_message
     ADD CONSTRAINT conversation_message_belongs_to_its_conversation FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id) ON DELETE CASCADE;
-
-
---
--- Name: conversation_message conversation_message_names_an_org_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.conversation_message
     ADD CONSTRAINT conversation_message_names_an_org_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id);
 
-
---
--- Name: incident incident_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.incident
     ADD CONSTRAINT incident_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: incident incident_superseded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.incident
     ADD CONSTRAINT incident_superseded_by_fkey FOREIGN KEY (superseded_by) REFERENCES public.incident(incident_id);
 
-
---
--- Name: integration_connect_flow integration_connect_flow_integration_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration_connect_flow
     ADD CONSTRAINT integration_connect_flow_integration_type_id_fkey FOREIGN KEY (integration_type_id) REFERENCES public.integration_type(integration_type_id);
-
-
---
--- Name: integration_delivery integration_delivery_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration_delivery
     ADD CONSTRAINT integration_delivery_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
 
-
---
--- Name: integration_installation integration_installation_integration_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration_installation
     ADD CONSTRAINT integration_installation_integration_type_id_fkey FOREIGN KEY (integration_type_id) REFERENCES public.integration_type(integration_type_id);
-
-
---
--- Name: integration_installation integration_installation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration_installation
     ADD CONSTRAINT integration_installation_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
 
-
---
--- Name: integration integration_integration_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.integration
     ADD CONSTRAINT integration_integration_type_id_fkey FOREIGN KEY (integration_type_id) REFERENCES public.integration_type(integration_type_id);
-
-
---
--- Name: integration integration_relay_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.integration
     ADD CONSTRAINT integration_relay_is_in_the_same_org FOREIGN KEY (org_id, relay_id) REFERENCES public.relay_registration(org_id, registration_id);
 
-
---
--- Name: investigation investigation_conversation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.investigation
     ADD CONSTRAINT investigation_conversation_is_in_the_same_org FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id);
-
-
---
--- Name: investigation_event investigation_event_belongs_to_its_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.investigation_event
     ADD CONSTRAINT investigation_event_belongs_to_its_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
 
-
---
--- Name: investigation investigation_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.investigation
     ADD CONSTRAINT investigation_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
-
-
---
--- Name: investigation investigation_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.investigation
-    ADD CONSTRAINT investigation_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: investigation_source investigation_source_belongs_to_its_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.investigation_source
-    ADD CONSTRAINT investigation_source_belongs_to_its_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
-
-
---
--- Name: investigation_source investigation_source_names_an_org_integration; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.investigation_source
-    ADD CONSTRAINT investigation_source_names_an_org_integration FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: investigation_tool_run investigation_tool_run_belongs_to_its_investigation; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.investigation_tool_run
     ADD CONSTRAINT investigation_tool_run_belongs_to_its_investigation FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
 
-
---
--- Name: investigation_tool_run investigation_tool_run_names_an_org_integration; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.investigation_tool_run
     ADD CONSTRAINT investigation_tool_run_names_an_org_integration FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: investigation investigation_webhook_work_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.investigation
     ADD CONSTRAINT investigation_webhook_work_is_in_the_same_org FOREIGN KEY (org_id, webhook_work_id) REFERENCES public.webhook_work(org_id, work_id);
 
-
---
--- Name: local_password local_password_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.local_password
     ADD CONSTRAINT local_password_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_user(user_id) ON DELETE CASCADE;
-
-
---
--- Name: operator_session operator_session_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.operator_session
     ADD CONSTRAINT operator_session_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_user(user_id) ON DELETE CASCADE;
 
-
---
--- Name: organization_membership organization_membership_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.organization_membership
     ADD CONSTRAINT organization_membership_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_user(user_id) ON DELETE CASCADE;
-
-
---
--- Name: postmortem postmortem_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.postmortem
     ADD CONSTRAINT postmortem_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
 
-
---
--- Name: relay_job relay_job_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.relay_job
     ADD CONSTRAINT relay_job_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
-
-
---
--- Name: relay_job relay_job_investigation_belongs_to_organization; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.relay_job
     ADD CONSTRAINT relay_job_investigation_belongs_to_organization FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
 
-
---
--- Name: relay_job relay_job_relay_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.relay_job
     ADD CONSTRAINT relay_job_relay_is_in_the_same_org FOREIGN KEY (org_id, registration_id) REFERENCES public.relay_registration(org_id, registration_id);
-
-
---
--- Name: slack_conversation slack_conversation_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.slack_conversation
     ADD CONSTRAINT slack_conversation_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
 
-
---
--- Name: slack_conversation slack_conversation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.slack_conversation
     ADD CONSTRAINT slack_conversation_is_in_the_same_org FOREIGN KEY (org_id, conversation_id) REFERENCES public.conversation(org_id, conversation_id) ON DELETE CASCADE;
-
-
---
--- Name: slack_reply slack_reply_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.slack_reply
     ADD CONSTRAINT slack_reply_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id) ON DELETE CASCADE;
 
-
---
--- Name: slack_reply slack_reply_investigation_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.slack_reply
     ADD CONSTRAINT slack_reply_investigation_is_in_the_same_org FOREIGN KEY (org_id, investigation_id) REFERENCES public.investigation(org_id, investigation_id) ON DELETE CASCADE;
-
-
---
--- Name: webhook_work webhook_work_delivery_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.webhook_work
     ADD CONSTRAINT webhook_work_delivery_is_in_the_same_org FOREIGN KEY (org_id, delivery_id) REFERENCES public.integration_delivery(org_id, delivery_id) ON DELETE CASCADE;
 
-
---
--- Name: webhook_work webhook_work_incident_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.webhook_work
     ADD CONSTRAINT webhook_work_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES public.incident(org_id, incident_id);
-
-
---
--- Name: webhook_work webhook_work_integration_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.webhook_work
     ADD CONSTRAINT webhook_work_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES public.integration(org_id, integration_id);
 
-
---
--- Name: webhook_work webhook_work_message_is_in_the_same_org; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.webhook_work
     ADD CONSTRAINT webhook_work_message_is_in_the_same_org FOREIGN KEY (org_id, conversation_id, message_sequence) REFERENCES public.conversation_message(org_id, conversation_id, sequence);
-
-
---
---
-
-
-
--- Product-owned Integration Type reference data.
---
---
-
-
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;

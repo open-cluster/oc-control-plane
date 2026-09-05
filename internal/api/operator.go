@@ -25,11 +25,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// readTimeout bounds how long a read may take, so an operator query cannot outlive the
-// attention of whoever made it.
 const readTimeout = 15 * time.Second
 
-// Handlers is the operator surface's dependencies.
 type Handlers struct {
 	Database                *storage.Database
 	Logger                  *slog.Logger
@@ -50,7 +47,7 @@ type Handlers struct {
 	// configured rather than derived from a request
 	IntakeBaseURL string
 	// PublicURL is where this surface is reachable from a browser, and ConsoleURL is where
-	// a browser is sent afterwards. Both are configuration for the reason IntakeBaseURL is:
+	// a browser is sent afterward. Both are configuration for the reason IntakeBaseURL is:
 	// a provider's redirect URI must be absolute and must not be assembled from a
 	// caller-controlled Host header. Empty PublicURL means no provider installation flow
 	// can be started, and starting one says so.
@@ -130,7 +127,6 @@ func (h Handlers) Routes() authz.Table {
 		Store:      h.Database,
 		Runner:     h.Investigations,
 		Logger:     h.Logger,
-		Events:     h.Database,
 		WindowLead: h.InvestigationWindowLead,
 		MaxPending: h.MaxWaitingTurns,
 	}.Routes()...)

@@ -335,6 +335,18 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 	}
 
 	investigation := document.Components.Schemas["Investigation"]
+	for _, retired := range []string{"integrationId", "spend"} {
+		if _, present := investigation.Properties[retired]; present {
+			t.Errorf("Investigation schema still contains retired field %s", retired)
+		}
+	}
+	usage := investigation.Properties["usage"]
+	if _, input := usage.Properties["inputTokens"]; !input {
+		t.Error("Investigation usage omits inputTokens")
+	}
+	if _, output := usage.Properties["outputTokens"]; !output {
+		t.Error("Investigation usage omits outputTokens")
+	}
 	for field, schemaName := range map[string]string{
 		"impact": "ImpactAssessment", "findings": "Finding",
 		"hypotheses": "Hypothesis", "actions": "ActionProposal",
@@ -358,6 +370,10 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 			t.Errorf("%s must exist and reject undeclared fields", name)
 		}
 	}
+	request := document.Components.Schemas["OpenInvestigationRequest"]
+	if !slices.Equal(request.Required, []string{"incidentId"}) || len(request.Properties) != 1 {
+		t.Errorf("direct Investigation creation is not incident-only: %+v", request)
+	}
 }
 
 func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
@@ -372,14 +388,13 @@ func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
 		t.Fatalf("parse the canonical OpenAPI document: %v", err)
 	}
 
-	event := document.Components.Schemas["InvestigationActivityEvent"]
-	if len(event.OneOf) != 10 {
-		t.Fatalf("InvestigationActivityEvent has %d variants, want nine shipped events and one fallback", len(event.OneOf))
+	event := document.Components.Schemas["InvestigationEvent"]
+	if len(event.OneOf) != 9 {
+		t.Fatalf("InvestigationEvent has %d variants, want eight active events and one fallback", len(event.OneOf))
 	}
 	for _, name := range []string{
 		"StartedInvestigationEvent", "ProgressInvestigationEvent", "ToolStartedInvestigationEvent",
-		"ToolCompletedInvestigationEvent", "AnswerDeltaInvestigationEvent",
-		"HypothesesUpdatedInvestigationEvent", "ConcludedInvestigationEvent",
+		"ToolCompletedInvestigationEvent", "HypothesesUpdatedInvestigationEvent", "ConcludedInvestigationEvent",
 		"FailedInvestigationEvent", "CancelledInvestigationEvent", "UnknownInvestigationEvent",
 	} {
 		found := false
@@ -387,7 +402,7 @@ func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
 			found = found || variant.Ref == "#/components/schemas/"+name
 		}
 		if !found {
-			t.Errorf("InvestigationActivityEvent is missing %s", name)
+			t.Errorf("InvestigationEvent is missing %s", name)
 		}
 		variant := document.Components.Schemas[name]
 		for _, field := range []string{
@@ -400,11 +415,6 @@ func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
 				t.Errorf("%s does not require shipped envelope field %s", name, field)
 			}
 		}
-	}
-	activity := document.Components.Schemas["InvestigationActivity"]
-	items := activity.Properties["items"].Items
-	if items == nil || items.Ref != "#/components/schemas/InvestigationActivityEvent" {
-		t.Error("InvestigationActivity items do not use the discriminated event schema")
 	}
 }
 

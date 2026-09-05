@@ -133,7 +133,7 @@ type ToolDefinition struct {
 	Description string
 	// InputSchema is JSON Schema for the call's arguments, generated from the declared
 	// argument list: typed, described, required listed, closed to inventions. Rendered
-	// deterministically, because the definition set feeds the derived agent revision.
+	// deterministically so provider prompt caches remain stable.
 	InputSchema map[string]any
 }
 

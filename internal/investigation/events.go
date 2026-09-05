@@ -2,7 +2,12 @@ package investigation
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,24 +17,17 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// Event payloads contain platform-composed facts, never model reasoning or transcript data.
-
-// EventType is one kind of semantic fact. Persisted as the integer in the column; the
-// values are frozen. New semantic facts append values without reinterpreting historical
-// rows; the retired compaction value remains readable for backward compatibility.
 type EventType int16
 
 const (
-	EventStarted EventType = iota + 1
-	EventProgress
-	EventToolStarted
-	EventToolCompleted
-	EventAnswerDelta
-	EventConcluded
-	EventFailed
-	EventCompacted
-	EventCancelled
-	EventHypothesesUpdated
+	EventStarted           EventType = 1
+	EventProgress          EventType = 2
+	EventToolStarted       EventType = 3
+	EventToolCompleted     EventType = 4
+	EventConcluded         EventType = 6
+	EventFailed            EventType = 7
+	EventCancelled         EventType = 9
+	EventHypothesesUpdated EventType = 10
 )
 
 func (t EventType) String() string {
@@ -42,14 +40,10 @@ func (t EventType) String() string {
 		return "tool_started"
 	case EventToolCompleted:
 		return "tool_completed"
-	case EventAnswerDelta:
-		return "answer_delta"
 	case EventConcluded:
 		return "concluded"
 	case EventFailed:
 		return "failed"
-	case EventCompacted:
-		return "compacted"
 	case EventCancelled:
 		return "cancelled"
 	case EventHypothesesUpdated:
@@ -98,45 +92,17 @@ func bounded(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// EventSink is where events are written. It is declared here, in the domain's vocabulary,
-// and implemented by storage.
-type EventSink interface {
-	// AppendEvent writes one event at the sequence it carries. The primary key refuses a
-	// position twice, which is the backstop against a double-claim.
-	AppendEvent(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
-		event Event) error
-}
-
-// EventReader is how a surface replays what has already happened.
-type EventReader interface {
-	// Events reports this investigation's events after a sequence, in order, bounded.
-	// after of zero is from the beginning.
-	Events(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
-		after int64, limit int) ([]Event, error)
-}
-
-// stream is one investigation's writer. The sequence counter is in-process because the
-// LEASE is exclusive: there is exactly one writer per investigation, and the primary key
-// catches the case where that turns out to be false.
-//
-// A write that fails is logged by the caller and does not fail the investigation. An event
-// stream is how a run is watched, not what it is: losing a progress line is a worse
-// experience, and failing the investigation for it would be a worse outcome.
 type stream struct {
-	sink          EventSink
+	appendEvent   func(context.Context, tenancy.Organization, uuid.UUID, Event) error
 	organization  tenancy.Organization
 	investigation uuid.UUID
 	telemetry     *Telemetry
-	// startedAt is when this stream began, which is when the run did. The two
-	// time-to-first measurements are taken from it.
+	// startedAt is when this stream began, which is when the run did.
 	startedAt time.Time
-
-	mu       sync.Mutex
-	sequence int64
-	// sawFirst and sawAnswer make the two time-to-first measurements happen once each,
-	// which is what "first" means.
-	sawFirst  bool
-	sawAnswer bool
+	mu        sync.Mutex
+	sequence  int64
+	// sawFirst makes the time-to-first measurement happen once.
+	sawFirst bool
 	// closed is set by the terminal event. After it, nothing more is written for this
 	// investigation — a reader that saw a terminal event may stop, and an event arriving
 	// afterwards would mean it stopped too early.
@@ -146,11 +112,33 @@ type stream struct {
 // EventStream writes sanitized semantic progress for one Investigation.
 type EventStream = stream
 
-func NewEventStream(
-	sink EventSink, telemetry *Telemetry, organization tenancy.Organization,
+func NewEventStream(appendEvent func(
+	context.Context,
+	tenancy.Organization,
+	uuid.UUID, Event) error,
+	telemetry *Telemetry,
+	organization tenancy.Organization,
 	investigation uuid.UUID,
 ) *EventStream {
-	return newStream(sink, telemetry, organization, investigation)
+	return newStream(appendEvent, telemetry, organization, investigation)
+}
+
+func newStream(appendEvent func(
+	context.Context,
+	tenancy.Organization,
+	uuid.UUID,
+	Event) error,
+	telemetry *Telemetry,
+	organization tenancy.Organization,
+	investigation uuid.UUID,
+) *stream {
+	return &stream{
+		appendEvent:   appendEvent,
+		telemetry:     telemetry,
+		organization:  organization,
+		investigation: investigation,
+		startedAt:     time.Now(),
+	}
 }
 
 func (s *stream) Emit(
@@ -159,23 +147,11 @@ func (s *stream) Emit(
 	return s.emit(ctx, eventType, payload)
 }
 
-// newStream begins one investigation's event stream. A nil sink produces a stream that
-// silently discards, which is what a test with no interest in events should get.
-func newStream(
-	sink EventSink, telemetry *Telemetry, organization tenancy.Organization,
-	investigation uuid.UUID,
-) *stream {
-	return &stream{
-		sink: sink, telemetry: telemetry, organization: organization,
-		investigation: investigation, startedAt: time.Now(),
-	}
-}
-
 // emit writes one event, returning whatever went wrong so the caller can log it.
 func (s *stream) emit(
 	ctx context.Context, eventType EventType, payload map[string]any,
 ) error {
-	if s == nil || s.sink == nil {
+	if s == nil || s.appendEvent == nil {
 		return nil
 	}
 	s.mu.Lock()
@@ -197,30 +173,17 @@ func (s *stream) emit(
 	// meter cannot hold up the writer.
 	firstEvent := !s.sawFirst
 	s.sawFirst = true
-	firstAnswer := eventType == EventAnswerDelta && !s.sawAnswer
-	if firstAnswer {
-		s.sawAnswer = true
-	}
 	s.mu.Unlock()
 
 	if firstEvent {
 		s.telemetry.firstEvent(time.Since(s.startedAt))
 	}
-	if firstAnswer {
-		s.telemetry.firstAnswerText(time.Since(s.startedAt))
-	}
-
-	return s.sink.AppendEvent(ctx, s.organization, s.investigation, event)
+	return s.appendEvent(ctx, s.organization, s.investigation, event)
 }
 
 // safePayload drops credential-shaped keys, mechanically, by the SAME rule the audit path
 // applies — audit.NamesACredential is the one list, and a second copy of it would be a
 // second place for one of the words to be missing.
-//
-// What it does NOT do is bound the strings. Each payload above bounds its own, because the
-// right limit differs: a progress line is one sentence and the direct answer is a
-// paragraph, and running everything through one number would silently truncate the answer
-// to the length of a summary.
 func safePayload(payload map[string]any) map[string]any {
 	safe := make(map[string]any, len(payload))
 	if len(payload) == 0 {
@@ -277,22 +240,14 @@ func sortedKeys(payload map[string]any) []string {
 	return keys
 }
 
-// maxPayloadEntries bounds one payload's breadth, mirroring the audit record's own cap. It
-// exists for the nested tool arguments, which are the only part a model decides the shape
-// of.
 const maxPayloadEntries = audit.MaxDetailEntries
-
-// The payloads, composed from held facts. Each is a function rather than a literal at the
-// call site so that what a reader receives is decided in ONE place and can be read as a
-// contract.
 
 // startedPayload opens the stream: what this investigation is about, and whether it is
 // executing or still waiting. The lease is what distinguishes those, and both are
 // `running`, so the first event is where a reader learns which.
-func startedPayload(opened Investigation, sources int, executing bool) map[string]any {
+func startedPayload(opened Investigation, executing bool) map[string]any {
 	payload := map[string]any{
 		"subject":     bounded(opened.Subject, eventTextBound),
-		"sources":     sources,
 		"state":       "waiting",
 		"windowFrom":  opened.WindowFrom.UTC().Format(time.RFC3339),
 		"windowUntil": opened.WindowUntil.UTC().Format(time.RFC3339),
@@ -386,7 +341,7 @@ func concludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
 		"findings": len(conclusion.Findings),
 	}
 	if conclusion.Summary != "" {
-		payload["summary"] = bounded(conclusion.Summary, eventTextBound)
+		payload["summary"] = bounded(conclusion.Summary, MaxSummaryLength)
 	}
 	if stoppedBy != "" {
 		payload["stoppedBy"] = stoppedBy
@@ -400,19 +355,8 @@ func failedPayload(reason string) map[string]any {
 	return map[string]any{"reason": bounded(reason, maxRunErrorLength)}
 }
 
-// answerDeltaPayload carries a coalesced checkpoint of the answer, never a token. Where a
-// provider streams, deltas are buffered and flushed on a boundary; where it does not — and
-// none does today — one chunk is emitted at conclusion. Individual token deltas are never
-// persisted, because a table with one row per token is a table nobody can read.
-func answerDeltaPayload(text string, final bool) map[string]any {
-	return map[string]any{
-		"text":  bounded(text, maxAnswerDeltaBound),
-		"final": final,
-	}
-}
-
-func StartedPayload(opened Investigation, sources int, executing bool) map[string]any {
-	return startedPayload(opened, sources, executing)
+func StartedPayload(opened Investigation, executing bool) map[string]any {
+	return startedPayload(opened, executing)
 }
 
 func ToolStartedPayload(run ToolRun, integration string) map[string]any {
@@ -433,10 +377,204 @@ func ConcludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
 
 func FailedPayload(reason string) map[string]any { return failedPayload(reason) }
 
-func AnswerDeltaPayload(text string, final bool) map[string]any {
-	return answerDeltaPayload(text, final)
+const (
+	// eventPollInterval is how often a following connection looks for more. There is no
+	// pub/sub here on purpose: a poll against a primary-key range scan is cheap, and the
+	// alternative is an infrastructure dependency for a latency nobody is measuring.
+	eventPollInterval = 500 * time.Millisecond
+	// eventHeartbeat keeps an idle connection from being reaped by whatever sits in front
+	// of it. A comment line is not an event and no reader has to know about it.
+	eventHeartbeat = 15 * time.Second
+	// eventStreamLifetime bounds one connection. It is the investigation's own ceiling
+	// plus room to see the ending: a stream that outlived every possible investigation
+	// would be a connection held open for nothing.
+	eventStreamLifetime = investigationTimeout + time.Minute
+)
+
+// streamEvents serves one investigation's events.
+//
+// The tenant check happens FIRST, by reading the investigation itself. An identifier from
+// another organization answers not-found with the same body as one that never existed,
+// before a single event is read — the boundary must not depend on the stream being empty.
+func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request) {
+	_, ok := h.caller(writer, request)
+	if !ok {
+		return
+	}
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	if h.Store == nil {
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "this deployment does not serve the investigation event stream"})
+		return
+	}
+
+	after, valid := afterSequence(request)
+	if !valid {
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: "after is not a sequence"})
+		return
+	}
+
+	// Bounded, and still cancelled by the request's own context, so a reader that
+	// disconnects stops the read it was waiting on.
+	readCtx, cancelRead := context.WithTimeout(request.Context(), readTimeout)
+	found, err := h.Store.Investigation(readCtx, organization, id)
+	cancelRead()
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+
+	flusher, streaming := writer.(http.Flusher)
+	if !streaming {
+		// Without flushing, every event would arrive at once when the handler returned,
+		// which is the opposite of what this is for.
+		writeJSON(writer, http.StatusInternalServerError,
+			errorView{Error: "request failed"})
+		h.Logger.ErrorContext(request.Context(),
+			"the event stream is mounted behind a writer that cannot flush")
+		return
+	}
+
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-cache")
+	// Named for the reverse proxies that buffer by default and turn a live stream into one
+	// silent minute followed by everything.
+	writer.Header().Set("X-Accel-Buffering", "no")
+	writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	h.follow(request, writer, flusher, organization, found, after)
 }
 
-// maxAnswerDeltaBound lets one delta carry the whole answer, since today's providers
-// deliver it at once.
-const maxAnswerDeltaBound = MaxSummaryLength
+// follow drains what is already recorded and then keeps draining until the investigation
+// ends, the connection goes, or the lifetime is up.
+func (h Handlers) follow(
+	request *http.Request, writer http.ResponseWriter, flusher http.Flusher,
+	organization tenancy.Organization, found Investigation, after int64,
+) {
+	ctx := request.Context()
+	deadline := time.Now().Add(eventStreamLifetime)
+	lastHeartbeat := time.Now()
+
+	for {
+		readCtx, cancel := context.WithTimeout(request.Context(), readTimeout)
+		events, err := h.Store.Events(readCtx, organization, found.ID, after, 0)
+		cancel()
+		if err != nil {
+			h.Logger.ErrorContext(ctx, "an investigation event stream could not be read",
+				slog.String("investigation_id", found.ID.String()),
+				slog.String("error", err.Error()))
+			return
+		}
+
+		for _, event := range events {
+			if err := writeEvent(writer, envelopeOf(organization, found, event)); err != nil {
+				// The reader is gone. That is the ordinary way a stream ends.
+				return
+			}
+			after = event.Sequence
+			if event.Type.Terminal() {
+				// Nothing follows a terminal event, so the connection has served its whole
+				// purpose. Holding it open would be a client waiting for something this
+				// investigation will never produce.
+				flusher.Flush()
+				return
+			}
+		}
+		if len(events) > 0 {
+			flusher.Flush()
+			lastHeartbeat = time.Now()
+			// A full page means there is probably more waiting; read again rather than
+			// sleeping through a backlog.
+			if len(events) == maxEventsPerRead {
+				continue
+			}
+		}
+
+		if time.Since(lastHeartbeat) >= eventHeartbeat {
+			if _, err := fmt.Fprint(writer, ": keep-alive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+			lastHeartbeat = time.Now()
+		}
+
+		if time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(eventPollInterval):
+		}
+	}
+}
+
+// maxEventsPerRead mirrors persistence's own page bound, so the follower can tell a full
+// page from a drained one without asking.
+const maxEventsPerRead = 500
+
+type eventEnvelope struct {
+	SchemaVersion   int            `json:"schemaVersion"`
+	OrganizationID  string         `json:"organizationId"`
+	ConversationID  string         `json:"conversationId,omitempty"`
+	InvestigationID string         `json:"investigationId"`
+	Sequence        int64          `json:"sequence"`
+	Type            string         `json:"type"`
+	At              string         `json:"at"`
+	Payload         map[string]any `json:"payload"`
+}
+
+func envelopeOf(
+	organization tenancy.Organization, found Investigation, event Event,
+) eventEnvelope {
+	envelope := eventEnvelope{
+		SchemaVersion:   EventSchemaVersion,
+		OrganizationID:  organization.String(),
+		InvestigationID: found.ID.String(),
+		Sequence:        event.Sequence,
+		Type:            event.Type.String(),
+		At:              event.At.UTC().Format(time.RFC3339Nano),
+		Payload:         event.Payload,
+	}
+	if found.ConversationID != uuid.Nil {
+		envelope.ConversationID = found.ConversationID.String()
+	}
+	return envelope
+}
+
+// writeEvent renders one event in the SSE framing. The id is the sequence, so a browser's
+// own EventSource reconnect sends Last-Event-ID and resumes exactly where it stopped —
+// which is the same resume the `after` parameter serves.
+func writeEvent(writer http.ResponseWriter, envelope eventEnvelope) error {
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(writer, "id: %d\nevent: %s\ndata: %s\n\n",
+		envelope.Sequence, envelope.Type, body)
+	return err
+}
+
+// afterSequence reads the resume point from the query, or from the browser's own
+// Last-Event-ID header when a native EventSource reconnected. Absent is from the
+// beginning; anything unreadable is refused rather than treated as the beginning, because
+// silently replaying a whole investigation is not what a resuming client asked for.
+func afterSequence(request *http.Request) (int64, bool) {
+	value := request.URL.Query().Get("after")
+	if value == "" {
+		value = request.Header.Get("Last-Event-ID")
+	}
+	if value == "" {
+		return 0, true
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, false
+	}
+	return parsed, true
+}

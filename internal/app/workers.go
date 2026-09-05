@@ -19,10 +19,6 @@ import (
 	slackwork "github.com/open-cluster/oc-control-plane/internal/webhooks/slack"
 )
 
-// auditPruneInterval is how often each tenant's declared retention schedule is applied.
-//
-// Retention is measured in days, so an hour is close enough to the horizon that the surface can
-// honestly say the schedule is enforced, and far enough from it that nothing is spent looking.
 const auditPruneInterval = time.Hour
 
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
@@ -70,10 +66,6 @@ func startWebhookWork(ctx context.Context, group *errgroup.Group, process assemb
 }
 
 // startAuditPruner runs the worker that applies each tenant's audit retention schedule.
-//
-// It is unconditional, and that is what lets the policy surface state that retention is enforced.
-// A deployment that ran the control plane without it would report a schedule it does not keep,
-// which is the thing that surface was written to avoid saying.
 func startAuditPruner(ctx context.Context, group *errgroup.Group, process assembled) {
 	pruner := audit.Pruner{
 		Retentions: process.database,
@@ -89,8 +81,7 @@ func startAuditPruner(ctx context.Context, group *errgroup.Group, process assemb
 		slog.Duration("interval", auditPruneInterval))
 }
 
-// startChangeLedgerPruner runs the worker that ages the change ledger out on the
-// deployment's schedule.
+// startChangeLedgerPruner runs the worker that ages the change ledger out on the deployment's schedule.
 func startChangeLedgerPruner(ctx context.Context, group *errgroup.Group, process assembled) {
 	pruner := changeledger.Pruner{
 		Retention: process.database,
@@ -109,8 +100,6 @@ func startChangeLedgerPruner(ctx context.Context, group *errgroup.Group, process
 
 // slackAgent is what the intake listener needs to receive Slack events, or nil where this
 // deployment receives none.
-//
-// The Slack surface is available wherever a signing secret is configured.
 func slackAgent(cfg config.Config) *webhooks.SlackAgent {
 	if cfg.SlackSigningSecret == "" {
 		return nil
