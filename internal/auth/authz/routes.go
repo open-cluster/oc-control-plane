@@ -6,23 +6,12 @@ import (
 	"strings"
 )
 
-// Access says how a route is reached. There are exactly three values and each route names one
-// by which constructor built it, so "I forgot the check" is not a state a route can be in.
 type Access int
 
 const (
-	// accessUnset is the zero value and is never a legal route. It exists so that a Route
-	// built by literal — which the unexported fields already prevent outside this package —
-	// would still fail validation rather than default to something.
 	AccessUnset Access = iota
-	// AccessPublic is reachable with no credential at all. The sign-in redirect and its
-	// callback are the whole set, and the gate in test/architecture holds them to a named list.
 	AccessPublic
-	// AccessAuthenticated needs a credential and no permission. Only the routes that describe
-	// the caller to themselves are this: who am I, and end my own session.
 	AccessAuthenticated
-	// AccessPrivileged needs a credential, a membership in the selected Organization,
-	// and the permission the route declares.
 	AccessPrivileged
 )
 
@@ -103,7 +92,6 @@ func Public(method, pattern string, handler http.Handler) Route {
 	return Route{method: method, pattern: pattern, access: AccessPublic, handler: handler}
 }
 
-// Method is the HTTP method this route answers.
 func (r Route) Method() string { return r.method }
 
 // Pattern is the path pattern, in net/http.ServeMux's syntax.

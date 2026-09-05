@@ -12,24 +12,14 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
-// readinessTimeout bounds the dependency check so a hung database makes readiness fail
-// rather than making the readiness endpoint itself hang.
 const readinessTimeout = 3 * time.Second
 
-// Handlers is the HTTP surface's dependencies.
 type Handlers struct {
-	// Ready reports whether dependencies are reachable. A non-nil error means unready.
-	Ready func(context.Context) error
-	// Metrics serves the scrape endpoint.
+	Ready   func(context.Context) error
 	Metrics http.Handler
-	// Logger is the base logger; per-request correlation is layered on top of it.
-	Logger *slog.Logger
+	Logger  *slog.Logger
 }
 
-// Router returns the HTTP surface with correlation, tracing, and logging applied.
-//
-// Metrics are served OUTSIDE the tracing middleware: a scrape every fifteen seconds would
-// otherwise produce a trace every fifteen seconds forever, which is noise that costs money.
 func (h Handlers) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", h.instrumented("healthz", http.HandlerFunc(h.live)))

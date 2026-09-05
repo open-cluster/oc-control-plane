@@ -8,19 +8,8 @@ import (
 	"strings"
 )
 
-// minOperatorTokenLength is the shortest token the operator surface will accept.
-//
-// The surface it guards reads across every tenant this instance serves, so a token short
-// enough to be guessed is the same as no token at all. Refusing a weak one at startup makes
-// that a deployment that fails to start rather than one that runs and looks fine.
 const minOperatorTokenLength = 32
 
-// operatorTokenDigest reads the operator credential from its file and returns only the digest.
-//
-// The variable names a path, never the token, for the same reason the database setting names a file:
-// an environment value is visible to anything that can read the process's environment, ends up
-// in orchestrator manifests, and is printed by half the tooling that touches a container. No
-// error here quotes the file's contents.
 func operatorTokenDigest(
 	lookup func(string) (string, bool), operatorAddress string,
 ) ([]byte, error) {
@@ -48,10 +37,6 @@ func operatorTokenDigest(
 	return digest[:], nil
 }
 
-// defaultOperatorTokenRole is what the bootstrap credential holds when a deployment says
-// nothing. It is named here rather than imported from internal/auth/authz because configuration
-// must not depend on the authorization model to parse; the composition root refuses an
-// unrecognised value when it builds the principal.
 const defaultOperatorTokenRole = "admin"
 
 // optionalBrowserURL reads a URL a browser will be sent to or arrive from. It must be an
@@ -86,11 +71,6 @@ func optionalOrigin(
 	return trimmed, nil
 }
 
-// sealingKey reads the key presentable credentials are sealed under.
-//
-// The file holds the key as base64 or as raw bytes; both are accepted because a key generated
-// with openssl and one generated with head -c 32 are both what an operator will reach for. No
-// error here quotes the file's contents.
 func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
 	path, _ := lookup(EnvSealingKeyFile)
 	if strings.TrimSpace(path) == "" {
