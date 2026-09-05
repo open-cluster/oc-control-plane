@@ -17,11 +17,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// Event payloads contain platform-composed facts, never model reasoning or transcript data.
-
-// EventType is one kind of semantic fact. Persisted as the integer in the column; the
-// values are frozen. New semantic facts append values without reinterpreting historical
-// rows; retired values remain gaps.
 type EventType int16
 
 const (
@@ -97,13 +92,6 @@ func bounded(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// stream is one investigation's writer. The sequence counter is in-process because the
-// LEASE is exclusive: there is exactly one writer per investigation, and the primary key
-// catches the case where that turns out to be false.
-//
-// A write that fails is logged by the caller and does not fail the investigation. An event
-// stream is how a run is watched, not what it is: losing a progress line is a worse
-// experience, and failing the investigation for it would be a worse outcome.
 type stream struct {
 	appendEvent   func(context.Context, tenancy.Organization, uuid.UUID, Event) error
 	organization  tenancy.Organization
@@ -111,9 +99,8 @@ type stream struct {
 	telemetry     *Telemetry
 	// startedAt is when this stream began, which is when the run did.
 	startedAt time.Time
-
-	mu       sync.Mutex
-	sequence int64
+	mu        sync.Mutex
+	sequence  int64
 	// sawFirst makes the time-to-first measurement happen once.
 	sawFirst bool
 	// closed is set by the terminal event. After it, nothing more is written for this
@@ -125,31 +112,39 @@ type stream struct {
 // EventStream writes sanitized semantic progress for one Investigation.
 type EventStream = stream
 
-func NewEventStream(
-	appendEvent func(context.Context, tenancy.Organization, uuid.UUID, Event) error,
-	telemetry *Telemetry, organization tenancy.Organization,
+func NewEventStream(appendEvent func(
+	context.Context,
+	tenancy.Organization,
+	uuid.UUID, Event) error,
+	telemetry *Telemetry,
+	organization tenancy.Organization,
 	investigation uuid.UUID,
 ) *EventStream {
 	return newStream(appendEvent, telemetry, organization, investigation)
+}
+
+func newStream(appendEvent func(
+	context.Context,
+	tenancy.Organization,
+	uuid.UUID,
+	Event) error,
+	telemetry *Telemetry,
+	organization tenancy.Organization,
+	investigation uuid.UUID,
+) *stream {
+	return &stream{
+		appendEvent:   appendEvent,
+		telemetry:     telemetry,
+		organization:  organization,
+		investigation: investigation,
+		startedAt:     time.Now(),
+	}
 }
 
 func (s *stream) Emit(
 	ctx context.Context, eventType EventType, payload map[string]any,
 ) error {
 	return s.emit(ctx, eventType, payload)
-}
-
-// newStream begins one investigation's event stream. A nil appender produces a stream
-// that silently discards, which is what a test with no interest in events should get.
-func newStream(
-	appendEvent func(context.Context, tenancy.Organization, uuid.UUID, Event) error,
-	telemetry *Telemetry, organization tenancy.Organization,
-	investigation uuid.UUID,
-) *stream {
-	return &stream{
-		appendEvent: appendEvent, telemetry: telemetry, organization: organization,
-		investigation: investigation, startedAt: time.Now(),
-	}
 }
 
 // emit writes one event, returning whatever went wrong so the caller can log it.
@@ -189,11 +184,6 @@ func (s *stream) emit(
 // safePayload drops credential-shaped keys, mechanically, by the SAME rule the audit path
 // applies — audit.NamesACredential is the one list, and a second copy of it would be a
 // second place for one of the words to be missing.
-//
-// What it does NOT do is bound the strings. Each payload above bounds its own, because the
-// right limit differs: a progress line is one sentence and the direct answer is a
-// paragraph, and running everything through one number would silently truncate the answer
-// to the length of a summary.
 func safePayload(payload map[string]any) map[string]any {
 	safe := make(map[string]any, len(payload))
 	if len(payload) == 0 {
@@ -250,14 +240,7 @@ func sortedKeys(payload map[string]any) []string {
 	return keys
 }
 
-// maxPayloadEntries bounds one payload's breadth, mirroring the audit record's own cap. It
-// exists for the nested tool arguments, which are the only part a model decides the shape
-// of.
 const maxPayloadEntries = audit.MaxDetailEntries
-
-// The payloads, composed from held facts. Each is a function rather than a literal at the
-// call site so that what a reader receives is decided in ONE place and can be read as a
-// contract.
 
 // startedPayload opens the stream: what this investigation is about, and whether it is
 // executing or still waiting. The lease is what distinguishes those, and both are
@@ -535,10 +518,6 @@ func (h Handlers) follow(
 // page from a drained one without asking.
 const maxEventsPerRead = 500
 
-// eventEnvelope is the wire shape. The schema version lives HERE rather than in a column,
-// because the table's shape is version 1 and a column would record the same number on every
-// row forever. The identifiers travel on every event so that a reader multiplexing several
-// streams never has to remember which connection it read from.
 type eventEnvelope struct {
 	SchemaVersion   int            `json:"schemaVersion"`
 	OrganizationID  string         `json:"organizationId"`

@@ -54,36 +54,23 @@ func NewAgent(deployment Deployment, model Model) (*Agent, error) {
 	return &Agent{model: model, deployment: deployment}, nil
 }
 
-// Instrument attaches the per-call telemetry. Without it the agent still works and
-// emits nothing, which is only right for tests.
 func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
 
-// Agent-level bounds protect runtime and context.
 const (
-	// defaultMaxToolRuns bounds the whole investigation's reads.
-	defaultMaxToolRuns = 30
-	// defaultMaxTurns bounds model turns before a forced conclusion.
-	defaultMaxTurns = 20
-	// maxStagnantTurns is how many consecutive turns may produce no new evidence before
-	// the conclusion is forced. A turn with a fresh successful read resets the count.
-	maxStagnantTurns = 2
-	// wallClockReserve is how much of the investigation's deadline is kept back for the
-	// concluding turn: a run nearing its deadline concludes with
-	// what it has instead of dying mid-read as a failure.
-	wallClockReserve = 2 * time.Minute
-	// inventoryDigestLimit bounds the orientation's workload digest.
+	defaultMaxToolRuns   = 30
+	defaultMaxTurns      = 20
+	maxStagnantTurns     = 2
+	wallClockReserve     = 2 * time.Minute
 	inventoryDigestLimit = 50
 	eventTextBound       = 512
 	decideTimeout        = 6 * time.Minute
 	defaultContextWindow = 128_000
 )
 
-// errProvenance marks a run that could not be recorded. It aborts the investigation
-// wherever it surfaces — a read whose record failed must not inform a conclusion.
-var errProvenance = errors.New("a tool run could not be recorded")
-
-// errNoConclusion marks a model that ignored a forced conclusion.
-var errNoConclusion = errors.New("the reasoner did not conclude when required to")
+var (
+	errProvenance   = errors.New("a tool run could not be recorded")
+	errNoConclusion = errors.New("the reasoner did not conclude when required to")
+)
 
 const UpdateHypothesesToolName = "update_hypotheses"
 

@@ -1,9 +1,3 @@
-// Package anthropic reaches Anthropic's Messages API, and is the only place in this program that
-// knows Anthropic exists.
-//
-// Everything vendor-shaped stops here: the SDK types, the wire vocabulary, the stop-reason
-// spellings, the usage shape and the beta surface. What leaves this package is the same small set
-// of types every other adapter returns, so a second vendor changes nothing above it.
 package anthropic
 
 import (
@@ -165,12 +159,6 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 	return &Provider{client: sdk.NewClient(requestOptions...), deployment: deployment}, nil
 }
 
-// Name identifies this vendor.
-// Complete asks for one document.
-//
-// Every request streams. The output ceiling has to be generous because thinking and answer text
-// share it on this model, and a large ceiling on a non-streaming request risks a transport timeout
-// long before the model is finished — so the two decisions are one decision.
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {

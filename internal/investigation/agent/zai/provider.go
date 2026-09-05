@@ -1,11 +1,3 @@
-// Package zai reaches Z.AI's chat completions API for the GLM models, and is the only place in
-// this program that knows Z.AI exists.
-//
-// It is hand-written against Z.AI's own documented API rather than borrowed from another vendor's
-// client. Z.AI publishes an Anthropic-compatible endpoint, and pointing the Anthropic SDK at it
-// would have been fewer lines — and would have made every record this system writes ambiguous
-// about who actually answered, while quietly coupling this adapter to a translation layer neither
-// vendor promises to keep stable. A provider is worth its own wire code.
 package zai
 
 import (
@@ -32,9 +24,6 @@ const defaultBaseURL = "https://api.z.ai"
 // completionsPath is the chat completions endpoint, relative to the base.
 const completionsPath = "/api/paas/v4/chat/completions"
 
-// maxResponseBytes bounds what this adapter will read from a response. A provider is not trusted
-// to bound its own body: an unbounded read is how a misbehaving endpoint becomes this process's
-// memory problem.
 const maxResponseBytes = 8 << 20
 
 // Provider is one configured Z.AI deployment.
@@ -182,21 +171,8 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 	}, nil
 }
 
-// Name identifies this vendor.
-// retryBackoff separates one attempt from the next. Long enough for a transient
-// upstream failure to pass, short enough that MaxAttempts stays inside the round's
-// deadline.
 const retryBackoff = 500 * time.Millisecond
 
-// Complete asks for one document, trying up to the deployment's MaxAttempts.
-//
-// Only an outage is retried: a rejected request is this build's own defect and would be
-// rejected identically every time, and a refusal or malformed answer is the caller's to
-// judge. The call is deliberately non-streamed: this vendor reports token usage in one
-// body on a non-streaming call, while on a streamed call the figures arrive in a final
-// chunk this adapter would have to assume was sent. Because this vendor offers a JSON
-// output mode rather than schema enforcement, the schema is rendered into the prompt
-// and the caller validates the answer.
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
