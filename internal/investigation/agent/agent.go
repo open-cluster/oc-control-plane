@@ -24,6 +24,7 @@ type Store interface {
 	InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error)
 	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error)
 	ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error)
+	ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error)
 	WorkloadInventory(context.Context, tenancy.Organization, int) ([]string, error)
 	RecordToolRun(context.Context, tenancy.Organization, uuid.UUID, investigation.ToolRun) error
 	RecordCredentialUnseal(context.Context, tenancy.Organization, uuid.UUID, string) error
@@ -79,7 +80,6 @@ type runState struct {
 	organization tenancy.Organization
 	opened       investigation.Investigation
 	offered      []offeredSource
-	brief        *investigation.Brief
 	events       *investigation.EventStream
 	credentials  *credentialCache
 	maxRuns      int
@@ -160,28 +160,20 @@ func (r *Agent) Run(
 		return nil
 	}
 
+	var origin *investigation.ConversationOrigin
+	if opened.ConversationID != uuid.Nil {
+		var err error
+		origin, err = r.Store.ConversationOrigin(ctx, organization, opened.ConversationID)
+		if err != nil || (origin != nil && (origin.IntegrationID == uuid.Nil || origin.Channel == "" || origin.Thread == "")) {
+			return failRun("the Conversation's execution scope could not be verified", investigation.Usage{})
+		}
+	}
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
 		return failRun("the connected sources could not be read", investigation.Usage{})
 	}
 	brief := r.conversationBrief(ctx, organization, opened, events)
-	offered := offeredSourcesForConversation(r.Catalog, candidates, brief)
-	if opened.ConversationID != uuid.Nil && brief == nil {
-		var safe []offeredSource
-		for _, source := range offered {
-			conversationProvider := false
-			for _, tool := range source.Tools {
-				if tool.ConversationScoped {
-					conversationProvider = true
-					break
-				}
-			}
-			if !conversationProvider {
-				safe = append(safe, source)
-			}
-		}
-		offered = safe
-	}
+	offered := offeredSourcesForConversation(r.Catalog, candidates, origin)
 	r.announce(ctx, events, investigation.EventStarted,
 		investigation.StartedPayload(opened, true))
 
@@ -194,7 +186,6 @@ func (r *Agent) Run(
 		organization: organization,
 		opened:       opened,
 		offered:      offered,
-		brief:        brief,
 		events:       events,
 		credentials: newCredentialCache(r.Sealer, func(ctx context.Context, id uuid.UUID) error {
 			return r.Store.RecordCredentialUnseal(ctx, organization, id,
@@ -235,7 +226,7 @@ func (r *Agent) Run(
 			r.announceToolStarted(ctx, state, call, ordinal)
 			var executeErr error
 			run, executeErr = r.execute(ctx, opened, selections(offered),
-				state.credentials, brief,
+				state.credentials, origin,
 				investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
 			if executeErr != nil {
 				return failRun("preflight provenance could not be recorded", state.usage)
@@ -479,7 +470,7 @@ func (r *Agent) Run(
 					r.announceToolStarted(ctx, state, call, ordinal)
 					var executeErr error
 					run, executeErr = r.execute(ctx, opened, selections(offered),
-						state.credentials, brief,
+						state.credentials, origin,
 						investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
 						ordinal)
 					if executeErr != nil {
@@ -753,17 +744,19 @@ func offeredSources(
 func offeredSourcesForConversation(
 	catalog integrations.Catalog,
 	candidates []integrations.Integration,
-	brief *investigation.Brief,
+	origin *investigation.ConversationOrigin,
 ) []offeredSource {
-	if brief == nil || brief.OriginIntegrationID == "" ||
-		brief.OriginChannel == "" || brief.OriginThread == "" {
+	if origin == nil {
 		return offeredSources(catalog, candidates)
+	}
+	if origin.IntegrationID == uuid.Nil || origin.Channel == "" || origin.Thread == "" {
+		return nil
 	}
 
 	var originType integrations.TypeID
 	found := false
 	for _, candidate := range candidates {
-		if candidate.ID.String() == brief.OriginIntegrationID {
+		if candidate.ID == origin.IntegrationID {
 			originType = candidate.Type
 			found = true
 			break
@@ -775,7 +768,7 @@ func offeredSourcesForConversation(
 
 	allowed := make([]integrations.Integration, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.Type != originType || candidate.ID.String() == brief.OriginIntegrationID {
+		if candidate.Type != originType || candidate.ID == origin.IntegrationID {
 			allowed = append(allowed, candidate)
 		}
 	}

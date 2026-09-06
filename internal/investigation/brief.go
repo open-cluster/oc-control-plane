@@ -65,11 +65,6 @@ func (p PriorFinding) Reference() string {
 type Brief struct {
 	ConversationID string
 	Subject        string
-	// OriginIntegrationID, OriginChannel, and OriginThread identify the provider
-	// thread that originated this Conversation. Browser Conversations leave them empty.
-	OriginIntegrationID string
-	OriginChannel       string
-	OriginThread        string
 	// Turn is this turn's one-based position, so the agent knows it is not the first.
 	Turn int
 	// Recent is the verbatim tail, oldest first.

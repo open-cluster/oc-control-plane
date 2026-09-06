@@ -111,7 +111,7 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	}
 }
 
-func TestSlackConversationBriefCarriesItsExactOriginatingThread(t *testing.T) {
+func TestSlackConversationRetainsItsExactOriginatingThread(t *testing.T) {
 	t.Parallel()
 
 	database, organization := migratedDatabase(t)
@@ -131,14 +131,14 @@ func TestSlackConversationBriefCarriesItsExactOriginatingThread(t *testing.T) {
 		t.Fatalf("recording the originating app mention: %v", err)
 	}
 
-	brief, err := database.ConversationBrief(context.Background(), organization,
-		outcome.Conversation, 12)
+	origin, err := database.ConversationOrigin(context.Background(), organization,
+		outcome.Conversation)
 	if err != nil {
 		t.Fatalf("reading the Conversation orientation: %v", err)
 	}
-	if brief.OriginIntegrationID != integration.ID.String() ||
-		brief.OriginChannel != "C-INCIDENT" || brief.OriginThread != "1710000000.1" {
-		t.Fatalf("Conversation origin was not structurally retained: %+v", brief)
+	if origin == nil || origin.IntegrationID != integration.ID ||
+		origin.Channel != "C-INCIDENT" || origin.Thread != "1710000000.1" {
+		t.Fatalf("Conversation origin was not structurally retained: %+v", origin)
 	}
 }
 

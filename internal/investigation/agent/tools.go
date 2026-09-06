@@ -107,7 +107,7 @@ func droppedRun(opened investigation.Investigation, call investigation.ToolCall,
 // a read that failed is provenance too, and often the provenance that matters.
 func (r *Agent) execute(
 	ctx context.Context, opened investigation.Investigation, selected []selection,
-	credentials *credentialCache, brief *investigation.Brief,
+	credentials *credentialCache, origin *investigation.ConversationOrigin,
 	call investigation.ToolCall, ordinal int,
 ) (investigation.ToolRun, error) {
 	run := investigation.ToolRun{
@@ -149,9 +149,9 @@ func (r *Agent) execute(
 		WindowFrom:      opened.WindowFrom,
 		WindowUntil:     opened.WindowUntil,
 	}
-	if brief != nil && source.integration.ID.String() == brief.OriginIntegrationID {
-		request.OriginChannel = brief.OriginChannel
-		request.OriginThread = brief.OriginThread
+	if origin != nil && source.integration.ID == origin.IntegrationID {
+		request.OriginChannel = origin.Channel
+		request.OriginThread = origin.Thread
 	}
 	result, err := tool.Run(runCtx, request)
 	run.FinishedAt = time.Now().UTC()

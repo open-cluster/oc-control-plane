@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -35,6 +36,9 @@ type records struct {
 	candidate   integrations.Integration
 	trigger     investigation.Trigger
 	brief       investigation.Brief
+	briefErr    error
+	origin      *investigation.ConversationOrigin
+	originErr   error
 	runs        []investigation.ToolRun
 	unseals     int
 	toolUsed    bool
@@ -91,7 +95,11 @@ func (r *records) WorkloadInventory(context.Context, tenancy.Organization, int) 
 	return nil, nil
 }
 func (r *records) ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error) {
-	return r.brief, nil
+	return r.brief, r.briefErr
+}
+
+func (r *records) ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error) {
+	return r.origin, r.originErr
 }
 func (r *records) AppendEvent(
 	context.Context, tenancy.Organization, uuid.UUID, investigation.Event,
@@ -255,49 +263,77 @@ func TestRunKeepsPreflightAndModelReadsInOneOrdinalSequence(t *testing.T) {
 }
 
 func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
-	origin, other, conversationID := uuid.New(), uuid.New(), uuid.New()
-	store := &records{
-		candidate: integrations.Integration{ID: origin, Type: 99, Name: "origin"},
-		brief:     investigation.Brief{OriginIntegrationID: origin.String(), OriginChannel: "C1", OriginThread: "T1"},
-	}
-	storeCandidates := []integrations.Integration{
-		store.candidate, {ID: other, Type: 99, Name: "other"},
-	}
-	read := func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-		return integrations.ToolResult{}, nil
-	}
-	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{ID: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Available: true, Tools: []integrations.Tool{
-			{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", ConversationScoped: true, Run: read},
-			{Name: "chat.channel", Description: "channel", WhenToUse: "broad", WhenNotToUse: "mentions", Permissions: "read", Output: "messages", Run: read},
-		}},
-		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// This adapter overrides only candidate discovery so Run sees both installations.
-	store.candidate = storeCandidates[0]
-	model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
-		if len(prompt.Tools) != 3 || prompt.Tools[0].Name != "chat.thread" ||
-			prompt.Tools[1].Name != UpdateHypothesesToolName || prompt.Tools[2].Name != ConcludeToolName {
-			t.Fatalf("offered tools = %+v", prompt.Tools)
-		}
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
-		}}}, nil
-	}}
-	// records normally returns one candidate; use a small wrapper for this boundary case.
-	scopedStore := &candidateRecords{records: store, candidates: storeCandidates}
-	agent := configuredTestAgent(t, store, model, catalog)
-	agent.Store = scopedStore
-	organization, _ := tenancy.NewOrganization("org-test")
-	if err := agent.Run(context.Background(), organization, investigation.Investigation{
-		ID: uuid.New(), ConversationID: conversationID, Subject: "question",
-	}); err != nil {
-		t.Fatal(err)
+	for _, historyAvailable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("history_available_%t", historyAvailable), func(t *testing.T) {
+			origin, other, conversationID := uuid.New(), uuid.New(), uuid.New()
+			store := &records{
+				candidate: integrations.Integration{ID: origin, Type: 99, Name: "origin"},
+				origin:    &investigation.ConversationOrigin{IntegrationID: origin, Channel: "C1", Thread: "T1"},
+			}
+			if !historyAvailable {
+				store.briefErr = errors.New("optional history unavailable")
+			}
+			sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.candidate.CredentialSealed, err = sealer.Seal("secret", integrations.CredentialBinding(origin))
+			if err != nil {
+				t.Fatal(err)
+			}
+			storeCandidates := []integrations.Integration{
+				store.candidate, {ID: other, Type: 99, Name: "other"},
+			}
+			reads := 0
+			read := func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+				reads++
+				if request.Integration.ID != origin || request.OriginChannel != "C1" || request.OriginThread != "T1" {
+					t.Fatalf("runtime origin changed: integration=%v channel=%q thread=%q", request.Integration.ID, request.OriginChannel, request.OriginThread)
+				}
+				return integrations.ToolResult{Summary: "origin thread", Content: "origin thread"}, nil
+			}
+			catalog, err := integrations.NewCatalog(integrations.Definition{
+				Manifest: integrations.Manifest{ID: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Available: true, Tools: []integrations.Tool{
+					{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", ConversationScoped: true, Run: read},
+					{Name: "chat.channel", Description: "channel", WhenToUse: "broad", WhenNotToUse: "mentions", Permissions: "read", Output: "messages", Run: read},
+				}},
+				Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
+					return integrations.Verification{Status: integrations.StatusActive}
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// This adapter overrides only candidate discovery so Run sees both installations.
+			store.candidate = storeCandidates[0]
+			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+				if len(prompt.Tools) != 3 || prompt.Tools[0].Name != "chat.thread" ||
+					prompt.Tools[1].Name != UpdateHypothesesToolName || prompt.Tools[2].Name != ConcludeToolName {
+					t.Fatalf("offered tools = %+v", prompt.Tools)
+				}
+				if call == 1 {
+					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "thread", Name: "chat.thread",
+						Arguments: json.RawMessage(`{"purpose":"read the originating thread","input":{}}`)}}}, nil
+				}
+				return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+					ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1}),
+				}}}, nil
+			}}
+			// records normally returns one candidate; use a small wrapper for this boundary case.
+			scopedStore := &candidateRecords{records: store, candidates: storeCandidates}
+			agent := configuredTestAgent(t, store, model, catalog)
+			agent.Store = scopedStore
+			agent.Sealer = sealer
+			organization, _ := tenancy.NewOrganization("org-test")
+			if err := agent.Run(context.Background(), organization, investigation.Investigation{
+				ID: uuid.New(), ConversationID: conversationID, Subject: "question",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if reads != 1 || len(store.runs) != 1 || store.runs[0].Outcome != investigation.RunSucceeded {
+				t.Fatalf("scoped runtime read was not preserved: reads=%d runs=%+v", reads, store.runs)
+			}
+		})
 	}
 }
 

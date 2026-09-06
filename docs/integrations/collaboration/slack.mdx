@@ -17,6 +17,11 @@ OpenCluster can list public channels, read permitted channel history and threads
 resolve author names, answer direct app mentions in their originating thread, and—only
 when an advanced pasted user token permits it—search messages.
 
+For direct app mentions, Slack reads are restricted to the originating thread and
+integration. If OpenCluster cannot verify that origin, the investigation stops.
+Unavailable previous conversation history limits continuity explicitly; it does not
+expand access to other Slack conversations.
+
 ## Prerequisites
 
 - The **Admin** role in OpenCluster.

@@ -3,11 +3,9 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -36,23 +34,6 @@ func (p *Database) ConversationBrief(
 	brief := investigation.Brief{
 		ConversationID: found.ID.String(),
 		Subject:        found.Subject,
-	}
-	var originatingIntegration uuid.UUID
-	err = pool.QueryRow(ctx, `
-		SELECT integration_id, channel_id, thread_ts
-		  FROM slack_conversation
-		 WHERE org_id = $1 AND conversation_id = $2`,
-		organization.String(), id).Scan(
-		&originatingIntegration,
-		&brief.OriginChannel,
-		&brief.OriginThread)
-
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return investigation.Brief{}, fmt.Errorf("reading a conversation's provider origin: %w", err)
-	}
-
-	if err == nil {
-		brief.OriginIntegrationID = originatingIntegration.String()
 	}
 	messages, err := conversationMessages(ctx, pool, organization, id, tail)
 	if err != nil {
