@@ -92,7 +92,7 @@ func TestAnEditorOperatesWithoutAdministering(t *testing.T) {
 	for _, forbidden := range []authz.Permission{
 		authz.IntegrationCreate, authz.IntegrationDelete, authz.IntegrationSecretRotate,
 		authz.RelayBootstrapIssue, authz.RelayConflictClear,
-		authz.IdentityConfigure, authz.MemberManage, authz.SessionRevoke,
+		authz.IdentityConfigure, authz.MemberManage,
 		authz.WebhookDeliveryReplay,
 	} {
 		if authz.Editor.Grants(forbidden) {

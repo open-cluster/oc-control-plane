@@ -24,6 +24,40 @@ Roles grant fixed Permissions inside an Organization. Missing authentication ret
 `401`, insufficient Permission returns `403`, and inaccessible Organizations and unknown
 tenant records are indistinguishable.
 
+A User can belong to several Organizations. Organization Admins can create local Users
+and manage memberships, but cannot replace an existing User's password. Change your own
+local password with `PUT /api/v1/auth/local/password`, supplying `currentPassword` and
+`newPassword` without an Organization selector. Success ends all your sessions, including
+the current one, and requires sign-in again. Passwords accept 12–1024 bytes.
+OIDC Users manage their credentials through their identity provider.
+
+Deployment operators can recover an existing enabled local account using its User UUID:
+
+```sh
+controlplane recover-local-password --user USER_UUID < /run/secrets/recovery-password
+```
+
+Run this with the deployment's existing configuration and database access. Supply the new
+password only through redirected or piped stdin; terminal input and password arguments are
+refused. One trailing line ending is accepted. Recovery changes the password, revokes all
+the User's sessions and records the action atomically. Unknown and OIDC-only accounts are
+refused; recovery does not create Users or reactivate bootstrap.
+
+After initial setup, remove the bootstrap credential file and configuration before restart.
+An omitted bootstrap credential disables initialization without preventing normal startup.
+Initialization stays retired even if the initial User is later deleted. Retained
+installations acquire this protection through a forward migration.
+
+Sessions belong to the User across Organizations. List or revoke your own sessions without
+an Organization selector. Organization Admins cannot revoke another User's sessions;
+removing a membership ends access to that Organization on the next request.
+
+Logout clears the browser cookie and revokes the current session even without a membership.
+Expired sessions are cleaned up automatically. Unexpired revoked sessions become eligible
+for cleanup after one day; their audit records follow the audit retention policy.
+An absent or expired cookie can be cleared again. Logout still requires the configured
+Origin; a storage failure returns an error because durable revocation was not confirmed.
+
 ## Trust boundaries
 
 The browser and product ingress share one origin. PostgreSQL holds durable product truth.

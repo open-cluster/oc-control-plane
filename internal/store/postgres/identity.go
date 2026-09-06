@@ -350,15 +350,6 @@ func (p *Database) UpdateMembership(
 				active, principal.ID()); err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("updating a membership: %w", err)
 			}
-			if currentActive && !active {
-				if _, err = transaction.Exec(ctx, `
-					UPDATE operator_session
-					   SET revoked_at = now(), revoked_by = $3
-					 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
-					user, organization.String(), principal.ID()); err != nil {
-					return Member{}, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
-				}
-			}
 
 			var member Member
 			var external *string
@@ -423,16 +414,6 @@ func (p *Database) RemoveMembership(
 				DELETE FROM organization_membership WHERE membership_id = $1`,
 				membership); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("removing a membership: %w", err)
-			}
-			// Story 10 and story 14: access ends now, not at the next token refresh. The
-			// sessions go with the membership, in the same transaction, so there is no window
-			// in which the row is gone and the credential still works.
-			if _, err := transaction.Exec(ctx, `
-				UPDATE operator_session
-				   SET revoked_at = now(), revoked_by = $3
-				 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
-				user, organization.String(), principal.ID()); err != nil {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
 			}
 			return struct{}{},
 				audit.Target{Kind: audit.TargetMembership, ID: membership.String()},

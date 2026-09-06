@@ -15,7 +15,10 @@ func (g Guard) originIsAllowed(principal Principal, request *http.Request) bool 
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
+	return g.cookieOriginIsAllowed(request)
+}
 
+func (g Guard) cookieOriginIsAllowed(request *http.Request) bool {
 	origin := strings.TrimSpace(request.Header.Get("Origin"))
 	if origin == "" {
 		return false

@@ -181,8 +181,14 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// for the organization. Nothing the caller sent
 		// contributes to the tenant the answer belongs to, which is why they are safe and why
 		// they have to exist.
-		"SessionByToken": "resolves a tenant FROM an opaque session digest; the row found is " +
-			"the authority, and no caller-supplied value selects it",
+		"SessionByToken":       "resolves a global User and current memberships from an opaque session digest",
+		"LocalPasswordHash":    "reads only the authenticated User's local verifier",
+		"ChangeLocalPassword":  "changes only the authenticated User's reauthenticated global credential",
+		"RecoverLocalPassword": "deployment operator recovery of an existing local User; no tenant authority applies",
+		"RevokeCurrentSession": "revokes only the authenticated User's current global session",
+		"RevokeSession":        "revokes a global session only when its user_id equals the authenticated User",
+		"ListSessions":         "lists global sessions only for the authenticated User ID",
+		"PruneSessions":        "bounded deployment housekeeping of unusable User-owned sessions; no Organization authority applies",
 		"BearerPrincipal": "resolves a tenant FROM an API token digest; the row found carries " +
 			"the organization and the role, and no caller-supplied value selects it",
 		"RedeemSignIn": "consumes an authorization state that names no tenant; the flow row " +

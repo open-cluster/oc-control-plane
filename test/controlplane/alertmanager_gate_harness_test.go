@@ -66,7 +66,6 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 		cfg.HTTPAddress = intakeAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = surfaceOrg
 		cfg.ModelProvider = "zai"
 		cfg.ModelName = "glm-4.7"
 		cfg.ModelKey = "scripted-model-key"

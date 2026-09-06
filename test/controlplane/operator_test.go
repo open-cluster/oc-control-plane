@@ -50,7 +50,6 @@ func TestOperatorSurface(t *testing.T) {
 		// The credential names the one tenant it reaches. That binding is the whole difference
 		// between it and the shared token it replaces, and the last case in this test asserts
 		// that a second organization is not reachable with it.
-		cfg.OperatorTokenOrganization = organization
 		databaseDSN = cfg.DatabaseDSN
 	})
 	token := plane.sessionCookie
@@ -320,8 +319,6 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = "local"
-		cfg.OperatorTokenRole = "admin"
 	})
 	const path = "/api/v1/relays"
 
@@ -373,24 +370,18 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 	}
 }
 
-// The token file is the only way a token is configured in production, so the reading of it is
-// worth exercising rather than assumed: a surface that silently starts with no credential, or
-// with a guessable one, is worse than one that refuses to start.
 func TestOperatorTokenComesFromAFile(t *testing.T) {
 	t.Parallel()
 
 	address := "127.0.0.1:8080"
 
-	t.Run("a token file is required when the surface is enabled", func(t *testing.T) {
+	t.Run("omitting the token disables bootstrap", func(t *testing.T) {
 		t.Parallel()
-		_, err := config.Load(environment(t, map[string]string{
+		cfg, err := config.Load(environment(t, map[string]string{
 			config.EnvHTTPAddress: address,
 		}))
-		if err == nil {
-			t.Fatal("the operator surface started with no token; it reads across every tenant")
-		}
-		if !strings.Contains(err.Error(), config.EnvOperatorTokenFile) {
-			t.Errorf("the failure does not name %s: %v", config.EnvOperatorTokenFile, err)
+		if err != nil || len(cfg.OperatorTokenDigest) != 0 {
+			t.Fatalf("bootstrap retirement failed: %v", err)
 		}
 	})
 
@@ -419,14 +410,6 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		digest := sha256.Sum256([]byte(token))
 		if string(cfg.OperatorTokenDigest) != string(digest[:]) {
 			t.Error("the configured digest does not match the token in the file")
-		}
-		if cfg.OperatorTokenOrganization != "local" {
-			t.Errorf("the bootstrap scope is %q, want local", cfg.OperatorTokenOrganization)
-		}
-		// Defaulted rather than required. A deployment with no members yet needs a credential
-		// that can create the first one; narrowing it is a one-line change once they have.
-		if cfg.OperatorTokenRole != "admin" {
-			t.Errorf("the credential holds %q, want admin by default", cfg.OperatorTokenRole)
 		}
 	})
 }

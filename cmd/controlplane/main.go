@@ -24,6 +24,9 @@ func main() {
 func start() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) > 1 && os.Args[1] == "recover-local-password" {
+		return recoverLocalPassword(ctx, os.Args[2:], os.Stdin, os.Stderr, os.LookupEnv)
+	}
 
 	cfg, err := config.LoadProcess(os.Args[1:], os.LookupEnv)
 	if err != nil {

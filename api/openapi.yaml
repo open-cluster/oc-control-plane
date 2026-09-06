@@ -129,6 +129,31 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /api/v1/auth/local/password:
+    put:
+      <<: *authenticated-write
+      operationId: changeLocalPassword
+      summary: Change the authenticated User's local password
+      description: Reauthenticate with the current password. Successful change revokes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+                newPassword: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+      responses:
+        "204": { description: Password changed and all User sessions revoked. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/auth/local/sign-in:
     post:
       <<: *public-write
@@ -187,10 +212,12 @@ paths:
       <<: *authenticated-write
       operationId: signOut
       summary: Sign out
+      description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
       tags: [Sessions]
       responses:
         "200": { $ref: "#/components/responses/SignOut" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/organizations:
     get:
       <<: *authenticated-read
@@ -293,30 +320,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /api/v1/local-users/{user}/password:
-    parameters:
-      - { $ref: "#/components/parameters/UserID" }
-    put:
-      <<: *privileged-write
-      operationId: replaceMemberPassword
-      summary: Replace member password
-      tags: [Members]
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PasswordRequest" }
-        required: true
-      responses:
-        "204": { $ref: "#/components/responses/NoContent" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/sessions:
     get:
-      <<: *privileged-read
+      <<: *authenticated-read
       operationId: listSessions
-      summary: List sessions
+      summary: List the authenticated User's live sessions
       tags: [Sessions]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -326,9 +336,9 @@ paths:
     parameters:
       - { $ref: "#/components/parameters/SessionID" }
     delete:
-      <<: *privileged-write
+      <<: *authenticated-write
       operationId: revokeSession
-      summary: Revoke session
+      summary: Revoke the authenticated User's session
       tags: [Sessions]
       responses:
         "204": { description: The named session was revoked. }
@@ -1114,7 +1124,6 @@ components:
       in: query
       required: true
       schema: { type: string, minLength: 32, maxLength: 4096 }
-    UserID: { name: user, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     MembershipID: { name: membership, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     SessionID: { name: session, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationID: { name: integration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
@@ -1422,12 +1431,6 @@ components:
       properties:
         role: { type: string, enum: [admin, editor, viewer] }
         active: { type: boolean }
-    PasswordRequest:
-      type: object
-      additionalProperties: false
-      required: [password]
-      properties:
-        password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true }
     Policy:
       type: object
       additionalProperties: false

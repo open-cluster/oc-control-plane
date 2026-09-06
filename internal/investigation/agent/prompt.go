@@ -443,7 +443,9 @@ func briefTokens(brief investigation.Brief) int {
 // trigger and the ledger already do: a follow-up that has lost its memory is worse than one
 // that has it, and better than none at all.
 func (r *Agent) conversationBrief(
-	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
+	ctx context.Context,
+	organization tenancy.Organization,
+	opened investigation.Investigation,
 	_ *investigation.EventStream,
 ) *investigation.Brief {
 	if opened.ConversationID == uuid.Nil {

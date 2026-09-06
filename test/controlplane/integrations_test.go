@@ -71,7 +71,6 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 		// The bootstrap credential is bound to ONE organization. A request naming the
 		// neighbour below is refused by the authorization middleware before it reaches a
 		// query — the cross-tenant assertions assert that refusal.
-		cfg.OperatorTokenOrganization = surfaceOrg
 		// The neighbour shares this database deliberately. An organization with no
 		// database fails before any query runs, which would leave the cross-tenant
 		// assertions passing against an implementation with no scoping at all.

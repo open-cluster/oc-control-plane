@@ -48,7 +48,6 @@ func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *ve
 		cfg.MaxPendingInvestigationsPerOrganization = 1
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = surfaceOrg
 	}, app.Options{Agent: agent, SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, operator: operatorAddress, intake: operatorAddress}, vendor
 }

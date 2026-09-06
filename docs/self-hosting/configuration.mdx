@@ -5,8 +5,8 @@ description: "Configure an OpenCluster deployment with a small, file-backed surf
 
 OpenCluster uses safe defaults for server addresses, local authentication, logs,
 telemetry, investigation limits, concurrency, retention, retries, request timeouts, and
-shutdown. A normal installation supplies the database, bootstrap, AI, and encryption
-files plus its public URL.
+shutdown. A normal installation supplies database, AI, and encryption files plus its
+public URL. Supply the bootstrap credential only for initial setup, then remove it.
 
 Environment values that end in `_FILE` name mounted files; they never contain the
 credential itself. YAML settings ending in `_file` follow the same rule.
@@ -92,7 +92,7 @@ and training terms before production use.
 | `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8080`. |
 | `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. |
 | `OC_AUTH_MODE` | `local` or `oidc`. |
-| `OC_BOOTSTRAP_TOKEN_FILE` | One-time first-User bootstrap token file. |
+| `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
 | `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. |

@@ -12,6 +12,7 @@ const Base = "/api/v1"
 
 func (h Handlers) Routes() authz.Table {
 	table := authz.Table{
+		authz.Authenticated(http.MethodPut, Base+"/auth/local/password", http.HandlerFunc(h.changeLocalPassword)),
 		authz.Public(http.MethodPost, Base+"/auth/local/bootstrap",
 			http.HandlerFunc(h.bootstrapLocalAdmin)),
 		authz.Public(http.MethodPost, Base+"/auth/local/sign-in",
@@ -25,7 +26,7 @@ func (h Handlers) Routes() authz.Table {
 		// yet could not be told that they have none.
 		authz.OptionalOrganizationAuthenticated(http.MethodGet, Base+"/session",
 			http.HandlerFunc(h.session)),
-		authz.Authenticated(http.MethodDelete, Base+"/session",
+		authz.SessionLogout(http.MethodDelete, Base+"/session",
 			http.HandlerFunc(h.signOut)),
 		authz.Authenticated(http.MethodGet, Base+"/organizations",
 			http.HandlerFunc(h.organizations)),
@@ -41,16 +42,14 @@ func (h Handlers) Routes() authz.Table {
 			authz.MemberManage, http.HandlerFunc(h.createMember)),
 		authz.Privileged(http.MethodPatch, Base+"/members/{membership}",
 			authz.MemberManage, http.HandlerFunc(h.setMember)),
-		authz.Privileged(http.MethodPut, Base+"/local-users/{user}/password",
-			authz.MemberManage, http.HandlerFunc(h.resetLocalPassword)),
 		authz.Privileged(http.MethodDelete, Base+"/members/{membership}",
 			authz.MemberManage, http.HandlerFunc(h.removeMember)),
 
 		// Live sessions and their revocation.
-		authz.Privileged(http.MethodGet, Base+"/sessions",
-			authz.MemberRead, http.HandlerFunc(h.listSessions)),
-		authz.Privileged(http.MethodDelete, Base+"/sessions/{session}",
-			authz.SessionRevoke, http.HandlerFunc(h.revokeSession)),
+		authz.Authenticated(http.MethodGet, Base+"/sessions",
+			http.HandlerFunc(h.listSessions)),
+		authz.Authenticated(http.MethodDelete, Base+"/sessions/{session}",
+			http.HandlerFunc(h.revokeSession)),
 
 		// The tenant's own policy.
 		authz.Privileged(http.MethodGet, Base+"/policy",

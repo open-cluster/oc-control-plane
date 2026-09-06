@@ -76,6 +76,53 @@ paths:
             schema:
               $ref: '#/components/schemas/LocalBootstrapRequest'
         required: true
+  /api/v1/auth/local/password:
+    put:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: authenticated
+      x-opencluster-organization-selector: forbidden
+      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
+      x-opencluster-idempotency: not-supported
+      responses:
+        '204':
+          description: Password changed and all User sessions revoked.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      operationId: changeLocalPassword
+      summary: Change the authenticated User's local password
+      description: Reauthenticate with the current password. Successful change revokes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - currentPassword
+                - newPassword
+              properties:
+                currentPassword:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+                  writeOnly: true
+                newPassword:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+                  writeOnly: true
   /api/v1/auth/local/sign-in:
     post:
       security: []
@@ -178,10 +225,13 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SignOut'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
       operationId: signOut
       summary: Sign out
+      description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
       tags:
         - Sessions
   /api/v1/organizations:
@@ -356,66 +406,36 @@ paths:
       summary: Remove member
       tags:
         - Members
-  /api/v1/local-users/{user}/password:
-    parameters:
-      - $ref: '#/components/parameters/UserID'
-    put:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
-      x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: replaceMemberPassword
-      summary: Replace member password
-      tags:
-        - Members
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PasswordRequest'
-        required: true
   /api/v1/sessions:
     get:
       security:
         - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
+      x-opencluster-access: authenticated
+      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/SessionList'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: listSessions
-      summary: List sessions
+      summary: List the authenticated User's live sessions
       tags:
         - Sessions
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/sessions/{session}:
     parameters:
       - $ref: '#/components/parameters/SessionID'
     delete:
       security:
         - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
+      x-opencluster-access: authenticated
+      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           description: The named session was revoked.
@@ -426,7 +446,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
       operationId: revokeSession
-      summary: Revoke session
+      summary: Revoke the authenticated User's session
       tags:
         - Sessions
   /api/v1/policy:
@@ -1772,12 +1792,6 @@ components:
         type: string
         minLength: 32
         maxLength: 4096
-    UserID:
-      name: user
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/UUID'
     MembershipID:
       name: membership
       in: path
@@ -2684,18 +2698,6 @@ components:
             - viewer
         active:
           type: boolean
-    PasswordRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - password
-      properties:
-        password:
-          type: string
-          format: password
-          minLength: 12
-          maxLength: 1024
-          writeOnly: true
     Policy:
       type: object
       additionalProperties: false
