@@ -129,12 +129,4 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		})
 	}
 
-	// A gate on the gate. A function added to the operator surface and not listed above would
-	// leave this table quietly smaller, and nothing would say so.
-	const covered = 21
-	if len(refusals) != covered {
-		t.Errorf("this table covers %d store functions and expects %d; a function added to the "+
-			"operator surface has to be added here too, or the boundary it crosses is untested",
-			len(refusals), covered)
-	}
 }

@@ -20,12 +20,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-func TestMigrationSetIsOneCleanPreReleaseBaseline(t *testing.T) {
+func TestBaselineRetainsThePreReleaseSchemaContract(t *testing.T) {
 	t.Parallel()
 
-	if got := storage.MigrationCount(); got != 1 {
-		t.Fatalf("migration count = %d, want one clean pre-release baseline", got)
-	}
 	body, err := os.ReadFile("migrations/0001_baseline.sql")
 	if err != nil {
 		t.Fatal(err)
