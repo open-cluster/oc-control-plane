@@ -2032,16 +2032,26 @@ components:
       type: object
       additionalProperties: false
       required: [subject]
+      dependentRequired:
+        windowFrom: [windowUntil, message]
+        windowUntil: [windowFrom, message]
       properties:
         incidentId: { $ref: "#/components/schemas/UUID" }
         subject: { type: string, minLength: 1, maxLength: 512 }
         message: { type: string, minLength: 1, maxLength: 8192 }
+        windowFrom: { $ref: "#/components/schemas/Timestamp", description: "Inclusive start, before windowUntil. Normalized to UTC microseconds." }
+        windowUntil: { $ref: "#/components/schemas/Timestamp", description: "Exclusive end, no later than acceptance time. Requires a first Message." }
     ConversationMessageRequest:
       type: object
       additionalProperties: false
       required: [message]
+      dependentRequired:
+        windowFrom: [windowUntil]
+        windowUntil: [windowFrom]
       properties:
         message: { type: string, minLength: 1, maxLength: 8192 }
+        windowFrom: { $ref: "#/components/schemas/Timestamp", description: "Inclusive start, before windowUntil. Normalized to UTC microseconds. Must match an existing queued batch." }
+        windowUntil: { $ref: "#/components/schemas/Timestamp", description: "Exclusive end, no later than acceptance time. Omit both bounds to inherit the queued batch or use the default window." }
     Conversation:
       type: object
       additionalProperties: false
@@ -2058,8 +2068,10 @@ components:
     ConversationMessage:
       type: object
       additionalProperties: false
-      required: [sequence, role, actorKind, text, createdAt]
+      required: [sequence, role, actorKind, text, createdAt, windowFrom, windowUntil]
       properties:
+        windowFrom: { $ref: "#/components/schemas/Timestamp" }
+        windowUntil: { $ref: "#/components/schemas/Timestamp" }
         sequence: { type: integer, format: int64, minimum: 1 }
         role: { type: string, enum: [person, agent] }
         actorKind: { type: string, enum: [principal, external] }

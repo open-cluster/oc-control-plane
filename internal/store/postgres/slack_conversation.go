@@ -195,20 +195,27 @@ func appendSlackMessage(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	conversationID uuid.UUID, said SlackMessage,
 ) (int64, error) {
+	if _, err := lockConversation(ctx, transaction, organization, conversationID); err != nil {
+		return 0, err
+	}
+	window, err := acceptedWindow(ctx, transaction, organization, conversationID, nil, conversation.DefaultIncidentWindowLead)
+	if err != nil {
+		return 0, err
+	}
 	var sequence int64
 	if err := transaction.QueryRow(ctx, `
 		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
 		                                  actor_kind, actor_id, actor_display, text,
-		                                  provider_channel_id, provider_message_id)
+		                                  provider_channel_id, provider_message_id, window_from, window_until)
 		SELECT $1, $2,
 		       coalesce((SELECT max(sequence)
 		                   FROM conversation_message
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
-		       $3, $4, $5, $6, $7, $8, $9
+		       $3, $4, $5, $6, $7, $8, $9, $10, $11
 		RETURNING sequence`,
 		conversationID, organization.String(),
 		int16(conversation.RolePerson), int16(conversation.ActorExternal),
-		said.ActorID, said.ActorDisplay, said.Text, said.Channel, said.MessageID).Scan(&sequence); err != nil {
+		said.ActorID, said.ActorDisplay, said.Text, said.Channel, said.MessageID, window.From, window.Until).Scan(&sequence); err != nil {
 		return 0, fmt.Errorf("appending a slack message: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `

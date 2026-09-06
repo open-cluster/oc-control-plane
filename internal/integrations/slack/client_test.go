@@ -284,7 +284,7 @@ func TestHistoryIsBoundedToTheAskedWindow(t *testing.T) {
 		if query.Get("channel") != "C1" {
 			t.Errorf("channel = %q", query.Get("channel"))
 		}
-		if query.Get("oldest") != "1767366000.000000" || query.Get("latest") != "1767367800.000000" {
+		if query.Get("inclusive") != "true" || query.Get("oldest") != "1767366000.000000" || query.Get("latest") != "1767367799.999999" {
 			t.Errorf("window = [%s, %s]; the incident's own window must bound the read",
 				query.Get("oldest"), query.Get("latest"))
 		}

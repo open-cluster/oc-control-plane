@@ -25,8 +25,8 @@ func (StartedEventPayload) EventType() EventType { return EventStarted }
 func StartedPayload(opened Investigation, executing bool) StartedEventPayload {
 	payload := StartedEventPayload{
 		Subject: bounded(opened.Subject, eventTextBound), State: "waiting",
-		WindowFrom:  opened.WindowFrom.UTC().Format(time.RFC3339),
-		WindowUntil: opened.WindowUntil.UTC().Format(time.RFC3339),
+		WindowFrom:  opened.WindowFrom.UTC().Format(time.RFC3339Nano),
+		WindowUntil: opened.WindowUntil.UTC().Format(time.RFC3339Nano),
 		Question:    bounded(opened.Question, eventTextBound), Turn: opened.Turn,
 	}
 	if executing {

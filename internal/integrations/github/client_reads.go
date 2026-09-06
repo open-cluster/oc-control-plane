@@ -240,7 +240,11 @@ func (c *Client) WorkflowRuns(
 	ctx context.Context, token string, query RunsQuery,
 ) (WorkflowRuns, error) {
 	parameters := url.Values{"per_page": {strconv.Itoa(query.Limit)}}
-	if created := createdRange(query.Since, query.Until); created != "" {
+	created, empty := createdRange(query.Since, query.Until)
+	if empty {
+		return WorkflowRuns{}, nil
+	}
+	if created != "" {
 		parameters.Set("created", created)
 	}
 	var decoded struct {
@@ -275,19 +279,27 @@ func (c *Client) WorkflowRuns(
 	return read, nil
 }
 
-// createdRange renders a window as the vendor's created filter. Half-open asks are
-// rendered with the vendor's own comparison forms.
-func createdRange(since, until time.Time) string {
+// GitHub's created range includes both bounds at whole-second precision.
+func createdRange(since, until time.Time) (string, bool) {
 	const form = "2006-01-02T15:04:05Z"
+	if !since.IsZero() {
+		since = since.Add(time.Second - time.Nanosecond).Truncate(time.Second)
+	}
+	if !until.IsZero() {
+		until = until.Add(-time.Nanosecond).Truncate(time.Second)
+	}
+	if !since.IsZero() && !until.IsZero() && since.After(until) {
+		return "", true
+	}
 	switch {
 	case since.IsZero() && until.IsZero():
-		return ""
+		return "", false
 	case since.IsZero():
-		return "<=" + until.UTC().Format(form)
+		return "<=" + until.UTC().Format(form), false
 	case until.IsZero():
-		return ">=" + since.UTC().Format(form)
+		return ">=" + since.UTC().Format(form), false
 	default:
-		return since.UTC().Format(form) + ".." + until.UTC().Format(form)
+		return since.UTC().Format(form) + ".." + until.UTC().Format(form), false
 	}
 }
 

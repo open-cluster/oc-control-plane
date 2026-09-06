@@ -127,6 +127,7 @@ type Conversation struct {
 // Message is one thing said, at its position in the Conversation. Its text never grants
 // Integration or resource authority.
 type Message struct {
+	WindowFrom, WindowUntil time.Time
 	// Sequence is monotonic within the conversation, from one.
 	Sequence     int64
 	Role         Role
@@ -178,6 +179,7 @@ type NewConversation struct {
 
 // NewMessage is one thing to say.
 type NewMessage struct {
+	Window       *Window
 	Role         Role
 	ActorKind    ActorKind
 	ActorID      string

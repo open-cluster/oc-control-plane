@@ -68,6 +68,9 @@ Slack delivery also uses unique claim tokens. Normal flush scheduling releases o
 independently of crash recovery; provider acceptance remains an
 [at-least-once boundary](./docs/integrations/collaboration/slack.mdx#reply-delivery).
 Stop old replicas before upgrading Slack delivery fencing as well.
+Messages may select an explicit time window; queued batches retain their accepted bounds.
+See [question windows](docs/concepts/investigations-and-conversations.mdx) for defaults and conflicts.
+
 Conversation detail includes the first 50 turns; use `turnsNext` with the turns endpoint
 to continue reading in order, with up to 200 turns per page.
 

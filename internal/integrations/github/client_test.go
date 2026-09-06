@@ -190,15 +190,18 @@ func TestCommitsAreReadByStableIDInsideTheWindow(t *testing.T) {
 	grantsPayments(fake)
 	fake.answers["/repos/acme-corp/payments/commits"] = func(writer http.ResponseWriter, request *http.Request) {
 		query := request.URL.Query()
-		if query.Get("since") != "2026-08-15T00:00:00Z" || query.Get("until") != "2026-08-16T00:00:00Z" {
+		if query.Get("since") != "2026-08-14T23:59:59Z" || query.Get("until") != "2026-08-16T00:00:00Z" {
 			t.Errorf("window = [%s, %s]", query.Get("since"), query.Get("until"))
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.Header().Set("Link", `<`+fake.URL+`/repos/acme-corp/payments/commits?page=2>; rel="next"`)
 		_, _ = writer.Write([]byte(`[
 			{"sha":"aaa111","commit":{"message":"raise the pool size",
-			 "author":{"name":"Kai","date":"2026-08-15T20:00:00Z"}},
-			 "author":{"login":"kai-dev"}}]`))
+			 "author":{"name":"Kai","date":"2026-08-14T20:00:00Z"},
+			 "committer":{"date":"2026-08-15T00:00:00Z"}},
+			 "author":{"login":"kai-dev"}},
+			{"sha":"too-late","commit":{"committer":{"date":"2026-08-16T00:00:00Z"}}},
+			{"sha":"too-early","commit":{"committer":{"date":"2026-08-14T23:59:59Z"}}}]`))
 	}
 
 	since := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
@@ -356,7 +359,7 @@ func TestWorkflowRunsCarryTheCreatedRange(t *testing.T) {
 	grantsPayments(fake)
 	fake.answers["/repos/acme-corp/payments/actions/runs"] = func(writer http.ResponseWriter, request *http.Request) {
 		created := request.URL.Query().Get("created")
-		if !strings.Contains(created, "2026-08-15T20:00:00Z..2026-08-15T22:00:00Z") {
+		if created != "2026-08-15T20:00:00Z..2026-08-15T21:59:59Z" {
 			t.Errorf("created = %q; the window travels as the vendor's own filter", created)
 		}
 		writer.Header().Set("Content-Type", "application/json")
@@ -378,6 +381,13 @@ func TestWorkflowRunsCarryTheCreatedRange(t *testing.T) {
 	}
 	if len(runs.Runs) != 1 || runs.Runs[0].Conclusion != "failure" || runs.Runs[0].ID != 42 {
 		t.Errorf("runs = %+v", runs.Runs)
+	}
+	start := time.Date(2026, 8, 15, 20, 0, 0, 100000000, time.UTC)
+	empty, err := NewClient(fake.URL).WorkflowRuns(testContext(t), "ghs_installation", RunsQuery{
+		RepositoryID: 1296269, Since: start, Until: start.Add(100 * time.Millisecond), Limit: 10,
+	})
+	if err != nil || len(empty.Runs) != 0 || empty.Truncated {
+		t.Fatalf("window without a whole-second timestamp: %+v %v", empty, err)
 	}
 }
 

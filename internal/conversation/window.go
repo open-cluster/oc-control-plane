@@ -1,27 +1,59 @@
 package conversation
 
-import "time"
+import (
+	"encoding/json"
+	"errors"
+	"time"
+)
 
-// MinimumQuestionWindow is how far back a turn with no incident reaches.
-//
-// A turn attached to an incident anchors its window to when that incident began, and the
-// investigation lead widens it backwards so the change that caused it sits inside the
-// window every read is clamped to. A turn with no incident has no onset to anchor to, so
-// there is nothing for a lead to lead. Borrowing it as a total width answered "what
-// changed recently?" against the last two hours and called an untouched window an
-// untouched estate.
-//
-// A day is what "recently" means to somebody asking about production, and it is
-// deliberately NOT configurable: a question with no incident carries no operator
-// judgement to encode, and a conversation that needs a different window should be
-// attached to an incident, which is exactly what an incident is for.
+var ErrInvalidWindow = errors.New("windowFrom and windowUntil must be paired RFC3339 timestamps with an offset, windowFrom before windowUntil, and windowUntil not in the future")
+var ErrWindowConflict = errors.New("the queued batch has a different window; retry after it opens")
+
+// Window is a half-open interval, normalized to PostgreSQL timestamp precision.
+type Window struct{ From, Until time.Time }
+
+func (w Window) Normalized() Window {
+	return Window{From: w.From.UTC().Truncate(time.Microsecond), Until: w.Until.UTC().Truncate(time.Microsecond)}
+}
+
+func (w Window) Valid(now time.Time) bool {
+	return w.From.Year() >= 1 && w.From.Before(w.Until) && !w.Until.After(now)
+}
+
+type windowInput struct {
+	WindowFrom  json.RawMessage `json:"windowFrom"`
+	WindowUntil json.RawMessage `json:"windowUntil"`
+}
+
+func (input windowInput) parse(now time.Time) (*Window, error) {
+	if len(input.WindowFrom) == 0 && len(input.WindowUntil) == 0 {
+		return nil, nil
+	}
+	var from, until string
+	if json.Unmarshal(input.WindowFrom, &from) != nil || json.Unmarshal(input.WindowUntil, &until) != nil {
+		return nil, ErrInvalidWindow
+	}
+	f, err := time.Parse(time.RFC3339Nano, from)
+	if err != nil {
+		return nil, ErrInvalidWindow
+	}
+	u, err := time.Parse(time.RFC3339Nano, until)
+	if err != nil {
+		return nil, ErrInvalidWindow
+	}
+	w := (Window{From: f, Until: u}).Normalized()
+	if !w.Valid(now) {
+		return nil, ErrInvalidWindow
+	}
+	return &w, nil
+}
+
+// MinimumQuestionWindow is the default lookback floor for questions without an Incident.
 const MinimumQuestionWindow = 24 * time.Hour
 
-// QuestionWindow is how far back a turn reaches when it is about no particular incident.
-// A deployment that widened the investigation lead meant "look further back", so a lead
-// past the floor is honoured; a shorter, absent or nonsensical one cannot narrow a
-// question below the floor, because a collapsed window makes every read empty and every
-// answer a false negative.
+const DefaultIncidentWindowLead = 2 * time.Hour
+
+// QuestionWindow preserves the default lookback floor when no explicit window is supplied.
 func QuestionWindow(lead time.Duration) time.Duration {
 	if lead > MinimumQuestionWindow {
 		return lead

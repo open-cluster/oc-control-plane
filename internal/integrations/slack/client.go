@@ -280,10 +280,11 @@ func (c *Client) History(ctx context.Context, token string, query HistoryQuery) 
 		"inclusive": {"true"},
 	}
 	if !query.Oldest.IsZero() {
-		parameters.Set("oldest", slackTimestamp(query.Oldest))
+		parameters.Set("oldest", slackTimestamp(query.Oldest.Add(time.Microsecond-time.Nanosecond)))
 	}
 	if !query.Latest.IsZero() {
-		parameters.Set("latest", slackTimestamp(query.Latest))
+		// Slack includes both bounds; its last eligible microsecond precedes our exclusive end.
+		parameters.Set("latest", slackTimestamp(query.Latest.Add(-time.Nanosecond)))
 	}
 	return c.messages(ctx, token, "conversations.history", parameters)
 }

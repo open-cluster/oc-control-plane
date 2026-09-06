@@ -205,9 +205,9 @@ func conversationMessages(
 	}
 	rows, err := queries.Query(ctx, `
 		SELECT sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
-		       investigation_id, created_at
+		       investigation_id, created_at, window_from, window_until
 		  FROM (SELECT sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
-		               investigation_id, created_at
+		               investigation_id, created_at, window_from, window_until
 		          FROM conversation_message
 		         WHERE org_id = $1 AND conversation_id = $2
 		         ORDER BY sequence DESC
@@ -248,7 +248,7 @@ func (p *Database) AppendMessage(
 		func(ctx context.Context, transaction pgx.Tx) (
 			conversation.Message, audit.Target, audit.Detail, error,
 		) {
-			written, err := appendMessage(ctx, transaction, organization, id, said)
+			written, err := appendMessage(ctx, transaction, organization, id, said, conversation.DefaultIncidentWindowLead)
 			if err != nil {
 				return conversation.Message{}, audit.Target{}, nil, err
 			}
@@ -278,7 +278,7 @@ func (p *Database) AppendMessageAndOpenTurn(
 				}
 				return acceptedMessage{}, audit.Target{}, nil, err
 			}
-			written, err := appendMessage(ctx, transaction, organization, id, said)
+			written, err := appendMessage(ctx, transaction, organization, id, said, lead)
 			if err != nil {
 				return acceptedMessage{}, audit.Target{}, nil, err
 			}
@@ -295,7 +295,7 @@ func (p *Database) AppendMessageAndOpenTurn(
 
 func appendMessage(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	id uuid.UUID, said conversation.NewMessage,
+	id uuid.UUID, said conversation.NewMessage, lead time.Duration,
 ) (conversation.Message, error) {
 	if said.Role == conversation.RolePerson {
 		if err := reserveQueuedMessage(ctx, transaction, organization); err != nil {
@@ -309,17 +309,21 @@ func appendMessage(
 	if state != conversation.StateOpen {
 		return conversation.Message{}, conversation.ErrClosed
 	}
+	window, err := acceptedWindow(ctx, transaction, organization, id, said.Window, lead)
+	if err != nil {
+		return conversation.Message{}, err
+	}
 	row := transaction.QueryRow(ctx, `
 		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
-		                                  actor_kind, actor_id, actor_display, text)
+		                                  actor_kind, actor_id, actor_display, text, window_from, window_until)
 		SELECT $1, $2,
 		       coalesce((SELECT max(sequence) FROM conversation_message
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
-		       $3, $4, $5, $6, $7
+		       $3, $4, $5, $6, $7, $8, $9
 		RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
-		          investigation_id, created_at`,
+		          investigation_id, created_at, window_from, window_until`,
 		id, organization.String(), int16(said.Role), int16(said.ActorKind),
-		said.ActorID, said.ActorDisplay, said.Text)
+		said.ActorID, said.ActorDisplay, said.Text, window.From, window.Until)
 	written, err := scanMessage(row)
 	if err != nil {
 		return conversation.Message{}, fmt.Errorf("appending a message: %w", err)
@@ -539,8 +543,10 @@ func openTurn(
 		return conversation.Turn{}, false, nil
 	}
 
-	from, until, err := turnWindow(ctx, transaction, organization, incidentID, lead)
-	if err != nil {
+	var from, until time.Time
+	if err = transaction.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
+		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1
+		ORDER BY sequence LIMIT 1`, organization.String(), id).Scan(&from, &until); err != nil {
 		return conversation.Turn{}, false, err
 	}
 
@@ -723,16 +729,20 @@ func scanMessage(row scanned) (conversation.Message, error) {
 		role            int16
 		actorKind       int16
 		investigationID *uuid.UUID
+		from, until     *time.Time
 	)
 	if err := row.Scan(&message.Sequence, &role, &actorKind, &message.ActorID,
 		&message.ActorDisplay, &message.Text, &message.SourceReference, &investigationID,
-		&message.CreatedAt); err != nil {
+		&message.CreatedAt, &from, &until); err != nil {
 		return conversation.Message{}, fmt.Errorf("scanning a message: %w", err)
 	}
 	message.Role = conversation.Role(role)
 	message.ActorKind = conversation.ActorKind(actorKind)
 	if investigationID != nil {
 		message.InvestigationID = *investigationID
+	}
+	if from != nil {
+		message.WindowFrom, message.WindowUntil = *from, *until
 	}
 	return message, nil
 }
