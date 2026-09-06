@@ -381,10 +381,6 @@ func inOrganization(name string) func(*http.Request) {
 	}
 }
 
-// withoutOrigin removes the Origin header, so a test can assert the CSRF check rather than
-// silently satisfy it.
-func withoutOrigin(request *http.Request) { request.Header.Del("Origin") }
-
 // sessionCookie reads the opaque credential out of a response, or reports that there was none.
 func sessionCookie(t *testing.T, from answer) string {
 	t.Helper()
