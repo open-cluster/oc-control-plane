@@ -243,6 +243,12 @@ func (r *Agent) Run(
 	state.orientationText = renderOrientation(oriented)
 	state.tools = exchangeTools(oriented)
 	state.carried = orientationTokens(oriented)
+	var priorEvidence []investigation.EvidenceRef
+	if oriented.Brief != nil {
+		for _, finding := range oriented.Brief.Findings {
+			priorEvidence = append(priorEvidence, finding.References()...)
+		}
+	}
 
 	var results []toolFeedback
 	stagnant := 0
@@ -332,7 +338,7 @@ func (r *Agent) Run(
 			}
 			if conclude != nil {
 				conclusion, decodeErr := decodeConclusion(
-					conclude.Arguments, state.highestOrdinal, false)
+					conclude.Arguments, state.highestOrdinal, priorEvidence)
 				if decodeErr != nil {
 					if attempt == 0 {
 						continue
@@ -340,6 +346,9 @@ func (r *Agent) Run(
 					err = Failed(OutcomeMalformed, r.deployment.Provider,
 						completion.Model, decodeErr.Error())
 					break
+				}
+				if oriented.Brief != nil && oriented.Brief.MissingEvidence {
+					conclusion.MarkMissingEvidence()
 				}
 				move.Conclusion = &conclusion
 				break

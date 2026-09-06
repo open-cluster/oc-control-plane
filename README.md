@@ -70,6 +70,7 @@ independently of crash recovery; provider acceptance remains an
 Stop old replicas before upgrading Slack delivery fencing as well.
 Messages may select an explicit time window; queued batches retain their accepted bounds.
 See [question windows](docs/concepts/investigations-and-conversations.mdx) for defaults and conflicts.
+Reused Finding citations retain their originating Investigation and Tool Run; unavailable evidence is marked in result detail.
 
 Conversation detail includes the first 50 turns; use `turnsNext` with the turns endpoint
 to continue reading in order, with up to 200 turns per page.

@@ -68,10 +68,9 @@ type Finding struct {
 	Confidence string `json:"confidence"`
 	// Mechanism is required for causal findings and explains how the cause produced impact.
 	Mechanism string `json:"mechanism"`
-	// Sources are one-based ordinals among the investigation's recorded tool runs. Every
-	// finding cites at least one — enforced when the reasoner's answer is decoded — so a
-	// statement nothing was read for cannot be stored as established.
-	Sources []int `json:"runRefs"`
+	// Sources name local runs; EvidenceRefs retain the origins of reused runs.
+	Sources      []int         `json:"runRefs"`
+	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 const (

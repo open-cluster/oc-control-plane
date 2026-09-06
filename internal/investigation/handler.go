@@ -384,7 +384,8 @@ type findingView struct {
 	Confidence string `json:"confidence,omitempty"`
 	Mechanism  string `json:"mechanism,omitempty"`
 	// Sources are one-based ordinals among the investigation's runs.
-	RunRefs []int `json:"runRefs"`
+	RunRefs      []int         `json:"runRefs"`
+	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type usageView struct {
@@ -450,6 +451,7 @@ func investigationViewOf(found Investigation) investigationView {
 		findings = append(findings, findingView{
 			ID: finding.ID, Statement: finding.Statement, Kind: finding.Kind,
 			Confidence: finding.Confidence, Mechanism: finding.Mechanism, RunRefs: finding.Sources,
+			EvidenceRefs: finding.EvidenceRefs,
 		})
 	}
 	humanConfirmationRequired := false

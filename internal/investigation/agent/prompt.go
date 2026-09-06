@@ -186,7 +186,8 @@ func ConcludeDefinition() integrations.ToolDefinition {
 		Description: "End the investigation with its structured conclusion. Call this " +
 			"exactly once, when your reads are done: status, concise summary, impact, " +
 			"findings, hypotheses, proposed actions, and limitations. Return no " +
-			"findings rather than a guess when nothing was established. Keep the answer " +
+			"findings rather than a guess when nothing was established. " +
+			"Cite this Investigation's runs with run_refs; reuse only supplied prior evidence_refs pairs. Keep the answer " +
 			"under " + strconv.Itoa(investigation.MaxSummaryLength) + " characters — it " +
 			"is the reply an operator reads first, not the report; the detail belongs in " +
 			"the findings, which are not bounded by it. A longer answer is cut to fit.",
@@ -227,6 +228,10 @@ func agentFindingSchema() map[string]any {
 		"confidence": enumField(investigation.Confidences...),
 		"mechanism":  stringField,
 		"run_refs":   array(integerField),
+		"evidence_refs": array(object(properties{
+			"investigationId": map[string]any{"type": "string", "format": "uuid"},
+			"toolRunOrdinal":  map[string]any{"type": "integer", "minimum": 1},
+		})),
 	})
 }
 
@@ -651,7 +656,7 @@ func writeFindings(
 			}
 			line += ")"
 		}
-		out.WriteString(line + " [" + finding.Reference() + "]\n")
+		out.WriteString(line + " evidence_refs=" + finding.Reference() + "\n")
 	}
 }
 

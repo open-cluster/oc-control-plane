@@ -76,6 +76,14 @@ Citations show what OpenCluster read, not that the source was complete or correc
 source timestamps, bounded windows, contradictions, and truncation before accepting a
 Finding.
 
+In API results, `runRefs` names Tool Run ordinals in the containing Investigation.
+Reused Findings use `evidenceRefs` pairs of `investigationId` and `toolRunOrdinal`;
+follow the referenced Investigation's detail and `runs` to resolve them. Two Investigations
+can each have Run 1, so the ordinal alone cannot identify reused evidence.
+Unavailable or unauthorized Investigations return the same `404`. If a cited Tool Run
+has been pruned, the Finding retains its reference and detail reports a `missing_telemetry`
+limitation; it does not substitute another run or claim fresh verification.
+
 ## Action Proposals
 
 An Action Proposal can describe mitigation, rollback, verification, a permanent fix, or
