@@ -124,9 +124,8 @@ type Conversation struct {
 	LastActivityAt time.Time
 }
 
-// Message is one thing said, at its position in the conversation. The text is untrusted
-// for its whole life: it reaches a model as evidence about what somebody typed, never as
-// an instruction.
+// Message is one thing said, at its position in the Conversation. Its text never grants
+// Integration or resource authority.
 type Message struct {
 	// Sequence is monotonic within the conversation, from one.
 	Sequence     int64

@@ -3840,6 +3840,16 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+        messageSequences:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+          description: Assigned Message sequences not processed because the complete request could not fit the input budget.
     Investigation:
       type: object
       additionalProperties: false
