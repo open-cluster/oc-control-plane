@@ -173,7 +173,7 @@ func recoverStaleIn(
 		return 0, fmt.Errorf("failing lapsed investigations: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{"reason": reason})
+	payload, err := json.Marshal(investigation.FailedPayload(reason))
 	if err != nil {
 		return 0, fmt.Errorf("encoding a recovery reason: %w", err)
 	}

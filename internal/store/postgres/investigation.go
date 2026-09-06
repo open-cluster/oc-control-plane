@@ -273,7 +273,7 @@ func (p *Database) ConcludeInvestigation(
 		return fmt.Errorf("encoding conclusion: %w", err)
 	}
 	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", usage, investigation.EventConcluded,
+		encoded, stoppedBy, "", usage,
 		investigation.ConcludedPayload(conclusion, stoppedBy))
 }
 
@@ -283,13 +283,17 @@ func (p *Database) FailInvestigation(
 	reason string, usage investigation.Usage,
 ) error {
 	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusFailed),
-		[]byte("{}"), "", reason, usage, investigation.EventFailed, investigation.FailedPayload(reason))
+		[]byte("{}"), "", reason, usage, investigation.FailedPayload(reason))
 }
 
 // CancelInvestigation ends active work and records the operator action atomically.
 func (p *Database) CancelInvestigation(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization, id uuid.UUID,
 ) (investigation.Investigation, error) {
+	payload, err := json.Marshal(investigation.CancelledPayload())
+	if err != nil {
+		return investigation.Investigation{}, err
+	}
 	return audited(ctx, p, principal, organization, audit.ActionInvestigationCancelled,
 		func(ctx context.Context, transaction pgx.Tx) (
 			investigation.Investigation, audit.Target, audit.Detail, error,
@@ -337,10 +341,10 @@ func (p *Database) CancelInvestigation(
 				INSERT INTO investigation_event
 				    (investigation_id, org_id, sequence, at, type, payload)
 				SELECT $1, $2, coalesce(max(sequence), 0) + 1, now(), $3,
-				       jsonb_build_object('message', 'Investigation cancelled by an operator')
+				       $4
 				  FROM investigation_event
 				 WHERE investigation_id = $1 AND org_id = $2`,
-				id, organization.String(), int16(investigation.EventCancelled)); err != nil {
+				id, organization.String(), int16(investigation.EventCancelled), payload); err != nil {
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("recording an investigation cancellation event: %w", err)
 			}
@@ -354,7 +358,7 @@ func (p *Database) CancelInvestigation(
 func (p *Database) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
-	usage investigation.Usage, eventType investigation.EventType, payload map[string]any,
+	usage investigation.Usage, payload investigation.EventPayload,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -402,7 +406,7 @@ func (p *Database) endInvestigation(
 		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
 		  FROM investigation_event
 		 WHERE investigation_id = $1 AND org_id = $2`,
-		id, organization.String(), int16(eventType), encodedPayload); err != nil {
+		id, organization.String(), int16(payload.EventType()), encodedPayload); err != nil {
 		return fmt.Errorf("recording terminal event: %w", err)
 	}
 	return transaction.Commit(ctx)

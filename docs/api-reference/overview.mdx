@@ -133,6 +133,10 @@ upstream reads. The supplied nginx configuration uses `proxy_buffering off`,
 Terminal events are `concluded`, `failed`, and `cancelled`. Ignore an unknown future event
 type while retaining its envelope so a newer server remains compatible with an older
 client. The generated stream operation documents every currently shipped event payload.
+Cancellation may include a human-readable `message`. Hypothesis snapshots always use
+arrays for cited Tool Runs, including when none are cited. Invalid hypothesis identities
+and repeated citations are refused before publication. A refused unavailable Tool is
+reported as a failed read without claiming it started against an Integration.
 
 Browse the [API surface](/api-reference/surface) or select an individual generated
 method/path entry in the navigation.

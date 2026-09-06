@@ -176,7 +176,7 @@ func (r *Agent) Run(
 	}
 	brief := r.conversationBrief(ctx, organization, opened, events)
 	offered := offeredSourcesForConversation(r.Catalog, candidates, origin)
-	r.announce(ctx, events, investigation.EventStarted,
+	r.announce(ctx, events,
 		investigation.StartedPayload(opened, true))
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
@@ -268,7 +268,7 @@ func (r *Agent) Run(
 				stoppedBy = investigation.StoppedByContext
 			}
 			if stoppedBy != "" {
-				r.announce(ctx, events, investigation.EventProgress,
+				r.announce(ctx, events,
 					investigation.ProgressPayload(ceilingProgress(stoppedBy)))
 			}
 		}
@@ -415,7 +415,7 @@ func (r *Agent) Run(
 					result.Run.Error = snapshotErr.Error()
 				} else {
 					result.Run.Content = map[string]any{"accepted": true}
-					r.announce(ctx, events, investigation.EventHypothesesUpdated,
+					r.announce(ctx, events,
 						investigation.HypothesesUpdatedPayload(snapshot))
 				}
 				state.carried += runTokens(result.Run)
@@ -441,7 +441,7 @@ func (r *Agent) Run(
 				case state.executedIdentities[identity] != 0:
 					run = suppressedRun(opened, call, len(state.runs)+1,
 						state.executedIdentities[identity])
-					r.announce(ctx, events, investigation.EventProgress,
+					r.announce(ctx, events,
 						investigation.ProgressPayload(
 							"Skipped a repeat of "+offeredName(offered, call.Tool)+
 								"; the earlier read already answers it"))
@@ -451,7 +451,7 @@ func (r *Agent) Run(
 						len(state.runs)+1, fmt.Sprintf(
 							"not executed: the investigation's read budget of %d was exhausted",
 							state.maxRuns))
-					r.announce(ctx, events, investigation.EventProgress,
+					r.announce(ctx, events,
 						investigation.ProgressPayload(
 							"Did not run "+offeredName(offered, call.Tool)+
 								"; the read budget is exhausted"))
@@ -469,7 +469,7 @@ func (r *Agent) Run(
 							investigation.StatusFailed.String(), "")
 						return terminalErr
 					}
-					r.announce(ctx, events, investigation.EventToolCompleted,
+					r.announce(ctx, events,
 						investigation.ToolCompletedPayload(run))
 					r.RuntimeTelemetry.RanTool(run)
 					state.executed++
@@ -558,12 +558,20 @@ func decodeHypothesisSnapshot(
 		if seen[hypothesis.ID] {
 			return nil, fmt.Errorf("hypothesis id %q appears more than once", hypothesis.ID)
 		}
+		if len([]rune(hypothesis.ID)) > 128 {
+			return nil, errors.New("hypothesis id exceeds 128 characters")
+		}
 		seen[hypothesis.ID] = true
 		if !hypothesisStatusAllowed(hypothesis.Status) {
 			return nil, fmt.Errorf("hypothesis %q has invalid status %q", hypothesis.ID,
 				hypothesis.Status)
 		}
+		references := make(map[int]bool, len(hypothesis.RunRefs))
 		for _, run := range hypothesis.RunRefs {
+			if references[run] {
+				return nil, fmt.Errorf("hypothesis %q cites run %d more than once", hypothesis.ID, run)
+			}
+			references[run] = true
 			if run < 1 || run > runs {
 				return nil, fmt.Errorf("hypothesis %q cites run %d, but only %d runs exist",
 					hypothesis.ID, run, runs)
@@ -572,7 +580,7 @@ func decodeHypothesisSnapshot(
 		result = append(result, investigation.HypothesisResult{
 			ID:        boundText(hypothesis.ID, eventTextBound),
 			Statement: boundText(hypothesis.Statement, eventTextBound), Status: hypothesis.Status,
-			Test: boundText(hypothesis.Test, eventTextBound), RunRefs: hypothesis.RunRefs,
+			Test: boundText(hypothesis.Test, eventTextBound), RunRefs: append([]int{}, hypothesis.RunRefs...),
 		})
 	}
 	return result, nil
@@ -607,19 +615,15 @@ func offeredName(offeredSources []offeredSource, tool string) string {
 func (r *Agent) announceToolStarted(
 	ctx context.Context, state *runState, call toolCall, ordinal int,
 ) {
-	integration, name := "", ""
-	if source, _, offered := toolNamed(selections(state.offered), call.Tool); offered {
-		integration = source.integration.ID.String()
-		name = source.integration.Name
+	source, _, offered := toolNamed(selections(state.offered), call.Tool)
+	if !offered {
+		return
 	}
 	payload := investigation.ToolStartedPayload(investigation.ToolRun{
 		Ordinal: ordinal, Tool: call.Tool, Purpose: call.Purpose,
 		HypothesisID: call.HypothesisID, Arguments: call.Arguments,
-	}, integration)
-	if name != "" {
-		payload["integration"] = name
-	}
-	r.announce(ctx, state.events, investigation.EventToolStarted, payload)
+	}, source.integration.ID.String(), source.integration.Name)
+	r.announce(ctx, state.events, payload)
 }
 
 // record writes one run into the provenance, in ordinal order.

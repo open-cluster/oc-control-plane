@@ -79,9 +79,9 @@ func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
 		WindowApplied: false,
 	})
 
-	if _, present := payload["windowFrom"]; present {
+	if payload.WindowFrom != "" {
 		t.Errorf("a listing that filtered by no window reports one: %v",
-			payload["windowFrom"])
+			payload.WindowFrom)
 	}
 }
 
@@ -96,9 +96,9 @@ func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
 		WindowApplied: true,
 	})
 
-	if payload["windowFrom"] != from.Format(time.RFC3339) {
+	if payload.WindowFrom != from.Format(time.RFC3339) {
 		t.Errorf("windowFrom = %v; a windowed read must say what it covered",
-			payload["windowFrom"])
+			payload.WindowFrom)
 	}
 }
 

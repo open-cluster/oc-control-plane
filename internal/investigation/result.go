@@ -11,10 +11,7 @@ type Agent interface {
 	Run(context.Context, tenancy.Organization, Investigation) error
 }
 
-const (
-	HypothesisSnapshotVersion  = 1
-	MaxHypothesisSnapshotItems = 8
-)
+const MaxHypothesisSnapshotItems = 8
 
 // Conclusion is the versioned, operator-facing result of an investigation.
 type Conclusion struct {

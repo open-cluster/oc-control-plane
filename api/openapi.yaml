@@ -1985,7 +1985,11 @@ components:
       properties:
         <<: *investigation-event-properties
         type: { type: string, const: cancelled }
-        payload: { type: object, additionalProperties: false }
+        payload:
+          type: object
+          additionalProperties: false
+          properties:
+            message: { type: string, maxLength: 512 }
     UnknownInvestigationEvent:
       type: object
       additionalProperties: false
