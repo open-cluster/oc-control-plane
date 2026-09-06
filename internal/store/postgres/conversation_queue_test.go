@@ -48,6 +48,81 @@ func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
 	}
 }
 
+func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
+	database, org, _ := twoOrganizationsInOneDatabase(t)
+	ctx := context.Background()
+	chat := openConversation(t, database, org, "competing follow-ups")
+	principal := ownerOf(t, org)
+	appendPerson := func(text string) (conversation.Turn, bool, error) {
+		_, turn, started, err := database.AppendMessageAndOpenTurn(ctx, principal, org, chat.ID,
+			conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+				ActorID: principal.ID(), Text: text}, turnWindowLead, 100)
+		return turn, started, err
+	}
+	first, started, err := appendPerson("initial question")
+	if err != nil || !started {
+		t.Fatalf("initial turn: %v, %v", started, err)
+	}
+	start := make(chan struct{})
+	appended := make(chan error, 10)
+	for i := range 10 {
+		go func() {
+			<-start
+			_, opened, err := appendPerson(fmt.Sprintf("follow-up %d", i))
+			if err == nil && opened {
+				err = errors.New("opened another active turn")
+			}
+			appended <- err
+		}()
+	}
+	close(start)
+	for range 10 {
+		if err := <-appended; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.ConcludeInvestigation(ctx, org, first.InvestigationID,
+		conclusionSaying("first answer"), "", investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	type drainResult struct {
+		turn    conversation.Turn
+		started bool
+		err     error
+	}
+	drained := make(chan drainResult, 2)
+	for range 2 {
+		go func() {
+			turn, started, err := database.OpenTurn(ctx, org, chat.ID, turnWindowLead)
+			drained <- drainResult{turn, started, err}
+		}()
+	}
+	var second conversation.Turn
+	opened := 0
+	for range 2 {
+		result := <-drained
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.started {
+			opened++
+			second = result.turn
+		}
+	}
+	detail, err := database.ConversationDetail(ctx, org, chat.ID, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened != 1 || len(detail.Turns) != 2 || len(detail.Messages) != 11 {
+		t.Fatalf("drains=%d turns=%d Messages=%d", opened, len(detail.Turns), len(detail.Messages))
+	}
+	for _, message := range detail.Messages[1:] {
+		if message.InvestigationID != second.InvestigationID {
+			t.Fatalf("follow-up not assigned to the one next turn: %+v", message)
+		}
+	}
+}
+
 func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 	database, org, _ := twoOrganizationsInOneDatabase(t)
 	ctx := context.Background()
