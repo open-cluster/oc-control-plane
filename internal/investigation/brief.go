@@ -3,6 +3,9 @@ package investigation
 import (
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // Brief is bounded durable context carried between Conversation turns. It references
@@ -35,8 +38,11 @@ type BriefMessage struct {
 	FromPerson bool
 	// Actor is who said it, for attribution. Never a credential and never an email
 	// address the model has any use for; a display name.
-	Actor string
-	Text  string
+	Actor           string
+	Text            string
+	Sequence        int64
+	CreatedAt       time.Time
+	InvestigationID uuid.UUID
 }
 
 // PriorFinding is something an earlier turn established, with its citation as a reference.

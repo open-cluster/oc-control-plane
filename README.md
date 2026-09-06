@@ -50,6 +50,8 @@ Follow-up Messages queue behind an active Investigation. Each Organization has a
 100 unassigned person Messages across Conversations; accepted work drains in bounded batches.
 Investigations use complete assigned Messages. Input that cannot fit produces `needs_input`
 with the unprocessed Message sequences instead of silently truncating the request.
+Follow-ups receive a bounded recent exchange of Messages and completed answers, with
+timestamps and source identities retained.
 
 ## Quick start
 
