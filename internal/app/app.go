@@ -255,6 +255,7 @@ func inventoryInterval(replacement time.Duration) time.Duration {
 // assembled is the constructed process: the pieces serve needs, which are meaningless
 // apart and always travel together.
 type assembled struct {
+	streamContext     context.Context
 	config            config.Config
 	logger            *slog.Logger
 	telemetry         *observability.Telemetry

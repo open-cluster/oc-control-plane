@@ -33,6 +33,7 @@ type Handlers struct {
 	Identity                identity.Handlers
 	Catalog                 integrations.Catalog
 	Investigations          *investigation.Runner
+	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
 	Sealer                  seal.Sealer
 	ConversationsEnabled    bool
@@ -124,11 +125,12 @@ func (h Handlers) Routes() authz.Table {
 		Logger:  h.Logger,
 	}.Routes()...)
 	routes = append(routes, investigation.Handlers{
-		Store:      h.Database,
-		Runner:     h.Investigations,
-		Logger:     h.Logger,
-		WindowLead: h.InvestigationWindowLead,
-		MaxPending: h.MaxWaitingTurns,
+		Store:         h.Database,
+		Runner:        h.Investigations,
+		StreamContext: h.StreamContext,
+		Logger:        h.Logger,
+		WindowLead:    h.InvestigationWindowLead,
+		MaxPending:    h.MaxWaitingTurns,
 	}.Routes()...)
 	routes = append(routes, conversation.Handlers{
 		Store:           h.Database,

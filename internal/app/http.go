@@ -26,6 +26,7 @@ import (
 // serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
 func serve(ctx context.Context, process assembled) error {
 	cfg, logger := process.config, process.logger
+	process.streamContext = ctx
 
 	handler, err := httpRoutes(process)
 	if err != nil {
@@ -179,6 +180,7 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		Catalog:                 process.catalog,
 		Sealer:                  process.sealer,
 		Investigations:          process.investigations,
+		StreamContext:           process.streamContext,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		ConversationsEnabled:    true,
 		MaxWaitingTurns:         cfg.MaxPendingInvestigationsPerOrganization,

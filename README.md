@@ -54,6 +54,9 @@ Follow-ups receive a bounded recent exchange of Messages and completed answers, 
 timestamps and source identities retained.
 Terminal outcomes and their replay events commit together; failed event writes cannot
 leave a completed result without its ending event.
+Event streams refresh bounded write deadlines, survive ordinary HTTP timeouts, and close
+during shutdown. Proxy buffering and timeout requirements are in the
+[API reference](./docs/api-reference/overview.mdx#investigation-event-streams).
 Expired worker leases cannot be renewed; recovery ends the interrupted Investigation.
 Each claim has a unique token fencing progress, Tool Runs and terminal writes. PostgreSQL
 allocates replay sequences under the same Investigation lock used by terminal transitions.
