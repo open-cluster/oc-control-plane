@@ -114,20 +114,18 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		revoked  *time.Time
 		disabled *time.Time
 	)
-	// The last-seen stamp is refreshed in the same statement that reads the row, and only when
-	// it has gone stale, so an authenticated read is a write at most once a minute per session
-	// rather than once per request.
 	err := on.QueryRow(ctx, `
-		UPDATE operator_session
-		   SET last_seen_at = CASE WHEN last_seen_at < now() - $2::INTERVAL
-		                           THEN now() ELSE last_seen_at END
-		 WHERE token_digest = $1
-		RETURNING session_id, user_id, COALESCE(org_id, ''), issued_at, expires_at, last_seen_at,
-		          revoked_at, user_agent, address,
-		          (SELECT email FROM app_user WHERE app_user.user_id = operator_session.user_id),
-		          (SELECT issuer FROM app_user WHERE app_user.user_id = operator_session.user_id),
-		          (SELECT display_name FROM app_user WHERE app_user.user_id = operator_session.user_id),
-		          (SELECT disabled_at FROM app_user WHERE app_user.user_id = operator_session.user_id)`,
+		WITH touched AS (
+			UPDATE operator_session SET last_seen_at = now()
+			WHERE token_digest = $1 AND last_seen_at < now() - $2::interval
+			  AND revoked_at IS NULL AND expires_at > now()
+			RETURNING last_seen_at
+		)
+		SELECT s.session_id, s.user_id, COALESCE(s.org_id, ''), s.issued_at, s.expires_at,
+		       COALESCE((SELECT last_seen_at FROM touched), s.last_seen_at),
+		       s.revoked_at, s.user_agent, s.address, u.email, u.issuer, u.display_name, u.disabled_at
+		FROM operator_session s JOIN app_user u ON u.user_id = s.user_id
+		WHERE s.token_digest = $1`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
 		&found.Session.Organization, &found.Session.IssuedAt, &found.Session.ExpiresAt,
 		&found.Session.LastSeenAt, &revoked, &found.Session.UserAgent, &found.Session.Address,
@@ -164,107 +162,49 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	return found, nil
 }
 
-// DeleteSession ends the caller's own session. It deletes the row rather than marking it, so
-// the credential is gone before the response is written — a row that still exists is a row a
-// bug can read.
-func (p *Database) DeleteSession(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	id uuid.UUID,
-) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
+// RevokeCurrentSession revokes the caller's current session and audits it in deployment scope.
+func (p *Database) RevokeCurrentSession(ctx context.Context, principal authz.Principal, id uuid.UUID) error {
+	if principal.CredentialID() != id.String() {
+		return session.ErrUnknown
 	}
+	return p.endOwnedSession(ctx, principal, id, audit.ActionSignedOut)
+}
 
-	transaction, err := pool.Begin(ctx)
+// RevokeSession revokes only a session belonging to the authenticated User.
+func (p *Database) RevokeSession(ctx context.Context, principal authz.Principal, id uuid.UUID) error {
+	return p.endOwnedSession(ctx, principal, id, audit.ActionSessionRevoked)
+}
+
+func (p *Database) endOwnedSession(ctx context.Context, principal authz.Principal, id uuid.UUID, action audit.Action) error {
+	userID, err := uuid.Parse(principal.ID())
+	if err != nil || principal.Kind() != authz.KindUser {
+		return session.ErrUnknown
+	}
+	transaction, err := p.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = transaction.Rollback(ctx)
-		}
-	}()
-
-	tag, err := transaction.Exec(ctx,
-		`DELETE FROM operator_session WHERE session_id = $1 AND org_id = $2`,
-		id, organization.String())
+	defer func() { _ = transaction.Rollback(ctx) }()
+	tag, err := transaction.Exec(ctx, `
+		UPDATE operator_session SET revoked_at = now(), revoked_by = $2
+		WHERE session_id = $1 AND user_id = $2::uuid AND revoked_at IS NULL`, id, userID.String())
 	if err != nil {
-		return fmt.Errorf("signing out: %w", err)
+		return fmt.Errorf("revoking session: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return session.ErrUnknown
 	}
-	// Recorded in the same transaction as the deletion, exactly as a state change is: a session
-	// that ended with nothing saying so is a gap in the trail an offboarding review reads.
-	if err := writeEvent(ctx, transaction, audit.Event{
-		Organization:  organization.String(),
-		Actor:         principal.Actor(),
-		Action:        audit.ActionSignedOut,
-		Target:        audit.Target{Kind: audit.TargetSession, ID: id.String()},
-		Outcome:       audit.OutcomeAllowed,
-		SourceAddress: principal.SourceAddress(),
-		RequestID:     principal.RequestID(),
+	if err = writeEvent(ctx, transaction, audit.Event{
+		Actor: principal.Actor(), Action: action,
+		Target:  audit.Target{Kind: audit.TargetSession, ID: id.String()},
+		Outcome: audit.OutcomeAllowed, SourceAddress: principal.SourceAddress(), RequestID: principal.RequestID(),
 	}); err != nil {
 		return err
 	}
-	if err := transaction.Commit(ctx); err != nil {
+	if err = transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	committed = true
 	return nil
-}
-
-// RevokeSession ends one named session in an Organization and preserves it for review.
-func (p *Database) RevokeSession(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	id uuid.UUID,
-) error {
-	_, err := audited(ctx, p, principal, organization, audit.ActionSessionRevoked,
-		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			tag, updateErr := transaction.Exec(ctx, `
-				UPDATE operator_session
-				   SET revoked_at = now(), revoked_by = $3
-				 WHERE session_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
-				id, organization.String(), principal.ID())
-			if updateErr != nil {
-				return struct{}{}, audit.Target{}, nil,
-					fmt.Errorf("revoking session: %w", updateErr)
-			}
-			if tag.RowsAffected() != 1 {
-				return struct{}{}, audit.Target{}, nil, session.ErrUnknown
-			}
-			return struct{}{}, audit.Target{Kind: audit.TargetSession, ID: id.String()},
-				audit.Detail{"sessionId": id.String()}, nil
-		})
-	return err
-}
-
-// RevokeSessionsOf ends every live session one person holds in one organization.
-//
-// Story 10: offboarding takes effect before the next token refresh. It marks rather than
-// deletes, because an administrator who ended somebody's session should be able to see that
-// they did, and because the person deserves to be told they were signed out rather than that
-// their session timed out.
-func (p *Database) RevokeSessionsOf(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	user uuid.UUID,
-) (int64, error) {
-	return audited(ctx, p, principal, organization, audit.ActionSessionRevoked,
-		func(ctx context.Context, transaction pgx.Tx) (int64, audit.Target, audit.Detail, error) {
-			tag, err := transaction.Exec(ctx, `
-				UPDATE operator_session
-				   SET revoked_at = now(), revoked_by = $3
-				 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
-				user, organization.String(), principal.ID())
-			if err != nil {
-				return 0, audit.Target{}, nil, fmt.Errorf("revoking sessions: %w", err)
-			}
-			return tag.RowsAffected(),
-				audit.Target{Kind: audit.TargetSession, ID: user.String()},
-				audit.Detail{"sessions": tag.RowsAffected(), "userId": user.String()}, nil
-		})
 }
 
 type SessionList struct {
@@ -273,15 +213,11 @@ type SessionList struct {
 }
 
 func (p *Database) ListSessions(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	page Page,
+	ctx context.Context, principal authz.Principal, page Page,
 ) (SessionList, error) {
-	if !principal.MemberOf(organization) {
-		return SessionList{}, ErrNotAMember
-	}
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return SessionList{}, err
+	userID, err := uuid.Parse(principal.ID())
+	if err != nil || principal.Kind() != authz.KindUser {
+		return SessionList{}, session.ErrUnknown
 	}
 	after, afterID, err := decodeCursor(page.After, "-lastSeenAt")
 	if err != nil {
@@ -289,14 +225,14 @@ func (p *Database) ListSessions(
 	}
 	limit := pageLimit(page.Limit)
 
-	rows, err := pool.Query(ctx, `
+	rows, err := p.pool.Query(ctx, `
 		SELECT session_id, user_id, issued_at, expires_at, last_seen_at, revoked_at,
 		       user_agent, address
 		  FROM operator_session
-		 WHERE org_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		 WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
 		   AND ($2::timestamptz IS NULL OR (last_seen_at, session_id) < ($2, $3))
 		 ORDER BY last_seen_at DESC, session_id DESC
-		 LIMIT $4`, organization.String(), after, afterID, limit+1)
+		 LIMIT $4`, userID, after, afterID, limit+1)
 	if err != nil {
 		return SessionList{}, fmt.Errorf("reading sessions: %w", err)
 	}
@@ -315,7 +251,6 @@ func (p *Database) ListSessions(
 		if revoked != nil {
 			live.RevokedAt = *revoked
 		}
-		live.Organization = organization.String()
 		if len(list.Sessions) == limit {
 			last := list.Sessions[limit-1]
 			list.Next = encodeCursor("-lastSeenAt", last.LastSeenAt, last.ID)

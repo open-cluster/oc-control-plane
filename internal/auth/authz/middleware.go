@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
@@ -53,8 +55,23 @@ func (g Guard) protect(route Route) http.Handler {
 			return
 		}
 
+		if route.sessionLogout {
+			if !g.cookieOriginIsAllowed(request) {
+				g.refuseOrigin(writer, request, Principal{})
+				return
+			}
+			session.Clear(writer)
+		}
 		principal, err := g.Resolve(request)
 		if err != nil || principal.IsZero() {
+			if route.sessionLogout && (errors.Is(err, ErrNoCredential) || errors.Is(err, ErrCredentialRejected)) {
+				route.handler.ServeHTTP(writer, request)
+				return
+			}
+			if errors.Is(err, ErrAuthenticationUnavailable) {
+				writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
+				return
+			}
 			g.refuseUnauthenticated(writer, request, err)
 			return
 		}

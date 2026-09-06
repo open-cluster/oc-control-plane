@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -32,7 +33,22 @@ type Principal struct {
 	credentialID  string
 	sourceAddress string
 	requestID     string
+	sessionInfo   SessionInfo
 }
+
+// SessionInfo contains identity metadata verified during request authentication.
+type SessionInfo struct {
+	Email                string
+	AuthenticationMethod string
+	ExpiresAt            time.Time
+}
+
+func (p Principal) WithSessionInfo(info SessionInfo) Principal {
+	p.sessionInfo = info
+	return p
+}
+
+func (p Principal) SessionInfo() SessionInfo { return p.sessionInfo }
 
 // Membership is one organization and the role held in it.
 type Membership struct {

@@ -67,13 +67,20 @@ func writeEvent(ctx context.Context, on executor, event audit.Event) error {
 		                         actor_display_name, action, target_kind, target_id, outcome,
 		                         source_address, request_id, detail, occurred_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-		eventID, bounded.Organization, int16(bounded.Actor.Kind), bounded.Actor.ID,
+		eventID, nullableOrganization(bounded.Organization), int16(bounded.Actor.Kind), bounded.Actor.ID,
 		bounded.Actor.DisplayName, string(bounded.Action), string(bounded.Target.Kind),
 		bounded.Target.ID, int16(bounded.Outcome), bounded.SourceAddress, bounded.RequestID,
 		detail, occurred); err != nil {
 		return fmt.Errorf("%w: %w", ErrAuditFailed, err)
 	}
 	return nil
+}
+
+func nullableOrganization(organization string) any {
+	if organization == "" {
+		return nil
+	}
+	return organization
 }
 
 func orEmptyDetail(detail audit.Detail) audit.Detail {

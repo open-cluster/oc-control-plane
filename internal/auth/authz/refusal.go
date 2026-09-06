@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrNoCredential       = errors.New("no credential presented")
-	ErrCredentialRejected = errors.New("credential rejected")
+	ErrNoCredential              = errors.New("no credential presented")
+	ErrCredentialRejected        = errors.New("credential rejected")
+	ErrAuthenticationUnavailable = errors.New("authentication unavailable")
 )
 
 type Reason string
@@ -50,7 +51,6 @@ func (g Guard) refuseUnauthenticated(
 		slog.String("path", truncate(request.URL.Path, maxLoggedPath)),
 		slog.String("reason", string(reason)),
 		slog.String("caller", request.RemoteAddr))
-	writer.Header().Set("WWW-Authenticate", "Bearer")
 	writeJSON(writer, http.StatusUnauthorized,
 		errorView{Error: "unauthorized", Reason: string(reason)})
 }

@@ -187,10 +187,12 @@ paths:
       <<: *authenticated-write
       operationId: signOut
       summary: Sign out
+      description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
       tags: [Sessions]
       responses:
         "200": { $ref: "#/components/responses/SignOut" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/organizations:
     get:
       <<: *authenticated-read
@@ -295,12 +297,11 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/sessions:
     get:
-      <<: *privileged-read
+      <<: *authenticated-read
       operationId: listSessions
-      summary: List sessions
+      summary: List the authenticated User's live sessions
       tags: [Sessions]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -310,9 +311,9 @@ paths:
     parameters:
       - { $ref: "#/components/parameters/SessionID" }
     delete:
-      <<: *privileged-write
+      <<: *authenticated-write
       operationId: revokeSession
-      summary: Revoke session
+      summary: Revoke the authenticated User's session
       tags: [Sessions]
       responses:
         "204": { description: The named session was revoked. }
