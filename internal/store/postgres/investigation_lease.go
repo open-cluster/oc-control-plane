@@ -51,12 +51,7 @@ func (p *Database) ClaimInvestigation(
 	return named, claimed, true, nil
 }
 
-// Heartbeat renews a lease this worker holds.
-//
-// The worker is part of the WHERE clause, so a lease that was swept and re-claimed by
-// somebody else cannot be renewed by the process that lost it. That is the fence: the
-// holder learns it is no longer the holder, from the database, rather than continuing to
-// write for an investigation another worker is now running.
+// Heartbeat renews only an unexpired lease held by this worker.
 func (p *Database) Heartbeat(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	claim investigation.Claim,
@@ -71,7 +66,8 @@ func (p *Database) Heartbeat(
 		 WHERE investigation_id = $1
 		   AND org_id           = $2
 		   AND status           = 1
-		   AND lease_worker     = $3`,
+		   AND lease_worker     = $3
+		   AND lease_expires_at > now()`,
 		id, organization.String(), claim.Worker, claim.LeaseFor.String())
 	if err != nil {
 		return false, fmt.Errorf("renewing an investigation lease: %w", err)
