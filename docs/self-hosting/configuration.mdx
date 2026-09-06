@@ -122,3 +122,15 @@ The shared HTTP server allows 10 seconds for headers, 30 seconds to read a reque
 30 seconds to write a response, and 60 seconds for an idle connection. Restart after a
 change, then verify `/healthz`, `/readyz`, sign-in, Organization selection, Integration
 verification, and one bounded Investigation.
+
+## Webhook admission limits
+
+Each control-plane process allows a shared burst of 600 webhook requests and restores
+10 requests per second before authentication. This protects both alert and Slack intake;
+changing an Integration identifier or forwarding header does not create fresh capacity.
+During overload, legitimate senders may also receive `429` and must honor `Retry-After`.
+
+After authentication, each Integration has a separate burst of 60 deliveries and restores
+one delivery per second. Incorrect credentials do not spend that quota. A process tracks
+at most 4,096 active Integrations; additional Integrations receive `429` until an entry
+has been idle for ten minutes. Limits are per process and multiply across replicas.
