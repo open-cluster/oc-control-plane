@@ -9,10 +9,11 @@ import (
 )
 
 func (r *Agent) assignedInputFits(state *runState, oriented orientation) (bool, error) {
-	state.task = taskInstruction(oriented)
-	state.orientationText = renderOrientation(oriented)
-	state.tools = exchangeTools(oriented)
-	encoded, err := json.Marshal(modelPrompt(r, state, false))
+	candidate := *state
+	candidate.task = taskInstruction(oriented)
+	candidate.orientationText = renderOrientation(oriented)
+	candidate.tools = exchangeTools(oriented)
+	encoded, err := json.Marshal(modelPrompt(r, &candidate, false))
 	if err != nil {
 		return false, err
 	}
