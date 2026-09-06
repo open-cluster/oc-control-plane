@@ -33,13 +33,13 @@ func recoverLocalPassword(ctx context.Context, args []string, input *os.File, ou
 	if info.Mode()&os.ModeCharDevice != 0 {
 		return errors.New("redirect or pipe the new password on stdin; terminal input is refused to prevent echo")
 	}
-	cfg, err := config.LoadProcess(nil, lookup)
+	dsn, err := config.LoadRecoveryDatabase(lookup)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	database, err := storage.OpenDatabase(ctx, cfg.DatabaseDSN)
+	database, err := storage.OpenDatabase(ctx, dsn)
 	if err != nil {
 		return errors.New("cannot open deployment database")
 	}

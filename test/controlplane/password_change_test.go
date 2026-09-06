@@ -97,9 +97,8 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	command.Env = append(os.Environ(),
 		config.EnvConfigFile+"=", config.EnvOperatorTokenFile+"=",
 		config.EnvDatabaseDSNFile+"="+writeSecret("dsn", plane.dsn),
-		config.EnvSealingKeyFile+"="+writeSecret("key", strings.Repeat("k", 32)),
-		config.EnvModelProvider+"=anthropic", config.EnvModelName+"=test-model",
-		config.EnvModelKeyFile+"="+writeSecret("model", "unused-test-model-key"))
+		config.EnvSealingKeyFile+"=", config.EnvModelProvider+"=anthropic",
+		config.EnvModelName+"=", config.EnvModelKeyFile+"=")
 	const recoveredPassword = "recovered administrator password"
 	command.Stdin = strings.NewReader(recoveredPassword + "\n")
 	output, err := command.CombinedOutput()

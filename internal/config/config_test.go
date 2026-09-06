@@ -43,6 +43,14 @@ func TestLoadWithoutBootstrapCredential(t *testing.T) {
 	}
 }
 
+func TestRecoveryNeedsOnlyDeploymentDatabaseConfiguration(t *testing.T) {
+	values := map[string]string{EnvDatabaseDSNFile: secretFile(t, "postgres://user:password@localhost/opencluster"), EnvModelProvider: "anthropic"}
+	dsn, err := LoadRecoveryDatabase(lookup(values))
+	if err != nil || dsn != "postgres://user:password@localhost/opencluster" {
+		t.Fatalf("recovery database configuration failed: %v", err)
+	}
+}
+
 func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	values := essentialEnvironment(t)
 	cfg, err := Load(lookup(values))
