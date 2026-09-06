@@ -348,14 +348,14 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 	}
 	origin := stubIntegration("Origin workspace")
 	other := stubIntegration("Other workspace")
-	brief := &investigation.Brief{
-		OriginIntegrationID: origin.ID.String(),
-		OriginChannel:       "C-INCIDENT",
-		OriginThread:        "1710000000.1",
+	scope := &investigation.ConversationOrigin{
+		IntegrationID: origin.ID,
+		Channel:       "C-INCIDENT",
+		Thread:        "1710000000.1",
 	}
 
 	offered := offeredSourcesForConversation(catalog,
-		[]integrations.Integration{origin, other}, brief)
+		[]integrations.Integration{origin, other}, scope)
 	if len(offered) != 1 || offered[0].Integration.ID != origin.ID {
 		t.Fatalf("a mention must offer only its originating workspace: %+v", offered)
 	}
