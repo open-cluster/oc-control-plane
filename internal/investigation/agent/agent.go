@@ -110,7 +110,6 @@ type orientation struct {
 	Trigger     *investigation.Trigger
 	Sources     []offeredSource
 	Inventory   []string
-	Preflight   []investigation.ToolRun
 	Brief       *investigation.Brief
 }
 
@@ -245,51 +244,6 @@ func (r *Agent) Run(
 			}
 			return err
 		}
-	}
-	for _, call := range preflightCalls(oriented) {
-		identity := callIdentityOf(call)
-		var run investigation.ToolRun
-		executedRead := false
-		switch {
-		case state.executedIdentities[identity] != 0:
-			run = suppressedRun(opened, call, len(state.runs)+1,
-				state.executedIdentities[identity])
-			r.announce(ctx, events, investigation.EventProgress, investigation.ProgressPayload(
-				"Skipped a repeat of "+offeredName(offered, call.Tool)+
-					"; the earlier read already answers it"))
-		case state.executed >= state.maxRuns:
-			run = droppedRun(opened,
-				investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
-				len(state.runs)+1, fmt.Sprintf(
-					"not executed: the investigation's read budget of %d was exhausted",
-					state.maxRuns))
-			r.announce(ctx, events, investigation.EventProgress, investigation.ProgressPayload(
-				"Did not run "+offeredName(offered, call.Tool)+"; the read budget is exhausted"))
-		default:
-			ordinal := len(state.runs) + 1
-			r.announceToolStarted(ctx, state, call, ordinal)
-			var executeErr error
-			run, executeErr = r.execute(ctx, opened, selections(offered),
-				state.credentials, origin,
-				investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments}, ordinal)
-			if executeErr != nil {
-				return failRun("preflight provenance could not be recorded", state.usage)
-			}
-			r.announce(ctx, events, investigation.EventToolCompleted,
-				investigation.ToolCompletedPayload(run))
-			r.RuntimeTelemetry.RanTool(run)
-			state.executed++
-			executedRead = true
-		}
-		run.Purpose = boundText(call.Purpose, eventTextBound)
-		run.HypothesisID = boundText(call.HypothesisID, eventTextBound)
-		if preflightErr := r.recordToolRun(ctx, state, run); preflightErr != nil {
-			return failRun("preflight provenance could not be recorded", state.usage)
-		}
-		if executedRead {
-			state.executedIdentities[identity] = run.Ordinal
-		}
-		oriented.Preflight = append(oriented.Preflight, run)
 	}
 	state.task = taskInstruction(oriented)
 	state.orientationText = renderOrientation(oriented)
@@ -579,65 +533,6 @@ func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
 	return prompt
 }
 
-func preflightCalls(oriented orientation) []toolCall {
-	if oriented.Trigger == nil || oriented.Brief != nil {
-		return nil
-	}
-	labels := oriented.Trigger.Labels
-	namespace := labels["namespace"]
-	workloadKind := labels["workload_kind"]
-	workloadName := labels["workload_name"]
-	exactNamespace := exactKubernetesIdentifier(namespace)
-	exactWorkload := exactNamespace && exactKubernetesIdentifier(workloadName) &&
-		(workloadKind == "Deployment" || workloadKind == "StatefulSet" ||
-			workloadKind == "DaemonSet")
-
-	var runtime, events []toolCall
-	for _, source := range oriented.Sources {
-		if source.Integration.Type != integrations.TypeKubernetes {
-			continue
-		}
-		for _, tool := range source.Tools {
-			base := strings.SplitN(tool.Name, "__", 2)[0]
-			switch {
-			case base == "kubernetes.workload.runtime" && exactWorkload:
-				runtime = append(runtime, toolCall{
-					ID: "preflight-runtime-" + source.Integration.ID.String(), Tool: tool.Name,
-					Purpose: "establish the exact workload's current runtime state",
-					Arguments: map[string]any{"namespace": namespace,
-						"workloadKind": workloadKind, "workloadName": workloadName},
-				})
-			case base == "kubernetes.namespace.events" && exactNamespace:
-				events = append(events, toolCall{
-					ID: "preflight-events-" + source.Integration.ID.String(), Tool: tool.Name,
-					Purpose:   "read recent events in the exact alert namespace",
-					Arguments: map[string]any{"namespace": namespace},
-				})
-			}
-		}
-	}
-	return append(runtime, events...)
-}
-
-func exactKubernetesIdentifier(value string) bool {
-	if value == "" || len(value) > 253 || value != strings.ToLower(value) ||
-		value[0] < 'a' || value[0] > 'z' {
-		return false
-	}
-	last := value[len(value)-1]
-	if (last < 'a' || last > 'z') && (last < '0' || last > '9') {
-		return false
-	}
-	for _, character := range value {
-		if (character >= 'a' && character <= 'z') ||
-			(character >= '0' && character <= '9') || character == '-' || character == '.' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 func decodeHypothesisSnapshot(
 	arguments map[string]any, runs int,
 ) ([]investigation.HypothesisResult, error) {
@@ -896,9 +791,6 @@ func orientationTokens(oriented orientation) int {
 	total := EstimateTokens(oriented.Subject) + EstimateTokens(oriented.Question)
 	for _, identity := range oriented.Inventory {
 		total += EstimateTokens(identity)
-	}
-	for _, run := range oriented.Preflight {
-		total += runTokens(run)
 	}
 	for _, source := range oriented.Sources {
 		total += EstimateTokens(source.Integration.Name)

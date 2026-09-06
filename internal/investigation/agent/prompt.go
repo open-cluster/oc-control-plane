@@ -312,14 +312,6 @@ func renderOrientation(orientation orientation) string {
 			out.WriteString("- " + line + "\n")
 		}
 	}
-	if len(orientation.Preflight) > 0 {
-		out.WriteString("\nSELECTIVE PREFLIGHT READS, ordinary Tool Runs available for citation:\n")
-		for _, run := range orientation.Preflight {
-			rendered := renderResult(toolFeedback{CallID: "preflight", Run: run})
-			out.WriteString(rendered.Content)
-		}
-	}
-
 	// The conversation last, so a follow-up reads the estate first and then what has
 	// already been said about it — the same order a person joining an incident would.
 	out.WriteString(renderBrief(orientation.Brief))
