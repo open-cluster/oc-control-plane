@@ -153,11 +153,17 @@ func (d *repliesInMemory) ClaimSlackReplies(
 	if d.completed || d.gaveUp {
 		return nil, nil
 	}
-	return []Reply{d.reply}, nil
+	reply := d.reply
+	reply.LeaseExpiresAt = time.Now().Add(leaseDuration)
+	return []Reply{reply}, nil
+}
+
+func (d *repliesInMemory) ReleaseSlackReply(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, time.Time) error {
+	return nil
 }
 
 func (d *repliesInMemory) AdvanceSlackReply(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, made Progress,
+	_ context.Context, _ tenancy.Organization, _, _ uuid.UUID, made Progress,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -184,7 +190,7 @@ func (d *repliesInMemory) RecordCollaborationWrite(
 }
 
 func (d *repliesInMemory) CompleteSlackReply(
-	context.Context, tenancy.Organization, uuid.UUID,
+	context.Context, tenancy.Organization, uuid.UUID, uuid.UUID,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -193,7 +199,7 @@ func (d *repliesInMemory) CompleteSlackReply(
 }
 
 func (d *repliesInMemory) RetrySlackReply(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID,
+	_ context.Context, _ tenancy.Organization, _, _ uuid.UUID,
 	_ time.Time, note string, giveUp bool,
 ) error {
 	d.mu.Lock()

@@ -64,6 +64,10 @@ Each claim has a unique token fencing progress, Tool Runs and terminal writes. P
 allocates replay sequences under the same Investigation lock used by terminal transitions.
 Stop old control-plane replicas before upgrading to claim-token fencing; interrupted
 Investigations are recovered as failed rather than resumed by an older worker.
+Slack delivery also uses unique claim tokens. Normal flush scheduling releases ownership
+independently of crash recovery; provider acceptance remains an
+[at-least-once boundary](./docs/integrations/collaboration/slack.mdx#reply-delivery).
+Stop old replicas before upgrading Slack delivery fencing as well.
 Conversation detail includes the first 50 turns; use `turnsNext` with the turns endpoint
 to continue reading in order, with up to 200 turns per page.
 

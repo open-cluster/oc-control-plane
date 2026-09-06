@@ -22,6 +22,19 @@ integration. If OpenCluster cannot verify that origin, the investigation stops.
 Unavailable previous conversation history limits continuity explicitly; it does not
 expand access to other Slack conversations.
 
+## Reply delivery
+
+Completed reads and answers are sent in batches. Normal passes become eligible again
+after about one second, including passes with nothing ready to send. Temporary failures
+use bounded retry backoff; a failed Slack delivery does not change the investigation's
+result, which remains available in OpenCluster.
+
+Delivery is at least once. Once a reply's identity is saved, subsequent updates reuse
+that message. If Slack accepts a message before OpenCluster saves its identity, a crash
+or lost connection can leave an extra message on retry. A native stream append accepted
+before progress is saved can likewise appear twice. Retries of an acknowledged terminal
+answer only finish closing its stream; they do not append that answer again.
+
 ## Prerequisites
 
 - The **Admin** role in OpenCluster.

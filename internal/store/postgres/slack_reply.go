@@ -57,9 +57,8 @@ func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 
 // ClaimSlackReplies leases the replies that are due.
 //
-// The LEASE is what stops two workers writing into one visible message, which would be the one
-// failure a reader in the thread could not make sense of. It takes no organization for the
-// reason every other sweep does not: finding out which tenants owe an answer IS the question.
+// This cross-Organization sweep grants a unique token for each local delivery claim.
+// Provider acceptance is outside the database transaction.
 func (p *Database) ClaimSlackReplies(
 	ctx context.Context, limit int, lease time.Duration,
 ) ([]slack.Reply, error) {
@@ -71,6 +70,7 @@ func (p *Database) ClaimSlackReplies(
 	rows, err := p.pool.Query(ctx, `
 			UPDATE slack_reply
 			   SET status       = $1,
+			       lease_owner  = gen_random_uuid(),
 			       leased_until = now() + $2::interval,
 			       updated_at   = now()
 			 WHERE investigation_id IN (
@@ -83,7 +83,7 @@ func (p *Database) ClaimSlackReplies(
 			        LIMIT $4
 			          FOR UPDATE SKIP LOCKED)
 			RETURNING investigation_id, org_id, integration_id, conversation_id,
-			          channel_id, thread_ts, stream_ts, native, last_sequence, attempts`,
+			          channel_id, thread_ts, stream_ts, native, last_sequence, attempts, lease_owner, leased_until`,
 		SlackReplyDelivering, lease.String(), SlackReplyPending, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claiming slack replies: %w", err)
@@ -98,7 +98,7 @@ func (p *Database) ClaimSlackReplies(
 		if err := rows.Scan(&one.Investigation, &organization, &one.Integration,
 			&one.Conversation, &one.Stream.Channel, &one.Stream.Thread,
 			&one.Stream.TS, &one.Stream.Native,
-			&one.LastSequence, &one.Attempts); err != nil {
+			&one.LastSequence, &one.Attempts, &one.ClaimToken, &one.LeaseExpiresAt); err != nil {
 			return nil, fmt.Errorf("scanning a slack reply: %w", err)
 		}
 		named, err := tenancy.NewOrganization(organization)
@@ -115,17 +115,13 @@ func (p *Database) ClaimSlackReplies(
 	return claimed, nil
 }
 
-// AdvanceSlackReply records progress. The cursor only ever moves forward, which is the
-// property that makes a retry append what was missed rather than repost what was seen.
+// AdvanceSlackReply saves acknowledged progress under the current claim.
 func (p *Database) AdvanceSlackReply(
-	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, investigation, owner uuid.UUID,
 	made slack.Progress,
 ) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	if _, err := pool.Exec(ctx, `
+	return p.withSlackReplyClaim(ctx, organization, investigation, owner, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
 		UPDATE slack_reply
 		   SET stream_ts     = CASE WHEN stream_ts = '' THEN $3 ELSE stream_ts END,
 		       native     = CASE WHEN stream_ts = '' THEN $4 ELSE native END,
@@ -134,11 +130,12 @@ func (p *Database) AdvanceSlackReply(
 		       note          = '',
 		       updated_at    = now()
 		 WHERE investigation_id = $1 AND org_id = $2`,
-		investigation, organization.String(), made.Stream.TS, made.Stream.Native,
-		made.Sequence); err != nil {
-		return fmt.Errorf("advancing a slack reply: %w", err)
-	}
-	return nil
+			investigation, organization.String(), made.Stream.TS, made.Stream.Native,
+			made.Sequence); err != nil {
+			return fmt.Errorf("advancing a slack reply: %w", err)
+		}
+		return nil
+	})
 }
 
 // RecordCollaborationWrite puts one reply into a customer's workspace on the audit record.
@@ -171,20 +168,18 @@ func (p *Database) RecordCollaborationWrite(
 
 // CompleteSlackReply marks one delivered. Nothing claims it again.
 func (p *Database) CompleteSlackReply(
-	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, investigation, owner uuid.UUID,
 ) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	if _, err := pool.Exec(ctx, `
+	return p.withSlackReplyClaim(ctx, organization, investigation, owner, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
 		UPDATE slack_reply
-		   SET status = $3, leased_until = NULL, updated_at = now()
+		   SET status = $3, leased_until = NULL, lease_owner = NULL, updated_at = now()
 		 WHERE investigation_id = $1 AND org_id = $2`,
-		investigation, organization.String(), SlackReplyDelivered); err != nil {
-		return fmt.Errorf("completing a slack reply: %w", err)
-	}
-	return nil
+			investigation, organization.String(), SlackReplyDelivered); err != nil {
+			return fmt.Errorf("completing a slack reply: %w", err)
+		}
+		return nil
+	})
 }
 
 // RetrySlackReply schedules another attempt, or gives up.
@@ -193,30 +188,29 @@ func (p *Database) CompleteSlackReply(
 // its own status and its own record. That separation is the point: a Slack outage must not be
 // able to make a completed investigation look failed.
 func (p *Database) RetrySlackReply(
-	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, investigation, owner uuid.UUID,
 	at time.Time, note string, giveUp bool,
 ) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	status := SlackReplyPending
-	if giveUp {
-		status = SlackReplyFailed
-	}
-	if _, err := pool.Exec(ctx, `
+	return p.withSlackReplyClaim(ctx, organization, investigation, owner, func(tx pgx.Tx) error {
+		status := SlackReplyPending
+		if giveUp {
+			status = SlackReplyFailed
+		}
+		if _, err := tx.Exec(ctx, `
 		UPDATE slack_reply
 		   SET status          = $3,
 		       attempts        = attempts + 1,
 		       next_attempt_at = $4,
 		       note            = $5,
 		       leased_until    = NULL,
+		       lease_owner     = NULL,
 		       updated_at      = now()
 		 WHERE investigation_id = $1 AND org_id = $2`,
-		investigation, organization.String(), status, at.UTC(), note); err != nil {
-		return fmt.Errorf("rescheduling a slack reply: %w", err)
-	}
-	return nil
+			investigation, organization.String(), status, at.UTC(), note); err != nil {
+			return fmt.Errorf("rescheduling a slack reply: %w", err)
+		}
+		return nil
+	})
 }
 
 // SlackReplyState reports what one reply looks like, for the tests and for support. It

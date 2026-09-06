@@ -65,7 +65,7 @@ func aSlackTurn(
 // the product does not reach.
 func claimed(
 	t *testing.T, database *storage.Database, investigation uuid.UUID, lease time.Duration,
-) {
+) slack.Reply {
 	t.Helper()
 
 	held, err := database.ClaimSlackReplies(context.Background(), 10, lease)
@@ -74,10 +74,11 @@ func claimed(
 	}
 	for _, one := range held {
 		if one.Investigation == investigation {
-			return
+			return one
 		}
 	}
 	t.Fatalf("the delivery for %s was not claimed: %+v", investigation, held)
+	return slack.Reply{}
 }
 
 func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
@@ -244,14 +245,14 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 	ctx := context.Background()
-	claimed(t, database, investigation, time.Minute)
+	reply := claimed(t, database, investigation, time.Minute)
 
-	if err := database.AdvanceSlackReply(ctx, organization, investigation,
+	if err := database.AdvanceSlackReply(ctx, organization, investigation, reply.ClaimToken,
 		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 12}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
 	// A later pass that somehow read an older batch must not undo it.
-	if err := database.AdvanceSlackReply(ctx, organization, investigation,
+	if err := database.AdvanceSlackReply(ctx, organization, investigation, reply.ClaimToken,
 		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 4}); err != nil {
 		t.Fatalf("advancing backwards: %v", err)
 	}
@@ -266,7 +267,7 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	}
 	// And the visible message's identity is written once. A second identity would be a
 	// second message in the thread.
-	if err := database.AdvanceSlackReply(ctx, organization, investigation,
+	if err := database.AdvanceSlackReply(ctx, organization, investigation, reply.ClaimToken,
 		slack.Progress{Stream: slack.Stream{TS: "1700000999.999", Native: true}, Sequence: 13}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
@@ -286,9 +287,9 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 	ctx := context.Background()
-	claimed(t, database, investigation, time.Minute)
+	reply := claimed(t, database, investigation, time.Minute)
 
-	if err := database.RetrySlackReply(ctx, organization, investigation,
+	if err := database.RetrySlackReply(ctx, organization, investigation, reply.ClaimToken,
 		time.Now(), "slack would not open the reply", true); err != nil {
 		t.Fatalf("giving up: %v", err)
 	}
@@ -332,11 +333,9 @@ func TestADeliveredAnswerIsNeverClaimedAgain(t *testing.T) {
 	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
 	ctx := context.Background()
-	// A lease that has already expired, so what keeps this delivery from being claimed
-	// again is its STATE rather than a lease that has not run out yet.
-	claimed(t, database, investigation, -time.Second)
+	reply := claimed(t, database, investigation, time.Minute)
 
-	if err := database.CompleteSlackReply(ctx, organization, investigation); err != nil {
+	if err := database.CompleteSlackReply(ctx, organization, investigation, reply.ClaimToken); err != nil {
 		t.Fatalf("completing: %v", err)
 	}
 	claimed, err := database.ClaimSlackReplies(ctx, 10, time.Minute)

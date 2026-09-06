@@ -17,21 +17,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
-// ANSWERING BACK IN THE THREAD.
-//
-// One visible message per turn, driven from the investigation's PERSISTED event stream by a
-// cursor of its own. That is what makes every hard case ordinary: a transient failure retries
-// and appends what was missed rather than reposting what was seen, and a worker killed
-// mid-stream resumes from the cursor instead of starting the answer again.
-//
-// A REPLY FAILURE IS NEVER AN INVESTIGATION FAILURE. They are related concerns and not the
-// same one. The investigation concludes or fails on its own terms and its record stays complete
-// and readable in the console whatever Slack did — a chat outage must not be able to cancel or
-// corrupt the work behind it.
-//
-// SLACK IS NEVER CALLED PER TOKEN. Text is coalesced and flushed on a size-or-interval
-// boundary chosen to sit well inside the published rate tier. A worker that called Slack for
-// every delta would be rate-limited into failure by its own enthusiasm.
+// Delivery has its own cursor and outcome. Slack acceptance and local persistence
+// are separate: interruption between them can repeat a message or native append.
 
 // The flush boundary. Whichever comes first: enough text to be worth a call, or enough time
 // that a reader would think nothing was happening.
@@ -52,9 +39,11 @@ const (
 
 // Reply is one investigation's answer on its way into one thread.
 type Reply struct {
-	Investigation uuid.UUID
-	Organization  tenancy.Organization
-	Integration   uuid.UUID
+	Investigation  uuid.UUID
+	ClaimToken     uuid.UUID
+	LeaseExpiresAt time.Time
+	Organization   tenancy.Organization
+	Integration    uuid.UUID
 	// Conversation is the thread's conversation. The reply is written into the thread and
 	// the conversation is what holds who said what in it.
 	Conversation uuid.UUID
@@ -76,23 +65,25 @@ type Progress struct {
 	Sequence int64
 }
 
+var ErrReplyClaimLost = errors.New("slack reply claim lost")
+
 // Replies is what the worker needs from durable state. It is declared here because the
 // collaboration delivery owns its vocabulary and persistence depends on it.
 type Replies interface {
-	// ClaimSlackReplies leases the replies that are due, so two workers cannot write into
-	// one visible message.
+	// ClaimSlackReplies assigns unique ownership to each due reply.
 	ClaimSlackReplies(ctx context.Context, limit int, lease time.Duration) ([]Reply, error)
 	// AdvanceSlackReply records what one pass established: the visible message's identity
 	// once it exists, and how far the cursor has moved. It only ever moves forward.
-	AdvanceSlackReply(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
+	AdvanceSlackReply(ctx context.Context, org tenancy.Organization, investigation, owner uuid.UUID,
 		made Progress) error
 	// CompleteSlackReply marks one answered. Nothing claims it again.
 	CompleteSlackReply(ctx context.Context, org tenancy.Organization,
-		investigation uuid.UUID) error
+		investigation, owner uuid.UUID) error
 	// RetrySlackReply schedules another attempt, or gives up when there is no attempt left
 	// worth making. The note is this build's own words.
-	RetrySlackReply(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
+	RetrySlackReply(ctx context.Context, org tenancy.Organization, investigation, owner uuid.UUID,
 		at time.Time, note string, giveUp bool) error
+	ReleaseSlackReply(ctx context.Context, org tenancy.Organization, investigation, owner uuid.UUID, at time.Time) error
 	// RecordCollaborationWrite puts one reply into a customer's workspace on the audit
 	// record. It is the only thing this product writes into a system it does not own, and
 	// "what did OpenCluster say in our Slack" has to be answerable.
@@ -164,23 +155,33 @@ func (w Worker) Run(ctx context.Context) {
 
 // pass takes one batch and reports whether anything moved.
 func (w Worker) pass(ctx context.Context, batch int) bool {
-	claimed, err := w.Replies.ClaimSlackReplies(ctx, batch, leaseDuration)
-	if err != nil {
-		if ctx.Err() == nil {
-			w.Logger.ErrorContext(ctx, "claiming slack replies failed",
-				slog.String("error", err.Error()))
-		}
-		return false
-	}
-
 	worked := false
-	for _, reply := range claimed {
+	for range batch {
+		claimed, err := w.Replies.ClaimSlackReplies(ctx, 1, leaseDuration)
+		if err != nil {
+			if ctx.Err() == nil {
+				w.Logger.ErrorContext(ctx, "claiming slack replies failed",
+					slog.String("error", err.Error()))
+			}
+			return worked
+		}
+		if len(claimed) == 0 {
+			return worked
+		}
+		reply := claimed[0]
 		if ctx.Err() != nil {
 			return worked
 		}
-		if w.answer(ctx, reply) {
+		attempt, cancel := context.WithDeadline(ctx, reply.LeaseExpiresAt.Add(-time.Second))
+		if w.answer(attempt, reply) {
 			worked = true
 		}
+		if errors.Is(attempt.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			settlement, stop := context.WithDeadline(ctx, reply.LeaseExpiresAt)
+			w.retry(settlement, reply, "slack delivery exceeded its attempt deadline")
+			stop()
+		}
+		cancel()
 	}
 	return worked
 }
@@ -200,6 +201,18 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 		return false
 	}
 	if len(events) == 0 {
+		if reply.LastSequence > 0 && reply.Stream.Held() {
+			last, readErr := w.Replies.Events(ctx, reply.Organization, reply.Investigation, reply.LastSequence-1, 1)
+			if readErr != nil {
+				w.retry(ctx, reply, "the investigation's final event could not be read")
+				return false
+			}
+			if len(last) == 1 && last[0].Sequence == reply.LastSequence && Render(last).Done {
+				w.finish(ctx, token, reply)
+				return true
+			}
+		}
+		w.release(ctx, reply)
 		return false
 	}
 
@@ -214,14 +227,13 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 		//
 		// Never held once the turn is done, and never when there is progress to show —
 		// those are the two things a person watching the thread is waiting to see.
+		w.release(ctx, reply)
 		return false
 	}
 
 	if !reply.Stream.Held() {
-		// The turn's one visible message, opened EMPTY and recorded before any content is
-		// sent. A worker that dies between the two resumes into the message it already
-		// opened; an opening that carried content would put that content outside the
-		// identity's protection, and a crash would repost it.
+		// Save identity before content. Provider acceptance before this save remains
+		// an at-least-once boundary; a database token cannot deduplicate Slack writes.
 		stream, startErr := w.Client.StartStream(ctx, token,
 			reply.Stream.Channel, reply.Stream.Thread)
 		if startErr != nil {
@@ -229,7 +241,7 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 			return false
 		}
 		reply.Stream = stream
-		if err := w.Replies.AdvanceSlackReply(ctx, reply.Organization, reply.Investigation,
+		if err := w.Replies.AdvanceSlackReply(ctx, reply.Organization, reply.Investigation, reply.ClaimToken,
 			Progress{Stream: stream, Sequence: reply.LastSequence}); err != nil {
 			w.Logger.ErrorContext(ctx, "recording a slack reply's message failed",
 				slog.String("error", err.Error()))
@@ -248,7 +260,7 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 		w.retry(ctx, reply, "slack would not take the reply")
 		return false
 	}
-	if err := w.Replies.AdvanceSlackReply(ctx, reply.Organization, reply.Investigation,
+	if err := w.Replies.AdvanceSlackReply(ctx, reply.Organization, reply.Investigation, reply.ClaimToken,
 		Progress{Stream: reply.Stream, Sequence: events[len(events)-1].Sequence}); err != nil {
 		w.Logger.ErrorContext(ctx, "recording slack reply progress failed",
 			slog.String("error", err.Error()))
@@ -256,20 +268,29 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 	}
 
 	if rendered.Done {
-		if err := w.Client.StopStream(ctx, token, reply.Stream); err != nil {
-			// The content is delivered and only the close failed. The answer is visible
-			// either way, and one more attempt at closing costs nothing.
-			w.retry(ctx, reply, "slack would not close the reply")
-			return true
-		}
-		if err := w.Replies.CompleteSlackReply(ctx, reply.Organization,
-			reply.Investigation); err != nil {
-			w.Logger.ErrorContext(ctx, "completing a slack reply failed",
-				slog.String("error", err.Error()))
-		}
-		w.Counters.countReply(ctx, replyAnswered)
+		w.finish(ctx, token, reply)
+	} else {
+		w.release(ctx, reply)
 	}
 	return true
+}
+
+func (w Worker) finish(ctx context.Context, token string, reply Reply) {
+	if err := w.Client.StopStream(ctx, token, reply.Stream); err != nil {
+		w.retry(ctx, reply, "slack would not close the reply")
+		return
+	}
+	if err := w.Replies.CompleteSlackReply(ctx, reply.Organization, reply.Investigation, reply.ClaimToken); err != nil {
+		w.Logger.ErrorContext(ctx, "completing a slack reply failed", slog.String("error", err.Error()))
+		return
+	}
+	w.Counters.countReply(ctx, replyAnswered)
+}
+
+func (w Worker) release(ctx context.Context, reply Reply) {
+	if err := w.Replies.ReleaseSlackReply(ctx, reply.Organization, reply.Investigation, reply.ClaimToken, time.Now().Add(flushInterval)); err != nil && ctx.Err() == nil {
+		w.Logger.ErrorContext(ctx, "releasing a slack reply failed", slog.String("error", err.Error()))
+	}
 }
 
 // send writes this batch into the visible message.
@@ -406,7 +427,7 @@ func (w Worker) audit(ctx context.Context, reply Reply) {
 func (w Worker) retry(ctx context.Context, reply Reply, note string) {
 	giveUp := reply.Attempts+1 >= maxAttempts
 	at := time.Now().Add(backoff(reply.Attempts))
-	if err := w.Replies.RetrySlackReply(ctx, reply.Organization, reply.Investigation,
+	if err := w.Replies.RetrySlackReply(ctx, reply.Organization, reply.Investigation, reply.ClaimToken,
 		at, note, giveUp); err != nil {
 		w.Logger.ErrorContext(ctx, "rescheduling a slack reply failed",
 			slog.String("error", err.Error()))
