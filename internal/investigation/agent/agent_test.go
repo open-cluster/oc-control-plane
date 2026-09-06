@@ -68,6 +68,8 @@ func (r *records) ConcludeInvestigation(_ context.Context, _ tenancy.Organizatio
 		return r.terminalErr
 	}
 	r.conclusion, r.status, r.stoppedBy, r.usage = conclusion, investigation.StatusConcluded, stoppedBy, usage
+	r.events = append(r.events, investigation.Event{Sequence: int64(len(r.events) + 1), At: time.Now(),
+		Type: investigation.EventConcluded, Payload: investigation.ConcludedPayload(conclusion, stoppedBy)})
 	return nil
 }
 func (r *records) FailInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, reason string, usage investigation.Usage) error {
@@ -77,6 +79,8 @@ func (r *records) FailInvestigation(_ context.Context, _ tenancy.Organization, _
 		return r.terminalErr
 	}
 	r.status, r.failure, r.usage = investigation.StatusFailed, reason, usage
+	r.events = append(r.events, investigation.Event{Sequence: int64(len(r.events) + 1), At: time.Now(),
+		Type: investigation.EventFailed, Payload: investigation.FailedPayload(reason)})
 	return nil
 }
 func (r *records) TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error) {

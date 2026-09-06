@@ -191,12 +191,7 @@ func (r *Agent) persistFailure(
 	return reason, nil
 }
 
-// announce writes one event and swallows the failure into a log line.
-//
-// An event that could not be written must not end an investigation. The record is the
-// investigation and its provenance; the stream is a view of it being produced, and trading
-// a completed diagnosis for a missing progress line would be the wrong way round. A write
-// that fails is visible as a gap in the sequence, which is what the log line explains.
+// announce treats progress as best effort. Terminal events commit with the result.
 func (r *Agent) announce(
 	ctx context.Context, events *investigation.EventStream, eventType investigation.EventType, payload map[string]any,
 ) {

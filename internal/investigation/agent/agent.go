@@ -149,15 +149,8 @@ func (r *Agent) Run(
 
 	startedAt := time.Now()
 	failRun := func(reason string, usage investigation.Usage) error {
-		safeReason, err := r.persistFailure(ctx, organization, opened.ID, reason, usage)
-		if err != nil {
-			return err
-		}
-		writeCtx, done := terminalWriteWindow(ctx)
-		defer done()
-		r.announce(writeCtx, events, investigation.EventFailed,
-			investigation.FailedPayload(safeReason))
-		return nil
+		_, err := r.persistFailure(ctx, organization, opened.ID, reason, usage)
+		return err
 	}
 
 	var origin *investigation.ConversationOrigin
@@ -387,8 +380,6 @@ func (r *Agent) Run(
 				done()
 				return fmt.Errorf("recording investigation conclusion: %w", err)
 			}
-			r.announce(writeCtx, events, investigation.EventConcluded,
-				investigation.ConcludedPayload(conclusion, stoppedBy))
 			r.Logger.Info("investigation concluded",
 				slog.String("investigation_id", opened.ID.String()),
 				slog.Int("turns", state.turns),

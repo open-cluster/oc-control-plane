@@ -18,6 +18,9 @@ marked as truncated. This bounded context is not a complete memory of the Conver
 
 Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
 
+Completed answers and their final activity event are saved together, so reconnecting sees
+the same outcome. Failed final writes do not report a completed answer.
+
 Messages sent during an active Investigation wait for its completion. An Organization can
 have up to 100 unassigned person Messages waiting across its Conversations, alongside the
 separate limit for waiting Investigations. When capacity is full, new Messages are refused;

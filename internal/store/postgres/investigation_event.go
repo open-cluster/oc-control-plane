@@ -22,9 +22,7 @@ const maxEventPage = 500
 
 // AppendEvent writes one event at the sequence it carries.
 //
-// The parent-row lock serializes progress with cancellation across replicas. Concluded
-// and failed runs may still emit their final answer or terminal event after their durable
-// status changes, but a cancelled stream never accepts anything after its terminal event.
+// The parent-row lock serializes progress with terminal transitions across replicas.
 func (p *Database) AppendEvent(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	event investigation.Event,
@@ -42,10 +40,10 @@ func (p *Database) AppendEvent(
 		                                 payload)
 		SELECT $1, $2, $3, $4, $5, $6
 		  FROM investigation
-		 WHERE investigation_id = $1 AND org_id = $2 AND status <> $7
+		 WHERE investigation_id = $1 AND org_id = $2 AND status = $7
 		 FOR NO KEY UPDATE`,
 		id, organization.String(), event.Sequence, event.At, int16(event.Type),
-		payload, int16(investigation.StatusCancelled))
+		payload, int16(investigation.StatusRunning))
 	if err != nil {
 		return fmt.Errorf("appending an investigation event: %w", err)
 	}
