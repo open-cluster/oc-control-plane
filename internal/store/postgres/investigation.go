@@ -260,7 +260,8 @@ func (p *Database) ConcludeInvestigation(
 		return fmt.Errorf("encoding conclusion: %w", err)
 	}
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", usage)
+		encoded, stoppedBy, "", usage, investigation.EventConcluded,
+		investigation.ConcludedPayload(conclusion, stoppedBy))
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
@@ -269,7 +270,7 @@ func (p *Database) FailInvestigation(
 	reason string, usage investigation.Usage,
 ) error {
 	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
-		[]byte("{}"), "", reason, usage)
+		[]byte("{}"), "", reason, usage, investigation.EventFailed, investigation.FailedPayload(reason))
 }
 
 // CancelInvestigation ends active work and records the operator action atomically.
@@ -339,13 +340,22 @@ func (p *Database) CancelInvestigation(
 func (p *Database) endInvestigation(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
-	usage investigation.Usage,
+	usage investigation.Usage, eventType investigation.EventType, payload map[string]any,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return err
 	}
-	tag, err := pool.Exec(ctx, `
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encoding terminal event: %w", err)
+	}
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning terminal transition: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	tag, err := transaction.Exec(ctx, `
 		UPDATE investigation
 		   SET status              = $3,
 		       conclusion          = $4,
@@ -368,7 +378,15 @@ func (p *Database) endInvestigation(
 	if tag.RowsAffected() == 0 {
 		return investigation.ErrUnknown
 	}
-	return nil
+	if _, err = transaction.Exec(ctx, `
+		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
+		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
+		  FROM investigation_event
+		 WHERE investigation_id = $1 AND org_id = $2`,
+		id, organization.String(), int16(eventType), encodedPayload); err != nil {
+		return fmt.Errorf("recording terminal event: %w", err)
+	}
+	return transaction.Commit(ctx)
 }
 
 // triggerColumns joins an incident with its newest alert_event's labels, annotations and

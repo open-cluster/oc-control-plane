@@ -38,6 +38,5 @@ func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messa
 		investigation.StoppedByContext, state.usage); err != nil {
 		return fmt.Errorf("recording unprocessed input: %w", err)
 	}
-	r.announce(writeCtx, state.events, investigation.EventConcluded, investigation.ConcludedPayload(conclusion, investigation.StoppedByContext))
 	return nil
 }

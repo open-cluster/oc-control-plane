@@ -159,13 +159,17 @@ func (s *stream) emit(
 		s.mu.Unlock()
 		return nil
 	}
-	s.sequence++
 	event := Event{
-		Sequence: s.sequence,
+		Sequence: s.sequence + 1,
 		At:       time.Now().UTC(),
 		Type:     eventType,
 		Payload:  safePayload(payload),
 	}
+	if err := s.appendEvent(ctx, s.organization, s.investigation, event); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.sequence = event.Sequence
 	if eventType.Terminal() {
 		s.closed = true
 	}
@@ -178,7 +182,7 @@ func (s *stream) emit(
 	if firstEvent {
 		s.telemetry.firstEvent(time.Since(s.startedAt))
 	}
-	return s.appendEvent(ctx, s.organization, s.investigation, event)
+	return nil
 }
 
 // safePayload drops credential-shaped keys, mechanically, by the SAME rule the audit path

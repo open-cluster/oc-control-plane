@@ -52,6 +52,8 @@ Investigations use complete assigned Messages. Input that cannot fit produces `n
 with the unprocessed Message sequences instead of silently truncating the request.
 Follow-ups receive a bounded recent exchange of Messages and completed answers, with
 timestamps and source identities retained.
+Terminal outcomes and their replay events commit together; failed event writes cannot
+leave a completed result without its ending event.
 
 ## Quick start
 
