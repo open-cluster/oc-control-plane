@@ -192,39 +192,3 @@ func (p *Database) CreateLocalMember(
 					"role": string(role), "source": SourceManual.String()}, nil
 		})
 }
-
-func (p *Database) ResetLocalPassword(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	user uuid.UUID, passwordHash string,
-) error {
-	_, err := audited(ctx, p, principal, organization, audit.ActionLocalPasswordReset,
-		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			tag, err := transaction.Exec(ctx, `
-				UPDATE local_password credential
-				   SET password_hash = $1, password_changed_at = now(), updated_at = now()
-				  FROM app_user person, organization_membership membership
-				 WHERE credential.user_id = $2
-				   AND person.user_id = credential.user_id AND person.issuer = $3
-				   AND membership.user_id = credential.user_id
-				   AND membership.org_id = $4 AND membership.active`,
-				passwordHash, user, LocalIssuer, organization.String())
-			if err != nil {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf("resetting a local password: %w", err)
-			}
-			if tag.RowsAffected() != 1 {
-				return struct{}{}, audit.Target{}, nil, ErrLocalCredentialUnknown
-			}
-			if _, err := transaction.Exec(ctx, `
-				UPDATE operator_session
-				   SET revoked_at = now(), revoked_by = $3
-				 WHERE user_id = $1 AND revoked_at IS NULL
-				   AND EXISTS (SELECT 1 FROM organization_membership
-				               WHERE org_id=$2 AND user_id=$1 AND active)`,
-				user, organization.String(), principal.ID()); err != nil {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf("revoking reset sessions: %w", err)
-			}
-			return struct{}{}, audit.Target{Kind: audit.TargetMembership, ID: user.String()},
-				audit.Detail{"userId": user.String(), "sessionsRevoked": true}, nil
-		})
-	return err
-}

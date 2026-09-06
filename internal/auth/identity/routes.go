@@ -41,8 +41,6 @@ func (h Handlers) Routes() authz.Table {
 			authz.MemberManage, http.HandlerFunc(h.createMember)),
 		authz.Privileged(http.MethodPatch, Base+"/members/{membership}",
 			authz.MemberManage, http.HandlerFunc(h.setMember)),
-		authz.Privileged(http.MethodPut, Base+"/local-users/{user}/password",
-			authz.MemberManage, http.HandlerFunc(h.resetLocalPassword)),
 		authz.Privileged(http.MethodDelete, Base+"/members/{membership}",
 			authz.MemberManage, http.HandlerFunc(h.removeMember)),
 

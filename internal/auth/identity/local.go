@@ -39,10 +39,6 @@ type memberCreationRequest struct {
 	Role        string `json:"role"`
 }
 
-type localPasswordRequest struct {
-	Password string `json:"password"`
-}
-
 func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.Request) {
 	var body localBootstrapRequest
 	if !decode(writer, request, &body) {
@@ -204,37 +200,6 @@ func (h Handlers) createMember(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	writeJSON(writer, http.StatusCreated, memberViewOf(member))
-}
-
-func (h Handlers) resetLocalPassword(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
-	user, ok := identifier(writer, request, "user")
-	if !ok {
-		return
-	}
-	var body localPasswordRequest
-	if !decode(writer, request, &body) {
-		return
-	}
-	encoded, err := hashPassword(body.Password)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
-		return
-	}
-	ctx, cancel := contextWithTimeout(request, signInTimeout)
-	defer cancel()
-	if err := h.Database.ResetLocalPassword(ctx, principal, organization, user, encoded); err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
 }
 
 func localEmail(writer http.ResponseWriter, raw string) (string, bool) {

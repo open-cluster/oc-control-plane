@@ -263,7 +263,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"POST /api/v1/relays/bootstrap-tokens",
 		"POST /api/v1/relays/{registration}/clear-conflict",
 		"POST /api/v1/webhook-deliveries/{delivery}/replay",
-		"PUT /api/v1/local-users/{user}/password",
 		"PUT /api/v1/policy",
 	}
 	wanted := make(map[string]bool, len(expected))

@@ -356,33 +356,6 @@ paths:
       summary: Remove member
       tags:
         - Members
-  /api/v1/local-users/{user}/password:
-    parameters:
-      - $ref: '#/components/parameters/UserID'
-    put:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
-      x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: replaceMemberPassword
-      summary: Replace member password
-      tags:
-        - Members
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PasswordRequest'
-        required: true
   /api/v1/sessions:
     get:
       security:
@@ -1772,12 +1745,6 @@ components:
         type: string
         minLength: 32
         maxLength: 4096
-    UserID:
-      name: user
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/UUID'
     MembershipID:
       name: membership
       in: path
@@ -2684,18 +2651,6 @@ components:
             - viewer
         active:
           type: boolean
-    PasswordRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - password
-      properties:
-        password:
-          type: string
-          format: password
-          minLength: 12
-          maxLength: 1024
-          writeOnly: true
     Policy:
       type: object
       additionalProperties: false

@@ -24,6 +24,11 @@ Roles grant fixed Permissions inside an Organization. Missing authentication ret
 `401`, insufficient Permission returns `403`, and inaccessible Organizations and unknown
 tenant records are indistinguishable.
 
+A User can belong to several Organizations. Organization Admins can create local Users
+and manage memberships, but cannot replace an existing User's password. Local password
+changes and deployment recovery are not yet available through a supported operation.
+OIDC Users manage their credentials through their identity provider.
+
 ## Trust boundaries
 
 The browser and product ingress share one origin. PostgreSQL holds durable product truth.
