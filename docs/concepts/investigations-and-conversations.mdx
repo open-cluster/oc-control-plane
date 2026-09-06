@@ -13,6 +13,12 @@ A Conversation is the ordered context a person talks to. Each Message may open a
 
 Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
 
+Messages sent during an active Investigation wait for its completion. An Organization can
+have up to 100 unassigned person Messages waiting across its Conversations, alongside the
+separate limit for waiting Investigations. When capacity is full, new Messages are refused;
+retry after work progresses. Accepted Messages remain stored. Older backlogs larger than
+the limit drain in chronological batches of at most 100.
+
 For example, “Why did checkout latency rise?” opens one Investigation. “Does the deploy
 at 09:42 explain it?” becomes a new Message and a new bounded Investigation in the same
 Conversation, retaining prior cited Findings without changing the first result.

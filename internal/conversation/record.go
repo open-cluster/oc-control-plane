@@ -102,7 +102,7 @@ var (
 	ErrIncidentUnknown = errors.New("incident unknown")
 	ErrClosed          = errors.New("conversation closed")
 	ErrBadCursor       = errors.New("after is not a page position from a previous response")
-	ErrQueueFull       = errors.New("this organization has too many investigations waiting")
+	ErrQueueFull       = errors.New("this organization has too much work waiting")
 )
 
 // Conversation is the record: who opened it, what it is about, and when it last moved.

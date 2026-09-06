@@ -43,6 +43,9 @@ Licensed under the [Apache License 2.0](./LICENSE).
 5. The conclusion reports impact, findings, hypotheses, action proposals, and limitations.
 6. After resolution, an operator can generate, correct, and review a draft Postmortem.
 
+Follow-up Messages queue behind an active Investigation. Each Organization has a limit of
+100 unassigned person Messages across Conversations; accepted work drains in bounded batches.
+
 ## Quick start
 
 You need Docker with Docker Compose. Create local files for the database password, DSN, administrator bootstrap token,
