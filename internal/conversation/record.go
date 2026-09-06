@@ -129,9 +129,8 @@ var (
 	ErrClosed = errors.New("conversation closed")
 	// ErrBadCursor reports a page position that did not come from a previous response.
 	ErrBadCursor = errors.New("after is not a page position from a previous response")
-	// ErrQueueFull reports an organization whose unclaimed turns are already at its
-	// ceiling. Refusing plainly is the alternative to a queue that grows without bound.
-	ErrQueueFull = errors.New("this organization has too many investigations waiting")
+	// ErrQueueFull reports exhausted Organization capacity for queued Messages or Investigations.
+	ErrQueueFull = errors.New("this organization has too much work waiting")
 )
 
 // Conversation is the record: who opened it, what it is about, and when it last moved.

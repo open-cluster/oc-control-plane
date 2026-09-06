@@ -327,6 +327,11 @@ func appendMessage(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	id uuid.UUID, said conversation.NewMessage,
 ) (conversation.Message, error) {
+	if said.Role == conversation.RolePerson {
+		if err := reserveQueuedMessage(ctx, transaction, organization); err != nil {
+			return conversation.Message{}, err
+		}
+	}
 	state, err := lockConversation(ctx, transaction, organization, id)
 	if err != nil {
 		return conversation.Message{}, err
@@ -543,12 +548,22 @@ func openTurn(
 	if conversation.State(state) != conversation.StateOpen {
 		return conversation.Turn{}, false, conversation.ErrClosed
 	}
+	var running bool
+	if err := transaction.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM investigation
+		 WHERE org_id = $1 AND conversation_id = $2 AND status = 1)`,
+		organization.String(), id).Scan(&running); err != nil {
+		return conversation.Turn{}, false, fmt.Errorf("checking active turn: %w", err)
+	}
+	if running {
+		return conversation.Turn{}, false, nil
+	}
 
-	question, has, err := queuedQuestion(ctx, transaction, organization, id)
+	question, lastSequence, opener, err := queuedQuestion(ctx, transaction, organization, id)
 	if err != nil {
 		return conversation.Turn{}, false, err
 	}
-	if !has {
+	if lastSequence == 0 {
 		// Nothing is waiting to be asked. A drain that finds an empty queue is the
 		// ordinary case, not a failure.
 		return conversation.Turn{}, false, nil
@@ -560,7 +575,6 @@ func openTurn(
 	}
 
 	investigationID := uuid.New()
-	opener := turnOpener(ctx, transaction, organization, id)
 	var (
 		ordinal   int
 		createdAt time.Time
@@ -579,19 +593,15 @@ func openTurn(
 		investigationID, organization.String(), incidentID, question, subject, from, until,
 		id, opener).Scan(&ordinal, &createdAt)
 	if err != nil {
-		// The partial unique index is the single-writer invariant, and this is it
-		// firing: another turn of this conversation is already running.
-		if isUniqueViolation(err, "investigation_one_running_per_conversation") {
-			return conversation.Turn{}, false, nil
-		}
 		return conversation.Turn{}, false, fmt.Errorf("opening a turn: %w", err)
 	}
 
 	if _, err := transaction.Exec(ctx, `
 		UPDATE conversation_message
 		   SET investigation_id = $1
-		 WHERE org_id = $2 AND conversation_id = $3 AND investigation_id IS NULL`,
-		investigationID, organization.String(), id); err != nil {
+		 WHERE org_id = $2 AND conversation_id = $3 AND investigation_id IS NULL
+		   AND role = 1 AND sequence <= $4`,
+		investigationID, organization.String(), id, lastSequence); err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("attaching queued messages: %w", err)
 	}
 
@@ -610,23 +620,25 @@ func openTurn(
 func queuedQuestion(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	id uuid.UUID,
-) (string, bool, error) {
+) (string, int64, string, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT text
+		SELECT text, sequence, actor_id
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL
 		   AND role = 1
-		 ORDER BY sequence`, organization.String(), id)
+		 ORDER BY sequence LIMIT $3`, organization.String(), id, maxQueuedMessages)
 	if err != nil {
-		return "", false, fmt.Errorf("reading queued messages: %w", err)
+		return "", 0, "", fmt.Errorf("reading queued messages: %w", err)
 	}
 	defer rows.Close()
 
 	question := ""
+	var lastSequence int64
+	var actor string
 	for rows.Next() {
 		var text string
-		if err := rows.Scan(&text); err != nil {
-			return "", false, fmt.Errorf("scanning a queued message: %w", err)
+		if err := rows.Scan(&text, &lastSequence, &actor); err != nil {
+			return "", 0, "", fmt.Errorf("scanning a queued message: %w", err)
 		}
 		if question != "" {
 			question += "\n"
@@ -634,32 +646,9 @@ func queuedQuestion(
 		question += text
 	}
 	if err := rows.Err(); err != nil {
-		return "", false, fmt.Errorf("reading queued messages: %w", err)
+		return "", 0, "", fmt.Errorf("reading queued messages: %w", err)
 	}
-	if question == "" {
-		return "", false, nil
-	}
-	return boundedRunes(question, maxQuestionLength), true, nil
-}
-
-// turnOpener is who the turn is attributed to: the actor of the newest queued person
-// message. A turn is caused by whoever asked for it, so an audit of the reads it performs
-// answers "who caused this" rather than naming the process that happened to run it.
-func turnOpener(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	id uuid.UUID,
-) string {
-	var actor string
-	if err := transaction.QueryRow(ctx, `
-		SELECT actor_id
-		  FROM conversation_message
-		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL
-		   AND role = 1
-		 ORDER BY sequence DESC
-		 LIMIT 1`, organization.String(), id).Scan(&actor); err != nil {
-		return ""
-	}
-	return actor
+	return boundedRunes(question, maxQuestionLength), lastSequence, actor, nil
 }
 
 // turnWindow derives the turn's time bounds. An incident-associated conversation reaches

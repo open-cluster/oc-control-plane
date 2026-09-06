@@ -104,6 +104,9 @@ func (p *Database) RecordSlackMessage(
 	if tag.RowsAffected() != 1 {
 		return SlackMessageOutcome{Duplicate: true}, nil
 	}
+	if err := reserveQueuedMessage(ctx, transaction, organization); err != nil {
+		return SlackMessageOutcome{}, err
+	}
 
 	conversationID, opened, err := bindThread(ctx, transaction, organization, said)
 	if err != nil {
