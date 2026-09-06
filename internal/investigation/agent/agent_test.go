@@ -55,13 +55,13 @@ type records struct {
 	usage       investigation.Usage
 }
 
-func (r *records) RecordToolRun(_ context.Context, _ tenancy.Organization, _ uuid.UUID, run investigation.ToolRun) error {
+func (r *records) RecordToolRun(_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ uuid.UUID, run investigation.ToolRun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.runs = append(r.runs, run)
 	return nil
 }
-func (r *records) ConcludeInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage) error {
+func (r *records) ConcludeInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ uuid.UUID, conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.terminalErr != nil {
@@ -72,7 +72,7 @@ func (r *records) ConcludeInvestigation(_ context.Context, _ tenancy.Organizatio
 		Type: investigation.EventConcluded, Payload: investigation.ConcludedPayload(conclusion, stoppedBy)})
 	return nil
 }
-func (r *records) FailInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, reason string, usage investigation.Usage) error {
+func (r *records) FailInvestigation(_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ uuid.UUID, reason string, usage investigation.Usage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.terminalErr != nil {
@@ -113,7 +113,7 @@ func (r *records) InvestigationMessages(context.Context, tenancy.Organization, u
 	return r.messages, r.messagesErr
 }
 func (r *records) AppendEvent(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, event investigation.Event,
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, _ uuid.UUID, event investigation.Event,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

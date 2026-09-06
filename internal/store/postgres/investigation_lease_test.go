@@ -157,7 +157,7 @@ func TestHeartbeatIsFencedByWorkerIdentity(t *testing.T) {
 		t.Fatalf("another worker renewed the lease: held=%v err=%v", held, heartbeatErr)
 	}
 	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-a")); heartbeatErr != nil || !held {
+		turn.InvestigationID, investigation.Claim{Worker: "worker-a", LeaseFor: turnWindowLead, Token: claimToken(t, database, organization, turn.InvestigationID)}); heartbeatErr != nil || !held {
 		t.Fatalf("the holder could not renew its lease: held=%v err=%v", held, heartbeatErr)
 	}
 }
@@ -183,7 +183,7 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 	}
 	// The worker got as far as saying it had started, and then stopped existing.
 	if err = database.AppendEvent(context.Background(), organization,
-		turn.InvestigationID, investigation.Event{
+		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Event{
 			Sequence: 1, At: time.Now().UTC(), Type: investigation.EventStarted,
 			Payload: map[string]any{"state": "executing"},
 		}); err != nil {
@@ -286,7 +286,7 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 	}
 
 	if err = database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, conclusionSaying("done"), "",
+		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), conclusionSaying("done"), "",
 		investigation.Usage{}); err != nil {
 		t.Fatalf("concluding: %v", err)
 	}
@@ -322,11 +322,11 @@ func TestTerminalInvestigationUsageRoundTrips(t *testing.T) {
 	}{
 		{name: "concluded", end: func(id uuid.UUID, usage investigation.Usage) error {
 			return database.ConcludeInvestigation(context.Background(), organization, id,
-				conclusionSaying("done"), "", usage)
+				claimToken(t, database, organization, id), conclusionSaying("done"), "", usage)
 		}},
 		{name: "failed", end: func(id uuid.UUID, usage investigation.Usage) error {
 			return database.FailInvestigation(context.Background(), organization, id,
-				"provider unavailable", usage)
+				claimToken(t, database, organization, id), "provider unavailable", usage)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

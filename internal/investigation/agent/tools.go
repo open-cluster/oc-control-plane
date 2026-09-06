@@ -179,13 +179,13 @@ func (r *Agent) execute(
 // persistFailure writes one terminal failure inside a detached window so cancellation
 // cannot erase the reason the run stopped.
 func (r *Agent) persistFailure(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	reason string, usage investigation.Usage,
 ) error {
 	writeCtx, done := terminalWriteWindow(ctx)
 	defer done()
 	reason = boundText(reason, maxRunErrorLength)
-	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, usage); err != nil {
+	if err := r.Store.FailInvestigation(writeCtx, organization, id, token, reason, usage); err != nil {
 		return fmt.Errorf("recording investigation failure: %w", err)
 	}
 	return nil

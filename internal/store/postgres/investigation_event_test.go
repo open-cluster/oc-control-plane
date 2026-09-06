@@ -42,7 +42,7 @@ func appendEvents(
 
 	for position, eventType := range types {
 		if err := database.AppendEvent(context.Background(), organization, id,
-			investigation.Event{
+			claimToken(t, database, organization, id), investigation.Event{
 				Sequence: int64(position + 1),
 				At:       time.Now().UTC(),
 				Type:     eventType,
@@ -120,7 +120,7 @@ func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
 		organization.String(), id); err != nil {
 		t.Fatalf("seeding future history: %v", err)
 	}
-	if err = database.AppendEvent(ctx, organization, id, investigation.Event{
+	if err = database.AppendEvent(ctx, organization, id, claimToken(t, database, organization, id), investigation.Event{
 		Sequence: 2, At: time.Now().UTC(), Type: investigation.EventProgress,
 		Payload: map[string]any{"text": "known history remains readable"},
 	}); err != nil {
@@ -191,7 +191,7 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 		"arguments": map[string]any{"channel": "deploys"},
 	}
 	if err := database.AppendEvent(context.Background(), organization, id,
-		investigation.Event{
+		claimToken(t, database, organization, id), investigation.Event{
 			Sequence: 1, At: time.Now().UTC(),
 			Type: investigation.EventToolStarted, Payload: payload,
 		}); err != nil {
@@ -216,11 +216,7 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 	}
 }
 
-// TWO WRITERS AT ONE POSITION. The lease makes one writer per investigation; the primary
-// key is the backstop for the case where that turns out to be false. A second row at a
-// sequence that already exists is REFUSED rather than silently overwriting the first,
-// because a stream that quietly changed what it already said is worse than one that stops.
-func TestASecondWriterAtTheSameSequenceIsRefused(t *testing.T) {
+func TestAnotherClaimCannotAppendProgress(t *testing.T) {
 	t.Parallel()
 
 	database, organization := migratedDatabase(t)
@@ -231,16 +227,15 @@ func TestASecondWriterAtTheSameSequenceIsRefused(t *testing.T) {
 		Payload: map[string]any{"writer": "the lease holder"},
 	}
 	if err := database.AppendEvent(
-		context.Background(), organization, id, first); err != nil {
+		context.Background(), organization, id, claimToken(t, database, organization, id), first); err != nil {
 		t.Fatalf("the first write failed: %v", err)
 	}
 
 	second := first
 	second.Payload = map[string]any{"writer": "somebody who should not be here"}
 	if err := database.AppendEvent(
-		context.Background(), organization, id, second); err == nil {
-		t.Fatal("a second event at sequence 1 was accepted; the primary key is the " +
-			"backstop against a double-claim and it must refuse")
+		context.Background(), organization, id, uuid.New(), second); err == nil {
+		t.Fatal("another claim appended progress")
 	}
 
 	read, err := database.Events(context.Background(), organization, id, 0, 0)

@@ -32,7 +32,7 @@ func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
 		t.Fatalf("follow-up = %+v", queued)
 	}
 	if err := database.ConcludeInvestigation(ctx, org, first.InvestigationID,
-		conclusionSaying("first answer"), "", investigation.Usage{}); err != nil {
+		claimToken(t, database, org, first.InvestigationID), conclusionSaying("first answer"), "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	second, started, err := database.OpenTurn(ctx, org, opened.ID, turnWindowLead)
@@ -82,7 +82,7 @@ func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
 		}
 	}
 	if err := database.ConcludeInvestigation(ctx, org, first.InvestigationID,
-		conclusionSaying("first answer"), "", investigation.Usage{}); err != nil {
+		claimToken(t, database, org, first.InvestigationID), conclusionSaying("first answer"), "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	type drainResult struct {
@@ -282,7 +282,7 @@ func TestLegacyMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 			t.Fatalf("batch attributed to %q, want actor-%d", actor, last)
 		}
 		if err := database.ConcludeInvestigation(ctx, org, turn.InvestigationID,
-			conclusionSaying("answer"), "", investigation.Usage{}); err != nil {
+			claimToken(t, database, org, turn.InvestigationID), conclusionSaying("answer"), "", investigation.Usage{}); err != nil {
 			t.Fatal(err)
 		}
 	}

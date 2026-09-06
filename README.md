@@ -55,6 +55,10 @@ timestamps and source identities retained.
 Terminal outcomes and their replay events commit together; failed event writes cannot
 leave a completed result without its ending event.
 Expired worker leases cannot be renewed; recovery ends the interrupted Investigation.
+Each claim has a unique token fencing progress, Tool Runs and terminal writes. PostgreSQL
+allocates replay sequences under the same Investigation lock used by terminal transitions.
+Stop old control-plane replicas before upgrading to claim-token fencing; interrupted
+Investigations are recovered as failed rather than resumed by an older worker.
 Conversation detail includes the first 50 turns; use `turnsNext` with the turns endpoint
 to continue reading in order, with up to 200 turns per page.
 

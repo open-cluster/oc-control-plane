@@ -21,6 +21,7 @@ func (p *Database) ClaimInvestigation(
 	row := p.pool.QueryRow(ctx, `
 			UPDATE investigation
 			   SET lease_worker       = $1,
+			       lease_token        = gen_random_uuid(),
 			       lease_expires_at   = now() + $2::interval
 			 WHERE investigation_id = (
 			       SELECT waiting.investigation_id
@@ -30,7 +31,7 @@ func (p *Database) ClaimInvestigation(
 			        ORDER BY waiting.created_at, waiting.investigation_id
 			        LIMIT 1
 			        FOR UPDATE SKIP LOCKED)
-			RETURNING org_id, `+investigationColumns,
+			RETURNING org_id, lease_token, `+investigationColumns,
 		claim.Worker, claim.LeaseFor.String())
 
 	var organization string
@@ -60,17 +61,32 @@ func (p *Database) Heartbeat(
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = lockInvestigation(ctx, tx, organization, id); err != nil {
+		if errors.Is(err, investigation.ErrUnknown) {
+			return false, nil
+		}
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE investigation
-		   SET lease_expires_at = now() + $4::interval
+		   SET lease_expires_at = clock_timestamp() + $4::interval
 		 WHERE investigation_id = $1
 		   AND org_id           = $2
 		   AND status           = 1
 		   AND lease_worker     = $3
-		   AND lease_expires_at > now()`,
-		id, organization.String(), claim.Worker, claim.LeaseFor.String())
+		   AND lease_token      = $5
+		   AND lease_expires_at > clock_timestamp()`,
+		id, organization.String(), claim.Worker, claim.LeaseFor.String(), claim.Token)
 	if err != nil {
 		return false, fmt.Errorf("renewing an investigation lease: %w", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
 }
@@ -123,6 +139,7 @@ func recoverStaleIn(
 		       error            = $1,
 		       concluded_at     = now(),
 		       lease_worker     = '',
+		       lease_token      = NULL,
 		       lease_expires_at = NULL
 		 WHERE investigation_id IN (
 		       SELECT lapsed.investigation_id
@@ -184,21 +201,23 @@ func recoverStaleIn(
 	return len(swept), nil
 }
 
-// scanClaimedInvestigation reads a claimed row, whose first column is the organization it
-// belongs to — the claimer asked no tenant in particular and has to be told.
+// scanClaimedInvestigation includes the Organization and claim token returned by leasing.
 func scanClaimedInvestigation(
 	row scanned, organization *string,
 ) (investigation.Investigation, error) {
-	return scanInvestigation(prefixedRow{row: row, first: organization}, "")
+	var token uuid.UUID
+	found, err := scanInvestigation(prefixedRow{row: row, first: organization, token: &token}, "")
+	found.ClaimToken = token
+	return found, err
 }
 
-// prefixedRow lets the shared investigation mapping serve a query that returns one extra
-// leading column, without a second copy of an eighteen-column scan.
+// prefixedRow preserves the shared Investigation mapping after the claim metadata.
 type prefixedRow struct {
 	row   scanned
 	first *string
+	token *uuid.UUID
 }
 
 func (p prefixedRow) Scan(destination ...any) error {
-	return p.row.Scan(append([]any{p.first}, destination...)...)
+	return p.row.Scan(append([]any{p.first, p.token}, destination...)...)
 }

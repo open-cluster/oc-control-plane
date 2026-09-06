@@ -144,6 +144,7 @@ type Investigation struct {
 	WindowUntil    time.Time
 	Status         Status
 	Executing      bool
+	ClaimToken     uuid.UUID `json:"-"`
 	Conclusion     Conclusion
 	StoppedBy      string
 	Error          string

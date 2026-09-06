@@ -19,7 +19,7 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
-		investigation.Conclusion{Summary: "production appears affected"}, "", investigation.Usage{}); err != nil {
+		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: "production appears affected"}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	say(t, database, organization, opened.ID, "correction: that was staging")
@@ -65,7 +65,7 @@ func TestRecentAnswerMarksOptionalTextTruncation(t *testing.T) {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
-		investigation.Conclusion{Summary: strings.Repeat("界", 2000)}, "", investigation.Usage{}); err != nil {
+		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: strings.Repeat("界", 2000)}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	brief, err := database.ConversationBrief(ctx, organization, opened.ID, 1)

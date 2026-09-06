@@ -34,7 +34,7 @@ func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messa
 	}
 	writeCtx, done := terminalWriteWindow(ctx)
 	defer done()
-	if err := r.Store.ConcludeInvestigation(writeCtx, state.organization, state.opened.ID, conclusion,
+	if err := r.Store.ConcludeInvestigation(writeCtx, state.organization, state.opened.ID, state.opened.ClaimToken, conclusion,
 		investigation.StoppedByContext, state.usage); err != nil {
 		return fmt.Errorf("recording unprocessed input: %w", err)
 	}

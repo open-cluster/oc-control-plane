@@ -22,7 +22,7 @@ func TestConversationDetailBoundsTurns(t *testing.T) {
 			t.Fatalf("opening turn: took=%v err=%v", took, err)
 		}
 		if err = database.ConcludeInvestigation(ctx, org, turn.InvestigationID,
-			conclusionSaying("answer"), "", investigation.Usage{}); err != nil {
+			claimToken(t, database, org, turn.InvestigationID), conclusionSaying("answer"), "", investigation.Usage{}); err != nil {
 			t.Fatal(err)
 		}
 	}
