@@ -379,13 +379,19 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	member := sessionCookie(t, login)
 	list := func(cookie string) []struct {
 		ID string `json:"id"`
-	} { response := plane.call(t, http.MethodGet, base+"/sessions", nil, asSession(cookie)); if response.status != http.StatusOK {
-		t.Fatalf("list = %d: %s", response.status, response.body)
-	}; var body struct {
-		Sessions []struct {
-			ID string `json:"id"`
-		} `json:"sessions"`
-	}; decodeInto(t, response.body, &body); return body.Sessions }
+	} {
+		response := plane.call(t, http.MethodGet, base+"/sessions", nil, asSession(cookie))
+		if response.status != http.StatusOK {
+			t.Fatalf("list = %d: %s", response.status, response.body)
+		}
+		var body struct {
+			Sessions []struct {
+				ID string `json:"id"`
+			} `json:"sessions"`
+		}
+		decodeInto(t, response.body, &body)
+		return body.Sessions
+	}
 	owned := list(member)
 	if len(owned) != 1 {
 		t.Fatalf("member sessions = %+v", owned)

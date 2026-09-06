@@ -162,8 +162,8 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	return found, nil
 }
 
-// DeleteSession revokes the caller's current session and audits it in deployment scope.
-func (p *Database) DeleteSession(ctx context.Context, principal authz.Principal, id uuid.UUID) error {
+// RevokeCurrentSession revokes the caller's current session and audits it in deployment scope.
+func (p *Database) RevokeCurrentSession(ctx context.Context, principal authz.Principal, id uuid.UUID) error {
 	if principal.CredentialID() != id.String() {
 		return session.ErrUnknown
 	}

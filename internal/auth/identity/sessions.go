@@ -62,7 +62,7 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Database.DeleteSession(ctx, principal, id); err != nil && !errors.Is(err, session.ErrUnknown) {
+	if err := h.Database.RevokeCurrentSession(ctx, principal, id); err != nil && !errors.Is(err, session.ErrUnknown) {
 		h.fail(writer, request, err)
 		return
 	}
