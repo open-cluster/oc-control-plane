@@ -54,6 +54,7 @@ Follow-ups receive a bounded recent exchange of Messages and completed answers, 
 timestamps and source identities retained.
 Terminal outcomes and their replay events commit together; failed event writes cannot
 leave a completed result without its ending event.
+Expired worker leases cannot be renewed; recovery ends the interrupted Investigation.
 
 ## Quick start
 
