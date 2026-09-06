@@ -615,7 +615,7 @@ func renderBrief(brief *investigation.Brief) string {
 	}
 
 	if len(brief.Recent) > 0 {
-		out.WriteString("\nRECENT MESSAGES, oldest first:\n")
+		out.WriteString("\nRECENT EXCHANGE, oldest first — prior answers are observations at their recorded time:\n")
 		for _, message := range brief.Recent {
 			speaker := "OpenCluster"
 			if message.FromPerson {
@@ -624,7 +624,17 @@ func renderBrief(brief *investigation.Brief) string {
 					speaker = "operator " + message.Actor
 				}
 			}
-			out.WriteString("- " + speaker + ": " + oneLine(message.Text) + "\n")
+			out.WriteString("- " + speaker)
+			if !message.CreatedAt.IsZero() {
+				out.WriteString(" at " + stamp(message.CreatedAt))
+			}
+			if message.Sequence > 0 {
+				out.WriteString(" [message " + strconv.FormatInt(message.Sequence, 10) + "]")
+			}
+			if message.InvestigationID != uuid.Nil {
+				out.WriteString(" [investigation " + message.InvestigationID.String() + "]")
+			}
+			out.WriteString(": " + oneLine(message.Text) + "\n")
 		}
 	}
 	return out.String()

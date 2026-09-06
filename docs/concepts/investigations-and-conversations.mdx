@@ -11,6 +11,11 @@ An Investigation is one immutable evidence-gathering turn. It moves through `que
 
 A Conversation is the ordered context a person talks to. Each Message may open a new Investigation. Follow-ups reuse bounded prior Findings and citations without copying raw provider payloads or private model reasoning.
 
+Recent context includes up to 12 Messages and completed answers combined, oldest first,
+with their timestamps. Answers come from completed Investigations in this Conversation;
+another Conversation's private answers are not included. Long entries are shortened and
+marked as truncated. This bounded context is not a complete memory of the Conversation.
+
 Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
 
 Messages sent during an active Investigation wait for its completion. An Organization can

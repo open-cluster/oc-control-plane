@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 
@@ -22,6 +23,9 @@ import (
 func (p *Database) ConversationBrief(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID, tail int,
 ) (investigation.Brief, error) {
+	if tail <= 0 || tail > investigation.BriefRecentMessages {
+		tail = investigation.BriefRecentMessages
+	}
 	found, err := p.Conversation(ctx, organization, id)
 	if err != nil {
 		return investigation.Brief{}, err
@@ -44,10 +48,32 @@ func (p *Database) ConversationBrief(
 			brief.RecentFrom = message.Sequence
 		}
 		brief.Recent = append(brief.Recent, investigation.BriefMessage{
-			FromPerson: message.Role == conversationRolePerson,
-			Actor:      message.ActorDisplay,
-			Text:       boundedRunes(message.Text, investigation.BriefMessageBound),
+			FromPerson:      message.Role == conversationRolePerson,
+			Actor:           message.ActorDisplay,
+			Text:            briefExchangeText(message.Text),
+			Sequence:        message.Sequence,
+			CreatedAt:       message.CreatedAt,
+			InvestigationID: message.InvestigationID,
 		})
+	}
+	if err = readRecentAnswers(ctx, pool, organization, id, tail, &brief); err != nil {
+		return investigation.Brief{}, err
+	}
+	sort.SliceStable(brief.Recent, func(i, j int) bool {
+		left, right := brief.Recent[i], brief.Recent[j]
+		if !left.CreatedAt.Equal(right.CreatedAt) {
+			return left.CreatedAt.Before(right.CreatedAt)
+		}
+		if left.FromPerson != right.FromPerson {
+			return left.FromPerson
+		}
+		if left.Sequence != right.Sequence {
+			return left.Sequence < right.Sequence
+		}
+		return left.InvestigationID.String() < right.InvestigationID.String()
+	})
+	if len(brief.Recent) > tail {
+		brief.Recent = brief.Recent[len(brief.Recent)-tail:]
 	}
 	if err = readOlderOperatorStatements(ctx, pool, organization, id, &brief); err != nil {
 		return investigation.Brief{}, err
@@ -57,6 +83,41 @@ func (p *Database) ConversationBrief(
 		return investigation.Brief{}, err
 	}
 	return brief, nil
+}
+
+func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.Organization,
+	id uuid.UUID, limit int, brief *investigation.Brief,
+) error {
+	rows, err := pool.Query(ctx, `
+		SELECT investigation_id, concluded_at, COALESCE(conclusion->>'summary', '')
+		  FROM investigation
+		 WHERE org_id = $1 AND conversation_id = $2 AND status = 2
+		 ORDER BY turn DESC
+		 LIMIT $3`, organization.String(), id, limit)
+	if err != nil {
+		return fmt.Errorf("reading recent answers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var answer investigation.BriefMessage
+		if err = rows.Scan(&answer.InvestigationID, &answer.CreatedAt, &answer.Text); err != nil {
+			return fmt.Errorf("scanning recent answer: %w", err)
+		}
+		answer.Text = briefExchangeText(answer.Text)
+		brief.Recent = append(brief.Recent, answer)
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("reading recent answers: %w", err)
+	}
+	return nil
+}
+
+func briefExchangeText(text string) string {
+	if len([]rune(text)) <= investigation.BriefMessageBound {
+		return text
+	}
+	const suffix = " [truncated]"
+	return boundedRunes(text, investigation.BriefMessageBound-len(suffix)) + suffix
 }
 
 func readOlderOperatorStatements(
