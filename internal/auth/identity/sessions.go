@@ -1,15 +1,14 @@
 package identity
 
 import (
+	"errors"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -25,29 +24,7 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	// A service account reading this is answering "what does this token reach", which is worth
-	// answering: it is how automation verifies its own scope without a mutation.
-	var (
-		expires              time.Time
-		email                string
-		authenticationMethod string
-	)
-	if token, present := session.FromRequest(request); present {
-		ctx, cancel := contextWithTimeout(request, readTimeout)
-		defer cancel()
-
-		if signedIn, err := h.Database.SessionByToken(ctx, session.Digest(token)); err == nil {
-			expires = signedIn.Session.ExpiresAt
-			email = signedIn.User.Email
-			authenticationMethod = "oidc"
-			if signedIn.User.Issuer == storage.LocalIssuer {
-				authenticationMethod = "local"
-			}
-		}
-	}
-	if authenticationMethod == "" {
-		authenticationMethod = "automation"
-	}
+	info := principal.SessionInfo()
 	var active *membershipView
 	if organization, selected := authz.ActiveOrganizationFrom(request.Context()); selected {
 		for _, membership := range principal.Memberships() {
@@ -61,19 +38,15 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	writeJSON(writer, http.StatusOK,
-		sessionViewOf(principal, email, expires, authenticationMethod, active))
+		sessionViewOf(principal, info.Email, info.ExpiresAt, info.AuthenticationMethod, active))
 }
 
 func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
+	principal, ok := authz.PrincipalFrom(request.Context())
 	if !ok {
+		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 		return
 	}
-	// Clearing the cookie happens whatever else does. A caller whose row was already gone still
-	// has a browser presenting a dead credential, and leaving it there means the next request
-	// answers 401 with no explanation.
-	defer session.Clear(writer)
-
 	if principal.Kind() != authz.KindUser {
 		// A service account has no session to end. Its credential is revoked through the token
 		// surface, which is where the revocation is durable.
@@ -86,33 +59,16 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	organization, ok := h.callersOrganization(principal)
-	if !ok {
-		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
-		return
-	}
-
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Database.DeleteSession(ctx, principal, organization, id); err != nil {
+	if err := h.Database.DeleteSession(ctx, principal, id); err != nil && !errors.Is(err, session.ErrUnknown) {
 		h.fail(writer, request, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 }
 
-// callersOrganization picks a tenant to resolve the caller's database from.
-func (h Handlers) callersOrganization(principal authz.Principal) (tenancy.Organization, bool) {
-	memberships := principal.Memberships()
-	if len(memberships) == 0 {
-		return tenancy.Organization{}, false
-	}
-	return memberships[0].Organization, true
-}
-
-// listSessions reports what is live in a tenant, so an administrator can see what they would
-// be ending before they end it.
 func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request) {
 	query, ok := listQuery(writer, request, listing.Spec{
 		DefaultSort: listing.Sort{Field: "lastSeenAt", Descending: true},
@@ -124,14 +80,10 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	live, err := h.Database.ListSessions(ctx, principal, organization, storage.Page{
+	live, err := h.Database.ListSessions(ctx, principal, storage.Page{
 		Limit: query.Limit, After: query.Cursor,
 	})
 	if err != nil {
@@ -152,19 +104,18 @@ func (h Handlers) revokeSession(writer http.ResponseWriter, request *http.Reques
 	if !ok {
 		return
 	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
 	sessionID, ok := identifier(writer, request, "session")
 	if !ok {
 		return
 	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	if err := h.Database.RevokeSession(ctx, principal, organization, sessionID); err != nil {
+	if err := h.Database.RevokeSession(ctx, principal, sessionID); err != nil {
 		h.fail(writer, request, err)
 		return
+	}
+	if principal.CredentialID() == sessionID.String() {
+		session.Clear(writer)
 	}
 	writer.WriteHeader(http.StatusNoContent)
 }

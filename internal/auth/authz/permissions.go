@@ -39,7 +39,6 @@ const (
 	IdentityConfigure Permission = "identity.configure"
 	MemberRead        Permission = "member.read"
 	MemberManage      Permission = "member.manage"
-	SessionRevoke     Permission = "session.revoke"
 
 	// ========= Audit =========
 	AuditRead Permission = "audit.read"
@@ -70,7 +69,6 @@ var allPermissions = []Permission{
 	IdentityConfigure,
 	MemberRead,
 	MemberManage,
-	SessionRevoke,
 	AuditRead,
 }
 

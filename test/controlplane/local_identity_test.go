@@ -351,121 +351,74 @@ func TestMemberStateCanBeDeactivatedAndRevokesAccess(t *testing.T) {
 	}
 	who := plane.call(t, http.MethodGet,
 		"http://"+plane.operator+"/api/v1/session", nil, asSession(memberSession))
-	if who.status != http.StatusUnauthorized {
-		t.Fatalf("deactivated member session remained usable: %d: %s", who.status, who.body)
+	if who.status != http.StatusOK {
+		t.Fatalf("membership deactivation revoked global session: %d: %s", who.status, who.body)
+	}
+	if memberships := readSession(t, plane, memberSession).Organizations; len(memberships) != 0 {
+		t.Fatalf("deactivated membership remained visible: %+v", memberships)
+	}
+	denied := plane.call(t, http.MethodGet, membersURL, nil, asSession(memberSession), inOrganization(identityOrg))
+	if denied.status != http.StatusNotFound {
+		t.Fatalf("deactivated membership still authorized: %d: %s", denied.status, denied.body)
 	}
 }
 
-func TestAnAdminCanRevokeOneNamedSession(t *testing.T) {
+func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	plane := startIdentityPlane(t)
-	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
-		"initial administrator password")
-	sessionsURL := "http://" + plane.operator + "/api/v1/sessions"
-	list := func(organization string) []struct {
+	base := "http://" + plane.operator + "/api/v1"
+	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
+	created := plane.call(t, http.MethodPost, base+"/local-users", map[string]any{
+		"email": "member@example.test", "role": "viewer", "password": "member password long enough",
+	}, asSession(admin), inOrganization(identityOrg))
+	if created.status != http.StatusCreated {
+		t.Fatalf("create member = %d: %s", created.status, created.body)
+	}
+	login := plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
+		"organization": identityOrg, "email": "member@example.test", "password": "member password long enough",
+	})
+	member := sessionCookie(t, login)
+	list := func(cookie string) []struct {
 		ID string `json:"id"`
-	} {
-		answer := plane.call(t, http.MethodGet, sessionsURL, nil,
-			asSession(admin), inOrganization(organization))
-		if answer.status != http.StatusOK {
-			t.Fatalf("listing sessions = %d: %s", answer.status, answer.body)
-		}
-		var body struct {
-			Sessions []struct {
-				ID string `json:"id"`
-			} `json:"sessions"`
-		}
-		decodeInto(t, answer.body, &body)
-		return body.Sessions
+	} { response := plane.call(t, http.MethodGet, base+"/sessions", nil, asSession(cookie)); if response.status != http.StatusOK {
+		t.Fatalf("list = %d: %s", response.status, response.body)
+	}; var body struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}; decodeInto(t, response.body, &body); return body.Sessions }
+	owned := list(member)
+	if len(owned) != 1 {
+		t.Fatalf("member sessions = %+v", owned)
 	}
-	before := list(identityOrg)
-
-	signedIn := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/sign-in", map[string]any{
-			"organization": identityOrg,
-			"email":        "admin@example.test", "password": "initial administrator password",
-		})
-	second := sessionCookie(t, signedIn)
-	after := list(identityOrg)
-	known := make(map[string]bool, len(before))
-	for _, live := range before {
-		known[live.ID] = true
+	admins := list(admin)
+	if len(admins) != 1 || admins[0].ID == owned[0].ID {
+		t.Fatalf("admin sessions = %+v", admins)
 	}
-	var target string
-	for _, live := range after {
-		if !known[live.ID] {
-			target = live.ID
-		}
+	refused := plane.call(t, http.MethodDelete, base+"/sessions/"+owned[0].ID, nil, asSession(admin))
+	if refused.status != http.StatusNotFound {
+		t.Fatalf("admin revoking another User = %d: %s", refused.status, refused.body)
 	}
-	if target == "" {
-		t.Fatalf("new session is absent: before=%v after=%v", before, after)
+	readSession(t, plane, member)
+	other := plane.call(t, http.MethodPost, base+"/organizations", map[string]any{
+		"displayName": "Second", "requestedSlug": "second-org",
+	}, asSession(member))
+	if other.status != http.StatusCreated {
+		t.Fatalf("second Organization = %d: %s", other.status, other.body)
 	}
-
-	createdOrganization := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/organizations", map[string]any{
-			"displayName": "Other", "requestedSlug": "other-org",
-		}, asSession(admin))
-	if createdOrganization.status != http.StatusCreated {
-		t.Fatalf("creating second organization = %d: %s",
-			createdOrganization.status, createdOrganization.body)
+	if len(list(member)) != 1 {
+		t.Fatal("Organization creation changed global sessions")
 	}
-	otherSignIn := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/sign-in", map[string]any{
-			"organization": "other-org", "email": "admin@example.test",
-			"password": "initial administrator password",
-		})
-	otherCookie := sessionCookie(t, otherSignIn)
-	otherSessions := list("other-org")
-	var otherTarget string
-	for _, live := range otherSessions {
-		if live.ID != "" {
-			otherTarget = live.ID
-		}
-	}
-	if otherTarget == "" {
-		t.Fatalf("second Organization session is absent: %v", otherSessions)
-	}
-	crossOrganization := plane.call(t, http.MethodDelete, sessionsURL+"/"+otherTarget, nil,
-		asSession(admin), inOrganization(identityOrg))
-	if crossOrganization.status != http.StatusNotFound {
-		t.Fatalf("cross-Organization revocation = %d: %s",
-			crossOrganization.status, crossOrganization.body)
-	}
-	otherWho := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/session", nil, asSession(otherCookie))
-	if otherWho.status != http.StatusOK {
-		t.Fatalf("cross-Organization target was revoked: %d: %s", otherWho.status, otherWho.body)
-	}
-
-	revoked := plane.call(t, http.MethodDelete, sessionsURL+"/"+target, nil,
-		asSession(admin), inOrganization(identityOrg))
+	revoked := plane.call(t, http.MethodDelete, base+"/sessions/"+owned[0].ID, nil, asSession(member))
 	if revoked.status != http.StatusNoContent {
-		t.Fatalf("revoking session = %d: %s", revoked.status, revoked.body)
+		t.Fatalf("own revocation = %d: %s", revoked.status, revoked.body)
 	}
-	connection, err := pgx.Connect(context.Background(), plane.dsn)
-	if err != nil {
-		t.Fatalf("connect to identity database: %v", err)
-	}
-	defer func() { _ = connection.Close(context.Background()) }()
-	var retained bool
-	if err = connection.QueryRow(context.Background(), `
-		SELECT revoked_at IS NOT NULL FROM operator_session WHERE session_id = $1`,
-		target).Scan(&retained); err != nil || !retained {
-		t.Fatalf("administratively revoked session was not retained: retained=%v error=%v",
-			retained, err)
-	}
-	var revocationEvents int
-	if err = connection.QueryRow(context.Background(), `
-		SELECT count(*) FROM audit_event
-		 WHERE target_id = $1 AND action = 'session.revoked'`, target).Scan(&revocationEvents); err != nil || revocationEvents != 1 {
-		t.Fatalf("administrative revocation audit count = %d: %v", revocationEvents, err)
-	}
-	who := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/session", nil, asSession(second))
+	assertSessionCookieCleared(t, revoked)
+	who := plane.call(t, http.MethodGet, base+"/session", nil, asSession(member))
 	if who.status != http.StatusUnauthorized {
-		t.Fatalf("revoked session remained usable: %d: %s", who.status, who.body)
+		t.Fatalf("revoked session = %d: %s", who.status, who.body)
 	}
+	readSession(t, plane, admin)
 }
-
 func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",

@@ -141,9 +141,11 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	t.Parallel()
 
 	permitted := map[string]string{
-		"GET /api/v1/session":       "its subject is the caller themselves",
-		"DELETE /api/v1/session":    "an Auditor must be able to end their own session",
-		"GET /api/v1/organizations": "a User may list memberships before selecting one",
+		"GET /api/v1/sessions":              "lists only the authenticated User sessions",
+		"DELETE /api/v1/sessions/{session}": "revokes only the authenticated User sessions",
+		"GET /api/v1/session":               "its subject is the caller themselves",
+		"DELETE /api/v1/session":            "an Auditor must be able to end their own session",
+		"GET /api/v1/organizations":         "a User may list memberships before selecting one",
 		"POST /api/v1/organizations": "edition policy, not an existing tenant Permission, " +
 			"decides whether a User may create another Organization",
 		"GET /api/v1/permissions": "membership is verified for the selected Organization, " +

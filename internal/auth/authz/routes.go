@@ -38,7 +38,15 @@ type Route struct {
 	access               Access
 	organizationScoped   bool
 	organizationOptional bool
+	sessionLogout        bool
 	handler              http.Handler
+}
+
+// SessionLogout permits stale credentials while retaining cookie-origin protection.
+func SessionLogout(method, pattern string, handler http.Handler) Route {
+	route := Authenticated(method, pattern, handler)
+	route.sessionLogout = true
+	return route
 }
 
 // Privileged declares a route needing a membership in the selected Organization and the

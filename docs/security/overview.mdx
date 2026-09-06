@@ -29,6 +29,14 @@ and manage memberships, but cannot replace an existing User's password. Local pa
 changes and deployment recovery are not yet available through a supported operation.
 OIDC Users manage their credentials through their identity provider.
 
+Sessions belong to the User across Organizations. List or revoke your own sessions without
+an Organization selector. Organization Admins cannot revoke another User's sessions;
+removing a membership ends access to that Organization on the next request.
+
+Logout clears the browser cookie and revokes the current session even without a membership.
+An absent or expired cookie can be cleared again. Logout still requires the configured
+Origin; a storage failure returns an error because durable revocation was not confirmed.
+
 ## Trust boundaries
 
 The browser and product ingress share one origin. PostgreSQL holds durable product truth.

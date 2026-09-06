@@ -112,8 +112,7 @@ type Target struct {
 // refuses an UPDATE and a DELETE outright, and there is deliberately no function here that
 // would build a modification.
 type Event struct {
-	// Organization is the tenant the act belongs to. Every event has one; a cross-tenant read
-	// is recorded against the tenant that was read, not against the reader's own.
+	// Organization is empty only for actions permitting deployment scope.
 	Organization string
 	Actor        Actor
 	Action       Action

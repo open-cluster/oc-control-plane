@@ -178,10 +178,13 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SignOut'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
       operationId: signOut
       summary: Sign out
+      description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
       tags:
         - Sessions
   /api/v1/organizations:
@@ -360,35 +363,32 @@ paths:
     get:
       security:
         - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
+      x-opencluster-access: authenticated
+      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/SessionList'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: listSessions
-      summary: List sessions
+      summary: List the authenticated User's live sessions
       tags:
         - Sessions
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/sessions/{session}:
     parameters:
       - $ref: '#/components/parameters/SessionID'
     delete:
       security:
         - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
+      x-opencluster-access: authenticated
+      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           description: The named session was revoked.
@@ -399,7 +399,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
       operationId: revokeSession
-      summary: Revoke session
+      summary: Revoke the authenticated User's session
       tags:
         - Sessions
   /api/v1/policy:
