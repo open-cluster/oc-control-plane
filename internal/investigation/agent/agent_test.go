@@ -47,6 +47,7 @@ type records struct {
 	terminalErr error
 	auditErr    error
 	eventErr    error
+	events      []investigation.Event
 	failure     string
 	stoppedBy   string
 	usage       investigation.Usage
@@ -102,8 +103,13 @@ func (r *records) ConversationOrigin(context.Context, tenancy.Organization, uuid
 	return r.origin, r.originErr
 }
 func (r *records) AppendEvent(
-	context.Context, tenancy.Organization, uuid.UUID, investigation.Event,
+	_ context.Context, _ tenancy.Organization, _ uuid.UUID, event investigation.Event,
 ) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.eventErr == nil {
+		r.events = append(r.events, event)
+	}
 	return r.eventErr
 }
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {

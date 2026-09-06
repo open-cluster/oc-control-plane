@@ -4197,6 +4197,9 @@ components:
               type: string
               minLength: 1
               maxLength: 512
+            integration:
+              type: string
+              maxLength: 512
             arguments:
               type: object
               additionalProperties: true
@@ -4374,7 +4377,7 @@ components:
               minimum: 0
             summary:
               type: string
-              maxLength: 512
+              maxLength: 4096
             stoppedBy:
               type: string
               enum:

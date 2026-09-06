@@ -1887,6 +1887,7 @@ components:
             ordinal: { type: integer, minimum: 1 }
             tool: { type: string, minLength: 1, maxLength: 512 }
             integrationId: { type: string, minLength: 1, maxLength: 512 }
+            integration: { type: string, maxLength: 512 }
             arguments: { type: object, additionalProperties: true }
             purpose: { type: string, maxLength: 512 }
             hypothesisId: { type: string, maxLength: 512 }
@@ -1941,7 +1942,7 @@ components:
           properties:
             status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
             findings: { type: integer, minimum: 0 }
-            summary: { type: string, maxLength: 512 }
+            summary: { type: string, maxLength: 4096 }
             stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
     FailedInvestigationEvent:
       type: object
