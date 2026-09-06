@@ -176,6 +176,11 @@ func (w Worker) pass(ctx context.Context, batch int) bool {
 		if w.answer(attempt, reply) {
 			worked = true
 		}
+		if errors.Is(attempt.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			settlement, stop := context.WithDeadline(ctx, reply.LeaseExpiresAt)
+			w.retry(settlement, reply, "slack delivery exceeded its attempt deadline")
+			stop()
+		}
 		cancel()
 	}
 	return worked

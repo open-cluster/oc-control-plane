@@ -146,20 +146,20 @@ func TestSlackNonterminalPassesReleaseRecoveryLease(t *testing.T) {
 				}
 				deadline := time.Now().Add(4 * time.Second)
 				for {
-					var exists bool
-					if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_reply WHERE org_id = $1 AND investigation_id = $2)`, org.String(), id).Scan(&exists); err != nil {
+					var released bool
+					if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_reply
+						WHERE org_id = $1 AND investigation_id = $2 AND status = 1
+						AND lease_owner IS NULL AND leased_until IS NULL AND next_attempt_at > now())`, org.String(), id).Scan(&released); err != nil {
 						t.Fatal(err)
 					}
-					if exists {
+					if released {
 						break
 					}
 					if time.Now().After(deadline) {
-						t.Fatal("worker did not claim delivery")
+						t.Fatal("worker did not release the empty or held pass for its next flush")
 					}
 					time.Sleep(20 * time.Millisecond)
 				}
-				// Let the first bounded pass read its empty or held event page.
-				time.Sleep(100 * time.Millisecond)
 			}
 			if err := database.AppendEvent(ctx, org, id, token, investigation.Event{Type: investigation.EventToolCompleted, Payload: map[string]any{"summary": "next batch"}}); err != nil {
 				t.Fatal(err)
