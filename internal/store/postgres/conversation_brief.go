@@ -42,11 +42,15 @@ func (p *Database) ConversationBrief(
 		SELECT integration_id, channel_id, thread_ts
 		  FROM slack_conversation
 		 WHERE org_id = $1 AND conversation_id = $2`,
-		organization.String(), id).Scan(&originatingIntegration,
-		&brief.OriginChannel, &brief.OriginThread)
+		organization.String(), id).Scan(
+		&originatingIntegration,
+		&brief.OriginChannel,
+		&brief.OriginThread)
+
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return investigation.Brief{}, fmt.Errorf("reading a conversation's provider origin: %w", err)
 	}
+
 	if err == nil {
 		brief.OriginIntegrationID = originatingIntegration.String()
 	}
@@ -206,8 +210,11 @@ func readPriorTurns(
 		prior := make([]investigation.PriorFinding, 0, len(decoded.Findings))
 		for _, finding := range decoded.Findings {
 			prior = append(prior, investigation.PriorFinding{
-				Turn: turn, Statement: finding.Statement, Kind: finding.Kind,
-				Confidence: finding.Confidence, Runs: finding.Sources,
+				Turn:       turn,
+				Statement:  finding.Statement,
+				Kind:       finding.Kind,
+				Confidence: finding.Confidence,
+				Runs:       finding.Sources,
 			})
 		}
 		brief.Findings = append(prior, brief.Findings...)

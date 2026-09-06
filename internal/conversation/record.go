@@ -1,16 +1,3 @@
-// Package conversation owns the multi-turn context a person talks to: an
-// organization-scoped record holding the messages said in it, optionally about one
-// incident incident, and the investigations its turns opened.
-//
-// What it deliberately does NOT own is the investigation. A turn opens one, and one is
-// exactly what it always was — a bounded answer with its own offered sources, tool runs,
-// findings, citations, and ceilings. This package carries the CONTINUITY between
-// turns and nothing else.
-//
-// Like every other capability here it is a leaf: it declares what it needs from durable
-// state as an interface in its own vocabulary and never imports another capability. A
-// turn is therefore a Turn — a small projection of the investigation it names — rather
-// than the investigation record itself, so the two domains stay separable.
 package conversation
 
 import (
@@ -25,15 +12,11 @@ import (
 )
 
 // Surface is where the person is talking from. Persisted as the integer in the column;
-// the values are frozen. A later surface — a Slack thread, a DM — adds its own value in
-// its own migration.
+// the values are frozen. A later surface — a Slack thread, a DM — adds its own value in its own migration.
 type Surface int16
 
 const (
 	SurfaceWeb Surface = iota + 1
-	// SurfaceSlack is a thread in a customer's own workspace. The Conversation is the
-	// same record either way: OpenCluster is not a second AI system inside Slack, it is
-	// the same one reached from somewhere else.
 	SurfaceSlack
 )
 
@@ -86,10 +69,6 @@ func (r Role) String() string {
 	}
 }
 
-// ActorKind distinguishes an OpenCluster principal from an identity belonging to an
-// external surface. Persisted; frozen. It exists because a Slack participant is not a
-// principal and never will be, and recording their surface identity as though it were
-// one would make an audit answer the wrong question.
 type ActorKind int16
 
 const (
@@ -119,19 +98,11 @@ const (
 
 // Refusals this capability names.
 var (
-	// ErrUnknown reports a conversation this organization does not have. It is the
-	// answer for a conversation belonging to another tenant too: a caller must not learn
-	// that an identifier exists somewhere they cannot reach.
-	ErrUnknown = errors.New("conversation unknown")
-	// ErrIncidentUnknown reports an incident this organization does not have.
+	ErrUnknown         = errors.New("conversation unknown")
 	ErrIncidentUnknown = errors.New("incident unknown")
-	// ErrClosed reports a message sent to a conversation that has been closed.
-	ErrClosed = errors.New("conversation closed")
-	// ErrBadCursor reports a page position that did not come from a previous response.
-	ErrBadCursor = errors.New("after is not a page position from a previous response")
-	// ErrQueueFull reports an organization whose unclaimed turns are already at its
-	// ceiling. Refusing plainly is the alternative to a queue that grows without bound.
-	ErrQueueFull = errors.New("this organization has too many investigations waiting")
+	ErrClosed          = errors.New("conversation closed")
+	ErrBadCursor       = errors.New("after is not a page position from a previous response")
+	ErrQueueFull       = errors.New("this organization has too many investigations waiting")
 )
 
 // Conversation is the record: who opened it, what it is about, and when it last moved.
@@ -248,35 +219,24 @@ type Detail struct {
 	Turns        []Turn
 }
 
-// Store is everything this capability needs from durable state.
-//
-// Opening a turn is here rather than on the investigation side because THIS is where the
-// single-writer invariant is decided: a message arriving while a turn runs must be
-// queued, not start a second agent, and the caller has to be able to tell the two
-// outcomes apart.
 type Store interface {
-	// OpenConversation records one and audits the act.
 	OpenConversation(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		wanted NewConversation) (Conversation, error)
-	// Conversation reads one, scoped to the tenant.
 	Conversation(ctx context.Context, org tenancy.Organization,
 		id uuid.UUID) (Conversation, error)
-	// QueryConversations reports a page, most recently active first.
 	QueryConversations(ctx context.Context, who authz.Principal,
 		org tenancy.Organization, page Page) (List, error)
-	// ConversationDetail reads one with its messages and its turns.
 	ConversationDetail(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		messages int) (Detail, error)
-	AppendMessageAndOpenTurn(ctx context.Context, who authz.Principal,
-		org tenancy.Organization, id uuid.UUID, said NewMessage, lead time.Duration,
+	AppendMessageAndOpenTurn(
+		ctx context.Context,
+		who authz.Principal,
+		org tenancy.Organization,
+		id uuid.UUID,
+		said NewMessage,
+		lead time.Duration,
 		maxPending int) (Message, Turn, bool, error)
 }
 
 // Bounded cuts text to what a column will hold, at a rune boundary.
-//
-// Exported for the surfaces that receive text they did not ask a person to type. The console
-// refuses an over-long message, which is right there: somebody typed it, they are standing at
-// the keyboard, and telling them is better than silently truncating what they wrote. A chat
-// surface has nobody to tell — the message is already sent, refusing it would drop a question
-// somebody asked in good faith, and the vendor's own limits differ from ours.
 func Bounded(text string, limit int) string { return boundedRunes(text, limit) }
