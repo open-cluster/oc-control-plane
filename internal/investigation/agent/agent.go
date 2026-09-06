@@ -149,8 +149,7 @@ func (r *Agent) Run(
 
 	startedAt := time.Now()
 	failRun := func(reason string, usage investigation.Usage) error {
-		_, err := r.persistFailure(ctx, organization, opened.ID, reason, usage)
-		return err
+		return r.persistFailure(ctx, organization, opened.ID, reason, usage)
 	}
 
 	var origin *investigation.ConversationOrigin

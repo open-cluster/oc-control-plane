@@ -181,14 +181,14 @@ func (r *Agent) execute(
 func (r *Agent) persistFailure(
 	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
 	reason string, usage investigation.Usage,
-) (string, error) {
+) error {
 	writeCtx, done := terminalWriteWindow(ctx)
 	defer done()
 	reason = boundText(reason, maxRunErrorLength)
 	if err := r.Store.FailInvestigation(writeCtx, organization, id, reason, usage); err != nil {
-		return reason, fmt.Errorf("recording investigation failure: %w", err)
+		return fmt.Errorf("recording investigation failure: %w", err)
 	}
-	return reason, nil
+	return nil
 }
 
 // announce treats progress as best effort. Terminal events commit with the result.
