@@ -793,6 +793,21 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/ConversationDetail" }
         default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/conversations/{conversation}/turns:
+    parameters: *conversation-path
+    get:
+      <<: *privileged-read
+      operationId: listConversationTurns
+      summary: List conversation turns
+      description: Returns turns ordered by turn number then Investigation ID, ascending. Cursors are scoped to the Organization, Conversation and ordering. Only limit and cursor are accepted.
+      tags: [Conversations]
+      parameters:
+        - { $ref: "#/components/parameters/Organization" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200": { description: A bounded page of turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationTurnPage" } } } }
+        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}/messages:
     parameters: *conversation-path
     post:
@@ -2070,14 +2085,22 @@ components:
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Conversation" } }
+    ConversationTurnPage:
+      type: object
+      additionalProperties: false
+      required: [turns, next]
+      properties:
+        turns: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/ConversationTurn" } }
+        next: { oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
     ConversationDetail:
       allOf:
         - { $ref: "#/components/schemas/Conversation" }
         - type: object
-          required: [messages, turns]
+          required: [messages, turns, turnsNext]
           properties:
             messages: { type: array, items: { $ref: "#/components/schemas/ConversationMessage" } }
-            turns: { type: array, items: { $ref: "#/components/schemas/ConversationTurn" } }
+            turns: { type: array, maxItems: 50, description: First page ordered by turn number then Investigation ID ascending., items: { $ref: "#/components/schemas/ConversationTurn" } }
+            turnsNext: { description: Pass as cursor to the Conversation turns endpoint; null when exhausted., oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
     ConversationOpened:
       allOf:
         - { $ref: "#/components/schemas/Conversation" }

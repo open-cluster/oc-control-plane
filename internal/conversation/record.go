@@ -216,6 +216,12 @@ type Detail struct {
 	Conversation Conversation
 	Messages     []Message
 	Turns        []Turn
+	TurnsNext    string
+}
+
+type TurnPage struct {
+	Turns []Turn
+	Next  string
 }
 
 type Store interface {
@@ -227,6 +233,8 @@ type Store interface {
 		org tenancy.Organization, page Page) (List, error)
 	ConversationDetail(ctx context.Context, org tenancy.Organization, id uuid.UUID,
 		messages int) (Detail, error)
+	ConversationTurns(ctx context.Context, org tenancy.Organization, id uuid.UUID,
+		limit int, cursor string) (TurnPage, error)
 	AppendMessageAndOpenTurn(
 		ctx context.Context,
 		who authz.Principal,

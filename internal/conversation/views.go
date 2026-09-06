@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 )
 
 type errorView struct {
@@ -53,8 +55,9 @@ type turnView struct {
 // detailView is one conversation with what was said in it and the turns it opened.
 type detailView struct {
 	conversationView
-	Messages []messageView `json:"messages"`
-	Turns    []turnView    `json:"turns"`
+	Messages  []messageView `json:"messages"`
+	Turns     []turnView    `json:"turns"`
+	TurnsNext *string       `json:"turnsNext"`
 }
 
 // messageAcceptedView is the answer to posting a message. It always reports the message
@@ -132,6 +135,7 @@ func detailViewOf(detail Detail) detailView {
 		conversationView: conversationViewOf(detail.Conversation),
 		Messages:         make([]messageView, 0, len(detail.Messages)),
 		Turns:            make([]turnView, 0, len(detail.Turns)),
+		TurnsNext:        listing.Continuation(detail.TurnsNext),
 	}
 	for _, message := range detail.Messages {
 		view.Messages = append(view.Messages, messageViewOf(message))

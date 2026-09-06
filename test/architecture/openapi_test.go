@@ -251,6 +251,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 		"listIncidentAlertEvents":   paged,
 		"listInvestigations":        append(slices.Clone(paged), "InvestigationIncidentFilter"),
 		"listConversations":         append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
+		"listConversationTurns":     paged,
 		"listWebhookDeliveries":     append(slices.Clone(paged), "WebhookDeliveryStatus"),
 	}
 

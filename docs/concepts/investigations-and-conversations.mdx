@@ -18,6 +18,12 @@ marked as truncated. This bounded context is not a complete memory of the Conver
 
 Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
 
+The Conversation API returns its first 50 turns, in ascending turn order. To read more,
+pass `turnsNext` as `cursor` to `GET /api/v1/conversations/{conversation}/turns`.
+That endpoint accepts `limit` from 1 to 200 (default 50) and returns `turns` and `next`.
+Continue until `next` is null. Cursors belong to the same Organization and Conversation;
+search and selectable sorting are not supported. The recent Message tail is separate.
+
 Completed answers and their final activity event are saved together, so reconnecting sees
 the same outcome. Failed final writes do not report a completed answer.
 
