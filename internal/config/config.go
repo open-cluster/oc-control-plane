@@ -100,13 +100,6 @@ type Config struct {
 	// there is nothing here to log or echo by accident.
 	OperatorTokenDigest []byte
 
-	// OperatorTokenOrganization is the one tenant the bootstrap credential reaches.
-	OperatorTokenOrganization string
-
-	// OperatorTokenRole is the one role it holds there. It defaults to admin, because a
-	// deployment with no members yet needs a credential that can create the first one.
-	OperatorTokenRole string
-
 	// OperatorPublicURL is where this surface is reachable from a browser, and what the redirect
 	// URI registered with an identity provider is built from.
 	OperatorPublicURL string
@@ -186,7 +179,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.HTTPAddress); err != nil {
 		return Config{}, err
 	}
-	cfg.OperatorTokenOrganization, cfg.OperatorTokenRole = "local", defaultOperatorTokenRole
 	if cfg.OperatorPublicURL, err = optionalBrowserURL(lookup, EnvOperatorPublicURL); err != nil {
 		return Config{}, err
 	}

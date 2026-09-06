@@ -62,7 +62,6 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = surfaceOrg
 		cfg.ModelProvider = "zai"
 		cfg.ModelName = "glm-4.7"
 		cfg.ModelKey = "test-provider-key"

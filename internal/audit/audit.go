@@ -87,6 +87,7 @@ type TargetKind string
 
 const (
 	TargetIntegration     TargetKind = "integration"
+	TargetUser            TargetKind = "user"
 	TargetInvestigation   TargetKind = "investigation"
 	TargetConversation    TargetKind = "conversation"
 	TargetIncident        TargetKind = "incident"

@@ -49,10 +49,6 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 		writeJSON(writer, http.StatusUnauthorized, errorView{Error: "credential rejected"})
 		return
 	}
-	if h.Bootstrap.Role != authz.Admin {
-		writeJSON(writer, http.StatusUnauthorized, errorView{Error: "credential rejected"})
-		return
-	}
 	email, ok := localEmail(writer, body.Email)
 	if !ok {
 		return
@@ -145,9 +141,14 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 			h.fail(writer, request, hashErr)
 			return
 		}
+		found.PasswordHash = replacement
 	}
 	if err := h.issueSession(writer, request, organization, found.User, found.Memberships,
-		admission{}); err != nil {
+		found.PasswordHash); err != nil {
+		if errors.Is(err, storage.ErrLocalCredentialUnknown) {
+			writeJSON(writer, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})
+			return
+		}
 		h.fail(writer, request, err)
 		return
 	}

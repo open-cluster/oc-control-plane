@@ -28,7 +28,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -51,29 +51,10 @@ const (
 // asking a customer's security team to approve access it does not use.
 var scopes = []string{"openid", "email", "profile"}
 
-// Bootstrap is the static credential a deployment is configured with.
-//
-// It is what the old shared operator token became. The difference is the whole point: it is
-// bound to one Organization and one role rather than being ambient root, so a deployment that
-// hands it to CI has handed out something with a stated blast radius.
-//
-// Its limits are worth stating plainly rather than implying. It has no expiry and no
-// revocation row — revoking it means changing the file and restarting — because it exists to
-// bootstrap a deployment that has no members yet. Every token issued after that comes from
-// deployment bootstrap credential.
-type Bootstrap struct {
-	Digest       []byte
-	Organization tenancy.Organization
-	Role         authz.Role
-	// Name is what the record calls this actor, so an event produced by the bootstrap
-	// credential is distinguishable from one produced by a service account somebody created.
-	Name string
-}
+// Bootstrap authorizes one-time deployment initialization.
+type Bootstrap struct{ Digest []byte }
 
-// Configured reports whether a deployment set a bootstrap credential at all.
-func (b Bootstrap) Configured() bool {
-	return len(b.Digest) > 0 && !b.Organization.IsEmpty() && authz.KnownRole(b.Role)
-}
+func (b Bootstrap) Configured() bool { return len(b.Digest) > 0 }
 
 // Handlers is this capability's dependencies.
 type Handlers struct {

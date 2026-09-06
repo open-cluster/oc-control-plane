@@ -447,14 +447,14 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 	}
 }
 
-func TestLocalBootstrapRequiresAnAdminScopedCredential(t *testing.T) {
-	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.OperatorTokenRole = "viewer" })
+func TestLocalBootstrapRefusesWhenCredentialIsRetired(t *testing.T) {
+	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.OperatorTokenDigest = nil })
 	answer := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
 		"email": "viewer@example.test", "displayName": "Viewer",
 		"password": "correct horse battery staple",
 	}, asBootstrap)
 	if answer.status != http.StatusUnauthorized {
-		t.Fatalf("viewer bootstrap = %d: %s", answer.status, answer.body)
+		t.Fatalf("disabled bootstrap = %d: %s", answer.status, answer.body)
 	}
 }
 

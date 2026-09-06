@@ -243,7 +243,6 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(identityToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = identityOrg
 		cfg.OperatorPublicURL = "http://" + operatorAddress
 		// A key, so a provider's client secret can be held at all. Without one, configuring a
 		// provider is refused rather than stored in the clear — which is itself asserted below.
