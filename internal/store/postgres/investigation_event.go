@@ -20,11 +20,11 @@ import (
 // than in one answer nobody sized.
 const maxEventPage = 500
 
-// AppendEvent writes one event at the sequence it carries.
+// AppendEvent allocates a durable sequence after locking the Investigation.
 //
 // The parent-row lock serializes progress with terminal transitions across replicas.
 func (p *Database) AppendEvent(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	event investigation.Event,
 ) error {
 	pool, err := p.Pool(organization)
@@ -35,22 +35,31 @@ func (p *Database) AppendEvent(
 	if err != nil {
 		return fmt.Errorf("encoding an event payload: %w", err)
 	}
-	tag, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = lockInvestigation(ctx, tx, organization, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO investigation_event (investigation_id, org_id, sequence, at, type,
 		                                 payload)
-		SELECT $1, $2, $3, $4, $5, $6
+		SELECT $1, $2,
+		       (SELECT coalesce(max(sequence), 0) + 1 FROM investigation_event WHERE investigation_id = $1 AND org_id = $2),
+		       $3, $4, $5
 		  FROM investigation
-		 WHERE investigation_id = $1 AND org_id = $2 AND status = $7
-		 FOR NO KEY UPDATE`,
-		id, organization.String(), event.Sequence, event.At, int16(event.Type),
-		payload, int16(investigation.StatusRunning))
+		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
+		 AND lease_token = $6 AND lease_expires_at > clock_timestamp()`,
+		id, organization.String(), event.At, int16(event.Type), payload, token)
 	if err != nil {
 		return fmt.Errorf("appending an investigation event: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return investigation.ErrAlreadyEnded
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // Events reports this investigation's events after a sequence, in order.

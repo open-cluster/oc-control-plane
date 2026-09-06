@@ -44,7 +44,7 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 		t.Fatalf("terminal cancellation activity is not safe and explicit: %+v", activity[0])
 	}
 	if err = database.AppendEvent(context.Background(), organization, turn.InvestigationID,
-		investigation.Event{Sequence: 2, At: time.Now().UTC(),
+		claimToken(t, database, organization, turn.InvestigationID), investigation.Event{Sequence: 2, At: time.Now().UTC(),
 			Type: investigation.EventProgress, Payload: map[string]any{"message": "too late"}}); !errors.Is(err, investigation.ErrAlreadyEnded) {
 		t.Fatalf("a remote worker appended activity after the terminal cancellation: %v", err)
 	}

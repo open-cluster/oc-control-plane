@@ -18,7 +18,7 @@ func TestConclusionCommitsItsReplayEvent(t *testing.T) {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(ctx, org, turn.InvestigationID,
-		conclusionSaying("canonical answer"), "", investigation.Usage{}); err != nil {
+		claimToken(t, database, org, turn.InvestigationID), conclusionSaying("canonical answer"), "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	events, err := database.Events(ctx, org, turn.InvestigationID, 0, 0)
@@ -52,9 +52,9 @@ func TestTerminalEventFailureRollsBackOutcome(t *testing.T) {
 			}
 			finish := func() error {
 				if failure {
-					return database.FailInvestigation(ctx, org, turn.InvestigationID, "provider unavailable", investigation.Usage{InputTokens: 42})
+					return database.FailInvestigation(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), "provider unavailable", investigation.Usage{InputTokens: 42})
 				}
-				return database.ConcludeInvestigation(ctx, org, turn.InvestigationID, conclusionSaying("answer"), "", investigation.Usage{InputTokens: 42})
+				return database.ConcludeInvestigation(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), conclusionSaying("answer"), "", investigation.Usage{InputTokens: 42})
 			}
 			if err = finish(); err == nil {
 				t.Fatal("terminal event failure was swallowed")
@@ -90,10 +90,10 @@ func TestLateProgressCannotFollowCompletion(t *testing.T) {
 	if err != nil || !took {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
-	if err = database.ConcludeInvestigation(ctx, org, turn.InvestigationID, conclusionSaying("done"), "", investigation.Usage{}); err != nil {
+	if err = database.ConcludeInvestigation(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), conclusionSaying("done"), "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = database.AppendEvent(ctx, org, turn.InvestigationID, investigation.Event{Sequence: 2, Type: investigation.EventProgress}); err == nil {
+	if err = database.AppendEvent(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), investigation.Event{Sequence: 2, Type: investigation.EventProgress}); err == nil {
 		t.Fatal("completed Investigation accepted late activity")
 	}
 }

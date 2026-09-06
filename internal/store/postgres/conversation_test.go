@@ -235,7 +235,7 @@ func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 	}
 
 	if err = database.ConcludeInvestigation(context.Background(), organization,
-		first.InvestigationID, conclusionSaying("nothing changed"), "",
+		first.InvestigationID, claimToken(t, database, organization, first.InvestigationID), conclusionSaying("nothing changed"), "",
 		investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the first turn: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Fatalf("opening Ada's turn: took=%v err=%v", took, err)
 	}
 	if err = database.RecordToolRun(context.Background(), organization,
-		adaTurn.InvestigationID, investigation.ToolRun{
+		adaTurn.InvestigationID, claimToken(t, database, organization, adaTurn.InvestigationID), investigation.ToolRun{
 			Ordinal: 1, Tool: "kubernetes.workload_runtime",
 			Purpose:      "compare runtime state with the deploy",
 			HypothesisID: "deployment-trigger",
@@ -494,7 +494,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Fatalf("recorded purpose metadata = %+v", recordedRuns)
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
-		adaTurn.InvestigationID, investigation.Conclusion{
+		adaTurn.InvestigationID, claimToken(t, database, organization, adaTurn.InvestigationID), investigation.Conclusion{
 			Summary: "ADA-PRIVATE-ANSWER: the pool size changed",
 			Findings: []investigation.Finding{{
 				Statement:  "the deploy at 14:02 changed the pool size",
@@ -603,7 +603,7 @@ func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, investigation.Conclusion{
+		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{
 			Summary: "the 14:02 deploy is the change",
 			Actions: []investigation.ActionProposal{
 				{Title: "roll back the 14:02 deploy"}, {Title: "watch the latency panel"},
@@ -640,7 +640,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 		})
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, investigation.Conclusion{Summary: "completed", Findings: findings},
+		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: "completed", Findings: findings},
 		"", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the turn: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 		t.Fatalf("opening a later turn: took=%v error=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
-		next.InvestigationID, investigation.Conclusion{
+		next.InvestigationID, claimToken(t, database, organization, next.InvestigationID), investigation.Conclusion{
 			Summary: "later finding", Findings: []investigation.Finding{
 				{Statement: "newest-turn-finding", Sources: []int{1}},
 			},
@@ -695,7 +695,7 @@ func TestConversationBriefPreservesLimitationsAndOperatorStatementsBeyondOneHund
 		t.Fatalf("opening first turn: took=%t error=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
-		investigation.Conclusion{Summary: "telemetry remains incomplete",
+		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: "telemetry remains incomplete",
 			Limitations: []investigation.Limitation{
 				{Type: investigation.LimitationMissingTelemetry,
 					Statement: "database wait telemetry is unavailable"},

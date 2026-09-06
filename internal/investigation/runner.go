@@ -102,7 +102,9 @@ func (r *Runner) runClaimed(
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
-		r.watch(runCtx, stop, done, organization, opened.ID)
+		claim := r.claim()
+		claim.Token = opened.ClaimToken
+		r.watch(runCtx, stop, done, organization, opened.ID, claim)
 	}()
 
 	err := r.Agent.Run(runCtx, organization, opened)
@@ -124,7 +126,7 @@ func (r *Runner) runClaimed(
 
 func (r *Runner) watch(
 	ctx context.Context, stop context.CancelFunc, done <-chan struct{},
-	organization tenancy.Organization, id uuid.UUID,
+	organization tenancy.Organization, id uuid.UUID, claim Claim,
 ) {
 	renew := time.NewTicker(heartbeatInterval)
 	cancelled := time.NewTicker(time.Second)
@@ -143,7 +145,7 @@ func (r *Runner) watch(
 				return
 			}
 		case <-renew.C:
-			held, err := r.Store.Heartbeat(ctx, organization, id, r.claim())
+			held, err := r.Store.Heartbeat(ctx, organization, id, claim)
 			if err != nil {
 				r.logError(ctx, "an investigation lease could not be renewed", err)
 				continue
@@ -268,4 +270,5 @@ const RecoveryReason = "worker interrupted"
 type Claim struct {
 	Worker   string
 	LeaseFor time.Duration
+	Token    uuid.UUID
 }

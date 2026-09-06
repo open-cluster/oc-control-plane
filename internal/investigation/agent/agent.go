@@ -27,12 +27,12 @@ type Store interface {
 	ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error)
 	InvestigationMessages(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
 	WorkloadInventory(context.Context, tenancy.Organization, int) ([]string, error)
-	RecordToolRun(context.Context, tenancy.Organization, uuid.UUID, investigation.ToolRun) error
+	RecordToolRun(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, investigation.ToolRun) error
 	RecordCredentialUnseal(context.Context, tenancy.Organization, uuid.UUID, string) error
-	AppendEvent(context.Context, tenancy.Organization, uuid.UUID, investigation.Event) error
-	ConcludeInvestigation(context.Context, tenancy.Organization, uuid.UUID,
+	AppendEvent(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, investigation.Event) error
+	ConcludeInvestigation(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID,
 		investigation.Conclusion, string, investigation.Usage) error
-	FailInvestigation(context.Context, tenancy.Organization, uuid.UUID, string, investigation.Usage) error
+	FailInvestigation(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, string, investigation.Usage) error
 }
 
 // Agent runs investigations against one validated model deployment.
@@ -145,11 +145,13 @@ func (r *Agent) Run(
 ) error {
 
 	events := investigation.NewEventStream(
-		r.Store.AppendEvent, r.RuntimeTelemetry, organization, opened.ID)
+		func(ctx context.Context, org tenancy.Organization, id uuid.UUID, event investigation.Event) error {
+			return r.Store.AppendEvent(ctx, org, id, opened.ClaimToken, event)
+		}, r.RuntimeTelemetry, organization, opened.ID)
 
 	startedAt := time.Now()
 	failRun := func(reason string, usage investigation.Usage) error {
-		return r.persistFailure(ctx, organization, opened.ID, reason, usage)
+		return r.persistFailure(ctx, organization, opened.ID, opened.ClaimToken, reason, usage)
 	}
 
 	var origin *investigation.ConversationOrigin
@@ -374,7 +376,7 @@ func (r *Agent) Run(
 			conclusion.Actions = boundActions(conclusion.Actions)
 
 			writeCtx, done := terminalWriteWindow(ctx)
-			if err := r.Store.ConcludeInvestigation(writeCtx, organization, opened.ID,
+			if err := r.Store.ConcludeInvestigation(writeCtx, organization, opened.ID, opened.ClaimToken,
 				conclusion, stoppedBy, state.usage); err != nil {
 				done()
 				return fmt.Errorf("recording investigation conclusion: %w", err)
@@ -629,7 +631,7 @@ func (r *Agent) recordToolRun(
 		state.highestOrdinal = run.Ordinal
 	}
 	if err := r.Store.RecordToolRun(
-		ctx, state.organization, state.opened.ID, run); err != nil {
+		ctx, state.organization, state.opened.ID, state.opened.ClaimToken, run); err != nil {
 		return errProvenance
 	}
 	return nil

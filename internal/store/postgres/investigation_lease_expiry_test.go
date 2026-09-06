@@ -22,6 +22,7 @@ func TestExpiredLeaseCannotBeRenewedBeforeRecovery(t *testing.T) {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
 	expireInvestigationLease(t, database, organization, turn.InvestigationID)
+	claim.Token = claimToken(t, database, organization, turn.InvestigationID)
 	if held, err := database.Heartbeat(ctx, organization, turn.InvestigationID, claim); err != nil || held {
 		t.Fatalf("expired lease renewed: held=%v err=%v", held, err)
 	}

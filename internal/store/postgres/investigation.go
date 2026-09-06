@@ -215,7 +215,7 @@ func (p *Database) QueryInvestigations(
 
 // RecordToolRun writes one execution as it finished.
 func (p *Database) RecordToolRun(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	run investigation.ToolRun,
 ) error {
 	pool, err := p.Pool(organization)
@@ -230,46 +230,59 @@ func (p *Database) RecordToolRun(
 	if err != nil {
 		return fmt.Errorf("encoding a run's sources: %w", err)
 	}
-	_, err = pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = lockInvestigation(ctx, tx, organization, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO investigation_tool_run (investigation_id, org_id,
 		                                    integration_id, ordinal, tool,
 		                                    purpose, hypothesis_id, arguments,
 		                                    window_from, window_until,
 		                                    outcome, truncated, summary, sources, error,
 		                                    started_at, finished_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+		FROM investigation WHERE investigation_id = $1 AND org_id = $2 AND status = 1
+		AND lease_token = $18 AND lease_expires_at > clock_timestamp()`,
 		id, organization.String(), nullableUUID(run.IntegrationID), run.Ordinal,
 		run.Tool, run.Purpose, run.HypothesisID, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
-		run.StartedAt, run.FinishedAt)
+		run.StartedAt, run.FinishedAt, token)
 	if err != nil {
 		return fmt.Errorf("recording a tool run: %w", err)
 	}
-	return nil
+	if tag.RowsAffected() == 0 {
+		return investigation.ErrAlreadyEnded
+	}
+	return tx.Commit(ctx)
 }
 
 // ConcludeInvestigation ends one with its concluding document and token usage. stoppedBy
 // names the ceiling that forced the concluding turn, empty when the model concluded
 // freely.
 func (p *Database) ConcludeInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage,
 ) error {
 	encoded, err := json.Marshal(conclusion)
 	if err != nil {
 		return fmt.Errorf("encoding conclusion: %w", err)
 	}
-	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusConcluded),
+	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusConcluded),
 		encoded, stoppedBy, "", usage, investigation.EventConcluded,
 		investigation.ConcludedPayload(conclusion, stoppedBy))
 }
 
 // FailInvestigation ends one with the reason it could not conclude.
 func (p *Database) FailInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	reason string, usage investigation.Usage,
 ) error {
-	return p.endInvestigation(ctx, organization, id, int16(investigation.StatusFailed),
+	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusFailed),
 		[]byte("{}"), "", reason, usage, investigation.EventFailed, investigation.FailedPayload(reason))
 }
 
@@ -288,6 +301,7 @@ func (p *Database) CancelInvestigation(
 				       cancel_requested_at = now(),
 				       cancelled_by = $4,
 				       lease_worker = '',
+				       lease_token = NULL,
 				       lease_expires_at = NULL
 				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 				RETURNING `+investigationColumns,
@@ -338,7 +352,7 @@ func (p *Database) CancelInvestigation(
 // endInvestigation is the one write both endings share. Guarded on the row still
 // running, so an investigation cannot be ended twice.
 func (p *Database) endInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
 	usage investigation.Usage, eventType investigation.EventType, payload map[string]any,
 ) error {
@@ -355,6 +369,9 @@ func (p *Database) endInvestigation(
 		return fmt.Errorf("beginning terminal transition: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
+	if err = lockInvestigation(ctx, transaction, organization, id); err != nil {
+		return err
+	}
 	tag, err := transaction.Exec(ctx, `
 		UPDATE investigation
 		   SET status              = $3,
@@ -368,10 +385,12 @@ func (p *Database) endInvestigation(
 		       -- hold, and leaving one behind would make the sweeper reason about work
 		       -- that is already finished.
 		       lease_worker        = '',
+		       lease_token         = NULL,
 		       lease_expires_at    = NULL
-		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1`,
+		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
+		   AND lease_token = $9 AND lease_expires_at > clock_timestamp()`,
 		id, organization.String(), status, conclusion, stoppedBy,
-		reason, usage.InputTokens, usage.OutputTokens)
+		reason, usage.InputTokens, usage.OutputTokens, token)
 	if err != nil {
 		return fmt.Errorf("ending an investigation: %w", err)
 	}

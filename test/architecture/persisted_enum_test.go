@@ -249,6 +249,7 @@ var enumColumns = map[string]map[string][]int{
 	// the recovery sweep fails it — so the file writes an investigation status as a
 	// literal twice, in the two places that mean the most.
 	"investigation_lease.go": {"status": investigationStatusValues},
+	"investigation_event.go": {"status": investigationStatusValues},
 	// Opening a turn counts INVESTIGATIONS that are still running and derives the window
 	// from whether the EPISODE is still open, so the same two enums share this file too.
 	// The queued-message reads filter on a MESSAGE's role, because only what a person

@@ -26,6 +26,7 @@ search and selectable sorting are not supported. The recent Message tail is sepa
 
 Completed answers and their final activity event are saved together, so reconnecting sees
 the same outcome. Failed final writes do not report a completed answer.
+An interrupted or superseded worker cannot append results or activity after losing ownership.
 
 Messages sent during an active Investigation wait for its completion. An Organization can
 have up to 100 unassigned person Messages waiting across its Conversations, alongside the
