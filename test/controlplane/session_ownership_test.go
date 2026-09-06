@@ -3,6 +3,7 @@ package controlplane
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 )
@@ -62,5 +63,15 @@ func TestLogoutReportsDatabaseFailureAndClearsCookie(t *testing.T) {
 	}
 	assertSessionCookieCleared(t, response)
 	plane.database.openGate()
-	readSession(t, plane, cookie)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		response := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil, asSession(cookie))
+		if response.status == http.StatusOK {
+			break
+		}
+		if response.status != http.StatusServiceUnavailable || time.Now().After(deadline) {
+			t.Fatalf("session after database recovery = %d: %s", response.status, response.body)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

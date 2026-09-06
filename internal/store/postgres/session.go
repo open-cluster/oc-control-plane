@@ -296,21 +296,17 @@ func (p *Database) ListSessions(
 	return list, nil
 }
 
-// SweepExpiredSessions removes sessions nobody can use. Expired rows authenticate nothing, so
-// keeping them buys an administrator a longer list and nothing else.
-func (p *Database) SweepExpiredSessions(
-	ctx context.Context, organization tenancy.Organization, keepRevokedFor time.Duration,
-) (int64, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return 0, err
-	}
-	// A revoked session survives for a while on purpose: an administrator who has just ended
-	// somebody's access should still see it in the list they ended it from.
-	tag, err := pool.Exec(ctx, `
+// PruneSessions removes at most 1000 unusable global sessions, retaining recent revocations for one day.
+func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
+	tag, err := p.pool.Exec(ctx, `
 		DELETE FROM operator_session
-		 WHERE expires_at <= now()
-		    OR (revoked_at IS NOT NULL AND revoked_at <= now() - $1::INTERVAL)`, keepRevokedFor)
+		 WHERE session_id IN (
+		   SELECT session_id FROM operator_session
+		    WHERE expires_at <= now()
+		       OR revoked_at <= now() - interval '1 day'
+		    ORDER BY expires_at, session_id
+		    LIMIT 1000 FOR UPDATE SKIP LOCKED
+		 )`)
 	if err != nil {
 		return 0, fmt.Errorf("sweeping sessions: %w", err)
 	}

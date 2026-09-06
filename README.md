@@ -93,6 +93,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 ## Read-only security model
 
 - Customer data and Tool execution are Organization-scoped; authentication and User-owned sessions are deployment-wide.
+- Background cleanup removes unusable sessions in bounded passes, including before any Organization exists.
 - Organization-scoped API requests select one active Organization with
   `X-OpenCluster-Organization`; authorization verifies membership before handlers run.
 - Users can belong to several Organizations; Organization Admins cannot replace an existing User's password or revoke their global sessions.

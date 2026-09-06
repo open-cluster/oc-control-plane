@@ -188,6 +188,7 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"RevokeCurrentSession": "revokes only the authenticated User's current global session",
 		"RevokeSession":        "revokes a global session only when its user_id equals the authenticated User",
 		"ListSessions":         "lists global sessions only for the authenticated User ID",
+		"PruneSessions":        "bounded deployment housekeeping of unusable User-owned sessions; no Organization authority applies",
 		"BearerPrincipal": "resolves a tenant FROM an API token digest; the row found carries " +
 			"the organization and the role, and no caller-supplied value selects it",
 		"RedeemSignIn": "consumes an authorization state that names no tenant; the flow row " +
