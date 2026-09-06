@@ -3723,6 +3723,15 @@ components:
         - confidence
         - mechanism
         - runRefs
+      anyOf:
+        - properties:
+            runRefs:
+              minItems: 1
+        - required:
+            - evidenceRefs
+          properties:
+            evidenceRefs:
+              minItems: 1
       properties:
         id:
           type: string
@@ -3754,11 +3763,27 @@ components:
           maxLength: 4096
         runRefs:
           type: array
-          minItems: 1
           items:
             type: integer
             minimum: 1
           uniqueItems: true
+        evidenceRefs:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+    EvidenceRef:
+      type: object
+      additionalProperties: false
+      required:
+        - investigationId
+        - toolRunOrdinal
+      properties:
+        investigationId:
+          $ref: '#/components/schemas/UUID'
+        toolRunOrdinal:
+          type: integer
+          minimum: 1
     Hypothesis:
       type: object
       additionalProperties: false

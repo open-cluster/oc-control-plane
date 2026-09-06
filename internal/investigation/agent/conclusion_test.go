@@ -43,7 +43,7 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 		t.Fatal(err)
 	}
 
-	if _, err := decodeConclusion(document, 1, false); err == nil {
+	if _, err := decodeConclusion(document, 1, nil); err == nil {
 		t.Fatal("a verified cause without a causal mechanism was accepted")
 	}
 
@@ -64,7 +64,7 @@ func TestStructuredConclusionEvaluationFixtures(t *testing.T) {
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
 			}
-			_, decodeErr := decodeConclusion(encoded, fixture.Runs, false)
+			_, decodeErr := decodeConclusion(encoded, fixture.Runs, nil)
 			if fixture.Valid && decodeErr != nil {
 				t.Fatalf("valid fixture was rejected: %v", decodeErr)
 			}
@@ -92,7 +92,7 @@ func TestStructuredConclusionRequiresCitationsForImpactAndActions(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeConclusion(encoded, 1, false); err == nil {
+	if _, err := decodeConclusion(encoded, 1, nil); err == nil {
 		t.Fatal("partial impact without a Run reference was accepted")
 	}
 
@@ -110,7 +110,7 @@ func TestStructuredConclusionRequiresCitationsForImpactAndActions(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeConclusion(encoded, 1, false); err == nil {
+	if _, err := decodeConclusion(encoded, 1, nil); err == nil {
 		t.Fatal("an action without a Run reference was accepted")
 	}
 }

@@ -1754,13 +1754,30 @@ components:
       type: object
       additionalProperties: false
       required: [id, statement, kind, confidence, mechanism, runRefs]
+      anyOf:
+        - properties:
+            runRefs: { minItems: 1 }
+        - required: [evidenceRefs]
+          properties:
+            evidenceRefs: { minItems: 1 }
       properties:
         id: { type: string, minLength: 1, maxLength: 128 }
         statement: { type: string, minLength: 1, maxLength: 4096 }
         kind: { type: string, enum: [cause, trigger, contributing_factor, symptom, propagation, ruled_out, unresolved, observation] }
         confidence: { type: string, enum: [confirmed, likely, possible] }
         mechanism: { type: string, maxLength: 4096 }
-        runRefs: { type: array, minItems: 1, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/EvidenceRef" }
+    EvidenceRef:
+      type: object
+      additionalProperties: false
+      required: [investigationId, toolRunOrdinal]
+      properties:
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        toolRunOrdinal: { type: integer, minimum: 1 }
     Hypothesis:
       type: object
       additionalProperties: false

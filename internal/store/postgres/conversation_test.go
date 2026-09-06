@@ -532,6 +532,9 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	for _, finding := range brief.Findings {
 		if finding.Statement == "the deploy at 14:02 changed the pool size" {
 			shared = true
+			if !strings.Contains(finding.Reference(), adaTurn.InvestigationID.String()) {
+				t.Errorf("shared citation lost its originating Investigation: %s", finding.Reference())
+			}
 			if len(finding.Runs) == 0 {
 				t.Errorf("the shared finding lost its citation: %+v", finding)
 			}
@@ -568,6 +571,24 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	if len(unrelated.Findings) != 0 {
 		t.Errorf("a conversation about another incident carries %d findings from this one",
 			len(unrelated.Findings))
+	}
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(context.Background(), `DELETE FROM investigation_tool_run WHERE org_id = $1 AND investigation_id = $2`, organization.String(), adaTurn.InvestigationID); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := database.Investigation(context.Background(), organization, adaTurn.InvestigationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := false
+	for _, limitation := range retained.Conclusion.Limitations {
+		missing = missing || limitation.Type == investigation.LimitationMissingTelemetry
+	}
+	if !missing || len(retained.Conclusion.Findings[0].Sources) != 1 {
+		t.Fatalf("pruned evidence lost its citation or limitation: %+v", retained.Conclusion)
 	}
 }
 

@@ -6,11 +6,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // SchemaVersion identifies the conclusion document shape.
-const SchemaVersion = "6"
+const SchemaVersion = "7"
 
 type properties map[string]any
 
@@ -80,7 +82,7 @@ func splitCalls(calls []CompletionCall) (reads []CompletionCall, conclude *Compl
 // kinds and confidences must be the declared vocabulary, and the texts must fit the
 // record.
 func decodeConclusion(
-	document []byte, runs int, _ bool,
+	document []byte, runs int, allowed []investigation.EvidenceRef,
 ) (investigation.Conclusion, error) {
 	var decoded struct {
 		Status  string `json:"status"`
@@ -94,12 +96,13 @@ func decodeConclusion(
 			RunRefs          []int    `json:"run_refs"`
 		} `json:"impact"`
 		Findings []struct {
-			ID         string `json:"id"`
-			Statement  string `json:"statement"`
-			Kind       string `json:"kind"`
-			Confidence string `json:"confidence"`
-			Mechanism  string `json:"mechanism"`
-			RunRefs    []int  `json:"run_refs"`
+			ID           string                      `json:"id"`
+			Statement    string                      `json:"statement"`
+			Kind         string                      `json:"kind"`
+			Confidence   string                      `json:"confidence"`
+			Mechanism    string                      `json:"mechanism"`
+			RunRefs      []int                       `json:"run_refs"`
+			EvidenceRefs []investigation.EvidenceRef `json:"evidence_refs"`
 		} `json:"findings"`
 		Hypotheses []struct {
 			ID, Statement, Status, Test string
@@ -171,11 +174,21 @@ func decodeConclusion(
 				"a finding's confidence %q is not confirmed, likely or possible",
 				finding.Confidence)
 		}
-		if len(finding.RunRefs) == 0 {
+		if len(finding.RunRefs) == 0 && len(finding.EvidenceRefs) == 0 {
 			return investigation.Conclusion{}, fmt.Errorf("a finding cites no run at all")
 		}
 		if err := validateRunRefs(finding.RunRefs, runs, "finding"); err != nil {
 			return investigation.Conclusion{}, err
+		}
+		seenEvidence := make(map[investigation.EvidenceRef]bool, len(finding.EvidenceRefs))
+		for _, ref := range finding.EvidenceRefs {
+			if ref.InvestigationID == uuid.Nil || ref.ToolRunOrdinal <= 0 || !slices.Contains(allowed, ref) {
+				return investigation.Conclusion{}, fmt.Errorf("a finding cites unavailable prior evidence")
+			}
+			if seenEvidence[ref] {
+				return investigation.Conclusion{}, fmt.Errorf("a finding repeats prior evidence")
+			}
+			seenEvidence[ref] = true
 		}
 		if causalFinding(finding.Kind) && strings.TrimSpace(finding.Mechanism) == "" {
 			return investigation.Conclusion{}, fmt.Errorf("causal finding %q has no mechanism", finding.ID)
@@ -183,6 +196,7 @@ func decodeConclusion(
 		conclusion.Findings = append(conclusion.Findings, investigation.Finding{
 			ID: finding.ID, Statement: finding.Statement, Kind: finding.Kind,
 			Confidence: finding.Confidence, Mechanism: finding.Mechanism, Sources: finding.RunRefs,
+			EvidenceRefs: finding.EvidenceRefs,
 		})
 	}
 	for _, hypothesis := range decoded.Hypotheses {

@@ -81,6 +81,17 @@ func (p *Database) ConversationBrief(
 	if err = readPriorTurns(ctx, pool, organization, id, &brief); err != nil {
 		return investigation.Brief{}, err
 	}
+	var refs []investigation.EvidenceRef
+	for _, finding := range brief.Findings {
+		refs = append(refs, finding.References()...)
+	}
+	brief.MissingEvidence, err = evidenceMissing(ctx, pool, organization, refs)
+	if err != nil {
+		return investigation.Brief{}, fmt.Errorf("checking prior evidence: %w", err)
+	}
+	if brief.MissingEvidence {
+		brief.Limitations = append(brief.Limitations, investigation.MissingEvidenceStatement)
+	}
 	return brief, nil
 }
 
@@ -192,12 +203,10 @@ func readPriorTurns(
 	// That second half is the whole of what conversations about one incident share.
 	// FINDINGS ONLY: durable, cited, incident-level fact. Never another conversation's
 	// messages and never its summary, because what somebody else asked and was told is
-	// theirs. A sibling turn carries no ordinal in this conversation, so its citation
-	// references turn 0 — which reads as "established elsewhere on this incident" rather
-	// than as a turn of this conversation that nobody can find.
+	// theirs. Citations retain Investigation identity independently of local turn ordinals.
 	rows, err := pool.Query(ctx, `
 		SELECT CASE WHEN turn.conversation_id = $2 THEN turn.turn ELSE 0 END,
-		       turn.conclusion
+		       turn.investigation_id, turn.conclusion
 		  FROM investigation turn
 		 WHERE turn.org_id = $1
 		   AND turn.status = 2
@@ -216,10 +225,11 @@ func readPriorTurns(
 
 	for rows.Next() {
 		var (
-			turn       int
-			conclusion []byte
+			investigationID uuid.UUID
+			turn            int
+			conclusion      []byte
 		)
-		if err = rows.Scan(&turn, &conclusion); err != nil {
+		if err = rows.Scan(&turn, &investigationID, &conclusion); err != nil {
 			return fmt.Errorf("scanning a prior turn: %w", err)
 		}
 		var decoded investigation.Conclusion
@@ -253,11 +263,13 @@ func readPriorTurns(
 		prior := make([]investigation.PriorFinding, 0, len(decoded.Findings))
 		for _, finding := range decoded.Findings {
 			prior = append(prior, investigation.PriorFinding{
-				Turn:       turn,
-				Statement:  finding.Statement,
-				Kind:       finding.Kind,
-				Confidence: finding.Confidence,
-				Runs:       finding.Sources,
+				InvestigationID: investigationID,
+				Turn:            turn,
+				Statement:       finding.Statement,
+				Kind:            finding.Kind,
+				Confidence:      finding.Confidence,
+				Runs:            finding.Sources,
+				EvidenceRefs:    finding.EvidenceRefs,
 			})
 		}
 		brief.Findings = append(prior, brief.Findings...)

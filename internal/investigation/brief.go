@@ -1,8 +1,7 @@
 package investigation
 
 import (
-	"strconv"
-	"strings"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,32 +44,36 @@ type BriefMessage struct {
 	InvestigationID uuid.UUID
 }
 
-// PriorFinding is something an earlier turn established, with its citation as a reference.
-// Turn and Runs together name exactly where the evidence is without carrying any of it.
+// PriorFinding retains the canonical origin of an earlier observation.
 type PriorFinding struct {
-	Turn       int
-	Statement  string
-	Kind       string
-	Confidence string
-	Runs       []int
+	InvestigationID uuid.UUID
+	Turn            int
+	Statement       string
+	Kind            string
+	Confidence      string
+	Runs            []int
+	EvidenceRefs    []EvidenceRef
 }
 
-// Reference renders the citation an operator or a model can follow: which turn, which runs.
-func (p PriorFinding) Reference() string {
-	if len(p.Runs) == 0 {
-		return "turn " + strconv.Itoa(p.Turn)
-	}
-	ordinals := make([]string, 0, len(p.Runs))
+func (p PriorFinding) References() []EvidenceRef {
+	refs := append([]EvidenceRef{}, p.EvidenceRefs...)
 	for _, run := range p.Runs {
-		ordinals = append(ordinals, strconv.Itoa(run))
+		refs = append(refs, EvidenceRef{InvestigationID: p.InvestigationID, ToolRunOrdinal: run})
 	}
-	return "turn " + strconv.Itoa(p.Turn) + " run " + strings.Join(ordinals, ", ")
+	return refs
+}
+
+// Reference renders the exact pairs accepted by the conclusion's evidence_refs field.
+func (p PriorFinding) Reference() string {
+	encoded, _ := json.Marshal(p.References())
+	return string(encoded)
 }
 
 // Brief is one conversation's contribution to a turn's Orientation.
 type Brief struct {
-	ConversationID string
-	Subject        string
+	MissingEvidence bool
+	ConversationID  string
+	Subject         string
 	// Turn is this turn's one-based position, so the agent knows it is not the first.
 	Turn int
 	// Recent is the verbatim tail, oldest first.
