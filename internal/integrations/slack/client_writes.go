@@ -67,12 +67,8 @@ type Stream struct {
 // Held reports whether this value names a visible message at all.
 func (s Stream) Held() bool { return s.TS != "" }
 
-// StartStream opens the turn's one visible message, EMPTY.
-//
-// Empty on purpose. The caller records the message's identity before any content is sent, so a
-// process that dies immediately afterwards resumes into the message it already opened rather
-// than opening a second one — and an opening that carried content would put that content
-// outside the identity's protection.
+// StartStream opens an empty reply. Once its identity is saved, retries reuse it;
+// interruption before that save can leave an extra visible message.
 func (c *Client) StartStream(ctx context.Context, token, channel, thread string) (Stream, error) {
 	streamed, err := c.write(ctx, token, methodStartStream, url.Values{
 		"channel":   {channel},
@@ -85,7 +81,7 @@ func (c *Client) StartStream(ctx context.Context, token, channel, thread string)
 		return Stream{}, err
 	}
 
-	// The fallback. One placeholder, posted once, edited in place from here on.
+	// A saved placeholder is edited in place on subsequent passes.
 	posted, err := c.write(ctx, token, methodPostMessage, url.Values{
 		"channel":   {channel},
 		"thread_ts": {thread},
@@ -139,7 +135,8 @@ func (c *Client) StopStream(ctx context.Context, token string, stream Stream) er
 		"channel": {stream.Channel},
 		"ts":      {stream.TS},
 	})
-	if err != nil && isUnavailable(err) {
+	var refusal *APIError
+	if isUnavailable(err) || (errors.As(err, &refusal) && refusal.Code == "message_not_in_streaming_state") {
 		return nil
 	}
 	return err
