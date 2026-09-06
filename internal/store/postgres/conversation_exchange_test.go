@@ -77,3 +77,29 @@ func TestRecentAnswerMarksOptionalTextTruncation(t *testing.T) {
 		t.Fatalf("optional answer truncation was hidden: %+v", brief.Recent)
 	}
 }
+
+func TestRecentExchangePreservesMessageSequenceWhenTransactionTimesDisagree(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database, organization := migratedDatabase(t)
+	opened := openConversation(t, database, organization, "concurrent correction")
+	say(t, database, organization, opened.ID, "production is affected")
+	say(t, database, organization, opened.ID, "correction: staging is affected")
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `UPDATE conversation_message
+		SET created_at = '2026-09-06T10:00:00Z'::timestamptz - sequence * interval '1 second'
+		WHERE org_id = $1 AND conversation_id = $2`, organization.String(), opened.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief, err := database.ConversationBrief(ctx, organization, opened.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brief.Recent) != 2 || brief.Recent[0].Sequence != 1 || brief.Recent[1].Sequence != 2 {
+		t.Fatalf("transaction timestamps reversed a durable correction: %+v", brief.Recent)
+	}
+}

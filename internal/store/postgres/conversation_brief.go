@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -56,22 +56,20 @@ func (p *Database) ConversationBrief(
 			InvestigationID: message.InvestigationID,
 		})
 	}
-	if err = readRecentAnswers(ctx, pool, organization, id, tail, &brief); err != nil {
+	answers, err := readRecentAnswers(ctx, pool, organization, id, tail)
+	if err != nil {
 		return investigation.Brief{}, err
 	}
-	sort.SliceStable(brief.Recent, func(i, j int) bool {
-		left, right := brief.Recent[i], brief.Recent[j]
-		if !left.CreatedAt.Equal(right.CreatedAt) {
-			return left.CreatedAt.Before(right.CreatedAt)
+	// Transaction timestamps can precede lock acquisition; Message sequence stays authoritative.
+	exchange := make([]investigation.BriefMessage, 0, len(brief.Recent)+len(answers))
+	for _, message := range brief.Recent {
+		for len(answers) > 0 && answers[0].CreatedAt.Before(message.CreatedAt) {
+			exchange = append(exchange, answers[0])
+			answers = answers[1:]
 		}
-		if left.FromPerson != right.FromPerson {
-			return left.FromPerson
-		}
-		if left.Sequence != right.Sequence {
-			return left.Sequence < right.Sequence
-		}
-		return left.InvestigationID.String() < right.InvestigationID.String()
-	})
+		exchange = append(exchange, message)
+	}
+	brief.Recent = append(exchange, answers...)
 	if len(brief.Recent) > tail {
 		brief.Recent = brief.Recent[len(brief.Recent)-tail:]
 	}
@@ -86,8 +84,8 @@ func (p *Database) ConversationBrief(
 }
 
 func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.Organization,
-	id uuid.UUID, limit int, brief *investigation.Brief,
-) error {
+	id uuid.UUID, limit int,
+) ([]investigation.BriefMessage, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT investigation_id, concluded_at, COALESCE(conclusion->>'summary', '')
 		  FROM investigation
@@ -95,21 +93,23 @@ func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.O
 		 ORDER BY turn DESC
 		 LIMIT $3`, organization.String(), id, limit)
 	if err != nil {
-		return fmt.Errorf("reading recent answers: %w", err)
+		return nil, fmt.Errorf("reading recent answers: %w", err)
 	}
 	defer rows.Close()
+	var answers []investigation.BriefMessage
 	for rows.Next() {
 		var answer investigation.BriefMessage
 		if err = rows.Scan(&answer.InvestigationID, &answer.CreatedAt, &answer.Text); err != nil {
-			return fmt.Errorf("scanning recent answer: %w", err)
+			return nil, fmt.Errorf("scanning recent answer: %w", err)
 		}
 		answer.Text = briefExchangeText(answer.Text)
-		brief.Recent = append(brief.Recent, answer)
+		answers = append(answers, answer)
 	}
 	if err = rows.Err(); err != nil {
-		return fmt.Errorf("reading recent answers: %w", err)
+		return nil, fmt.Errorf("reading recent answers: %w", err)
 	}
-	return nil
+	slices.Reverse(answers)
+	return answers, nil
 }
 
 func briefExchangeText(text string) string {
