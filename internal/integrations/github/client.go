@@ -274,10 +274,11 @@ func (c *Client) Commits(
 ) (Commits, error) {
 	parameters := url.Values{"per_page": {strconv.Itoa(query.Limit)}}
 	if !query.Since.IsZero() {
-		parameters.Set("since", query.Since.UTC().Format(time.RFC3339))
+		// Fetch the boundary second and filter commit dates below; GitHub describes since as exclusive.
+		parameters.Set("since", query.Since.Add(-time.Second).UTC().Format(time.RFC3339))
 	}
 	if !query.Until.IsZero() {
-		parameters.Set("until", query.Until.UTC().Format(time.RFC3339))
+		parameters.Set("until", query.Until.Add(time.Second-time.Nanosecond).UTC().Format(time.RFC3339))
 	}
 
 	var decoded []struct {
@@ -288,6 +289,9 @@ func (c *Client) Commits(
 				Name string `json:"name"`
 				Date string `json:"date"`
 			} `json:"author"`
+			Committer struct {
+				Date string `json:"date"`
+			} `json:"committer"`
 		} `json:"commit"`
 		Author *struct {
 			Login string `json:"login"`
@@ -310,6 +314,15 @@ func (c *Client) Commits(
 		Truncated: hasNextPage(header),
 	}
 	for _, one := range decoded {
+		if !query.Since.IsZero() || !query.Until.IsZero() {
+			at, parseErr := time.Parse(time.RFC3339Nano, one.Commit.Committer.Date)
+			if parseErr != nil {
+				return Commits{}, errors.New("GitHub returned a commit without a valid commit timestamp")
+			}
+			if (!query.Since.IsZero() && at.Before(query.Since)) || (!query.Until.IsZero() && !at.Before(query.Until)) {
+				continue
+			}
+		}
 		commit := Commit{
 			SHA:      one.SHA,
 			Message:  one.Commit.Message,

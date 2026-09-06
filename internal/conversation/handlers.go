@@ -64,6 +64,7 @@ func (h Handlers) Routes() authz.Table {
 // openRequest starts a conversation: a subject, optionally the incident it is about, and
 // optionally the first thing to say.
 type openRequest struct {
+	windowInput
 	IncidentID string `json:"incidentId"`
 	Subject    string `json:"subject"`
 	Message    string `json:"message"`
@@ -79,6 +80,11 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	}
 	var asked openRequest
 	if !h.decode(writer, request, &asked) {
+		return
+	}
+	window, err := asked.parse(time.Now())
+	if err != nil || (window != nil && strings.TrimSpace(asked.Message) == "") {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrInvalidWindow.Error()})
 		return
 	}
 
@@ -131,7 +137,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	said, turn, queued, err := h.append(ctx, principal, organization, opened.ID,
-		asked.Message)
+		asked.Message, window)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -146,6 +152,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 
 // sayRequest is one thing to say.
 type sayRequest struct {
+	windowInput
 	Message string `json:"message"`
 }
 
@@ -163,6 +170,11 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	if !h.decode(writer, request, &asked) {
 		return
 	}
+	window, err := asked.parse(time.Now())
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return
+	}
 	text := strings.TrimSpace(asked.Message)
 	switch {
 	case text == "":
@@ -177,7 +189,7 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	said, turn, queued, err := h.append(ctx, principal, organization, id, text)
+	said, turn, queued, err := h.append(ctx, principal, organization, id, text, window)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -189,7 +201,7 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 
 func (h Handlers) append(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	id uuid.UUID, text string,
+	id uuid.UUID, text string, window *Window,
 ) (Message, *turnView, bool, error) {
 	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
 		Role:      RolePerson,
@@ -201,6 +213,7 @@ func (h Handlers) append(
 		ActorID:      boundedRunes(principal.ID(), MaxActorIDLength),
 		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
+		Window:       window,
 	}, h.WindowLead, h.MaxWaitingTurns)
 	if err != nil {
 		return Message{}, nil, false, err
@@ -356,6 +369,10 @@ func (h Handlers) decode(
 
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrInvalidWindow):
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+	case errors.Is(err, ErrWindowConflict):
+		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
 	case errors.Is(err, authz.ErrNotAMember):
 		// The same answer the authorization middleware gives, byte for byte. A different
 		// one would confirm to a caller that a tenant they may not reach exists.

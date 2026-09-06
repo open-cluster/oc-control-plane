@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
@@ -35,7 +36,7 @@ const (
 	defaultShutdownTimeout         = 15 * time.Second
 	defaultInventoryInterval       = 5 * time.Minute
 	defaultChangeRetentionDays     = 90
-	defaultInvestigationWindowLead = 2 * time.Hour
+	defaultInvestigationWindowLead = conversation.DefaultIncidentWindowLead
 )
 
 // Bounds on connections to the shared HTTP surface. Route owners retain their own body and

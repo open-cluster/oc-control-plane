@@ -26,8 +26,10 @@ type conversationView struct {
 }
 
 type messageView struct {
-	Sequence int64  `json:"sequence"`
-	Role     string `json:"role"`
+	WindowFrom  string `json:"windowFrom"`
+	WindowUntil string `json:"windowUntil"`
+	Sequence    int64  `json:"sequence"`
+	Role        string `json:"role"`
 	// ActorKind says whether the actor is an OpenCluster principal or an identity that
 	// belongs to some other surface, so a client never renders one as the other.
 	ActorKind       string `json:"actorKind"`
@@ -110,6 +112,10 @@ func messageViewOf(message Message) messageView {
 	}
 	if message.InvestigationID != uuid.Nil {
 		view.InvestigationID = message.InvestigationID.String()
+	}
+	if !message.WindowFrom.IsZero() {
+		view.WindowFrom = message.WindowFrom.UTC().Format(time.RFC3339Nano)
+		view.WindowUntil = message.WindowUntil.UTC().Format(time.RFC3339Nano)
 	}
 	return view
 }

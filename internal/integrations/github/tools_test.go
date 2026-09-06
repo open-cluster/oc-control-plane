@@ -116,7 +116,7 @@ func TestReadCommitsIsBoundedToTheWindow(t *testing.T) {
 	grantsPayments(fake)
 	fake.answers["/repos/acme-corp/payments/commits"] = func(writer http.ResponseWriter, request *http.Request) {
 		query := request.URL.Query()
-		if query.Get("since") != "2026-08-15T00:00:00Z" {
+		if query.Get("since") != "2026-08-14T23:59:59Z" {
 			t.Errorf("since = %q; the incident's own window must bound the read", query.Get("since"))
 		}
 		if query.Get("per_page") != "5" {
@@ -125,7 +125,8 @@ func TestReadCommitsIsBoundedToTheWindow(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`[{"sha":"aaa111",
 			"commit":{"message":"raise the pool size",
-			          "author":{"name":"Kai","date":"2026-08-15T20:00:00Z"}},
+			          "author":{"name":"Kai","date":"2026-08-15T20:00:00Z"},
+			          "committer":{"date":"2026-08-15T20:00:00Z"}},
 			"author":{"login":"kai-dev"}}]`))
 	}
 

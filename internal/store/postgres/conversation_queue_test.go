@@ -254,8 +254,8 @@ func TestLegacyMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO conversation_message
-		(conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text)
-		SELECT $1, $2, n, 1, 1, 'actor-' || n, 'Operator', 'question-' || n
+		(conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text, window_from, window_until)
+		SELECT $1, $2, n, 1, 1, 'actor-' || n, 'Operator', 'question-' || n, now() - interval '24 hours', now()
 		FROM generate_series(1, 205) n`, chat.ID, org.String()); err != nil {
 		t.Fatal(err)
 	}

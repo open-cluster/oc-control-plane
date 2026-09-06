@@ -18,6 +18,18 @@ marked as truncated. This bounded context is not a complete memory of the Conver
 
 Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
 
+To ask about a specific interval, send both `windowFrom` and `windowUntil` when posting
+a Message, or when creating a Conversation with its first Message. Use RFC3339 timestamps
+with an offset. The start is inclusive and the end exclusive; the end cannot be in the
+future. Values are normalized to UTC microseconds and echoed on the accepted Message and
+Investigation. Invalid windows return `400` before accepting the request.
+
+Without explicit bounds, ordinary questions cover at least the preceding 24 hours;
+Incident questions retain their Incident-derived window. The first queued Message fixes
+the next batch's window. Later Messages inherit it, or may supply the same normalized
+bounds. Different bounds return `409`; resend after that batch opens. Waiting or restarting
+does not move an accepted window.
+
 The Conversation API returns its first 50 turns, in ascending turn order. To read more,
 pass `turnsNext` as `cursor` to `GET /api/v1/conversations/{conversation}/turns`.
 That endpoint accepts `limit` from 1 to 200 (default 50) and returns `turns` and `next`.
