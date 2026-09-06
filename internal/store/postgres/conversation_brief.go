@@ -69,7 +69,8 @@ func (p *Database) ConversationBrief(
 		}
 		exchange = append(exchange, message)
 	}
-	brief.Recent = append(exchange, answers...)
+	exchange = append(exchange, answers...)
+	brief.Recent = exchange
 	if len(brief.Recent) > tail {
 		brief.Recent = brief.Recent[len(brief.Recent)-tail:]
 	}
