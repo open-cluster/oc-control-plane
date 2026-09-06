@@ -218,7 +218,7 @@ func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 	}
 }
 
-func TestRunKeepsPreflightAndModelReadsInOneOrdinalSequence(t *testing.T) {
+func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) {
 	integrationID, incidentID := uuid.New(), uuid.New()
 	store := &records{
 		candidate: integrations.Integration{ID: integrationID, Type: integrations.TypeKubernetes, Name: "cluster"},
@@ -226,12 +226,16 @@ func TestRunKeepsPreflightAndModelReadsInOneOrdinalSequence(t *testing.T) {
 			"namespace": "payments", "workload_kind": "Deployment", "workload_name": "checkout-api",
 		}},
 	}
+	modelSelected := false
 	run := func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
+		if !modelSelected {
+			t.Fatal("workload labels triggered an external read before model selection")
+		}
 		return integrations.ToolResult{Summary: request.Arguments["namespace"].(string)}, nil
 	}
 	tools := []integrations.Tool{
-		{Name: "kubernetes.workload.runtime", Description: "runtime", WhenToUse: "preflight", WhenNotToUse: "never", Permissions: "read", Output: "state", Run: run},
-		{Name: "kubernetes.namespace.events", Description: "events", WhenToUse: "preflight", WhenNotToUse: "never", Permissions: "read", Output: "events", Run: run},
+		{Name: "kubernetes.workload.runtime", Description: "runtime", WhenToUse: "runtime state", WhenNotToUse: "never", Permissions: "read", Output: "state", Run: run},
+		{Name: "kubernetes.namespace.events", Description: "events", WhenToUse: "recent events", WhenNotToUse: "never", Permissions: "read", Output: "events", Run: run},
 		{Name: "kubernetes.pod.logs", Description: "logs", WhenToUse: "diagnosis", WhenNotToUse: "never", Permissions: "read", Output: "logs", Run: run},
 	}
 	catalog, err := integrations.NewCatalog(integrations.Definition{
@@ -245,15 +249,22 @@ func TestRunKeepsPreflightAndModelReadsInOneOrdinalSequence(t *testing.T) {
 	}
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
-			if !strings.Contains(prompt.Content[len(prompt.Content)-1].Text, "payments") {
-				t.Fatal("preflight results were not included in the first Model prompt")
+			for _, expected := range []string{"kubernetes.workload.runtime", "kubernetes.namespace.events", "kubernetes.pod.logs"} {
+				found := false
+				for _, offered := range prompt.Tools {
+					found = found || offered.Name == expected
+				}
+				if !found {
+					t.Fatalf("eligible tool %q missing from model choice", expected)
+				}
 			}
+			modelSelected = true
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 				ID: "logs", Name: "kubernetes.pod.logs", Arguments: json.RawMessage(`{"purpose":"read logs","input":{"namespace":"payments"}}`),
 			}}}, nil
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1, 2, 3}),
+			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1}),
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
@@ -264,8 +275,8 @@ func TestRunKeepsPreflightAndModelReadsInOneOrdinalSequence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.runs) != 3 {
-		t.Fatalf("runs=%d, want two preflight reads and one Model read", len(store.runs))
+	if len(store.runs) != 1 || store.runs[0].Tool != "kubernetes.pod.logs" {
+		t.Fatalf("runs=%+v, want only the model-selected read", store.runs)
 	}
 	for index, recorded := range store.runs {
 		if recorded.Ordinal != index+1 {

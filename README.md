@@ -111,7 +111,8 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - Users can belong to several Organizations; Organization Admins cannot replace an existing User's password or revoke their global sessions.
 - Local Users change their own password after reauthentication. Deployment operators can recover an existing local User through stdin; see [credential recovery](docs/security/overview.mdx).
 - Connected content and prior history remain untrusted data. Current assigned Messages express requests within the verified tool scope.
-- External tools are read-only and every call records an operator-visible purpose.
+- The model selects from eligible read-only tools; each call is validated and records an operator-visible purpose.
+- Workload and namespace names alone never trigger reads across Integrations.
 - Secrets are file-backed or sealed; credential-shaped fields are removed from logs, events, audit details, prompts, and
   API responses.
 - OpenCluster proposes production changes but exposes no execution endpoint.

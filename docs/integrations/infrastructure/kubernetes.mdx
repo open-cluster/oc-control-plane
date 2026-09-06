@@ -20,6 +20,9 @@ Integration's comma-separated namespace allow-list can narrow that access and ca
 it. OpenCluster requests only the bounded read operations supported by both this deployment
 and the connected Relay.
 
+The model chooses relevant reads from the available tools. An alert's namespace or workload
+name does not automatically trigger reads against every Kubernetes Integration.
+
 Do not grant create, update, patch, delete, or Kubernetes Secret-data access. Inventory
 synchronization records identifiers, image references, quantities, versions, and hashes; it
 does not copy ConfigMap data, Secret data, or environment values.
