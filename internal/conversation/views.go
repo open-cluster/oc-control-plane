@@ -8,23 +8,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// What this surface says on the wire. Kept apart from the handlers because it is a
-// contract: a field renamed here is a client broken somewhere else.
-
 type errorView struct {
 	Error string `json:"error"`
 }
 
 type conversationView struct {
-	ID         string `json:"id"`
-	Subject    string `json:"subject"`
-	Surface    string `json:"surface"`
-	State      string `json:"state"`
-	IncidentID string `json:"incidentId,omitempty"`
-	CreatedBy  string `json:"createdBy,omitempty"`
-	CreatedAt  string `json:"createdAt"`
-	// LastActivityAt is what the listing is ordered by, so a client rendering the order
-	// can render the reason for it.
+	ID             string `json:"id"`
+	Subject        string `json:"subject"`
+	Surface        string `json:"surface"`
+	State          string `json:"state"`
+	IncidentID     string `json:"incidentId,omitempty"`
+	CreatedBy      string `json:"createdBy,omitempty"`
+	CreatedAt      string `json:"createdAt"`
 	LastActivityAt string `json:"lastActivityAt"`
 }
 

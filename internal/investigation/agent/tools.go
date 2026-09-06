@@ -58,11 +58,8 @@ func agentCalls(calls []CompletionCall) []toolCall {
 // from the investigation's set, never a call that always fails — which is how a pasted
 // bot token stops being offered user-token-only search.
 func offeredTools(
-	definition integrations.Definition, candidate integrations.Integration,
-) []integrations.Tool {
-	// Delegated, never reimplemented. The same rule answers the operator surface's
-	// Tool availability, and two copies of it would let what an operator is shown
-	// disagree with what the investigator may actually call.
+	definition integrations.Definition,
+	candidate integrations.Integration) []integrations.Tool {
 	return integrations.SupportedTools(definition, candidate)
 }
 
