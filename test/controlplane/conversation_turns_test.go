@@ -56,7 +56,7 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	if len(page.Turns) != 1 || page.Turns[0].InvestigationID != accepted.Turn.InvestigationID || page.Turns[0].Turn != 2 || page.Next != nil {
 		t.Fatalf("last page = %s", body)
 	}
-	for _, query := range []string{"limit=0", "limit=201", "limit=", "limit=1&limit=2", "cursor=", "cursor=bad", "cursor=a&cursor=b", "search=answer", "sort=turn", "unknown=value"} {
+	for _, query := range []string{"limit=0", "limit=201", "limit=", "limit=1&limit=2", "cursor=", "cursor=bad", "cursor=a&cursor=b", "search=answer", "sort=turn", "unknown=value", "cursor=%zz", "limit=1;sort=turn"} {
 		if status, body := plane.call(t, http.MethodGet, path+"/turns?"+query, nil); status != http.StatusBadRequest {
 			t.Errorf("query %s = %d: %s", query, status, body)
 		}

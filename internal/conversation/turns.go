@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 )
@@ -12,7 +13,12 @@ func (h Handlers) turns(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	query, err := listing.Parse(request.URL.Query(), listing.Spec{})
+	values, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "query parameters are malformed"})
+		return
+	}
+	query, err := listing.Parse(values, listing.Spec{})
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
