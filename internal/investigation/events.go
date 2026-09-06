@@ -388,7 +388,8 @@ const (
 	eventPollInterval = 500 * time.Millisecond
 	// eventHeartbeat keeps an idle connection from being reaped by whatever sits in front
 	// of it. A comment line is not an event and no reader has to know about it.
-	eventHeartbeat = 15 * time.Second
+	eventHeartbeat    = 15 * time.Second
+	eventWriteTimeout = 10 * time.Second
 	// eventStreamLifetime bounds one connection. It is the investigation's own ceiling
 	// plus room to see the ending: a stream that outlived every possible investigation
 	// would be a connection held open for nothing.
@@ -401,6 +402,13 @@ const (
 // another organization answers not-found with the same body as one that never existed,
 // before a single event is read — the boundary must not depend on the stream being empty.
 func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request) {
+	if h.StreamContext != nil {
+		ctx, cancel := context.WithCancel(request.Context())
+		defer cancel()
+		stop := context.AfterFunc(h.StreamContext, cancel)
+		defer stop()
+		request = request.WithContext(ctx)
+	}
 	_, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -432,14 +440,12 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	flusher, streaming := writer.(http.Flusher)
-	if !streaming {
-		// Without flushing, every event would arrive at once when the handler returned,
-		// which is the opposite of what this is for.
+	controller := http.NewResponseController(writer)
+	if err := controller.SetWriteDeadline(time.Now().Add(eventWriteTimeout)); err != nil {
 		writeJSON(writer, http.StatusInternalServerError,
 			errorView{Error: "request failed"})
 		h.Logger.ErrorContext(request.Context(),
-			"the event stream is mounted behind a writer that cannot flush")
+			"the event stream is mounted behind a writer without write deadlines")
 		return
 	}
 
@@ -449,15 +455,19 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 	// silent minute followed by everything.
 	writer.Header().Set("X-Accel-Buffering", "no")
 	writer.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	if err := controller.Flush(); err != nil {
+		return
+	}
+	// net/http must still flush the response ending after an idle shutdown.
+	defer func() { _ = controller.SetWriteDeadline(time.Now().Add(eventWriteTimeout)) }()
 
-	h.follow(request, writer, flusher, organization, found, after)
+	h.follow(request, writer, controller, organization, found, after)
 }
 
 // follow drains what is already recorded and then keeps draining until the investigation
 // ends, the connection goes, or the lifetime is up.
 func (h Handlers) follow(
-	request *http.Request, writer http.ResponseWriter, flusher http.Flusher,
+	request *http.Request, writer http.ResponseWriter, controller *http.ResponseController,
 	organization tenancy.Organization, found Investigation, after int64,
 ) {
 	ctx := request.Context()
@@ -465,6 +475,9 @@ func (h Handlers) follow(
 	lastHeartbeat := time.Now()
 
 	for {
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			return
+		}
 		readCtx, cancel := context.WithTimeout(request.Context(), readTimeout)
 		events, err := h.Store.Events(readCtx, organization, found.ID, after, 0)
 		cancel()
@@ -474,7 +487,27 @@ func (h Handlers) follow(
 				slog.String("error", err.Error()))
 			return
 		}
+		if len(events) == 0 {
+			if found.Status != StatusRunning {
+				return
+			}
+			readCtx, cancel = context.WithTimeout(ctx, readTimeout)
+			found, err = h.Store.Investigation(readCtx, organization, found.ID)
+			cancel()
+			if err != nil {
+				return
+			}
+			if found.Status != StatusRunning {
+				// Re-read events after observing completion to include its committed ending.
+				continue
+			}
+		}
 
+		if len(events) > 0 {
+			if err := controller.SetWriteDeadline(time.Now().Add(eventWriteTimeout)); err != nil {
+				return
+			}
+		}
 		for _, event := range events {
 			if err := writeEvent(writer, envelopeOf(organization, found, event)); err != nil {
 				// The reader is gone. That is the ordinary way a stream ends.
@@ -485,12 +518,14 @@ func (h Handlers) follow(
 				// Nothing follows a terminal event, so the connection has served its whole
 				// purpose. Holding it open would be a client waiting for something this
 				// investigation will never produce.
-				flusher.Flush()
+				_ = controller.Flush()
 				return
 			}
 		}
 		if len(events) > 0 {
-			flusher.Flush()
+			if err := controller.Flush(); err != nil {
+				return
+			}
 			lastHeartbeat = time.Now()
 			// A full page means there is probably more waiting; read again rather than
 			// sleeping through a backlog.
@@ -500,16 +535,18 @@ func (h Handlers) follow(
 		}
 
 		if time.Since(lastHeartbeat) >= eventHeartbeat {
+			if err := controller.SetWriteDeadline(time.Now().Add(eventWriteTimeout)); err != nil {
+				return
+			}
 			if _, err := fmt.Fprint(writer, ": keep-alive\n\n"); err != nil {
 				return
 			}
-			flusher.Flush()
+			if err := controller.Flush(); err != nil {
+				return
+			}
 			lastHeartbeat = time.Now()
 		}
 
-		if time.Now().After(deadline) {
-			return
-		}
 		select {
 		case <-ctx.Done():
 			return

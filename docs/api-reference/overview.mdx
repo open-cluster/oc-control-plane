@@ -120,6 +120,16 @@ Investigation activity uses increasing sequence identifiers. SSE clients reconne
 `Last-Event-ID`; comment frames are heartbeats and carry no product event. Store the last
 processed sequence only after handling its event successfully.
 
+Streams send an idle heartbeat every 15 seconds and can stay open beyond ordinary HTTP
+request timeouts. Each event batch has a 10-second write deadline; a stalled connection
+is dropped and can reconnect using its last processed sequence. Streams close on a terminal
+event, an already processed terminal cursor, or server shutdown. Reconnect after shutdown
+to resume from durable activity.
+
+Reverse proxies must disable response buffering and allow at least 60 seconds between
+upstream reads. The supplied nginx configuration uses `proxy_buffering off`,
+`proxy_read_timeout 60s`, and `send_timeout 10s` to bound stalled downstream clients.
+
 Terminal events are `concluded`, `failed`, and `cancelled`. Ignore an unknown future event
 type while retaining its envelope so a newer server remains compatible with an older
 client. The generated stream operation documents every currently shipped event payload.

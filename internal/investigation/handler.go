@@ -28,6 +28,8 @@ type Handlers struct {
 	Runner     *Runner
 	Logger     *slog.Logger
 	MaxPending int
+	// StreamContext stops long-lived streams while ordinary requests drain at shutdown.
+	StreamContext context.Context
 	// WindowLead widens an investigation's window before the incident began: the change
 	// that caused an incident usually landed before it fired. Configuration, because the
 	// right lead follows an organization's deploy cadence, not a constant.
