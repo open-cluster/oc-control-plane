@@ -18,6 +18,29 @@ func atTime(start time.Time, elapsed *time.Duration) func() time.Time {
 	return func() time.Time { return start.Add(*elapsed) }
 }
 
+func TestLimiter_PreAuthenticationRefillsWithoutSpendingIntegrationQuota(t *testing.T) {
+	var elapsed time.Duration
+	limiter := newLimiter(atTime(time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC), &elapsed))
+	for range 600 {
+		if !limiter.allowRequest() {
+			t.Fatal("preauthentication burst refused early")
+		}
+	}
+	if limiter.allowRequest() {
+		t.Fatal("preauthentication burst was unbounded")
+	}
+	elapsed = 100 * time.Millisecond
+	if !limiter.allowRequest() || limiter.allowRequest() {
+		t.Fatal("100 milliseconds must restore one request")
+	}
+	integration := uuid.New()
+	for range 60 {
+		if !limiter.allow(integration) {
+			t.Fatal("preauthentication spent authenticated Integration quota")
+		}
+	}
+}
+
 func TestLimiter_AllowsABurstAndThenSheds(t *testing.T) {
 	t.Parallel()
 
@@ -88,31 +111,32 @@ func TestLimiter_OneIntegrationExhaustedLeavesAnotherUntouched(t *testing.T) {
 	}
 }
 
-// The map is keyed by whatever arrives, so it is a memory-exhaustion primitive unless it is
-// bounded. It is bounded by eviction rather than by refusal: refusing at the bound would let
-// anyone with many identifiers deny service to every real Integration.
-func TestLimiter_IsBoundedInMemoryAndStillAdmitsRealTraffic(t *testing.T) {
+func TestLimiter_RefusesNewIntegrationsAtCapacity(t *testing.T) {
 	t.Parallel()
 
 	start := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	var elapsed time.Duration
 	limiter := newLimiter(atTime(start, &elapsed))
 
-	// Far more identifiers than the bound, each delivering once — what a flood of guesses at
-	// connection identifiers would look like.
-	for range tracked * 2 {
-		limiter.allow(uuid.New())
+	known := uuid.New()
+	limiter.allow(known)
+	for range tracked - 1 {
+		if !limiter.allow(uuid.New()) {
+			t.Fatal("refused before tracking capacity")
+		}
 	}
 	if len(limiter.buckets) > tracked {
 		t.Fatalf("the limiter is tracking %d connections, above its bound of %d",
 			len(limiter.buckets), tracked)
 	}
 
-	// And a real Integration arriving after that flood is still served rather than refused to
-	// protect a memory bound.
-	if !limiter.allow(uuid.New()) {
-		t.Fatal("shedding real traffic to protect a memory bound would be the limiter causing " +
-			"the outage it exists to prevent")
+	for range burst * 2 {
+		if limiter.allow(uuid.New()) {
+			t.Fatal("untracked Integration bypassed the full limiter")
+		}
+	}
+	if !limiter.allow(known) {
+		t.Fatal("overflow consumed an existing Integration's quota")
 	}
 }
 

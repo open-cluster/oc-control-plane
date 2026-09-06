@@ -394,15 +394,20 @@ func TestIntake_AuthenticatesBeforeNormalizing(t *testing.T) {
 	}
 }
 
-func TestIntake_RateLimitsBeforeParsingOrProviderAuthentication(t *testing.T) {
+func TestIntake_ForgedRequestsDoNotSpendAuthenticatedQuota(t *testing.T) {
 	plane := startIntake(t)
+	for request := 1; request <= 65; request++ {
+		if status := plane.deliver(t, "wrong-secret-long-enough", `{not-json`); status != http.StatusUnauthorized {
+			t.Fatalf("forged request %d = %d, want 401", request, status)
+		}
+	}
 	for request := 1; request <= 60; request++ {
 		if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusBadRequest {
 			t.Fatalf("request %d = %d before burst was consumed, want malformed", request, status)
 		}
 	}
-	if status := plane.deliver(t, "wrong-secret-long-enough", `{not-json`); status != http.StatusTooManyRequests {
-		t.Fatalf("request after burst = %d, want rate limit before auth or parsing", status)
+	if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusTooManyRequests {
+		t.Fatalf("authenticated request after burst = %d, want 429", status)
 	}
 }
 

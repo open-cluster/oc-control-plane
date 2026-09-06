@@ -145,14 +145,21 @@ func (h Handlers) Router() http.Handler {
 		}
 		mux.Handle(route.Method+" "+route.Pattern, handler)
 	}
-	return mux
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !running.deliveries.allowRequest() {
+			running.counters.countDelivery(request.Context(), dispositionRateLimited)
+			writer.Header().Set("X-Request-ID", uuid.NewString())
+			writer.Header().Set("Retry-After", "1")
+			writeStatus(writer, http.StatusTooManyRequests, "slow down")
+			return
+		}
+		mux.ServeHTTP(writer, request)
+	})
 }
 
 // deliver accepts one webhook delivery.
 //
-// The order is the point. The rate limit comes first, because it is the only defence that must
-// hold when everything after it is being abused. The body is read under its fixed bound before
-// provider verification, then the verified provider adapter is the only code allowed to parse it.
+// Integration quota is spent only after authentication, before payload normalization.
 func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
@@ -161,15 +168,6 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 
 	integrationID, ok := h.addressed(writer, request)
 	if !ok {
-		return
-	}
-	if !h.deliveries.allow(integrationID) {
-		// Shed rather than refused. The source is told to slow down, not to stop, because the
-		// alerts behind this one are real and it should still send them.
-		h.refuse(ctx, request, "rate limited")
-		h.counters.countDelivery(ctx, dispositionRateLimited)
-		writer.Header().Set("Retry-After", "1")
-		writeStatus(writer, http.StatusTooManyRequests, "slow down")
 		return
 	}
 	body, err := readBody(writer, request)
@@ -215,6 +213,14 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		// indistinguishable, because telling them apart is how a caller learns which half
 		// of a guess was right.
 		writeStatus(writer, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if !h.deliveries.allow(integration.ID) {
+		h.refuse(ctx, request, "rate limited")
+		h.counters.countDelivery(ctx, dispositionRateLimited)
+		writer.Header().Set("Retry-After", "1")
+		writeStatus(writer, http.StatusTooManyRequests, "slow down")
 		return
 	}
 
@@ -420,9 +426,8 @@ func (h *surface) refuse(ctx context.Context, request *http.Request, reason stri
 //
 // It is skipped when no Integration was found, which is both correct and what bounds it:
 // there is no tenant to attribute an unknown identifier to, so an attacker guessing
-// identifiers writes no rows at all. A rate-limited delivery is likewise not recorded —
-// the limiter runs before the Integration is resolved, deliberately, because that is the
-// defence that has to hold when everything after it is being abused.
+// identifiers writes no rows at all. Rate-limited deliveries are not recorded, so shedding
+// requests cannot amplify database writes.
 //
 // A failure to record is logged and does not change the answer. The delivery was already
 // refused and telling the source something different because our own history could not be

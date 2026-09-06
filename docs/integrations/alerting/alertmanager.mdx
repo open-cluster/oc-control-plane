@@ -100,7 +100,8 @@ explain the alert.
 - **`401`:** replace the configured secret with the current value. Rotated secrets stop
   working immediately.
 - **`400`:** confirm middleware has not changed Alertmanager's version 4 webhook body.
-- **`429`:** reduce delivery frequency or group alerts more aggressively.
+- **`429`:** honor `Retry-After`, reduce delivery frequency, or group alerts more aggressively.
+  See the [shared and per-Integration limits](/self-hosting/configuration#webhook-admission-limits).
 
 ## Rotate or disconnect
 

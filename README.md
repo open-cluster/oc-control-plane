@@ -98,6 +98,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - Customer data and Tool execution are Organization-scoped; authentication and User-owned sessions are deployment-wide.
 - Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
 - Background cleanup removes unusable sessions in bounded passes, including before any Organization exists.
+- Webhooks have bounded preauthentication admission and separate authenticated Integration quotas; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
 - Organization-scoped API requests select one active Organization with
   `X-OpenCluster-Organization`; authorization verifies membership before handlers run.
 - Users can belong to several Organizations; Organization Admins cannot replace an existing User's password or revoke their global sessions.

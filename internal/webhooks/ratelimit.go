@@ -18,13 +18,13 @@ const (
 	// refillInterval is how often one delivery of headroom returns, so the sustained rate is
 	// one per second.
 	refillInterval = time.Second
-	// tracked bounds how many Integrations are remembered at once. The limiter is reachable by
-	// anything that can guess an identifier, so a map keyed by whatever arrives is a memory
-	// exhaustion primitive unless it is bounded.
+	// tracked bounds authenticated Integration buckets; new entries are refused at capacity.
 	tracked = 4096
 	// idleEviction is how long an Integration is remembered after its last delivery. A bucket
 	// that has been idle this long is full, so forgetting it loses nothing.
-	idleEviction = 10 * time.Minute
+	idleEviction          = 10 * time.Minute
+	requestBurst          = 600
+	requestRefillInterval = 100 * time.Millisecond
 )
 
 // limiter sheds deliveries from an Integration that is sending faster than any real alerting
@@ -36,9 +36,10 @@ const (
 // times this rate — which is stated rather than hidden, and is the right trade until there is
 // a shared limiter worth its coordination cost.
 type limiter struct {
-	mu      sync.Mutex
-	buckets map[uuid.UUID]*bucket
-	now     func() time.Time
+	mu       sync.Mutex
+	buckets  map[uuid.UUID]*bucket
+	now      func() time.Time
+	requests bucket
 }
 
 type bucket struct {
@@ -50,7 +51,15 @@ func newLimiter(now func() time.Time) *limiter {
 	if now == nil {
 		now = time.Now
 	}
-	return &limiter{buckets: make(map[uuid.UUID]*bucket), now: now}
+	return &limiter{buckets: make(map[uuid.UUID]*bucket), now: now,
+		requests: bucket{tokens: requestBurst, last: now()}}
+}
+
+// allowRequest bounds preauthentication work without trusting caller-selected identifiers.
+func (l *limiter) allowRequest() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.requests.take(l.now(), requestBurst, requestRefillInterval)
 }
 
 // allow reports whether this Integration may deliver now, spending one unit of headroom if so.
@@ -61,26 +70,23 @@ func (l *limiter) allow(integration uuid.UUID) bool {
 	at := l.now()
 	held, known := l.buckets[integration]
 	if !known {
-		// An Integration arriving when the map is full does not get an unbounded pass and does
-		// not get refused either: sweeping first is what keeps the bound honest, and a bound
-		// that turned into a refusal would let an attacker with many identifiers deny service
-		// to every real one.
 		if len(l.buckets) >= tracked {
 			l.evictIdle(at)
 		}
 		if len(l.buckets) >= tracked {
-			// Still full after a sweep, which means this many Integrations are genuinely active.
-			// Admitting the delivery is the right failure: shedding real traffic to protect a
-			// memory bound would be the limiter causing the outage it exists to prevent.
-			return true
+			return false
 		}
 		l.buckets[integration] = &bucket{tokens: burst - 1, last: at}
 		return true
 	}
 
-	held.tokens += at.Sub(held.last).Seconds() * (float64(time.Second) / float64(refillInterval))
-	if held.tokens > burst {
-		held.tokens = burst
+	return held.take(at, burst, refillInterval)
+}
+
+func (held *bucket) take(at time.Time, capacity float64, interval time.Duration) bool {
+	held.tokens += float64(at.Sub(held.last)) / float64(interval)
+	if held.tokens > capacity {
+		held.tokens = capacity
 	}
 	held.last = at
 
