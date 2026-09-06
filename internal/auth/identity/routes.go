@@ -12,6 +12,7 @@ const Base = "/api/v1"
 
 func (h Handlers) Routes() authz.Table {
 	table := authz.Table{
+		authz.Authenticated(http.MethodPut, Base+"/auth/local/password", http.HandlerFunc(h.changeLocalPassword)),
 		authz.Public(http.MethodPost, Base+"/auth/local/bootstrap",
 			http.HandlerFunc(h.bootstrapLocalAdmin)),
 		authz.Public(http.MethodPost, Base+"/auth/local/sign-in",

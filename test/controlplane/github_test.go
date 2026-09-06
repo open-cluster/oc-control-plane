@@ -99,7 +99,6 @@ func startGitHubPlane(t *testing.T, vendor *githubFake) *integrationPlane {
 		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = surfaceOrg
 		cfg.GitHubAppID = "12345"
 		cfg.GitHubAppKey = appKeyPEM(t)
 	}, app.Options{GitHubAPIURL: vendor.URL})
@@ -203,7 +202,6 @@ func TestGitHubWithoutAnAppRefusesAtSetup(t *testing.T) {
 		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = surfaceOrg
 	})
 	surface := &integrationPlane{controlPlane: plane, operator: operatorAddress}
 

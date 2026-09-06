@@ -89,7 +89,7 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		h.fail(w, r, err)
 		return
 	}
-	if err = h.issueSession(w, r, organization, user, memberships, admission{}); err != nil {
+	if err = h.issueSession(w, r, organization, user, memberships, ""); err != nil {
 		h.fail(w, r, err)
 		return
 	}

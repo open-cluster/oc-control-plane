@@ -182,6 +182,9 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// contributes to the tenant the answer belongs to, which is why they are safe and why
 		// they have to exist.
 		"SessionByToken":       "resolves a global User and current memberships from an opaque session digest",
+		"LocalPasswordHash":    "reads only the authenticated User's local verifier",
+		"ChangeLocalPassword":  "changes only the authenticated User's reauthenticated global credential",
+		"RecoverLocalPassword": "deployment operator recovery of an existing local User; no tenant authority applies",
 		"RevokeCurrentSession": "revokes only the authenticated User's current global session",
 		"RevokeSession":        "revokes a global session only when its user_id equals the authenticated User",
 		"ListSessions":         "lists global sessions only for the authenticated User ID",

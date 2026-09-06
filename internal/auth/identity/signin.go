@@ -30,7 +30,7 @@ func (h Handlers) issueSession(
 	organization tenancy.Organization,
 	user storage.User,
 	memberships []authz.Membership,
-	_ admission,
+	localPasswordHash string,
 ) error {
 	token, digest, issued, detail, err := h.prepareSession(
 		request, organization, user.ID, len(memberships))
@@ -39,8 +39,13 @@ func (h Handlers) issueSession(
 	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	if err = h.Database.IssueSession(ctx, organization, issued, digest, audit.Actor{
-		Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}, detail); err != nil {
+	actor := audit.Actor{Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}
+	if localPasswordHash != "" {
+		err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor, detail, localPasswordHash)
+	} else {
+		err = h.Database.IssueSession(ctx, organization, issued, digest, actor, detail)
+	}
+	if err != nil {
 		return err
 	}
 	session.Set(writer, token, issued.ExpiresAt)

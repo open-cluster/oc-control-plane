@@ -20,8 +20,7 @@ func operatorTokenDigest(
 		return nil, nil
 	}
 	if path == "" {
-		return nil, fmt.Errorf("%s is required when %s is set",
-			EnvOperatorTokenFile, EnvHTTPAddress)
+		return nil, nil
 	}
 
 	token, err := readSecretFile(path)
@@ -36,8 +35,6 @@ func operatorTokenDigest(
 	digest := sha256.Sum256([]byte(token))
 	return digest[:], nil
 }
-
-const defaultOperatorTokenRole = "admin"
 
 // optionalBrowserURL reads a URL a browser will be sent to or arrive from. It must be an
 // absolute origin with no path, because everything downstream appends one.

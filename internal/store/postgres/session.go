@@ -67,6 +67,38 @@ func (p *Database) IssueSession(
 	return nil
 }
 
+// IssueLocalSession holds the verifier lock through issuance so password replacement revokes concurrent sign-ins.
+func (p *Database) IssueLocalSession(
+	ctx context.Context, organization tenancy.Organization,
+	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail, previous string,
+) error {
+	pool, err := p.Pool(organization)
+	if err != nil {
+		return err
+	}
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin local sign-in: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	var current string
+	err = transaction.QueryRow(ctx, `SELECT c.password_hash FROM local_password c JOIN app_user u USING (user_id)
+		WHERE c.user_id = $1 AND u.issuer = $2 AND u.disabled_at IS NULL FOR SHARE OF c`, issued.UserID, LocalIssuer).Scan(&current)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && current != previous) {
+		return ErrLocalCredentialUnknown
+	}
+	if err != nil {
+		return fmt.Errorf("checking local sign-in: %w", err)
+	}
+	if err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, detail); err != nil {
+		return err
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("commit local sign-in: %w", err)
+	}
+	return nil
+}
+
 func issueSessionIn(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,

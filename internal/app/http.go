@@ -15,7 +15,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -221,34 +220,8 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	if len(cfg.OperatorTokenDigest) == 0 {
 		return handlers, nil
 	}
-	organization, err := tenancy.NewOrganization(cfg.OperatorTokenOrganization)
-	if err != nil {
-		return identity.Handlers{}, fmt.Errorf("bootstrap organization: %w", err)
-	}
-	// The default is applied here as well as in config.Load, because a Config may be
-	// constructed directly — every harness in this package does — and a composition root that
-	// only worked for configuration that came through the parser would fail in exactly the
-	// place nobody exercises it.
-	named := cfg.OperatorTokenRole
-	if strings.TrimSpace(named) == "" {
-		named = string(authz.Admin)
-	}
-	role, known := authz.ParseRole(named)
-	if !known {
-		return identity.Handlers{}, fmt.Errorf(
-			"%s names %q, which is not a role this build has",
-			"bootstrap role", cfg.OperatorTokenRole)
-	}
-	handlers.Bootstrap = identity.Bootstrap{
-		Digest:       cfg.OperatorTokenDigest,
-		Organization: organization,
-		Role:         role,
-		// Named so an event produced by the bootstrap credential is distinguishable in the record.
-		Name: "bootstrap credential",
-	}
-	process.logger.Info("bootstrap operator credential configured",
-		slog.String("organization", organization.String()),
-		slog.String("role", string(role)))
+	handlers.Bootstrap = identity.Bootstrap{Digest: cfg.OperatorTokenDigest}
+	process.logger.Info("one-time bootstrap credential configured")
 	return handlers, nil
 }
 

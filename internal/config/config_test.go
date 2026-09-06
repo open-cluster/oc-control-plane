@@ -31,6 +31,18 @@ func essentialEnvironment(t *testing.T) map[string]string {
 	}
 }
 
+func TestLoadWithoutBootstrapCredential(t *testing.T) {
+	values := essentialEnvironment(t)
+	delete(values, EnvOperatorTokenFile)
+	cfg, err := Load(lookup(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.OperatorTokenDigest) != 0 {
+		t.Fatal("bootstrap was enabled without a credential")
+	}
+}
+
 func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	values := essentialEnvironment(t)
 	cfg, err := Load(lookup(values))
@@ -42,9 +54,6 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	}
 	if cfg.OperatorPublicURL != "http://localhost:8080" {
 		t.Fatalf("public URL default = %q", cfg.OperatorPublicURL)
-	}
-	if cfg.OperatorTokenOrganization != "local" || cfg.OperatorTokenRole != "admin" {
-		t.Fatalf("bootstrap scope = %q/%q", cfg.OperatorTokenOrganization, cfg.OperatorTokenRole)
 	}
 	if cfg.InvestigationWorkers != 8 || cfg.MaxPendingInvestigationsPerOrganization != 100 {
 		t.Fatalf("investigation defaults = workers %d pending %d",

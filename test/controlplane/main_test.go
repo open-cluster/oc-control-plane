@@ -365,7 +365,7 @@ func startControlPlaneRunning(
 	t.Cleanup(plane.shutdown)
 	surfaceDigest := sha256.Sum256([]byte(surfaceToken))
 	if bytes.Equal(cfg.OperatorTokenDigest, surfaceDigest[:]) {
-		plane.bootstrapAdmin(t, cfg.OperatorTokenOrganization, surfaceToken,
+		plane.bootstrapAdmin(t, surfaceOrg, surfaceToken,
 			cfg.OperatorPublicURL)
 	}
 	return plane

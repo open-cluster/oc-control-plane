@@ -129,6 +129,31 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /api/v1/auth/local/password:
+    put:
+      <<: *authenticated-write
+      operationId: changeLocalPassword
+      summary: Change the authenticated User's local password
+      description: Reauthenticate with the current password. Successful change revokes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+                newPassword: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+      responses:
+        "204": { description: Password changed and all User sessions revoked. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/auth/local/sign-in:
     post:
       <<: *public-write

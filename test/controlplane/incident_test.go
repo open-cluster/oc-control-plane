@@ -50,7 +50,6 @@ func startIncidents(t *testing.T) *incidentPlane {
 		cfg.HTTPAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.OperatorTokenOrganization = intakeOrganization
 		dsn = cfg.DatabaseDSN
 	})
 

@@ -141,6 +141,7 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	t.Parallel()
 
 	permitted := map[string]string{
+		"PUT /api/v1/auth/local/password":   "reauthenticates the User to change only their own local credential",
 		"GET /api/v1/sessions":              "lists only the authenticated User sessions",
 		"DELETE /api/v1/sessions/{session}": "revokes only the authenticated User sessions",
 		"GET /api/v1/session":               "its subject is the caller themselves",
@@ -266,6 +267,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"POST /api/v1/relays/{registration}/clear-conflict",
 		"POST /api/v1/webhook-deliveries/{delivery}/replay",
 		"PUT /api/v1/policy",
+		"PUT /api/v1/auth/local/password",
 	}
 	wanted := make(map[string]bool, len(expected))
 	for _, key := range expected {

@@ -54,6 +54,13 @@ func (p *Database) BootstrapLocalUser(
 	if users != 0 {
 		return User{}, ErrLocalBootstrapComplete
 	}
+	tag, err := transaction.Exec(ctx, `INSERT INTO deployment_initialization (singleton) VALUES (true) ON CONFLICT DO NOTHING`)
+	if err != nil {
+		return User{}, fmt.Errorf("retiring bootstrap: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return User{}, ErrLocalBootstrapComplete
+	}
 
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	var user User
@@ -82,8 +89,13 @@ func (p *Database) BootstrapLocalUser(
 		truncateTo(issued.Address, session.MaxAddressLength)); err != nil {
 		return User{}, fmt.Errorf("issuing the bootstrap session: %w", err)
 	}
-	// Audit events are Organization-owned records. Bootstrap deliberately has no
-	// Organization yet, so the first auditable Organization mutation is its creation.
+	if err = writeEvent(ctx, transaction, audit.Event{
+		Actor: audit.System("deployment bootstrap"), Action: audit.ActionLocalBootstrapCompleted,
+		Target: audit.Target{Kind: audit.TargetUser, ID: user.ID.String()}, Outcome: audit.OutcomeAllowed,
+		SourceAddress: issued.Address,
+	}); err != nil {
+		return User{}, err
+	}
 	if err = transaction.Commit(ctx); err != nil {
 		return User{}, fmt.Errorf("committing local bootstrap: %w", err)
 	}

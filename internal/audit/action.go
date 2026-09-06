@@ -3,6 +3,9 @@ package audit
 type Action string
 
 const (
+	ActionLocalBootstrapCompleted Action = "local.bootstrap-completed"
+	ActionLocalPasswordChanged    Action = "local.password-changed"
+	ActionLocalPasswordRecovered  Action = "local.password-recovered"
 	// Sessions and identity.
 	ActionSignInStarted      Action = "session.sign-in.started"
 	ActionSignInCompleted    Action = "session.sign-in.completed"
