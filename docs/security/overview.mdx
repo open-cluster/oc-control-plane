@@ -53,6 +53,8 @@ an Organization selector. Organization Admins cannot revoke another User's sessi
 removing a membership ends access to that Organization on the next request.
 
 Logout clears the browser cookie and revokes the current session even without a membership.
+Expired sessions are cleaned up automatically. Unexpired revoked sessions remain visible
+for up to a day before cleanup; their audit records follow the audit retention policy.
 An absent or expired cookie can be cleared again. Logout still requires the configured
 Origin; a storage failure returns an error because durable revocation was not confirmed.
 

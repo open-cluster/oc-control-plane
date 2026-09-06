@@ -30,6 +30,7 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 	}
 	startWebhookWork(ctx, group, process)
 	startAuditPruner(ctx, group, process)
+	startSessionPruner(ctx, group, process)
 	startChangeLedgerPruner(ctx, group, process)
 	startSlackReplies(ctx, group, process)
 }
