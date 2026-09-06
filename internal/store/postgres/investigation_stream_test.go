@@ -10,7 +10,8 @@ import (
 )
 
 func TestFailedEventWritePreservesStreamStateForRetry(t *testing.T) {
-	for _, eventType := range []investigation.EventType{investigation.EventProgress, investigation.EventFailed} {
+	for _, payload := range []investigation.EventPayload{investigation.ProgressPayload("reading"), investigation.FailedPayload("failed")} {
+		eventType := payload.EventType()
 		t.Run(eventType.String(), func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
@@ -27,13 +28,13 @@ func TestFailedEventWritePreservesStreamStateForRetry(t *testing.T) {
 			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event ADD CONSTRAINT reject_stream_test CHECK (type NOT IN (2, 7))`); err != nil {
 				t.Fatal(err)
 			}
-			if err = stream.Emit(ctx, eventType, nil); err == nil {
+			if err = stream.Emit(ctx, payload); err == nil {
 				t.Fatal("event write failure was swallowed")
 			}
 			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event DROP CONSTRAINT reject_stream_test`); err != nil {
 				t.Fatal(err)
 			}
-			if err = stream.Emit(ctx, eventType, nil); err != nil {
+			if err = stream.Emit(ctx, payload); err != nil {
 				t.Fatal(err)
 			}
 			events, err := database.Events(ctx, org, id, 0, 0)

@@ -30,6 +30,8 @@ safely.
 
 Investigation events include the Integration display name when a Tool starts and retain
 the canonical answer, up to 4,096 Unicode characters, when the Investigation concludes.
+Current event writers use typed payloads; composed HTTP regressions validate their actual
+serialized envelopes, including nested hypotheses, against OpenAPI.
 
 > OpenCluster is experimental pre-release software. APIs and storage may change without
 > upgrade compatibility until the first stable release; recreate pre-release databases.

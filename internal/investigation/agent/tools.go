@@ -193,11 +193,11 @@ func (r *Agent) persistFailure(
 
 // announce treats progress as best effort. Terminal events commit with the result.
 func (r *Agent) announce(
-	ctx context.Context, events *investigation.EventStream, eventType investigation.EventType, payload map[string]any,
+	ctx context.Context, events *investigation.EventStream, payload investigation.EventPayload,
 ) {
-	if err := events.Emit(ctx, eventType, payload); err != nil {
+	if err := events.Emit(ctx, payload); err != nil {
 		r.Logger.Warn("an investigation event could not be written",
-			slog.String("event", eventType.String()),
+			slog.String("event", payload.EventType().String()),
 			slog.String("error", err.Error()))
 	}
 }

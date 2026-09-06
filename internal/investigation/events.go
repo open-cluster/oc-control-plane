@@ -71,8 +71,7 @@ type Event struct {
 	Sequence int64
 	At       time.Time
 	Type     EventType
-	// Payload is the event's own structure. It never carries a credential, a header, a
-	// system prompt or a raw tool result.
+	// Replay stays open to historical and future fields; current writers use EventPayload.
 	Payload map[string]any
 }
 
@@ -142,9 +141,20 @@ func newStream(appendEvent func(
 }
 
 func (s *stream) Emit(
-	ctx context.Context, eventType EventType, payload map[string]any,
+	ctx context.Context, payload EventPayload,
 ) error {
-	return s.emit(ctx, eventType, payload)
+	if s == nil || s.appendEvent == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return err
+	}
+	return s.emit(ctx, payload.EventType(), fields)
 }
 
 // emit writes one event, returning whatever went wrong so the caller can log it.
@@ -245,141 +255,6 @@ func sortedKeys(payload map[string]any) []string {
 }
 
 const maxPayloadEntries = audit.MaxDetailEntries
-
-// startedPayload opens the stream: what this investigation is about, and whether it is
-// executing or still waiting. The lease is what distinguishes those, and both are
-// `running`, so the first event is where a reader learns which.
-func startedPayload(opened Investigation, executing bool) map[string]any {
-	payload := map[string]any{
-		"subject":     bounded(opened.Subject, eventTextBound),
-		"state":       "waiting",
-		"windowFrom":  opened.WindowFrom.UTC().Format(time.RFC3339),
-		"windowUntil": opened.WindowUntil.UTC().Format(time.RFC3339),
-	}
-	if executing {
-		payload["state"] = "executing"
-	}
-	if opened.Question != "" {
-		payload["question"] = bounded(opened.Question, eventTextBound)
-	}
-	if opened.Turn > 0 {
-		payload["turn"] = opened.Turn
-	}
-	return payload
-}
-
-// toolStartedPayload says which read is about to happen and where it is going. The
-// arguments are the call's own scope, normalized: a person watching wants to know it is
-// reading #deploys and not #random.
-func toolStartedPayload(run ToolRun, integration string) map[string]any {
-	payload := map[string]any{
-		"ordinal":       run.Ordinal,
-		"tool":          bounded(run.Tool, eventTextBound),
-		"integrationId": integration,
-		"arguments":     run.Arguments,
-	}
-	if run.Purpose != "" {
-		payload["purpose"] = bounded(run.Purpose, eventTextBound)
-	}
-	if run.HypothesisID != "" {
-		payload["hypothesisId"] = bounded(run.HypothesisID, eventTextBound)
-	}
-	return payload
-}
-
-// toolCompletedPayload says what came back, in one line, using the provider's OWN summary
-// — the same sentence the provenance records. A failed read is reported as a failure
-// rather than omitted, because a gap in an answer that is explained is a different thing
-// from one that is silent.
-func toolCompletedPayload(run ToolRun) map[string]any {
-	payload := map[string]any{
-		"ordinal":    run.Ordinal,
-		"tool":       bounded(run.Tool, eventTextBound),
-		"outcome":    outcomeWord(run.Outcome),
-		"durationMs": run.FinishedAt.Sub(run.StartedAt).Milliseconds(),
-	}
-	if run.IntegrationID != uuid.Nil {
-		payload["integrationId"] = run.IntegrationID.String()
-	}
-	if run.Summary != "" {
-		payload["summary"] = bounded(run.Summary, eventTextBound)
-	}
-	if run.Error != "" {
-		payload["error"] = bounded(run.Error, eventTextBound)
-	}
-	if run.Truncated {
-		payload["truncated"] = true
-	}
-	// The window the read covered, for the reader who has to tell an empty window from an
-	// empty estate. Absent on a read that covers none, because claiming a window a
-	// repository listing never applied would answer the question wrongly rather than not
-	// at all.
-	if run.WindowApplied {
-		payload["windowFrom"] = run.WindowFrom.UTC().Format(time.RFC3339)
-		payload["windowUntil"] = run.WindowUntil.UTC().Format(time.RFC3339)
-	}
-	if len(run.Sources) > 0 {
-		payload["sources"] = run.Sources
-	}
-	return payload
-}
-
-// progressPayload is a composed sentence and the fact behind it. The text is written here,
-// from what the platform knows; it is never asked for and never received.
-func progressPayload(text string) map[string]any {
-	return map[string]any{"text": bounded(text, eventTextBound)}
-}
-
-func hypothesesUpdatedPayload(hypotheses []HypothesisResult) map[string]any {
-	return map[string]any{
-		"version":    HypothesisSnapshotVersion,
-		"hypotheses": hypotheses,
-	}
-}
-
-// concludedPayload is the ending a reader stops on: the direct answer, how much was
-// established, and the ceiling that forced it if one did.
-func concludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
-	payload := map[string]any{
-		"status":   conclusion.Status,
-		"findings": len(conclusion.Findings),
-	}
-	if conclusion.Summary != "" {
-		payload["summary"] = bounded(conclusion.Summary, MaxSummaryLength)
-	}
-	if stoppedBy != "" {
-		payload["stoppedBy"] = stoppedBy
-	}
-	return payload
-}
-
-// failedPayload is the other ending. It always states a reason, because a reader left
-// watching a spinner is the failure this exists to prevent.
-func failedPayload(reason string) map[string]any {
-	return map[string]any{"reason": bounded(reason, maxRunErrorLength)}
-}
-
-func StartedPayload(opened Investigation, executing bool) map[string]any {
-	return startedPayload(opened, executing)
-}
-
-func ToolStartedPayload(run ToolRun, integration string) map[string]any {
-	return toolStartedPayload(run, integration)
-}
-
-func ToolCompletedPayload(run ToolRun) map[string]any { return toolCompletedPayload(run) }
-
-func ProgressPayload(text string) map[string]any { return progressPayload(text) }
-
-func HypothesesUpdatedPayload(hypotheses []HypothesisResult) map[string]any {
-	return hypothesesUpdatedPayload(hypotheses)
-}
-
-func ConcludedPayload(conclusion Conclusion, stoppedBy string) map[string]any {
-	return concludedPayload(conclusion, stoppedBy)
-}
-
-func FailedPayload(reason string) map[string]any { return failedPayload(reason) }
 
 const (
 	// eventPollInterval is how often a following connection looks for more. There is no
