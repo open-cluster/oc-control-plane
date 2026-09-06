@@ -222,21 +222,23 @@ func (r *Agent) Run(
 		state.maxTurns = defaultMaxTurns
 	}
 	if len(messages) > 0 {
-		fits, err := r.assignedInputFits(state, oriented)
+		// UTF-8 bytes conservatively bound input tokens, with output reserved and ten percent headroom.
+		inputCapacity := state.ceiling - state.ceiling/10
+		inputBytes, err := r.initialInputBytes(oriented)
 		if err != nil {
 			return failRun("the assigned input budget could not be established", investigation.Usage{})
 		}
-		if !fits {
+		if inputBytes > inputCapacity {
 			oriented.Brief = &investigation.Brief{Turn: opened.Turn, Limitations: []string{
 				"Optional history and inventory were omitted to preserve the complete current request.",
 			}}
 			oriented.Inventory = nil
-			fits, err = r.assignedInputFits(state, oriented)
+			inputBytes, err = r.initialInputBytes(oriented)
 			if err != nil {
 				return failRun("the assigned input budget could not be established", investigation.Usage{})
 			}
 		}
-		if !fits {
+		if inputBytes > inputCapacity {
 			err := r.requestNarrowerInput(ctx, state, messages)
 			if err == nil {
 				r.RuntimeTelemetry.Ended(time.Since(startedAt), "needs_input", investigation.StoppedByContext)

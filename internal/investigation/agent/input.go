@@ -8,17 +8,14 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-func (r *Agent) assignedInputFits(state *runState, oriented orientation) (bool, error) {
-	candidate := *state
-	candidate.task = taskInstruction(oriented)
-	candidate.orientationText = renderOrientation(oriented)
-	candidate.tools = exchangeTools(oriented)
+func (r *Agent) initialInputBytes(oriented orientation) (int, error) {
+	candidate := runState{task: taskInstruction(oriented),
+		orientationText: renderOrientation(oriented), tools: exchangeTools(oriented)}
 	encoded, err := json.Marshal(modelPrompt(r, &candidate, false))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	// UTF-8 bytes conservatively bound input tokens; reserve output and ten percent headroom.
-	return len(encoded) <= state.ceiling-state.ceiling/10, nil
+	return len(encoded), nil
 }
 
 func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messages []investigation.AssignedMessage) error {
