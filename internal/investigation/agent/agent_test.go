@@ -39,6 +39,8 @@ type records struct {
 	briefErr    error
 	origin      *investigation.ConversationOrigin
 	originErr   error
+	messages    []investigation.AssignedMessage
+	messagesErr error
 	runs        []investigation.ToolRun
 	unseals     int
 	toolUsed    bool
@@ -101,6 +103,10 @@ func (r *records) ConversationBrief(context.Context, tenancy.Organization, uuid.
 
 func (r *records) ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error) {
 	return r.origin, r.originErr
+}
+
+func (r *records) InvestigationMessages(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error) {
+	return r.messages, r.messagesErr
 }
 func (r *records) AppendEvent(
 	_ context.Context, _ tenancy.Organization, _ uuid.UUID, event investigation.Event,
@@ -312,6 +318,7 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			}
 			// This adapter overrides only candidate discovery so Run sees both installations.
 			store.candidate = storeCandidates[0]
+			store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "Read this thread."}}
 			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 				if len(prompt.Tools) != 3 || prompt.Tools[0].Name != "chat.thread" ||
 					prompt.Tools[1].Name != UpdateHypothesesToolName || prompt.Tools[2].Name != ConcludeToolName {

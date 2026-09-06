@@ -134,9 +134,10 @@ var LimitationTypes = []string{
 }
 
 type Limitation struct {
-	Type      LimitationType `json:"type"`
-	Statement string         `json:"statement"`
-	RunRefs   []int          `json:"runRefs"`
+	Type             LimitationType `json:"type"`
+	Statement        string         `json:"statement"`
+	RunRefs          []int          `json:"runRefs"`
+	MessageSequences []int64        `json:"messageSequences,omitempty"`
 }
 
 // The concluding document's record bounds, enforced where it is decoded and again

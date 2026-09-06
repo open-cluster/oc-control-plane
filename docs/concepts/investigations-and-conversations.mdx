@@ -19,6 +19,14 @@ separate limit for waiting Investigations. When capacity is full, new Messages a
 retry after work progresses. Accepted Messages remain stored. Older backlogs larger than
 the limit drain in chronological batches of at most 100.
 
+Each Investigation receives the complete Messages assigned to it, in order, with their
+authors and timestamps. A shortened question preview does not replace those instructions.
+Optional history and inventory are omitted first if the initial request is too large.
+If the complete assigned batch still cannot fit, the result is `needs_input`: its limitation
+identifies the unprocessed Message sequences and asks you to narrow or split the request.
+Those Messages stay stored; send a new Message to continue. No part of that batch is
+reported as answered.
+
 For example, “Why did checkout latency rise?” opens one Investigation. “Does the deploy
 at 09:42 explain it?” becomes a new Message and a new bounded Investigation in the same
 Conversation, retaining prior cited Findings without changing the first result.

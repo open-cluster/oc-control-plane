@@ -42,7 +42,8 @@ func TestRunRefusesWhenConversationOriginCannotBeVerified(t *testing.T) {
 }
 
 func TestFirstQuestionReportsUnavailableHistoryWithoutBecomingAFollowUp(t *testing.T) {
-	store := &records{briefErr: errors.New("history unavailable")}
+	store := &records{briefErr: errors.New("history unavailable"),
+		messages: []investigation.AssignedMessage{{Sequence: 1, Text: "What changed?"}}}
 	model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
 		var rendered strings.Builder
 		for _, blocks := range [][]Block{prompt.System, prompt.Content} {
