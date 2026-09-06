@@ -35,10 +35,9 @@ type Store interface {
 
 // Agent runs investigations against one validated model deployment.
 type Agent struct {
-	model      Model
-	deployment Deployment
-	telemetry  *Telemetry
-
+	model               Model
+	deployment          Deployment
+	telemetry           *Telemetry
 	Store               Store
 	Catalog             integrations.Catalog
 	Sealer              seal.Sealer
@@ -140,11 +139,14 @@ type modelMove struct {
 
 // Run performs one investigation through a durable terminal result.
 func (r *Agent) Run(
-	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
+	ctx context.Context,
+	organization tenancy.Organization,
+	opened investigation.Investigation,
 ) error {
+
 	events := investigation.NewEventStream(
-		r.Store.AppendEvent, r.RuntimeTelemetry, organization, opened.ID,
-	)
+		r.Store.AppendEvent, r.RuntimeTelemetry, organization, opened.ID)
+
 	startedAt := time.Now()
 	failRun := func(reason string, usage investigation.Usage) error {
 		safeReason, err := r.persistFailure(ctx, organization, opened.ID, reason, usage)
@@ -749,7 +751,9 @@ func offeredSources(
 // originating thread. Other provider categories remain available, while another
 // installation of the originating provider and its broader reads are not implied.
 func offeredSourcesForConversation(
-	catalog integrations.Catalog, candidates []integrations.Integration, brief *investigation.Brief,
+	catalog integrations.Catalog,
+	candidates []integrations.Integration,
+	brief *investigation.Brief,
 ) []offeredSource {
 	if brief == nil || brief.OriginIntegrationID == "" ||
 		brief.OriginChannel == "" || brief.OriginThread == "" {
@@ -937,8 +941,11 @@ func boundActions(actions []investigation.ActionProposal) []investigation.Action
 // holds. The trigger and the inventory are best-effort — an unreadable one narrows the
 // orientation, never fails the investigation.
 func (r *Agent) orientation(
-	ctx context.Context, organization tenancy.Organization, opened investigation.Investigation,
-	offered []offeredSource, brief *investigation.Brief,
+	ctx context.Context,
+	organization tenancy.Organization,
+	opened investigation.Investigation,
+	offered []offeredSource,
+	brief *investigation.Brief,
 ) orientation {
 	oriented := orientation{
 		Subject:     opened.Subject,
