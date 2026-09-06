@@ -55,6 +55,8 @@ timestamps and source identities retained.
 Terminal outcomes and their replay events commit together; failed event writes cannot
 leave a completed result without its ending event.
 Expired worker leases cannot be renewed; recovery ends the interrupted Investigation.
+Conversation detail includes the first 50 turns; use `turnsNext` with the turns endpoint
+to continue reading in order, with up to 200 turns per page.
 
 ## Quick start
 

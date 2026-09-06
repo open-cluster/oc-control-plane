@@ -54,6 +54,8 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.open)),
 		authz.Privileged(http.MethodGet, base+"/{conversation}", authz.ConversationRead,
 			http.HandlerFunc(h.read)),
+		authz.Privileged(http.MethodGet, base+"/{conversation}/turns", authz.ConversationRead,
+			http.HandlerFunc(h.turns)),
 		authz.Privileged(http.MethodPost, base+"/{conversation}/messages",
 			authz.ConversationWrite, http.HandlerFunc(h.say)),
 	}
@@ -275,8 +277,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
 }
 
-// read answers one conversation with its recent transcript and every turn it opened —
-// what a support engineer needs to explain what OpenCluster did, after the fact.
+// read answers one conversation with its recent transcript and first page of turns.
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	_, organization, id, ok := h.addressed(writer, request)
 	if !ok {

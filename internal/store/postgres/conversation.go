@@ -187,41 +187,11 @@ func (p *Database) ConversationDetail(
 		return conversation.Detail{}, err
 	}
 
-	turnRows, err := pool.Query(ctx, `
-		SELECT investigation_id, turn, status, coalesce(conclusion->>'summary', ''),
-		       stopped_by, error, created_at,
-		       concluded_at
-		  FROM investigation
-		 WHERE org_id = $1 AND conversation_id = $2
-		 ORDER BY turn`, organization.String(), id)
+	turns, err := readConversationTurns(ctx, pool, organization, id, defaultPageSize, "")
 	if err != nil {
-		return conversation.Detail{}, fmt.Errorf("reading a conversation's turns: %w", err)
+		return conversation.Detail{}, err
 	}
-	defer turnRows.Close()
-
-	turns := make([]conversation.Turn, 0, 8)
-	for turnRows.Next() {
-		var (
-			turn        conversation.Turn
-			status      int16
-			concludedAt *time.Time
-		)
-		if err := turnRows.Scan(&turn.InvestigationID, &turn.Ordinal, &status,
-			&turn.Answer, &turn.StoppedBy, &turn.Error, &turn.CreatedAt,
-			&concludedAt); err != nil {
-			return conversation.Detail{}, fmt.Errorf("scanning a turn: %w", err)
-		}
-		turn.Status = investigationStatusWord(status)
-		if concludedAt != nil {
-			turn.ConcludedAt = *concludedAt
-		}
-		turns = append(turns, turn)
-	}
-	if err := turnRows.Err(); err != nil {
-		return conversation.Detail{}, fmt.Errorf("reading a conversation's turns: %w", err)
-	}
-
-	return conversation.Detail{Conversation: found, Messages: said, Turns: turns}, nil
+	return conversation.Detail{Conversation: found, Messages: said, Turns: turns.Turns, TurnsNext: turns.Next}, nil
 }
 
 // conversationMessages reads the newest bounded window of a conversation's transcript, in
