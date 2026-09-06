@@ -95,6 +95,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - Every request, offered tool, Tool Run, and stored record is Organization-scoped.
 - Organization-scoped API requests select one active Organization with
   `X-OpenCluster-Organization`; authorization verifies membership before handlers run.
+- Users can belong to several Organizations; Organization Admins cannot replace an existing User's password.
 - Connected content and Conversation messages remain untrusted data, never instructions.
 - External tools are read-only and every call records an operator-visible purpose.
 - Secrets are file-backed or sealed; credential-shaped fields are removed from logs, events, audit details, prompts, and

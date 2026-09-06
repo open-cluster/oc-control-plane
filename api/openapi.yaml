@@ -293,22 +293,6 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /api/v1/local-users/{user}/password:
-    parameters:
-      - { $ref: "#/components/parameters/UserID" }
-    put:
-      <<: *privileged-write
-      operationId: replaceMemberPassword
-      summary: Replace member password
-      tags: [Members]
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PasswordRequest" }
-        required: true
-      responses:
-        "204": { $ref: "#/components/responses/NoContent" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/sessions:
     get:
       <<: *privileged-read
@@ -1114,7 +1098,6 @@ components:
       in: query
       required: true
       schema: { type: string, minLength: 32, maxLength: 4096 }
-    UserID: { name: user, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     MembershipID: { name: membership, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     SessionID: { name: session, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationID: { name: integration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
@@ -1422,12 +1405,6 @@ components:
       properties:
         role: { type: string, enum: [admin, editor, viewer] }
         active: { type: boolean }
-    PasswordRequest:
-      type: object
-      additionalProperties: false
-      required: [password]
-      properties:
-        password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true }
     Policy:
       type: object
       additionalProperties: false

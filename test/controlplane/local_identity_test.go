@@ -589,7 +589,7 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	}
 }
 
-func TestLocalMembersAreAdminManagedAndPasswordResetRevokesSessions(t *testing.T) {
+func TestOrganizationAdminCannotReplaceAMultiOrganizationUsersPassword(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
@@ -616,63 +616,50 @@ func TestLocalMembersAreAdminManagedAndPasswordResetRevokesSessions(t *testing.T
 	if err := json.Unmarshal([]byte(created.body), &member); err != nil || member.UserID == "" {
 		t.Fatalf("created member = %s (%v)", created.body, err)
 	}
-	connection, err := pgx.Connect(context.Background(), plane.dsn)
-	if err != nil {
-		t.Fatalf("connect to identity database: %v", err)
-	}
-	defer func() { _ = connection.Close(context.Background()) }()
-	if _, err = connection.Exec(context.Background(), `
-		INSERT INTO organization (org_id,display_name,created_by) VALUES ($1,'Neighbour','test')`,
-		identityNeighbour); err != nil {
-		t.Fatalf("create neighbor organization: %v", err)
-	}
-	if _, err = connection.Exec(context.Background(), `INSERT INTO organization_membership
-		(membership_id,org_id,user_id,role,source,granted_by) VALUES ($1,$2,$3,'viewer',1,'test')`,
-		uuid.New(), identityNeighbour, member.UserID); err != nil {
-		t.Fatalf("grant neighbor membership: %v", err)
-	}
-
 	grace := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
 		map[string]any{"organization": identityOrg, "email": "grace@example.test", "password": "first member password"})
 	graceCookie := sessionCookie(t, grace)
+	organization := plane.call(t, http.MethodPost,
+		"http://"+plane.operator+"/api/v1/organizations", map[string]any{
+			"displayName": "Neighbour", "requestedSlug": identityNeighbour,
+		}, asSession(graceCookie))
+	if organization.status != http.StatusCreated {
+		t.Fatalf("creating another Organization = %d: %s", organization.status, organization.body)
+	}
+	who := readSession(t, plane, graceCookie)
+	if len(who.Organizations) != 2 {
+		t.Fatalf("User memberships = %+v, want both Organizations", who.Organizations)
+	}
 	neighbor := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
 		map[string]any{"organization": identityNeighbour, "email": "grace@example.test", "password": "first member password"})
 	neighborCookie := sessionCookie(t, neighbor)
-
-	csrf := plane.call(t, http.MethodPut,
-		localUsersURL+"/"+member.UserID+"/password",
-		map[string]any{"password": "replacement member password"},
-		asSession(admin), inOrganization(identityOrg), withoutOrigin)
-	if csrf.status != http.StatusForbidden {
-		t.Fatalf("password reset without origin = %d: %s", csrf.status, csrf.body)
-	}
 
 	reset := plane.call(t, http.MethodPut,
 		localUsersURL+"/"+member.UserID+"/password",
 		map[string]any{"password": "replacement member password"},
 		asSession(admin), inOrganization(identityOrg))
-	if reset.status != http.StatusNoContent {
-		t.Fatalf("password reset = %d: %s", reset.status, reset.body)
+	if reset.status != http.StatusNotFound {
+		t.Fatalf("removed password reset route = %d: %s", reset.status, reset.body)
 	}
 
-	revoked := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
+	retained := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
 		nil, asSession(graceCookie))
-	if revoked.status != http.StatusUnauthorized {
-		t.Fatalf("session after reset = %d: %s", revoked.status, revoked.body)
+	if retained.status != http.StatusOK {
+		t.Fatalf("session after refused reset = %d: %s", retained.status, retained.body)
 	}
-	neighborRevoked := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
+	neighborRetained := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
 		nil, asSession(neighborCookie))
-	if neighborRevoked.status != http.StatusUnauthorized {
-		t.Fatalf("neighbor session after reset = %d: %s", neighborRevoked.status, neighborRevoked.body)
+	if neighborRetained.status != http.StatusOK {
+		t.Fatalf("neighbor session after refused reset = %d: %s", neighborRetained.status, neighborRetained.body)
 	}
 	oldPassword := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
 		map[string]any{"organization": identityOrg, "email": "grace@example.test", "password": "first member password"})
-	if oldPassword.status != http.StatusForbidden {
+	if oldPassword.status != http.StatusOK {
 		t.Fatalf("old password = %d: %s", oldPassword.status, oldPassword.body)
 	}
 	newPassword := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
-		map[string]any{"organization": identityOrg, "email": "grace@example.test", "password": "replacement member password"})
-	if newPassword.status != http.StatusOK {
-		t.Fatalf("new password = %d: %s", newPassword.status, newPassword.body)
+		map[string]any{"organization": identityNeighbour, "email": "grace@example.test", "password": "replacement member password"})
+	if newPassword.status != http.StatusForbidden {
+		t.Fatalf("neighbor sign-in with replacement password = %d: %s", newPassword.status, newPassword.body)
 	}
 }
