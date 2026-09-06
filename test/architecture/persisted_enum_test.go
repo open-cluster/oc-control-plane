@@ -258,6 +258,7 @@ var enumColumns = map[string]map[string][]int{
 			incidentStatusValues...),
 		"role": conversationRoleValues,
 	},
+	"conversation_capacity.go": {"role": conversationRoleValues},
 	// The ledger opens scopes only for kubernetes Integrations and excludes baselines from
 	// every change query.
 	"change_ledger.go": {

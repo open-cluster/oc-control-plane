@@ -41,10 +41,10 @@ Licensed under the [Apache License 2.0](./LICENSE).
    Relay.
 4. Operators watch hypotheses and operational progress while numbered Tool Runs execute.
 5. The conclusion reports impact, findings, hypotheses, action proposals, and limitations.
+6. After resolution, an operator can generate, correct, and review a draft Postmortem.
 
 Follow-up Messages queue behind an active Investigation. Each Organization has a limit of
 100 unassigned person Messages across Conversations; accepted work drains in bounded batches.
-6. After resolution, an operator can generate, correct, and review a draft Postmortem.
 
 ## Quick start
 
