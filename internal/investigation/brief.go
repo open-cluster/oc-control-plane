@@ -17,13 +17,8 @@ const (
 	BriefRecentMessages = 12
 	// BriefMaxFindings bounds how many prior cited findings a brief carries.
 	BriefMaxFindings = 40
-	// BriefMaxConstraints bounds remembered recommendations and failed reads.
+	// BriefMaxConstraints bounds retained limitations.
 	BriefMaxConstraints = 12
-	// BriefMaxOperatorStatements bounds the deterministic, history-wide sample of older
-	// person-authored testimony retained outside the recent verbatim tail.
-	BriefMaxOperatorStatements = 12
-	// BriefMaxIdentifiers bounds the service and resource identifiers in play.
-	BriefMaxIdentifiers = 30
 	// BriefMessageBound bounds one remembered message.
 	BriefMessageBound = 1024
 )
@@ -33,15 +28,16 @@ const (
 // because the model must be able to tell an operator's instruction from its own earlier
 // answer.
 type BriefMessage struct {
+	Answer *Conclusion `json:"answer,omitempty"`
 	// FromPerson distinguishes what somebody said from what the agent answered.
-	FromPerson bool
+	FromPerson bool `json:"fromPerson"`
 	// Actor is who said it, for attribution. Never a credential and never an email
 	// address the model has any use for; a display name.
-	Actor           string
-	Text            string
-	Sequence        int64
-	CreatedAt       time.Time
-	InvestigationID uuid.UUID
+	Actor           string    `json:"actor,omitempty"`
+	Text            string    `json:"text"`
+	Sequence        int64     `json:"sequence,omitempty"`
+	CreatedAt       time.Time `json:"createdAt,omitzero"`
+	InvestigationID uuid.UUID `json:"investigationId,omitzero"`
 }
 
 // PriorFinding retains the canonical origin of an earlier observation.
@@ -53,6 +49,9 @@ type PriorFinding struct {
 	Confidence      string
 	Runs            []int
 	EvidenceRefs    []EvidenceRef
+	ObservedAt      time.Time
+	WindowFrom      time.Time
+	WindowUntil     time.Time
 }
 
 func (p PriorFinding) References() []EvidenceRef {
@@ -72,25 +71,12 @@ func (p PriorFinding) Reference() string {
 // Brief is one conversation's contribution to a turn's Orientation.
 type Brief struct {
 	MissingEvidence bool
-	ConversationID  string
-	Subject         string
 	// Turn is this turn's one-based position, so the agent knows it is not the first.
 	Turn int
 	// Recent is the verbatim tail, oldest first.
 	Recent []BriefMessage
-	// RecentFrom is the sequence the verbatim tail starts at.
-	RecentFrom int64
-	// OperatorStatements are bounded older person-authored messages retained as
-	// untrusted testimony, so durable operator facts do not disappear with a long tail.
-	OperatorStatements []BriefMessage
 	// Findings are prior turns' cited findings.
 	Findings []PriorFinding
 	// Limitations are gaps and unresolved constraints declared by prior conclusions.
 	Limitations []string
-	// FailedReads are the prior turns' reads that did not work.
-	FailedReads []string
-	// Recommended is what prior turns already advised.
-	Recommended []string
-	// Identifiers are what the prior turns actually read — channel ids, repository ids —
-	Identifiers []string
 }

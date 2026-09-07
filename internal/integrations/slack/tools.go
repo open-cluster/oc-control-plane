@@ -324,8 +324,8 @@ func threadRepliesTool(client *Client) integrations.Tool {
 		Arguments: declared,
 		Permissions: "the bot token needs the channels:history scope; users:read resolves " +
 			"authors to names",
-		Requires:           []string{"channels:history"},
-		ConversationScoped: true,
+		Requires:            []string{"channels:history"},
+		SupportsThreadScope: true,
 		Output: "the thread's messages in order — the newest tail of what a bounded walk " +
 			"reached — each with ts, the author resolved to a display name, text and a " +
 			"permalink; the truncated flag reports a thread longer than what came back, " +

@@ -330,7 +330,7 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 				{
 					Name: "chat.thread", Description: "reads the originating thread",
 					WhenToUse: "for its thread", WhenNotToUse: "for another thread",
-					Permissions: "history", Output: "messages", ConversationScoped: true, Run: read,
+					Permissions: "history", Output: "messages", SupportsThreadScope: true, Run: read,
 				},
 				{
 					Name: "chat.channel", Description: "reads an entire channel",

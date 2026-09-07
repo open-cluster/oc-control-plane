@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -26,7 +27,7 @@ func (p *Database) ConversationBrief(
 	if tail <= 0 || tail > investigation.BriefRecentMessages {
 		tail = investigation.BriefRecentMessages
 	}
-	found, err := p.Conversation(ctx, organization, id)
+	_, err := p.Conversation(ctx, organization, id)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
@@ -35,18 +36,12 @@ func (p *Database) ConversationBrief(
 		return investigation.Brief{}, err
 	}
 
-	brief := investigation.Brief{
-		ConversationID: found.ID.String(),
-		Subject:        found.Subject,
-	}
+	brief := investigation.Brief{}
 	messages, err := conversationMessages(ctx, pool, organization, id, tail)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
 	for _, message := range messages {
-		if brief.RecentFrom == 0 {
-			brief.RecentFrom = message.Sequence
-		}
 		brief.Recent = append(brief.Recent, investigation.BriefMessage{
 			FromPerson:      message.Role == conversationRolePerson,
 			Actor:           message.ActorDisplay,
@@ -61,23 +56,10 @@ func (p *Database) ConversationBrief(
 		return investigation.Brief{}, err
 	}
 	// Transaction timestamps can precede lock acquisition; Message sequence stays authoritative.
-	exchange := make([]investigation.BriefMessage, 0, len(brief.Recent)+len(answers))
-	for _, message := range brief.Recent {
-		for len(answers) > 0 && answers[0].CreatedAt.Before(message.CreatedAt) {
-			exchange = append(exchange, answers[0])
-			answers = answers[1:]
-		}
-		exchange = append(exchange, message)
-	}
-	exchange = append(exchange, answers...)
-	brief.Recent = exchange
+	brief.Recent = mergeExchange(brief.Recent, answers)
 	if len(brief.Recent) > tail {
 		brief.Recent = brief.Recent[len(brief.Recent)-tail:]
 	}
-	if err = readOlderOperatorStatements(ctx, pool, organization, id, &brief); err != nil {
-		return investigation.Brief{}, err
-	}
-
 	if err = readPriorTurns(ctx, pool, organization, id, &brief); err != nil {
 		return investigation.Brief{}, err
 	}
@@ -99,7 +81,7 @@ func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.O
 	id uuid.UUID, limit int,
 ) ([]investigation.BriefMessage, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT investigation_id, concluded_at, COALESCE(conclusion->>'summary', '')
+		SELECT investigation_id, concluded_at, COALESCE(conclusion->>'summary', ''), conclusion
 		  FROM investigation
 		 WHERE org_id = $1 AND conversation_id = $2 AND status = 2
 		 ORDER BY turn DESC
@@ -111,7 +93,7 @@ func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.O
 	var answers []investigation.BriefMessage
 	for rows.Next() {
 		var answer investigation.BriefMessage
-		if err = rows.Scan(&answer.InvestigationID, &answer.CreatedAt, &answer.Text); err != nil {
+		if err = rows.Scan(&answer.InvestigationID, &answer.CreatedAt, &answer.Text, &answer.Answer); err != nil {
 			return nil, fmt.Errorf("scanning recent answer: %w", err)
 		}
 		answer.Text = briefExchangeText(answer.Text)
@@ -130,57 +112,6 @@ func briefExchangeText(text string) string {
 	}
 	const suffix = " [truncated]"
 	return boundedRunes(text, investigation.BriefMessageBound-len(suffix)) + suffix
-}
-
-func readOlderOperatorStatements(
-	ctx context.Context, pool querier, organization tenancy.Organization, id uuid.UUID,
-	brief *investigation.Brief,
-) error {
-	if brief.RecentFrom <= 1 {
-		return nil
-	}
-	// Probe fixed points across the older sequence range through the partial person-message
-	// index. Both the result and the database work stay bounded as the transcript grows.
-	rows, err := pool.Query(ctx, `
-		WITH targets AS (
-			SELECT 1 + (($3::bigint - 2) * point / ($4 - 1)) AS sequence
-			  FROM generate_series(0, $4::int - 1) point
-		), probed AS (
-			SELECT message.sequence, message.actor_display, message.text
-			  FROM targets
-			 CROSS JOIN LATERAL (
-				SELECT sequence, actor_display, text
-				  FROM conversation_message
-				 WHERE org_id = $1 AND conversation_id = $2 AND role = 1
-				   AND sequence >= targets.sequence AND sequence < $3
-				 ORDER BY sequence
-				 LIMIT 1
-			 ) message
-		)
-		SELECT actor_display, text
-		  FROM probed
-		 GROUP BY sequence, actor_display, text
-		 ORDER BY sequence`, organization.String(), id, brief.RecentFrom,
-		investigation.BriefMaxOperatorStatements)
-	if err != nil {
-		return fmt.Errorf("reading older operator statements: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var actor, text string
-		if err = rows.Scan(&actor, &text); err != nil {
-			return fmt.Errorf("scanning an older operator statement: %w", err)
-		}
-		brief.OperatorStatements = append(brief.OperatorStatements, investigation.BriefMessage{
-			FromPerson: true,
-			Actor:      actor,
-			Text:       boundedRunes(text, investigation.BriefMessageBound),
-		})
-	}
-	if err = rows.Err(); err != nil {
-		return fmt.Errorf("reading older operator statements: %w", err)
-	}
-	return nil
 }
 
 // conversationRolePerson is the message role a person's own words carry. Named here rather
@@ -206,7 +137,8 @@ func readPriorTurns(
 	// theirs. Citations retain Investigation identity independently of local turn ordinals.
 	rows, err := pool.Query(ctx, `
 		SELECT CASE WHEN turn.conversation_id = $2 THEN turn.turn ELSE 0 END,
-		       turn.investigation_id, turn.conclusion
+		       turn.investigation_id, turn.conclusion, turn.concluded_at,
+		       turn.window_from, turn.window_until
 		  FROM investigation turn
 		 WHERE turn.org_id = $1
 		   AND turn.status = 2
@@ -228,8 +160,11 @@ func readPriorTurns(
 			investigationID uuid.UUID
 			turn            int
 			conclusion      []byte
+			observedAt      time.Time
+			windowFrom      time.Time
+			windowUntil     time.Time
 		)
-		if err = rows.Scan(&turn, &investigationID, &conclusion); err != nil {
+		if err = rows.Scan(&turn, &investigationID, &conclusion, &observedAt, &windowFrom, &windowUntil); err != nil {
 			return fmt.Errorf("scanning a prior turn: %w", err)
 		}
 		var decoded investigation.Conclusion
@@ -242,11 +177,6 @@ func readPriorTurns(
 					len(brief.Limitations) < investigation.BriefMaxConstraints {
 					brief.Limitations = append(brief.Limitations,
 						boundedRunes(limitation.Statement, investigation.BriefMessageBound))
-				}
-			}
-			for _, action := range decoded.Actions {
-				if len(brief.Recommended) < investigation.BriefMaxConstraints {
-					brief.Recommended = append(brief.Recommended, action.Title)
 				}
 			}
 		}
@@ -270,6 +200,9 @@ func readPriorTurns(
 				Confidence:      finding.Confidence,
 				Runs:            finding.Sources,
 				EvidenceRefs:    finding.EvidenceRefs,
+				ObservedAt:      observedAt,
+				WindowFrom:      windowFrom,
+				WindowUntil:     windowUntil,
 			})
 		}
 		brief.Findings = append(prior, brief.Findings...)
@@ -278,59 +211,5 @@ func readPriorTurns(
 		return fmt.Errorf("reading a conversation's prior findings: %w", err)
 	}
 
-	return readPriorReads(ctx, pool, organization, id, brief)
-}
-
-// readPriorReads fills in what the conversation's turns actually read: the identifiers in
-// play, and the reads that failed — so a gap in an answer stays explained.
-func readPriorReads(
-	ctx context.Context, pool querier, organization tenancy.Organization, id uuid.UUID,
-	brief *investigation.Brief,
-) error {
-	rows, err := pool.Query(ctx, `
-		SELECT run.sources, run.error
-		  FROM investigation_tool_run run
-		  JOIN investigation turn
-		    ON turn.investigation_id = run.investigation_id
-		   AND turn.org_id           = run.org_id
-		 WHERE turn.org_id = $1 AND turn.conversation_id = $2
-		 ORDER BY turn.turn DESC, run.ordinal DESC
-		 LIMIT $3`, organization.String(), id,
-		investigation.BriefMaxIdentifiers+investigation.BriefMaxConstraints)
-	if err != nil {
-		return fmt.Errorf("reading a conversation's prior reads: %w", err)
-	}
-	defer rows.Close()
-
-	identifiers := map[string]bool{}
-	failures := map[string]bool{}
-	for rows.Next() {
-		var (
-			sources  []byte
-			runError string
-		)
-		if err = rows.Scan(&sources, &runError); err != nil {
-			return fmt.Errorf("scanning a prior read: %w", err)
-		}
-		read, decodeErr := decodeStringArray(sources)
-		if decodeErr != nil {
-			return fmt.Errorf("decoding a prior read's sources: %w", decodeErr)
-		}
-		for _, identifier := range read {
-			if identifier != "" && !identifiers[identifier] &&
-				len(brief.Identifiers) < investigation.BriefMaxIdentifiers {
-				identifiers[identifier] = true
-				brief.Identifiers = append(brief.Identifiers, identifier)
-			}
-		}
-		if runError != "" && !failures[runError] &&
-			len(brief.FailedReads) < investigation.BriefMaxConstraints {
-			failures[runError] = true
-			brief.FailedReads = append(brief.FailedReads, runError)
-		}
-	}
-	if err = rows.Err(); err != nil {
-		return fmt.Errorf("reading a conversation's prior reads: %w", err)
-	}
 	return nil
 }

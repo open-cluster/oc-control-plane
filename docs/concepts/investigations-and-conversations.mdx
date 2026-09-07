@@ -15,6 +15,11 @@ Recent context includes up to 12 Messages and completed answers combined, oldest
 with their timestamps. Answers come from completed Investigations in this Conversation;
 another Conversation's private answers are not included. Long entries are shortened and
 marked as truncated. This bounded context is not a complete memory of the Conversation.
+When recent context is insufficient, the investigator can read bounded older pages from
+the same Conversation. Those pages preserve Message order, corrections, canonical answers,
+and their Investigation identities. Stored history is context rather than a current request
+or fresh evidence. Prior Findings retain their observation time and evidence window and can
+be reconsidered after a correction, refresh request, or window change.
 
 Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
 

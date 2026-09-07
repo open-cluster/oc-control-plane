@@ -38,7 +38,7 @@ func agentCalls(calls []CompletionCall) []toolCall {
 			_ = json.Unmarshal(call.Arguments, &arguments)
 		}
 		translatedCall := toolCall{ID: call.ID, Tool: call.Name}
-		if call.Name == UpdateHypothesesToolName {
+		if call.Name == UpdateHypothesesToolName || call.Name == historyToolName {
 			translatedCall.Arguments = arguments
 		} else {
 			translatedCall.Purpose, _ = arguments["purpose"].(string)
@@ -249,8 +249,11 @@ func firstLine(text string) string {
 // double cannot accidentally store an untraceable finding either.
 func checkCitations(findings []investigation.Finding, runs int) string {
 	for _, finding := range findings {
-		if len(finding.Sources) == 0 {
+		if len(finding.Sources) == 0 && len(finding.EvidenceRefs) == 0 {
 			return "the reasoner stated a finding citing no read at all"
+		}
+		if len(finding.Sources) == 0 {
+			continue
 		}
 		cited := append([]int(nil), finding.Sources...)
 		sort.Ints(cited)
