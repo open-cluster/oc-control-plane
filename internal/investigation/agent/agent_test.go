@@ -172,10 +172,10 @@ func validConclusion(t *testing.T, refs []int) json.RawMessage {
 
 func configuredTestAgent(t *testing.T, store *records, model Model, catalog integrations.Catalog) *Agent {
 	t.Helper()
-	return &Agent{model: model, deployment: Deployment{Provider: "scripted", Model: "test", MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
+	return &Agent{model: model, deployment: Deployment{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
 }
 
-func TestRunAcceptsAModelIdentifierWithoutALocalLookupEntry(t *testing.T) {
+func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
 	store := &records{}
 	model := &scriptedModel{next: func(_ int, _ Prompt) (Completion, error) {
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -183,7 +183,8 @@ func TestRunAcceptsAModelIdentifierWithoutALocalLookupEntry(t *testing.T) {
 		}}}, nil
 	}}
 	built, err := NewAgent(Deployment{
-		Provider: "anthropic", Model: "claude-future-release", MaxOutputTokens: 1_024,
+		Provider: "anthropic", Model: "claude-future-release",
+		ContextWindowTokens: 128_000, MaxOutputTokens: 1_024,
 	}, model)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +195,6 @@ func TestRunAcceptsAModelIdentifierWithoutALocalLookupEntry(t *testing.T) {
 			return integrations.ToolResult{}, nil
 		})
 	built.Logger = slog.New(slog.DiscardHandler)
-	built.ContextWindowTokens = 128_000
 
 	organization, _ := tenancy.NewOrganization("org-test")
 	if err = built.Run(context.Background(), organization,
@@ -725,7 +725,7 @@ func TestRunReservesTheDeploymentOutputFromTheContextWindow(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	agent.ContextWindowTokens = 1_026
+	agent.deployment.ContextWindowTokens = 1_026
 
 	organization, _ := tenancy.NewOrganization("org-test")
 	if err := agent.Run(context.Background(), organization,
@@ -755,9 +755,9 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 				return context.WithTimeout(context.Background(), time.Minute)
 			}},
 		{name: "context", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.ContextWindowTokens = 1_025 }},
+			configure: func(a *Agent) { a.deployment.ContextWindowTokens = 1_025 }},
 		{name: "context exhausted by reserved output", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.ContextWindowTokens = 1_024 }},
+			configure: func(a *Agent) { a.deployment.ContextWindowTokens = 1_024 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

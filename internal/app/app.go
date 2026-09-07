@@ -176,7 +176,6 @@ func Run(
 		configuredAgent.Logger = logger
 		configuredAgent.MaxToolRuns = options.MaxToolRuns
 		configuredAgent.MaxTurns = options.MaxTurns
-		configuredAgent.ContextWindowTokens = cfg.ModelContextWindowTokens
 		investigationAgent = configuredAgent
 	}
 
@@ -210,31 +209,36 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 // modelBoundary validates and builds the configured model-backed agent.
 func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*agent.Agent, error) {
 	deployment := agent.Deployment{
-		Provider:   cfg.ModelProvider,
-		Model:      cfg.ModelName,
-		Effort:     agent.Effort(options.ModelEffort),
-		BaseURL:    options.ModelBaseURL,
-		Credential: agent.Secret(cfg.ModelKey),
+		Provider:            cfg.ModelProvider,
+		Model:               cfg.ModelName,
+		Effort:              agent.Effort(options.ModelEffort),
+		BaseURL:             options.ModelBaseURL,
+		Credential:          agent.Secret(cfg.ModelKey),
+		ContextWindowTokens: cfg.ModelContextWindowTokens,
+		MaxOutputTokens:     cfg.ModelMaxOutputTokens,
 	}.WithDefaults()
 	if err := deployment.Validate(); err != nil {
 		return nil, err
 	}
 	model := options.Model
-
-	if model == nil {
-		var openErr error
-		switch deployment.Provider {
-		case anthropic.Name:
+	var openErr error
+	switch deployment.Provider {
+	case anthropic.Name:
+		deployment, openErr = anthropic.ResolveDeployment(deployment)
+		if openErr == nil && model == nil {
 			model, openErr = anthropic.New(deployment, anthropic.Options{})
-		case zai.Name:
+		}
+	case zai.Name:
+		deployment, openErr = zai.ResolveDeployment(deployment)
+		if openErr == nil && model == nil {
 			model, openErr = zai.New(deployment, zai.Options{})
-		default:
-			return nil, fmt.Errorf("%q is not a model provider this build serves; it serves [%s, %s]",
-				deployment.Provider, anthropic.Name, zai.Name)
 		}
-		if openErr != nil {
-			return nil, openErr
-		}
+	default:
+		return nil, fmt.Errorf("%q is not a model provider this build serves; it serves [%s, %s]",
+			deployment.Provider, anthropic.Name, zai.Name)
+	}
+	if openErr != nil {
+		return nil, openErr
 	}
 	built, err := agent.NewAgent(deployment, model)
 	if err != nil {

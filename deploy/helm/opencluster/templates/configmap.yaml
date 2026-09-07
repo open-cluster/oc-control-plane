@@ -16,7 +16,12 @@ data:
       provider: {{ .Values.model.provider | quote }}
       model: {{ .Values.model.name | quote }}
       api_key_file: "/run/opencluster/credentials/{{ .Values.credentials.modelKey }}"
-      context_window_tokens: {{ .Values.model.contextWindowTokens }}
+{{ with .Values.model.contextWindowTokens }}
+      context_window_tokens: {{ . }}
+{{ end }}
+{{ with .Values.model.maxOutputTokens }}
+      max_output_tokens: {{ . }}
+{{ end }}
     investigation:
       workers: {{ .Values.investigation.workers }}
       max_pending_per_organization: {{ .Values.investigation.maxPendingPerOrganization }}

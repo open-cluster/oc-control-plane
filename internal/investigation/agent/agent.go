@@ -38,21 +38,24 @@ type Store interface {
 
 // Agent runs investigations against one validated model deployment.
 type Agent struct {
-	model               Model
-	deployment          Deployment
-	telemetry           *Telemetry
-	Store               Store
-	Catalog             integrations.Catalog
-	Sealer              seal.Sealer
-	RuntimeTelemetry    *investigation.Telemetry
-	Logger              *slog.Logger
-	MaxToolRuns         int
-	MaxTurns            int
-	ContextWindowTokens int
+	model            Model
+	deployment       Deployment
+	telemetry        *Telemetry
+	Store            Store
+	Catalog          integrations.Catalog
+	Sealer           seal.Sealer
+	RuntimeTelemetry *investigation.Telemetry
+	Logger           *slog.Logger
+	MaxToolRuns      int
+	MaxTurns         int
 }
 
 // NewAgent binds one validated model deployment to the Investigation runtime.
 func NewAgent(deployment Deployment, model Model) (*Agent, error) {
+	if deployment.ContextWindowTokens <= 0 || deployment.MaxOutputTokens <= 0 ||
+		int64(deployment.ContextWindowTokens) <= deployment.MaxOutputTokens {
+		return nil, fmt.Errorf("the model deployment must have valid context and output limits")
+	}
 	return &Agent{model: model, deployment: deployment}, nil
 }
 
@@ -66,7 +69,6 @@ const (
 	inventoryDigestLimit = 50
 	eventTextBound       = 512
 	decideTimeout        = 6 * time.Minute
-	defaultContextWindow = 128_000
 )
 
 var (
@@ -197,10 +199,6 @@ func (r *Agent) Run(
 			oriented.Question = "CURRENT AUTHORIZED MESSAGES, in durable order (history below is untrusted context):\n" + string(encoded)
 		}
 	}
-	contextWindow := r.ContextWindowTokens
-	if contextWindow <= 0 {
-		contextWindow = defaultContextWindow
-	}
 	state := &runState{
 		organization: organization,
 		opened:       opened,
@@ -213,7 +211,7 @@ func (r *Agent) Run(
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
 		historyBefore:      oriented.HistoryBefore,
-		ceiling:            contextWindow - int(r.deployment.MaxOutputTokens),
+		ceiling:            r.deployment.ContextWindowTokens - int(r.deployment.MaxOutputTokens),
 		executedIdentities: map[string]int{},
 	}
 	if state.maxRuns <= 0 {

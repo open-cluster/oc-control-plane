@@ -15,7 +15,6 @@ const (
 	defaultAuthenticationMode                     = "local"
 	defaultInvestigationWorkers                   = 8
 	defaultInvestigationMaxPendingPerOrganization = 100
-	defaultModelContextWindowTokens               = 128_000
 )
 
 var SupportedEnvironmentKeys = []string{
@@ -34,6 +33,7 @@ var SupportedEnvironmentKeys = []string{
 	EnvModelName,
 	EnvModelKeyFile,
 	EnvModelContextWindowSize,
+	EnvModelMaxOutputTokens,
 	EnvInvestigationWorkers,
 	EnvInvestigationMaxPendingPerOrganization,
 	EnvSealingKeyFile,
@@ -61,6 +61,7 @@ const (
 	EnvModelName                              = "OC_AI_MODEL"
 	EnvModelKeyFile                           = "OC_AI_API_KEY_FILE"
 	EnvModelContextWindowSize                 = "OC_AI_CONTEXT_WINDOW_SIZE"
+	EnvModelMaxOutputTokens                   = "OC_AI_MAX_OUTPUT_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
@@ -137,6 +138,7 @@ type Config struct {
 	ModelName                string
 	ModelKey                 string
 	ModelContextWindowTokens int
+	ModelMaxOutputTokens     int64
 
 	InvestigationWorkers                    int
 	MaxPendingInvestigationsPerOrganization int
@@ -150,7 +152,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		AuthenticationMode:                      defaultAuthenticationMode,
 		InvestigationWorkers:                    defaultInvestigationWorkers,
 		MaxPendingInvestigationsPerOrganization: defaultInvestigationMaxPendingPerOrganization,
-		ModelContextWindowTokens:                defaultModelContextWindowTokens,
 	}
 
 	var err error
@@ -203,9 +204,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 
 	if cfg.ModelContextWindowTokens, err = positiveInteger(lookup,
 		EnvModelContextWindowSize,
-		defaultModelContextWindowTokens); err != nil {
+		0); err != nil {
 		return Config{}, err
 	}
+	modelOutput, outputErr := positiveInteger(lookup, EnvModelMaxOutputTokens, 0)
+	if outputErr != nil {
+		return Config{}, outputErr
+	}
+	cfg.ModelMaxOutputTokens = int64(modelOutput)
 	if cfg.InvestigationWorkers, err = positiveInteger(lookup,
 		EnvInvestigationWorkers,
 		defaultInvestigationWorkers); err != nil {

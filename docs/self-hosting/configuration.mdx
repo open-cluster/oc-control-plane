@@ -25,7 +25,6 @@ ai:
   provider: "anthropic"
   model: "MODEL_ID"
   api_key_file: "/run/opencluster/credentials/model-key"
-  context_window_tokens: 128000
 investigation:
   workers: 8
   max_pending_per_organization: 100
@@ -72,6 +71,12 @@ to `anthropic` or `zai`, set `OC_AI_MODEL` to an exact model identifier accepted
 provider, and set `OC_AI_API_KEY_FILE` to the mounted credential file. Organization-level
 BYOK is not part of the OSS v0.1 contract.
 
+OpenCluster supplies the exact context and maximum output limits for the shipped model IDs:
+`claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5-20251001`, and `glm-4.7`.
+For a custom provider model ID, set both `OC_AI_CONTEXT_WINDOW_SIZE` and
+`OC_AI_MAX_OUTPUT_SIZE`. These advanced overrides may lower a shipped model's limits but
+cannot exceed its published capacity.
+
 Restart the control plane, wait for `/readyz`, and run one bounded Investigation. Startup
 proves that the file is readable; only a completed Investigation proves that the selected
 provider and model satisfy the structured result contract. For authentication, quota,
@@ -101,7 +106,8 @@ and training terms before production use.
 | `OC_AI_PROVIDER` | Native AI provider: `anthropic` or `zai`. |
 | `OC_AI_MODEL` | Exact model identifier. |
 | `OC_AI_API_KEY_FILE` | AI provider credential file. |
-| `OC_AI_CONTEXT_WINDOW_SIZE` | Model context-window size in tokens; default `128000`. |
+| `OC_AI_CONTEXT_WINDOW_SIZE` | Optional advanced model context-window override; required for a custom model ID. |
+| `OC_AI_MAX_OUTPUT_SIZE` | Optional advanced model output-limit override in tokens; required for a custom model ID. |
 | `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
 | `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |
 | `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. |
