@@ -19,7 +19,10 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
 	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
-		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: "production appears affected"}, "", investigation.Usage{}); err != nil {
+		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{
+			Summary:  "production appears affected",
+			Findings: []investigation.Finding{{Statement: "production appears affected", Sources: []int{1}}},
+		}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	say(t, database, organization, opened.ID, "correction: that was staging")
@@ -51,6 +54,21 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 	}
 	if len(detail.Messages) != 2 {
 		t.Fatalf("answer was duplicated into authored Messages: %+v", detail.Messages)
+	}
+	for range 14 {
+		say(t, database, organization, opened.ID, "later discussion")
+	}
+	history, err := database.ConversationHistory(ctx, organization, opened.ID, 3)
+	if err != nil || len(history.Exchange) != len(want) {
+		t.Fatalf("older exchange = %+v, error=%v", history, err)
+	}
+	if !history.MissingEvidence || len(history.Limitations) != 1 {
+		t.Fatalf("pruned evidence was not carried as a history limitation: %+v", history)
+	}
+	for index, expected := range want {
+		if history.Exchange[index].Text != expected {
+			t.Fatalf("older exchange[%d] = %q, want %q", index, history.Exchange[index].Text, expected)
+		}
 	}
 }
 

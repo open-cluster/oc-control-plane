@@ -513,7 +513,8 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading Ada's own brief: %v", err)
 	}
-	if len(adaBrief.Limitations) != 1 || len(adaBrief.Recommended) != 1 {
+	if len(adaBrief.Limitations) != 1 || len(adaBrief.Recent) != 2 ||
+		adaBrief.Recent[1].Answer == nil || len(adaBrief.Recent[1].Answer.Actions) != 1 {
 		t.Fatalf("Ada's conclusion prose was not persisted into her own continuity: %+v",
 			adaBrief)
 	}
@@ -551,14 +552,14 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 
 	// NOT SHARED: Ada's messages, and Ada's prose.
 	for _, message := range brief.Recent {
-		if strings.Contains(message.Text, "ADA-PRIVATE") {
+		if strings.Contains(message.Text, "ADA-PRIVATE") || message.Answer != nil {
 			t.Errorf("Bo's brief carries Ada's message %q; conversations about one "+
 				"incident share the incident, never each other", message.Text)
 		}
 	}
-	if len(brief.Limitations) != 0 || len(brief.Recommended) != 0 {
-		t.Errorf("Bo's brief carries Ada's private conclusion prose: limitations=%+v recommended=%+v",
-			brief.Limitations, brief.Recommended)
+	if len(brief.Limitations) != 0 {
+		t.Errorf("Bo's brief carries Ada's private conclusion prose: limitations=%+v",
+			brief.Limitations)
 	}
 	// A conversation about a DIFFERENT incident shares nothing at all.
 	other := recordIncident(t, database, organization, integration, "group-unrelated")
@@ -610,9 +611,7 @@ func openConversationAbout(
 	return opened
 }
 
-// What earlier turns already recommended travels too, so the tenth turn stops advising the
-// rollback the second one did.
-func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
+func TestTheBriefCarriesActionsWithTheirCanonicalAnswer(t *testing.T) {
 	t.Parallel()
 
 	database, organization := migratedDatabase(t)
@@ -638,8 +637,14 @@ func TestTheBriefCarriesWhatEarlierTurnsAlreadyRecommended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the brief: %v", err)
 	}
-	if len(brief.Recommended) != 2 || brief.Recommended[0] != "roll back the 14:02 deploy" {
-		t.Errorf("recommended = %+v; what was already advised must travel", brief.Recommended)
+	var answer *investigation.Conclusion
+	for _, entry := range brief.Recent {
+		if entry.InvestigationID == turn.InvestigationID && !entry.FromPerson {
+			answer = entry.Answer
+		}
+	}
+	if answer == nil || len(answer.Actions) != 2 || answer.Actions[0].Title != "roll back the 14:02 deploy" {
+		t.Fatalf("recommendations lost their canonical answer owner: %+v", answer)
 	}
 }
 
@@ -700,7 +705,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 	}
 }
 
-func TestConversationBriefPreservesLimitationsAndOperatorStatementsBeyondOneHundredMessages(t *testing.T) {
+func TestConversationHistoryRetrievesOlderFactsBeyondOneHundredMessages(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	database, organization := migratedDatabase(t)
@@ -744,36 +749,37 @@ func TestConversationBriefPreservesLimitationsAndOperatorStatementsBeyondOneHund
 	if len(brief.Limitations[1]) > investigation.BriefMessageBound {
 		t.Fatalf("a retained limitation is unbounded: %d characters", len(brief.Limitations[1]))
 	}
-	if len(brief.OperatorStatements) > investigation.BriefMaxOperatorStatements {
-		t.Fatalf("operator statements are unbounded: %d", len(brief.OperatorStatements))
+	page, err := database.ConversationHistory(ctx, organization, opened.ID, 51)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Exchange) > investigation.BriefRecentMessages+1 || page.NextBefore == 0 {
+		t.Fatalf("unbounded or unpageable history: %+v", page)
 	}
 	foundFact := false
-	for _, statement := range brief.OperatorStatements {
+	for _, statement := range page.Exchange {
 		foundFact = foundFact || strings.Contains(statement.Text, "production traffic stayed flat")
 	}
 	if !foundFact {
-		t.Fatalf("old operator-provided fact fell out of bounded continuity: %+v",
-			brief.OperatorStatements)
+		t.Fatalf("selected older fact was not retrieved: %+v", page)
 	}
 }
 
-func TestOlderOperatorContinuityHasAnIndexedProbePath(t *testing.T) {
+func TestHistoryMigrationRemovesTheRetiredSamplerIndex(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
 	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var definition string
-	err = pool.QueryRow(context.Background(), `
-		SELECT indexdef FROM pg_indexes
-		 WHERE schemaname = 'public'
-		   AND indexname = 'conversation_message_person_history_idx'`).Scan(&definition)
+	var exists bool
+	err = pool.QueryRow(context.Background(), `SELECT EXISTS (
+		SELECT 1 FROM pg_indexes WHERE schemaname='public'
+		AND indexname='conversation_message_person_history_idx')`).Scan(&exists)
 	if err != nil {
-		t.Fatalf("person-history probe index is absent: %v", err)
+		t.Fatal(err)
 	}
-	if !strings.Contains(definition, "(org_id, conversation_id, sequence)") ||
-		!strings.Contains(definition, "WHERE (role = 1)") {
-		t.Fatalf("person-history probe index has the wrong contract: %s", definition)
+	if exists {
+		t.Fatal("retired fixed-position sampler index still exists")
 	}
 }

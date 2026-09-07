@@ -36,6 +36,7 @@ type records struct {
 	candidate   integrations.Integration
 	trigger     investigation.Trigger
 	brief       investigation.Brief
+	history     investigation.HistoryPage
 	briefErr    error
 	origin      *investigation.ConversationOrigin
 	originErr   error
@@ -113,6 +114,10 @@ func (r *records) WorkloadInventory(context.Context, tenancy.Organization, int) 
 }
 func (r *records) ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error) {
 	return r.brief, r.briefErr
+}
+
+func (r *records) ConversationHistory(context.Context, tenancy.Organization, uuid.UUID, int64) (investigation.HistoryPage, error) {
+	return r.history, nil
 }
 
 func (r *records) ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error) {
@@ -331,7 +336,7 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			}
 			catalog, err := integrations.NewCatalog(integrations.Definition{
 				Manifest: integrations.Manifest{ID: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Available: true, Tools: []integrations.Tool{
-					{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", ConversationScoped: true, Run: read},
+					{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", SupportsThreadScope: true, Run: read},
 					{Name: "chat.channel", Description: "channel", WhenToUse: "broad", WhenNotToUse: "mentions", Permissions: "read", Output: "messages", Run: read},
 				}},
 				Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {

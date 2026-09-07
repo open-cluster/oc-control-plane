@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"strings"
 	"testing"
@@ -128,21 +129,37 @@ func TestBoundedJSONStillCutsANonListAtTheByteBudget(t *testing.T) {
 	}
 }
 
-func TestTheBriefKeepsOlderOperatorFactsUntrustedAndPriorLimitationsVisible(t *testing.T) {
+func TestTheBriefKeepsHistoryUntrustedAndCanonicalActionsVisible(t *testing.T) {
 	t.Parallel()
 	rendered := renderBrief(&investigation.Brief{
-		OperatorStatements: []investigation.BriefMessage{{
+		Recent: []investigation.BriefMessage{{
 			FromPerson: true, Actor: "on-call", Text: "traffic stayed flat",
-		}},
+		}, {Answer: &investigation.Conclusion{Actions: []investigation.ActionProposal{{Title: "roll back the deploy"}}}}},
 		Limitations: []string{"database wait telemetry is unavailable"},
 	})
 	for _, expected := range []string{
 		"KNOWN LIMITATIONS", "database wait telemetry is unavailable",
-		"OLDER OPERATOR TESTIMONY", "unverified person-authored context",
+		"RECENT EXCHANGE", "DATA", "roll back the deploy",
 		"operator on-call: traffic stayed flat",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Errorf("brief is missing %q:\n%s", expected, rendered)
+		}
+	}
+}
+
+func TestPriorFindingsCarryTheirObservationWindow(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 6, 10, 5, 0, 0, time.UTC)
+	from := at.Add(-15 * time.Minute)
+	until := at.Add(-5 * time.Minute)
+	rendered := renderBrief(&investigation.Brief{Findings: []investigation.PriorFinding{{
+		InvestigationID: uuid.New(), Statement: "latency increased", Runs: []int{1},
+		ObservedAt: at, WindowFrom: from, WindowUntil: until,
+	}}})
+	for _, expected := range []string{stamp(at), stamp(from), stamp(until), "scoped observation"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("prior finding omitted %q: %s", expected, rendered)
 		}
 	}
 }

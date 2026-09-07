@@ -23,10 +23,15 @@ func TestModelReceivesOrderedExchangeWithCanonicalAnswerIdentity(t *testing.T) {
 	}
 	model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
 		var rendered strings.Builder
-		for _, block := range prompt.Content {
-			rendered.WriteString(block.Text)
+		for _, blocks := range [][]Block{prompt.System, prompt.Content} {
+			for _, block := range blocks {
+				rendered.WriteString(block.Text)
+			}
 		}
 		text := rendered.String()
+		if strings.Contains(text, "without re-reading") || !strings.Contains(text, "refresh") {
+			t.Fatalf("follow-up prompt prevents an explicitly requested refresh: %s", text)
+		}
 		for _, required := range []string{answerID.String(), "2026-09-06T10:01:00Z", "message 2"} {
 			if !strings.Contains(text, required) {
 				t.Fatalf("model context omitted exchange identity %q", required)

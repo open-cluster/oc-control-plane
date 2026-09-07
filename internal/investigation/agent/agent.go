@@ -24,6 +24,7 @@ type Store interface {
 	InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error)
 	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error)
 	ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error)
+	ConversationHistory(context.Context, tenancy.Organization, uuid.UUID, int64) (investigation.HistoryPage, error)
 	ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error)
 	InvestigationMessages(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
 	WorkloadInventory(context.Context, tenancy.Organization, int) ([]string, error)
@@ -100,17 +101,20 @@ type runState struct {
 	transcript      []Turn
 	opening         string
 	highestOrdinal  int
+	historyBefore   int64
+	missingEvidence bool
 }
 
 type orientation struct {
-	Subject     string
-	Question    string
-	WindowFrom  time.Time
-	WindowUntil time.Time
-	Trigger     *investigation.Trigger
-	Sources     []offeredSource
-	Inventory   []string
-	Brief       *investigation.Brief
+	HistoryBefore int64
+	Subject       string
+	Question      string
+	WindowFrom    time.Time
+	WindowUntil   time.Time
+	Trigger       *investigation.Trigger
+	Sources       []offeredSource
+	Inventory     []string
+	Brief         *investigation.Brief
 }
 
 type offeredSource struct {
@@ -180,6 +184,9 @@ func (r *Agent) Run(
 		investigation.StartedPayload(opened, true))
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
+	if len(messages) > 0 {
+		oriented.HistoryBefore = messages[0].Sequence
+	}
 	if opened.ConversationID != uuid.Nil {
 		oriented.Question = ""
 		if len(messages) > 0 {
@@ -205,6 +212,7 @@ func (r *Agent) Run(
 		}),
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
+		historyBefore:      oriented.HistoryBefore,
 		ceiling:            contextWindow - int(r.deployment.MaxOutputTokens),
 		executedIdentities: map[string]int{},
 	}
@@ -240,6 +248,7 @@ func (r *Agent) Run(
 		}
 	}
 	state.task = taskInstruction(oriented)
+	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
 	state.orientationText = renderOrientation(oriented)
 	state.tools = exchangeTools(oriented)
 	state.carried = orientationTokens(oriented)
@@ -279,7 +288,7 @@ func (r *Agent) Run(
 			}
 		}
 
-		mustConclude := stoppedBy != "" || len(state.offered) == 0
+		mustConclude := stoppedBy != "" || (len(state.offered) == 0 && state.historyBefore <= 1)
 		reason := concludeReason(stoppedBy, len(state.offered))
 		if len(results) > 0 {
 			rendered := make([]ToolResultTurn, 0, len(results))
@@ -347,7 +356,7 @@ func (r *Agent) Run(
 						completion.Model, decodeErr.Error())
 					break
 				}
-				if oriented.Brief != nil && oriented.Brief.MissingEvidence {
+				if state.missingEvidence {
 					conclusion.MarkMissingEvidence()
 				}
 				move.Conclusion = &conclusion
@@ -412,6 +421,18 @@ func (r *Agent) Run(
 		for _, call := range move.Calls {
 			result := toolFeedback{CallID: call.ID}
 			fresh := false
+			if call.Tool == historyToolName {
+				result.Semantic = true
+				result.Run = r.readHistory(ctx, state, call)
+				if page, ok := result.Run.Content.(investigation.HistoryPage); ok {
+					priorEvidence = append(priorEvidence, historyEvidence(page)...)
+					state.missingEvidence = state.missingEvidence || page.MissingEvidence
+				}
+				freshRead = freshRead || result.Run.Outcome == investigation.RunSucceeded
+				state.carried += runTokens(result.Run)
+				results = append(results, result)
+				continue
+			}
 			if call.Tool == UpdateHypothesesToolName {
 				result.Semantic = true
 				result.Run = investigation.ToolRun{
@@ -723,14 +744,14 @@ func offeredSourcesForConversation(
 			scoped = append(scoped, source)
 			continue
 		}
-		var threadReads []integrations.Tool
+		var threadScopedTools []integrations.Tool
 		for _, tool := range source.Tools {
-			if tool.ConversationScoped {
-				threadReads = append(threadReads, tool)
+			if tool.SupportsThreadScope {
+				threadScopedTools = append(threadScopedTools, tool)
 			}
 		}
-		if len(threadReads) > 0 {
-			source.Tools = threadReads
+		if len(threadScopedTools) > 0 {
+			source.Tools = threadScopedTools
 			scoped = append(scoped, source)
 		}
 	}

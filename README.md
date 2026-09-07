@@ -53,7 +53,9 @@ Follow-up Messages queue behind an active Investigation. Each Organization has a
 Investigations use complete assigned Messages. Input that cannot fit produces `needs_input`
 with the unprocessed Message sequences instead of silently truncating the request.
 Follow-ups receive a bounded recent exchange of Messages and completed answers, with
-timestamps and source identities retained.
+timestamps and source identities retained. The investigator can request bounded older
+Conversation pages when needed; corrections stay ordered and prior answers keep their
+owning Investigation and evidence references.
 Terminal outcomes and their replay events commit together; failed event writes cannot
 leave a completed result without its ending event.
 Event streams refresh bounded write deadlines, survive ordinary HTTP timeouts, and close

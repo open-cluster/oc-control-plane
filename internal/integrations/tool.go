@@ -38,10 +38,10 @@ type Tool struct {
 	// with the connected credential — a bot token asked to run user-token search — is
 	// absent from the set, never a call that always fails.
 	Requires []string
-	// ConversationScoped marks a read that can be restricted to the provider thread
+	// SupportsThreadScope marks a read that can be restricted to the provider thread
 	// that originated a Conversation. Broader reads are never implicitly granted by
 	// mentioning the application in that thread.
-	ConversationScoped bool
+	SupportsThreadScope bool
 	// Output says what a successful answer holds. Composed into the model-facing
 	// description ("Returns: …") and rendered on the operator catalog view.
 	Output string

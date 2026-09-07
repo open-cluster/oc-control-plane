@@ -331,7 +331,7 @@ func TestConversationThreadReadRefusesADifferentChannelOrThread(t *testing.T) {
 
 	fake := newFakeSlack(t)
 	tool := toolNamed(t, NewClient(fake.URL), "slack.get_thread_replies")
-	if !tool.ConversationScoped {
+	if !tool.SupportsThreadScope {
 		t.Fatal("the originating-thread read must declare its restricted Conversation scope")
 	}
 
