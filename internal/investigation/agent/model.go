@@ -39,6 +39,8 @@ type Deployment struct {
 	Model    string
 	// Effort is how hard to think, the primary resource and latency lever.
 	Effort Effort
+	// ContextWindowTokens is the provider's total input and output capacity for this exact model.
+	ContextWindowTokens int
 	// MaxOutputTokens bounds one answer. It is set generously where thinking and answer share the
 	// bound, because a value sized around the answer alone truncates mid-thought.
 	MaxOutputTokens int64
@@ -57,18 +59,14 @@ type Deployment struct {
 }
 
 const (
-	defaultMaxOutputTokens = 32_000
-	defaultRequestTimeout  = 5 * time.Minute
-	defaultMaxAttempts     = 3
+	defaultRequestTimeout = 5 * time.Minute
+	defaultMaxAttempts    = 3
 )
 
 // WithDefaults fills what an operator did not name. It never loosens what they did.
 func (d Deployment) WithDefaults() Deployment {
 	if d.Effort == "" {
 		d.Effort = EffortHigh
-	}
-	if d.MaxOutputTokens <= 0 {
-		d.MaxOutputTokens = defaultMaxOutputTokens
 	}
 	if d.RequestTimeout <= 0 {
 		d.RequestTimeout = defaultRequestTimeout
@@ -114,8 +112,44 @@ func (d Deployment) Validate() error {
 
 // String renders a deployment for a log line. The credential is a Secret, so it cannot appear here.
 func (d Deployment) String() string {
-	return fmt.Sprintf("%s/%s effort=%s max_output=%d", d.Provider, d.Model, d.Effort,
-		d.MaxOutputTokens)
+	return fmt.Sprintf("%s/%s effort=%s context=%d max_output=%d", d.Provider, d.Model, d.Effort,
+		d.ContextWindowTokens, d.MaxOutputTokens)
+}
+
+// ModelCapabilities are the provider-published limits for one exact model identifier.
+type ModelCapabilities struct {
+	ContextWindowTokens int
+	MaxOutputTokens     int64
+}
+
+// ResolveModelCapabilities applies optional operator overrides to an exact provider capability.
+// A nil capability represents a custom model and therefore requires both limits explicitly.
+func ResolveModelCapabilities(
+	deployment Deployment, published *ModelCapabilities,
+) (Deployment, error) {
+	if published == nil {
+		if deployment.ContextWindowTokens <= 0 || deployment.MaxOutputTokens <= 0 {
+			return Deployment{}, fmt.Errorf("the custom model %q requires explicit context and output limits",
+				deployment.Model)
+		}
+	} else {
+		if deployment.ContextWindowTokens <= 0 {
+			deployment.ContextWindowTokens = published.ContextWindowTokens
+		} else if deployment.ContextWindowTokens > published.ContextWindowTokens {
+			return Deployment{}, fmt.Errorf("the context limit %d exceeds model %q's published limit %d",
+				deployment.ContextWindowTokens, deployment.Model, published.ContextWindowTokens)
+		}
+		if deployment.MaxOutputTokens <= 0 {
+			deployment.MaxOutputTokens = published.MaxOutputTokens
+		} else if deployment.MaxOutputTokens > published.MaxOutputTokens {
+			return Deployment{}, fmt.Errorf("the output limit %d exceeds model %q's published limit %d",
+				deployment.MaxOutputTokens, deployment.Model, published.MaxOutputTokens)
+		}
+	}
+	if int64(deployment.ContextWindowTokens) <= deployment.MaxOutputTokens {
+		return Deployment{}, fmt.Errorf("model %q's context limit must exceed its output limit", deployment.Model)
+	}
+	return deployment, nil
 }
 
 // Model performs one provider completion.

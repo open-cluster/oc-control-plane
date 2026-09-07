@@ -47,6 +47,7 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
 		cfg.ModelContextWindowTokens = 33000
+		cfg.ModelMaxOutputTokens = 32000
 	}, app.Options{Model: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	_, turn := plane.openConversation(t, "oversized input", strings.Repeat("界", 8192))

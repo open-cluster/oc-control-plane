@@ -83,6 +83,7 @@ type fileAI struct {
 	Model               string `yaml:"model"`
 	APIKeyFile          string `yaml:"api_key_file"`
 	ContextWindowTokens *int   `yaml:"context_window_tokens"`
+	MaxOutputTokens     *int   `yaml:"max_output_tokens"`
 }
 type fileTelemetry struct {
 	LogLevel     string `yaml:"log_level"`
@@ -144,6 +145,7 @@ func (d fileDocument) environment() map[string]string {
 	set(values, EnvModelName, d.AI.Model)
 	set(values, EnvModelKeyFile, d.AI.APIKeyFile)
 	setInteger(values, EnvModelContextWindowSize, d.AI.ContextWindowTokens)
+	setInteger(values, EnvModelMaxOutputTokens, d.AI.MaxOutputTokens)
 	set(values, EnvLogLevel, d.Telemetry.LogLevel)
 	set(values, EnvOTLPEndpoint, d.Telemetry.OTLPEndpoint)
 	set(values, EnvSlackClientID, d.Slack.ClientID)
