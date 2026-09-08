@@ -46,7 +46,7 @@ func TestCatalogMigrationPreservesInstallationsAndRejectsConflictingKinds(t *tes
 	}
 	if _, err := connection.Exec(ctx, `
  INSERT INTO integration(integration_id, org_id, integration_type_id, name, credential_sealed, credential_fingerprint, credential_created_at)
- VALUES ($1, 'retained-org', 3, 'Retained Slack', '0203', 'fingerprint', now());
+ VALUES ($1, 'retained-org', 3, 'Retained Slack', decode('010203','hex'), 'fingerprint', now());
  `, id); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCatalogMigrationPreservesInstallationsAndRejectsConflictingKinds(t *tes
 	if err := connection.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM integration i JOIN integration_installation s USING (integration_id,org_id,integration_type_id)
  JOIN integration_connect_flow f ON f.org_id=i.org_id
- WHERE i.integration_id=$1 AND f.flow_id=$2 AND i.credential_sealed='0203'::bytea
+ WHERE i.integration_id=$1 AND f.flow_id=$2 AND i.credential_sealed=decode('010203','hex')
  AND i.credential_fingerprint='fingerprint' AND s.workspace='workspace' AND f.integration_type_id=4)`, id, flow).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("retained data changed: %v", err)
 	}
