@@ -46,7 +46,7 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 }
 
 func TestCancelledEventMatchesSerializedSchema(t *testing.T) {
-	plane, _ := agentPlane(t, &blockingAgentMain{started: make(chan struct{}, 1)})
+	plane, _ := agentPlane(t, &blockingAgentMain{})
 	_, turn := plane.openConversation(t, "cancel schema", "investigate checkout")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
 	if status != http.StatusOK {

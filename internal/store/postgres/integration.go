@@ -466,6 +466,15 @@ func (p *Database) DeleteIntegration(
 					integrations.ErrInUse, alertEvents, jobs, ledger, investigations)
 			}
 
+			// Removing the Integration retires its reply obligations atomically; a
+			// mapping cannot be removed independently while a reply still uses it.
+			if _, err := transaction.Exec(ctx, `
+				DELETE FROM slack_reply r USING slack_conversation s
+				WHERE r.org_id = $2 AND s.org_id = r.org_id
+				  AND s.conversation_id = r.conversation_id AND s.integration_id = $1`,
+				id, organization.String()); err != nil {
+				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration replies: %w", err)
+			}
 			tag, err := transaction.Exec(ctx, `
 				DELETE FROM integration
 				 WHERE integration_id = $1 AND org_id = $2`,

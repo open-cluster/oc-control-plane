@@ -32,7 +32,7 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 				digest := sha256.Sum256([]byte(surfaceToken))
 				cfg.OperatorTokenDigest = digest[:]
 				dsn = cfg.DatabaseDSN
-			}, app.Options{Agent: &blockingAgentMain{started: make(chan struct{}, 1)}})
+			}, app.Options{Agent: &blockingAgentMain{}})
 			plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 			_, turn := plane.openConversation(t, "large replay", "investigate checkout")
 			seedEventBacklog(t, dsn, turn)
