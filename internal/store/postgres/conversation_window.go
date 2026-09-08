@@ -12,8 +12,13 @@ import (
 )
 
 // acceptedWindow runs under the Conversation lock shared by admission and drain.
-func acceptedWindow(ctx context.Context, tx pgx.Tx, org tenancy.Organization, id uuid.UUID,
-	requested *conversation.Window, lead time.Duration,
+func acceptedWindow(
+	ctx context.Context,
+	tx pgx.Tx,
+	org tenancy.Organization,
+	id uuid.UUID,
+	requested *conversation.Window,
+	lead time.Duration,
 ) (conversation.Window, error) {
 	if requested != nil {
 		normalized := requested.Normalized()

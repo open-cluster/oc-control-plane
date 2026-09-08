@@ -96,7 +96,7 @@ func Run(
 	if err != nil {
 		return fmt.Errorf("applying migrations: %w", err)
 	}
-	logMigrations(logger, applied)
+	logMigrationSummary(logger, applied)
 
 	// The GitHub App is deployment configuration; a deployment without one still serves
 	// github in the catalog — the compiled provider set and the seeded reference rows
