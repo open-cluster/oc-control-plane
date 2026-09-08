@@ -95,7 +95,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "run", "../../cmd/controlplane", "recover-local-password", "--user", who.Principal.ID)
 	command.Env = append(os.Environ(),
-		config.EnvConfigFile+"=", config.EnvOperatorTokenFile+"=",
+		config.EnvDatabaseDSN+"=", config.EnvOperatorTokenFile+"=",
 		config.EnvDatabaseDSNFile+"="+writeSecret("dsn", plane.dsn),
 		config.EnvSealingKeyFile+"=", config.EnvModelProvider+"=anthropic",
 		config.EnvModelName+"=", config.EnvModelKeyFile+"=")

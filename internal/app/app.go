@@ -71,6 +71,7 @@ func Run(
 		ServiceVersion: version,
 		OTLPEndpoint:   cfg.OTLPEndpoint,
 		LogOutput:      logOutput,
+		LogLevel:       cfg.LogLevel,
 	})
 	if err != nil {
 		return err

@@ -43,6 +43,7 @@ type Options struct {
 	ServiceVersion string
 	OTLPEndpoint   string
 	LogOutput      io.Writer
+	LogLevel       slog.Level
 }
 
 // Telemetry is the assembled stack. Shutdown flushes and releases it.
@@ -64,7 +65,7 @@ func Start(ctx context.Context, options Options) (*Telemetry, error) {
 		return nil, errors.New("observability: ServiceName is required")
 	}
 
-	logger := slog.New(slog.NewJSONHandler(options.LogOutput, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(options.LogOutput, &slog.HandlerOptions{Level: options.LogLevel}))
 
 	attributes, err := resource.Merge(resource.Default(), resource.NewWithAttributes(
 		semconv.SchemaURL,

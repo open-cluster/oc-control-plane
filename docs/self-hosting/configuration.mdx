@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "Configure an OpenCluster deployment with a small, file-backed surface."
+description: "Configure startup settings, direct or file secrets, and configuration rollouts."
 ---
 
 OpenCluster uses safe defaults for server addresses, local authentication, logs,
@@ -8,58 +8,39 @@ telemetry, investigation limits, concurrency, retention, retries, request timeou
 shutdown. A normal installation supplies database, AI, and encryption files plus its
 public URL. Supply the bootstrap credential only for initial setup, then remove it.
 
-Environment values that end in `_FILE` name mounted files; they never contain the
-credential itself. YAML settings ending in `_file` follow the same rule.
+Use environment settings at startup. For each secret, supply either the direct value or
+its optional `_FILE` path. Setting both stops startup with a redacted error. Mounted
+files work with Kubernetes Secrets and external secret managers without an additional
+client in OpenCluster.
 
-## Minimal YAML
+## Minimal configuration
 
-```yaml
-server:
-  public_url: "https://opencluster.example.com"
-database:
-  dsn_file: "/run/opencluster/database/postgres-dsn"
-authentication:
-  bootstrap_token_file: "/run/opencluster/credentials/bootstrap-token"
-  encryption_key_file: "/run/opencluster/credentials/encryption-key"
-ai:
-  provider: "anthropic"
-  model: "MODEL_ID"
-  api_key_file: "/run/opencluster/credentials/model-key"
-investigation:
-  workers: 8
-  max_pending_per_organization: 100
+```sh
+export OC_DATABASE_DSN_FILE=/run/secrets/postgres_dsn
+export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/operator_token
+export OC_ENCRYPTION_KEY_FILE=/run/secrets/sealing_key
+export OC_AI_PROVIDER=anthropic
+export OC_AI_MODEL=claude-sonnet-5
+export OC_AI_API_KEY_FILE=/run/secrets/model_key
+controlplane
 ```
 
-Pass the file with `--config /etc/opencluster/opencluster.yaml` or `OC_CONFIG_FILE`.
-Environment variables override YAML. Unknown YAML fields and additional documents stop
-startup, so misspelled configuration is never silently ignored.
+Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_KEY`.
+Supply these through your deployment's secret tooling. Remove the bootstrap input after
+initial setup. Application YAML, `OC_CONFIG_FILE`, and `--config` are retired.
 
-## Optional YAML
+## Applying changes
 
-```yaml
-server:
-  address: ":8080"
-authentication:
-  mode: "oidc"
-  oidc:
-    issuer: "https://identity.example.com"
-    client_id: "opencluster"
-    client_secret_file: "/run/opencluster/credentials/oidc-client-secret"
-relay:
-  address: ":8443"
-  spki_pins: ["BASE64_SHA256_SPKI"]
-telemetry:
-  log_level: "info"
-  otlp_endpoint: "collector.example.com:4317"
-slack:
-  client_id: "SLACK_CLIENT_ID"
-  client_secret_file: "/run/opencluster/credentials/slack-client-secret"
-  signing_secret_file: "/run/opencluster/credentials/slack-signing-secret"
-github:
-  app_id: "12345"
-  app_private_key_file: "/run/opencluster/credentials/github-app-key"
-```
+Configuration and secret files are read once at startup. A file update does not reload
+a running process. For Compose, recreate the control plane with
+`docker compose -f deploy/compose/compose.yaml up -d --force-recreate control-plane`.
+For Helm, ordinary values change the Deployment and trigger rollout. After updating an
+existing Secret, run `kubectl rollout restart deployment/<release>-opencluster`, then
+`kubectl rollout status deployment/<release>-opencluster`. Confirm `/readyz` and a bounded
+Investigation before considering the change complete.
 
+Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`; the default is `info`.
+Use `OC_OTLP_ENDPOINT` when exporting traces to a collector.
 Local authentication is the default. `oidc` adds the configured provider while local
 Admin recovery remains available. Relay is optional and listens separately from HTTP;
 customer Relays initiate outbound connections and pin the configured control-plane key.
@@ -92,37 +73,35 @@ and training terms before production use.
 
 | Variable | Purpose |
 | --- | --- |
-| `OC_CONFIG_FILE` | Optional YAML file path. |
 | `OC_SERVER_ADDRESS` | HTTP listen address; default `:8080`. |
 | `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8080`. |
-| `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. |
+| `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file; do not set both. |
 | `OC_AUTH_MODE` | `local` or `oidc`. |
-| `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. |
+| `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file; do not set both. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
-| `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. |
+| `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file; do not set both. |
 | `OC_RELAY_ADDRESS` | Optional Relay gRPC listen address. |
 | `OC_RELAY_SPKI_PINS` | Comma-separated control-plane SPKI pins. |
 | `OC_AI_PROVIDER` | Native AI provider: `anthropic` or `zai`. |
 | `OC_AI_MODEL` | Exact model identifier. |
-| `OC_AI_API_KEY_FILE` | AI provider credential file. |
+| `OC_AI_API_KEY` / `OC_AI_API_KEY_FILE` | AI provider credential file. Direct value or file; do not set both. |
 | `OC_AI_CONTEXT_WINDOW_SIZE` | Optional advanced model context-window override; required for a custom model ID. |
 | `OC_AI_MAX_OUTPUT_SIZE` | Optional advanced model output-limit override in tokens; required for a custom model ID. |
 | `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
 | `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |
-| `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. |
+| `OC_ENCRYPTION_KEY` / `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. Direct value or file; do not set both. |
 | `OC_LOG_LEVEL` | Log level; default `info`. |
 | `OC_OTLP_ENDPOINT` | Optional OTLP collector host and port. |
 | `OC_SLACK_CLIENT_ID` | Deployment Slack App client ID. |
-| `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. |
-| `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. |
+| `OC_SLACK_CLIENT_SECRET` / `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. Direct value or file; do not set both. |
+| `OC_SLACK_SIGNING_SECRET` / `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. Direct value or file; do not set both. |
 | `OC_GITHUB_APP_ID` | Deployment GitHub App ID. |
-| `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. |
+| `OC_GITHUB_APP_PRIVATE_KEY` / `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. Direct value or file; do not set both. |
 
 The OSS binary uses one mounted AI deployment for every Organization.
 
-This is a pre-release clean break. Existing databases and configuration from earlier
-builds must be recreated rather than migrated through compatibility settings.
+Back up retained installation data before an upgrade. Configuration conversion does not require deleting the database.
 
 The shared HTTP server allows 10 seconds for headers, 30 seconds to read a request,
 30 seconds to write a response, and 60 seconds for an idle connection. Restart after a
