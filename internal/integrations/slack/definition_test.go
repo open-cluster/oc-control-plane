@@ -7,10 +7,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The definition's promises, pinned. These are what the seeded reference row, the setup
-// flow and the investigator rely on; a drift here is a product change, not a refactor.
-
-func TestDefinitionMirrorsTheSeededRow(t *testing.T) {
+func TestDefinitionDeclaresProviderContract(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition(NewClient(""), nil, false)

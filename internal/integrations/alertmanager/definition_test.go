@@ -35,8 +35,6 @@ func TestVerify_SaysWhatADeliveryProved(t *testing.T) {
 	}
 }
 
-// The definition's metadata mirrors the seeded integration_type row; the cross-check
-// against the database lives at the composition-root seam, and this pins the compiled half.
 func TestDefinition_DeclaresTheInboundShape(t *testing.T) {
 	t.Parallel()
 

@@ -222,8 +222,6 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			"data and takes no caller-supplied identifier",
 		"RedeemDeploymentSignIn": "the opaque state digest selects the tenant-bound flow; " +
 			"the consumed row is the authority for the organization returned to the callback",
-		"ReconcileIntegrationTypes": "startup-only reconciliation of product-owned reference " +
-			"metadata from compiled provider manifests; reaches no tenant-owned data",
 	}
 
 	for _, file := range parseProductionFiles(t,

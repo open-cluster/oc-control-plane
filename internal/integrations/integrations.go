@@ -104,7 +104,7 @@ type InboundAvailability struct {
 }
 
 // Definition is everything one provider package exports about its Integration Type.
-// Metadata mirrors the seeded integration_type row; behavior is the provider's own.
+// Its manifest owns catalog metadata; behavior is the provider's own.
 type Definition struct {
 	Manifest
 	// Verify judges an integration against the facts in VerifyInput. It is pure: the

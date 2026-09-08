@@ -134,9 +134,6 @@ func Run(
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)
 	}
-	if err = database.ReconcileIntegrationTypes(ctx, catalog.Manifests()); err != nil {
-		return err
-	}
 
 	// One sealer for the process: identity client secrets and integration credentials are
 	// sealed under the same deployment key.
