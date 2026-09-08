@@ -13,7 +13,7 @@ import (
 )
 
 func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
-	plane, _ := agentPlane(t, &blockingAgentMain{started: make(chan struct{}, 1)})
+	plane, _ := agentPlane(t, &blockingAgentMain{})
 	_, turn := plane.openConversation(t, "replayed stream", "investigate checkout")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
 	if status != http.StatusOK {
@@ -37,7 +37,7 @@ func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
 }
 
 func TestEventStreamClosesDuringGracefulShutdown(t *testing.T) {
-	plane, _ := agentPlane(t, &blockingAgentMain{started: make(chan struct{}, 1)})
+	plane, _ := agentPlane(t, &blockingAgentMain{})
 	_, turn := plane.openConversation(t, "shutdown stream", "investigate checkout")
 	response := openEventStream(t, plane, turn, "")
 	defer func() { _ = response.Body.Close() }()
@@ -52,13 +52,13 @@ func TestEventStreamClosesDuringGracefulShutdown(t *testing.T) {
 
 func TestEventStreamSurvivesOrdinaryWriteTimeout(t *testing.T) {
 	t.Parallel()
-	plane, _ := agentPlane(t, &blockingAgentMain{started: make(chan struct{}, 1)})
+	plane, _ := agentPlane(t, &blockingAgentMain{})
 	assertLiveEventStream(t, plane, plane)
 }
 
 func TestEventStreamThroughSupportedProxy(t *testing.T) {
 	t.Parallel()
-	plane, _ := agentPlane(t, &blockingAgentMain{started: make(chan struct{}, 1)})
+	plane, _ := agentPlane(t, &blockingAgentMain{})
 	proxied := *plane
 	proxied.operator = startEventProxy(t, plane.operator)
 	assertLiveEventStream(t, plane, &proxied)
