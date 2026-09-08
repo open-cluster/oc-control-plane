@@ -118,6 +118,9 @@ conclusions, Postmortems, and audit events in PostgreSQL. The supported composit
 proxies its same-origin `/api/v1` and `/webhooks/v1` traffic to the control plane. A separate gRPC listener accepts
 outbound Relay sessions.
 
+Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
+installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
+
 Provider adapters offer native read tools behind one provider-independent investigation contract. Kubernetes libraries
 and customer cluster credentials never enter this module; the Relay executes the released, versioned capability protocol
 inside the customer boundary.

@@ -4,8 +4,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// Definition is what this provider exports to the catalog. Metadata mirrors the seeded
-// integration_type row; a test proves the two agree.
+// Definition exports this provider's catalog metadata and behavior.
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{

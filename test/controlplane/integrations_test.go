@@ -15,8 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
@@ -356,56 +354,6 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 			if _, err := os.Stat(page); err != nil {
 				t.Errorf("%s documents at %q, and %s does not exist",
 					entry.Key, entry.ProductDocumentationURL, page)
-			}
-		}
-	})
-
-	t.Run("the seeded reference rows and the compiled catalog agree", func(t *testing.T) {
-		// Reference-data drift is a test failure, not a runtime concern: the rows are
-		// seeded by migration and the definitions are compiled, and this is the assertion
-		// that keeps the two sets identical in both directions.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		database, err := pgx.Connect(ctx, plane.dsn)
-		if err != nil {
-			t.Fatalf("connecting to compare reference data: %v", err)
-		}
-		defer func() { _ = database.Close(ctx) }()
-
-		rows, err := database.Query(ctx, `
-			SELECT key, name, description, logo, category
-			  FROM integration_type
-			 ORDER BY key`)
-		if err != nil {
-			t.Fatalf("reading integration_type: %v", err)
-		}
-		defer rows.Close()
-		seeded := map[string]catalogType{}
-		for rows.Next() {
-			var entry catalogType
-			if err := rows.Scan(&entry.Key, &entry.Name, &entry.Description,
-				&entry.Logo, &entry.Category); err != nil {
-				t.Fatalf("scanning a type row: %v", err)
-			}
-			seeded[entry.Key] = entry
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatalf("reading integration_type: %v", err)
-		}
-
-		if len(seeded) != len(catalog.Types) {
-			t.Fatalf("the table seeds %v and the catalog serves %d types", seeded, len(catalog.Types))
-		}
-		for _, compiled := range catalog.Types {
-			stored, present := seeded[compiled.Key]
-			if !present {
-				t.Errorf("the compiled catalog serves %q and integration_type does not", compiled.Key)
-				continue
-			}
-			if stored.Name != compiled.Name || stored.Description != compiled.Description ||
-				stored.Logo != compiled.Logo || stored.Category != compiled.Category {
-				t.Errorf("integration_type metadata for %q = %+v, compiled catalog = %+v",
-					compiled.Key, stored, compiled)
 			}
 		}
 	})

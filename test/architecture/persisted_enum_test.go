@@ -58,8 +58,7 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"AlertEventFiring", int(storage.AlertEventFiring), 1},
 		{"AlertEventResolved", int(storage.AlertEventResolved), 2},
 
-		// The Integration Type ids are seeded into integration_type by migration and
-		// compiled here as constants; the id is the join key everything else stores.
+		// Integration kind codes retain their meaning across schema upgrades.
 		{"TypeAlertmanager", int(integrations.TypeAlertmanager), 1},
 		{"TypeKubernetes", int(integrations.TypeKubernetes), 2},
 		{"TypeSlack", int(integrations.TypeSlack), 3},
