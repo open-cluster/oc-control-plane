@@ -42,7 +42,7 @@ func slackDelivery(t *testing.T, handler http.Handler) (*storage.Database, tenan
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(context.Background(), `UPDATE integration SET credential_sealed = $3,
-		credential_fingerprint = 'fixture', credential_created_at = now(), credential_key_id = 'default'
+		credential_fingerprint = 'fixture', credential_created_at = now()
 		WHERE org_id = $1 AND integration_id = $2`, org.String(), integration, sealed); err != nil {
 		t.Fatal(err)
 	}
