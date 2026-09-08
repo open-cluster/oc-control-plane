@@ -147,7 +147,7 @@ type Manifest struct {
 // documentationSite is where this product's own documentation is published. One constant,
 // beside the schema $id's origin above, because the site is the product's and not a
 // deployment's: a self-hosted install reads the same published pages.
-const documentationSite = "https://docs.open-cluster.io/"
+const documentationSite = "https://docs.open-cluster.io"
 
 // ProductDocumentationURL is OUR page for this type — the one that carries the receiver
 // YAML, the header name and the version floor, rather than the vendor's reference.

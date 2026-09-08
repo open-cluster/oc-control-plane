@@ -10,11 +10,12 @@ import (
 var ErrModelUnavailable = investigation.ErrReasonerUnavailable
 
 var (
-	ErrRefused   = errors.New("the model provider declined the request")
-	ErrOutage    = errors.New("the model provider is unreachable")
-	ErrRejected  = errors.New("the model provider rejected the request as malformed")
-	ErrMalformed = errors.New("the model's answer did not satisfy the declared schema")
-	ErrTimeout   = errors.New("the model provider did not answer within the deadline")
+	ErrRefused       = errors.New("the model provider declined the request")
+	ErrOutage        = errors.New("the model provider is unreachable")
+	ErrRejected      = errors.New("the model provider rejected the request as malformed")
+	ErrMalformed     = errors.New("the model's answer did not satisfy the declared schema")
+	ErrTimeout       = errors.New("the model provider did not answer within the deadline")
+	ErrContextWindow = errors.New("the model provider rejected the request context")
 )
 
 // Outcome is which named failure happened.
@@ -109,6 +110,12 @@ func FailedBecause(outcome Outcome, provider, model, detail string, cause error)
 	return &Failure{
 		Outcome: outcome, Provider: provider, Model: model, Detail: detail, cause: cause,
 	}
+}
+
+// ContextRejected preserves the rejected-request outcome while making bounded recovery explicit.
+func ContextRejected(provider, model, detail string, cause error) *Failure {
+	return FailedBecause(OutcomeRejected, provider, model, detail,
+		errors.Join(ErrContextWindow, cause))
 }
 
 // OutcomeOf reports the named outcome behind an error, and whether there was one. An error from

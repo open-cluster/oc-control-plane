@@ -484,24 +484,6 @@ func concludeInstruction(reason string) string {
 	return instruction
 }
 
-// MEASURING A TURN'S CONTEXT.
-//
-// The estimate is characters divided by a constant, and that is the whole of it. A real
-// tokenizer would be one dependency per vendor, kept in step with each vendor's releases,
-// to produce a number that is then compared against a threshold which already carries a
-// safety margin. It is deliberately pessimistic: overestimating ends a turn slightly
-// early, while underestimating can exhaust the model's context window.
-const charactersPerToken = 2
-
-// EstimateTokens reports the pessimistic token cost of some text.
-func EstimateTokens(text string) int {
-	return (len(text) + charactersPerToken - 1) / charactersPerToken
-}
-
-func briefTokens(brief investigation.Brief) int {
-	return EstimateTokens(renderBrief(&brief))
-}
-
 // conversationBrief assembles a bounded message tail and prior cited findings.
 // Optional history failure limits continuity without changing verified tool authority.
 func (r *Agent) conversationBrief(

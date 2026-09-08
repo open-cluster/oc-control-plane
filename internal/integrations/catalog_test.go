@@ -85,7 +85,7 @@ func TestTheProductDocumentationURLIsDerivedFromTheDefinition(t *testing.T) {
 	// directory is the Category and the page is the Key. Derived rather than declared, so
 	// a hand-written URL cannot drift away from the page it names.
 	definition := Definition{Manifest: Manifest{DocumentationSlug: "integrations/collaboration/slack"}}
-	const want = "https://docs.opencluster.dev/integrations/collaboration/slack"
+	const want = "https://docs.open-cluster.io/integrations/collaboration/slack"
 	if got := definition.ProductDocumentationURL(); got != want {
 		t.Errorf("ProductDocumentationURL() = %q, want %q", got, want)
 	}

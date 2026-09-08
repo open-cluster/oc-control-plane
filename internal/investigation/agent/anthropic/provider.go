@@ -71,6 +71,8 @@ func classify(provider, model string, status int, identifier string, cause error
 	}
 
 	switch {
+	case status == http.StatusBadRequest && isContextLimitError(cause.Error()):
+		return reasoning.ContextRejected(provider, model, detail+": the request exceeded the model context", cause)
 	case status == http.StatusTooManyRequests:
 		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
 			detail+": rate limited past the retries this deployment allows", cause)
@@ -92,6 +94,13 @@ func classify(provider, model string, status int, identifier string, cause error
 	default:
 		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model, detail, cause)
 	}
+}
+
+func isContextLimitError(detail string) bool {
+	normalized := strings.ToLower(detail)
+	return strings.Contains(normalized, "context window") ||
+		strings.Contains(normalized, "context length") ||
+		strings.Contains(normalized, "prompt is too long")
 }
 
 func transportFailure(provider, model string, cause error) error {
@@ -157,6 +166,15 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 	}
 	requestOptions = append(requestOptions, option.WithHTTPClient(client))
 	return &Provider{client: sdk.NewClient(requestOptions...), deployment: deployment}, nil
+}
+
+// RequestTokens sizes the same provider request structure Complete sends.
+func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
+	encoded, err := json.Marshal(p.params(prompt))
+	if err != nil {
+		return 0, err
+	}
+	return reasoning.EstimateSerializedRequest(encoded), nil
 }
 
 func (p *Provider) Complete(

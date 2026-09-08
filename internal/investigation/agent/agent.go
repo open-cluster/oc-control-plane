@@ -88,8 +88,6 @@ type runState struct {
 	credentials  *credentialCache
 	maxRuns      int
 	maxTurns     int
-	ceiling      int
-	carried      int
 
 	runs               []investigation.ToolRun
 	executedIdentities map[string]int
@@ -211,7 +209,6 @@ func (r *Agent) Run(
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
 		historyBefore:      oriented.HistoryBefore,
-		ceiling:            r.deployment.ContextWindowTokens - int(r.deployment.MaxOutputTokens),
 		executedIdentities: map[string]int{},
 	}
 	if state.maxRuns <= 0 {
@@ -221,23 +218,22 @@ func (r *Agent) Run(
 		state.maxTurns = defaultMaxTurns
 	}
 	if len(messages) > 0 {
-		// UTF-8 bytes conservatively bound input tokens, with output reserved and ten percent headroom.
-		inputCapacity := state.ceiling - state.ceiling/10
-		inputBytes, err := r.initialInputBytes(oriented)
+		inputCapacity := r.deployment.ContextWindowTokens - int(r.deployment.MaxOutputTokens)
+		inputTokens, err := r.initialInputTokens(oriented)
 		if err != nil {
 			return failRun("the assigned input budget could not be established", investigation.Usage{})
 		}
-		if inputBytes > inputCapacity {
+		if inputTokens > inputCapacity {
 			oriented.Brief = &investigation.Brief{Turn: opened.Turn, Limitations: []string{
 				"Optional history and inventory were omitted to preserve the complete current request.",
 			}}
 			oriented.Inventory = nil
-			inputBytes, err = r.initialInputBytes(oriented)
+			inputTokens, err = r.initialInputTokens(oriented)
 			if err != nil {
 				return failRun("the assigned input budget could not be established", investigation.Usage{})
 			}
 		}
-		if inputBytes > inputCapacity {
+		if inputTokens > inputCapacity {
 			err := r.requestNarrowerInput(ctx, state, messages)
 			if err == nil {
 				r.RuntimeTelemetry.Ended(time.Since(startedAt), "needs_input", investigation.StoppedByContext)
@@ -249,7 +245,6 @@ func (r *Agent) Run(
 	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
 	state.orientationText = renderOrientation(oriented)
 	state.tools = exchangeTools(oriented)
-	state.carried = orientationTokens(oriented)
 	var priorEvidence []investigation.EvidenceRef
 	if oriented.Brief != nil {
 		for _, finding := range oriented.Brief.Findings {
@@ -277,8 +272,6 @@ func (r *Agent) Run(
 				stoppedBy = investigation.StoppedByWallClock
 			case stagnant >= maxStagnantTurns:
 				stoppedBy = investigation.StoppedByStagnation
-			case state.carried >= state.ceiling:
-				stoppedBy = investigation.StoppedByContext
 			}
 			if stoppedBy != "" {
 				r.announce(ctx, events,
@@ -304,7 +297,7 @@ func (r *Agent) Run(
 			}
 		}
 		forced := mustConclude
-		if forced {
+		forceInstruction := func() {
 			instruction := concludeInstruction(reason)
 			if len(state.transcript) == 0 {
 				state.opening = instruction
@@ -312,14 +305,47 @@ func (r *Agent) Run(
 				state.transcript[len(state.transcript)-1].Instruction = instruction
 			}
 		}
+		if forced {
+			forceInstruction()
+		}
 
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 		for attempt := range 2 {
+			prompt, fits, budgetErr := r.budgetPrompt(modelPrompt(r, state, forced), forced)
+			if budgetErr != nil {
+				err = Failed(OutcomeRejected, r.deployment.Provider, r.deployment.Model,
+					"the provider request could not be budgeted: "+budgetErr.Error())
+				break
+			}
+			if !fits && !forced {
+				stoppedBy = investigation.StoppedByContext
+				r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
+				reason = concludeReason(stoppedBy, len(state.offered))
+				forced = true
+				forceInstruction()
+				prompt, fits, budgetErr = r.budgetPrompt(modelPrompt(r, state, true), true)
+			}
+			if budgetErr != nil || !fits {
+				detail := "the complete provider request does not fit the model context window"
+				if budgetErr != nil {
+					detail = "the provider request could not be budgeted: " + budgetErr.Error()
+				}
+				err = Failed(OutcomeRejected, r.deployment.Provider, r.deployment.Model, detail)
+				break
+			}
 			completion, completeErr := r.telemetry.complete(
-				moveCtx, r.model, r.deployment, modelPrompt(r, state, forced))
+				moveCtx, r.model, r.deployment, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
 			if completeErr != nil {
+				if attempt == 0 && !forced && errors.Is(completeErr, ErrContextWindow) {
+					stoppedBy = investigation.StoppedByContext
+					r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
+					reason = concludeReason(stoppedBy, len(state.offered))
+					forced = true
+					forceInstruction()
+					continue
+				}
 				err = completeErr
 				break
 			}
@@ -336,7 +362,7 @@ func (r *Agent) Run(
 			}
 
 			reads, conclude := splitCalls(completion.ToolCalls)
-			if len(reads) > 0 && !mustConclude {
+			if len(reads) > 0 && !forced {
 				state.transcript = append(state.transcript, Turn{Assistant: AssistantTurn{
 					Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
 				}})
@@ -408,7 +434,7 @@ func (r *Agent) Run(
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusConcluded.String(), stoppedBy)
 			return nil
 		}
-		if mustConclude {
+		if forced {
 			terminalErr := failRun(errNoConclusion.Error(), state.usage)
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
 			return terminalErr
@@ -427,7 +453,6 @@ func (r *Agent) Run(
 					state.missingEvidence = state.missingEvidence || page.MissingEvidence
 				}
 				freshRead = freshRead || result.Run.Outcome == investigation.RunSucceeded
-				state.carried += runTokens(result.Run)
 				results = append(results, result)
 				continue
 			}
@@ -446,7 +471,6 @@ func (r *Agent) Run(
 					r.announce(ctx, events,
 						investigation.HypothesesUpdatedPayload(snapshot))
 				}
-				state.carried += runTokens(result.Run)
 				results = append(results, result)
 				continue
 			}
@@ -518,7 +542,6 @@ func (r *Agent) Run(
 			}
 			result.Run = run
 			freshRead = freshRead || fresh
-			state.carried += runTokens(result.Run)
 			results = append(results, result)
 		}
 		if freshRead {
@@ -806,44 +829,6 @@ func callIdentityOf(call toolCall) string {
 		encoded = []byte(fmt.Sprintf("%v", call.Arguments))
 	}
 	return call.Tool + " " + string(encoded)
-}
-
-// orientationTokens estimates what an orientation costs before a single read has happened.
-// The tool definitions are counted too, because a catalog of forty tools is not free and a
-// budget that ignored them would be a budget that overflowed on the tools alone.
-func orientationTokens(oriented orientation) int {
-	total := EstimateTokens(oriented.Subject) + EstimateTokens(oriented.Question)
-	for _, identity := range oriented.Inventory {
-		total += EstimateTokens(identity)
-	}
-	for _, source := range oriented.Sources {
-		total += EstimateTokens(source.Integration.Name)
-		for _, tool := range source.Tools {
-			total += EstimateTokens(tool.Name) + EstimateTokens(tool.Description) +
-				EstimateTokens(tool.WhenToUse) + EstimateTokens(tool.WhenNotToUse)
-		}
-	}
-	if oriented.Brief != nil {
-		total += briefTokens(*oriented.Brief)
-	}
-	return total
-}
-
-// runTokens estimates what feeding one result back costs. The CONTENT is what fills a
-// transcript — the summary is one line and the payload is everything the vendor returned —
-// so it is what the estimate is mostly of.
-func runTokens(run investigation.ToolRun) int {
-	total := EstimateTokens(run.Tool) + EstimateTokens(run.Summary) +
-		EstimateTokens(run.Error)
-	for _, source := range run.Sources {
-		total += EstimateTokens(source)
-	}
-	if run.Content != nil {
-		if encoded, err := json.Marshal(run.Content); err == nil {
-			total += EstimateTokens(string(encoded))
-		}
-	}
-	return total
 }
 
 // concludeReason says why reads are over, written for the model to act on.
