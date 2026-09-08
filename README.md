@@ -120,6 +120,8 @@ outbound Relay sessions.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
+Credential key identity lives in the authenticated sealed envelope. Upgrades refuse retained installation
+refresh data that needs reconciliation before removing unsupported refresh fields.
 
 Provider adapters offer native read tools behind one provider-independent investigation contract. Kubernetes libraries
 and customer cluster credentials never enter this module; the Relay executes the released, versioned capability protocol
