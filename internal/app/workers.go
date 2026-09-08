@@ -32,7 +32,7 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 	startAuditPruner(ctx, group, process)
 	startSessionPruner(ctx, group, process)
 	startChangeLedgerPruner(ctx, group, process)
-	startSlackReplies(ctx, group, process)
+	startSlackReplyWorker(ctx, group, process)
 }
 
 func startWebhookWork(ctx context.Context, group *errgroup.Group, process assembled) {
@@ -99,32 +99,26 @@ func startChangeLedgerPruner(ctx context.Context, group *errgroup.Group, process
 		slog.Int("retention_days", defaultChangeRetentionDays))
 }
 
-// slackAgent is what the intake listener needs to receive Slack events, or nil where this
-// deployment receives none.
-func slackAgent(cfg config.Config) *webhooks.SlackAgent {
-	if cfg.SlackSigningSecret == "" {
-		return nil
-	}
+// newSlackAgent returns a Slack webhook agent when Slack integration is configured.
+// It returns nil when Slack event handling is disabled.
+func newSlackAgent(cfg config.Config) *webhooks.SlackAgent {
+	isSlackConfigured(cfg)
 	return &webhooks.SlackAgent{
-		SigningSecret: cfg.SlackSigningSecret,
-		Enabled: func(tenancy.Organization) bool {
-			return true
-		},
+		SigningSecret:   cfg.SlackSigningSecret,
+		Enabled:         func(tenancy.Organization) bool { return true },
 		WindowLead:      defaultInvestigationWindowLead,
 		MaxWaitingTurns: cfg.MaxPendingInvestigationsPerOrganization,
 	}
 }
 
-// startSlackReplies runs the worker that answers in Slack threads, or nothing where this
-// deployment receives no Slack events.
-//
-// It is stopped with the process and nothing waits for it. A delivery in flight when the
-// process ends resumes from its own cursor in the next instance, which is the same property
-// that makes a crash mid-stream survivable — so there is nothing here worth draining for.
-func startSlackReplies(ctx context.Context, group *errgroup.Group, process assembled) {
-	if process.config.SlackSigningSecret == "" {
-		return
-	}
+// startSlackReplyWorker starts the background worker that delivers replies to
+// Slack threads. It does nothing when Slack integration is disabled.
+func startSlackReplyWorker(
+	ctx context.Context,
+	group *errgroup.Group,
+	process assembled,
+) {
+	isSlackConfigured(process.config)
 	worker := slack.Worker{
 		Replies:    process.database,
 		Client:     slack.NewClient(process.slackAPIURL),
@@ -138,5 +132,10 @@ func startSlackReplies(ctx context.Context, group *errgroup.Group, process assem
 		worker.Run(ctx)
 		return nil
 	})
+
 	process.logger.Info("slack delivery worker started")
+}
+
+func isSlackConfigured(cfg config.Config) bool {
+	return cfg.SlackSigningSecret != ""
 }

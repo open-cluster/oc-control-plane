@@ -9,17 +9,18 @@ import (
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			ID: integrations.TypeAlertmanager, Key: "alertmanager", Name: "Prometheus Alertmanager",
+			ID:   integrations.TypeAlertmanager,
+			Key:  "alertmanager",
+			Name: "Prometheus Alertmanager",
 			Description: "Create incidents from firing and resolved Alertmanager alerts " +
 				"delivered through an authenticated webhook.",
-			Logo: "alertmanager", Category: integrations.CategoryAlerting, Available: true,
+			Logo: "alertmanager", Category: integrations.CategoryAlerting,
+			Available:         true,
 			SourceURL:         "https://prometheus.io/docs/alerting/latest/configuration/#webhook_config",
 			DocumentationSlug: "integrations/alerting/alertmanager",
-			// NOTHING TO CONFIGURE, and saying so is the honest definition. Alertmanager is
-			// reached inbound: the platform mints the secret and the Integration carries its
-			// own operator-chosen name. A "source name" field would be a second place to write
-			// what the Integration is called, and the two would eventually disagree.
-			Config: nil, RequiresRelay: false, ReceivesWebhooks: true,
+			Config:            nil,
+			RequiresRelay:     false,
+			ReceivesWebhooks:  true,
 		},
 		Verify: verify,
 	}

@@ -6,7 +6,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The bounded Slack Tools offered to Investigations.
 const (
 	ListChannels       = "slack.list_channels"
 	ReadChannelHistory = "slack.read_channel_history"
@@ -18,10 +17,14 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 	connection := connect(installer, client)
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			ID: integrations.TypeSlack, Key: "slack", Name: "Slack",
-			Description: "Give investigations read-only access to Slack conversations visible " +
+			ID:   integrations.TypeSlack,
+			Key:  "slack",
+			Name: "Slack",
+			Description: "Give investigations access to Slack conversations visible " +
 				"to the connected token and reply to direct app mentions in their original thread.",
-			Logo: "slack", Category: integrations.CategoryCollaboration, Available: true,
+			Logo:              "slack",
+			Category:          integrations.CategoryCollaboration,
+			Available:         true,
 			SourceURL:         "https://api.slack.com/authentication/token-types#bot",
 			DocumentationSlug: "integrations/collaboration/slack",
 			Config: []integrations.Field{
@@ -38,28 +41,20 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 					Secret:   true,
 				},
 				{
-					// Written by the installation flow, never typed. It is declared because
-					// every configuration key must be, and because an operator reading the
-					// record should be able to see which workspace it names.
 					Name:  TeamIDField,
 					Title: "Workspace ID",
 					Description: "The Slack workspace this integration is installed in, " +
 						"recorded by the connect flow. Not a secret, and not something to " +
 						"fill in by hand.",
-					Type: integrations.FieldString,
-					// Its PRESENCE says this integration is an app installation rather than
-					// a pasted credential.
-					// If it could be typed, an operator could make a pasted token claim an
-					// agent that will never answer.
+					Type:     integrations.FieldString,
 					Recorded: true,
 				},
 				{
-					Name:  AppIDField,
-					Title: "Slack app ID",
-					Description: "The Slack app the workspace installed, recorded by the " +
-						"connect flow.",
-					Type:     integrations.FieldString,
-					Recorded: true,
+					Name:        AppIDField,
+					Title:       "Slack app ID",
+					Description: "The Slack app the workspace installed, recorded by the connect flow.",
+					Type:        integrations.FieldString,
+					Recorded:    true,
 				},
 			},
 			RequiresRelay:    false,

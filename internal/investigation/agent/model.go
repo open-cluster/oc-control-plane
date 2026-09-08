@@ -13,12 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// Secret is a credential that must never be rendered.
-//
-// String, GoString and the JSON form are all the same fixed placeholder, so a credential cannot
-// reach a log line, an error message or a case file by being interpolated somewhere nobody thought
-// about. Reading the real value is an explicit call, which makes the handful of places that do it
-// greppable.
 type Secret string
 
 // redacted is what a credential looks like everywhere except the one call that reveals it.

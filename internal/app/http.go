@@ -23,7 +23,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// serve opens the listener and runs the HTTP surface until ctx is cancelled, then drains.
 func serve(ctx context.Context, process assembled) error {
 	cfg, logger := process.config, process.logger
 	process.streamContext = ctx
@@ -58,9 +57,6 @@ func serve(ctx context.Context, process assembled) error {
 		}
 		failed <- nil
 	}()
-	// The backstop for the paths that return before the drain at the bottom — an endpoint
-	// that refused to start must not leave this goroutine serving forever. On the ordinary
-	// path the drain has already shut the server down and this is a no-op.
 	defer func() { _ = server.Close() }()
 
 	// The Relay endpoint is a second listener on purpose. It speaks a different protocol to
@@ -72,10 +68,6 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	defer relays.stop(defaultShutdownTimeout, logger)
 
-	// The callback fires only once EVERY configured surface is bound, because its promise
-	// is "a test can address a port without racing the listener" — and a caller told about
-	// one listener while three others are still binding would race exactly the way the
-	// promise forbids.
 	if process.onListen != nil {
 		process.onListen(listener.Addr())
 	}
@@ -95,15 +87,10 @@ func serve(ctx context.Context, process assembled) error {
 	}
 
 	// Drain: stop accepting, let in-flight requests finish within the budget, then exit.
-	// The shutdown context is detached from the already-cancelled process context, or the
-	// drain would end instantly and defeat the point.
 	logger.Info("draining", slog.Duration("timeout", defaultShutdownTimeout))
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultShutdownTimeout)
 	defer cancel()
 
-	// Both surfaces drain at once, under one budget. Draining them in sequence would let a slow
-	// HTTP drain spend the whole budget and leave relay sessions none of it, and would make a
-	// shutdown take twice as long as it was configured to.
 	var stopped sync.WaitGroup
 	stopped.Go(func() {
 		relays.stop(defaultShutdownTimeout, logger)
@@ -148,9 +135,7 @@ func httpRoutes(process assembled) (http.Handler, error) {
 	return mux, nil
 }
 
-// logMigrations reports the schema effect of this start, so a deployment's schema change
-// is visible without querying the database.
-func logMigrations(logger *slog.Logger, applied []string) {
+func logMigrationSummary(logger *slog.Logger, applied []string) {
 	if len(applied) == 0 {
 		logger.Info("schema current")
 		return
@@ -237,6 +222,6 @@ func intakeRouter(process assembled) http.Handler {
 			integrations.TypeAlertmanager:   alertmanager.Adapter{},
 			integrations.TypeGenericWebhook: genericwebhook.Adapter{},
 		},
-		Slack: slackAgent(cfg),
+		Slack: newSlackAgent(cfg),
 	}.Router()
 }

@@ -6,14 +6,23 @@ import (
 	"time"
 )
 
-var ErrInvalidWindow = errors.New("windowFrom and windowUntil must be paired RFC3339 timestamps with an offset, windowFrom before windowUntil, and windowUntil not in the future")
-var ErrWindowConflict = errors.New("the queued batch has a different window; retry after it opens")
+var (
+	ErrInvalidWindow  = errors.New("windowFrom and windowUntil must be paired RFC3339 timestamps with an offset, windowFrom before windowUntil, and windowUntil not in the future")
+	ErrWindowConflict = errors.New("the queued batch has a different window; retry after it opens")
+)
 
 // Window is a half-open interval, normalized to PostgreSQL timestamp precision.
-type Window struct{ From, Until time.Time }
+type Window struct {
+	From  time.Time
+	Until time.Time
+}
 
+// Normalized converts the window to UTC and PostgreSQL timestamp precision.
 func (w Window) Normalized() Window {
-	return Window{From: w.From.UTC().Truncate(time.Microsecond), Until: w.Until.UTC().Truncate(time.Microsecond)}
+	return Window{
+		From:  w.From.UTC().Truncate(time.Microsecond),
+		Until: w.Until.UTC().Truncate(time.Microsecond),
+	}
 }
 
 func (w Window) Valid(now time.Time) bool {
@@ -29,26 +38,31 @@ func (input windowInput) parse(now time.Time) (*Window, error) {
 	if len(input.WindowFrom) == 0 && len(input.WindowUntil) == 0 {
 		return nil, nil
 	}
+
 	var from, until string
 	if json.Unmarshal(input.WindowFrom, &from) != nil || json.Unmarshal(input.WindowUntil, &until) != nil {
 		return nil, ErrInvalidWindow
 	}
-	f, err := time.Parse(time.RFC3339Nano, from)
+	parsedFrom, err := time.Parse(time.RFC3339Nano, from)
 	if err != nil {
 		return nil, ErrInvalidWindow
 	}
-	u, err := time.Parse(time.RFC3339Nano, until)
+	parsedUntil, err := time.Parse(time.RFC3339Nano, until)
 	if err != nil {
 		return nil, ErrInvalidWindow
 	}
-	w := (Window{From: f, Until: u}).Normalized()
+	w := Window{
+		From:  parsedFrom,
+		Until: parsedUntil,
+	}.Normalized()
+
 	if !w.Valid(now) {
 		return nil, ErrInvalidWindow
 	}
 	return &w, nil
 }
 
-// MinimumQuestionWindow is the default lookback floor for questions without an Incident.
+// MinimumQuestionWindow is the default lookback used for questions without an incident.
 const MinimumQuestionWindow = 24 * time.Hour
 
 const DefaultIncidentWindowLead = 2 * time.Hour

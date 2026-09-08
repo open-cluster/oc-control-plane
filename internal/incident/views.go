@@ -16,15 +16,8 @@ import (
 const maxRequestBytes = 8 << 10
 
 type incidentView struct {
-	ID            string `json:"id"`
-	IntegrationID string `json:"integrationId"`
-	// IntegrationName is what the delivering installation is called. Served beside the
-	// identity rather than instead of it: a console that had only the identity could
-	// render nothing but a field restating its own label, and assembling a name in the
-	// browser would be a value this service never sent.
-	//
-	// Absent, rather than empty, where it could not be resolved. A console renders what
-	// it was given and an absent name is the one thing it can tell from a blank one.
+	ID              string `json:"id"`
+	IntegrationID   string `json:"integrationId"`
 	IntegrationName string `json:"integrationName,omitempty"`
 	Title           string `json:"title"`
 	Status          string `json:"status"`
