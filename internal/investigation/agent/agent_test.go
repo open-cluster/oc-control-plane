@@ -22,6 +22,7 @@ type scriptedModel struct {
 	mu    sync.Mutex
 	calls int
 	next  func(int, Prompt) (Completion, error)
+	size  func(Prompt) (int, error)
 }
 
 func (m *scriptedModel) Complete(_ context.Context, prompt Prompt) (Completion, error) {
@@ -29,6 +30,13 @@ func (m *scriptedModel) Complete(_ context.Context, prompt Prompt) (Completion, 
 	defer m.mu.Unlock()
 	m.calls++
 	return m.next(m.calls, prompt)
+}
+
+func (m *scriptedModel) RequestTokens(prompt Prompt) (int, error) {
+	if m.size != nil {
+		return m.size(prompt)
+	}
+	return EstimatePromptTokens(prompt)
 }
 
 type records struct {
@@ -711,9 +719,97 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 	}
 }
 
+func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.T) {
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	model := &scriptedModel{
+		size: func(prompt Prompt) (int, error) {
+			if prompt.ForceTool == ConcludeToolName {
+				return 100, nil
+			}
+			return 2_000, nil
+		},
+		next: func(_ int, prompt Prompt) (Completion, error) {
+			if prompt.ForceTool != ConcludeToolName {
+				t.Fatal("an oversized provider request was sent before forcing conclusion")
+			}
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+				ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
+			}}}, nil
+		},
+	}
+	runner := configuredTestAgent(t, store, model, testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{}, nil
+		}))
+	runner.deployment.ContextWindowTokens = 1_500
+
+	organization, _ := tenancy.NewOrganization("org-test")
+	if err := runner.Run(context.Background(), organization,
+		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.stoppedBy != investigation.StoppedByContext || model.calls != 1 {
+		t.Fatalf("stopped_by=%q calls=%d", store.stoppedBy, model.calls)
+	}
+}
+
+func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	var rejectedTurns, rejectedContent []byte
+	var rejectedOutput int64
+	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+		if call == 1 {
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "read-1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+		}
+		if call == 2 {
+			rejectedTurns, _ = json.Marshal(prompt.Turns)
+			rejectedContent, _ = json.Marshal(prompt.Content)
+			rejectedOutput = prompt.MaxOutputTokens
+			return Completion{}, FailedBecause(OutcomeRejected, "scripted", "test",
+				"context rejected", ErrContextWindow)
+		}
+		if prompt.ForceTool != ConcludeToolName {
+			t.Fatal("context rejection did not force the bounded recovery")
+		}
+		retained := append([]Turn(nil), prompt.Turns...)
+		for i := range retained {
+			retained[i].Instruction = ""
+		}
+		after, _ := json.Marshal(retained)
+		if len(prompt.Turns) == 0 || !bytes.Equal(rejectedTurns, after) {
+			t.Fatal("context recovery lost the completed tool exchange")
+		}
+		after, _ = json.Marshal(prompt.Content)
+		if !bytes.Equal(rejectedContent, after) || prompt.MaxOutputTokens > rejectedOutput {
+			t.Fatal("context recovery changed current input or increased output allowance")
+		}
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
+		}}}, nil
+	}}
+	runner := configuredTestAgent(t, store, model, testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{}, nil
+		}))
+
+	organization, _ := tenancy.NewOrganization("org-test")
+	if err := runner.Run(context.Background(), organization,
+		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != 3 || store.stoppedBy != investigation.StoppedByContext {
+		t.Fatalf("calls=%d stopped_by=%q", model.calls, store.stoppedBy)
+	}
+}
+
 func TestRunReservesTheDeploymentOutputFromTheContextWindow(t *testing.T) {
-	store := &records{}
-	model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	model := &scriptedModel{size: func(prompt Prompt) (int, error) {
+		if prompt.ForceTool == ConcludeToolName {
+			return 1, nil
+		}
+		return 3, nil
+	}, next: func(_ int, prompt Prompt) (Completion, error) {
 		if prompt.ForceTool != ConcludeToolName {
 			t.Fatal("context window did not reserve the deployment's maximum output")
 		}
@@ -766,7 +862,15 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 			if arguments == nil {
 				arguments = json.RawMessage(`{"purpose":"read it","input":{}}`)
 			}
-			model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
+			model := &scriptedModel{size: func(prompt Prompt) (int, error) {
+				if strings.HasPrefix(test.name, "context") {
+					if prompt.ForceTool == ConcludeToolName {
+						return 1, nil
+					}
+					return 2_000, nil
+				}
+				return 0, nil
+			}, next: func(_ int, prompt Prompt) (Completion, error) {
 				if prompt.ForceTool == ConcludeToolName {
 					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 						ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),

@@ -2,20 +2,15 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-func (r *Agent) initialInputBytes(oriented orientation) (int, error) {
+func (r *Agent) initialInputTokens(oriented orientation) (int, error) {
 	candidate := runState{task: taskInstruction(oriented),
 		orientationText: renderOrientation(oriented), tools: exchangeTools(oriented)}
-	encoded, err := json.Marshal(modelPrompt(r, &candidate, false))
-	if err != nil {
-		return 0, err
-	}
-	return len(encoded), nil
+	return requestTokens(r.model, modelPrompt(r, &candidate, false))
 }
 
 func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messages []investigation.AssignedMessage) error {

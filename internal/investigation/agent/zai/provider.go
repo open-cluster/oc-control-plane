@@ -73,11 +73,14 @@ func classify(model string, status int, identifier string, payload []byte) error
 	if identifier != "" {
 		detail += " (request " + identifier + ")"
 	}
-	if message := errorMessage(payload); message != "" {
+	message := errorMessage(payload)
+	if message != "" {
 		detail += ": " + message
 	}
 
 	switch {
+	case status == http.StatusBadRequest && isContextLimitError(message):
+		return reasoning.ContextRejected(Name, model, detail, nil)
 	case status == http.StatusTooManyRequests:
 		return reasoning.Failed(reasoning.OutcomeOutage, Name, model, detail+": rate limited")
 	case status >= 500:
@@ -94,6 +97,13 @@ func classify(model string, status int, identifier string, payload []byte) error
 	default:
 		return reasoning.Failed(reasoning.OutcomeOutage, Name, model, detail)
 	}
+}
+
+func isContextLimitError(detail string) bool {
+	normalized := strings.ToLower(detail)
+	return strings.Contains(normalized, "context_length_exceeded") ||
+		strings.Contains(normalized, "context window") ||
+		strings.Contains(normalized, "context length")
 }
 
 func errorMessage(payload []byte) string {
@@ -172,6 +182,15 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 }
 
 const retryBackoff = 500 * time.Millisecond
+
+// RequestTokens sizes the same provider request structure Complete sends.
+func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
+	encoded, err := json.Marshal(p.request(prompt))
+	if err != nil {
+		return 0, err
+	}
+	return reasoning.EstimateSerializedRequest(encoded), nil
+}
 
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,

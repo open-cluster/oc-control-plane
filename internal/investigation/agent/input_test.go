@@ -77,7 +77,14 @@ func TestAssignedBatchBeyondHistoryTailSurvivesOptionalContextTrimming(t *testin
 		store.messages = append(store.messages, investigation.AssignedMessage{Sequence: int64(n + 1), Actor: "Operator",
 			Text: fmt.Sprintf("ordered-request-%02d", n)})
 	}
-	model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
+	model := &scriptedModel{size: func(prompt Prompt) (int, error) {
+		for _, block := range prompt.Content {
+			if strings.Contains(block.Text, "old-untrusted-finding") {
+				return 40_000, nil
+			}
+		}
+		return 100, nil
+	}, next: func(_ int, prompt Prompt) (Completion, error) {
 		var text strings.Builder
 		for _, block := range prompt.Content {
 			text.WriteString(block.Text)
