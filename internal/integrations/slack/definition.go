@@ -20,7 +20,7 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 			ID:   integrations.TypeSlack,
 			Key:  "slack",
 			Name: "Slack",
-			Description: "Give investigations access to Slack conversations visible " +
+			Description: "Give investigations read-only access to Slack conversations visible " +
 				"to the connected token and reply to direct app mentions in their original thread.",
 			Logo:              "slack",
 			Category:          integrations.CategoryCollaboration,
