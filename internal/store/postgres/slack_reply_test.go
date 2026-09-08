@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -109,6 +111,38 @@ func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	}
 	if one.Stream.TS != "" || one.LastSequence != 0 {
 		t.Errorf("a fresh delivery already claims progress: %+v", one)
+	}
+}
+
+func TestSlackReplyCannotBeRetargetedBetweenAttempts(t *testing.T) {
+	database, organization := migratedDatabase(t)
+	ctx := context.Background()
+	investigation, integration := aSlackTurn(t, database, organization, "T-ORIGINAL", "C-ORIGINAL", "1700000001.1")
+	reply := claimed(t, database, investigation, time.Minute)
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE slack_conversation SET channel_id='C-OTHER'
+WHERE org_id=$1 AND conversation_id=$2`, organization.String(), reply.Conversation); err == nil {
+		t.Fatal("pending reply destination was retargeted")
+	}
+	if err := database.RetrySlackReply(ctx, organization, investigation, reply.ClaimToken,
+		time.Now().Add(-time.Second), "retry", false); err != nil {
+		t.Fatal(err)
+	}
+	retried := claimed(t, database, investigation, time.Minute)
+	if retried.Integration != integration || retried.Stream.Channel != "C-ORIGINAL" || retried.Stream.Thread != "1700000001.1" {
+		t.Fatalf("retry changed destination: %+v", retried)
+	}
+	if err := database.CompleteSlackReply(ctx, organization, investigation, retried.ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.DeleteIntegration(ctx, ownerOf(t, organization), organization, integration); !errors.Is(err, integrations.ErrInUse) {
+		t.Fatalf("outstanding Webhook Work did not prevent disconnection: %v", err)
+	}
+	if _, _, _, _, found, err := database.SlackReplyState(ctx, organization, investigation); err != nil || !found {
+		t.Fatalf("refused disconnection removed reply state: found=%v, %v", found, err)
 	}
 }
 

@@ -38,9 +38,8 @@ const (
 func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO slack_reply
-			(investigation_id, org_id, integration_id, conversation_id, channel_id, thread_ts)
-		SELECT i.investigation_id, i.org_id, s.integration_id, i.conversation_id,
-		       s.channel_id, s.thread_ts
+			(investigation_id, org_id, conversation_id)
+		SELECT i.investigation_id, i.org_id, i.conversation_id
 		  FROM investigation i
 		  JOIN slack_conversation s
 		    ON s.org_id = i.org_id AND s.conversation_id = i.conversation_id
@@ -68,6 +67,7 @@ func (p *Database) ClaimSlackReplies(
 		return nil, err
 	}
 	rows, err := p.pool.Query(ctx, `
+		WITH claimed AS (
 			UPDATE slack_reply
 			   SET status       = $1,
 			       lease_owner  = gen_random_uuid(),
@@ -82,8 +82,14 @@ func (p *Database) ClaimSlackReplies(
 			        ORDER BY next_attempt_at
 			        LIMIT $4
 			          FOR UPDATE SKIP LOCKED)
-			RETURNING investigation_id, org_id, integration_id, conversation_id,
-			          channel_id, thread_ts, stream_ts, native, last_sequence, attempts, lease_owner, leased_until`,
+			RETURNING investigation_id, org_id, conversation_id,
+			          stream_ts, native, last_sequence, attempts, lease_owner, leased_until
+		)
+		SELECT c.investigation_id, c.org_id, s.integration_id, c.conversation_id,
+		       s.channel_id, s.thread_ts, c.stream_ts, c.native, c.last_sequence,
+		       c.attempts, c.lease_owner, c.leased_until
+		FROM claimed c JOIN slack_conversation s
+		  ON s.org_id = c.org_id AND s.conversation_id = c.conversation_id`,
 		SlackReplyDelivering, lease.String(), SlackReplyPending, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claiming slack replies: %w", err)

@@ -122,6 +122,8 @@ Provider manifests own Integration catalog metadata. PostgreSQL retains stable k
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
 Credential key identity lives in the authenticated sealed envelope. Upgrades refuse retained installation
 refresh data that needs reconciliation before removing unsupported refresh fields.
+Slack reply attempts derive their destination from an immutable Conversation mapping; delivery cursors and
+leases remain owned by the reply. An upgrade refuses conflicting retained destinations.
 
 Provider adapters offer native read tools behind one provider-independent investigation contract. Kubernetes libraries
 and customer cluster credentials never enter this module; the Relay executes the released, versioned capability protocol
