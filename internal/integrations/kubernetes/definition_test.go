@@ -42,7 +42,7 @@ func TestVerify_JudgesTheRelayHonestly(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			verified := Definition().Verify(integrations.VerifyInput{Relay: testCase.relay})
+			verified := Definition().Verify(integrations.VerifyInput{RelayStatus: testCase.relay})
 			if verified.Status != testCase.wantStatus {
 				t.Errorf("verified as %v, want %v; note: %s",
 					verified.Status, testCase.wantStatus, verified.Note)

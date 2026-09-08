@@ -1,9 +1,3 @@
-// Package kubernetes is the Kubernetes provider: a cluster read through a Relay by bounded
-// typed reads — what is running, what the cluster said about it, and what a container
-// logged before it died.
-//
-// The typed Relay Capability contracts live under internal/relay/capability because they
-// are the closed wire operations shared with the Relay, not generic Integration features.
 package kubernetes
 
 import (
@@ -18,8 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 )
 
-// Definition is what this provider exports to the catalog. Metadata mirrors the seeded
-// integration_type row; a test proves the two agree.
 type Executor interface {
 	Execute(context.Context, integrations.ToolRequest, string, *relayv1.CapabilityArguments) (integrations.ToolResult, error)
 }
@@ -31,7 +23,9 @@ func Definition(executors ...Executor) integrations.Definition {
 	}
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			ID: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes",
+			ID:   integrations.TypeKubernetes,
+			Key:  "kubernetes",
+			Name: "Kubernetes",
 			Description: "Give investigations read-only access to Kubernetes workload " +
 				"runtime, namespace events, and bounded container logs through an outbound Relay.",
 			Logo: "kubernetes", Category: integrations.CategoryInfrastructure, Available: true,
@@ -130,21 +124,21 @@ func tools(executor Executor) []integrations.Tool {
 // Relay Capability the Relay did not advertise is the cluster's own configuration answering, not
 // this platform's.
 func verify(input integrations.VerifyInput) integrations.Verification {
-	if !input.Relay.Bound {
+	if !input.RelayStatus.Bound {
 		return integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note:   "no relay serves this integration; bind one and verify again",
 		}
 	}
-	if !input.Relay.Connected {
+	if !input.RelayStatus.Connected {
 		return integrations.Verification{
 			Status: integrations.StatusFailed,
 			Note:   "the relay serving this integration is not connected",
 		}
 	}
 
-	advertised := make(map[string]bool, len(input.Relay.Capabilities))
-	for _, name := range input.Relay.Capabilities {
+	advertised := make(map[string]bool, len(input.RelayStatus.Capabilities))
+	for _, name := range input.RelayStatus.Capabilities {
 		advertised[name] = true
 	}
 	var missing []string

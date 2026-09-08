@@ -597,7 +597,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 			h.fail(writer, request, statusErr)
 			return
 		}
-		input.Relay = status
+		input.RelayStatus = status
 	}
 	if definition.ReceivesWebhooks {
 		last, lastErr := h.Store.LastAcceptedDelivery(ctx, organization, id)

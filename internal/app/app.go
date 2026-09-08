@@ -1,4 +1,3 @@
-// Package app composes and runs the OpenCluster control plane.
 package app
 
 import (
@@ -27,8 +26,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
-// readHeaderTimeout bounds how long a client may take to send its headers, which is the
-// cheapest defence against a slow-loris holding connections open.
 const readHeaderTimeout = 10 * time.Second
 
 const (
@@ -39,8 +36,6 @@ const (
 	defaultInvestigationWindowLead = conversation.DefaultIncidentWindowLead
 )
 
-// Bounds on connections to the shared HTTP surface. Route owners retain their own body and
-// request limits inside these server-wide bounds.
 const (
 	operatorReadTimeout  = 30 * time.Second
 	operatorWriteTimeout = 30 * time.Second
@@ -48,13 +43,12 @@ const (
 )
 
 type Options struct {
-	Version      string
-	OnListen     func(net.Addr)
-	Agent        investigation.Agent
-	Model        agent.Model
-	ModelEffort  string
-	ModelBaseURL string
-	// InventoryInterval replaces the production cadence in composed-process tests.
+	Version           string
+	OnListen          func(net.Addr)
+	Agent             investigation.Agent
+	Model             agent.Model
+	ModelEffort       string
+	ModelBaseURL      string
 	InventoryInterval time.Duration
 	MaxToolRuns       int
 	MaxTurns          int
@@ -82,8 +76,6 @@ func Run(
 		return err
 	}
 	defer func() {
-		// Flushing telemetry uses a fresh context: the process context is already cancelled
-		// by the time this runs, and an exporter given a dead context flushes nothing.
 		if shutdownErr := telemetry.Shutdown(context.WithoutCancel(ctx)); shutdownErr != nil {
 			telemetry.Logger.Warn("telemetry shutdown", slog.String("error", shutdownErr.Error()))
 		}
@@ -118,9 +110,6 @@ func Run(
 			return fmt.Errorf("%s: %w", config.EnvGitHubAppKeyFile, err)
 		}
 	}
-	// The installation flow is registered separately from the credential: a deployment may
-	// hold an App and offer no one-click install — which is the self-hosted case — and it
-	// then serves the configuration form exactly as it does today.
 
 	// Slack's installation flow is registered separately from its credential, exactly as
 	// GitHub's is: a deployment that registered no Slack app offers no connect button and
@@ -134,14 +123,10 @@ func Run(
 		}
 	}
 
-	// The catalog is assembled HERE, and this is the only place that knows every provider.
-	// A duplicate key or a definition missing its verification refuses startup, where the
-	// person who caused it is still the person reading the error.
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(kubernetes.RelayExecutor{Database: database}),
-		slack.Definition(slack.NewClient(options.SlackAPIURL), slackInstaller,
-			cfg.SlackSigningSecret != ""),
+		slack.Definition(slack.NewClient(options.SlackAPIURL), slackInstaller, cfg.SlackSigningSecret != ""),
 		github.Definition(gitHubApp, gitHubClient),
 		genericwebhook.Definition(),
 	)

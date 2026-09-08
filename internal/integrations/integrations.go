@@ -1,15 +1,3 @@
-// Package integrations owns the Integration domain: the catalog of Integration Types this
-// product supports, and the configured installations belonging to an organization.
-//
-// An Integration Type is product-owned reference data. Its row in integration_type carries
-// minimal catalog metadata and is seeded by migration; everything behavioral — configuration
-// schema, verification, and Tools — lives in a provider package under this one, exported
-// as a Definition and assembled into a Catalog at the composition root. The composition root
-// is the only place that knows every provider; nothing here imports one.
-//
-// An Integration is one configured installation: "Production Alertmanager", "Org Slack".
-// org_id is the tenant boundary. Where work runs is derivable from whether a Relay serves
-// the integration.
 package integrations
 
 import (
@@ -20,9 +8,6 @@ import (
 	"time"
 )
 
-// TypeID is the persisted identity of an Integration Type. The values are frozen: they are
-// seeded into integration_type by migration and compiled here as constants, so no runtime
-// lookup maps a key to an id. A test proves the two sets agree.
 type TypeID int16
 
 const (
@@ -33,7 +18,6 @@ const (
 	TypeGenericWebhook TypeID = 5
 )
 
-// Category groups the catalog. A controlled vocabulary owned here; deliberately not a table.
 type Category string
 
 const (
@@ -43,9 +27,6 @@ const (
 	CategorySourceControl  Category = "source-control"
 )
 
-// FieldType is what one configuration field holds. Deliberately small: a setup form that
-// needs a type this does not have is a provider that needs its own component, not a wider
-// vocabulary.
 type FieldType string
 
 const (
@@ -53,23 +34,14 @@ const (
 	FieldInteger FieldType = "integer"
 )
 
-// Field is one thing an Integration of this type is configured with. The configuration
-// schema is RENDERED from these rather than written as JSON, which is what makes "every
-// configuration schema is valid" true by construction.
 type Field struct {
 	Name        string
 	Title       string
 	Description string
 	Type        FieldType
-	// Format is a JSON Schema format annotation — `uri`, `hostname`. Empty means the type
-	// is the whole constraint.
-	Format   string
-	Required bool
-	// Secret marks a value that is written once and never read back: it is routed to the
-	// sealer, never to configuration, and the rendered schema says writeOnly. A definition
-	// declaring one must declare a Probe, because the only honest check of a credential is
-	// presenting it to the provider.
-	Secret bool
+	Format      string
+	Required    bool
+	Secret      bool
 	// Recorded marks a value the INSTALLATION FLOW writes and a caller never may. It is
 	// declared so that an operator reading the record can see it and a schema can describe
 	// it, and it is refused on the way in — a field that only a proven connect can set
@@ -102,25 +74,16 @@ type Verification struct {
 	// Grants. Nil means the run established none.
 	Facts map[string]any
 }
-
-// VerifyInput is everything a Definition's Verify may consult. It is gathered by the
-// handler so the verification itself is a pure function of observed facts.
 type VerifyInput struct {
-	Integration Integration
-	// Relay is the state of the bound Relay, meaningful only when the type requires one.
-	Relay RelayStatus
-	// LastAcceptedDelivery is when a webhook-receiving integration last accepted a real
-	// delivery, zero when it never has.
+	Integration          Integration
+	RelayStatus          RelayStatus
 	LastAcceptedDelivery time.Time
 }
 
 // RelayStatus is what verification may know about the Relay serving an integration.
 type RelayStatus struct {
-	// Bound reports whether the integration names a Relay at all.
-	Bound bool
-	// Connected reports whether that Relay currently holds a session.
-	Connected bool
-	// Capabilities is the Relay Capabilities advertised at enrolment.
+	Bound        bool
+	Connected    bool
 	Capabilities []string
 }
 
@@ -184,7 +147,7 @@ type Manifest struct {
 // documentationSite is where this product's own documentation is published. One constant,
 // beside the schema $id's origin above, because the site is the product's and not a
 // deployment's: a self-hosted install reads the same published pages.
-const documentationSite = "https://docs.opencluster.dev"
+const documentationSite = "https://docs.open-cluster.io/"
 
 // ProductDocumentationURL is OUR page for this type — the one that carries the receiver
 // YAML, the header name and the version floor, rather than the vendor's reference.
@@ -234,13 +197,10 @@ func (m Manifest) ConfigurationSchema() json.RawMessage {
 	sort.Strings(required)
 
 	schema := map[string]any{
-		"$schema": "https://json-schema.org/draft/2020-12/schema",
-		"$id":     "https://opencluster.dev/schemas/integration/" + m.Key + "/configuration.json",
-		"title":   m.Name + " configuration",
-		"type":    "object",
-		// Closed on purpose. A field a customer invented is a field nothing reads, and
-		// accepting it silently is how a configuration comes to look complete and do
-		// nothing.
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"$id":                  "https://opencluster.dev/schemas/integration/" + m.Key + "/configuration.json",
+		"title":                m.Name + " configuration",
+		"type":                 "object",
 		"additionalProperties": false,
 		"properties":           properties,
 	}
@@ -302,19 +262,12 @@ func (d Definition) SecretField() (Field, bool) {
 	return Field{}, false
 }
 
-// Catalog is the assembled set of Definitions this deployment serves. It is built once at
-// the composition root and read everywhere else.
 type Catalog struct {
 	ordered []Definition
 	byKey   map[string]Definition
 	byID    map[TypeID]Definition
 }
 
-// NewCatalog assembles and validates the definitions. A duplicate key or id, a definition
-// with no verification or two kinds of it, a second secret field, a credential without a
-// probe to check it, or an incomplete Tool contract — each is a
-// programming error and refuses assembly, at startup, where the person who caused it is
-// reading.
 func NewCatalog(definitions ...Definition) (Catalog, error) {
 	catalog := Catalog{
 		ordered: make([]Definition, 0, len(definitions)),
@@ -344,7 +297,6 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 	return catalog, nil
 }
 
-// checkDefinition refuses a definition whose declarations cannot all be true at once.
 func checkDefinition(definition Definition) error {
 	wantDocumentationSlug := "integrations/" + string(definition.Category) + "/" + definition.Key
 	if definition.DocumentationSlug != "" && definition.DocumentationSlug != wantDocumentationSlug {
@@ -399,9 +351,6 @@ func checkDefinition(definition Definition) error {
 	return nil
 }
 
-// checkArguments refuses a tool whose argument declarations are incomplete. The model
-// plans calls by these declarations, so a nameless, undescribed or untyped argument is
-// a call that goes wrong at three in the morning instead of failing this build.
 func checkArguments(key string, tool Tool) error {
 	declared := make(map[string]bool, len(tool.Arguments))
 	for _, argument := range tool.Arguments {
@@ -422,7 +371,6 @@ func checkArguments(key string, tool Tool) error {
 	return nil
 }
 
-// All returns every definition, ordered by key so a rendered catalog is stable.
 func (c Catalog) All() []Definition { return append([]Definition(nil), c.ordered...) }
 
 func (c Catalog) Manifests() []Manifest {
@@ -440,7 +388,6 @@ func (c Catalog) Manifests() []Manifest {
 	return manifests
 }
 
-// Tools returns every declared Tool in stable Integration Type and declaration order.
 func (c Catalog) Tools() []Tool {
 	var tools []Tool
 	for _, definition := range c.ordered {
@@ -461,10 +408,6 @@ func (c Catalog) ByID(id TypeID) (Definition, bool) {
 	return definition, ok
 }
 
-// CredentialBearing reports the keys of the types that take a pasted credential, in
-// order. The composition root refuses to serve the operator surface for a non-empty
-// answer with no sealing key configured: the setup flow would accept a secret it could
-// only store in the clear or drop.
 func (c Catalog) CredentialBearing() []string {
 	var keys []string
 	for _, definition := range c.ordered {

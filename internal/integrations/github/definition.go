@@ -20,12 +20,6 @@ const (
 	ListReleases     = "github.list_releases"
 )
 
-// Definition is what this provider exports to the catalog. Metadata mirrors the seeded
-// integration_type row; a test proves the two agree.
-//
-// The App may be nil — a deployment that configured none still serves github in the
-// catalog, because the compiled provider set and the seeded reference rows must agree
-// exactly; connecting is what fails, live and with the reason, when the probe runs.
 func Definition(app *App, client *Client) integrations.Definition {
 	where := deployment{
 		app: app, client: client, webURL: browserOrigin(client),
