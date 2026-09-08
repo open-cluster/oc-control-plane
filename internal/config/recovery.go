@@ -1,29 +1,15 @@
 package config
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // LoadRecoveryDatabase reads deployment database configuration without requiring server dependencies.
 func LoadRecoveryDatabase(lookup func(string) (string, bool)) (string, error) {
-	path, _ := lookup(EnvConfigFile)
-	values, err := loadFile(strings.TrimSpace(path))
-	if err != nil {
-		return "", err
-	}
-	dsn, err := databaseDSN(func(key string) (string, bool) {
-		if value, ok := lookup(key); ok {
-			return value, true
-		}
-		value, ok := values[key]
-		return value, ok
-	})
+	dsn, err := databaseDSN(lookup)
 	if err != nil {
 		return "", err
 	}
 	if dsn == "" {
-		return "", fmt.Errorf("%s is required", EnvDatabaseDSNFile)
+		return "", fmt.Errorf("%s or %s is required", EnvDatabaseDSN, EnvDatabaseDSNFile)
 	}
 	return dsn, nil
 }

@@ -3,8 +3,8 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strconv"
@@ -18,69 +18,85 @@ const (
 )
 
 var SupportedEnvironmentKeys = []string{
-	EnvConfigFile,
 	EnvHTTPAddress,
 	EnvOperatorPublicURL,
+	EnvDatabaseDSN,
 	EnvDatabaseDSNFile,
 	EnvAuthenticationMode,
+	EnvOperatorToken,
 	EnvOperatorTokenFile,
 	EnvOIDCIssuer,
 	EnvOIDCClientID,
+	EnvOIDCClientSecret,
 	EnvOIDCClientSecretFile,
 	EnvRelayAddress,
 	EnvRelaySPKIPins,
 	EnvModelProvider,
 	EnvModelName,
+	EnvModelKey,
 	EnvModelKeyFile,
 	EnvModelContextWindowSize,
 	EnvModelMaxOutputTokens,
 	EnvInvestigationWorkers,
 	EnvInvestigationMaxPendingPerOrganization,
+	EnvSealingKey,
 	EnvSealingKeyFile,
 	EnvLogLevel,
 	EnvOTLPEndpoint,
 	EnvSlackClientID,
+	EnvSlackClientSecret,
 	EnvSlackClientSecretFile,
+	EnvSlackSigningSecret,
 	EnvSlackSigningSecretFile,
 	EnvGitHubAppID,
+	EnvGitHubAppKey,
 	EnvGitHubAppKeyFile,
 }
 
 const (
 	EnvHTTPAddress                            = "OC_SERVER_ADDRESS"
 	EnvOperatorPublicURL                      = "OC_PUBLIC_URL"
+	EnvDatabaseDSN                            = "OC_DATABASE_DSN"
 	EnvDatabaseDSNFile                        = "OC_DATABASE_DSN_FILE"
 	EnvAuthenticationMode                     = "OC_AUTH_MODE"
+	EnvOperatorToken                          = "OC_BOOTSTRAP_TOKEN"
 	EnvOperatorTokenFile                      = "OC_BOOTSTRAP_TOKEN_FILE"
 	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
 	EnvOIDCClientID                           = "OC_OIDC_CLIENT_ID"
+	EnvOIDCClientSecret                       = "OC_OIDC_CLIENT_SECRET"
 	EnvOIDCClientSecretFile                   = "OC_OIDC_CLIENT_SECRET_FILE"
 	EnvRelayAddress                           = "OC_RELAY_ADDRESS"
 	EnvRelaySPKIPins                          = "OC_RELAY_SPKI_PINS"
 	EnvModelProvider                          = "OC_AI_PROVIDER"
 	EnvModelName                              = "OC_AI_MODEL"
+	EnvModelKey                               = "OC_AI_API_KEY"
 	EnvModelKeyFile                           = "OC_AI_API_KEY_FILE"
 	EnvModelContextWindowSize                 = "OC_AI_CONTEXT_WINDOW_SIZE"
 	EnvModelMaxOutputTokens                   = "OC_AI_MAX_OUTPUT_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
+	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
 	EnvLogLevel                               = "OC_LOG_LEVEL"
 	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
 	EnvSlackClientID                          = "OC_SLACK_CLIENT_ID"
+	EnvSlackClientSecret                      = "OC_SLACK_CLIENT_SECRET"
 	EnvSlackClientSecretFile                  = "OC_SLACK_CLIENT_SECRET_FILE"
+	EnvSlackSigningSecret                     = "OC_SLACK_SIGNING_SECRET"
 	EnvSlackSigningSecretFile                 = "OC_SLACK_SIGNING_SECRET_FILE"
 	EnvGitHubAppID                            = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKey                           = "OC_GITHUB_APP_PRIVATE_KEY"
 	EnvGitHubAppKeyFile                       = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 )
 
 // Config is the validated process configuration.
 type Config struct {
+	LogLevel slog.Level
 	// HTTPAddress is the shared listen address for every HTTP route group.
 	HTTPAddress string
 
 	// DatabaseDSN is the single deployment database connection string, resolved from
-	// the file named by configuration. It never appears in an environment value.
+	// a direct environment value or the configured file.
 	DatabaseDSN string
 
 	// OTLPEndpoint is the trace collector, host:port. Empty disables trace export, which
@@ -155,6 +171,11 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	var err error
+	if raw, _ := lookup(EnvLogLevel); strings.TrimSpace(raw) != "" {
+		if err := cfg.LogLevel.UnmarshalText([]byte(strings.TrimSpace(raw))); err != nil {
+			return Config{}, fmt.Errorf("%s must be debug, info, warn, or error", EnvLogLevel)
+		}
+	}
 	if raw, ok := lookup(EnvHTTPAddress); ok && strings.TrimSpace(raw) != "" {
 		cfg.HTTPAddress = strings.TrimSpace(raw)
 	}
@@ -254,10 +275,12 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 	cfg.AuthenticationMode = mode
 	issuer, _ := lookup(EnvOIDCIssuer)
 	clientID, _ := lookup(EnvOIDCClientID)
-	secretFile, _ := lookup(EnvOIDCClientSecretFile)
-	issuer, clientID, secretFile = strings.TrimSpace(issuer), strings.TrimSpace(clientID),
-		strings.TrimSpace(secretFile)
-	configured := issuer != "" || clientID != "" || secretFile != ""
+	secret, err := readSecretText(lookup, EnvOIDCClientSecretFile)
+	if err != nil {
+		return err
+	}
+	issuer, clientID = strings.TrimSpace(issuer), strings.TrimSpace(clientID)
+	configured := issuer != "" || clientID != "" || secret != ""
 	if mode == "local" {
 		if configured {
 			return fmt.Errorf("%s must be local+oidc when OIDC settings are present",
@@ -265,7 +288,7 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 		}
 		return nil
 	}
-	if issuer == "" || clientID == "" || secretFile == "" {
+	if issuer == "" || clientID == "" || secret == "" {
 		return fmt.Errorf("%s, %s, and %s are all required in local+oidc mode",
 			EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile)
 	}
@@ -274,40 +297,12 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 		(parsed.Scheme != "https" && (parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1")) {
 		return fmt.Errorf("%s must be an HTTPS issuer URL", EnvOIDCIssuer)
 	}
-	secret, err := readSecretFile(secretFile)
-	if err != nil {
-		return fmt.Errorf("%s: client secret file cannot be read", EnvOIDCClientSecretFile)
-	}
-	if secret == "" {
-		return fmt.Errorf("%s: client secret file is empty", EnvOIDCClientSecretFile)
-	}
 	cfg.OIDCIssuer, cfg.OIDCClientID, cfg.OIDCClientSecret = issuer, clientID, secret
 	return nil
 }
 
 func databaseDSN(lookup func(string) (string, bool)) (string, error) {
-	path, _ := lookup(EnvDatabaseDSNFile)
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", nil
-	}
-	dsn, err := readSecretFile(path)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", EnvDatabaseDSNFile, err)
-	}
-	return dsn, nil
-}
-
-func readSecretFile(path string) (string, error) {
-	raw, err := (MountedSecretSource{}).Read("", path)
-	if err != nil {
-		return "", err
-	}
-	value := strings.TrimSpace(string(raw))
-	if value == "" {
-		return "", errors.New("file is empty")
-	}
-	return value, nil
+	return readSecretText(lookup, EnvDatabaseDSNFile)
 }
 
 func optionalHostPort(lookup func(string) (string, bool), key string) (string, error) {
@@ -347,10 +342,12 @@ func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 	cfg.ModelProvider = strings.TrimSpace(provider)
 	name, _ := lookup(EnvModelName)
 	cfg.ModelName = strings.TrimSpace(name)
-	path, _ := lookup(EnvModelKeyFile)
-	path = strings.TrimSpace(path)
+	key, err := readSecretText(lookup, EnvModelKeyFile)
+	if err != nil {
+		return err
+	}
 	if cfg.ModelProvider == "" {
-		if path != "" || cfg.ModelName != "" {
+		if key != "" || cfg.ModelName != "" {
 			return fmt.Errorf("%s is required when a model is configured", EnvModelProvider)
 		}
 		return nil
@@ -359,12 +356,8 @@ func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 		return fmt.Errorf("%s is required when %s is set: a constructed model identifier "+
 			"is a 404 at best", EnvModelName, EnvModelProvider)
 	}
-	if path == "" {
+	if key == "" {
 		return fmt.Errorf("%s is required when %s is set", EnvModelKeyFile, EnvModelProvider)
-	}
-	key, err := readSecretFile(path)
-	if err != nil {
-		return fmt.Errorf("%s: %w", EnvModelKeyFile, err)
 	}
 	cfg.ModelKey = key
 	return nil
@@ -374,27 +367,14 @@ func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
 func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 	id, _ := lookup(EnvGitHubAppID)
 	id = strings.TrimSpace(id)
-	path, _ := lookup(EnvGitHubAppKeyFile)
-	path = strings.TrimSpace(path)
-
-	switch {
-	case id == "" && path == "":
-		return "", nil, nil
-	case id == "":
-		return "", nil, fmt.Errorf("%s is required when %s is set",
-			EnvGitHubAppID, EnvGitHubAppKeyFile)
-	case path == "":
-		return "", nil, fmt.Errorf("%s is required when %s is set",
-			EnvGitHubAppKeyFile, EnvGitHubAppID)
-	}
-	raw, err := (MountedSecretSource{}).Read(EnvGitHubAppKeyFile, path)
+	key, err := readSecret(lookup, EnvGitHubAppKeyFile)
 	if err != nil {
 		return "", nil, err
 	}
-	if len(raw) == 0 {
-		return "", nil, fmt.Errorf("%s: the key file is empty", EnvGitHubAppKeyFile)
+	if (id == "") != (len(key) == 0) {
+		return "", nil, fmt.Errorf("%s and a GitHub App private key must be configured together", EnvGitHubAppID)
 	}
-	return id, raw, nil
+	return id, key, nil
 }
 
 // slackApp reads the deployment's Slack app registration.
@@ -409,33 +389,18 @@ func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	clientID, _ := lookup(EnvSlackClientID)
 	clientID = strings.TrimSpace(clientID)
-	secretPath, _ := lookup(EnvSlackClientSecretFile)
-	secretPath = strings.TrimSpace(secretPath)
-
-	switch {
-	case clientID == "" && secretPath != "":
-		return fmt.Errorf("%s is required when %s is set",
-			EnvSlackClientID, EnvSlackClientSecretFile)
-	case clientID != "" && secretPath == "":
-		return fmt.Errorf("%s is required when %s is set",
-			EnvSlackClientSecretFile, EnvSlackClientID)
-	case clientID != "":
-		secret, err := readSecretFile(secretPath)
-		if err != nil {
-			return fmt.Errorf("%s: %w", EnvSlackClientSecretFile, err)
-		}
-		cfg.SlackClientID, cfg.SlackClientSecret = clientID, secret
-	}
-
-	signingPath, _ := lookup(EnvSlackSigningSecretFile)
-	if signingPath = strings.TrimSpace(signingPath); signingPath == "" {
-		return nil
-	}
-	signing, err := readSecretFile(signingPath)
+	secret, err := readSecretText(lookup, EnvSlackClientSecretFile)
 	if err != nil {
-		return fmt.Errorf("%s: %w", EnvSlackSigningSecretFile, err)
+		return err
 	}
-	cfg.SlackSigningSecret = signing
+	if (clientID == "") != (secret == "") {
+		return fmt.Errorf("%s and %s or its direct value must be configured together", EnvSlackClientID, EnvSlackClientSecretFile)
+	}
+	signing, err := readSecretText(lookup, EnvSlackSigningSecretFile)
+	if err != nil {
+		return err
+	}
+	cfg.SlackClientID, cfg.SlackClientSecret, cfg.SlackSigningSecret = clientID, secret, signing
 	return nil
 }
 
@@ -445,10 +410,7 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 // which is the property key pinning exists to remove.
 func relaySPKIPins(lookup func(string) (string, bool), relayAddress string) ([]string, error) {
 	raw, _ := lookup(EnvRelaySPKIPins)
-	fields, listErr := decodeList(raw)
-	if listErr != nil {
-		return nil, fmt.Errorf("%s: invalid list: %w", EnvRelaySPKIPins, listErr)
-	}
+	fields := strings.Split(raw, ",")
 	pins := make([]string, 0, len(fields))
 	for _, field := range fields {
 		pin := strings.TrimSpace(field)

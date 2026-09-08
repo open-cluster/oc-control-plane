@@ -45,3 +45,5 @@ relay:
     image: nginx:1.27-alpine
 
 resources: {}
+
+logLevel: info

@@ -111,65 +111,6 @@ func TestLoadModelOutputLimitFromEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoadProcessUsesSmallYAMLSchemaAndEnvironmentPrecedence(t *testing.T) {
-	dsn := secretFile(t, "postgres://user:password@localhost/opencluster")
-	path := filepath.Join(t.TempDir(), "opencluster.yaml")
-	document := "server:\n  address: ':9000'\n  public_url: http://localhost:9000\ndatabase:\n  dsn_file: " + dsn + "\n"
-	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadProcess(nil, lookup(map[string]string{
-		EnvConfigFile: path, EnvHTTPAddress: ":9100",
-		EnvOperatorTokenFile: secretFile(t, strings.Repeat("b", 32)),
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.HTTPAddress != ":9100" || cfg.OperatorPublicURL != "http://localhost:9000" {
-		t.Fatalf("resolved config = address %q public %q", cfg.HTTPAddress, cfg.OperatorPublicURL)
-	}
-}
-
-func TestLoadProcessReadsInvestigationLimitsFromYAML(t *testing.T) {
-	dsn := secretFile(t, "postgres://user:password@localhost/opencluster")
-	path := filepath.Join(t.TempDir(), "opencluster.yaml")
-	document := "database:\n  dsn_file: " + dsn +
-		"\ninvestigation:\n  workers: 5\n  max_pending_per_organization: 75\n"
-	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadProcess(nil, lookup(map[string]string{
-		EnvConfigFile: path, EnvOperatorTokenFile: secretFile(t, strings.Repeat("b", 32)),
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.InvestigationWorkers != 5 || cfg.MaxPendingInvestigationsPerOrganization != 75 {
-		t.Fatalf("investigation limits = workers %d pending %d",
-			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
-	}
-}
-
-func TestLoadProcessReadsModelLimitsFromYAML(t *testing.T) {
-	dsn := secretFile(t, "postgres://user:password@localhost/opencluster")
-	path := filepath.Join(t.TempDir(), "opencluster.yaml")
-	document := "database:\n  dsn_file: " + dsn +
-		"\nai:\n  context_window_tokens: 256000\n  max_output_tokens: 64000\n"
-	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadProcess(nil, lookup(map[string]string{
-		EnvConfigFile: path, EnvOperatorTokenFile: secretFile(t, strings.Repeat("b", 32)),
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ModelContextWindowTokens != 256_000 || cfg.ModelMaxOutputTokens != 64_000 {
-		t.Fatalf("model limits = context %d output %d",
-			cfg.ModelContextWindowTokens, cfg.ModelMaxOutputTokens)
-	}
-}
-
 func TestLoadRejectsNonPositiveInvestigationLimits(t *testing.T) {
 	for _, key := range []string{EnvInvestigationWorkers, EnvInvestigationMaxPendingPerOrganization} {
 		t.Run(key, func(t *testing.T) {
@@ -196,12 +137,17 @@ func TestLoadRejectsInvalidModelLimits(t *testing.T) {
 	}
 }
 
-func TestLoadProcessRejectsObsoleteYAMLSettings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "opencluster.yaml")
-	if err := os.WriteFile(path, []byte("server:\n  operator_address: ':8080'\n"), 0o600); err != nil {
-		t.Fatal(err)
+func TestLoadProcessAcceptsEnvironmentAndRejectsRetiredConfiguration(t *testing.T) {
+	values := essentialEnvironment(t)
+	cfg, err := LoadProcess([]string{"--server-address", ":9100"}, lookup(values))
+	if err != nil || cfg.HTTPAddress != ":9100" {
+		t.Fatalf("startup configuration: %v", err)
 	}
-	if _, err := LoadProcess(nil, lookup(map[string]string{EnvConfigFile: path})); err == nil || !strings.Contains(err.Error(), "operator_address") {
-		t.Fatalf("obsolete setting error = %v", err)
+	if _, err := LoadProcess([]string{"--config", "private-path"}, lookup(values)); err == nil || strings.Contains(err.Error(), "private-path") {
+		t.Fatalf("retired flag: %v", err)
+	}
+	values["OC_CONFIG_FILE"] = "private-path"
+	if _, err := LoadProcess(nil, lookup(values)); err == nil || strings.Contains(err.Error(), "private-path") {
+		t.Fatalf("retired setting: %v", err)
 	}
 }

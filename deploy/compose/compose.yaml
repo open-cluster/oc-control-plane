@@ -21,8 +21,12 @@ services:
     build:
       context: ../..
       dockerfile: deploy/compose/Dockerfile
-    command: [--config, /etc/opencluster/opencluster.yaml]
     environment:
+      OC_DATABASE_DSN_FILE: /run/secrets/postgres_dsn
+      OC_BOOTSTRAP_TOKEN_FILE: /run/secrets/operator_token
+      OC_ENCRYPTION_KEY_FILE: /run/secrets/sealing_key
+      OC_AI_API_KEY_FILE: /run/secrets/model_key
+      OC_LOG_LEVEL: ${OPENCLUSTER_LOG_LEVEL:-info}
       OC_PUBLIC_URL: ${OPENCLUSTER_PUBLIC_URL:-http://localhost:8080}
       OC_AI_PROVIDER: ${OPENCLUSTER_AI_PROVIDER:-anthropic}
       OC_AI_MODEL: ${OPENCLUSTER_AI_MODEL:?set the configured model identifier}
@@ -37,8 +41,6 @@ services:
         condition: service_healthy
     expose:
       - "8080"
-    volumes:
-      - ./opencluster.yaml:/etc/opencluster/opencluster.yaml:ro
     secrets:
       - postgres_dsn
       - operator_token

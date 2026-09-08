@@ -12,10 +12,10 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/config"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -318,34 +318,17 @@ func typeExpression(expression ast.Expr) string {
 	}
 }
 
-// A secret must never be carried in an environment value; configuration names a FILE and
-// reads it. A new environment variable whose name suggests a secret is a review failure
-// worth catching mechanically.
-func TestNoEnvironmentVariableNamesASecret(t *testing.T) {
-	t.Parallel()
-
-	forbidden := []string{"PASSWORD", "SECRET", "TOKEN", "APIKEY", "API_KEY", "CREDENTIAL"}
-
-	for _, file := range parseProductionFiles(t,
-		filepath.Join(moduleRoot, "internal", "config")) {
-		ast.Inspect(file, func(node ast.Node) bool {
-			literal, ok := node.(*ast.BasicLit)
-			if !ok || literal.Kind != token.STRING {
-				return true
+func TestSecretEnvironmentInputsHaveFileAlternatives(t *testing.T) {
+	keys := make(map[string]bool, len(config.SupportedEnvironmentKeys))
+	for _, key := range config.SupportedEnvironmentKeys {
+		keys[key] = true
+	}
+	for key := range keys {
+		for _, word := range []string{"PASSWORD", "SECRET", "TOKEN", "APIKEY", "API_KEY", "CREDENTIAL", "ENCRYPTION_KEY", "PRIVATE_KEY", "DATABASE_DSN"} {
+			if strings.Contains(key, word) && !strings.HasSuffix(key, "_FILE") && !keys[key+"_FILE"] {
+				t.Errorf("%s has no optional file input", key)
 			}
-			value, err := strconv.Unquote(literal.Value)
-			if err != nil || !strings.HasPrefix(value, "OC_") {
-				return true
-			}
-			for _, word := range forbidden {
-				if strings.Contains(strings.ToUpper(value), word) &&
-					!strings.HasSuffix(strings.ToUpper(value), "_FILE") {
-					t.Errorf("%s names a secret; configuration must reference a file path instead",
-						value)
-				}
-			}
-			return true
-		})
+		}
 	}
 }
 

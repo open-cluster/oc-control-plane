@@ -9,6 +9,7 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
@@ -168,5 +169,24 @@ func TestShutdown_IsSafeAndReportsSuccess(t *testing.T) {
 	}
 	if err := telemetry.Shutdown(context.Background()); err != nil {
 		t.Errorf("Shutdown must be safe to call twice: %v", err)
+	}
+}
+
+func TestConfiguredLogLevelControlsOutput(t *testing.T) {
+	for _, level := range []string{"debug", "warn"} {
+		cfg, err := config.Load(func(key string) (string, bool) {
+			values := map[string]string{config.EnvDatabaseDSN: "postgres://localhost/test", config.EnvLogLevel: level}
+			value, ok := values[key]
+			return value, ok
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		telemetry, logs := startTelemetry(t, observability.Options{LogLevel: cfg.LogLevel})
+		telemetry.Logger.Debug("debug-visible")
+		telemetry.Logger.Warn("warn-visible")
+		if strings.Contains(logs.String(), "debug-visible") != (level == "debug") || !strings.Contains(logs.String(), "warn-visible") {
+			t.Fatalf("level %s did not control output", level)
+		}
 	}
 }

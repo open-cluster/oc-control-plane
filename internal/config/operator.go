@@ -13,19 +13,15 @@ const minOperatorTokenLength = 32
 func operatorTokenDigest(
 	lookup func(string) (string, bool), operatorAddress string,
 ) ([]byte, error) {
-	path, _ := lookup(EnvOperatorTokenFile)
-	path = strings.TrimSpace(path)
-
 	if operatorAddress == "" {
 		return nil, nil
 	}
-	if path == "" {
-		return nil, nil
-	}
-
-	token, err := readSecretFile(path)
+	token, err := readSecretText(lookup, EnvOperatorTokenFile)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", EnvOperatorTokenFile, err)
+		return nil, err
+	}
+	if token == "" {
+		return nil, nil
 	}
 	if len(token) < minOperatorTokenLength {
 		return nil, fmt.Errorf("%s: the token must be at least %d characters; the surface it "+
@@ -69,23 +65,13 @@ func optionalOrigin(
 }
 
 func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
-	path, _ := lookup(EnvSealingKeyFile)
-	if strings.TrimSpace(path) == "" {
+	raw, err := readSecret(lookup, EnvSealingKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
 		return nil, nil
 	}
-	active, err := readSealingKey(EnvSealingKeyFile, strings.TrimSpace(path))
-	if err != nil {
-		return nil, err
-	}
-	return active, nil
-}
-
-func readSealingKey(setting, path string) ([]byte, error) {
-	raw, err := (MountedSecretSource{}).Read(setting, path)
-	if err != nil {
-		return nil, err
-	}
-
 	trimmed := strings.TrimSpace(string(raw))
 	if decoded, decodeErr := base64.StdEncoding.DecodeString(trimmed); decodeErr == nil &&
 		len(decoded) == sealingKeyLength {
@@ -95,7 +81,7 @@ func readSealingKey(setting, path string) ([]byte, error) {
 		return raw, nil
 	}
 	return nil, fmt.Errorf("%s: the key must be %d bytes, raw or base64-encoded",
-		setting, sealingKeyLength)
+		EnvSealingKeyFile, sealingKeyLength)
 }
 
 // sealingKeyLength is AES-256's key size. It is stated here rather than imported so that

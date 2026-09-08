@@ -90,7 +90,7 @@ production data and verify retention changes against legal and operational requi
 
 ## Secrets and Relay
 
-Environment variables name secret files rather than containing credential values.
+Secrets accept a direct environment value or an optional `_FILE` path, never both. Startup errors omit secret values and paths. Restart after changing configuration or secret files.
 Inbound webhook credentials are stored as digests. Presentable Integration credentials
 are sealed and never returned after creation; one-time values must be stored immediately.
 Audit details remove credential-shaped keys.

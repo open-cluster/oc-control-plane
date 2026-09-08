@@ -10,6 +10,8 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: opencluster
         app.kubernetes.io/instance: {{ .Release.Name }}
@@ -27,7 +29,45 @@ spec:
         - name: control-plane
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--config", "/etc/opencluster/opencluster.yaml"]
+          env:
+            - name: OC_SERVER_ADDRESS
+              value: ":{{ .Values.service.httpPort }}"
+            - name: OC_PUBLIC_URL
+              value: {{ .Values.operator.publicURL | quote }}
+            - name: OC_DATABASE_DSN_FILE
+              value: "/run/opencluster/secrets/{{ .Values.database.dsnKey }}"
+            {{- with .Values.credentials.operatorTokenKey }}
+            - name: OC_BOOTSTRAP_TOKEN_FILE
+              value: "/run/opencluster/credentials/{{ . }}"
+            {{- end }}
+            - name: OC_ENCRYPTION_KEY_FILE
+              value: "/run/opencluster/credentials/{{ .Values.credentials.sealingKey }}"
+            - name: OC_AI_API_KEY_FILE
+              value: "/run/opencluster/credentials/{{ .Values.credentials.modelKey }}"
+            - name: OC_AI_PROVIDER
+              value: {{ .Values.model.provider | quote }}
+            - name: OC_AI_MODEL
+              value: {{ .Values.model.name | quote }}
+            {{- with .Values.model.contextWindowTokens }}
+            - name: OC_AI_CONTEXT_WINDOW_SIZE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.model.maxOutputTokens }}
+            - name: OC_AI_MAX_OUTPUT_SIZE
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OC_INVESTIGATION_WORKERS
+              value: {{ .Values.investigation.workers | quote }}
+            - name: OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION
+              value: {{ .Values.investigation.maxPendingPerOrganization | quote }}
+            - name: OC_LOG_LEVEL
+              value: {{ .Values.logLevel | default "info" | quote }}
+            {{- if .Values.relay.enabled }}
+            - name: OC_RELAY_ADDRESS
+              value: ":{{ .Values.relay.internalPort }}"
+            - name: OC_RELAY_SPKI_PINS
+              value: {{ required "relay.spkiPins requires the TLS certificate's public-key digest" .Values.relay.spkiPins | join "," | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.httpPort }}
@@ -51,9 +91,6 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
-            - name: configuration
-              mountPath: /etc/opencluster
-              readOnly: true
             - name: database
               mountPath: /run/opencluster/secrets
               readOnly: true

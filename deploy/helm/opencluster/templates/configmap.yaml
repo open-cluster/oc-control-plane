@@ -3,33 +3,6 @@ kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-opencluster
 data:
-  opencluster.yaml: |
-    server:
-      address: ":{{ .Values.service.httpPort }}"
-      public_url: {{ .Values.operator.publicURL | quote }}
-    database:
-      dsn_file: "/run/opencluster/secrets/{{ .Values.database.dsnKey }}"
-    authentication:
-      bootstrap_token_file: "/run/opencluster/credentials/{{ .Values.credentials.operatorTokenKey }}"
-      encryption_key_file: "/run/opencluster/credentials/{{ .Values.credentials.sealingKey }}"
-    ai:
-      provider: {{ .Values.model.provider | quote }}
-      model: {{ .Values.model.name | quote }}
-      api_key_file: "/run/opencluster/credentials/{{ .Values.credentials.modelKey }}"
-{{ with .Values.model.contextWindowTokens }}
-      context_window_tokens: {{ . }}
-{{ end }}
-{{ with .Values.model.maxOutputTokens }}
-      max_output_tokens: {{ . }}
-{{ end }}
-    investigation:
-      workers: {{ .Values.investigation.workers }}
-      max_pending_per_organization: {{ .Values.investigation.maxPendingPerOrganization }}
-    {{- if .Values.relay.enabled }}
-    relay:
-      address: ":{{ .Values.relay.internalPort }}"
-      spki_pins: {{ required "relay.spkiPins requires the TLS certificate's public-key digest" .Values.relay.spkiPins | toJson }}
-    {{- end }}
   {{- if .Values.relay.enabled }}
   nginx.conf: |
     pid /tmp/nginx.pid;
