@@ -11,7 +11,6 @@ import (
 
 type Store interface {
 	QueryIncidents(ctx context.Context, org tenancy.Organization, query Query) (Page, error)
-	// Incident reads one, scoped to the tenant.
 	Incident(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Incident, error)
 	IncidentAlertEvents(ctx context.Context, org tenancy.Organization,
 		id uuid.UUID, page AlertEventPage) (AlertEventList, error)
