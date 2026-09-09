@@ -141,7 +141,7 @@ func (e Event) Bounded() Event {
 	e.Target.ID = truncate(e.Target.ID, MaxTargetIDLength)
 	e.SourceAddress = truncate(e.SourceAddress, MaxSourceAddrLength)
 	e.RequestID = truncate(e.RequestID, MaxRequestIDLength)
-	e.Detail = e.Detail.Safe()
+	e.Detail = safeDetailForAction(e.Action, e.Detail)
 	return e
 }
 
@@ -150,7 +150,19 @@ func truncate(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "…"
+	const marker = "..."
+	if limit <= len(marker) {
+		return value[:limit]
+	}
+	cut := limit - len(marker)
+	last := 0
+	for index := range value {
+		if index > cut {
+			return value[:last] + marker
+		}
+		last = index
+	}
+	return value[:cut] + marker
 }
 
 // Page is a position in the record, so an auditor reading a long history pages through it

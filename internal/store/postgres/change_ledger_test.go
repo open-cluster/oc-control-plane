@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,6 +315,7 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	defer database.Close()
 	registration, integration := ledgerScope(t, database, organization)
+	otherIntegration := kubernetesIntegration(t, database, organization, registration)
 	ctx := context.Background()
 
 	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
@@ -331,6 +333,36 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 	if _, err := database.RecordInventoryDelta(ctx, organization, registration, delta); err != nil {
 		t.Fatalf("recording the baseline: %v", err)
 	}
+	other := changeledger.Delta{
+		IntegrationID: otherIntegration, Baseline: true, ObservedAt: start,
+		Changes: []changeledger.Change{{
+			Namespace: "shop", Kind: changeledger.KindDeployment, Name: "api",
+			UID: "other-uid", ObservedRevision: "g1.other", Change: changeledger.ChangeCreated,
+		}},
+	}
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, other); err != nil {
+		t.Fatalf("recording the second baseline: %v", err)
+	}
+	duplicates, err := database.WorkloadInventory(ctx, organization, 10)
+	if err != nil {
+		t.Fatalf("reading duplicate inventory: %v", err)
+	}
+	if len(duplicates) != 3 ||
+		!inventoryLine(duplicates, integration, "shop/deployment api") ||
+		!inventoryLine(duplicates, otherIntegration, "shop/deployment api") ||
+		!inventoryLine(duplicates, integration, "shop/statefulset queue") {
+		t.Fatalf("duplicate inventory = %v", duplicates)
+	}
+	deletedDuplicate := changeledger.Delta{
+		IntegrationID: otherIntegration, ObservedAt: start.Add(5 * time.Minute),
+		Changes: []changeledger.Change{{
+			Namespace: "shop", Kind: changeledger.KindDeployment, Name: "api",
+			UID: "other-uid", ObservedRevision: "g2.other", Change: changeledger.ChangeDeleted,
+		}},
+	}
+	if _, err := database.RecordInventoryDelta(ctx, organization, registration, deletedDuplicate); err != nil {
+		t.Fatalf("recording the duplicate deletion: %v", err)
+	}
 	gone := changeledger.Delta{
 		IntegrationID: integration, ObservedAt: start.Add(10 * time.Minute),
 		Changes: []changeledger.Change{{
@@ -346,12 +378,24 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the inventory: %v", err)
 	}
-	if len(digest) != 1 || digest[0] != "shop/deployment api" {
-		t.Fatalf("digest = %v; deletions drop out and only workload kinds appear", digest)
+	if len(digest) != 1 || !inventoryLine(digest, integration, "shop/deployment api") ||
+		inventoryLine(digest, otherIntegration, "shop/deployment api") {
+		t.Fatalf("digest = %v; same-name deletion must affect only its source Integration", digest)
 	}
 
 	if bounded, err := database.WorkloadInventory(ctx, organization, 0); err != nil ||
 		len(bounded) != 0 {
 		t.Fatalf("a zero bound reads nothing: %v %v", bounded, err)
 	}
+}
+
+func inventoryLine(lines []string, integration uuid.UUID, workload string) bool {
+	for _, line := range lines {
+		if strings.HasPrefix(line, "integration "+integration.String()+" covered since ") &&
+			strings.Contains(line, " last confirmed ") &&
+			strings.HasSuffix(line, " "+workload) {
+			return true
+		}
+	}
+	return false
 }
