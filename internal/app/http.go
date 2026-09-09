@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -192,6 +193,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		OIDCClientSecret: cfg.OIDCClientSecret,
 		PublicURL:        cfg.OperatorPublicURL,
 		ConsoleURL:       cfg.OperatorPublicURL,
+		SessionLifetime:  time.Duration(cfg.SessionLifetimeSeconds) * time.Second,
 		// This process starts the pruner unconditionally, so the policy surface may say that a
 		// declared retention schedule is applied. It is passed rather than assumed because the
 		// statement is made to an auditor, and the only way to keep it true is for the component

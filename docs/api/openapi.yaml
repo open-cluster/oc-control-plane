@@ -2735,7 +2735,7 @@ components:
       properties:
         sessionLifetimeSeconds:
           type: integer
-          minimum: 900
+          minimum: 300
           maximum: 2592000
         auditRetentionDays:
           type: integer

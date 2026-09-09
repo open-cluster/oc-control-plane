@@ -1451,7 +1451,7 @@ components:
       additionalProperties: false
       required: [sessionLifetimeSeconds, auditRetentionDays]
       properties:
-        sessionLifetimeSeconds: { type: integer, minimum: 900, maximum: 2592000 }
+        sessionLifetimeSeconds: { type: integer, minimum: 300, maximum: 2592000 }
         auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
         auditRetentionEnforced: { type: boolean, readOnly: true }
     IntegrationType:

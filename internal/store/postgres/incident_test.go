@@ -38,8 +38,8 @@ func recordIncident(
 	if _, err = pool.Exec(context.Background(), `
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key,
-			 grouping_basis, title, status, first_seen_at, last_seen_at, alert_event_count)
-		VALUES ($1, $2, $3, $4, 1, 'a failure', 1, $5, $5, 1)`,
+			 grouping_basis, title, status, first_seen_at, last_seen_at)
+		VALUES ($1, $2, $3, $4, 1, 'a failure', 1, $5, $5)`,
 		id, organization.String(), integration, key, now); err != nil {
 		t.Fatalf("recording an incident incident: %v", err)
 	}
@@ -209,5 +209,34 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 	if page.Incidents[0].Basis != incident.BasisSourceGrouping {
 		t.Errorf("the incident reports basis %v, want the source's own grouping",
 			page.Incidents[0].Basis)
+	}
+}
+
+func TestIncidentAlertEventCountIsDerivedFromAlertEvents(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	integration := alertmanagerIntegration(t, database, organization)
+	incidentID := recordIncident(t, database, organization, integration, "derived-count")
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"one", "two"} {
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO alert_event
+				(alert_event_id, org_id, integration_id, source_key, status, title, summary,
+				 started_at, incident_id)
+			VALUES ($1, $2, $3, $4, 1, 'Alert', 'Summary', $5, $6)`,
+			uuid.New(), organization.String(), integration, source, time.Now().UTC(), incidentID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found, err := database.Incident(context.Background(), organization, incidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.AlertEventCount != 2 {
+		t.Fatalf("incident count = %d, want the two owned AlertEvents", found.AlertEventCount)
 	}
 }

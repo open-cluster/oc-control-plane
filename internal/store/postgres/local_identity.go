@@ -81,7 +81,7 @@ func (p *Database) BootstrapLocalUser(
 	}
 	issued.UserID = user.ID
 	if _, err = transaction.Exec(ctx, `
-		INSERT INTO operator_session (session_id, token_digest, user_id, org_id,
+		INSERT INTO operator_session (session_id, credential_digest, user_id, org_id,
 		                              issued_at, expires_at, last_seen_at, user_agent, address)
 		VALUES ($1, $2, $3, NULL, $4, $5, $4, $6, $7)`,
 		issued.ID, digest, issued.UserID, issued.IssuedAt, issued.ExpiresAt,

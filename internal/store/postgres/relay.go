@@ -129,7 +129,7 @@ func spendBootstrapToken(
 	tag, err := transaction.Exec(ctx, `
 		UPDATE relay_bootstrap_token
 		   SET consumed_at = now()
-		 WHERE token_digest = $1
+		 WHERE bootstrap_digest = $1
 		   AND org_id = $2
 		   AND consumed_at IS NULL
 		   AND revoked_at IS NULL
@@ -157,7 +157,7 @@ func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
 		       revoked_at IS NOT NULL,
 		       expires_at <= now()
 		  FROM relay_bootstrap_token
-		 WHERE token_digest = $1`, tokenDigest).
+		 WHERE bootstrap_digest = $1`, tokenDigest).
 		Scan(&tokenOrganization, &consumed, &revoked, &expired)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -221,7 +221,7 @@ func (p *Database) IssueBootstrapToken(
 		return err
 	}
 	_, err = pool.Exec(ctx, `
-		INSERT INTO relay_bootstrap_token (token_digest, org_id, expires_at)
+		INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
 		VALUES ($1, $2, $3)`,
 		tokenDigest, organization.String(), expiresAt)
 	if err != nil {
