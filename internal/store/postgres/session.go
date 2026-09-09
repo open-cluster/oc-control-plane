@@ -104,7 +104,7 @@ func issueSessionIn(
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
 ) error {
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO operator_session (session_id, token_digest, user_id, org_id,
+		INSERT INTO operator_session (session_id, credential_digest, user_id, org_id,
 		                              issued_at, expires_at, last_seen_at, user_agent, address)
 		VALUES ($1, $2, $3, $4, $5, $6, $5, $7, $8)`,
 		issued.ID, digest, issued.UserID, organization.String(), issued.IssuedAt,
@@ -149,7 +149,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	err := on.QueryRow(ctx, `
 		WITH touched AS (
 			UPDATE operator_session SET last_seen_at = now()
-			WHERE token_digest = $1 AND last_seen_at < now() - $2::interval
+			WHERE credential_digest = $1 AND last_seen_at < now() - $2::interval
 			  AND revoked_at IS NULL AND expires_at > now()
 			RETURNING last_seen_at
 		)
@@ -157,7 +157,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		       COALESCE((SELECT last_seen_at FROM touched), s.last_seen_at),
 		       s.revoked_at, s.user_agent, s.address, u.email, u.issuer, u.display_name, u.disabled_at
 		FROM operator_session s JOIN app_user u ON u.user_id = s.user_id
-		WHERE s.token_digest = $1`,
+		WHERE s.credential_digest = $1`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
 		&found.Session.Organization, &found.Session.IssuedAt, &found.Session.ExpiresAt,
 		&found.Session.LastSeenAt, &revoked, &found.Session.UserAgent, &found.Session.Address,
@@ -313,74 +313,58 @@ func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-// SessionPolicy reports how long a tenant's sessions live and how long it says it keeps its
-// record. Both are the organization's own settings; the application holds the lifetime inside
-// the bounds this build serves.
-func (p *Database) SessionPolicy(
+// OrganizationAuditRetention reports the Organization-owned audit retention schedule.
+func (p *Database) OrganizationAuditRetention(
 	ctx context.Context, organization tenancy.Organization,
-) (time.Duration, int, error) {
+) (int, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	var seconds, retention int
+	var retention int
 	err = pool.QueryRow(ctx, `
-		SELECT session_lifetime_seconds, audit_retention_days
-		  FROM organization_policy WHERE org_id = $1`,
-		organization.String()).Scan(&seconds, &retention)
+		SELECT audit_retention_days
+		  FROM organization WHERE org_id = $1`,
+		organization.String()).Scan(&retention)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// A tenant that has configured nothing takes the product's defaults rather than
-		// failing. There is no row to create here: writing one on a read would mean every
-		// sign-in mutates.
-		return 0, 0, nil
+		return 0, nil
 	}
 	if err != nil {
-		return 0, 0, fmt.Errorf("reading the session policy: %w", err)
+		return 0, fmt.Errorf("reading audit retention: %w", err)
 	}
-	return time.Duration(seconds) * time.Second, retention, nil
+	return retention, nil
 }
 
-// SetSessionPolicy records a tenant's own security policy, and what it was before.
-func (p *Database) SetSessionPolicy(
+// SetOrganizationAuditRetention records a tenant's own audit retention policy.
+func (p *Database) SetOrganizationAuditRetention(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	lifetime time.Duration, retentionDays int,
+	retentionDays int,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionPolicyChanged,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var beforeSeconds, beforeRetention int
+			var beforeRetention int
 			err := transaction.QueryRow(ctx, `
-				SELECT session_lifetime_seconds, audit_retention_days
-				  FROM organization_policy WHERE org_id = $1 FOR UPDATE`,
-				organization.String()).Scan(&beforeSeconds, &beforeRetention)
+				SELECT audit_retention_days
+				  FROM organization WHERE org_id = $1 FOR UPDATE`,
+				organization.String()).Scan(&beforeRetention)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("reading the policy: %w", err)
 			}
 
 			if _, err := transaction.Exec(ctx, `
-				INSERT INTO organization_policy (org_id, session_lifetime_seconds,
-				                                 audit_retention_days, updated_by)
-				VALUES ($1, $2, $3, $4)
-				ON CONFLICT (org_id) DO UPDATE
-				    SET session_lifetime_seconds = EXCLUDED.session_lifetime_seconds,
-				        audit_retention_days     = EXCLUDED.audit_retention_days,
-				        updated_at               = now(),
-				        updated_by               = EXCLUDED.updated_by`,
-				organization.String(), int(lifetime.Seconds()), retentionDays,
-				principal.ID()); err != nil {
+				UPDATE organization SET audit_retention_days = $2
+				 WHERE org_id = $1`,
+				organization.String(), retentionDays); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("writing the policy: %w", err)
 			}
-			// Story 23 applies to every identity setting, not only to the provider: a weakened
-			// policy is discoverable because both values are on the record.
 			return struct{}{},
 				audit.Target{Kind: audit.TargetOrganization, ID: organization.String()},
 				audit.Detail{
 					"before": map[string]any{
-						"sessionLifetimeSeconds": beforeSeconds,
-						"auditRetentionDays":     beforeRetention,
+						"auditRetentionDays": beforeRetention,
 					},
 					"after": map[string]any{
-						"sessionLifetimeSeconds": int(lifetime.Seconds()),
-						"auditRetentionDays":     retentionDays,
+						"auditRetentionDays": retentionDays,
 					},
 				}, nil
 		})

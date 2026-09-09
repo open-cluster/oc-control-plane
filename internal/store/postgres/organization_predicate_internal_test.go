@@ -54,6 +54,8 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 	alertEventID := uuid.New()
 	observedAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	seed := &pgx.Batch{}
+	seed.Queue(`INSERT INTO organization (org_id, display_name, created_by)
+		VALUES ($1, 'First', 'test'), ($2, 'Second', 'test')`, first.String(), second.String())
 	seed.Queue(`
 		INSERT INTO integration (integration_id, org_id, integration_type_id, name)
 		VALUES ($1, $2, 1, 'tenant predicate test')`, integrationID, first.String())
@@ -69,8 +71,8 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 	seed.Queue(`
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key, grouping_basis,
-			 title, status, first_seen_at, last_seen_at, alert_event_count)
-		VALUES ($1, $2, $3, 'boundary', 1, 'tenant predicate test', 1, $4, $4, 0)`,
+			 title, status, first_seen_at, last_seen_at)
+		VALUES ($1, $2, $3, 'boundary', 1, 'tenant predicate test', 1, $4, $4)`,
 		incidentID, first.String(), integrationID, observedAt)
 	seed.Queue(`
 		INSERT INTO alert_event
@@ -116,14 +118,14 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 		if commitErr := transaction.Commit(ctx); commitErr != nil {
 			t.Fatal(commitErr)
 		}
-		var count int
+		var lastSeen time.Time
 		if queryErr := database.pool.QueryRow(ctx,
-			`SELECT alert_event_count FROM incident WHERE incident_id = $1`, incidentID).
-			Scan(&count); queryErr != nil {
+			`SELECT last_seen_at FROM incident WHERE incident_id = $1`, incidentID).
+			Scan(&lastSeen); queryErr != nil {
 			t.Fatal(queryErr)
 		}
-		if count != 0 {
-			t.Fatalf("another Organization refreshed the incident to %d alertEvents", count)
+		if !lastSeen.Equal(observedAt) {
+			t.Fatalf("another Organization refreshed the incident to %v", lastSeen)
 		}
 	})
 

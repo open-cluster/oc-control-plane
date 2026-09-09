@@ -2,8 +2,6 @@ package identity
 
 import (
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
@@ -129,13 +127,13 @@ func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
-	lifetime, retention, err := h.Database.SessionPolicy(ctx, organization)
+	retention, err := h.Database.OrganizationAuditRetention(ctx, organization)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, policyView{
-		SessionLifetimeSeconds: int(session.ClampLifetime(lifetime).Seconds()),
+		SessionLifetimeSeconds: int(session.ClampLifetime(h.SessionLifetime).Seconds()),
 		AuditRetentionDays:     retention,
 		AuditRetentionEnforced: h.RetentionEnforced})
 }
@@ -157,18 +155,16 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorView{Error: "a policy value must not be negative"})
 		return
 	}
-	lifetime := time.Duration(body.SessionLifetimeSeconds) * time.Second
-	if lifetime != 0 && (lifetime < session.MinLifetime || lifetime > session.MaxLifetime) {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "sessionLifetimeSeconds must be between " + secondsIn(session.MinLifetime) + " and " + secondsIn(session.MaxLifetime) + ", or 0 for the product default"})
+	configuredLifetimeSeconds := int(session.ClampLifetime(h.SessionLifetime).Seconds())
+	if body.SessionLifetimeSeconds != 0 && body.SessionLifetimeSeconds != configuredLifetimeSeconds {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "sessionLifetimeSeconds is deployment configuration"})
 		return
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
-	if err := h.Database.SetSessionPolicy(ctx, principal, organization, lifetime, body.AuditRetentionDays); err != nil {
+	if err := h.Database.SetOrganizationAuditRetention(ctx, principal, organization, body.AuditRetentionDays); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: int(session.ClampLifetime(lifetime).Seconds()), AuditRetentionDays: body.AuditRetentionDays, AuditRetentionEnforced: h.RetentionEnforced})
+	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: configuredLifetimeSeconds, AuditRetentionDays: body.AuditRetentionDays, AuditRetentionEnforced: h.RetentionEnforced})
 }
-
-func secondsIn(value time.Duration) string { return strconv.Itoa(int(value.Seconds())) }

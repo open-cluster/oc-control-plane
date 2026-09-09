@@ -39,6 +39,7 @@ var SupportedEnvironmentKeys = []string{
 	EnvModelMaxOutputTokens,
 	EnvInvestigationWorkers,
 	EnvInvestigationMaxPendingPerOrganization,
+	EnvSessionLifetimeSeconds,
 	EnvSealingKey,
 	EnvSealingKeyFile,
 	EnvLogLevel,
@@ -75,6 +76,7 @@ const (
 	EnvModelMaxOutputTokens                   = "OC_AI_MAX_OUTPUT_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
+	EnvSessionLifetimeSeconds                 = "OC_SESSION_LIFETIME_SECONDS"
 	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
 	EnvLogLevel                               = "OC_LOG_LEVEL"
@@ -158,6 +160,7 @@ type Config struct {
 
 	InvestigationWorkers                    int
 	MaxPendingInvestigationsPerOrganization int
+	SessionLifetimeSeconds                  int
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -168,6 +171,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		AuthenticationMode:                      defaultAuthenticationMode,
 		InvestigationWorkers:                    defaultInvestigationWorkers,
 		MaxPendingInvestigationsPerOrganization: defaultInvestigationMaxPendingPerOrganization,
+		SessionLifetimeSeconds:                  43200,
 	}
 
 	var err error
@@ -243,8 +247,25 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		defaultInvestigationMaxPendingPerOrganization); err != nil {
 		return Config{}, err
 	}
+	if cfg.SessionLifetimeSeconds, err = boundedInteger(lookup,
+		EnvSessionLifetimeSeconds, cfg.SessionLifetimeSeconds, 300, 2592000); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
+}
+
+func boundedInteger(
+	lookup func(string) (string, bool), key string, fallback, minimum, maximum int,
+) (int, error) {
+	value, err := positiveInteger(lookup, key, fallback)
+	if err != nil {
+		return 0, err
+	}
+	if value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be between %d and %d", key, minimum, maximum)
+	}
+	return value, nil
 }
 
 func positiveInteger(

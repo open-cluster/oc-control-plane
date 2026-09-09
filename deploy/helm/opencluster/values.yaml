@@ -29,6 +29,8 @@ investigation:
   workers: 8
   maxPendingPerOrganization: 100
 
+sessionLifetimeSeconds: 43200
+
 service:
   type: ClusterIP
   httpPort: 8080

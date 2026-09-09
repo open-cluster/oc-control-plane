@@ -255,7 +255,7 @@ func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, e
 	var declared []audit.Retention
 	rows, err := p.pool.Query(ctx, `
 			SELECT org_id, audit_retention_days
-			  FROM organization_policy
+			  FROM organization
 			 WHERE audit_retention_days > 0
 			 ORDER BY org_id`)
 	if err != nil {

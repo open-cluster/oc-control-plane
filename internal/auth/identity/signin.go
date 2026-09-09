@@ -60,15 +60,13 @@ func (h Handlers) prepareSession(
 ) (session.Token, []byte, session.Session, audit.Detail, error) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	var configured time.Duration
 	if !organization.IsEmpty() {
-		var err error
-		configured, _, err = h.Database.SessionPolicy(ctx, organization)
+		_, err := h.Database.OrganizationAuditRetention(ctx, organization)
 		if err != nil {
 			return "", nil, session.Session{}, nil, err
 		}
 	}
-	lifetime := session.ClampLifetime(configured)
+	lifetime := session.ClampLifetime(h.SessionLifetime)
 	token, digest, err := session.NewToken()
 	if err != nil {
 		return "", nil, session.Session{}, nil, err

@@ -134,7 +134,7 @@ func (t *truth) issueBootstrapToken(ctx context.Context, organization string) (s
 	digest := sha256.Sum256([]byte(token))
 
 	_, err := t.pool.Exec(ctx, `
-		INSERT INTO relay_bootstrap_token (token_digest, org_id, expires_at)
+		INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
 		VALUES ($1, $2, $3)`,
 		digest[:], organization, time.Now().Add(time.Hour))
 	if err != nil {

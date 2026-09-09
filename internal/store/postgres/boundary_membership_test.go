@@ -107,8 +107,8 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		"RemoveMembership": func() error {
 			return database.RemoveMembership(ctx, stranger, organization, somebody)
 		},
-		"SetSessionPolicy": func() error {
-			return database.SetSessionPolicy(ctx, stranger, organization, time.Hour, 30)
+		"SetOrganizationAuditRetention": func() error {
+			return database.SetOrganizationAuditRetention(ctx, stranger, organization, 30)
 		},
 		"AuditEvents": func() error {
 			_, err := database.AuditEvents(ctx, stranger, organization, audit.Page{})

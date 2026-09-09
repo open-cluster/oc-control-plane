@@ -384,7 +384,7 @@ func (s *scanSeconds) Scan(value any) error {
 }
 
 // WorkloadInventory reads a bounded digest of the ledger's current workload
-// identities — each rendered "namespace/kind name" — for the autonomous
+// identities — each rendered with its Integration and "namespace/kind name" — for the autonomous
 // orientation. A navigation index, never evidence: deletions drop out, and only the
 // watched workload kinds appear. Empty when no Relay has synchronized anything.
 func (p *Database) WorkloadInventory(
@@ -395,16 +395,19 @@ func (p *Database) WorkloadInventory(
 		return nil, err
 	}
 	rows, err := pool.Query(ctx, `
-		SELECT namespace, object_kind, object_name
+		SELECT latest.integration_id, scope.covered_since, scope.last_confirmed_at,
+		       scope.faulted, scope.truncated, namespace, object_kind, object_name
 		  FROM (
-		      SELECT DISTINCT ON (namespace, object_kind, object_name)
-		             namespace, object_kind, object_name, change_kind
+		      SELECT DISTINCT ON (integration_id, namespace, object_kind, object_name)
+		             integration_id, namespace, object_kind, object_name, change_kind
 		        FROM change_ledger
 		       WHERE org_id = $1 AND object_kind IN ($2, $3, $4)
-		       ORDER BY namespace, object_kind, object_name, observed_at DESC
+		       ORDER BY integration_id, namespace, object_kind, object_name, observed_at DESC, entry_id DESC
 		  ) latest
+		  JOIN change_ledger_scope scope
+		    ON scope.org_id = $1 AND scope.integration_id = latest.integration_id
 		 WHERE change_kind <> $5
-		 ORDER BY namespace, object_name
+		 ORDER BY namespace, object_name, latest.integration_id
 		 LIMIT $6`,
 		organization.String(), int16(changeledger.KindDeployment),
 		int16(changeledger.KindStatefulSet), int16(changeledger.KindDaemonSet),
@@ -416,16 +419,41 @@ func (p *Database) WorkloadInventory(
 
 	var digest []string
 	for rows.Next() {
+		var integration uuid.UUID
 		var namespace, name string
+		var coveredSince, lastConfirmed *time.Time
+		var faulted, truncated bool
 		var kind int16
-		if err := rows.Scan(&namespace, &kind, &name); err != nil {
+		if err := rows.Scan(&integration, &coveredSince, &lastConfirmed,
+			&faulted, &truncated, &namespace, &kind, &name); err != nil {
 			return nil, fmt.Errorf("reading a workload identity: %w", err)
 		}
-		digest = append(digest, namespace+"/"+
-			changeledger.ObjectKind(kind).String()+" "+name)
+		digest = append(digest, "integration "+integration.String()+" "+
+			inventoryCoverage(coveredSince, lastConfirmed, faulted, truncated)+" "+
+			namespace+"/"+changeledger.ObjectKind(kind).String()+" "+name)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading the workload inventory: %w", err)
 	}
 	return digest, nil
+}
+
+func inventoryCoverage(
+	coveredSince, lastConfirmed *time.Time, faulted, truncated bool,
+) string {
+	var parts []string
+	if faulted {
+		parts = append(parts, "coverage faulted")
+	} else if coveredSince != nil {
+		parts = append(parts, "covered since "+coveredSince.UTC().Format(time.RFC3339))
+	} else {
+		parts = append(parts, "coverage unknown")
+	}
+	if lastConfirmed != nil {
+		parts = append(parts, "last confirmed "+lastConfirmed.UTC().Format(time.RFC3339))
+	}
+	if truncated {
+		parts = append(parts, "truncated")
+	}
+	return strings.Join(parts, " ")
 }

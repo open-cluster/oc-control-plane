@@ -108,7 +108,7 @@ func (p *Database) IssueOperatorBootstrapToken(
 	_, err := audited(ctx, p, principal, organization, audit.ActionRelayBootstrapIssued,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
 			if _, err := transaction.Exec(ctx, `
-				INSERT INTO relay_bootstrap_token (token_digest, org_id, expires_at)
+				INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
 				VALUES ($1, $2, $3)`,
 				tokenDigest, organization.String(), expiresAt); err != nil {
 				return struct{}{}, audit.Target{}, nil,

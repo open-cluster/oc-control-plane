@@ -35,6 +35,7 @@ func recordAuditEvent(
 	defer func() { _ = connection.Close(context.Background()) }()
 
 	id := uuid.New()
+	ensureOrganization(t, connection, organization)
 	if _, err = connection.Exec(context.Background(), `
 		INSERT INTO audit_event
 			(event_id, org_id, actor_kind, actor_display_name, action, target_kind,
@@ -56,11 +57,21 @@ func declareRetention(t *testing.T, dsn string, organization tenancy.Organizatio
 	defer func() { _ = connection.Close(context.Background()) }()
 
 	if _, err = connection.Exec(context.Background(), `
-		INSERT INTO organization_policy (org_id, audit_retention_days)
-		VALUES ($1, $2)
+		INSERT INTO organization (org_id, display_name, created_by, audit_retention_days)
+		VALUES ($1, $1, 'retention-test', $2)
 		ON CONFLICT (org_id) DO UPDATE SET audit_retention_days = EXCLUDED.audit_retention_days`,
 		organization.String(), days); err != nil {
 		t.Fatalf("declaring a retention schedule: %v", err)
+	}
+}
+
+func ensureOrganization(t *testing.T, connection *pgx.Conn, organization tenancy.Organization) {
+	t.Helper()
+	if _, err := connection.Exec(context.Background(), `
+		INSERT INTO organization (org_id, display_name, created_by)
+		VALUES ($1, $1, 'retention-test')
+		ON CONFLICT (org_id) DO NOTHING`, organization.String()); err != nil {
+		t.Fatalf("creating organization: %v", err)
 	}
 }
 

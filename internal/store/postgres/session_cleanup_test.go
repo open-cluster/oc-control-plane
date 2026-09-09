@@ -29,7 +29,7 @@ func TestSessionCleanupIsGlobalAndBounded(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	if _, err := connection.Exec(ctx, `INSERT INTO operator_session
-		(session_id, token_digest, user_id, issued_at, expires_at, revoked_at)
+		(session_id, credential_digest, user_id, issued_at, expires_at, revoked_at)
 		SELECT md5(n::text)::uuid, decode(md5(n::text) || md5(n::text), 'hex'), $1,
 		       now() - interval '3 days',
 		       CASE WHEN n <= 1001 THEN now() - interval '2 days' ELSE now() + interval '1 day' END,

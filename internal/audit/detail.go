@@ -57,6 +57,47 @@ func (d Detail) Safe() Detail {
 	return safe
 }
 
+func safeDetailForAction(action Action, detail Detail) Detail {
+	if action == ActionPolicyChanged {
+		return safePolicyChangeDetail(detail)
+	}
+	return detail.Safe()
+}
+
+func safePolicyChangeDetail(detail Detail) Detail {
+	before := safeRetentionMetadata(detail["before"])
+	after := safeRetentionMetadata(detail["after"])
+	if before == nil && after == nil {
+		return nil
+	}
+	safe := Detail{}
+	if before != nil {
+		safe["before"] = before
+	}
+	if after != nil {
+		safe["after"] = after
+	}
+	return safe
+}
+
+func safeRetentionMetadata(value any) Detail {
+	detail, ok := value.(map[string]any)
+	if !ok {
+		if typed, isDetail := value.(Detail); isDetail {
+			detail = typed
+			ok = true
+		}
+	}
+	if !ok {
+		return nil
+	}
+	value, ok = detail["auditRetentionDays"]
+	if !ok {
+		return nil
+	}
+	return Detail{"auditRetentionDays": boundedValue(value)}
+}
+
 func NamesACredential(key string) bool { return namesACredential(key) }
 
 func namesACredential(key string) bool {
@@ -70,9 +111,20 @@ func namesACredential(key string) bool {
 }
 
 func boundedValue(value any) any {
-	text, isText := value.(string)
-	if !isText {
+	switch typed := value.(type) {
+	case string:
+		return truncate(typed, MaxDetailValueLength)
+	case Detail:
+		return typed.Safe()
+	case map[string]any:
+		return Detail(typed).Safe()
+	case map[string]string:
+		nested := make(Detail, len(typed))
+		for key, nestedValue := range typed {
+			nested[key] = nestedValue
+		}
+		return nested.Safe()
+	default:
 		return value
 	}
-	return truncate(text, MaxDetailValueLength)
 }

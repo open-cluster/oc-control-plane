@@ -78,6 +78,9 @@ type Handlers struct {
 	// ConsoleURL is where the browser is sent once signed in.
 	ConsoleURL string
 	Bootstrap  Bootstrap
+	// SessionLifetime is deployment-owned. Organization policy may describe retention, but it
+	// cannot silently lengthen browser credentials for one tenant.
+	SessionLifetime time.Duration
 	// CanCreateOrganization is the edition policy seam. It decides only whether an
 	// authenticated User may create another Organization; persistence remains shared.
 	CanCreateOrganization func(authz.Principal) bool

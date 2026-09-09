@@ -92,8 +92,8 @@ func openIncident(
 	err := transaction.QueryRow(ctx, `
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key,
-			 grouping_basis, title, status, first_seen_at, last_seen_at, alert_event_count)
-		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $7, 0)
+			 grouping_basis, title, status, first_seen_at, last_seen_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $7)
 		ON CONFLICT (integration_id, grouping_key) WHERE status = 1
 		DO UPDATE SET updated_at = now()
 		RETURNING incident_id, xmax = 0`,
@@ -121,8 +121,7 @@ func refreshIncident(
 	// did.
 	if _, err := transaction.Exec(ctx, `
 		UPDATE incident AS incident
-		   SET alert_event_count  = counted.total,
-		       first_seen_at = counted.first_seen,
+		   SET first_seen_at = counted.first_seen,
 		       last_seen_at  = counted.last_seen,
 		       status        = CASE WHEN counted.firing = 0 THEN 2 ELSE 1 END,
 		       resolved_at   = CASE WHEN counted.firing = 0 THEN counted.resolved END,
@@ -157,8 +156,13 @@ const incidentColumns = `incident_id, integration_id,
 		         WHERE i.integration_id = e.integration_id
 		           AND i.org_id = e.org_id) AS integration_name,
 		       grouping_key, grouping_basis, title,
-		       status, first_seen_at, last_seen_at, resolved_at, alert_event_count,
+		       status, first_seen_at, last_seen_at, resolved_at, ` +
+	incidentAlertEventCount + ` AS alert_event_count,
 		       superseded_by, superseded_at, supersede_reason, created_at, updated_at`
+
+const incidentAlertEventCount = `(SELECT count(*)::integer FROM alert_event a
+		         WHERE a.org_id = e.org_id
+		           AND a.incident_id = e.incident_id)`
 
 // QueryIncidents reports a page of a tenant's incidents.
 func (p *Database) QueryIncidents(
@@ -255,7 +259,7 @@ var incidentOrderings = map[string]struct {
 		return e.FirstSeenAt.UTC().Format(time.RFC3339Nano)
 	}},
 	"title": {"title", "text", func(e incident.Incident) string { return e.Title }},
-	"alertEventCount": {"alert_event_count", "integer", func(e incident.Incident) string {
+	"alertEventCount": {incidentAlertEventCount, "integer", func(e incident.Incident) string {
 		return fmt.Sprintf("%d", e.AlertEventCount)
 	}},
 }

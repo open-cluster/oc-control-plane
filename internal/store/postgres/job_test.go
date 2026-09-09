@@ -494,6 +494,14 @@ func migratedDatabase(t *testing.T) (*storage.Database, tenancy.Organization) {
 	if err != nil {
 		t.Fatalf("naming the organization: %v", err)
 	}
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatalf("opening organization pool: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO organization(org_id, display_name, created_by)
+VALUES ($1, 'Test Organization', 'test') ON CONFLICT (org_id) DO NOTHING`, organization.String()); err != nil {
+		t.Fatalf("creating test organization: %v", err)
+	}
 	return database, organization
 }
 

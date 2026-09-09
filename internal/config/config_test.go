@@ -67,9 +67,24 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 		t.Fatalf("investigation defaults = workers %d pending %d",
 			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
 	}
+	if cfg.SessionLifetimeSeconds != 43200 {
+		t.Fatalf("session lifetime default = %d", cfg.SessionLifetimeSeconds)
+	}
 	if cfg.ModelContextWindowTokens != 0 || cfg.ModelMaxOutputTokens != 0 {
 		t.Fatalf("model limit overrides = context %d output %d",
 			cfg.ModelContextWindowTokens, cfg.ModelMaxOutputTokens)
+	}
+}
+
+func TestLoadSessionLifetimeFromEnvironment(t *testing.T) {
+	values := essentialEnvironment(t)
+	values[EnvSessionLifetimeSeconds] = "900"
+	cfg, err := Load(lookup(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionLifetimeSeconds != 900 {
+		t.Fatalf("session lifetime = %d", cfg.SessionLifetimeSeconds)
 	}
 }
 
