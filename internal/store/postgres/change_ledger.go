@@ -442,11 +442,12 @@ func inventoryCoverage(
 	coveredSince, lastConfirmed *time.Time, faulted, truncated bool,
 ) string {
 	var parts []string
-	if faulted {
+	switch {
+	case faulted:
 		parts = append(parts, "coverage faulted")
-	} else if coveredSince != nil {
+	case coveredSince != nil:
 		parts = append(parts, "covered since "+coveredSince.UTC().Format(time.RFC3339))
-	} else {
+	default:
 		parts = append(parts, "coverage unknown")
 	}
 	if lastConfirmed != nil {
