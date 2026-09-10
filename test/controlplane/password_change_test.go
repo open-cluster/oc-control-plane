@@ -25,13 +25,17 @@ func TestLocalUserChangesPasswordAndRevokesAllSessions(t *testing.T) {
 		})
 	}
 	other := plane.call(t, http.MethodPost, base+"/organizations", map[string]any{
-		"displayName": "Second", "requestedSlug": "second-org",
+		"displayName": "Second",
 	}, asSession(first))
 	if other.status != http.StatusCreated {
 		t.Fatalf("second Organization = %d: %s", other.status, other.body)
 	}
+	var otherOrganization struct {
+		ID string `json:"id"`
+	}
+	decodeAnswer(t, other, &otherOrganization)
 	otherLogin := plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
-		"organization": "second-org", "email": "admin@example.test", "password": oldPassword,
+		"organization": otherOrganization.ID, "email": "admin@example.test", "password": oldPassword,
 	})
 	second := sessionCookie(t, otherLogin)
 	for _, invalid := range []struct {

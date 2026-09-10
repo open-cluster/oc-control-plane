@@ -58,7 +58,7 @@ func declareRetention(t *testing.T, dsn string, organization tenancy.Organizatio
 
 	if _, err = connection.Exec(context.Background(), `
 		INSERT INTO organization (org_id, display_name, created_by, audit_retention_days)
-		VALUES ($1, $1, 'retention-test', $2)
+		VALUES ($1::uuid, $1::text, 'retention-test', $2)
 		ON CONFLICT (org_id) DO UPDATE SET audit_retention_days = EXCLUDED.audit_retention_days`,
 		organization.String(), days); err != nil {
 		t.Fatalf("declaring a retention schedule: %v", err)
@@ -69,7 +69,7 @@ func ensureOrganization(t *testing.T, connection *pgx.Conn, organization tenancy
 	t.Helper()
 	if _, err := connection.Exec(context.Background(), `
 		INSERT INTO organization (org_id, display_name, created_by)
-		VALUES ($1, $1, 'retention-test')
+		VALUES ($1::uuid, $1::text, 'retention-test')
 		ON CONFLICT (org_id) DO NOTHING`, organization.String()); err != nil {
 		t.Fatalf("creating organization: %v", err)
 	}
@@ -237,8 +237,8 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	}
 }
 
-// A tenant that declared nothing is not reported, and treating its zero as a horizon of "now"
-// would delete an entire record because somebody never set a policy.
+// An Organization that explicitly retains forever is not reported; treating zero as a horizon
+// of "now" would delete its entire record.
 func TestDeclaredRetentions_ReportsOnlyTheTenantsThatDeclaredASchedule(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
@@ -261,16 +261,18 @@ func TestDeclaredRetentions_ReportsOnlyTheTenantsThatDeclaredASchedule(t *testin
 	for _, one := range declared {
 		days[one.Organization.String()] = one.Days
 	}
-	if days["org-a"] != 30 {
-		t.Errorf("org-a declared 30 days and is reported as %d", days["org-a"])
+	orgA := organization(t, "org-a").String()
+	if days[orgA] != 30 {
+		t.Errorf("org-a declared 30 days and is reported as %d", days[orgA])
 	}
 	// Every Organization in the deployment database is scanned.
-	if days["org-far"] != 7 {
+	orgFar := organization(t, "org-far").String()
+	if days[orgFar] != 7 {
 		t.Errorf("a second tenant declared 7 days and is reported as %d",
-			days["org-far"])
+			days[orgFar])
 	}
-	if _, reported := days["org-quiet"]; reported {
-		t.Error("a tenant declaring zero days was reported; zero is the product default of " +
-			"keeping everything, and acting on it would delete a whole record")
+	if _, reported := days[organization(t, "org-quiet").String()]; reported {
+		t.Error("a tenant declaring zero days was reported; zero keeps everything, and acting " +
+			"on it would delete a whole record")
 	}
 }

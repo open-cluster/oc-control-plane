@@ -83,7 +83,11 @@ VALUES ($1,'retained-org',$2,$3,'C-WRONG','1700000001.1',1,12,'1700000002.1',tru
 			t.Fatalf("reply ownership could be removed: %s", statement)
 		}
 	}
-	org := organization(t, "retained-org")
+	var migratedOrgID string
+	if err := connection.QueryRow(ctx, `SELECT org_id FROM organization WHERE display_name='Retained'`).Scan(&migratedOrgID); err != nil {
+		t.Fatal(err)
+	}
+	org := organization(t, migratedOrgID)
 	if err := database.CompleteSlackReply(ctx, org, investigation, reply.ClaimToken); err != nil {
 		t.Fatal(err)
 	}

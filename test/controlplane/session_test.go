@@ -32,7 +32,7 @@ import (
 func TestRelaySession(t *testing.T) {
 	// The organization the harness assigns a database to. An unassigned one is refused
 	// exactly like a bad credential, which makes a wrong name here look like a session defect.
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -336,7 +336,7 @@ func TestRelaySession(t *testing.T) {
 // is told — and two sides that disagree about meaning still exchange messages successfully,
 // which is how evidence nobody can vouch for gets recorded.
 func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -391,7 +391,7 @@ func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 // and the whole execution is thrown away and done again once the lease expires — so a network
 // blip costs an investigation its evidence twice over.
 func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -477,7 +477,7 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 // connection a test makes comes from the loopback host. That distinction is exercised where the
 // peer address is an input rather than a property of the machine running the suite.
 func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -542,7 +542,7 @@ func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
 // when part of what came back was never looked at, and evidence is only worth what its
 // provenance is worth.
 func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -634,7 +634,7 @@ func sendUnreadableResult(
 // checked against the previous in-loop timer and passed. It is here for the behaviour it
 // states, not as evidence for that reasoning.
 func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -688,7 +688,7 @@ func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 // end it. Waiting for the relay to notice would let one unresponsive relay hold the process
 // open for as long as it stayed silent — a deploy that hangs on a customer's network problem.
 func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -722,7 +722,7 @@ func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 // alternative tells a caller which registrations exist, which is the same disclosure the
 // enrolment refusals are shaped to avoid.
 func TestRelaySessionRefusesUnprovenIdentity(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string

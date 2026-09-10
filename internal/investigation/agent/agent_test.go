@@ -204,7 +204,7 @@ func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
 		})
 	built.Logger = slog.New(slog.DiscardHandler)
 
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err = built.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
 	}
 	agent := configuredTestAgent(t, store, model, catalog)
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment", WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{
 		ID: uuid.New(), IncidentID: incidentID, Subject: "checkout-api",
 		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
@@ -375,7 +375,7 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			agent := configuredTestAgent(t, store, model, catalog)
 			agent.Store = scopedStore
 			agent.Sealer = sealer
-			organization, _ := tenancy.NewOrganization("org-test")
+			organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 			if err := agent.Run(context.Background(), organization, investigation.Investigation{
 				ID: uuid.New(), ConversationID: conversationID, Subject: "question",
 			}); err != nil {
@@ -425,7 +425,7 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
 	agent.Sealer = sealer
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment"}); err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestRunStopsWhenCredentialAccessCannotBeAudited(t *testing.T) {
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
 	agent.Sealer = sealer
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{
 		ID: uuid.New(), Subject: "deployment", WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
 	}); err != nil {
@@ -483,7 +483,7 @@ func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
 	agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
 	}))
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ func TestRunDurablyRecordsRefusalAndTruncation(t *testing.T) {
 				func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 					return integrations.ToolResult{}, nil
 				}))
-			organization, _ := tenancy.NewOrganization("org-test")
+			organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 			if err := agent.Run(context.Background(), organization,
 				investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 				t.Fatal(err)
@@ -543,7 +543,7 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -578,7 +578,7 @@ func TestRunRejectsStateChangingActionWithoutApproval(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{Summary: "value"}, nil
 		}))
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -599,7 +599,7 @@ func TestRunReturnsAnErrorWhenTheTerminalRecordCannotBeWritten(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"})
 	if err == nil || !strings.Contains(err.Error(), "database unavailable") {
@@ -628,7 +628,7 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -659,7 +659,7 @@ func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -679,7 +679,7 @@ func TestRunDurablyFailsWhenTheModelIsUnavailable(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -709,7 +709,7 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 			return integrations.ToolResult{Summary: "value"}, nil
 		}))
 	agent.MaxTurns = 1
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -743,7 +743,7 @@ func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.
 		}))
 	runner.deployment.ContextWindowTokens = 1_500
 
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -792,7 +792,7 @@ func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
 			return integrations.ToolResult{}, nil
 		}))
 
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -823,7 +823,7 @@ func TestRunReservesTheDeploymentOutputFromTheContextWindow(t *testing.T) {
 		}))
 	agent.deployment.ContextWindowTokens = 1_026
 
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -893,7 +893,7 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 				ctx, cancel = test.context()
 			}
 			defer cancel()
-			organization, _ := tenancy.NewOrganization("org-test")
+			organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 			if err := agent.Run(ctx, organization,
 				investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 				t.Fatal(err)
@@ -916,7 +916,7 @@ func TestRunKeepsADurableConclusionWhenEventsFail(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
@@ -941,7 +941,7 @@ func TestRunStopsAfterCancellationWithoutAnotherModelOrToolCall(t *testing.T) {
 		}))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(ctx, organization,
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)

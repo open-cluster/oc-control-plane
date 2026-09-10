@@ -67,7 +67,7 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 
 	request := httptest.NewRequest(http.MethodPost,
 		"/api/v1/integration-types/stub/connect", nil)
-	request.Header.Set(authz.OrganizationHeader, "acme")
+	request.Header.Set(authz.OrganizationHeader, "11111111-1111-4111-8111-111111111111")
 	request.Header.Set("Origin", "https://console.example.com")
 	router, err := authz.Router(authz.Table{
 		authz.Privileged(http.MethodPost,
@@ -75,7 +75,7 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 			authz.IntegrationCreate, http.HandlerFunc(handlers.startConnect)),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return connectingPrincipal(t, "acme"), nil
+			return connectingPrincipal(t, "11111111-1111-4111-8111-111111111111"), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -230,7 +230,7 @@ func completeConnectAgainst(
 func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 	t.Parallel()
 
-	principal := connectingPrincipal(t, "acme")
+	principal := connectingPrincipal(t, "11111111-1111-4111-8111-111111111111")
 	sealer, err := seal.New(bytes.Repeat([]byte{7}, 32))
 	if err != nil {
 		t.Fatalf("building a sealer: %v", err)
@@ -248,7 +248,7 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 	}
 
 	store := &capturingStore{flow: ConnectFlow{
-		ID: uuid.New(), Organization: "acme", Type: 99, Principal: principal.ID(),
+		ID: uuid.New(), Organization: "11111111-1111-4111-8111-111111111111", Type: 99, Principal: principal.ID(),
 	}}
 	recorder := completeConnectAgainst(t, Handlers{
 		Store:     store,
@@ -314,7 +314,7 @@ func (s *capturingStore) RecordIntegrationVerification(
 func TestReconnectingReplacesTheCredentialRatherThanReverifyingTheOldOne(t *testing.T) {
 	t.Parallel()
 
-	principal := connectingPrincipal(t, "acme")
+	principal := connectingPrincipal(t, "11111111-1111-4111-8111-111111111111")
 	sealer, err := seal.New(bytes.Repeat([]byte{9}, 32))
 	if err != nil {
 		t.Fatalf("building a sealer: %v", err)
@@ -333,7 +333,7 @@ func TestReconnectingReplacesTheCredentialRatherThanReverifyingTheOldOne(t *test
 	}
 
 	store := &capturingStore{existing: true, flow: ConnectFlow{
-		ID: uuid.New(), Organization: "acme", Type: 99, Principal: principal.ID(),
+		ID: uuid.New(), Organization: "11111111-1111-4111-8111-111111111111", Type: 99, Principal: principal.ID(),
 	}}
 	recorder := completeConnectAgainst(t, Handlers{
 		Store:     store,

@@ -31,8 +31,8 @@ import (
 
 const (
 	surfaceToken   = "operator-token-for-the-integration-surface"
-	surfaceOrg     = "org-a"
-	neighbourOrg   = "org-neighbour"
+	surfaceOrg     = "11111111-1111-4111-8111-111111111111"
+	neighbourOrg   = "22222222-2222-4222-8222-222222222222"
 	alertmanagerAt = "2026-01-02T15:04:05Z"
 )
 

@@ -53,7 +53,7 @@ VALUES ('66666666-6666-6666-6666-666666666666','retained-org','44444444-4444-444
 
 	var organizationID uuid.UUID
 	var retention int
-	if err := connection.QueryRow(ctx, `SELECT organization_id, audit_retention_days FROM organization WHERE org_id='retained-org'`).
+	if err := connection.QueryRow(ctx, `SELECT org_id, audit_retention_days FROM organization WHERE display_name='Retained'`).
 		Scan(&organizationID, &retention); err != nil {
 		t.Fatal(err)
 	}
@@ -61,18 +61,15 @@ VALUES ('66666666-6666-6666-6666-666666666666','retained-org','44444444-4444-444
 		t.Fatalf("organization identity/retention = %s/%d", organizationID, retention)
 	}
 	var integrationOrganizationID uuid.UUID
-	if err := connection.QueryRow(ctx, `SELECT organization_id FROM integration WHERE org_id='retained-org'`).
+	if err := connection.QueryRow(ctx, `SELECT org_id FROM integration WHERE integration_id='44444444-4444-4444-4444-444444444444'`).
 		Scan(&integrationOrganizationID); err != nil {
 		t.Fatal(err)
 	}
 	if integrationOrganizationID != organizationID {
 		t.Fatalf("integration Organization UUID = %s, want %s", integrationOrganizationID, organizationID)
 	}
-	if _, err := connection.Exec(ctx, `UPDATE organization SET org_id='renamed-org' WHERE org_id='retained-org'`); err == nil {
+	if _, err := connection.Exec(ctx, `UPDATE organization SET org_id=$1 WHERE org_id=$2`, uuid.New(), organizationID); err == nil {
 		t.Fatal("Organization selector identity was mutable")
-	}
-	if _, err := connection.Exec(ctx, `UPDATE organization SET organization_id=$1 WHERE org_id='retained-org'`, uuid.New()); err == nil {
-		t.Fatal("Organization UUID identity was mutable")
 	}
 	for _, removed := range []string{
 		`SELECT to_regclass('organization_policy') IS NULL`,
@@ -86,12 +83,8 @@ VALUES ('66666666-6666-6666-6666-666666666666','retained-org','44444444-4444-444
 		}
 	}
 	if _, err := connection.Exec(ctx, `INSERT INTO integration(integration_id,org_id,integration_type_id,name)
-VALUES ($1,'missing-org',1,'bad')`, uuid.New()); err == nil {
+VALUES ($1,$2,1,'bad')`, uuid.New(), uuid.New()); err == nil {
 		t.Fatal("tenant child row without an Organization was accepted")
-	}
-	if _, err := connection.Exec(ctx, `INSERT INTO integration(integration_id,org_id,organization_id,integration_type_id,name)
-VALUES ($1,'retained-org',$2,1,'bad uuid')`, uuid.New(), uuid.New()); err == nil {
-		t.Fatal("tenant child row with a mismatched Organization UUID was accepted")
 	}
 }
 
@@ -123,7 +116,8 @@ VALUES ('22222222-2222-2222-2222-222222222222','retained-org','11111111-1111-111
 		t.Fatal(err)
 	}
 	var role string
-	if err := connection.QueryRow(ctx, `SELECT role FROM organization_membership WHERE org_id='retained-org'`).Scan(&role); err != nil {
+	if err := connection.QueryRow(ctx, `SELECT role FROM organization_membership
+		WHERE membership_id='22222222-2222-2222-2222-222222222222'`).Scan(&role); err != nil {
 		t.Fatal(err)
 	}
 	if role != "viewer" {
@@ -203,10 +197,10 @@ func TestSchemaOwnershipFreshInstallHasPhase4Owners(t *testing.T) {
 
 	for _, assertion := range []string{
 		`SELECT to_regclass('organization_policy') IS NULL`,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization' AND column_name='organization_id')`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization' AND column_name='org_id' AND data_type='uuid')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND column_name='org_id' AND data_type<>'uuid')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND column_name='organization_id')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization' AND column_name='audit_retention_days')`,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integration' AND column_name='organization_id')`,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='relay_registration' AND column_name='organization_id')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='operator_session' AND column_name='credential_digest')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='relay_bootstrap_token' AND column_name='bootstrap_digest')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='incident' AND column_name='alert_event_count')`,
@@ -216,10 +210,19 @@ func TestSchemaOwnershipFreshInstallHasPhase4Owners(t *testing.T) {
 			t.Fatalf("fresh schema assertion failed for %s: %v", assertion, err)
 		}
 	}
+	var generatedID uuid.UUID
+	var retention int
+	if err := connection.QueryRow(ctx, `INSERT INTO organization (display_name,created_by)
+		VALUES ('Defaulted','test') RETURNING org_id,audit_retention_days`).Scan(&generatedID, &retention); err != nil {
+		t.Fatal(err)
+	}
+	if generatedID == uuid.Nil || retention != 90 {
+		t.Fatalf("Organization defaults = %s/%d, want generated UUID and 90-day retention", generatedID, retention)
+	}
 	if _, err := connection.Exec(ctx, `INSERT INTO relay_registration
 		(registration_id, org_id, credential_digest, cluster_fingerprint, relay_version, capabilities)
-		VALUES ($1, 'missing-org', decode(repeat('01',32),'hex'), 'fingerprint', 'test', '{}'::jsonb)`,
-		uuid.New()); err == nil {
+		VALUES ($1, $2, decode(repeat('01',32),'hex'), 'fingerprint', 'test', '{}'::jsonb)`,
+		uuid.New(), uuid.New()); err == nil {
 		t.Fatal("fresh schema accepted a tenant-root row without an Organization")
 	}
 }

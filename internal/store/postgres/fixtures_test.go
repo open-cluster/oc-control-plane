@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -53,6 +54,9 @@ func openDatabaseForTest(t *testing.T, dsn string) *storage.Database {
 
 func organization(t *testing.T, id string) tenancy.Organization {
 	t.Helper()
+	if _, err := uuid.Parse(id); err != nil {
+		id = uuid.NewSHA1(uuid.NameSpaceOID, []byte(id)).String()
+	}
 	value, err := tenancy.NewOrganization(id)
 	if err != nil {
 		t.Fatalf("NewOrganization(%q): %v", id, err)
@@ -80,10 +84,5 @@ func memberOf(
 
 func aStranger(t *testing.T) authz.Principal {
 	t.Helper()
-
-	elsewhere, err := tenancy.NewOrganization("org-somebody-else")
-	if err != nil {
-		t.Fatalf("naming another organization: %v", err)
-	}
-	return memberOf(t, elsewhere, authz.Admin)
+	return memberOf(t, organization(t, "somebody else"), authz.Admin)
 }

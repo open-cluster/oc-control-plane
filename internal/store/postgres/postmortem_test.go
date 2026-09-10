@@ -68,7 +68,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		t.Fatalf("reviewed = %+v err=%v", reviewed, err)
 	}
 
-	other, _ := tenancy.NewOrganization("other-org")
+	other, _ := tenancy.NewOrganization("22222222-2222-4222-8222-222222222222")
 	if _, err := database.Postmortem(context.Background(), other, incident); !errors.Is(err, postmortem.ErrUnknown) {
 		t.Fatalf("other tenant read error = %v", err)
 	}

@@ -34,7 +34,7 @@ func TestRelayRegistration(t *testing.T) {
 	// The organization the harness assigns a database to. An unassigned one is refused
 	// exactly like a bad token, which is deliberate — the refusal must not reveal which
 	// organizations exist — and makes a wrong name here look like a registration defect.
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -156,6 +156,7 @@ func issueBootstrapToken(t *testing.T, dsn, organization, token string) {
 	defer cancel()
 
 	digest := sha256.Sum256([]byte(token))
+	ensureTestOrganization(t, dsn, organization)
 	if err := openDatabase(t, dsn).IssueBootstrapToken(
 		ctx, namedOrganization(t, organization), digest[:], time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("issuing the bootstrap token: %v", err)

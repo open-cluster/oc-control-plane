@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -31,13 +30,11 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	organization, err := tenancy.NewOrganization("operations")
+	membership, err := database.CreateOrganization(ctx, principal, "Operations")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateOrganization(ctx, principal, organization, "Operations"); err != nil {
-		t.Fatal(err)
-	}
+	organization := membership.Organization
 	if err := database.ChangeLocalPassword(ctx, principal, previous, "replacement encoded password verifier"); err != nil {
 		t.Fatal(err)
 	}

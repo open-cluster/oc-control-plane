@@ -40,7 +40,7 @@ func (unusedAgent) Run(context.Context, tenancy.Organization, Investigation) err
 func TestDirectInvestigationCreationRejectsQuestions(t *testing.T) {
 	t.Parallel()
 
-	organization, err := tenancy.NewOrganization("acme")
+	organization, err := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestDirectInvestigationCreationRejectsQuestions(t *testing.T) {
 func TestCanonicalInvestigationDetailContainsOnlyTheInvestigationAndToolRuns(t *testing.T) {
 	t.Parallel()
 
-	organization, err := tenancy.NewOrganization("acme")
+	organization, err := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -315,8 +315,11 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	defer database.Close()
 	registration, integration := ledgerScope(t, database, organization)
-	otherIntegration := kubernetesIntegration(t, database, organization, registration)
 	ctx := context.Background()
+	otherIntegration := kubernetesIntegration(t, database, organization, registration)
+	if _, err := database.OpenInventoryScopes(ctx, organization, registration, 5*time.Minute); err != nil {
+		t.Fatalf("opening the second inventory scope: %v", err)
+	}
 
 	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 	delta := changeledger.Delta{
@@ -357,7 +360,7 @@ func TestChangeLedger_WorkloadInventoryIsACurrentBoundedDigest(t *testing.T) {
 		IntegrationID: otherIntegration, ObservedAt: start.Add(5 * time.Minute),
 		Changes: []changeledger.Change{{
 			Namespace: "shop", Kind: changeledger.KindDeployment, Name: "api",
-			UID: "other-uid", ObservedRevision: "g2.other", Change: changeledger.ChangeDeleted,
+			UID: "other-uid", ObservedRevision: "", Change: changeledger.ChangeDeleted,
 		}},
 	}
 	if _, err := database.RecordInventoryDelta(ctx, organization, registration, deletedDuplicate); err != nil {

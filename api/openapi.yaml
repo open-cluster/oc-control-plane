@@ -1004,14 +1004,14 @@ components:
       required: true
       description: Selects the Organization whose data and membership are authorized.
       schema: { $ref: "#/components/schemas/OrganizationID" }
-      example: acme-production
+      example: 7d722f19-1978-4dc1-a176-e9be92b7e154
     OptionalOrganization:
       name: X-OpenCluster-Organization
       in: header
       required: false
       description: Optionally selects an Organization for Organization-specific session facts.
       schema: { $ref: "#/components/schemas/OrganizationID" }
-      example: acme-production
+      example: 7d722f19-1978-4dc1-a176-e9be92b7e154
     Cursor:
       name: cursor
       in: query
@@ -1251,7 +1251,7 @@ components:
   schemas:
     UUID: { type: string, format: uuid }
     Timestamp: { type: string, format: date-time }
-    OrganizationID: { type: string, pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", minLength: 1, maxLength: 63 }
+    OrganizationID: { type: string, format: uuid }
     Error:
       type: object
       additionalProperties: false
@@ -1324,7 +1324,6 @@ components:
       required: [displayName]
       properties:
         displayName: { type: string, minLength: 1, maxLength: 256 }
-        requestedSlug: { $ref: "#/components/schemas/OrganizationID" }
     Session:
       type: object
       additionalProperties: false

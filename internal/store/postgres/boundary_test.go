@@ -89,10 +89,10 @@ func TestBoundary_AJobCannotNameAnotherOrganizationsIntegration(t *testing.T) {
 		t.Fatalf("migrating: %v", err)
 	}
 	one, two := named(t, "boundary-one"), named(t, "boundary-two")
+	ensureTestOrganization(t, database, one)
+	ensureTestOrganization(t, database, two)
 
 	// An Integration and its Relay both belong to the second organization.
-	myRelay := enrolledRelay(t, database, one)
-	_ = myRelay
 	theirRelay := enrolledRelay(t, database, two)
 	theirIntegration := kubernetesIntegration(t, database, two, theirRelay)
 
@@ -153,6 +153,9 @@ func claimableFor(
 
 func named(t *testing.T, organization string) tenancy.Organization {
 	t.Helper()
+	if _, err := uuid.Parse(organization); err != nil {
+		organization = uuid.NewSHA1(uuid.NameSpaceOID, []byte(organization)).String()
+	}
 	name, err := tenancy.NewOrganization(organization)
 	if err != nil {
 		t.Fatalf("naming the organization: %v", err)

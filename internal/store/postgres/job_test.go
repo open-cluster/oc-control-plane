@@ -21,7 +21,7 @@ import (
 // refused — rather than about which calls were made. Only the database proves the guarantee
 // held; a sequence of calls proves a conversation happened.
 
-const testOrganization = "org-a"
+const testOrganization = "11111111-1111-4111-8111-111111111111"
 
 func TestJob_ClaimingLeasesTheWorkAndFencesIt(t *testing.T) {
 	t.Parallel()
@@ -494,6 +494,14 @@ func migratedDatabase(t *testing.T) (*storage.Database, tenancy.Organization) {
 	if err != nil {
 		t.Fatalf("naming the organization: %v", err)
 	}
+	ensureTestOrganization(t, database, organization)
+	return database, organization
+}
+
+func ensureTestOrganization(
+	t *testing.T, database *storage.Database, organization tenancy.Organization,
+) {
+	t.Helper()
 	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("opening organization pool: %v", err)
@@ -502,7 +510,6 @@ func migratedDatabase(t *testing.T) (*storage.Database, tenancy.Organization) {
 VALUES ($1, 'Test Organization', 'test') ON CONFLICT (org_id) DO NOTHING`, organization.String()); err != nil {
 		t.Fatalf("creating test organization: %v", err)
 	}
-	return database, organization
 }
 
 func enqueue(

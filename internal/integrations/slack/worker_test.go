@@ -242,7 +242,7 @@ func answering(t *testing.T, fake *slackCallLog, events []investigation.Event) (
 ) {
 	t.Helper()
 
-	organization, err := tenancy.NewOrganization("org-a")
+	organization, err := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err != nil {
 		t.Fatalf("naming the organization: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestAFinalAnswerLinksOnlyTheInvestigation(t *testing.T) {
 	worker.answer(context.Background(), state.reply)
 
 	whole := strings.Join(fake.carried(), "")
-	if !strings.Contains(whole, "/organizations/org-a/investigations/"+
+	if !strings.Contains(whole, "/organizations/11111111-1111-4111-8111-111111111111/investigations/"+
 		state.reply.Investigation.String()) {
 		t.Errorf("the final answer has no stable Investigation link: %q", whole)
 	}

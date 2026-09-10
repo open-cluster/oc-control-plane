@@ -35,8 +35,8 @@ import (
 // ways an attacker would need it to.
 
 const (
-	identityOrg       = "org-a"
-	identityNeighbour = "org-neighbour"
+	identityOrg       = "11111111-1111-4111-8111-111111111111"
+	identityNeighbour = "22222222-2222-4222-8222-222222222222"
 	identityToken     = "an-operator-bootstrap-token-long-enough"
 )
 
