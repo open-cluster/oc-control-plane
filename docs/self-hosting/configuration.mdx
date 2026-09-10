@@ -45,7 +45,8 @@ Local authentication is the default. `oidc` adds the configured provider while l
 Admin recovery remains available. Relay is optional and listens separately from HTTP;
 customer Relays initiate outbound connections and pin the configured control-plane key.
 `OC_SESSION_LIFETIME_SECONDS` is deployment-owned and defaults to 43,200 seconds.
-Organizations configure audit retention, not browser credential lifetime.
+Organizations start with 90 days of audit retention and can configure it independently;
+browser credential lifetime remains deployment-owned.
 
 ## Model provider
 

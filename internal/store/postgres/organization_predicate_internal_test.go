@@ -157,6 +157,9 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 
 func mustOrganization(t *testing.T, value string) tenancy.Organization {
 	t.Helper()
+	if _, err := uuid.Parse(value); err != nil {
+		value = uuid.NewSHA1(uuid.NameSpaceOID, []byte(value)).String()
+	}
 	organization, err := tenancy.NewOrganization(value)
 	if err != nil {
 		t.Fatalf("organization %q: %v", value, err)

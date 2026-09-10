@@ -36,7 +36,10 @@ func twoOrganizationsInOneDatabase(
 	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
-	return database, organization(t, "org-a"), organization(t, "org-b")
+	first, second := organization(t, "org-a"), organization(t, "org-b")
+	ensureTestOrganization(t, database, first)
+	ensureTestOrganization(t, database, second)
+	return database, first, second
 }
 
 // conclusionSaying is a minimal concluding document: an answer and no findings, which is

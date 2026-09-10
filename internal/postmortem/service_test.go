@@ -52,7 +52,7 @@ func (s *serviceStore) Review(context.Context, authz.Principal, tenancy.Organiza
 func TestServiceGeneratesOnlyForResolvedIncidentsAndRevisionsRegeneration(t *testing.T) {
 	t.Parallel()
 
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	incidentID := uuid.New()
 	store := &serviceStore{contextErr: ErrNotEligible}
 	service := Service{Store: store}

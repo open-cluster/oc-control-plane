@@ -142,9 +142,10 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 
 func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, error) {
 	var (
-		found    SignedIn
-		revoked  *time.Time
-		disabled *time.Time
+		found          SignedIn
+		organizationID *uuid.UUID
+		revoked        *time.Time
+		disabled       *time.Time
 	)
 	err := on.QueryRow(ctx, `
 		WITH touched AS (
@@ -153,13 +154,13 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 			  AND revoked_at IS NULL AND expires_at > now()
 			RETURNING last_seen_at
 		)
-		SELECT s.session_id, s.user_id, COALESCE(s.org_id, ''), s.issued_at, s.expires_at,
+		SELECT s.session_id, s.user_id, s.org_id, s.issued_at, s.expires_at,
 		       COALESCE((SELECT last_seen_at FROM touched), s.last_seen_at),
 		       s.revoked_at, s.user_agent, s.address, u.email, u.issuer, u.display_name, u.disabled_at
 		FROM operator_session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
-		&found.Session.Organization, &found.Session.IssuedAt, &found.Session.ExpiresAt,
+		&organizationID, &found.Session.IssuedAt, &found.Session.ExpiresAt,
 		&found.Session.LastSeenAt, &revoked, &found.Session.UserAgent, &found.Session.Address,
 		&found.User.Email, &found.User.Issuer, &found.User.DisplayName, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -167,6 +168,9 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	}
 	if err != nil {
 		return SignedIn{}, fmt.Errorf("reading a session: %w", err)
+	}
+	if organizationID != nil {
+		found.Session.Organization = organizationID.String()
 	}
 	if revoked != nil {
 		found.Session.RevokedAt = *revoked

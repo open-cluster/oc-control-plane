@@ -564,7 +564,7 @@ func TestIncidents_AreReachableOnlyByTheTenantWhoseIntegrationDeliveredThem(t *t
 
 	id := plane.incidents(t, "").Items[0].ID
 	status, _ := plane.call(t, http.MethodGet,
-		"/api/v1/organizations/org-neighbour/incidents/"+id, nil)
+		"/api/v1/organizations/"+neighbourOrg+"/incidents/"+id, nil)
 	if status != http.StatusNotFound {
 		t.Errorf("reading another tenant's incident answered %d, want 404", status)
 	}

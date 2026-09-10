@@ -1,19 +1,12 @@
 package identity
 
 import (
-	"errors"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
-	"unicode"
-
-	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type organizationView struct {
@@ -35,8 +28,7 @@ var organizationsListSpec = listing.Spec{
 }
 
 type createOrganizationRequest struct {
-	DisplayName   string `json:"displayName"`
-	RequestedSlug string `json:"requestedSlug,omitempty"`
+	DisplayName string `json:"displayName"`
 }
 
 func (h Handlers) organizations(writer http.ResponseWriter, request *http.Request) {
@@ -90,35 +82,7 @@ func (h Handlers) createOrganization(writer http.ResponseWriter, request *http.R
 	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	requested := strings.TrimSpace(body.RequestedSlug) != ""
-	attempts := 1
-	if !requested {
-		attempts = 3
-	}
-	var membership authz.Membership
-	var err error
-	for attempt := 0; attempt < attempts; attempt++ {
-		slug, slugErr := organizationSlug(displayName, body.RequestedSlug)
-		if slugErr != nil {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "requestedSlug is not a canonical Organization slug"})
-			return
-		}
-		organization, organizationErr := tenancy.NewOrganization(slug)
-		if organizationErr != nil {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "Organization slug is invalid"})
-			return
-		}
-		membership, err = h.Database.CreateOrganization(ctx, principal, organization, displayName)
-		if !errors.Is(err, storage.ErrOrganizationExists) || requested {
-			break
-		}
-	}
-	if errors.Is(err, storage.ErrOrganizationExists) {
-		writeJSON(writer, http.StatusConflict, errorView{Error: "organization already exists"})
-		return
-	}
+	membership, err := h.Database.CreateOrganization(ctx, principal, displayName)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -127,40 +91,6 @@ func (h Handlers) createOrganization(writer http.ResponseWriter, request *http.R
 	view.Membership.ID = membership.ID
 	view.Membership.Role = string(membership.Role)
 	writeJSON(writer, http.StatusCreated, view)
-}
-
-var canonicalOrganizationSlug = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-
-func organizationSlug(displayName, requested string) (string, error) {
-	if strings.TrimSpace(requested) != "" {
-		slug := strings.ToLower(strings.TrimSpace(requested))
-		if !canonicalOrganizationSlug.MatchString(slug) {
-			return "", tenancy.ErrInvalidOrganization
-		}
-		return slug, nil
-	}
-	var builder strings.Builder
-	separator := false
-	for _, character := range strings.ToLower(displayName) {
-		if character <= unicode.MaxASCII &&
-			((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')) {
-			if separator && builder.Len() > 0 {
-				builder.WriteByte('-')
-			}
-			builder.WriteRune(character)
-			separator = false
-		} else {
-			separator = true
-		}
-	}
-	base := strings.Trim(builder.String(), "-")
-	if base == "" {
-		base = "organization"
-	}
-	if len(base) > 54 {
-		base = strings.TrimRight(base[:54], "-")
-	}
-	return base + "-" + strings.ReplaceAll(uuid.New().String()[:8], "-", ""), nil
 }
 
 func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request) {

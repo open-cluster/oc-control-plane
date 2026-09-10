@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,9 +17,10 @@ import (
 // includes applying the migrations, which is the slowest thing a first start does.
 const (
 	controlPlaneStartTimeout   = 2 * time.Minute
-	organization               = "local"
 	investigationOperatorToken = "e2e-investigation-operator-token-with-sufficient-entropy"
 )
+
+var organization string
 
 // controlPlane is the control plane running as a real process.
 //
@@ -145,7 +147,7 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 	for _, cookie := range response.Cookies() {
 		if cookie.Value != "" {
 			c.session = cookie
-			organizationBody := strings.NewReader(`{"displayName":"E2E Organization","requestedSlug":"` + organization + `"}`)
+			organizationBody := strings.NewReader(`{"displayName":"E2E Organization"}`)
 			organizationRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodPost,
 				"http://"+c.httpAddress+"/api/v1/organizations", organizationBody)
 			if requestErr != nil {
@@ -163,6 +165,13 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 				return fmt.Errorf("creating the e2e Organization returned %d",
 					organizationResponse.StatusCode)
 			}
+			var created struct {
+				ID string `json:"id"`
+			}
+			if requestErr = json.NewDecoder(organizationResponse.Body).Decode(&created); requestErr != nil {
+				return fmt.Errorf("reading the e2e Organization: %w", requestErr)
+			}
+			organization = created.ID
 			return nil
 		}
 	}

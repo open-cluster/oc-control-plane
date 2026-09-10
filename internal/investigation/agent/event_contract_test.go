@@ -25,7 +25,7 @@ func TestRunEmitsDocumentedToolStartedProperties(t *testing.T) {
 	runner := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{Summary: "available"}, nil
 	}))
-	org, _ := tenancy.NewOrganization("org-test")
+	org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), Subject: "source"}); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestRunEmitsDocumentedCanonicalAnswerLength(t *testing.T) {
 			runner := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 				return integrations.ToolResult{}, nil
 			}))
-			org, _ := tenancy.NewOrganization("org-test")
+			org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 			if err := runner.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 				t.Fatal(err)
 			}

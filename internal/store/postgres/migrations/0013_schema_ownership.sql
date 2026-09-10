@@ -97,7 +97,9 @@ ALTER TABLE slack_reply ADD COLUMN organization_id uuid;
 ALTER TABLE webhook_work ADD COLUMN organization_id uuid;
 
 UPDATE alert_event child SET organization_id = root.organization_id FROM organization root WHERE child.org_id = root.org_id;
+ALTER TABLE audit_event DISABLE TRIGGER audit_event_refuses_update;
 UPDATE audit_event child SET organization_id = root.organization_id FROM organization root WHERE child.org_id = root.org_id;
+ALTER TABLE audit_event ENABLE TRIGGER audit_event_refuses_update;
 UPDATE change_ledger child SET organization_id = root.organization_id FROM organization root WHERE child.org_id = root.org_id;
 UPDATE change_ledger_scope child SET organization_id = root.organization_id FROM organization root WHERE child.org_id = root.org_id;
 UPDATE conversation child SET organization_id = root.organization_id FROM organization root WHERE child.org_id = root.org_id;

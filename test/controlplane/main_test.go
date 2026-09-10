@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -366,13 +367,13 @@ func startControlPlaneRunning(
 	surfaceDigest := sha256.Sum256([]byte(surfaceToken))
 	if bytes.Equal(cfg.OperatorTokenDigest, surfaceDigest[:]) {
 		plane.bootstrapAdmin(t, surfaceOrg, surfaceToken,
-			cfg.OperatorPublicURL)
+			cfg.OperatorPublicURL, cfg.DatabaseDSN)
 	}
 	return plane
 }
 
 func (c *controlPlane) bootstrapAdmin(
-	t *testing.T, organization, token, origin string,
+	t *testing.T, organization, token, origin, dsn string,
 ) {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{
@@ -403,35 +404,57 @@ func (c *controlPlane) bootstrapAdmin(
 	for _, cookie := range response.Cookies() {
 		if cookie.Name == session.CookieName && cookie.Value != "" {
 			c.sessionCookie = cookie.Value
-			organizationBody, marshalErr := json.Marshal(map[string]string{
-				"displayName": "Test Organization", "requestedSlug": organization,
-			})
-			if marshalErr != nil {
-				t.Fatal(marshalErr)
-			}
-			organizationRequest, requestErr := http.NewRequestWithContext(
-				context.Background(), http.MethodPost, c.baseURL+"/api/v1/organizations",
-				bytes.NewReader(organizationBody))
-			if requestErr != nil {
-				t.Fatal(requestErr)
-			}
-			organizationRequest.Header.Set("Content-Type", "application/json")
-			organizationRequest.Header.Set("Origin", origin)
-			organizationRequest.AddCookie(&http.Cookie{Name: session.CookieName, Value: c.sessionCookie})
-			organizationResponse, requestErr := http.DefaultClient.Do(organizationRequest)
-			if requestErr != nil {
-				t.Fatalf("create integration-test Organization: %v", requestErr)
-			}
-			defer func() { _ = organizationResponse.Body.Close() }()
-			if organizationResponse.StatusCode != http.StatusCreated {
-				organizationRaw, _ := io.ReadAll(organizationResponse.Body)
-				t.Fatalf("create integration-test Organization = %d: %s",
-					organizationResponse.StatusCode, organizationRaw)
-			}
+			seedTestOrganization(t, dsn, organization, "admin@example.test")
 			return
 		}
 	}
 	t.Fatal("bootstrap integration-test administrator issued no session cookie")
+}
+
+func seedTestOrganization(t *testing.T, dsn, organization, email string) {
+	t.Helper()
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	var userID uuid.UUID
+	if err = transaction.QueryRow(ctx, `SELECT user_id FROM app_user WHERE email=$1`, email).
+		Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
+		VALUES ($1,'Operations',$2)`, organization, userID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = transaction.Exec(ctx, `INSERT INTO organization_membership
+		(membership_id,org_id,user_id,role,source,granted_by)
+		VALUES ($1,$2,$3,'admin',1,$4)`, uuid.New(), organization, userID, userID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func ensureTestOrganization(t *testing.T, dsn, organization string) {
+	t.Helper()
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	if _, err = connection.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
+		VALUES ($1,'Test Organization','test') ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // shutdown cancels the process context and waits for a clean exit, recording what the exit

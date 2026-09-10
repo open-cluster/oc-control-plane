@@ -31,7 +31,7 @@ func (s *runnerStore) ClaimInvestigation(_ context.Context, _ Claim) (
 	}
 	opened := s.queue[0]
 	s.queue = s.queue[1:]
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	return organization, opened, true, nil
 }
 
@@ -178,7 +178,7 @@ func TestRunnerDrainsAConversationAfterTheAgentFinishes(t *testing.T) {
 		Store: store, Agent: concludingAgent{}, Worker: "test",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	runner.runClaimed(context.Background(), organization,
 		Investigation{ID: uuid.New(), ConversationID: conversationID})
 	store.mu.Lock()
@@ -194,7 +194,7 @@ func TestRunnerDoesNotDrainAfterATerminalWriteFailure(t *testing.T) {
 		Store: store, Agent: unterminatedAgent{}, Worker: "test",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	runner.runClaimed(context.Background(), organization,
 		Investigation{ID: uuid.New(), ConversationID: uuid.New()})
 	store.mu.Lock()
@@ -211,7 +211,7 @@ func TestRunnerStopsActiveAgentAfterRemoteCancellation(t *testing.T) {
 		Store: store, Agent: agent, Worker: "test",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	organization, _ := tenancy.NewOrganization("org-test")
+	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	done := make(chan struct{})
 	go func() {
 		runner.runClaimed(context.Background(), organization, Investigation{ID: uuid.New()})

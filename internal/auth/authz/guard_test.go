@@ -103,13 +103,13 @@ func call(t *testing.T, router http.Handler, method, path string, headers ...str
 func TestAForeignOrganizationIsIndistinguishableFromOneThatDoesNotExist(t *testing.T) {
 	t.Parallel()
 
-	router := guardOver(t, memberOf(t, "org-a", authz.Admin), nil)
+	router := guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil)
 
 	existsElsewhere, foreignBody := call(t, router, http.MethodGet,
-		relaysPattern, organizationHeader, "org-b")
+		relaysPattern, organizationHeader, "22222222-2222-4222-8222-222222222222")
 	invented, inventedBody := call(t, router, http.MethodGet,
 		relaysPattern,
-		organizationHeader, "org-nobody-has")
+		organizationHeader, "33333333-3333-4333-8333-333333333333")
 
 	if existsElsewhere != http.StatusNotFound {
 		t.Errorf("another tenant's organization answered %d, want 404; a 403 confirms it exists",
@@ -127,7 +127,7 @@ func TestAForeignOrganizationIsIndistinguishableFromOneThatDoesNotExist(t *testi
 func TestAnOrganizationScopedRouteRequiresAnActiveOrganizationSelector(t *testing.T) {
 	t.Parallel()
 
-	status, _ := call(t, guardOver(t, memberOf(t, "org-a", authz.Admin), nil),
+	status, _ := call(t, guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil),
 		http.MethodGet, relaysPattern)
 
 	if status != http.StatusBadRequest {
@@ -149,7 +149,7 @@ func TestTheVerifiedActiveOrganizationReachesTheHandler(t *testing.T) {
 			})),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Admin), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -162,12 +162,12 @@ func TestTheVerifiedActiveOrganizationReachesTheHandler(t *testing.T) {
 	}
 
 	status, _ := call(t, router, http.MethodGet,
-		relaysPattern, organizationHeader, "org-a")
+		relaysPattern, organizationHeader, "11111111-1111-4111-8111-111111111111")
 	if status != http.StatusOK {
 		t.Fatalf("a valid request answered %d, want 200", status)
 	}
-	if observed != "org-a" {
-		t.Errorf("handler observed active organization %q, want org-a", observed)
+	if observed != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("handler observed active organization %q, want 11111111-1111-4111-8111-111111111111", observed)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestACanonicalPrivilegedRouteUsesOnlyTheVerifiedHeaderOrganization(t *testi
 			})),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Admin), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -198,12 +198,12 @@ func TestACanonicalPrivilegedRouteUsesOnlyTheVerifiedHeaderOrganization(t *testi
 	}
 
 	status, _ := call(t, router, http.MethodGet, "/api/v1/relays",
-		organizationHeader, "org-a")
+		organizationHeader, "11111111-1111-4111-8111-111111111111")
 	if status != http.StatusOK {
 		t.Fatalf("a canonical privileged request answered %d, want 200", status)
 	}
-	if observed != "org-a" {
-		t.Errorf("handler observed active organization %q, want org-a", observed)
+	if observed != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("handler observed active organization %q, want 11111111-1111-4111-8111-111111111111", observed)
 	}
 }
 
@@ -221,7 +221,7 @@ func TestAnOrganizationScopedAuthenticatedRouteVerifiesMembershipWithoutAPermiss
 			})),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Viewer), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Viewer), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -234,12 +234,12 @@ func TestAnOrganizationScopedAuthenticatedRouteVerifiesMembershipWithoutAPermiss
 	}
 
 	status, _ := call(t, router, http.MethodGet, "/api/v1/permissions",
-		organizationHeader, "org-a")
+		organizationHeader, "11111111-1111-4111-8111-111111111111")
 	if status != http.StatusOK {
 		t.Fatalf("a member reading their permissions answered %d, want 200", status)
 	}
-	if observed != "org-a" {
-		t.Errorf("handler observed active organization %q, want org-a", observed)
+	if observed != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("handler observed active organization %q, want 11111111-1111-4111-8111-111111111111", observed)
 	}
 }
 
@@ -256,7 +256,7 @@ func TestAnOptionalOrganizationAuthenticatedRouteVerifiesAProvidedSelector(t *te
 			})),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Viewer), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Viewer), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -268,12 +268,12 @@ func TestAnOptionalOrganizationAuthenticatedRouteVerifiesAProvidedSelector(t *te
 	}
 
 	status, _ := call(t, router, http.MethodGet, "/api/v1/session",
-		organizationHeader, "org-a")
+		organizationHeader, "11111111-1111-4111-8111-111111111111")
 	if status != http.StatusOK {
 		t.Fatalf("selected session request answered %d, want 200", status)
 	}
-	if observed != "org-a" {
-		t.Errorf("handler observed active organization %q, want org-a", observed)
+	if observed != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("handler observed active organization %q, want 11111111-1111-4111-8111-111111111111", observed)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestTheActiveOrganizationIsResolvedBeforeTheHandler(t *testing.T) {
 			http.HandlerFunc(func(http.ResponseWriter, *http.Request) { handled = true })),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Admin), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return false, nil
@@ -298,7 +298,7 @@ func TestTheActiveOrganizationIsResolvedBeforeTheHandler(t *testing.T) {
 	}
 
 	status, body := call(t, router, http.MethodGet,
-		relaysPattern, organizationHeader, "org-a")
+		relaysPattern, organizationHeader, "11111111-1111-4111-8111-111111111111")
 	if status != http.StatusNotFound || body != "{\"error\":\"organization not found\"}\n" {
 		t.Fatalf("an unresolved Organization answered %d %q, want indistinguishable 404", status, body)
 	}
@@ -310,9 +310,9 @@ func TestTheActiveOrganizationIsResolvedBeforeTheHandler(t *testing.T) {
 func TestMembershipIsVerifiedBeforeCSRF(t *testing.T) {
 	t.Parallel()
 
-	status, body := call(t, guardOver(t, memberOf(t, "org-a", authz.Admin), nil),
+	status, body := call(t, guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil),
 		http.MethodPost, "/api/v1/relays/r1/clear-conflict",
-		organizationHeader, "org-b", "Origin", "https://evil.example.com")
+		organizationHeader, "22222222-2222-4222-8222-222222222222", "Origin", "https://evil.example.com")
 
 	if status != http.StatusNotFound {
 		t.Fatalf("an inaccessible organization with a bad origin answered %d, want 404", status)
@@ -325,9 +325,9 @@ func TestMembershipIsVerifiedBeforeCSRF(t *testing.T) {
 func TestAnOriginContainingCredentialsIsRefused(t *testing.T) {
 	t.Parallel()
 
-	status, _ := call(t, guardOver(t, memberOf(t, "org-a", authz.Admin), nil),
+	status, _ := call(t, guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil),
 		http.MethodPost, "/api/v1/relays/r1/clear-conflict",
-		organizationHeader, "org-a", "Origin", "https://attacker@console.example.com")
+		organizationHeader, "11111111-1111-4111-8111-111111111111", "Origin", "https://attacker@console.example.com")
 
 	if status != http.StatusForbidden {
 		t.Errorf("an origin containing credentials answered %d, want 403", status)
@@ -337,12 +337,12 @@ func TestAnOriginContainingCredentialsIsRefused(t *testing.T) {
 func TestTheActiveOrganizationSelectorMustBeOneValidValue(t *testing.T) {
 	t.Parallel()
 
-	router := guardOver(t, memberOf(t, "org-a", authz.Admin), nil)
+	router := guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil)
 	for _, testCase := range []struct {
 		name   string
 		values []string
 	}{
-		{name: "repeated", values: []string{"org-a", "org-a"}},
+		{name: "repeated", values: []string{"11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"}},
 		{name: "malformed", values: []string{"org a"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -370,7 +370,7 @@ func TestABodyOrganizationCannotConflictBeforeTheHandler(t *testing.T) {
 			http.HandlerFunc(func(http.ResponseWriter, *http.Request) { handled = true })),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Admin), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -383,8 +383,8 @@ func TestABodyOrganizationCannotConflictBeforeTheHandler(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost,
 		"/api/v1/relays/r1/clear-conflict",
-		strings.NewReader(`{"organization":"org-b"}`))
-	request.Header.Set(organizationHeader, "org-a")
+		strings.NewReader(`{"organization":"22222222-2222-4222-8222-222222222222"}`))
+	request.Header.Set(organizationHeader, "11111111-1111-4111-8111-111111111111")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://console.example.com")
 	recorder := httptest.NewRecorder()
@@ -412,7 +412,7 @@ func TestTheOrganizationCheckPreservesAnOrdinaryJSONBody(t *testing.T) {
 			})),
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			return memberOf(t, "org-a", authz.Admin), nil
+			return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil
 		},
 		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
 			return true, nil
@@ -425,7 +425,7 @@ func TestTheOrganizationCheckPreservesAnOrdinaryJSONBody(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost,
 		"/api/v1/relays/r1/clear-conflict", strings.NewReader(body))
-	request.Header.Set(organizationHeader, "org-a")
+	request.Header.Set(organizationHeader, "11111111-1111-4111-8111-111111111111")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://console.example.com")
 	recorder := httptest.NewRecorder()
@@ -470,11 +470,11 @@ func TestAnAuthenticationRefusalDoesNotLogCredentialHeaders(t *testing.T) {
 func TestAMemberWithoutThePermissionIsToldWhatTheyLack(t *testing.T) {
 	t.Parallel()
 
-	router := guardOver(t, memberOf(t, "org-a", authz.Viewer), nil)
+	router := guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Viewer), nil)
 
 	status, body := call(t, router, http.MethodPost,
 		"/api/v1/relays/r1/clear-conflict",
-		"Origin", "https://console.example.com", organizationHeader, "org-a")
+		"Origin", "https://console.example.com", organizationHeader, "11111111-1111-4111-8111-111111111111")
 
 	if status != http.StatusForbidden {
 		t.Fatalf("a viewer clearing a conflict answered %d, want 403", status)
@@ -490,16 +490,16 @@ func TestARefusedAuthorizationIsRecorded(t *testing.T) {
 	t.Parallel()
 
 	var recorded []audit.Event
-	router := guardOver(t, memberOf(t, "org-a", authz.Viewer), &recorded)
+	router := guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Viewer), &recorded)
 
 	call(t, router, http.MethodPost, "/api/v1/relays/r1/clear-conflict",
-		"Origin", "https://console.example.com", organizationHeader, "org-a")
+		"Origin", "https://console.example.com", organizationHeader, "11111111-1111-4111-8111-111111111111")
 	call(t, router, http.MethodGet, relaysPattern,
-		organizationHeader, "org-b")
+		organizationHeader, "22222222-2222-4222-8222-222222222222")
 	call(t, router, http.MethodPost, "/api/v1/relays/r1/clear-conflict",
-		organizationHeader, "org-a", "Origin", "https://evil.example.com")
+		organizationHeader, "11111111-1111-4111-8111-111111111111", "Origin", "https://evil.example.com")
 	call(t, router, http.MethodGet, relaysPattern,
-		organizationHeader, "org-a")
+		organizationHeader, "11111111-1111-4111-8111-111111111111")
 
 	if len(recorded) != 3 {
 		t.Fatalf("the trail holds %d refusals, want permission, membership, and CSRF misses",
@@ -542,7 +542,7 @@ func TestAnUnauthenticatedRequestIsRefusedAndNotRecorded(t *testing.T) {
 func TestACookieBorneUnsafeRequestNeedsAnAllowedOrigin(t *testing.T) {
 	t.Parallel()
 
-	router := guardOver(t, memberOf(t, "org-a", authz.Admin), nil)
+	router := guardOver(t, memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil)
 	const path = "/api/v1/relays/r1/clear-conflict"
 
 	for _, testCase := range []struct {
@@ -561,7 +561,7 @@ func TestACookieBorneUnsafeRequestNeedsAnAllowedOrigin(t *testing.T) {
 			if testCase.origin != "" {
 				headers = []string{"Origin", testCase.origin}
 			}
-			headers = append(headers, organizationHeader, "org-a")
+			headers = append(headers, organizationHeader, "11111111-1111-4111-8111-111111111111")
 			status, _ := call(t, router, http.MethodPost, path, headers...)
 
 			// The handler under test writes nothing, so a request that reached it is 200.
@@ -598,7 +598,7 @@ func TestAnAuthenticatedRouteRejectsAnOrganizationSelector(t *testing.T) {
 		t.Fatalf("building a principal: %v", err)
 	}
 	status, _ := call(t, guardOver(t, principal, nil), http.MethodGet, sessionPattern,
-		organizationHeader, "org-a")
+		organizationHeader, "11111111-1111-4111-8111-111111111111")
 	if status != http.StatusBadRequest {
 		t.Errorf("a plain authenticated route with an Organization selector answered %d, want 400",
 			status)
@@ -652,7 +652,7 @@ func TestTheRouterRequiresAnOrganizationResolverForPrivilegedRoutes(t *testing.T
 		authz.Privileged(http.MethodGet, relaysPattern, authz.RelayRead,
 			http.HandlerFunc(served)),
 	}, authz.Guard{Resolve: func(*http.Request) (authz.Principal, error) {
-		return memberOf(t, "org-a", authz.Admin), nil
+		return memberOf(t, "11111111-1111-4111-8111-111111111111", authz.Admin), nil
 	}, Logger: quietLogger()})
 	if err == nil {
 		t.Error("a privileged router with no Organization resolver was accepted")

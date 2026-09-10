@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -32,10 +31,11 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 				t.Fatal(err)
 			}
 			principal, _ := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
-			organization, _ := tenancy.NewOrganization("operations")
-			if _, err := database.CreateOrganization(ctx, principal, organization, "Operations"); err != nil {
+			membership, err := database.CreateOrganization(ctx, principal, "Operations")
+			if err != nil {
 				t.Fatal(err)
 			}
+			organization := membership.Organization
 			connection, err := pgx.Connect(ctx, dsn)
 			if err != nil {
 				t.Fatal(err)

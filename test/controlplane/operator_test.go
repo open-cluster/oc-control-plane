@@ -32,7 +32,7 @@ import (
 // always failed would refuse the right token, and the reads would fail. Neither can be true of
 // a suite that is green.
 func TestOperatorSurface(t *testing.T) {
-	const organization = "org-a"
+	const organization = surfaceOrg
 
 	// Long enough that the configuration accepts it, which is itself the point: a token short
 	// enough to guess is the same as no token on a cross-tenant surface.
@@ -302,7 +302,7 @@ func TestOperatorSurface(t *testing.T) {
 
 	t.Run("an organization this deployment does not serve is not found", func(t *testing.T) {
 		status, _ := operatorRequest(t, http.MethodGet,
-			"http://"+operatorAddress+"/api/v1/organizations/org-nowhere/relays", token)
+			"http://"+operatorAddress+"/api/v1/organizations/"+neighbourOrg+"/relays", token)
 		if status != http.StatusNotFound {
 			t.Errorf("an unserved organization returned %d, want 404", status)
 		}

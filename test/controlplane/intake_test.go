@@ -26,7 +26,7 @@ import (
 // delivering a request, because that is how it is reached in production.
 
 const (
-	intakeOrganization = "org-a"
+	intakeOrganization = surfaceOrg
 	intakeSecret       = "a-source-secret-long-enough-to-be-one"
 )
 
@@ -76,6 +76,7 @@ func listeningAddress(t *testing.T, plane *controlPlane, message string) string 
 func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
+	ensureTestOrganization(t, dsn, organization)
 
 	database, err := pgx.Connect(ctx, dsn)
 	if err != nil {
@@ -752,7 +753,7 @@ func TestIntake_RefusesAnOversizedPayload(t *testing.T) {
 // fails before any query runs, which would leave this passing against an implementation
 // with no scoping at all — the exact defect it exists to catch.
 func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T) {
-	const neighbour = "org-neighbour"
+	const neighbour = neighbourOrg
 
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {

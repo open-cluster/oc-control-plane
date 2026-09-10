@@ -152,6 +152,7 @@ func TestCursorCannotMoveBetweenListOperations(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
 	plane.createAlertmanager(t, "Cursor scope")
+	plane.createAlertmanager(t, "Cursor scope 2")
 
 	status, body := plane.call(t, http.MethodGet, base+"/audit-events?limit=1", nil)
 	if status != http.StatusOK {

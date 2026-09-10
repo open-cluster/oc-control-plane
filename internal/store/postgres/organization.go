@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -11,9 +10,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
-
-// ErrOrganizationExists reports an Organization name already held by durable truth.
-var ErrOrganizationExists = errors.New("organization exists")
 
 // OrganizationExists reports whether durable identity state names the Organization.
 func (d *Database) OrganizationExists(
@@ -35,30 +31,27 @@ func (d *Database) OrganizationExists(
 
 // CreateOrganization records a new Organization and its creator's Admin membership atomically.
 func (d *Database) CreateOrganization(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	displayName string,
+	ctx context.Context, principal authz.Principal, displayName string,
 ) (authz.Membership, error) {
 	userID, err := uuid.Parse(principal.ID())
 	if err != nil || principal.Kind() != authz.KindUser {
 		return authz.Membership{}, ErrUserUnknown
 	}
-	pool, err := d.Pool(organization)
-	if err != nil {
-		return authz.Membership{}, err
-	}
-	transaction, err := pool.Begin(ctx)
+	transaction, err := d.pool.Begin(ctx)
 	if err != nil {
 		return authz.Membership{}, fmt.Errorf("beginning organization creation: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	if _, err = transaction.Exec(ctx,
-		`INSERT INTO organization (org_id, display_name, created_by) VALUES ($1, $2, $3)`,
-		organization.String(), displayName, principal.ID()); err != nil {
-		if isUniqueViolation(err, "organization_pkey") {
-			return authz.Membership{}, ErrOrganizationExists
-		}
+	var organizationID uuid.UUID
+	if err = transaction.QueryRow(ctx,
+		`INSERT INTO organization (display_name, created_by) VALUES ($1, $2) RETURNING org_id`,
+		displayName, principal.ID()).Scan(&organizationID); err != nil {
 		return authz.Membership{}, fmt.Errorf("creating organization: %w", err)
+	}
+	organization, err := tenancy.NewOrganization(organizationID.String())
+	if err != nil {
+		return authz.Membership{}, fmt.Errorf("reading created organization: %w", err)
 	}
 	membershipID := uuid.New()
 	if _, err = transaction.Exec(ctx, `

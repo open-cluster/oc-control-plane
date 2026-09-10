@@ -28,7 +28,7 @@ func TestRunRefusesWhenConversationOriginCannotBeVerified(t *testing.T) {
 				return integrations.ToolResult{}, nil
 			})
 			runner := configuredTestAgent(t, store, model, catalog)
-			org, _ := tenancy.NewOrganization("org-test")
+			org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 			if err := runner.Run(context.Background(), org, investigation.Investigation{
 				ID: uuid.New(), ConversationID: uuid.New(), Subject: "question",
 			}); err != nil {
@@ -66,7 +66,7 @@ func TestFirstQuestionReportsUnavailableHistoryWithoutBecomingAFollowUp(t *testi
 	runner := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
 	}))
-	org, _ := tenancy.NewOrganization("org-test")
+	org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), org, investigation.Investigation{
 		ID: uuid.New(), ConversationID: uuid.New(), Turn: 1, Subject: "question", Question: "What changed?",
 	}); err != nil {
