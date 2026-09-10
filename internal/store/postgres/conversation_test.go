@@ -768,7 +768,7 @@ func TestConversationHistoryRetrievesOlderFactsBeyondOneHundredMessages(t *testi
 	}
 }
 
-func TestHistoryMigrationRemovesTheRetiredSamplerIndex(t *testing.T) {
+func TestFreshSchemaOmitsTheRetiredSamplerIndex(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
 	pool, err := database.Pool(organization)

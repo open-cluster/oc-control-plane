@@ -9,23 +9,23 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// WorkHandler hides one provider's domain effect. The durable worker owns only leasing,
+// JobHandler hides one provider's domain effect. The durable worker owns only leasing,
 // retry, and dispatch; it never switches over provider payloads or workflows.
-type WorkHandler interface {
-	Handle(context.Context, storage.WebhookWork) error
+type JobHandler interface {
+	Handle(context.Context, storage.WebhookJob) error
 }
 
-type WorkHandlers map[storage.WebhookWorkKind]WorkHandler
+type JobHandlers map[storage.WebhookJobKind]JobHandler
 
 type Worker struct {
-	Work        *storage.Database
-	Handlers    WorkHandlers
+	Jobs        *storage.Database
+	Handlers    JobHandlers
 	Owner       string
 	Lease       time.Duration
 	RetryBase   time.Duration
 	MaxAttempts int
 	Logger      *slog.Logger
-	Counters    WorkInstruments
+	Counters    JobInstruments
 }
 
 func (w Worker) Run(ctx context.Context) {
@@ -33,7 +33,7 @@ func (w Worker) Run(ctx context.Context) {
 	for {
 		worked, err := w.ProcessOne(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			w.logger().ErrorContext(ctx, "webhook delivery processing failed", slog.String("error", err.Error()))
+			w.logger().ErrorContext(ctx, "webhook job processing failed", slog.String("error", err.Error()))
 		}
 		if worked {
 			continue
@@ -51,34 +51,34 @@ func (w Worker) ProcessOne(ctx context.Context) (bool, error) {
 	if lease <= 0 {
 		lease = time.Minute
 	}
-	work, found, err := w.Work.ClaimWebhookWork(ctx, w.Owner, lease)
+	job, found, err := w.Jobs.ClaimWebhookJob(ctx, w.Owner, lease)
 	if err != nil || !found {
 		return found, err
 	}
-	w.Counters.ObserveDelay(ctx, work.UpdatedAt.Sub(work.CreatedAt))
-	if work.Attempts >= storage.MaxWebhookWorkAttempts {
-		return true, w.fail(ctx, work, errors.New("the accepted webhook delivery exhausted its processing budget"))
+	w.Counters.ObserveDelay(ctx, job.UpdatedAt.Sub(job.CreatedAt))
+	if job.Attempts >= storage.MaxWebhookJobAttempts {
+		return true, w.fail(ctx, job, errors.New("the accepted webhook delivery exhausted its processing budget"))
 	}
-	handler := w.Handlers[work.Kind]
+	handler := w.Handlers[job.Kind]
 	if handler == nil {
-		return true, w.fail(ctx, work, errors.New("this build has no handler for the work kind"))
+		return true, w.fail(ctx, job, errors.New("this build has no handler for the webhook job kind"))
 	}
-	if err := w.handleWithLease(ctx, work, handler, lease); err != nil {
-		if errors.Is(err, storage.ErrWebhookWorkLeaseLost) {
+	if err := w.handleWithLease(ctx, job, handler, lease); err != nil {
+		if errors.Is(err, storage.ErrWebhookJobLeaseLost) {
 			return true, nil
 		}
-		if errors.Is(err, storage.ErrWebhookWorkCapacity) {
+		if errors.Is(err, storage.ErrWebhookJobCapacity) {
 			w.Counters.Count(ctx, "delayed")
-			return true, w.Work.DeferWebhookWork(ctx, work.Organization, work,
+			return true, w.Jobs.DeferWebhookJob(ctx, job.Organization, job,
 				time.Second)
 		}
-		return true, w.fail(ctx, work, err)
+		return true, w.fail(ctx, job, err)
 	}
 	return true, nil
 }
 
 func (w Worker) handleWithLease(
-	ctx context.Context, work storage.WebhookWork, handler WorkHandler, lease time.Duration,
+	ctx context.Context, job storage.WebhookJob, handler JobHandler, lease time.Duration,
 ) error {
 	handlerContext, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -93,7 +93,7 @@ func (w Worker) handleWithLease(
 			case <-handlerContext.Done():
 				return
 			case <-ticker.C:
-				if err := w.Work.HeartbeatWebhookWork(handlerContext, work.Organization, work, lease); err != nil {
+				if err := w.Jobs.HeartbeatWebhookJob(handlerContext, job.Organization, job, lease); err != nil {
 					lost <- err
 					cancel()
 					return
@@ -101,7 +101,7 @@ func (w Worker) handleWithLease(
 			}
 		}
 	}()
-	err := handler.Handle(handlerContext, work)
+	err := handler.Handle(handlerContext, job)
 	cancel()
 	<-stopped
 	if err == nil {
@@ -109,8 +109,8 @@ func (w Worker) handleWithLease(
 	}
 	select {
 	case renewalError := <-lost:
-		if errors.Is(renewalError, storage.ErrWebhookWorkLeaseLost) {
-			return storage.ErrWebhookWorkLeaseLost
+		if errors.Is(renewalError, storage.ErrWebhookJobLeaseLost) {
+			return storage.ErrWebhookJobLeaseLost
 		}
 		return renewalError
 	default:
@@ -118,7 +118,7 @@ func (w Worker) handleWithLease(
 	}
 }
 
-func (w Worker) fail(ctx context.Context, work storage.WebhookWork, cause error) error {
+func (w Worker) fail(ctx context.Context, job storage.WebhookJob, cause error) error {
 	maximum := w.MaxAttempts
 	if maximum <= 0 {
 		maximum = 8
@@ -127,12 +127,12 @@ func (w Worker) fail(ctx context.Context, work storage.WebhookWork, cause error)
 	if base <= 0 {
 		base = time.Second
 	}
-	terminal := work.Attempts >= maximum
-	delay := base << min(work.Attempts-1, 8)
-	class := "provider-work-failed"
+	terminal := job.Attempts >= maximum
+	delay := base << min(job.Attempts-1, 8)
+	class := "provider-job-failed"
 	message := "the accepted webhook delivery could not be processed"
-	if err := w.Work.FailWebhookWork(ctx, work.Organization, work, terminal, delay,
-		class, message); err != nil && !errors.Is(err, storage.ErrWebhookWorkLeaseLost) {
+	if err := w.Jobs.FailWebhookJob(ctx, job.Organization, job, terminal, delay,
+		class, message); err != nil && !errors.Is(err, storage.ErrWebhookJobLeaseLost) {
 		return err
 	}
 	if terminal {
@@ -140,8 +140,8 @@ func (w Worker) fail(ctx context.Context, work storage.WebhookWork, cause error)
 	} else {
 		w.Counters.Count(ctx, "delayed")
 	}
-	w.logger().WarnContext(ctx, message, slog.String("delivery_id", work.DeliveryID.String()),
-		slog.String("failure_class", class), slog.Int("attempt", work.Attempts),
+	w.logger().WarnContext(ctx, message, slog.String("delivery_id", job.DeliveryID.String()),
+		slog.String("failure_class", class), slog.Int("attempt", job.Attempts),
 		slog.String("cause", cause.Error()))
 	return nil
 }

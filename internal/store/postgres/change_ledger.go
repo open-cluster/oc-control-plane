@@ -45,8 +45,8 @@ func (p *Database) OpenInventoryScopes(
 			   AND disabled_at IS NULL
 		)
 		INSERT INTO change_ledger_scope
-			(integration_id, org_id, requested_interval_seconds)
-		SELECT integration_id, $1, $3 FROM served
+			(integration_id, org_id, requested_interval_seconds, updated_at)
+		SELECT integration_id, $1, $3, now() FROM served
 		ON CONFLICT (integration_id) DO UPDATE
 			SET requested_interval_seconds = EXCLUDED.requested_interval_seconds,
 			    -- The revision moves exactly when the request changed, so a delta or a

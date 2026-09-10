@@ -70,8 +70,8 @@ func (h *harness) assertInvestigation(t *testing.T) {
 	_, err := h.truth.pool.Exec(context.Background(), `
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key, grouping_basis,
-			 title, status, first_seen_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, 1, $5, 1, $6, $6)`,
+			 title, status, first_seen_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, $4, 1, $5, 1, $6, $6, now())`,
 		incident, organization, h.integration, "e2e-investigation", fixtureWorkload, now)
 	if err != nil {
 		t.Fatalf("creating the investigation incident: %v", err)

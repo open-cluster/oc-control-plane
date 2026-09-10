@@ -12,10 +12,10 @@ import (
 )
 
 type ReferenceStore interface {
-	SlackMessageProviderReference(context.Context, storage.WebhookWork) (string, string, string, error)
-	Integration(context.Context, storage.WebhookWork) (integrations.Integration, error)
-	SetSlackMessageSourceReference(context.Context, storage.WebhookWork, string) error
-	RecordCredentialUnseal(context.Context, storage.WebhookWork, string) error
+	SlackMessageProviderReference(context.Context, storage.WebhookJob) (string, string, string, error)
+	Integration(context.Context, storage.WebhookJob) (integrations.Integration, error)
+	SetSlackMessageSourceReference(context.Context, storage.WebhookJob, string) error
+	RecordCredentialUnseal(context.Context, storage.WebhookJob, string) error
 }
 
 // ReferenceDatabase narrows storage to the safe, Organization-scoped references needed by
@@ -23,27 +23,27 @@ type ReferenceStore interface {
 type ReferenceDatabase struct{ Database *storage.Database }
 
 func (d ReferenceDatabase) SlackMessageProviderReference(
-	ctx context.Context, work storage.WebhookWork,
+	ctx context.Context, work storage.WebhookJob,
 ) (string, string, string, error) {
 	return d.Database.SlackMessageProviderReference(
 		ctx, work.Organization, work.ConversationID, work.MessageSequence)
 }
 
 func (d ReferenceDatabase) Integration(
-	ctx context.Context, work storage.WebhookWork,
+	ctx context.Context, work storage.WebhookJob,
 ) (integrations.Integration, error) {
 	return d.Database.Integration(ctx, work.Organization, work.IntegrationID)
 }
 
 func (d ReferenceDatabase) SetSlackMessageSourceReference(
-	ctx context.Context, work storage.WebhookWork, reference string,
+	ctx context.Context, work storage.WebhookJob, reference string,
 ) error {
 	return d.Database.SetSlackMessageSourceReference(
 		ctx, work.Organization, work.ConversationID, work.MessageSequence, reference, work)
 }
 
 func (d ReferenceDatabase) RecordCredentialUnseal(
-	ctx context.Context, work storage.WebhookWork, purpose string,
+	ctx context.Context, work storage.WebhookJob, purpose string,
 ) error {
 	return d.Database.RecordCredentialUnseal(ctx, work.Organization, work.IntegrationID, purpose)
 }
@@ -54,7 +54,7 @@ type SlackReferenceResolver struct {
 	Sealer seal.Sealer
 }
 
-func (r SlackReferenceResolver) Resolve(ctx context.Context, work storage.WebhookWork) error {
+func (r SlackReferenceResolver) Resolve(ctx context.Context, work storage.WebhookJob) error {
 	channel, message, existing, err := r.Store.SlackMessageProviderReference(ctx, work)
 	if err != nil || existing != "" || channel == "" || message == "" {
 		return err

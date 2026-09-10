@@ -1,1 +1,0 @@
-DROP INDEX conversation_message_person_history_idx;

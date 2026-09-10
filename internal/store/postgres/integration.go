@@ -104,13 +104,13 @@ func (p *Database) CreateIntegration(
 				                         webhook_secret_created_at,
 				                         credential_sealed, credential_fingerprint,
 				                         credential_created_at,
-				                         status, last_verified_at, verify_note,
-				                         verify_grants, verify_facts, created_by)
+					                         status, last_verified_at, verify_note,
+					                         verify_grants, verify_facts, created_by, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 				        CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE now() END,
 				        $10, $11,
 				        CASE WHEN $10::BYTEA IS NULL THEN NULL ELSE now() END,
-				        $12, CASE WHEN $13 THEN now() END, $14, $15, $16, $17)
+					        $12, CASE WHEN $13 THEN now() END, $14, $15, $16, $17, now())
 				RETURNING `+integrationColumns,
 				identityOrNew(wanted.ID), organization.String(), int16(wanted.Type), wanted.Name,
 				configuration, labels, nullableUUID(wanted.RelayID),
@@ -435,19 +435,20 @@ func (p *Database) SetIntegrationDisabled(
 
 // DeleteIntegration removes an Integration nothing depends on.
 //
-// The dependents are counted inside the deleting transaction, so a alert_event arriving between
-// the check and the delete serialises on the row rather than racing it. Deliveries are
-// deliberately NOT a dependent: they cascade with the Integration, because a delivery
-// record's whole subject is the Integration it belongs to.
+// The dependents are counted inside the deleting transaction, so an Alert Event arriving between
+// the check and the delete serialises on the row rather than racing it. Historical deliveries
+// are dependents too; deletion must not erase accepted external evidence.
 func (p *Database) DeleteIntegration(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	id uuid.UUID,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationDeleted,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var alertEvents, jobs, ledger, investigations int
+			var alertEvents, deliveries, jobs, ledger, investigations int
 			err := transaction.QueryRow(ctx, `
 				SELECT (SELECT count(*) FROM alert_event
+				         WHERE org_id = $2 AND integration_id = $1),
+				       (SELECT count(*) FROM webhook_delivery
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM relay_job
 				         WHERE org_id = $2 AND integration_id = $1),
@@ -455,15 +456,15 @@ func (p *Database) DeleteIntegration(
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM investigation_tool_run
 				           WHERE org_id = $2 AND integration_id = $1)`,
-				id, organization.String()).Scan(&alertEvents, &jobs, &ledger, &investigations)
+				id, organization.String()).Scan(&alertEvents, &deliveries, &jobs, &ledger, &investigations)
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("counting an integration's dependents: %w", err)
 			}
-			if alertEvents+jobs+ledger+investigations > 0 {
+			if alertEvents+deliveries+jobs+ledger+investigations > 0 {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf(
-					"%w: %d alertEvents, %d jobs, %d change-ledger entries, %d investigation records",
-					integrations.ErrInUse, alertEvents, jobs, ledger, investigations)
+					"%w: %d alertEvents, %d deliveries, %d jobs, %d change-ledger entries, %d investigation records",
+					integrations.ErrInUse, alertEvents, deliveries, jobs, ledger, investigations)
 			}
 
 			// Removing the Integration retires its reply obligations atomically; a
@@ -474,6 +475,16 @@ func (p *Database) DeleteIntegration(
 				  AND s.conversation_id = r.conversation_id AND s.integration_id = $1`,
 				id, organization.String()); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration replies: %w", err)
+			}
+			if _, err := transaction.Exec(ctx, `
+				DELETE FROM slack_conversation WHERE org_id = $2 AND integration_id = $1`,
+				id, organization.String()); err != nil {
+				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration conversations: %w", err)
+			}
+			if _, err := transaction.Exec(ctx, `
+				DELETE FROM integration_installation WHERE org_id = $2 AND integration_id = $1`,
+				id, organization.String()); err != nil {
+				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration installation: %w", err)
 			}
 			tag, err := transaction.Exec(ctx, `
 				DELETE FROM integration
@@ -767,7 +778,7 @@ func (p *Database) LastAcceptedDelivery(
 	var last time.Time
 	err = pool.QueryRow(ctx, `
 		SELECT received_at
-		  FROM integration_delivery
+		  FROM webhook_delivery
 		 WHERE integration_id = $1 AND org_id = $2 AND outcome = 1
 		 ORDER BY received_at DESC
 		 LIMIT 1`, id, organization.String()).Scan(&last)

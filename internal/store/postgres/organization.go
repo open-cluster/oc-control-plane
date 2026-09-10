@@ -56,8 +56,8 @@ func (d *Database) CreateOrganization(
 	membershipID := uuid.New()
 	if _, err = transaction.Exec(ctx, `
 		INSERT INTO organization_membership
-			(membership_id, org_id, user_id, role, source, granted_by)
-		VALUES ($1, $2, $3, $4, $5, $6)`, membershipID, organization.String(), userID,
+			(membership_id, org_id, user_id, role, source, granted_by, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now())`, membershipID, organization.String(), userID,
 		string(authz.Admin), int16(SourceManual), principal.ID()); err != nil {
 		return authz.Membership{}, fmt.Errorf("granting organization creator: %w", err)
 	}

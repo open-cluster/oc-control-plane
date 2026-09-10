@@ -309,7 +309,7 @@ func (h *surface) record(
 	}
 
 	h.counters.countDelivery(ctx, dispositionAccepted)
-	h.counters.work.Count(ctx, "accepted")
+	h.counters.jobs.Count(ctx, "accepted")
 	h.counters.countAlertEvents(ctx, outcome.Recorded, outcome.IncidentsOpened, outcome.IncidentsJoined)
 	h.Logger.InfoContext(ctx, "delivery accepted",
 		slog.String("org_id", organization.String()),

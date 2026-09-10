@@ -20,9 +20,10 @@ operational probes remain outside the product OpenAPI contract.
 
 The control plane offers closed, read-only Tool capabilities. Provider adapters or Relay
 execute them, and the Investigation engine records bounded Tool Runs and cited results.
-Maintenance cleanup is conditional on those consumers: audit retention, ledger inventory,
-and Relay conflict history stay durable until an equivalent shipped surface replaces them
-or the contract is explicitly retired.
+Maintenance cleanup is conditional on those consumers. Relay conflict history is part of
+the audit record and follows each Organization's audit retention policy; ledger inventory
+stays durable until an equivalent shipped surface replaces it or the contract is explicitly
+retired.
 The public control-plane repository owns this documentation and HTTP contract. The
 Apache-licensed Relay protocol is consumed from the pinned
 `github.com/open-cluster/oc-relay/gen/go` module. Review the repository

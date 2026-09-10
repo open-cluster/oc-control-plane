@@ -56,9 +56,8 @@ func startIntake(t *testing.T) *intakePlane {
 	}
 }
 
-// alertmanagerTypeID mirrors the seeded integration_type row. Written out rather than
-// imported so that renaming the constant in code cannot silently change what a configured
-// row in the database means.
+// alertmanagerTypeID mirrors the compiled Alertmanager Integration kind code. Written out
+// so a code rename cannot silently change what a configured database row means.
 const alertmanagerTypeID = 1
 
 // listeningAddress pulls a surface's bound address out of the startup log, which is the only
@@ -89,8 +88,8 @@ func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.U
 	_, err = database.Exec(ctx, `
 		INSERT INTO integration
 			(integration_id, org_id, integration_type_id, name,
-			 webhook_secret_digest, webhook_secret_fingerprint, webhook_secret_created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now())`,
+			 webhook_secret_digest, webhook_secret_fingerprint, webhook_secret_created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), now())`,
 		id, organization, alertmanagerTypeID, "the source "+id.String(), digest[:],
 		id.String()[:8])
 	if err != nil {
@@ -199,7 +198,7 @@ func (p *intakePlane) truncatedCount(t *testing.T) int {
 
 	var total int
 	err = connection.QueryRow(ctx,
-		`SELECT coalesce(sum(truncated), 0) FROM integration_delivery
+		`SELECT coalesce(sum(truncated), 0) FROM webhook_delivery
 		  WHERE org_id = $1 AND outcome = 1`,
 		intakeOrganization).Scan(&total)
 	if err != nil {

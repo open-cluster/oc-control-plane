@@ -112,7 +112,7 @@ func TestRecoveryDoesNotConvertOIDCUsers(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	user := uuid.New()
-	if _, err = connection.Exec(ctx, `INSERT INTO app_user (user_id, issuer, subject, email) VALUES ($1, 'https://issuer.example', 'subject', 'oidc@example.test')`, user); err != nil {
+	if _, err = connection.Exec(ctx, `INSERT INTO app_user (user_id, issuer, subject, email, updated_at) VALUES ($1, 'https://issuer.example', 'subject', 'oidc@example.test', now())`, user); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.RecoverLocalPassword(ctx, user, "replacement encoded password verifier"); !errors.Is(err, storage.ErrLocalCredentialUnknown) {

@@ -188,8 +188,8 @@ func (t *truth) kubernetesIntegration(
 	integration := uuid.New()
 	if _, err := t.pool.Exec(ctx, `
 		INSERT INTO integration
-			(integration_id, org_id, integration_type_id, name, relay_id)
-		VALUES ($1, $2, 2, $3, $4)`,
+			(integration_id, org_id, integration_type_id, name, relay_id, updated_at)
+		VALUES ($1, $2, 2, $3, $4, now())`,
 		integration, organization, "the cluster "+integration.String(),
 		registration); err != nil {
 		return uuid.Nil, fmt.Errorf("creating the kubernetes integration: %w", err)

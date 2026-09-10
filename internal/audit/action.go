@@ -33,6 +33,7 @@ const (
 	ActionIntegrationCredentialUnsealed Action = "integration.credential.unsealed"
 
 	// Relay
+	ActionConflictDetected     Action = "relay.conflict.detected"
 	ActionConflictCleared      Action = "relay.conflict.cleared"
 	ActionRelayBootstrapIssued Action = "relay.bootstrap-token.issued"
 

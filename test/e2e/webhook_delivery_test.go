@@ -21,8 +21,8 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 	if _, err := h.truth.pool.Exec(ctx, `
 		INSERT INTO integration
 			(integration_id, org_id, integration_type_id, name, webhook_secret_digest,
-			 webhook_secret_fingerprint, webhook_secret_created_at)
-		VALUES ($1, $2, 5, 'E2E Generic Webhook', $3, 'e2e-generic', now())`,
+			 webhook_secret_fingerprint, webhook_secret_created_at, updated_at)
+		VALUES ($1, $2, 5, 'E2E Generic Webhook', $3, 'e2e-generic', now(), now())`,
 		integrationID, organization, digest[:]); err != nil {
 		t.Fatalf("creating generic webhook integration: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 
 	var deliveryID uuid.UUID
 	if err = h.truth.pool.QueryRow(ctx, `
-		SELECT delivery_id FROM integration_delivery
+		SELECT delivery_id FROM webhook_delivery
 		 WHERE integration_id = $1 AND provider_identity = 'restart-42'
 		   AND lifecycle_phase = 'firing' AND outcome = 1`, integrationID).Scan(&deliveryID); err != nil {
 		t.Fatalf("202 returned before durable acceptance: %v", err)
@@ -79,10 +79,10 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 			if err := h.truth.pool.QueryRow(ctx, `
 				SELECT count(*) FILTER (WHERE work.status = 5),
 				       count(DISTINCT investigation.investigation_id)
-				  FROM webhook_work AS work
+				  FROM webhook_job AS work
 				  LEFT JOIN investigation
 				    ON investigation.org_id = work.org_id
-				   AND investigation.webhook_work_id = work.work_id
+				   AND investigation.webhook_job_id = work.job_id
 				 WHERE work.org_id = $1 AND work.delivery_id = $2`, organization, deliveryID).
 				Scan(&workComplete, &investigations); err != nil {
 				return false, err

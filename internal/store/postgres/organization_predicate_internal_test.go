@@ -57,8 +57,8 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 	seed.Queue(`INSERT INTO organization (org_id, display_name, created_by)
 		VALUES ($1, 'First', 'test'), ($2, 'Second', 'test')`, first.String(), second.String())
 	seed.Queue(`
-		INSERT INTO integration (integration_id, org_id, integration_type_id, name)
-		VALUES ($1, $2, 1, 'tenant predicate test')`, integrationID, first.String())
+		INSERT INTO integration (integration_id, org_id, integration_type_id, name, updated_at)
+		VALUES ($1, $2, 1, 'tenant predicate test', now())`, integrationID, first.String())
 	seed.Queue(`
 		INSERT INTO conversation
 			(conversation_id, org_id, surface, subject, created_by)
@@ -71,19 +71,19 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 	seed.Queue(`
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key, grouping_basis,
-			 title, status, first_seen_at, last_seen_at)
-		VALUES ($1, $2, $3, 'boundary', 1, 'tenant predicate test', 1, $4, $4)`,
+			 title, status, first_seen_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, 'boundary', 1, 'tenant predicate test', 1, $4, $4, now())`,
 		incidentID, first.String(), integrationID, observedAt)
 	seed.Queue(`
 		INSERT INTO alert_event
 			(alert_event_id, org_id, integration_id, source_key, status, title, summary,
-			 started_at, incident_id)
-		VALUES ($1, $2, $3, 'boundary-alert_event', 1, 'tenant predicate test', '', $4, $5)`,
+			 started_at, incident_id, updated_at)
+		VALUES ($1, $2, $3, 'boundary-alert_event', 1, 'tenant predicate test', '', $4, $5, now())`,
 		alertEventID, first.String(), integrationID, observedAt, incidentID)
 	seed.Queue(`
 		INSERT INTO change_ledger_scope
-			(integration_id, org_id, requested_interval_seconds)
-		VALUES ($1, $2, 60)`, integrationID, first.String())
+			(integration_id, org_id, requested_interval_seconds, updated_at)
+		VALUES ($1, $2, 60, now())`, integrationID, first.String())
 	if err = database.pool.SendBatch(ctx, seed).Close(); err != nil {
 		t.Fatalf("seed tenant-owned rows: %v", err)
 	}

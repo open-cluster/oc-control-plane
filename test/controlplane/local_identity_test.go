@@ -487,15 +487,15 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	oidcUser := uuid.New()
 	if _, err = connection.Exec(context.Background(), `
 		INSERT INTO app_user
-			(user_id,issuer,subject,email,email_verified,display_name)
-		VALUES ($1,$2,'operator-1','ada@example.test',TRUE,'Ada Lovelace')`,
+			(user_id,issuer,subject,email,email_verified,display_name,updated_at)
+		VALUES ($1,$2,'operator-1','ada@example.test',TRUE,'Ada Lovelace',now())`,
 		oidcUser, issuer.url()); err != nil {
 		t.Fatalf("seed OIDC User: %v", err)
 	}
 	if _, err = connection.Exec(context.Background(), `
 		INSERT INTO organization_membership
-			(membership_id,org_id,user_id,role,source,granted_by)
-		VALUES ($1,$2,$3,'editor',1,'test')`, uuid.New(), identityOrg, oidcUser); err != nil {
+			(membership_id,org_id,user_id,role,source,granted_by,updated_at)
+		VALUES ($1,$2,$3,'editor',1,'test',now())`, uuid.New(), identityOrg, oidcUser); err != nil {
 		t.Fatalf("seed OIDC membership: %v", err)
 	}
 	startURL := "http://" + plane.operator + "/api/v1/auth/oidc/start?organization=" + identityOrg
