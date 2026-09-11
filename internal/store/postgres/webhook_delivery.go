@@ -120,7 +120,7 @@ const deliveryProjection = `
 		         WHEN bool_or(work.status = 4) THEN 'failed'
 		         WHEN bool_or(work.status IN (2, 3)) OR
 		              (bool_or(work.status = 5) AND bool_or(work.status = 1)) THEN 'processing'
-		         WHEN count(work.work_id) = 0 OR bool_and(work.status = 5) THEN 'succeeded'
+		         WHEN count(work.job_id) = 0 OR bool_and(work.status = 5) THEN 'succeeded'
 		         WHEN bool_and(work.status = 1) THEN 'accepted'
 		         ELSE 'processing'
 		       END AS state,
@@ -131,8 +131,8 @@ const deliveryProjection = `
 		       END AS failure_class,
 		       max(work.updated_at) FILTER (WHERE work.attempts > 0) AS last_attempt_at,
 		       min(work.available_at) FILTER (WHERE work.status = 3) AS next_eligible_at
-		  FROM integration_delivery AS delivery
-		  LEFT JOIN webhook_work AS work
+		  FROM webhook_delivery AS delivery
+		  LEFT JOIN webhook_job AS work
 		    ON work.org_id = delivery.org_id AND work.delivery_id = delivery.delivery_id
 		 WHERE delivery.org_id = $1 AND delivery.outcome = 1
 		 GROUP BY delivery.delivery_id, delivery.integration_id, delivery.provider_identity,
@@ -155,7 +155,7 @@ func (d *Database) ReplayWebhookDelivery(
 	_, err := audited(ctx, d, principal, organization, audit.ActionWebhookDeliveryReplayed,
 		func(ctx context.Context, tx pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
 			rows, updateErr := tx.Query(ctx, `
-				UPDATE webhook_work
+				UPDATE webhook_job
 				   SET status = 1, attempts = 0, available_at = now(),
 				       failure_class = '', failure_message = '', updated_at = now()
 				 WHERE org_id = $1 AND delivery_id = $2 AND status = 4

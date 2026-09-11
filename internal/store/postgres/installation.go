@@ -36,8 +36,8 @@ import (
 const installationInsert = `
 		INSERT INTO integration_installation
 			(integration_id, org_id, integration_type_id, application, enterprise,
-			 workspace, enterprise_wide, agent, authorizer, grants)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			 workspace, enterprise_wide, agent, authorizer, grants, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`
 
 // recordInstallation writes the routing record for a newly created Integration, inside the
 // transaction that created it.

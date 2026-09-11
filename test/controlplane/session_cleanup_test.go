@@ -26,7 +26,7 @@ func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(context.Background()) }()
-	if _, err := connection.Exec(ctx, `UPDATE operator_session
+	if _, err := connection.Exec(ctx, `UPDATE session
 		SET issued_at = now() - interval '2 hours', expires_at = now() - interval '1 hour'`); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var sessions, organizations int
-		if err := connection.QueryRow(ctx, `SELECT (SELECT count(*) FROM operator_session),
+		if err := connection.QueryRow(ctx, `SELECT (SELECT count(*) FROM session),
 			(SELECT count(*) FROM organization)`).Scan(&sessions, &organizations); err != nil {
 			t.Fatal(err)
 		}

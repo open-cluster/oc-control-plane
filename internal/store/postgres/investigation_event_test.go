@@ -247,9 +247,7 @@ func TestAnotherClaimCannotAppendProgress(t *testing.T) {
 	}
 }
 
-// The events go with the investigation. Cascade delete is what keeps the investigation the
-// single retention unit, so no second reaper has to exist.
-func TestEventsAreDeletedWithTheirInvestigation(t *testing.T) {
+func TestInvestigationCannotBeDeletedThroughItsEventHistory(t *testing.T) {
 	t.Parallel()
 
 	database, organization := migratedDatabase(t)
@@ -266,17 +264,16 @@ func TestEventsAreDeletedWithTheirInvestigation(t *testing.T) {
 		t.Fatalf("detaching the turn's messages: %v", err)
 	}
 	if _, err = pool.Exec(context.Background(), `
-		DELETE FROM investigation WHERE investigation_id = $1`, id); err != nil {
-		t.Fatalf("deleting the investigation: %v", err)
+		DELETE FROM investigation WHERE investigation_id = $1`, id); err == nil {
+		t.Fatal("deleting an Investigation erased its replay history")
 	}
 
 	read, err := database.Events(context.Background(), organization, id, 0, 0)
 	if err != nil {
 		t.Fatalf("reading: %v", err)
 	}
-	if len(read) != 0 {
-		t.Errorf("%d events survived their investigation; the cascade is what keeps the "+
-			"investigation the single retention unit", len(read))
+	if len(read) != 2 {
+		t.Errorf("refused Investigation deletion left %d events, want 2", len(read))
 	}
 }
 

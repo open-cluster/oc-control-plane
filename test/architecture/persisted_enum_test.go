@@ -46,14 +46,14 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"JobSucceeded", int(storage.JobSucceeded), 2},
 		{"JobFailed", int(storage.JobFailed), 3},
 		{"JobCancelled", int(storage.JobCancelled), 4},
-		{"WebhookWorkAlert", int(storage.WebhookWorkAlert), 1},
-		{"WebhookWorkSlack", int(storage.WebhookWorkSlack), 2},
-		{"WebhookWorkReady", int(storage.WebhookWorkReady), 1},
-		{"WebhookWorkLeased", int(storage.WebhookWorkLeased), 2},
-		{"WebhookWorkRetry", int(storage.WebhookWorkRetry), 3},
-		{"WebhookWorkTerminal", int(storage.WebhookWorkTerminal), 4},
-		{"WebhookWorkComplete", int(storage.WebhookWorkComplete), 5},
-		{"MaxWebhookWorkAttempts", storage.MaxWebhookWorkAttempts, 12},
+		{"WebhookJobAlert", int(storage.WebhookJobAlert), 1},
+		{"WebhookJobSlack", int(storage.WebhookJobSlack), 2},
+		{"WebhookJobReady", int(storage.WebhookJobReady), 1},
+		{"WebhookJobLeased", int(storage.WebhookJobLeased), 2},
+		{"WebhookJobRetry", int(storage.WebhookJobRetry), 3},
+		{"WebhookJobTerminal", int(storage.WebhookJobTerminal), 4},
+		{"WebhookJobComplete", int(storage.WebhookJobComplete), 5},
+		{"MaxWebhookJobAttempts", storage.MaxWebhookJobAttempts, 12},
 
 		{"AlertEventFiring", int(storage.AlertEventFiring), 1},
 		{"AlertEventResolved", int(storage.AlertEventResolved), 2},
@@ -166,10 +166,10 @@ var (
 		int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
 		int(storage.JobFailed), int(storage.JobCancelled),
 	}
-	webhookWorkStatusValues = []int{
-		int(storage.WebhookWorkReady), int(storage.WebhookWorkLeased),
-		int(storage.WebhookWorkRetry), int(storage.WebhookWorkTerminal),
-		int(storage.WebhookWorkComplete),
+	webhookJobStatusValues = []int{
+		int(storage.WebhookJobReady), int(storage.WebhookJobLeased),
+		int(storage.WebhookJobRetry), int(storage.WebhookJobTerminal),
+		int(storage.WebhookJobComplete),
 	}
 	alertEventStatusValues = []int{int(storage.AlertEventFiring), int(storage.AlertEventResolved)}
 	deliveryOutcomeValues  = []int{
@@ -214,10 +214,10 @@ var enumColumns = map[string]map[string][]int{
 	"result.go":       {"status": jobStatusValues},
 	"cancellation.go": {"status": jobStatusValues},
 	// The fleet counts leased jobs to report what the relays are holding.
-	"fleet.go":        {"status": jobStatusValues},
-	"webhook_work.go": {"status": webhookWorkStatusValues},
+	"fleet.go":       {"status": jobStatusValues},
+	"webhook_job.go": {"status": webhookJobStatusValues},
 	"webhook_delivery.go": {
-		"status": webhookWorkStatusValues, "outcome": deliveryOutcomeValues,
+		"status": webhookJobStatusValues, "outcome": deliveryOutcomeValues,
 	},
 	// The delivery path: the upsert guard compares a SIGNAL's status, and the idempotence
 	// key's partial-index predicate compares a delivery's outcome.
@@ -231,7 +231,7 @@ var enumColumns = map[string]map[string][]int{
 	// An inbound Slack message claims its delivery through the same idempotence key every
 	// other delivery uses, so it writes and compares the accepted outcome.
 	"slack_conversation.go": {
-		"outcome": deliveryOutcomeValues, "status": webhookWorkStatusValues,
+		"outcome": deliveryOutcomeValues, "status": webhookJobStatusValues,
 	},
 	// The outbound half: claiming compares a delivery's own lifecycle state.
 	"slack_reply.go": {"status": slackReplyValues},

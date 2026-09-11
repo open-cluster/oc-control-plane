@@ -104,7 +104,7 @@ func issueSessionIn(
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
 ) error {
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO operator_session (session_id, credential_digest, user_id, org_id,
+		INSERT INTO session (session_id, credential_digest, user_id, org_id,
 		                              issued_at, expires_at, last_seen_at, user_agent, address)
 		VALUES ($1, $2, $3, $4, $5, $6, $5, $7, $8)`,
 		issued.ID, digest, issued.UserID, organization.String(), issued.IssuedAt,
@@ -149,7 +149,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	)
 	err := on.QueryRow(ctx, `
 		WITH touched AS (
-			UPDATE operator_session SET last_seen_at = now()
+			UPDATE session SET last_seen_at = now()
 			WHERE credential_digest = $1 AND last_seen_at < now() - $2::interval
 			  AND revoked_at IS NULL AND expires_at > now()
 			RETURNING last_seen_at
@@ -157,7 +157,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		SELECT s.session_id, s.user_id, s.org_id, s.issued_at, s.expires_at,
 		       COALESCE((SELECT last_seen_at FROM touched), s.last_seen_at),
 		       s.revoked_at, s.user_agent, s.address, u.email, u.issuer, u.display_name, u.disabled_at
-		FROM operator_session s JOIN app_user u ON u.user_id = s.user_id
+		FROM session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
 		&organizationID, &found.Session.IssuedAt, &found.Session.ExpiresAt,
@@ -222,7 +222,7 @@ func (p *Database) endOwnedSession(ctx context.Context, principal authz.Principa
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 	tag, err := transaction.Exec(ctx, `
-		UPDATE operator_session SET revoked_at = now(), revoked_by = $2
+		UPDATE session SET revoked_at = now(), revoked_by = $2
 		WHERE session_id = $1 AND user_id = $2::uuid AND revoked_at IS NULL`, id, userID.String())
 	if err != nil {
 		return fmt.Errorf("revoking session: %w", err)
@@ -264,7 +264,7 @@ func (p *Database) ListSessions(
 	rows, err := p.pool.Query(ctx, `
 		SELECT session_id, user_id, issued_at, expires_at, last_seen_at, revoked_at,
 		       user_agent, address
-		  FROM operator_session
+		  FROM session
 		 WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
 		   AND ($2::timestamptz IS NULL OR (last_seen_at, session_id) < ($2, $3))
 		 ORDER BY last_seen_at DESC, session_id DESC
@@ -303,9 +303,9 @@ func (p *Database) ListSessions(
 // PruneSessions removes at most 1000 unusable global sessions, retaining recent revocations for one day.
 func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
 	tag, err := p.pool.Exec(ctx, `
-		DELETE FROM operator_session
+		DELETE FROM session
 		 WHERE session_id IN (
-		   SELECT session_id FROM operator_session
+		   SELECT session_id FROM session
 		    WHERE expires_at <= now()
 		       OR revoked_at <= now() - interval '1 day'
 		    ORDER BY expires_at, session_id

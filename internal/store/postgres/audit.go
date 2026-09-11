@@ -237,7 +237,7 @@ func (p *Database) AuditEvents(
 
 // THE ONE PATH THROUGH WHICH AN AUDIT EVENT MAY LEAVE.
 //
-// Migration 0011 refuses an UPDATE, a DELETE and a TRUNCATE on audit_event outright, except in a
+// The schema refuses an UPDATE, a DELETE and a TRUNCATE on audit_event outright, except in a
 // transaction that has declared itself the retention pruner. These two functions are that path.
 // Everything else in this program — every handler, every worker, every future refactor — is
 // refused by the database rather than by a reviewer noticing.
@@ -248,9 +248,8 @@ func (p *Database) AuditEvents(
 // to discover which tenants there are, so there is no tenant in the question to resolve a
 // database from. It reads no tenant data — only which tenants declared a number.
 //
-// A tenant whose declared period is zero is NOT reported. Zero is the product's default, which is
-// to keep everything, and treating it as a horizon of "now" would delete an entire record because
-// somebody had never set a policy.
+// A tenant whose declared period is zero is NOT reported. Zero explicitly disables pruning, and
+// treating it as a horizon of "now" would delete the entire record.
 func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, error) {
 	var declared []audit.Retention
 	rows, err := p.pool.Query(ctx, `

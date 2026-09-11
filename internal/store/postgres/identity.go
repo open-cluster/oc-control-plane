@@ -29,7 +29,7 @@ var (
 )
 
 // MembershipSource is how a membership came to exist. It is persisted as an integer and
-// constrained by a CHECK in migration 0011.
+// constrained by the schema baseline.
 type MembershipSource int16
 
 const (
@@ -277,8 +277,8 @@ func (p *Database) SetMembership(
 			var member Member
 			if err := transaction.QueryRow(ctx, `
 				INSERT INTO organization_membership (membership_id, org_id, user_id, role,
-				                                     source, granted_by)
-				VALUES ($1, $2, $3, $4, $5, $6)
+				                                     source, granted_by, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, now())
 				ON CONFLICT (org_id, user_id) DO UPDATE
 				    SET role       = EXCLUDED.role,
 				        source     = EXCLUDED.source,

@@ -320,7 +320,7 @@ func TestSlackEvents_AFailedPermalinkLookupDoesNotBlockTheAcceptedQuestion(t *te
 		var reference string
 		err = database.QueryRow(ctx, `
 			SELECT work.status, message.source_reference
-			  FROM webhook_work AS work
+			  FROM webhook_job AS work
 			  JOIN conversation_message AS message
 			    ON message.org_id = work.org_id
 			   AND message.conversation_id = work.conversation_id
@@ -337,7 +337,7 @@ func TestSlackEvents_AFailedPermalinkLookupDoesNotBlockTheAcceptedQuestion(t *te
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("permalink lookup failure blocked accepted webhook work: status=%d error=%v", status, err)
+			t.Fatalf("permalink lookup failure blocked accepted webhook job: status=%d error=%v", status, err)
 		case <-time.After(25 * time.Millisecond):
 		}
 	}

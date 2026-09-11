@@ -213,8 +213,8 @@ func (p *Database) CreateDraft(
 				return postmortem.Postmortem{}, err
 			}
 			row := tx.QueryRow(ctx, `
-				INSERT INTO postmortem (incident_id, org_id, status, revision, document)
-				VALUES ($1, $2, $3, $4, $5)
+				INSERT INTO postmortem (incident_id, org_id, status, revision, document, updated_at)
+				VALUES ($1, $2, $3, $4, $5, now())
 				RETURNING `+postmortemColumns,
 				draft.IncidentID, organization.String(), postmortem.StatusDraft, 1, document)
 			created, err := scanPostmortem(row)

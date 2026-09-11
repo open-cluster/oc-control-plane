@@ -91,7 +91,7 @@ func (p *Database) RecordSlackMessage(
 	// could pass.
 	deliveryID := uuid.New()
 	tag, err := transaction.Exec(ctx, `
-		INSERT INTO integration_delivery
+		INSERT INTO webhook_delivery
 			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity,
 			 lifecycle_phase, request_id, alert_event_count)
 		VALUES ($1, $2, $3, 1, $4, encode($4, 'hex'), '', $5, 0)
@@ -116,7 +116,7 @@ func (p *Database) RecordSlackMessage(
 	if err != nil {
 		return SlackMessageOutcome{}, err
 	}
-	if err := enqueueWebhookWork(ctx, transaction, organization, WebhookWorkSlack,
+	if err := enqueueWebhookJob(ctx, transaction, organization, WebhookJobSlack,
 		deliveryID, said.Integration, uuid.Nil, conversationID, sequence); err != nil {
 		return SlackMessageOutcome{}, err
 	}
@@ -252,7 +252,7 @@ func (p *Database) SlackMessageProviderReference(
 // acknowledgement path has completed.
 func (p *Database) SetSlackMessageSourceReference(
 	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
-	sequence int64, reference string, work WebhookWork,
+	sequence int64, reference string, work WebhookJob,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -261,9 +261,9 @@ func (p *Database) SetSlackMessageSourceReference(
 	tag, err := pool.Exec(ctx, `
 		UPDATE conversation_message AS message
 		   SET source_reference = $4
-		  FROM webhook_work AS work
+		  FROM webhook_job AS work
 		 WHERE message.org_id = $1 AND message.conversation_id = $2 AND message.sequence = $3
-		   AND work.org_id = $1 AND work.work_id = $5 AND work.status = 2
+		   AND work.org_id = $1 AND work.job_id = $5 AND work.status = 2
 		   AND work.lease_owner = $6 AND work.lease_epoch = $7 AND work.lease_expires_at > now()`,
 		organization.String(), conversationID, sequence, reference,
 		work.ID, work.LeaseOwner, work.LeaseEpoch)
@@ -271,7 +271,7 @@ func (p *Database) SetSlackMessageSourceReference(
 		return fmt.Errorf("recording slack message source reference: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
-		return ErrWebhookWorkLeaseLost
+		return ErrWebhookJobLeaseLost
 	}
 	return nil
 }

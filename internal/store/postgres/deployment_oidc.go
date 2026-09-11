@@ -67,8 +67,8 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 		func(ctx context.Context, tx pgx.Tx) (Member, audit.Target, audit.Detail, error) {
 			var userID uuid.UUID
 			err := tx.QueryRow(ctx, `INSERT INTO app_user
-				(user_id,issuer,subject,email,email_verified,display_name)
-				VALUES ($1,$2,$3,$4,FALSE,$5)
+				(user_id,issuer,subject,email,email_verified,display_name,updated_at)
+				VALUES ($1,$2,$3,$4,FALSE,$5,now())
 				ON CONFLICT (issuer,subject) DO UPDATE SET email=EXCLUDED.email,
 					display_name=EXCLUDED.display_name,updated_at=now()
 				RETURNING user_id`, uuid.New(), identity.Issuer, identity.Subject, identity.Email, identity.DisplayName).Scan(&userID)
@@ -77,8 +77,8 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 			}
 			var member Member
 			err = tx.QueryRow(ctx, `INSERT INTO organization_membership
-				(membership_id,org_id,user_id,role,source,granted_by)
-				VALUES ($1,$2,$3,$4,$5,$6) RETURNING membership_id,user_id,role,source,created_at`,
+				(membership_id,org_id,user_id,role,source,granted_by,updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,now()) RETURNING membership_id,user_id,role,source,created_at`,
 				uuid.New(), organization.String(), userID, string(role), int16(SourceManual), principal.ID()).Scan(&member.MembershipID, &member.UserID, &member.Role, &member.Source, &member.CreatedAt)
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("granting an OIDC membership: %w", err)

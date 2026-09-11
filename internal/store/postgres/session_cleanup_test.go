@@ -28,7 +28,7 @@ func TestSessionCleanupIsGlobalAndBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(ctx) }()
-	if _, err := connection.Exec(ctx, `INSERT INTO operator_session
+	if _, err := connection.Exec(ctx, `INSERT INTO session
 		(session_id, credential_digest, user_id, issued_at, expires_at, revoked_at)
 		SELECT md5(n::text)::uuid, decode(md5(n::text) || md5(n::text), 'hex'), $1,
 		       now() - interval '3 days',
@@ -44,7 +44,7 @@ func TestSessionCleanupIsGlobalAndBounded(t *testing.T) {
 		}
 	}
 	var remaining, audits int
-	if err := connection.QueryRow(ctx, `SELECT count(*) FROM operator_session`).Scan(&remaining); err != nil {
+	if err := connection.QueryRow(ctx, `SELECT count(*) FROM session`).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
 	if err := connection.QueryRow(ctx, `SELECT count(*) FROM audit_event WHERE action = 'local.bootstrap-completed'`).Scan(&audits); err != nil {

@@ -262,7 +262,7 @@ func (h *surface) acceptSlackMessage(
 	}
 
 	h.counters.countSlackEvent(ctx, slackAccepted)
-	h.counters.work.Count(ctx, "accepted")
+	h.counters.jobs.Count(ctx, "accepted")
 	h.Logger.InfoContext(ctx, "slack message accepted",
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", integration.String()),

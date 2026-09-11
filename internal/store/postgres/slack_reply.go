@@ -38,8 +38,8 @@ const (
 func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO slack_reply
-			(investigation_id, org_id, conversation_id)
-		SELECT i.investigation_id, i.org_id, i.conversation_id
+			(investigation_id, org_id, conversation_id, updated_at)
+		SELECT i.investigation_id, i.org_id, i.conversation_id, now()
 		  FROM investigation i
 		  JOIN slack_conversation s
 		    ON s.org_id = i.org_id AND s.conversation_id = i.conversation_id

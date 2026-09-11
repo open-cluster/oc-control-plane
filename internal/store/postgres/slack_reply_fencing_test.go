@@ -66,35 +66,3 @@ func TestReclaimedSlackReplyRejectsPreviousGeneration(t *testing.T) {
 		t.Fatalf("delivery changed: sequence=%d message=%q note=%q found=%v err=%v", sequence, message, note, found, err)
 	}
 }
-
-func TestSlackClaimMigrationPreservesHeldDelivery(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	id, _ := aSlackTurn(t, database, org, "T1", "C1", "1700000000.1")
-	reply := claimed(t, database, id, time.Minute)
-	if err := database.AdvanceSlackReply(ctx, org, id, reply.ClaimToken, slack.Progress{Stream: slack.Stream{TS: "retained"}, Sequence: 4}); err != nil {
-		t.Fatal(err)
-	}
-	pool, err := database.Pool(org)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, `ALTER TABLE slack_reply DROP COLUMN lease_owner; DELETE FROM schema_migration WHERE version = '0007_slack_reply_claim'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = database.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var owner uuid.UUID
-	if err = pool.QueryRow(ctx, `SELECT lease_owner FROM slack_reply WHERE org_id = $1 AND investigation_id = $2`, org.String(), id).Scan(&owner); err != nil || owner == uuid.Nil {
-		t.Fatalf("retained ownership: %v %v", owner, err)
-	}
-	if err = database.CompleteSlackReply(ctx, org, id, owner); err != nil {
-		t.Fatal(err)
-	}
-	_, sequence, message, _, found, err := database.SlackReplyState(ctx, org, id)
-	if err != nil || !found || sequence != 4 || message != "retained" {
-		t.Fatalf("migration changed delivery: %d %q %v %v", sequence, message, found, err)
-	}
-}

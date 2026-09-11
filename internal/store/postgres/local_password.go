@@ -66,7 +66,7 @@ func (p *Database) replaceLocalPassword(ctx context.Context, user uuid.UUID, pre
 	if tag.RowsAffected() != 1 {
 		return ErrLocalCredentialUnknown
 	}
-	if _, err = transaction.Exec(ctx, `UPDATE operator_session SET revoked_at = now(), revoked_by = $2
+	if _, err = transaction.Exec(ctx, `UPDATE session SET revoked_at = now(), revoked_by = $2
 		WHERE user_id = $1 AND revoked_at IS NULL`, user, event.Actor.ID); err != nil {
 		return fmt.Errorf("revoking User sessions: %w", err)
 	}

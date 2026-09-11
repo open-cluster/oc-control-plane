@@ -2,10 +2,9 @@ package storage
 
 import (
 	"context"
-	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,11 +72,13 @@ func (p *Database) RecordSessionConflict(
 
 	// The trail and the current answer commit together, which is what makes the second a
 	// reading of the first rather than a second opinion about it.
-	if err = appendConflictEvent(ctx, transaction, conflictEvent{
-		organization:   organization,
-		registrationID: registrationID,
-		kind:           ConflictDetected,
-		distinctHosts:  distinctHosts,
+	if err = writeEvent(ctx, transaction, audit.Event{
+		Organization: organization.String(),
+		Actor:        audit.System("relay session guard"),
+		Action:       audit.ActionConflictDetected,
+		Target:       audit.Target{Kind: audit.TargetRelay, ID: registrationID.String()},
+		Outcome:      audit.OutcomeAllowed,
+		Detail:       audit.Detail{"distinctHosts": distinctHosts},
 	}); err != nil {
 		return err
 	}
@@ -106,33 +107,6 @@ func (k ConflictEventKind) String() string {
 	default:
 		return "unrecognised"
 	}
-}
-
-// conflictEvent is one entry on its way into the trail.
-type conflictEvent struct {
-	organization   tenancy.Organization
-	registrationID uuid.UUID
-	kind           ConflictEventKind
-	distinctHosts  int
-	// withdrawnFrom is the address a withdrawal came from, and empty for a detection.
-	withdrawnFrom string
-}
-
-func appendConflictEvent(ctx context.Context, transaction pgx.Tx, event conflictEvent) error {
-	var actor *string
-	if event.withdrawnFrom != "" {
-		actor = &event.withdrawnFrom
-	}
-	_, err := transaction.Exec(ctx, `
-		INSERT INTO relay_session_conflict_event
-			(org_id, registration_id, kind, distinct_hosts, withdrawn_from)
-		VALUES ($1, $2, $3, $4, $5)`,
-		event.organization.String(), event.registrationID,
-		int16(event.kind), event.distinctHosts, actor)
-	if err != nil {
-		return fmt.Errorf("appending a session conflict event: %w", err)
-	}
-	return nil
 }
 
 // SessionConflict reports what has been seen of a contested relay identity.
@@ -224,18 +198,7 @@ func (p *Database) ClearSessionConflict(
 		return p.explainUnwithdrawn(ctx, organization, registrationID)
 	}
 
-	// The conflict trail records WHAT happened to the relay identity. It now records who: the
-	// principal's name goes in the trail's own withdrawnFrom field rather than an address,
-	// which is the limit this surface used to state out loud and no longer has.
-	if err = appendConflictEvent(ctx, transaction, conflictEvent{
-		organization:   organization,
-		registrationID: registrationID,
-		kind:           ConflictWithdrawn,
-		withdrawnFrom:  principal.DisplayName() + " (" + principal.SourceAddress() + ")",
-	}); err != nil {
-		return 0, err
-	}
-	// And the audit trail records it at warning level, in the same transaction. Withdrawing the
+	// The audit trail records it at warning level in the same transaction. Withdrawing the
 	// mark destroys a credential-theft finding — it is one of the highest-privilege operations
 	// in the product — so an unrecordable withdrawal must not happen at all.
 	if err = writeEvent(ctx, transaction, audit.Event{
@@ -315,27 +278,32 @@ func (p *Database) SessionConflictTrail(
 		return ConflictTrail{}, err
 	}
 	limit := pageLimit(page.Limit)
-	before, err := decodeEventCursor(page.After)
+	before, beforeID, err := decodeCursor(page.After, "-conflictAt")
 	if err != nil {
 		return ConflictTrail{}, err
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT event_id, kind, distinct_hosts, withdrawn_from, at
-		  FROM relay_session_conflict_event
-		 WHERE org_id    = $1
-		   AND registration_id = $2
-		   AND ($4::bigint IS NULL OR event_id < $4::bigint)
-		 ORDER BY event_id DESC
+		SELECT event_id, action, actor_display_name, source_address, detail, occurred_at
+		  FROM audit_event
+		 WHERE org_id = $1
+		   AND target_kind = 'relay'
+		   AND target_id = $2
+		   AND action IN ($6, $7)
+		   AND ($4::timestamptz IS NULL
+		        OR (occurred_at, event_id) < ($4::timestamptz, $5::uuid))
+		 ORDER BY occurred_at DESC, event_id DESC
 		 LIMIT $3`,
-		organization.String(), registrationID, limit+1, before)
+		organization.String(), registrationID.String(), limit+1, before, beforeID,
+		audit.ActionConflictDetected, audit.ActionConflictCleared)
 	if err != nil {
 		return ConflictTrail{}, fmt.Errorf("reading a session conflict trail: %w", err)
 	}
 	defer rows.Close()
 
 	trail := ConflictTrail{Events: make([]ConflictEvent, 0, limit)}
-	var last int64
+	var lastAt time.Time
+	var lastID uuid.UUID
 	for rows.Next() {
 		identifier, event, scanErr := scanConflictEvent(rows)
 		if scanErr != nil {
@@ -345,10 +313,10 @@ func (p *Database) SessionConflictTrail(
 			// The cursor is the last event RETURNED, not the extra one read to detect it. The
 			// next page resumes strictly after what the caller has seen, so the row that proved
 			// there was more is the first row they get rather than one they never see.
-			trail.Next = encodeEventCursor(last)
+			trail.Next = encodeCursor("-conflictAt", lastAt, lastID)
 			break
 		}
-		last = identifier
+		lastID, lastAt = identifier, event.At
 		trail.Events = append(trail.Events, event)
 	}
 	if err = rows.Err(); err != nil {
@@ -357,40 +325,36 @@ func (p *Database) SessionConflictTrail(
 	return trail, nil
 }
 
-func scanConflictEvent(rows pgx.Rows) (int64, ConflictEvent, error) {
+func scanConflictEvent(rows pgx.Rows) (uuid.UUID, ConflictEvent, error) {
 	var (
-		identifier    int64
-		event         ConflictEvent
-		withdrawnFrom *string
+		identifier uuid.UUID
+		event      ConflictEvent
+		action     audit.Action
+		actor      string
+		address    string
+		detail     []byte
 	)
-	if err := rows.Scan(&identifier, &event.Kind, &event.DistinctHosts,
-		&withdrawnFrom, &event.At); err != nil {
-		return 0, ConflictEvent{}, fmt.Errorf("reading a session conflict event: %w", err)
+	if err := rows.Scan(&identifier, &action, &actor, &address, &detail, &event.At); err != nil {
+		return uuid.Nil, ConflictEvent{}, fmt.Errorf("reading a session conflict event: %w", err)
 	}
-	if withdrawnFrom != nil {
-		event.WithdrawnFrom = *withdrawnFrom
+	switch action {
+	case audit.ActionConflictDetected:
+		event.Kind = ConflictDetected
+		var context struct {
+			DistinctHosts int `json:"distinctHosts"`
+		}
+		if err := json.Unmarshal(detail, &context); err != nil {
+			return uuid.Nil, ConflictEvent{}, fmt.Errorf("reading session conflict detail: %w", err)
+		}
+		event.DistinctHosts = context.DistinctHosts
+	case audit.ActionConflictCleared:
+		event.Kind = ConflictWithdrawn
+		event.WithdrawnFrom = actor
+		if address != "" {
+			event.WithdrawnFrom += " (" + address + ")"
+		}
+	default:
+		return uuid.Nil, ConflictEvent{}, fmt.Errorf("reading a session conflict event: unknown action %q", action)
 	}
 	return identifier, event, nil
-}
-
-// encodeEventCursor renders a position in the trail. It is opaque so that a caller cannot read
-// a row count out of it: the identity is assigned across every organization in the database,
-// and its value is nobody's business but this table's.
-func encodeEventCursor(identifier int64) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(identifier, 10)))
-}
-
-func decodeEventCursor(cursor string) (*int64, error) {
-	if cursor == "" {
-		return nil, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(cursor)
-	if err != nil {
-		return nil, ErrBadCursor
-	}
-	identifier, err := strconv.ParseInt(string(raw), 10, 64)
-	if err != nil {
-		return nil, ErrBadCursor
-	}
-	return &identifier, nil
 }

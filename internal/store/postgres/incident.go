@@ -92,8 +92,8 @@ func openIncident(
 	err := transaction.QueryRow(ctx, `
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key,
-			 grouping_basis, title, status, first_seen_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $7)
+			 grouping_basis, title, status, first_seen_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $7, now())
 		ON CONFLICT (integration_id, grouping_key) WHERE status = 1
 		DO UPDATE SET updated_at = now()
 		RETURNING incident_id, xmax = 0`,

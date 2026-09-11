@@ -141,10 +141,10 @@ func (h *harness) assertInFlightGuarantees(t *testing.T) {
 		if _, err := h.truth.pool.Exec(context.Background(), `
 			INSERT INTO investigation
 			    (investigation_id, org_id, subject, window_from, window_until,
-			     lease_worker, lease_expires_at)
-			VALUES ($1, $2, $3, $4, $4, 'e2e-cancellation', now() + interval '5 minutes')`,
+			     lease_worker, lease_token, lease_expires_at)
+			VALUES ($1, $2, $3, $4, $4, 'e2e-cancellation', $5, now() + interval '5 minutes')`,
 			id, organization,
-			"cancel an actively executing Relay read", now); err != nil {
+			"cancel an actively executing Relay read", now, uuid.New()); err != nil {
 			t.Fatalf("creating the active investigation: %v", err)
 		}
 		attached, err := h.truth.pool.Exec(context.Background(), `

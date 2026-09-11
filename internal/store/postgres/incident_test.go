@@ -38,8 +38,8 @@ func recordIncident(
 	if _, err = pool.Exec(context.Background(), `
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key,
-			 grouping_basis, title, status, first_seen_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, 1, 'a failure', 1, $5, $5)`,
+			 grouping_basis, title, status, first_seen_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, $4, 1, 'a failure', 1, $5, $5, now())`,
 		id, organization.String(), integration, key, now); err != nil {
 		t.Fatalf("recording an incident incident: %v", err)
 	}
@@ -226,8 +226,8 @@ func TestIncidentAlertEventCountIsDerivedFromAlertEvents(t *testing.T) {
 		if _, err := pool.Exec(context.Background(), `
 			INSERT INTO alert_event
 				(alert_event_id, org_id, integration_id, source_key, status, title, summary,
-				 started_at, incident_id)
-			VALUES ($1, $2, $3, $4, 1, 'Alert', 'Summary', $5, $6)`,
+				 started_at, incident_id, updated_at)
+			VALUES ($1, $2, $3, $4, 1, 'Alert', 'Summary', $5, $6, now())`,
 			uuid.New(), organization.String(), integration, source, time.Now().UTC(), incidentID); err != nil {
 			t.Fatal(err)
 		}

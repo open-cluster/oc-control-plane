@@ -10,26 +10,26 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-type WorkStore interface {
-	ApplySlackWebhookWork(context.Context, tenancy.Organization, storage.WebhookWork, time.Duration, int) error
+type JobStore interface {
+	ApplySlackWebhookJob(context.Context, tenancy.Organization, storage.WebhookJob, time.Duration, int) error
 }
 
 type ReferenceResolver interface {
-	Resolve(context.Context, storage.WebhookWork) error
+	Resolve(context.Context, storage.WebhookJob) error
 }
 
-type WorkHandler struct {
-	Work            WorkStore
+type JobHandler struct {
+	Jobs            JobStore
 	References      ReferenceResolver
 	WindowLead      time.Duration
 	MaxWaitingTurns int
 	Logger          *slog.Logger
 }
 
-func (h WorkHandler) Handle(ctx context.Context, work storage.WebhookWork) error {
+func (h JobHandler) Handle(ctx context.Context, job storage.WebhookJob) error {
 	if h.References != nil {
 		lookup, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := h.References.Resolve(lookup, work)
+		err := h.References.Resolve(lookup, job)
 		cancel()
 		if err != nil {
 			logger := h.Logger
@@ -37,11 +37,11 @@ func (h WorkHandler) Handle(ctx context.Context, work storage.WebhookWork) error
 				logger = slog.Default()
 			}
 			logger.WarnContext(ctx, "slack message provenance lookup failed",
-				slog.String("delivery_id", work.DeliveryID.String()))
+				slog.String("delivery_id", job.DeliveryID.String()))
 		}
 	}
-	if h.Work == nil {
+	if h.Jobs == nil {
 		return fmt.Errorf("slack webhook delivery: no store")
 	}
-	return h.Work.ApplySlackWebhookWork(ctx, work.Organization, work, h.WindowLead, h.MaxWaitingTurns)
+	return h.Jobs.ApplySlackWebhookJob(ctx, job.Organization, job, h.WindowLead, h.MaxWaitingTurns)
 }

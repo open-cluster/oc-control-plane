@@ -139,7 +139,7 @@ WHERE org_id=$1 AND conversation_id=$2`, organization.String(), reply.Conversati
 		t.Fatal(err)
 	}
 	if err := database.DeleteIntegration(ctx, ownerOf(t, organization), organization, integration); !errors.Is(err, integrations.ErrInUse) {
-		t.Fatalf("outstanding Webhook Work did not prevent disconnection: %v", err)
+		t.Fatalf("outstanding Webhook Job did not prevent disconnection: %v", err)
 	}
 	if _, _, _, _, found, err := database.SlackReplyState(ctx, organization, investigation); err != nil || !found {
 		t.Fatalf("refused disconnection removed reply state: found=%v, %v", found, err)

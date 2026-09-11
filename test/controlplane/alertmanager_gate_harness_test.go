@@ -533,7 +533,7 @@ func (g *alertmanagerGate) countDeliveries(
 
 	var counted int
 	err = connection.QueryRow(ctx, `
-		SELECT count(*) FROM integration_delivery
+		SELECT count(*) FROM webhook_delivery
 		 WHERE integration_id = $1 AND outcome = $2 AND reason = $3`,
 		g.integration, int16(disposition), reason).Scan(&counted)
 	if err != nil {

@@ -137,7 +137,7 @@ func (p *Database) RecordDeliveryAttempt(
 		return err
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO integration_delivery (delivery_id, org_id, integration_id, outcome, reason)
+		INSERT INTO webhook_delivery (delivery_id, org_id, integration_id, outcome, reason)
 		VALUES ($1, $2, $3, $4, $5)`,
 		uuid.New(), organization.String(), attempt.Integration,
 		int16(attempt.Disposition), attempt.Reason); err != nil {
@@ -209,7 +209,7 @@ func (p *Database) RecordDelivery(
 			if opened {
 				grouping.IncidentsOpened++
 				if alertEvent.Status == AlertEventFiring {
-					if err := enqueueWebhookWork(ctx, transaction, organization, WebhookWorkAlert,
+					if err := enqueueWebhookJob(ctx, transaction, organization, WebhookJobAlert,
 						deliveryID, delivery.Integration, incidentID, uuid.Nil, 0); err != nil {
 						return DeliveryOutcome{}, err
 					}
@@ -253,7 +253,7 @@ func claimDelivery(
 		providerIdentity = fmt.Sprintf("%x", delivery.BodyDigest)
 	}
 	tag, err := transaction.Exec(ctx, `
-		INSERT INTO integration_delivery
+		INSERT INTO webhook_delivery
 			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity,
 			 lifecycle_phase, request_id, alert_event_count, truncated)
 		VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9)
@@ -270,7 +270,7 @@ func claimDelivery(
 	}
 	var acceptedDigest []byte
 	if err := transaction.QueryRow(ctx, `
-		SELECT body_digest FROM integration_delivery
+		SELECT body_digest FROM webhook_delivery
 		 WHERE org_id = $1 AND integration_id = $2
 		   AND provider_identity = $3 AND lifecycle_phase = $4 AND outcome = 1`,
 		organization.String(), delivery.Integration, providerIdentity,
@@ -328,8 +328,8 @@ func upsertAlertEvent(
 	err = transaction.QueryRow(ctx, `
 		INSERT INTO alert_event
 			(alert_event_id, org_id, integration_id, source_key, status,
-			 title, summary, labels, annotations, generator_url, started_at, resolved_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			 title, summary, labels, annotations, generator_url, started_at, resolved_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
 		ON CONFLICT (integration_id, source_key, started_at) DO UPDATE
 		   SET status        = EXCLUDED.status,
 		       title         = EXCLUDED.title,

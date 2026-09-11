@@ -76,7 +76,7 @@ func TestSessionLookupOnlyWritesWhenLastSeenIsDue(t *testing.T) {
 	defer func() { _ = connection.Close(ctx) }()
 	version := func() string {
 		var found string
-		if err := connection.QueryRow(ctx, `SELECT xmin::text FROM operator_session WHERE session_id = $1`, issued.ID).Scan(&found); err != nil {
+		if err := connection.QueryRow(ctx, `SELECT xmin::text FROM session WHERE session_id = $1`, issued.ID).Scan(&found); err != nil {
 			t.Fatal(err)
 		}
 		return found
@@ -90,7 +90,7 @@ func TestSessionLookupOnlyWritesWhenLastSeenIsDue(t *testing.T) {
 	if version() != before {
 		t.Fatal("fresh session lookup created a new row version")
 	}
-	if _, err := connection.Exec(ctx, `UPDATE operator_session SET last_seen_at = now() - interval '2 minutes' WHERE session_id = $1`, issued.ID); err != nil {
+	if _, err := connection.Exec(ctx, `UPDATE session SET last_seen_at = now() - interval '2 minutes' WHERE session_id = $1`, issued.ID); err != nil {
 		t.Fatal(err)
 	}
 	due := version()

@@ -37,14 +37,14 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	defer func() { _ = database.Close(ctx) }()
 	var workID, deliveryID string
 	if err = database.QueryRow(ctx, `
-		UPDATE webhook_work
+		UPDATE webhook_job
 		   SET status = 4, attempts = 8, lease_owner = '', lease_expires_at = NULL,
 		       failure_class = 'provider-work-failed',
-		       failure_message = 'the accepted webhook work could not be applied',
+		       failure_message = 'the accepted webhook job could not be applied',
 		       updated_at = now()
 		 WHERE org_id = $1 AND integration_id = $2
-		 RETURNING work_id, delivery_id`, surfaceOrg, created.Integration.ID).Scan(&workID, &deliveryID); err != nil {
-		t.Fatalf("recording a terminal work item: %v", err)
+		 RETURNING job_id, delivery_id`, surfaceOrg, created.Integration.ID).Scan(&workID, &deliveryID); err != nil {
+		t.Fatalf("recording a terminal Webhook Job: %v", err)
 	}
 
 	base := plane.base(surfaceOrg) + "/webhook-deliveries"
@@ -85,14 +85,14 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	}
 	var secondWorkID, secondDeliveryID string
 	if err = database.QueryRow(ctx, `
-		UPDATE webhook_work
+		UPDATE webhook_job
 		   SET status = 4, attempts = 4, lease_owner = '', lease_expires_at = NULL,
 		       failure_class = 'provider-work-failed', failure_message = 'safe failure',
 		       updated_at = now()
-		 WHERE org_id = $1 AND integration_id = $2 AND work_id <> $3
-		 RETURNING work_id, delivery_id`, surfaceOrg, created.Integration.ID, workID).
+		 WHERE org_id = $1 AND integration_id = $2 AND job_id <> $3
+		 RETURNING job_id, delivery_id`, surfaceOrg, created.Integration.ID, workID).
 		Scan(&secondWorkID, &secondDeliveryID); err != nil {
-		t.Fatalf("recording the second terminal work item: %v", err)
+		t.Fatalf("recording the second terminal Webhook Job: %v", err)
 	}
 	status, body = plane.call(t, http.MethodGet, base+"?limit=1", nil)
 	if status != http.StatusOK {

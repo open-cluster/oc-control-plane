@@ -28,24 +28,24 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 			return nil
 		})
 	}
-	startWebhookWork(ctx, group, process)
+	startWebhookJob(ctx, group, process)
 	startAuditPruner(ctx, group, process)
 	startSessionPruner(ctx, group, process)
 	startChangeLedgerPruner(ctx, group, process)
 	startSlackReplyWorker(ctx, group, process)
 }
 
-func startWebhookWork(ctx context.Context, group *errgroup.Group, process assembled) {
+func startWebhookJob(ctx context.Context, group *errgroup.Group, process assembled) {
 	slackClient := slack.NewClient(process.slackAPIURL)
 	worker := webhooks.Worker{
-		Work: process.database,
-		Handlers: webhooks.WorkHandlers{
-			storage.WebhookWorkAlert: alertwork.WorkHandler{
+		Jobs: process.database,
+		Handlers: webhooks.JobHandlers{
+			storage.WebhookJobAlert: alertwork.JobHandler{
 				Database: process.database, WindowLead: defaultInvestigationWindowLead,
 				MaxWaitingTurns: process.config.MaxPendingInvestigationsPerOrganization,
 			},
-			storage.WebhookWorkSlack: slackwork.WorkHandler{
-				Work: process.database,
+			storage.WebhookJobSlack: slackwork.JobHandler{
+				Jobs: process.database,
 				References: slackwork.SlackReferenceResolver{
 					Store:  slackwork.ReferenceDatabase{Database: process.database},
 					Client: slackClient, Sealer: process.sealer,
@@ -57,7 +57,7 @@ func startWebhookWork(ctx context.Context, group *errgroup.Group, process assemb
 		},
 		Owner: uuid.NewString(), Lease: time.Minute, RetryBase: time.Second,
 		MaxAttempts: 8, Logger: process.logger,
-		Counters: webhooks.NewWorkInstruments(process.logger),
+		Counters: webhooks.NewJobInstruments(process.logger),
 	}
 	group.Go(func() error {
 		worker.Run(ctx)
