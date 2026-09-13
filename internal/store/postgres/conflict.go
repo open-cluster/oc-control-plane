@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -70,12 +69,12 @@ func (p *Database) RecordSessionConflict(
 		return fmt.Errorf("recording a session conflict: registration %s not found", registrationID)
 	}
 
-	// The trail and the current answer commit together, which is what makes the second a
+	// The audit event and the current answer commit together, which is what makes the second a
 	// reading of the first rather than a second opinion about it.
 	if err = writeEvent(ctx, transaction, audit.Event{
 		Organization: organization.String(),
 		Actor:        audit.System("relay session guard"),
-		Action:       audit.ActionConflictDetected,
+		Action:       audit.ActionRelaySessionConflictDetected,
 		Target:       audit.Target{Kind: audit.TargetRelay, ID: registrationID.String()},
 		Outcome:      audit.OutcomeAllowed,
 		Detail:       audit.Detail{"distinctHosts": distinctHosts},
@@ -86,27 +85,6 @@ func (p *Database) RecordSessionConflict(
 		return fmt.Errorf("recording a session conflict: %w", err)
 	}
 	return nil
-}
-
-// ConflictEventKind is what happened to a relay identity.
-type ConflictEventKind int16
-
-const (
-	// ConflictDetected is the control plane finding that an identity is being taken over.
-	ConflictDetected ConflictEventKind = iota + 1
-	// ConflictWithdrawn is a person saying that finding has been dealt with.
-	ConflictWithdrawn
-)
-
-func (k ConflictEventKind) String() string {
-	switch k {
-	case ConflictDetected:
-		return "detected"
-	case ConflictWithdrawn:
-		return "withdrawn"
-	default:
-		return "unrecognised"
-	}
 }
 
 // SessionConflict reports what has been seen of a contested relay identity.
@@ -146,10 +124,10 @@ const (
 	// WithdrawalRelayUnknown means there is no such registration here.
 	WithdrawalRelayUnknown ConflictWithdrawal = iota + 1
 	// WithdrawalNothingMarked means the relay carried no finding. Asking again for a state that
-	// already holds is not an error, and nothing is written down for it: a trail padded with
-	// acts that changed nothing is a trail nobody reads.
+	// already holds is not an error, and no audit event is written for a transition that did
+	// not happen.
 	WithdrawalNothingMarked
-	// WithdrawalRecorded means a finding was withdrawn and the trail says so.
+	// WithdrawalRecorded means a finding was withdrawn and the audit record says so.
 	WithdrawalRecorded
 )
 
@@ -161,7 +139,7 @@ const (
 // outside this system, so it takes a deliberate act by someone who made that judgement.
 //
 // The act destroys the current finding, which is what makes recording it the point rather than
-// a formality: without the trail, the second occurrence would look like the first.
+// a formality: without the audit record, the second occurrence would look like the first.
 func (p *Database) ClearSessionConflict(
 	ctx context.Context,
 	principal authz.Principal,
@@ -198,13 +176,13 @@ func (p *Database) ClearSessionConflict(
 		return p.explainUnwithdrawn(ctx, organization, registrationID)
 	}
 
-	// The audit trail records it at warning level in the same transaction. Withdrawing the
+	// The audit event records it at warning level in the same transaction. Withdrawing the
 	// mark destroys a credential-theft finding — it is one of the highest-privilege operations
 	// in the product — so an unrecordable withdrawal must not happen at all.
 	if err = writeEvent(ctx, transaction, audit.Event{
 		Organization:  organization.String(),
 		Actor:         principal.Actor(),
-		Action:        audit.ActionConflictCleared,
+		Action:        audit.ActionRelaySessionConflictCleared,
 		Target:        audit.Target{Kind: audit.TargetRelay, ID: registrationID.String()},
 		Outcome:       audit.OutcomeAllowed,
 		SourceAddress: principal.SourceAddress(),
@@ -243,118 +221,4 @@ func (p *Database) explainUnwithdrawn(
 		return 0, fmt.Errorf("withdrawing a session conflict: %w", err)
 	}
 	return WithdrawalNothingMarked, nil
-}
-
-// ConflictEvent is one entry in a relay identity's trail.
-type ConflictEvent struct {
-	Kind ConflictEventKind
-	At   time.Time
-	// DistinctHosts is what was observed at a detection, and zero for a withdrawal.
-	DistinctHosts int
-	// WithdrawnFrom is where a withdrawal came from, and empty for a detection.
-	WithdrawnFrom string
-}
-
-// ConflictTrail is a page of a relay identity's history.
-type ConflictTrail struct {
-	Events []ConflictEvent
-	// Next resumes the next page, and is empty when there is none.
-	Next string
-}
-
-// SessionConflictTrail returns what has happened to a relay identity, newest first.
-func (p *Database) SessionConflictTrail(
-	ctx context.Context,
-	principal authz.Principal,
-	organization tenancy.Organization,
-	registrationID uuid.UUID,
-	page Page,
-) (ConflictTrail, error) {
-	if !principal.MemberOf(organization) {
-		return ConflictTrail{}, ErrNotAMember
-	}
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return ConflictTrail{}, err
-	}
-	limit := pageLimit(page.Limit)
-	before, beforeID, err := decodeCursor(page.After, "-conflictAt")
-	if err != nil {
-		return ConflictTrail{}, err
-	}
-
-	rows, err := pool.Query(ctx, `
-		SELECT event_id, action, actor_display_name, source_address, detail, occurred_at
-		  FROM audit_event
-		 WHERE org_id = $1
-		   AND target_kind = 'relay'
-		   AND target_id = $2
-		   AND action IN ($6, $7)
-		   AND ($4::timestamptz IS NULL
-		        OR (occurred_at, event_id) < ($4::timestamptz, $5::uuid))
-		 ORDER BY occurred_at DESC, event_id DESC
-		 LIMIT $3`,
-		organization.String(), registrationID.String(), limit+1, before, beforeID,
-		audit.ActionConflictDetected, audit.ActionConflictCleared)
-	if err != nil {
-		return ConflictTrail{}, fmt.Errorf("reading a session conflict trail: %w", err)
-	}
-	defer rows.Close()
-
-	trail := ConflictTrail{Events: make([]ConflictEvent, 0, limit)}
-	var lastAt time.Time
-	var lastID uuid.UUID
-	for rows.Next() {
-		identifier, event, scanErr := scanConflictEvent(rows)
-		if scanErr != nil {
-			return ConflictTrail{}, scanErr
-		}
-		if len(trail.Events) == limit {
-			// The cursor is the last event RETURNED, not the extra one read to detect it. The
-			// next page resumes strictly after what the caller has seen, so the row that proved
-			// there was more is the first row they get rather than one they never see.
-			trail.Next = encodeCursor("-conflictAt", lastAt, lastID)
-			break
-		}
-		lastID, lastAt = identifier, event.At
-		trail.Events = append(trail.Events, event)
-	}
-	if err = rows.Err(); err != nil {
-		return ConflictTrail{}, fmt.Errorf("reading a session conflict trail: %w", err)
-	}
-	return trail, nil
-}
-
-func scanConflictEvent(rows pgx.Rows) (uuid.UUID, ConflictEvent, error) {
-	var (
-		identifier uuid.UUID
-		event      ConflictEvent
-		action     audit.Action
-		actor      string
-		address    string
-		detail     []byte
-	)
-	if err := rows.Scan(&identifier, &action, &actor, &address, &detail, &event.At); err != nil {
-		return uuid.Nil, ConflictEvent{}, fmt.Errorf("reading a session conflict event: %w", err)
-	}
-	switch action {
-	case audit.ActionConflictDetected:
-		event.Kind = ConflictDetected
-		var context struct {
-			DistinctHosts int `json:"distinctHosts"`
-		}
-		if err := json.Unmarshal(detail, &context); err != nil {
-			return uuid.Nil, ConflictEvent{}, fmt.Errorf("reading session conflict detail: %w", err)
-		}
-		event.DistinctHosts = context.DistinctHosts
-	case audit.ActionConflictCleared:
-		event.Kind = ConflictWithdrawn
-		event.WithdrawnFrom = actor
-		if address != "" {
-			event.WithdrawnFrom += " (" + address + ")"
-		}
-	default:
-		return uuid.Nil, ConflictEvent{}, fmt.Errorf("reading a session conflict event: unknown action %q", action)
-	}
-	return identifier, event, nil
 }

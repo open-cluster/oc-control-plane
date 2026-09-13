@@ -1,4 +1,4 @@
-package changeledger
+package changes
 
 import (
 	"context"
@@ -17,19 +17,19 @@ const (
 // capability owns its vocabulary and persistence depends on it; a test's implementation
 // needs no database.
 type Retention interface {
-	// PruneChangeLedgerBefore removes at most limit entries older than the horizon,
+	// PruneChangesBefore removes at most limit events older than the horizon,
 	// across every database, reporting how many went.
-	PruneChangeLedgerBefore(ctx context.Context, before time.Time, limit int) (int64, error)
+	PruneChangesBefore(ctx context.Context, before time.Time, limit int) (int64, error)
 }
 
-// Pruner applies the ledger's retention on an interval. Purely by age and deliberately
-// simpler than the audit pruner's per-tenant schedule: the ledger is derived operational
-// context, its retention is the deployment's, and a pruned entry is recoverable as a
+// Pruner applies change retention on an interval. Purely by age and deliberately
+// simpler than the audit pruner's per-tenant schedule: the change history is derived operational
+// context, its retention is the deployment's, and a pruned event is recoverable as a
 // fresh baseline the next time a Relay observes the object.
 type Pruner struct {
 	Retention Retention
 	Logger    *slog.Logger
-	// Days is how long an entry is kept.
+	// Days is how long an event is kept.
 	Days int
 	// Interval is how often the horizon is applied. Retention is measured in days, so
 	// hourly is close enough to be honest and far enough to cost nothing.
@@ -64,10 +64,10 @@ func (p Pruner) Sweep(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		batch, err := p.Retention.PruneChangeLedgerBefore(ctx, horizon, pruneBatch)
+		batch, err := p.Retention.PruneChangesBefore(ctx, horizon, pruneBatch)
 		removed += batch
 		if err != nil {
-			p.Logger.ErrorContext(ctx, "the change ledger's retention could not be applied",
+			p.Logger.ErrorContext(ctx, "change retention could not be applied",
 				slog.String("error", err.Error()))
 			return
 		}
@@ -76,7 +76,7 @@ func (p Pruner) Sweep(ctx context.Context) {
 		}
 	}
 	if removed > 0 {
-		p.Logger.InfoContext(ctx, "change ledger entries removed by retention",
+		p.Logger.InfoContext(ctx, "change events removed by retention",
 			slog.Int("retention_days", p.Days),
 			slog.Int64("removed", removed))
 	}

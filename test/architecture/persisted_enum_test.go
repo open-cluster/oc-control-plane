@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/open-cluster/oc-control-plane/internal/changecontext"
+	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -107,14 +107,14 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"EventCancelled", int(investigation.EventCancelled), 9},
 		{"EventHypothesesUpdated", int(investigation.EventHypothesesUpdated), 10},
 
-		// The change ledger's vocabulary. The baseline exclusion in every change query is
+		// The Changes capability's vocabulary. The baseline exclusion in every change query is
 		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
 		// every baseline into a reportable change.
-		{"KindDeployment", int(changeledger.KindDeployment), 1},
-		{"KindStatefulSet", int(changeledger.KindStatefulSet), 2},
-		{"KindDaemonSet", int(changeledger.KindDaemonSet), 3},
-		{"KindConfigMap", int(changeledger.KindConfigMap), 4},
-		{"KindSecret", int(changeledger.KindSecret), 5},
+		{"KindDeployment", int(changes.KindDeployment), 1},
+		{"KindStatefulSet", int(changes.KindStatefulSet), 2},
+		{"KindDaemonSet", int(changes.KindDaemonSet), 3},
+		{"KindConfigMap", int(changes.KindConfigMap), 4},
+		{"KindSecret", int(changes.KindSecret), 5},
 
 		// A conversation's own vocabularies. Every one is written as a bare literal in
 		// the SQL that reads or writes it, so a constant that moved would silently
@@ -128,10 +128,10 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"ActorPrincipal", int(conversation.ActorPrincipal), 1},
 		{"ActorExternal", int(conversation.ActorExternal), 2},
 
-		{"ChangeBaseline", int(changeledger.ChangeBaseline), 1},
-		{"ChangeCreated", int(changeledger.ChangeCreated), 2},
-		{"ChangeModified", int(changeledger.ChangeModified), 3},
-		{"ChangeDeleted", int(changeledger.ChangeDeleted), 4},
+		{"ChangeBaseline", int(changes.ChangeBaseline), 1},
+		{"ChangeCreated", int(changes.ChangeCreated), 2},
+		{"ChangeModified", int(changes.ChangeModified), 3},
+		{"ChangeDeleted", int(changes.ChangeDeleted), 4},
 	}
 
 	for _, constant := range frozen {
@@ -194,8 +194,8 @@ var (
 		int(integrations.TypeGenericWebhook),
 	}
 	changeKindValues = []int{
-		int(changeledger.ChangeBaseline), int(changeledger.ChangeCreated),
-		int(changeledger.ChangeModified), int(changeledger.ChangeDeleted),
+		int(changes.ChangeBaseline), int(changes.ChangeCreated),
+		int(changes.ChangeModified), int(changes.ChangeDeleted),
 	}
 	conversationRoleValues = []int{
 		int(conversation.RolePerson), int(conversation.RoleAgent),
@@ -262,9 +262,9 @@ var enumColumns = map[string]map[string][]int{
 	"conversation_window.go":   {"role": conversationRoleValues},
 	"conversation_history.go":  {"status": investigationStatusValues},
 	"investigation_message.go": {"role": conversationRoleValues},
-	// The ledger opens scopes only for kubernetes Integrations and excludes baselines from
+	// The change history opens scopes only for kubernetes Integrations and excludes baselines from
 	// every change query.
-	"change_ledger.go": {
+	"changes.go": {
 		"integration_type_id": integrationTypeValues,
 		"change_kind":         changeKindValues,
 	},

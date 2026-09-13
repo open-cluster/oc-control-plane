@@ -12,10 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/changecontext"
+	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
-// The change ledger's persistence. The vocabulary lives in internal/changecontext; this
+// Changes persistence. The vocabulary lives in internal/changes; this
 // file reconstructs it from rows and writes it into them, and decides nothing about
 // what a change means.
 
@@ -24,7 +24,7 @@ import (
 func (p *Database) OpenInventoryScopes(
 	ctx context.Context, organization tenancy.Organization,
 	registrationID uuid.UUID, requestedInterval time.Duration,
-) ([]changeledger.Scope, error) {
+) ([]changes.Scope, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func (p *Database) OpenInventoryScopes(
 			   AND integration_type_id = 2
 			   AND disabled_at IS NULL
 		)
-		INSERT INTO change_ledger_scope
+		INSERT INTO change_scope
 			(integration_id, org_id, requested_interval_seconds, updated_at)
 		SELECT integration_id, $1, $3, now() FROM served
 		ON CONFLICT (integration_id) DO UPDATE
@@ -52,8 +52,8 @@ func (p *Database) OpenInventoryScopes(
 			    -- The revision moves exactly when the request changed, so a delta or a
 			    -- freshness stamp can say which request it answered and "monotonic" stays
 			    -- a true statement rather than a constant one.
-			    policy_revision = change_ledger_scope.policy_revision
-			        + CASE WHEN change_ledger_scope.requested_interval_seconds
+			    policy_revision = change_scope.policy_revision
+			        + CASE WHEN change_scope.requested_interval_seconds
 			                    <> EXCLUDED.requested_interval_seconds THEN 1 ELSE 0 END,
 			    updated_at = now()
 		RETURNING integration_id, policy_revision, requested_interval_seconds`,
@@ -63,9 +63,9 @@ func (p *Database) OpenInventoryScopes(
 	}
 	defer rows.Close()
 
-	var scopes []changeledger.Scope
+	var scopes []changes.Scope
 	for rows.Next() {
-		var scope changeledger.Scope
+		var scope changes.Scope
 		var intervalSeconds int64
 		if err = rows.Scan(&scope.IntegrationID,
 			&scope.PolicyRevision, &intervalSeconds); err != nil {
@@ -93,16 +93,16 @@ func (p *Database) OpenInventoryScopes(
 // without any notion of a delta having been seen before.
 func (p *Database) RecordInventoryDelta(
 	ctx context.Context, organization tenancy.Organization,
-	registrationID uuid.UUID, delta changeledger.Delta,
-) (changeledger.Recorded, error) {
+	registrationID uuid.UUID, delta changes.Delta,
+) (changes.Recorded, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return changeledger.Recorded{}, err
+		return changes.Recorded{}, err
 	}
 
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
-		return changeledger.Recorded{}, fmt.Errorf("beginning a ledger delta: %w", err)
+		return changes.Recorded{}, fmt.Errorf("beginning a change delta: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
@@ -116,10 +116,10 @@ func (p *Database) RecordInventoryDelta(
 		   AND disabled_at IS NULL`,
 		delta.IntegrationID, organization.String(), registrationID).Scan(&served)
 	if err == pgx.ErrNoRows {
-		return changeledger.Recorded{Refused: true}, nil
+		return changes.Recorded{Refused: true}, nil
 	}
 	if err != nil {
-		return changeledger.Recorded{}, fmt.Errorf("resolving a delta's integration: %w", err)
+		return changes.Recorded{}, fmt.Errorf("resolving a delta's integration: %w", err)
 	}
 
 	// A fixed write order, for the same reason alertEvents are sorted: two chunks carrying
@@ -129,14 +129,14 @@ func (p *Database) RecordInventoryDelta(
 	for _, change := range ordered {
 		kind := int16(change.Change)
 		if delta.Baseline {
-			kind = int16(changeledger.ChangeBaseline)
+			kind = int16(changes.ChangeBaseline)
 		}
 		fields, marshalErr := json.Marshal(orEmptyFields(change.Fields))
 		if marshalErr != nil {
-			return changeledger.Recorded{}, fmt.Errorf("encoding field changes: %w", marshalErr)
+			return changes.Recorded{}, fmt.Errorf("encoding field changes: %w", marshalErr)
 		}
 		tag, execErr := transaction.Exec(ctx, `
-			INSERT INTO change_ledger
+			INSERT INTO change_event
 				(org_id, integration_id, namespace, object_kind,
 				 object_name, object_uid, observed_revision, change_kind, observed_at, fields)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -145,26 +145,26 @@ func (p *Database) RecordInventoryDelta(
 			int16(change.Kind), change.Name, change.UID, change.ObservedRevision, kind,
 			delta.ObservedAt, fields)
 		if execErr != nil {
-			return changeledger.Recorded{}, fmt.Errorf("recording a ledger entry: %w", execErr)
+			return changes.Recorded{}, fmt.Errorf("recording a change event: %w", execErr)
 		}
 		inserted += int(tag.RowsAffected())
 	}
 
-	if err = advanceChangeLedgerScope(
+	if err = advanceChangeScope(
 		ctx, transaction, organization, delta, inserted,
 	); err != nil {
-		return changeledger.Recorded{}, err
+		return changes.Recorded{}, err
 	}
 
 	if err = transaction.Commit(ctx); err != nil {
-		return changeledger.Recorded{}, fmt.Errorf("committing a ledger delta: %w", err)
+		return changes.Recorded{}, fmt.Errorf("committing a change delta: %w", err)
 	}
-	return changeledger.Recorded{Inserted: inserted}, nil
+	return changes.Recorded{Inserted: inserted}, nil
 }
 
-func advanceChangeLedgerScope(
+func advanceChangeScope(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	delta changeledger.Delta, inserted int,
+	delta changes.Delta, inserted int,
 ) error {
 	var err error
 	if delta.Baseline {
@@ -176,7 +176,7 @@ func advanceChangeLedgerScope(
 		// bounded by the scope's own cadence. Any insert, or a longer silence, moves the
 		// boundary to where watching demonstrably resumed.
 		_, err = transaction.Exec(ctx, `
-			UPDATE change_ledger_scope
+			UPDATE change_scope
 			   SET covered_since = CASE
 			           WHEN covered_since IS NULL
 			             OR $3 > 0
@@ -195,7 +195,7 @@ func advanceChangeLedgerScope(
 			organization.String())
 	} else {
 		_, err = transaction.Exec(ctx, `
-			UPDATE change_ledger_scope
+			UPDATE change_scope
 			   SET last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), $2),
 			       updated_at = now()
 			 WHERE integration_id = $1 AND org_id = $3`,
@@ -212,7 +212,7 @@ func advanceChangeLedgerScope(
 // does not serve updates nothing.
 func (p *Database) RecordInventoryFreshness(
 	ctx context.Context, organization tenancy.Organization,
-	registrationID uuid.UUID, stamps []changeledger.Freshness,
+	registrationID uuid.UUID, stamps []changes.Freshness,
 ) error {
 	if len(stamps) == 0 {
 		return nil
@@ -227,7 +227,7 @@ func (p *Database) RecordInventoryFreshness(
 			confirmed = stamp.CompletedAt
 		}
 		if _, err = pool.Exec(ctx, `
-			UPDATE change_ledger_scope
+			UPDATE change_scope
 			   SET last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), coalesce($2, last_confirmed_at)),
 			       faulted = $3,
 			       truncated = $4,
@@ -245,28 +245,28 @@ func (p *Database) RecordInventoryFreshness(
 	return nil
 }
 
-// RecentLedgerChanges answers the question: what changed in this namespace, through
+// RecentChanges answers the question: what changed in this namespace, through
 // this Integration, in this window. Baselines are excluded — they record where
 // watching began, not something changing — and the scope's boundaries travel with the
 // answer so an empty list is readable as "nothing changed" only where that is actually
 // knowable.
-func (p *Database) RecentLedgerChanges(
+func (p *Database) RecentChanges(
 	ctx context.Context, organization tenancy.Organization,
 	integrationID uuid.UUID, namespace string, from, to time.Time, limit int,
-) (changeledger.WindowChanges, error) {
+) (changes.WindowChanges, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return changeledger.WindowChanges{}, err
+		return changes.WindowChanges{}, err
 	}
 	if limit < 1 {
-		return changeledger.WindowChanges{}, fmt.Errorf("a ledger window needs a positive bound")
+		return changes.WindowChanges{}, fmt.Errorf("a change window needs a positive bound")
 	}
 
-	answer := changeledger.WindowChanges{}
+	answer := changes.WindowChanges{}
 	err = pool.QueryRow(ctx, `
 		SELECT integration_id, policy_revision, requested_interval_seconds,
 		       covered_since, baseline_at, last_confirmed_at, faulted, truncated
-		  FROM change_ledger_scope
+		  FROM change_scope
 		 WHERE integration_id = $1 AND org_id = $2`,
 		integrationID, organization.String()).Scan(
 		&answer.Scope.IntegrationID, &answer.Scope.PolicyRevision,
@@ -274,94 +274,94 @@ func (p *Database) RecentLedgerChanges(
 		&answer.Scope.BaselineAt, &answer.Scope.LastConfirmedAt,
 		&answer.Scope.Faulted, &answer.Scope.Truncated)
 	if err == pgx.ErrNoRows {
-		return changeledger.WindowChanges{}, nil
+		return changes.WindowChanges{}, nil
 	}
 	if err != nil {
-		return changeledger.WindowChanges{}, fmt.Errorf("reading the ledger scope: %w", err)
+		return changes.WindowChanges{}, fmt.Errorf("reading the change scope: %w", err)
 	}
 	answer.Covered = answer.Scope.CoveredSince != nil
 
 	rows, err := pool.Query(ctx, `
-		SELECT entry_id, integration_id, namespace, object_kind, object_name,
+		SELECT change_event_id, integration_id, namespace, object_kind, object_name,
 		       object_uid, observed_revision, change_kind, observed_at, received_at, fields
-		  FROM change_ledger
+		  FROM change_event
 		 WHERE integration_id = $1
 		   AND org_id = $2
 		   AND namespace = $3
 		   AND change_kind <> 1
 		   AND observed_at >= $4
 		   AND observed_at < $5
-		 ORDER BY observed_at, entry_id
+		 ORDER BY observed_at, change_event_id
 		 LIMIT $6`,
 		integrationID, organization.String(), namespace, from, to, limit+1)
 	if err != nil {
-		return changeledger.WindowChanges{}, fmt.Errorf("reading the ledger window: %w", err)
+		return changes.WindowChanges{}, fmt.Errorf("reading the change window: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var entry changeledger.Entry
+		var event changes.Event
 		var kind, change int16
 		var fields []byte
-		if err = rows.Scan(&entry.ID, &entry.IntegrationID,
-			&entry.Namespace, &kind, &entry.Name, &entry.UID, &entry.ObservedRevision,
-			&change, &entry.ObservedAt, &entry.RecordedAt, &fields); err != nil {
-			return changeledger.WindowChanges{}, fmt.Errorf("reading a ledger entry: %w", err)
+		if err = rows.Scan(&event.ID, &event.IntegrationID,
+			&event.Namespace, &kind, &event.Name, &event.UID, &event.ObservedRevision,
+			&change, &event.ObservedAt, &event.RecordedAt, &fields); err != nil {
+			return changes.WindowChanges{}, fmt.Errorf("reading a change event: %w", err)
 		}
-		entry.Kind = changeledger.ObjectKind(kind)
-		entry.Change = changeledger.ChangeKind(change)
-		if err = json.Unmarshal(fields, &entry.Fields); err != nil {
-			return changeledger.WindowChanges{}, fmt.Errorf("decoding field changes: %w", err)
+		event.Kind = changes.ObjectKind(kind)
+		event.Change = changes.ChangeKind(change)
+		if err = json.Unmarshal(fields, &event.Fields); err != nil {
+			return changes.WindowChanges{}, fmt.Errorf("decoding field changes: %w", err)
 		}
-		answer.Entries = append(answer.Entries, entry)
+		answer.Events = append(answer.Events, event)
 	}
 	if err = rows.Err(); err != nil {
-		return changeledger.WindowChanges{}, fmt.Errorf("reading the ledger window: %w", err)
+		return changes.WindowChanges{}, fmt.Errorf("reading the change window: %w", err)
 	}
-	if len(answer.Entries) > limit {
-		answer.Entries = answer.Entries[:limit]
+	if len(answer.Events) > limit {
+		answer.Events = answer.Events[:limit]
 		answer.Truncated = true
 	}
 	return answer, nil
 }
 
-// PruneChangeLedgerBefore removes at most limit entries older than the horizon, oldest
-// first. Purely by age: the ledger is derived operational
-// context on its own retention schedule, and a pruned entry is recoverable as a fresh
+// PruneChangesBefore removes at most limit events older than the horizon, oldest
+// first. Purely by age: captured changes are derived operational
+// context on its own retention schedule, and a pruned event is recoverable as a fresh
 // baseline the next time a Relay observes the object.
-func (p *Database) PruneChangeLedgerBefore(
+func (p *Database) PruneChangesBefore(
 	ctx context.Context, before time.Time, limit int,
 ) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
 	tag, err := p.pool.Exec(ctx, `
-			DELETE FROM change_ledger
-			 WHERE entry_id IN (
-			       SELECT entry_id
-			         FROM change_ledger
+			DELETE FROM change_event
+			 WHERE change_event_id IN (
+			       SELECT change_event_id
+			         FROM change_event
 			        WHERE received_at < $1
-			        ORDER BY received_at, entry_id
+			        ORDER BY received_at, change_event_id
 			        LIMIT $2
 			       )`, before, limit)
 	if err != nil {
-		return 0, fmt.Errorf("pruning the change ledger: %w", err)
+		return 0, fmt.Errorf("pruning the changes: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }
 
 // compareChanges orders two changes by the identity they are written under — the dedup
 // key's own order.
-func compareChanges(a, b changeledger.Change) int {
+func compareChanges(a, b changes.Change) int {
 	if byUID := strings.Compare(a.UID, b.UID); byUID != 0 {
 		return byUID
 	}
 	return strings.Compare(a.ObservedRevision, b.ObservedRevision)
 }
 
-func orEmptyFields(fields []changeledger.FieldChange) []changeledger.FieldChange {
+func orEmptyFields(fields []changes.FieldChange) []changes.FieldChange {
 	if fields == nil {
-		return []changeledger.FieldChange{}
+		return []changes.FieldChange{}
 	}
 	return fields
 }
@@ -383,7 +383,7 @@ func (s *scanSeconds) Scan(value any) error {
 	}
 }
 
-// WorkloadInventory reads a bounded digest of the ledger's current workload
+// WorkloadInventory reads a bounded digest of the current workload
 // identities — each rendered with its Integration and "namespace/kind name" — for the autonomous
 // orientation. A navigation index, never evidence: deletions drop out, and only the
 // watched workload kinds appear. Empty when no Relay has synchronized anything.
@@ -400,18 +400,18 @@ func (p *Database) WorkloadInventory(
 		  FROM (
 		      SELECT DISTINCT ON (integration_id, namespace, object_kind, object_name)
 		             integration_id, namespace, object_kind, object_name, change_kind
-		        FROM change_ledger
+		        FROM change_event
 		       WHERE org_id = $1 AND object_kind IN ($2, $3, $4)
-		       ORDER BY integration_id, namespace, object_kind, object_name, observed_at DESC, entry_id DESC
+		       ORDER BY integration_id, namespace, object_kind, object_name, observed_at DESC, change_event_id DESC
 		  ) latest
-		  JOIN change_ledger_scope scope
+		  JOIN change_scope scope
 		    ON scope.org_id = $1 AND scope.integration_id = latest.integration_id
 		 WHERE change_kind <> $5
 		 ORDER BY namespace, object_name, latest.integration_id
 		 LIMIT $6`,
-		organization.String(), int16(changeledger.KindDeployment),
-		int16(changeledger.KindStatefulSet), int16(changeledger.KindDaemonSet),
-		int16(changeledger.ChangeDeleted), limit)
+		organization.String(), int16(changes.KindDeployment),
+		int16(changes.KindStatefulSet), int16(changes.KindDaemonSet),
+		int16(changes.ChangeDeleted), limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading the workload inventory: %w", err)
 	}
@@ -430,7 +430,7 @@ func (p *Database) WorkloadInventory(
 		}
 		digest = append(digest, "integration "+integration.String()+" "+
 			inventoryCoverage(coveredSince, lastConfirmed, faulted, truncated)+" "+
-			namespace+"/"+changeledger.ObjectKind(kind).String()+" "+name)
+			namespace+"/"+changes.ObjectKind(kind).String()+" "+name)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading the workload inventory: %w", err)

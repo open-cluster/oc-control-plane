@@ -80,8 +80,8 @@ CREATE TABLE audit_event (
     CONSTRAINT audit_event_pkey PRIMARY KEY (event_id)
 );
 
-CREATE TABLE change_ledger (
-    entry_id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+CREATE TABLE change_event (
+    change_event_id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
     org_id uuid NOT NULL,
     integration_id uuid NOT NULL,
     namespace text NOT NULL,
@@ -93,14 +93,14 @@ CREATE TABLE change_ledger (
     observed_at timestamptz NOT NULL,
     received_at timestamptz DEFAULT now() NOT NULL,
     fields jsonb DEFAULT '[]'::jsonb NOT NULL,
-    CONSTRAINT change_ledger_change_kind_check CHECK (change_kind = ANY (ARRAY[1, 2, 3, 4])),
-    CONSTRAINT change_ledger_deletion_has_no_revision CHECK ((change_kind = 4) = (observed_revision = '')),
-    CONSTRAINT change_ledger_object_kind_check CHECK (object_kind = ANY (ARRAY[1, 2, 3, 4, 5])),
-    CONSTRAINT change_ledger_entry_is_unique_per_observation UNIQUE (integration_id, object_uid, observed_revision),
-    CONSTRAINT change_ledger_pkey PRIMARY KEY (entry_id)
+    CONSTRAINT change_event_change_kind_check CHECK (change_kind = ANY (ARRAY[1, 2, 3, 4])),
+    CONSTRAINT change_event_deletion_has_no_revision CHECK ((change_kind = 4) = (observed_revision = '')),
+    CONSTRAINT change_event_object_kind_check CHECK (object_kind = ANY (ARRAY[1, 2, 3, 4, 5])),
+    CONSTRAINT change_event_is_unique_per_observation UNIQUE (integration_id, object_uid, observed_revision),
+    CONSTRAINT change_event_pkey PRIMARY KEY (change_event_id)
 );
 
-CREATE TABLE change_ledger_scope (
+CREATE TABLE change_scope (
     integration_id uuid NOT NULL,
     org_id uuid NOT NULL,
     policy_revision bigint DEFAULT 1 NOT NULL,
@@ -112,8 +112,8 @@ CREATE TABLE change_ledger_scope (
     truncated boolean DEFAULT false NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz NOT NULL,
-    CONSTRAINT change_ledger_scope_requested_interval_seconds_check CHECK (requested_interval_seconds > 0),
-    CONSTRAINT change_ledger_scope_pkey PRIMARY KEY (integration_id)
+    CONSTRAINT change_scope_requested_interval_seconds_check CHECK (requested_interval_seconds > 0),
+    CONSTRAINT change_scope_pkey PRIMARY KEY (integration_id)
 );
 
 CREATE TABLE conversation (
@@ -583,9 +583,9 @@ CREATE INDEX audit_event_org_idx ON audit_event (org_id, occurred_at DESC, event
 
 CREATE INDEX audit_event_target_idx ON audit_event (org_id, target_kind, target_id, occurred_at DESC, event_id DESC);
 
-CREATE INDEX change_ledger_retention_idx ON change_ledger (org_id, received_at);
+CREATE INDEX change_event_retention_idx ON change_event (org_id, received_at);
 
-CREATE INDEX change_ledger_window_idx ON change_ledger (integration_id, namespace, observed_at);
+CREATE INDEX change_event_window_idx ON change_event (integration_id, namespace, observed_at);
 
 CREATE INDEX conversation_incident_idx ON conversation (incident_id) WHERE (incident_id IS NOT NULL);
 
@@ -671,11 +671,11 @@ ALTER TABLE alert_event
 ALTER TABLE audit_event
     ADD CONSTRAINT audit_event_organization_exists FOREIGN KEY (org_id) REFERENCES organization(org_id);
 
-ALTER TABLE change_ledger
-    ADD CONSTRAINT change_ledger_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES integration(org_id, integration_id);
+ALTER TABLE change_event
+    ADD CONSTRAINT change_event_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES integration(org_id, integration_id);
 
-ALTER TABLE change_ledger_scope
-    ADD CONSTRAINT change_ledger_scope_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES integration(org_id, integration_id);
+ALTER TABLE change_scope
+    ADD CONSTRAINT change_scope_integration_is_in_the_org FOREIGN KEY (org_id, integration_id) REFERENCES integration(org_id, integration_id);
 
 ALTER TABLE conversation
     ADD CONSTRAINT conversation_incident_is_in_the_same_org FOREIGN KEY (org_id, incident_id) REFERENCES incident(org_id, incident_id);

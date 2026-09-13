@@ -51,7 +51,7 @@ type Store interface {
 	SetIntegrationDisabled(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		id uuid.UUID, disabled bool) error
 	// DeleteIntegration removes one that nothing depends on, and refuses with ErrInUse
-	// when alertEvents, jobs or ledger entries reference it.
+	// when Alert Events, jobs, change events, or Investigation records reference it.
 	DeleteIntegration(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		id uuid.UUID) error
 	// RotateIntegrationWebhookSecret replaces the digest without disturbing identity, so a

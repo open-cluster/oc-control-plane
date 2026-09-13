@@ -10,7 +10,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/changecontext"
+	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -31,7 +31,7 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 	startWebhookJob(ctx, group, process)
 	startAuditPruner(ctx, group, process)
 	startSessionPruner(ctx, group, process)
-	startChangeLedgerPruner(ctx, group, process)
+	startChangesPruner(ctx, group, process)
 	startSlackReplyWorker(ctx, group, process)
 }
 
@@ -82,9 +82,9 @@ func startAuditPruner(ctx context.Context, group *errgroup.Group, process assemb
 		slog.Duration("interval", auditPruneInterval))
 }
 
-// startChangeLedgerPruner runs the worker that ages the change ledger out on the deployment's schedule.
-func startChangeLedgerPruner(ctx context.Context, group *errgroup.Group, process assembled) {
-	pruner := changeledger.Pruner{
+// startChangesPruner runs the worker that ages captured changes out on the deployment's schedule.
+func startChangesPruner(ctx context.Context, group *errgroup.Group, process assembled) {
+	pruner := changes.Pruner{
 		Retention: process.database,
 		Logger:    process.logger,
 		Days:      defaultChangeRetentionDays,
@@ -95,7 +95,7 @@ func startChangeLedgerPruner(ctx context.Context, group *errgroup.Group, process
 		pruner.Run(ctx)
 		return nil
 	})
-	process.logger.Info("change ledger retention pruner started",
+	process.logger.Info("change retention pruner started",
 		slog.Int("retention_days", defaultChangeRetentionDays))
 }
 

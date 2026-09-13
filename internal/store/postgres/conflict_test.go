@@ -3,9 +3,6 @@ package storage_test
 import (
 	"context"
 	"testing"
-	"time"
-
-	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func TestRelayConflictStateRollsBackWhenItsAuditEventFails(t *testing.T) {
@@ -17,7 +14,7 @@ func TestRelayConflictStateRollsBackWhenItsAuditEventFails(t *testing.T) {
 	}
 	ctx := context.Background()
 	if _, err = pool.Exec(ctx, `ALTER TABLE audit_event ADD CONSTRAINT reject_detection
-		CHECK (action <> 'relay.conflict.detected')`); err != nil {
+		CHECK (action <> 'relay.session_conflict.detected')`); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.RecordSessionConflict(ctx, organization, registration, 2); err == nil {
@@ -33,7 +30,7 @@ func TestRelayConflictStateRollsBackWhenItsAuditEventFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, `ALTER TABLE audit_event ADD CONSTRAINT reject_withdrawal
-		CHECK (action <> 'relay.conflict.cleared')`); err != nil {
+		CHECK (action <> 'relay.session_conflict.cleared')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.ClearSessionConflict(ctx, ownerOf(t, organization), organization, registration); err == nil {
@@ -45,18 +42,5 @@ func TestRelayConflictStateRollsBackWhenItsAuditEventFails(t *testing.T) {
 	}
 	if _, err = pool.Exec(ctx, `ALTER TABLE audit_event DROP CONSTRAINT reject_withdrawal`); err != nil {
 		t.Fatal(err)
-	}
-	trail, err := database.SessionConflictTrail(ctx, ownerOf(t, organization), organization,
-		registration, storage.Page{Limit: 10})
-	if err != nil || len(trail.Events) != 1 {
-		t.Fatalf("conflict trail before retention = %+v %v", trail, err)
-	}
-	if _, err = database.PruneEventsBefore(ctx, organization, time.Now().Add(time.Hour), 10); err != nil {
-		t.Fatal(err)
-	}
-	trail, err = database.SessionConflictTrail(ctx, ownerOf(t, organization), organization,
-		registration, storage.Page{Limit: 10})
-	if err != nil || len(trail.Events) != 0 {
-		t.Fatalf("conflict trail survived Audit Event retention: %+v %v", trail, err)
 	}
 }

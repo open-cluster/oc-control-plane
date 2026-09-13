@@ -10,7 +10,7 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/changecontext"
+	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -96,7 +96,7 @@ func draining(within time.Duration) *relayv1.ControlToRelay {
 // design: the relay floors the interval and intersects the namespaces with its own
 // local configuration, so nothing sent here can increase load on a customer's cluster.
 // No namespaces are named — the relay watches what its operator allows.
-func inventoryPolicy(scope changeledger.Scope) *relayv1.ControlToRelay {
+func inventoryPolicy(scope changes.Scope) *relayv1.ControlToRelay {
 	return &relayv1.ControlToRelay{Message: &relayv1.ControlToRelay_InventorySynchronizationPolicy{
 		InventorySynchronizationPolicy: &relayv1.InventorySynchronizationPolicy{
 			ConnectionId:      scope.IntegrationID.String(),

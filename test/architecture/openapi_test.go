@@ -68,6 +68,22 @@ type openAPIReference struct {
 	Ref string `yaml:"$ref"`
 }
 
+func TestOpenAPIRetiresDedicatedRelayConflictHistory(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := string(contents)
+	if strings.Contains(contract, "/api/v1/relays/{registration}/session-conflicts:") {
+		t.Error("OpenAPI still exposes dedicated Relay conflict history")
+	}
+	if !strings.Contains(contract, "/api/v1/relays/{registration}/clear-conflict:") {
+		t.Error("OpenAPI removed the privileged conflict-clear operation")
+	}
+}
+
 func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 	t.Parallel()
 
@@ -236,23 +252,22 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 
 	paged := []string{"Cursor", "Limit"}
 	expected := map[string][]string{
-		"listOrganizations":         paged,
-		"listEffectivePermissions":  paged,
-		"listMembers":               paged,
-		"listSessions":              paged,
-		"listAuditEvents":           paged,
-		"listIntegrationTypes":      paged,
-		"listIntegrations":          append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),
-		"listRelays":                append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
-		"listRelayIntegrations":     paged,
-		"listRelayFailures":         paged,
-		"listRelaySessionConflicts": paged,
-		"listIncidents":             append(slices.Clone(paged), "IncidentSearch", "IncidentSort", "IncidentIntegrationFilter", "IncidentStatusFilter"),
-		"listIncidentAlertEvents":   paged,
-		"listInvestigations":        append(slices.Clone(paged), "InvestigationIncidentFilter"),
-		"listConversations":         append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
-		"listConversationTurns":     paged,
-		"listWebhookDeliveries":     append(slices.Clone(paged), "WebhookDeliveryStatus"),
+		"listOrganizations":        paged,
+		"listEffectivePermissions": paged,
+		"listMembers":              paged,
+		"listSessions":             paged,
+		"listAuditEvents":          paged,
+		"listIntegrationTypes":     paged,
+		"listIntegrations":         append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),
+		"listRelays":               append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
+		"listRelayIntegrations":    paged,
+		"listRelayFailures":        paged,
+		"listIncidents":            append(slices.Clone(paged), "IncidentSearch", "IncidentSort", "IncidentIntegrationFilter", "IncidentStatusFilter"),
+		"listIncidentAlertEvents":  paged,
+		"listInvestigations":       append(slices.Clone(paged), "InvestigationIncidentFilter"),
+		"listConversations":        append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
+		"listConversationTurns":    paged,
+		"listWebhookDeliveries":    append(slices.Clone(paged), "WebhookDeliveryStatus"),
 	}
 
 	for pathName, path := range document.Paths {
