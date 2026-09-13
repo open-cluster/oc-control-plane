@@ -25,6 +25,27 @@ const modulePath = "github.com/open-cluster/oc-control-plane"
 // resolves its inputs against.
 const moduleRoot = "../.."
 
+func TestBaselineUsesChangesVocabulary(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(moduleRoot, "internal", "store", "postgres", "migrations", "0001_schema.sql")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(content)
+	for _, table := range []string{"change_event", "change_scope"} {
+		if !strings.Contains(schema, "CREATE TABLE "+table+" (") {
+			t.Errorf("baseline does not create %s", table)
+		}
+	}
+	for _, retired := range []string{"change_ledger", "change_ledger_scope"} {
+		if strings.Contains(schema, retired) {
+			t.Errorf("baseline still contains retired name %q", retired)
+		}
+	}
+}
+
 // loadPackages parses the module's PRODUCTION packages. Test variants are excluded
 // deliberately: a test may construct a database connection to arrange a scenario, and the
 // property these gates protect is what ships in the binary, not what a fixture does.
@@ -197,11 +218,11 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"RedeemConnectFlow": "consumes an installation state that names no tenant; the flow " +
 			"row found is the authority for the organization the integration binds to, and " +
 			"an organization named in the provider's callback is never read",
-		// The change ledger's pruner deletes by AGE across the database, bounded per
+		// The Changes capability's pruner deletes by AGE across the database, bounded per
 		// statement. It reads no tenant data and takes no caller-supplied value at all — a
 		// horizon and a batch size are the whole request — so there is no tenant in the
 		// question, and nothing selective enough to leak one.
-		"PruneChangeLedgerBefore": "age-bounded delete across the database; reads no tenant " +
+		"PruneChangesBefore": "age-bounded delete across the database; reads no tenant " +
 			"data and takes no caller-supplied identifier",
 		// The investigation claimer asks for WORK, not for a tenant's work. Which
 		// organization has something waiting is the answer rather than the question, and a

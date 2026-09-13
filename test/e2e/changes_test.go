@@ -10,51 +10,51 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// The property that keeps the change ledger an investigation tool rather than a monitoring
+// The property that keeps the changes an investigation tool rather than a monitoring
 // platform, provable only end to end: a change made in a REAL cluster becomes a durable
-// ledger row naming the field that moved with both values — and status movement in the same
+// change history row naming the field that moved with both values — and status movement in the same
 // namespace produces no row at all.
 //
 // The second half is the important one and it is written so that WIDENING THE WATCHED FIELD
 // SET MAKES IT FAIL: deleting a pod churns ready counts, phases and conditions through the
-// same objects the ledger watches, and a build that recorded any of that produces a row this
+// same objects the change history watches, and a build that recorded any of that produces a row this
 // test refuses.
 
-// ledgerRow is one change_ledger entry as this test reads it back.
-type ledgerRow struct {
+// changeEventRow is one change_event as this test reads it back.
+type changeEventRow struct {
 	changeKind int16
 	objectName string
 	fields     string
 }
 
-func (h *harness) ledgerChanges(ctx context.Context, t *testing.T) []ledgerRow {
+func (h *harness) changeEvents(ctx context.Context, t *testing.T) []changeEventRow {
 	t.Helper()
 	rows, err := h.truth.pool.Query(ctx, `
 		SELECT change_kind, object_name, fields::text
-		  FROM change_ledger
+		  FROM change_event
 		 WHERE integration_id = $1 AND namespace = $2 AND change_kind <> 1
-		 ORDER BY entry_id`, h.integration, fixtureNamespace)
+		 ORDER BY change_event_id`, h.integration, fixtureNamespace)
 	if err != nil {
-		t.Fatalf("reading the ledger: %v", err)
+		t.Fatalf("reading the change history: %v", err)
 	}
 	defer rows.Close()
-	var read []ledgerRow
+	var read []changeEventRow
 	for rows.Next() {
-		var row ledgerRow
+		var row changeEventRow
 		if err = rows.Scan(&row.changeKind, &row.objectName, &row.fields); err != nil {
-			t.Fatalf("reading a ledger row: %v", err)
+			t.Fatalf("reading a change history row: %v", err)
 		}
 		read = append(read, row)
 	}
 	return read
 }
 
-func (h *harness) awaitLedgerBaseline(t *testing.T) {
+func (h *harness) awaitChangeBaseline(t *testing.T) {
 	t.Helper()
-	h.await(t, "the ledger's baseline", 2*time.Minute, func(ctx context.Context) (bool, error) {
+	h.await(t, "the change history's baseline", 2*time.Minute, func(ctx context.Context) (bool, error) {
 		var baselined bool
 		err := h.truth.pool.QueryRow(ctx, `
-			SELECT baseline_at IS NOT NULL FROM change_ledger_scope
+			SELECT baseline_at IS NOT NULL FROM change_scope
 			 WHERE integration_id = $1`, h.integration).Scan(&baselined)
 		if err != nil {
 			// The scope row itself may not exist yet; the poll continues and the timeout
@@ -73,7 +73,7 @@ func (h *harness) awaitConfirmations(t *testing.T, after time.Time, ticks int) {
 	h.await(t, "further synchronization ticks", deadline, func(ctx context.Context) (bool, error) {
 		var confirmed time.Time
 		err := h.truth.pool.QueryRow(ctx, `
-			SELECT coalesce(last_confirmed_at, to_timestamp(0)) FROM change_ledger_scope
+			SELECT coalesce(last_confirmed_at, to_timestamp(0)) FROM change_scope
 			 WHERE integration_id = $1`, h.integration).Scan(&confirmed)
 		if err != nil {
 			return false, err
@@ -82,16 +82,16 @@ func (h *harness) awaitConfirmations(t *testing.T, after time.Time, ticks int) {
 	})
 }
 
-func TestProof_AClusterChangeBecomesALedgerRowAndStatusChurnDoesNot(t *testing.T) {
+func TestProof_AClusterChangeBecomesAChangeEventAndStatusChurnDoesNot(t *testing.T) {
 	h := newHarness(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	h.awaitLedgerBaseline(t)
+	h.awaitChangeBaseline(t)
 
 	// STATUS CHURN FIRST. Deleting the settled workload's pod makes the deployment's ready
 	// count fall and recover, pod phases move, and conditions rewrite — everything a
-	// monitoring platform would record and this ledger must not.
+	// monitoring platform would record and this change history must not.
 	pod, err := h.cluster.podFor(ctx, fixtureWorkload)
 	if err != nil {
 		t.Fatalf("finding the settled workload's pod: %v", err)
@@ -109,8 +109,8 @@ func TestProof_AClusterChangeBecomesALedgerRowAndStatusChurnDoesNot(t *testing.T
 	})
 	h.awaitConfirmations(t, churnStarted, 3)
 
-	if rows := h.ledgerChanges(ctx, t); len(rows) != 0 {
-		t.Fatalf("status movement produced %d ledger rows; the watched field set has widened "+
+	if rows := h.changeEvents(ctx, t); len(rows) != 0 {
+		t.Fatalf("status movement produced %d change history rows; the watched field set has widened "+
 			"past declared intent, which is how an investigation product becomes a monitoring "+
 			"platform: %+v", len(rows), rows)
 	}
@@ -132,21 +132,21 @@ func TestProof_AClusterChangeBecomesALedgerRowAndStatusChurnDoesNot(t *testing.T
 		t.Fatalf("changing the image: %v", err)
 	}
 
-	var recorded []ledgerRow
-	h.await(t, "the image change to reach the ledger", 2*time.Minute,
+	var recorded []changeEventRow
+	h.await(t, "the image change to reach the change history", 2*time.Minute,
 		func(ctx context.Context) (bool, error) {
-			recorded = h.ledgerChanges(ctx, t)
+			recorded = h.changeEvents(ctx, t)
 			return len(recorded) > 0, nil
 		})
 
-	var moved *ledgerRow
+	var moved *changeEventRow
 	for i := range recorded {
 		if recorded[i].objectName == fixtureWorkload {
 			moved = &recorded[i]
 		}
 	}
 	if moved == nil {
-		t.Fatalf("the ledger recorded changes but none names %s: %+v", fixtureWorkload, recorded)
+		t.Fatalf("the change history recorded changes but none names %s: %+v", fixtureWorkload, recorded)
 	}
 	if moved.changeKind != 3 {
 		t.Fatalf("an image change is a modification, got change_kind %d", moved.changeKind)
@@ -172,7 +172,7 @@ func TestProof_AClusterChangeBecomesALedgerRowAndStatusChurnDoesNot(t *testing.T
 		lowered := strings.ToLower(field.Field)
 		for _, banned := range []string{"status", "ready", "available", "phase", "condition"} {
 			if strings.Contains(lowered, banned) {
-				t.Fatalf("the ledger itemized %q, which is state rather than declared intent", field.Field)
+				t.Fatalf("the change history itemized %q, which is state rather than declared intent", field.Field)
 			}
 		}
 	}
@@ -182,6 +182,6 @@ func TestProof_AClusterChangeBecomesALedgerRowAndStatusChurnDoesNot(t *testing.T
 }
 
 // pauseImage is a second pinned image the fixture does not run, so an image change has a
-// visible before and after. Whether the cluster can pull it is irrelevant: the ledger
+// visible before and after. Whether the cluster can pull it is irrelevant: the change history
 // records DECLARED intent, and the declaration happened the moment the spec moved.
 const pauseImage = "registry.k8s.io/pause:3.10"

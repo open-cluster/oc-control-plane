@@ -12,7 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/changecontext"
+	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
 func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
@@ -81,7 +81,7 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 		VALUES ($1, $2, $3, 'boundary-alert_event', 1, 'tenant predicate test', '', $4, $5, now())`,
 		alertEventID, first.String(), integrationID, observedAt, incidentID)
 	seed.Queue(`
-		INSERT INTO change_ledger_scope
+		INSERT INTO change_scope
 			(integration_id, org_id, requested_interval_seconds, updated_at)
 		VALUES ($1, $2, 60, now())`, integrationID, first.String())
 	if err = database.pool.SendBatch(ctx, seed).Close(); err != nil {
@@ -129,13 +129,13 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 		}
 	})
 
-	t.Run("ledger scope advancement", func(t *testing.T) {
+	t.Run("change history scope advancement", func(t *testing.T) {
 		transaction, beginErr := database.pool.Begin(ctx)
 		if beginErr != nil {
 			t.Fatal(beginErr)
 		}
-		if advanceErr := advanceChangeLedgerScope(ctx, transaction, second,
-			changeledger.Delta{IntegrationID: integrationID, ObservedAt: observedAt}, 0,
+		if advanceErr := advanceChangeScope(ctx, transaction, second,
+			changes.Delta{IntegrationID: integrationID, ObservedAt: observedAt}, 0,
 		); advanceErr != nil {
 			_ = transaction.Rollback(ctx)
 			t.Fatal(advanceErr)
@@ -145,12 +145,12 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 		}
 		var confirmed *time.Time
 		if queryErr := database.pool.QueryRow(ctx,
-			`SELECT last_confirmed_at FROM change_ledger_scope WHERE integration_id = $1`,
+			`SELECT last_confirmed_at FROM change_scope WHERE integration_id = $1`,
 			integrationID).Scan(&confirmed); queryErr != nil {
 			t.Fatal(queryErr)
 		}
 		if confirmed != nil {
-			t.Fatalf("another Organization advanced the ledger scope to %v", *confirmed)
+			t.Fatalf("another Organization advanced the change history scope to %v", *confirmed)
 		}
 	})
 }

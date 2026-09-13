@@ -444,7 +444,7 @@ func (p *Database) DeleteIntegration(
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationDeleted,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var alertEvents, deliveries, jobs, ledger, investigations int
+			var alertEvents, deliveries, jobs, changeEvents, investigations int
 			err := transaction.QueryRow(ctx, `
 				SELECT (SELECT count(*) FROM alert_event
 				         WHERE org_id = $2 AND integration_id = $1),
@@ -452,19 +452,20 @@ func (p *Database) DeleteIntegration(
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM relay_job
 				         WHERE org_id = $2 AND integration_id = $1),
-				       (SELECT count(*) FROM change_ledger
+				       (SELECT count(*) FROM change_event
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM investigation_tool_run
 				           WHERE org_id = $2 AND integration_id = $1)`,
-				id, organization.String()).Scan(&alertEvents, &deliveries, &jobs, &ledger, &investigations)
+				id, organization.String()).Scan(
+				&alertEvents, &deliveries, &jobs, &changeEvents, &investigations)
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("counting an integration's dependents: %w", err)
 			}
-			if alertEvents+deliveries+jobs+ledger+investigations > 0 {
+			if alertEvents+deliveries+jobs+changeEvents+investigations > 0 {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf(
-					"%w: %d alertEvents, %d deliveries, %d jobs, %d change-ledger entries, %d investigation records",
-					integrations.ErrInUse, alertEvents, deliveries, jobs, ledger, investigations)
+					"%w: %d Alert Events, %d deliveries, %d jobs, %d change events, %d Investigation records",
+					integrations.ErrInUse, alertEvents, deliveries, jobs, changeEvents, investigations)
 			}
 
 			// Removing the Integration retires its reply obligations atomically; a

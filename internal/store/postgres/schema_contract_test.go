@@ -56,7 +56,7 @@ func TestFreshSchemaUsesOneFinalBaseline(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	wantTables := []string{
-		"alert_event", "app_user", "audit_event", "change_ledger", "change_ledger_scope",
+		"alert_event", "app_user", "audit_event", "change_event", "change_scope",
 		"conversation", "conversation_message", "deployment_initialization",
 		"deployment_sign_in_flow", "incident", "integration", "integration_connect_flow",
 		"integration_installation", "investigation", "investigation_event",
@@ -82,6 +82,8 @@ func TestFreshSchemaUsesOneFinalBaseline(t *testing.T) {
 		`SELECT to_regclass('integration_delivery') IS NULL`,
 		`SELECT to_regclass('webhook_work') IS NULL`,
 		`SELECT to_regclass('relay_session_conflict_event') IS NULL`,
+		`SELECT to_regclass('change_ledger') IS NULL`,
+		`SELECT to_regclass('change_ledger_scope') IS NULL`,
 		`SELECT to_regclass('session') IS NOT NULL`,
 		`SELECT to_regclass('webhook_delivery') IS NOT NULL`,
 		`SELECT to_regclass('webhook_job') IS NOT NULL`,

@@ -263,7 +263,7 @@ func limitationSchema() map[string]any {
 }
 
 // renderOrientation writes the held-context message: subject, window, the trigger's own
-// metadata, the connected sources with the tool names each offers, the ledger's workload
+// metadata, the connected sources with the tool names each offers, the workload
 // digest, and — for a Conversation turn — the brief of what has already been said and established.
 func renderOrientation(orientation orientation) string {
 	out := &strings.Builder{}

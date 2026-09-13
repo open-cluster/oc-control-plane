@@ -596,20 +596,6 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/RelayFailureList" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/relays/{registration}/session-conflicts:
-    parameters: *relay-path
-    get:
-      <<: *privileged-read
-      operationId: listRelaySessionConflicts
-      summary: List relay session conflicts
-      tags: [Relays]
-      parameters:
-        - { $ref: "#/components/parameters/Organization" }
-        - { $ref: "#/components/parameters/Cursor" }
-        - { $ref: "#/components/parameters/Limit" }
-      responses:
-        "200": { $ref: "#/components/responses/RelayConflictTrail" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/relays/{registration}/clear-conflict:
     parameters: *relay-path
     post:
@@ -1205,7 +1191,6 @@ components:
     RelayBootstrapToken: { description: Bootstrap token returned once; only its digest is retained., content: { application/json: { schema: { $ref: "#/components/schemas/RelayBootstrapToken" } } } }
     RelayIntegrationList: { description: Integrations served by a Relay., content: { application/json: { schema: { $ref: "#/components/schemas/RelayIntegrationList" } } } }
     RelayFailureList: { description: Recent failed or cancelled Relay work., content: { application/json: { schema: { $ref: "#/components/schemas/RelayFailureList" } } } }
-    RelayConflictTrail: { description: Durable Relay session-conflict trail., content: { application/json: { schema: { $ref: "#/components/schemas/RelayConflictTrail" } } } }
     IncidentList: { description: Incidents., content: { application/json: { schema: { $ref: "#/components/schemas/IncidentList" } } } }
     Incident: { description: Incident., content: { application/json: { schema: { $ref: "#/components/schemas/Incident" } } } }
     AlertEventList: { description: Alert Events in an Incident., content: { application/json: { schema: { $ref: "#/components/schemas/AlertEventList" } } } }
@@ -1674,24 +1659,6 @@ components:
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/RelayFailure" } }
-    RelayConflictTrail:
-      type: object
-      additionalProperties: false
-      required: [events, next]
-      properties:
-        events:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required: [kind, at]
-            properties:
-              kind: { type: string, enum: [detected, withdrawn] }
-              at: { $ref: "#/components/schemas/Timestamp" }
-              distinctHosts: { type: integer, minimum: 2 }
-              multipleHosts: { type: boolean }
-              withdrawnFrom: { type: string, maxLength: 128 }
-        next: { type: string, maxLength: 512 }
     Incident:
       type: object
       additionalProperties: false

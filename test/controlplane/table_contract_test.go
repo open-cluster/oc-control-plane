@@ -28,7 +28,6 @@ func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 		"relays":                {base + "/relays", "items"},
 		"relay integrations":    {base + "/relays/" + registration + "/integrations", "items"},
 		"relay failures":        {base + "/relays/" + registration + "/failures", "items"},
-		"relay conflicts":       {base + "/relays/" + registration + "/session-conflicts", "events"},
 		"incidents":             {base + "/incidents", "items"},
 		"incident alert events": {base + "/incidents/" + incidentID + "/alert-events", "items"},
 		"investigations":        {base + "/investigations", "items"},

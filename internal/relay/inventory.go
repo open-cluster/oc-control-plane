@@ -8,10 +8,10 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/changecontext"
+	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
-// The change ledger's session half: policies out at greeting, deltas in as the third
+// The Changes session half: policies out at greeting, deltas in as the third
 // durable write this stream carries, freshness off the heartbeat. Nothing here is
 // leased or fenced — a delta is at-least-once with a dedup key, so recording is
 // idempotent and an ack is safe the moment the transaction commits.
@@ -115,13 +115,13 @@ func (s *SessionService) recordInventoryFreshness(
 	if len(scopes) == 0 {
 		return
 	}
-	stamps := make([]changeledger.Freshness, 0, len(scopes))
+	stamps := make([]changes.Freshness, 0, len(scopes))
 	for _, scope := range scopes {
 		integrationID, err := uuid.Parse(scope.GetConnectionId())
 		if err != nil {
 			continue
 		}
-		stamp := changeledger.Freshness{
+		stamp := changes.Freshness{
 			IntegrationID:  integrationID,
 			PolicyRevision: int64(scope.GetPolicyRevision()),
 			Faulted:        scope.GetFaulted(),
@@ -144,8 +144,8 @@ func (s *SessionService) recordInventoryFreshness(
 // record and counting the drops.
 func reduceDelta(
 	delta *relayv1.InventoryDelta, integrationID uuid.UUID,
-) (changeledger.Delta, int) {
-	reduced := changeledger.Delta{
+) (changes.Delta, int) {
+	reduced := changes.Delta{
 		IntegrationID:  integrationID,
 		PolicyRevision: int64(delta.GetPolicyRevision()),
 		Baseline:       delta.GetBaseline(),
@@ -163,26 +163,26 @@ func reduceDelta(
 	return reduced, skipped
 }
 
-func reduceChange(change *relayv1.InventoryObjectChange) (changeledger.Change, bool) {
+func reduceChange(change *relayv1.InventoryObjectChange) (changes.Change, bool) {
 	kind, ok := objectKindOf(change.GetKind())
 	if !ok {
-		return changeledger.Change{}, false
+		return changes.Change{}, false
 	}
 	changeKind, ok := changeKindOf(change.GetChange())
 	if !ok {
-		return changeledger.Change{}, false
+		return changes.Change{}, false
 	}
 	// The schema's own bounds, checked here so one out-of-bounds change costs itself and
 	// not the transaction the rest of the delta records in.
 	if !within(change.GetNamespace(), 1, 63) || !within(change.GetName(), 1, 253) ||
 		!within(change.GetUid(), 1, 128) || !within(change.GetObservedRevision(), 0, 128) {
-		return changeledger.Change{}, false
+		return changes.Change{}, false
 	}
-	if (changeKind == changeledger.ChangeDeleted) != (change.GetObservedRevision() == "") {
-		return changeledger.Change{}, false
+	if (changeKind == changes.ChangeDeleted) != (change.GetObservedRevision() == "") {
+		return changes.Change{}, false
 	}
 
-	domain := changeledger.Change{
+	domain := changes.Change{
 		Namespace:        change.GetNamespace(),
 		Kind:             kind,
 		Name:             change.GetName(),
@@ -193,9 +193,9 @@ func reduceChange(change *relayv1.InventoryObjectChange) (changeledger.Change, b
 	for _, field := range change.GetFields() {
 		if !within(field.GetField(), 1, 253) ||
 			!within(field.GetBefore(), 0, 512) || !within(field.GetAfter(), 0, 512) {
-			return changeledger.Change{}, false
+			return changes.Change{}, false
 		}
-		domain.Fields = append(domain.Fields, changeledger.FieldChange{
+		domain.Fields = append(domain.Fields, changes.FieldChange{
 			Field:  field.GetField(),
 			Before: field.GetBefore(),
 			After:  field.GetAfter(),
@@ -204,31 +204,31 @@ func reduceChange(change *relayv1.InventoryObjectChange) (changeledger.Change, b
 	return domain, true
 }
 
-func objectKindOf(kind relayv1.InventoryObjectKind) (changeledger.ObjectKind, bool) {
+func objectKindOf(kind relayv1.InventoryObjectKind) (changes.ObjectKind, bool) {
 	switch kind {
 	case relayv1.InventoryObjectKind_INVENTORY_OBJECT_KIND_DEPLOYMENT:
-		return changeledger.KindDeployment, true
+		return changes.KindDeployment, true
 	case relayv1.InventoryObjectKind_INVENTORY_OBJECT_KIND_STATEFULSET:
-		return changeledger.KindStatefulSet, true
+		return changes.KindStatefulSet, true
 	case relayv1.InventoryObjectKind_INVENTORY_OBJECT_KIND_DAEMONSET:
-		return changeledger.KindDaemonSet, true
+		return changes.KindDaemonSet, true
 	case relayv1.InventoryObjectKind_INVENTORY_OBJECT_KIND_CONFIGMAP:
-		return changeledger.KindConfigMap, true
+		return changes.KindConfigMap, true
 	case relayv1.InventoryObjectKind_INVENTORY_OBJECT_KIND_SECRET:
-		return changeledger.KindSecret, true
+		return changes.KindSecret, true
 	default:
 		return 0, false
 	}
 }
 
-func changeKindOf(kind relayv1.InventoryChangeKind) (changeledger.ChangeKind, bool) {
+func changeKindOf(kind relayv1.InventoryChangeKind) (changes.ChangeKind, bool) {
 	switch kind {
 	case relayv1.InventoryChangeKind_INVENTORY_CHANGE_KIND_CREATED:
-		return changeledger.ChangeCreated, true
+		return changes.ChangeCreated, true
 	case relayv1.InventoryChangeKind_INVENTORY_CHANGE_KIND_MODIFIED:
-		return changeledger.ChangeModified, true
+		return changes.ChangeModified, true
 	case relayv1.InventoryChangeKind_INVENTORY_CHANGE_KIND_DELETED:
-		return changeledger.ChangeDeleted, true
+		return changes.ChangeDeleted, true
 	default:
 		return 0, false
 	}

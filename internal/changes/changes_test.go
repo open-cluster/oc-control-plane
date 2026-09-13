@@ -1,4 +1,4 @@
-package changeledger
+package changes
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 )
 
 func TestSummary_ReadsAsWhatMovedWithBothValues(t *testing.T) {
-	entry := Entry{
+	event := Event{
 		Kind: KindDeployment, Name: "api", Change: ChangeModified,
 		Fields: []FieldChange{{
 			Field:  "spec.template.spec.containers[app].resources.limits.memory",
 			Before: "256Mi", After: "128Mi",
 		}},
 	}
-	summary := entry.Summary()
+	summary := event.Summary()
 	want := "deployment api: spec.template.spec.containers[app].resources.limits.memory 256Mi -> 128Mi"
 	if summary != want {
 		t.Fatalf("a deploy must read as what moved, got %q", summary)
@@ -24,22 +24,22 @@ func TestSummary_ReadsAsWhatMovedWithBothValues(t *testing.T) {
 }
 
 func TestSummary_IsBoundedHoweverManyFieldsMoved(t *testing.T) {
-	entry := Entry{Kind: KindDeployment, Name: "api", Change: ChangeModified}
+	event := Event{Kind: KindDeployment, Name: "api", Change: ChangeModified}
 	for range 10 {
-		entry.Fields = append(entry.Fields, FieldChange{Field: "spec.replicas", Before: "1", After: "2"})
+		event.Fields = append(event.Fields, FieldChange{Field: "spec.replicas", Before: "1", After: "2"})
 	}
-	summary := entry.Summary()
+	summary := event.Summary()
 	if len(summary) > 400 || !containsSuffix(summary, ", and more") {
 		t.Fatalf("a mass change must summarize, not enumerate, got %q", summary)
 	}
 }
 
 func TestSummary_ADeletionAndACreationSayWhatHappened(t *testing.T) {
-	deleted := Entry{Kind: KindSecret, Name: "db-credentials", Change: ChangeDeleted}
+	deleted := Event{Kind: KindSecret, Name: "db-credentials", Change: ChangeDeleted}
 	if deleted.Summary() != "secret db-credentials was deleted" {
 		t.Fatalf("got %q", deleted.Summary())
 	}
-	created := Entry{Kind: KindConfigMap, Name: "settings", Change: ChangeCreated}
+	created := Event{Kind: KindConfigMap, Name: "settings", Change: ChangeCreated}
 	if created.Summary() != "configmap settings was created" {
 		t.Fatalf("got %q", created.Summary())
 	}
@@ -53,7 +53,7 @@ type fakeRetention struct {
 	err     error
 }
 
-func (f *fakeRetention) PruneChangeLedgerBefore(
+func (f *fakeRetention) PruneChangesBefore(
 	_ context.Context, before time.Time, _ int,
 ) (int64, error) {
 	f.calls++

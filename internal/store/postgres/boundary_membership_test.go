@@ -86,11 +86,6 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			return database.IssueOperatorBootstrapToken(ctx, stranger, organization,
 				randomDigest(t), time.Now().Add(time.Hour))
 		},
-		"SessionConflictTrail": func() error {
-			_, err := database.SessionConflictTrail(
-				ctx, stranger, organization, somebody, storage.Page{})
-			return err
-		},
 		"ClearSessionConflict": func() error {
 			_, err := database.ClearSessionConflict(ctx, stranger, organization, somebody)
 			return err

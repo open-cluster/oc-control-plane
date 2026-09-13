@@ -902,29 +902,6 @@ paths:
       summary: List relay failures
       tags:
         - Relays
-  /api/v1/relays/{registration}/session-conflicts:
-    parameters:
-      - $ref: '#/components/parameters/RelayRegistrationID'
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-      responses:
-        '200':
-          $ref: '#/components/responses/RelayConflictTrail'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: listRelaySessionConflicts
-      summary: List relay session conflicts
-      tags:
-        - Relays
   /api/v1/relays/{registration}/clear-conflict:
     parameters:
       - $ref: '#/components/parameters/RelayRegistrationID'
@@ -2039,12 +2016,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RelayFailureList'
-    RelayConflictTrail:
-      description: Durable Relay session-conflict trail.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/RelayConflictTrail'
     IncidentList:
       description: Incidents.
       content:
@@ -3441,40 +3412,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RelayFailure'
-    RelayConflictTrail:
-      type: object
-      additionalProperties: false
-      required:
-        - events
-        - next
-      properties:
-        events:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - kind
-              - at
-            properties:
-              kind:
-                type: string
-                enum:
-                  - detected
-                  - withdrawn
-              at:
-                $ref: '#/components/schemas/Timestamp'
-              distinctHosts:
-                type: integer
-                minimum: 2
-              multipleHosts:
-                type: boolean
-              withdrawnFrom:
-                type: string
-                maxLength: 128
-        next:
-          type: string
-          maxLength: 512
     Incident:
       type: object
       additionalProperties: false

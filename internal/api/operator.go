@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
@@ -93,11 +92,8 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.relayIntegrations)),
 		authz.Privileged(http.MethodGet, relays+"/{registration}/failures", authz.RelayRead,
 			http.HandlerFunc(h.relayFailures)),
-		authz.Privileged(http.MethodGet, relays+"/{registration}/session-conflicts",
-			authz.RelayRead, http.HandlerFunc(h.conflictTrail)),
-		// Withdrawing the mark destroys a credential-theft finding and nothing else in the
-		// product records that it existed, so it is a permission of its own rather than part of
-		// reading the roster — and only the Admin holds it.
+		// Withdrawing the mark clears an active credential-theft finding, so it is a permission
+		// of its own rather than part of reading the roster — and only the Admin holds it.
 		authz.Privileged(http.MethodPost, relays+"/{registration}/clear-conflict",
 			authz.RelayConflictClear, http.HandlerFunc(h.clearConflict)),
 		// Minting a credential that enrols a new Relay is not part of reading the fleet, so it
@@ -206,42 +202,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	}
 }
 
-func (h Handlers) conflictTrail(writer http.ResponseWriter, request *http.Request) {
-	query, ok := h.query(writer, request, listing.Spec{
-		DefaultSort: listing.Sort{Field: "sequence", Descending: true},
-	})
-	if !ok {
-		return
-	}
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, registration, ok := h.relay(writer, request)
-	if !ok {
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
-	defer cancel()
-
-	trail, err := h.Database.SessionConflictTrail(ctx, principal, organization, registration,
-		storage.Page{Limit: query.Limit, After: query.Cursor})
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	h.Logger.InfoContext(ctx, "operator read a session conflict trail",
-		slog.String("organization", organization.String()),
-		slog.String("registration_id", registration.String()),
-		slog.String("caller", h.callerName(request)))
-
-	events := make([]conflictEventView, 0, len(trail.Events))
-	for _, event := range trail.Events {
-		events = append(events, eventViewOf(event))
-	}
-	writeJSON(writer, http.StatusOK, trailView{Events: events, Next: trail.Next})
-}
-
 // clearConflict withdraws the mark on a contested relay identity.
 func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
@@ -266,8 +226,8 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "relay not found"})
 		return
 	case storage.WithdrawalNothingMarked:
-		// The state asked for already holds. Nothing was written to the trail, because an act
-		// that changed nothing is not part of the history of what happened.
+		// The state asked for already holds. Nothing is written to the audit record because an
+		// act that changed nothing is not part of the history of what happened.
 		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
