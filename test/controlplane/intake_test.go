@@ -197,7 +197,7 @@ func (p *intakePlane) truncatedCount(t *testing.T) int {
 	var total int
 	err = connection.QueryRow(ctx,
 		`SELECT coalesce(sum(truncated), 0) FROM webhook_delivery
-		  WHERE org_id = $1 AND outcome = 1`,
+		  WHERE org_id = $1`,
 		intakeOrganization).Scan(&total)
 	if err != nil {
 		t.Fatalf("reading truncation counts: %v", err)
@@ -374,6 +374,13 @@ func TestGenericWebhookLifecycleIsCanonicalIdempotentAndDoesNotInventIncidents(t
 		 WHERE integration_id = $1 AND source_key = 'generic-unmatched'`, plane.integration).
 		Scan(&unmatchedIncident); err != nil || unmatchedIncident != nil {
 		t.Fatalf("unmatched resolution incident = %v, error=%v", unmatchedIncident, err)
+	}
+	var deliveries int
+	if err = connection.QueryRow(context.Background(), `
+		SELECT count(*) FROM webhook_delivery WHERE integration_id = $1`, plane.integration).
+		Scan(&deliveries); err != nil || deliveries != 3 {
+		t.Fatalf("accepted Generic Webhook deliveries = %d, error=%v; duplicates and conflicts must add none",
+			deliveries, err)
 	}
 }
 

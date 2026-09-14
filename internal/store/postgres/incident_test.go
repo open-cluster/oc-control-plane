@@ -149,8 +149,8 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		digest := make([]byte, 32)
 		digest[0] = body
 		return storage.Delivery{
-			Integration: integration,
-			BodyDigest:  digest,
+			Integration:   integration,
+			ContentDigest: digest,
 			AlertEvents: []storage.AlertEvent{{
 				SourceKey:   fingerprint,
 				GroupingKey: key,

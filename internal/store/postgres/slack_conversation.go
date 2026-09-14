@@ -34,10 +34,10 @@ type SlackMessage struct {
 	// Integration is the installation the event resolved through, and the only authority
 	// for the tenant everything in it belongs to.
 	Integration uuid.UUID
-	// BodyDigest is SHA-256 over the raw body as received. It is the idempotence identity,
-	// and nothing else from the payload is stored on the delivery.
-	BodyDigest []byte
-	RequestID  string
+	// ContentDigest is SHA-256 over the raw body as received. Slack exposes no separate
+	// delivery identity, so its accepted content fingerprint supplies that identity.
+	ContentDigest []byte
+	RequestID     string
 	// Channel and Thread are Slack's identity for where this was said. Thread is the
 	// message's own timestamp when it started no thread, which is the thread OpenCluster's
 	// reply then creates.
@@ -92,12 +92,12 @@ func (p *Database) RecordSlackMessage(
 	deliveryID := uuid.New()
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_delivery
-			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity,
-			 lifecycle_phase, request_id, alert_event_count)
-		VALUES ($1, $2, $3, 1, $4, encode($4, 'hex'), '', $5, 0)
+			(delivery_id, org_id, integration_id, content_digest, provider_identity,
+			 lifecycle_phase, request_id)
+		VALUES ($1, $2, $3, $4, encode($4, 'hex'), '', $5)
 		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
-		WHERE outcome = 1 DO NOTHING`,
-		deliveryID, organization.String(), said.Integration, said.BodyDigest, said.RequestID)
+		DO NOTHING`,
+		deliveryID, organization.String(), said.Integration, said.ContentDigest, said.RequestID)
 	if err != nil {
 		return SlackMessageOutcome{}, fmt.Errorf("recording a slack delivery: %w", err)
 	}

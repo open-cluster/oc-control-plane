@@ -65,11 +65,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"TypeGitHub", int(integrations.TypeGitHub), 4},
 		{"TypeGenericWebhook", int(integrations.TypeGenericWebhook), 5},
 
-		// Delivery dispositions, and the 1 the delivery health queries filter on.
-		{"DeliveryAccepted", int(storage.DeliveryAccepted), 1},
-		{"DeliveryDuplicate", int(storage.DeliveryDuplicate), 2},
-		{"DeliveryRejected", int(storage.DeliveryRejected), 3},
-
 		// An incident's vocabulary is the capability's rather than persistence's, because
 		// the capability owns what it defines. What is frozen is the same thing either
 		// way: the integers the SQL writes as bare literals.
@@ -175,11 +170,7 @@ var (
 		int(storage.WebhookJobComplete),
 	}
 	alertEventStatusValues = []int{int(storage.AlertEventFiring), int(storage.AlertEventResolved)}
-	deliveryOutcomeValues  = []int{
-		int(storage.DeliveryAccepted), int(storage.DeliveryDuplicate),
-		int(storage.DeliveryRejected),
-	}
-	incidentStatusValues = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	incidentStatusValues   = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
 	// A Slack delivery's own lifecycle, which is NOT an investigation's: it is pending,
 	// delivering, delivered or failed, and a delivery that failed says nothing about the
 	// investigation behind it.
@@ -220,21 +211,18 @@ var enumColumns = map[string]map[string][]int{
 	"fleet.go":       {"status": jobStatusValues},
 	"webhook_job.go": {"status": webhookJobStatusValues},
 	"webhook_delivery.go": {
-		"status": webhookJobStatusValues, "outcome": deliveryOutcomeValues,
+		"status": webhookJobStatusValues,
 	},
-	// The delivery path: the upsert guard compares a SIGNAL's status, and the idempotence
-	// key's partial-index predicate compares a delivery's outcome.
-	"alert_event.go": {"status": alertEventStatusValues, "outcome": deliveryOutcomeValues},
+	// The delivery path: the upsert guard compares an Alert Event's status.
+	"alert_event.go": {"status": alertEventStatusValues},
 	// Grouping compares an EPISODE's status — an open incident is the one a new AlertEvent joins —
 	// and recomputing one counts the alertEvents still firing, which shares the value 1.
 	"incident.go": {"status": append(append([]int(nil), incidentStatusValues...),
 		alertEventStatusValues...)},
-	// The last-accepted-delivery health read filters on the accepted outcome.
-	"integration.go": {"outcome": deliveryOutcomeValues},
 	// An inbound Slack message claims its delivery through the same idempotence key every
-	// other delivery uses, so it writes and compares the accepted outcome.
+	// other delivery uses.
 	"slack_conversation.go": {
-		"outcome": deliveryOutcomeValues, "status": webhookJobStatusValues,
+		"status": webhookJobStatusValues,
 	},
 	// The outbound half: claiming compares a delivery's own lifecycle state.
 	"slack_reply.go": {"status": slackReplyValues},

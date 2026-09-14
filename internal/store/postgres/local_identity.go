@@ -74,17 +74,16 @@ func (p *Database) BootstrapLocalUser(
 	issued.UserID = user.ID
 	if _, err = transaction.Exec(ctx, `
 		INSERT INTO session (session_id, credential_digest, user_id, org_id,
-		                              issued_at, expires_at, last_seen_at, user_agent, address)
-		VALUES ($1, $2, $3, NULL, $4, $5, $4, $6, $7)`,
+		                              issued_at, expires_at, last_seen_at, remote_addr)
+		VALUES ($1, $2, $3, NULL, $4, $5, $4, $6)`,
 		issued.ID, digest, issued.UserID, issued.IssuedAt, issued.ExpiresAt,
-		truncateTo(issued.UserAgent, session.MaxUserAgentLength),
-		truncateTo(issued.Address, session.MaxAddressLength)); err != nil {
+		truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength)); err != nil {
 		return User{}, fmt.Errorf("issuing the bootstrap session: %w", err)
 	}
 	if err = writeEvent(ctx, transaction, audit.Event{
 		Actor: audit.System("deployment bootstrap"), Action: audit.ActionLocalBootstrapCompleted,
 		Target: audit.Target{Kind: audit.TargetUser, ID: user.ID.String()}, Outcome: audit.OutcomeAllowed,
-		SourceAddress: issued.Address,
+		SourceAddress: issued.RemoteAddr,
 	}); err != nil {
 		return User{}, err
 	}

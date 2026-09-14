@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -195,18 +194,14 @@ func TestAlertmanagerGate_ARetriedDeliveryCreatesNoSecondIncident(t *testing.T) 
 		t.Errorf("one alert delivered three times produced %d incidents, want 1: %+v",
 			len(list.Items), list.Items)
 	}
-	if accepted := gate.countDeliveries(t, storage.DeliveryAccepted, ""); accepted != 1 {
-		t.Errorf("%d deliveries were accepted, want 1", accepted)
-	}
-	if duplicates := gate.countDeliveries(t, storage.DeliveryDuplicate, ""); duplicates != 2 {
-		t.Errorf("%d deliveries were recorded as duplicates, want 2 — a retry that is not "+
-			"recorded as a retry looks like a healthy source going quiet", duplicates)
+	if accepted := gate.countDeliveries(t); accepted != 1 {
+		t.Errorf("%d deliveries were persisted, want the one accepted delivery", accepted)
 	}
 }
 
-// Being turned away must never be indistinguishable from going quiet. Each refusal is its own
-// recorded outcome, asserted against the body a real Alertmanager produced.
-func TestAlertmanagerGate_ARefusedDeliveryIsRecordedRatherThanLost(t *testing.T) {
+// Refusals remain observable without becoming Webhook Deliveries. This is asserted against the
+// body a real Alertmanager produced rather than a hand-built approximation.
+func TestAlertmanagerGate_ARefusedDeliveryIsNotPersisted(t *testing.T) {
 	gate := startAlertmanagerGate(t)
 	const accepted = "GateAcceptedAlert"
 	const afterDisabling = "GateAlertAfterDisabling"
@@ -243,15 +238,7 @@ func TestAlertmanagerGate_ARefusedDeliveryIsRecordedRatherThanLost(t *testing.T)
 		t.Errorf("a disabled integration recorded %d alertEvents, want 0", len(alertEvents))
 	}
 
-	// Three refusals, each saying why, next to the one acceptance.
-	if count := gate.countDeliveries(t, storage.DeliveryAccepted, ""); count != 1 {
-		t.Errorf("%d deliveries were accepted, want 1", count)
-	}
-	if count := gate.countDeliveries(t, storage.DeliveryRejected, storage.RefusedUnauthenticated); count != 2 {
-		t.Errorf("%d deliveries were recorded as unauthenticated, want 2 (a wrong secret "+
-			"and a disabled integration)", count)
-	}
-	if count := gate.countDeliveries(t, storage.DeliveryRejected, storage.RefusedMalformed); count != 1 {
-		t.Errorf("%d deliveries were recorded as malformed, want 1", count)
+	if count := gate.countDeliveries(t); count != 1 {
+		t.Errorf("%d deliveries were persisted, want only the accepted delivery", count)
 	}
 }

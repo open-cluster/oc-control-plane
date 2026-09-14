@@ -224,14 +224,14 @@ func (h *surface) acceptSlackMessage(
 ) {
 	digest := sha256.Sum256(body)
 	outcome, err := h.Database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
-		Integration: integration,
-		BodyDigest:  digest[:],
-		RequestID:   requestID,
-		Channel:     envelope.Event.Channel,
-		Thread:      envelope.Thread(),
-		MessageID:   envelope.Event.TS,
-		Subject:     slack.Subject(envelope.Event.Text),
-		ActorID:     conversation.Bounded(envelope.Event.User, conversation.MaxActorIDLength),
+		Integration:   integration,
+		ContentDigest: digest[:],
+		RequestID:     requestID,
+		Channel:       envelope.Event.Channel,
+		Thread:        envelope.Thread(),
+		MessageID:     envelope.Event.TS,
+		Subject:       slack.Subject(envelope.Event.Text),
+		ActorID:       conversation.Bounded(envelope.Event.User, conversation.MaxActorIDLength),
 		// The display name is the Slack user id until a name is resolved. Resolving it
 		// needs a users.info read this handler must not make: it would put a vendor call
 		// on the acknowledgement path, which is the one thing this endpoint may not do.
@@ -252,10 +252,6 @@ func (h *surface) acceptSlackMessage(
 		// retrying because it never saw our answer — which has done nothing wrong and whose
 		// answer must let it stop — and a body replayed by somebody who captured it, which
 		// is applied to nothing for the same reason.
-		//
-		// Recorded in the delivery history, so a source that is delivering and being turned
-		// away stays distinguishable from one that has gone quiet.
-		h.recordAttempt(ctx, organization, integration, storage.DeliveryDuplicate)
 		h.counters.countSlackEvent(ctx, slackDuplicate)
 		writeStatus(writer, http.StatusOK, "already accepted")
 		return

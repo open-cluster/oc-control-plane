@@ -71,7 +71,7 @@ func (h Handlers) prepareSession(
 	}
 	now := time.Now().UTC()
 	issued := session.Session{ID: uuid.New(), UserID: userID, Organization: organization.String(),
-		IssuedAt: now, ExpiresAt: now.Add(lifetime), UserAgent: request.UserAgent(), Address: request.RemoteAddr}
+		IssuedAt: now, ExpiresAt: now.Add(lifetime), RemoteAddr: request.RemoteAddr}
 	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
 		"memberships": membershipCount, "requestId": correlation.From(request.Context())}
 	return token, digest, issued, detail, nil

@@ -60,7 +60,7 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 	if err = h.truth.pool.QueryRow(ctx, `
 		SELECT delivery_id FROM webhook_delivery
 		 WHERE integration_id = $1 AND provider_identity = 'restart-42'
-		   AND lifecycle_phase = 'firing' AND outcome = 1`, integrationID).Scan(&deliveryID); err != nil {
+		   AND lifecycle_phase = 'firing'`, integrationID).Scan(&deliveryID); err != nil {
 		t.Fatalf("202 returned before durable acceptance: %v", err)
 	}
 

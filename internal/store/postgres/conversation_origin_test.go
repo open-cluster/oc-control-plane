@@ -19,7 +19,7 @@ func TestProviderConversationRequiresAnIntactOriginBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	chat, err := database.RecordSlackMessage(ctx, org, storage.SlackMessage{
-		Integration: integration.ID, BodyDigest: randomDigest(t), Channel: "CORIGIN", Thread: "1.0",
+		Integration: integration.ID, ContentDigest: randomDigest(t), Channel: "CORIGIN", Thread: "1.0",
 		Subject: "origin", ActorID: "UORIGIN", Text: "question",
 	})
 	if err != nil {

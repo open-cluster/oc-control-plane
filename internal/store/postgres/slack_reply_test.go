@@ -39,14 +39,14 @@ func aSlackTurn(
 	}
 
 	outcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
-		Integration:  integration.ID,
-		BodyDigest:   randomDigest(t),
-		Channel:      channel,
-		Thread:       thread,
-		Subject:      "why is checkout failing?",
-		ActorID:      "U9SRE",
-		ActorDisplay: "U9SRE",
-		Text:         "why is checkout failing?",
+		Integration:   integration.ID,
+		ContentDigest: randomDigest(t),
+		Channel:       channel,
+		Thread:        thread,
+		Subject:       "why is checkout failing?",
+		ActorID:       "U9SRE",
+		ActorDisplay:  "U9SRE",
+		Text:          "why is checkout failing?",
 	})
 	if err != nil {
 		t.Fatalf("recording a slack message: %v", err)
@@ -157,7 +157,7 @@ func TestSlackConversationRetainsItsExactOriginatingThread(t *testing.T) {
 	}
 	outcome, err := database.RecordSlackMessage(context.Background(), organization,
 		storage.SlackMessage{
-			Integration: integration.ID, BodyDigest: randomDigest(t),
+			Integration: integration.ID, ContentDigest: randomDigest(t),
 			Channel: "C-INCIDENT", Thread: "1710000000.1", MessageID: "1710000000.2",
 			Subject: "checkout latency", ActorID: "U-SRE", ActorDisplay: "On-call",
 			Text: "why is checkout slow?",
@@ -187,13 +187,13 @@ func TestSlackMessageCannotBindAnotherOrganizationsIntegration(t *testing.T) {
 	}
 
 	_, err = database.RecordSlackMessage(context.Background(), second, storage.SlackMessage{
-		Integration: integration.ID,
-		BodyDigest:  randomDigest(t),
-		Channel:     "C-SECOND",
-		Thread:      "1700000002.1",
-		Subject:     "must not cross the organization boundary",
-		ActorID:     "U-SECOND",
-		Text:        "investigate",
+		Integration:   integration.ID,
+		ContentDigest: randomDigest(t),
+		Channel:       "C-SECOND",
+		Thread:        "1700000002.1",
+		Subject:       "must not cross the organization boundary",
+		ActorID:       "U-SECOND",
+		Text:          "investigate",
 	})
 	if err == nil {
 		t.Fatal("another Organization's Integration was accepted")
@@ -396,7 +396,7 @@ func TestTheThreadBindingIsReadableForDelivery(t *testing.T) {
 	}
 	outcome, err := database.RecordSlackMessage(context.Background(), organization,
 		storage.SlackMessage{
-			Integration: integration.ID, BodyDigest: randomDigest(t),
+			Integration: integration.ID, ContentDigest: randomDigest(t),
 			Channel: "C0INCIDENTS", Thread: "1700000001.1",
 			Subject: "why?", ActorID: "U9SRE", ActorDisplay: "U9SRE", Text: "why?",
 		})

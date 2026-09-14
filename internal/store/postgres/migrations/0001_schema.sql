@@ -228,23 +228,14 @@ CREATE TABLE webhook_delivery (
     delivery_id uuid NOT NULL,
     org_id uuid NOT NULL,
     integration_id uuid NOT NULL,
-    outcome smallint NOT NULL, -- 1=accepted, 2=duplicate, 3=rejected
-    body_digest bytea,
-    reason text DEFAULT '' NOT NULL,
-    alert_event_count integer DEFAULT 0 NOT NULL,
+    content_digest bytea NOT NULL,
     truncated integer DEFAULT 0 NOT NULL,
     received_at timestamptz DEFAULT now() NOT NULL,
-    provider_identity text,
-    lifecycle_phase text,
+    provider_identity text NOT NULL,
+    lifecycle_phase text DEFAULT '' NOT NULL,
     request_id text DEFAULT '' NOT NULL,
-    CONSTRAINT webhook_delivery_accepted_carries_a_digest CHECK ((outcome <> 1) OR (body_digest IS NOT NULL)),
-    CONSTRAINT webhook_delivery_accepted_carries_provider_identity CHECK ((outcome <> 1) OR ((provider_identity IS NOT NULL) AND (lifecycle_phase IS NOT NULL))),
-    CONSTRAINT webhook_delivery_alert_event_count_check CHECK (alert_event_count >= 0),
-    CONSTRAINT webhook_delivery_body_digest_check CHECK ((body_digest IS NULL) OR (length(body_digest) = 32)),
-    CONSTRAINT webhook_delivery_lifecycle_phase_check CHECK ((lifecycle_phase IS NULL) OR (lifecycle_phase = ANY (ARRAY['', 'firing', 'resolved']))),
-    CONSTRAINT webhook_delivery_nonaccepted_has_no_provider_identity CHECK ((outcome = 1) OR ((provider_identity IS NULL) AND (lifecycle_phase IS NULL))),
-    CONSTRAINT webhook_delivery_outcome_check CHECK (outcome = ANY (ARRAY[1, 2, 3])),
-    CONSTRAINT webhook_delivery_states_a_reason_exactly_when_it_refused CHECK ((outcome = 3) = (reason <> '')),
+    CONSTRAINT webhook_delivery_content_digest_check CHECK (length(content_digest) = 32),
+    CONSTRAINT webhook_delivery_lifecycle_phase_check CHECK (lifecycle_phase = ANY (ARRAY['', 'firing', 'resolved'])),
     CONSTRAINT webhook_delivery_truncated_check CHECK (truncated >= 0),
     CONSTRAINT webhook_delivery_identity_is_org_scoped UNIQUE (org_id, delivery_id),
     CONSTRAINT webhook_delivery_pkey PRIMARY KEY (delivery_id)
@@ -362,9 +353,7 @@ CREATE TABLE session (
     expires_at timestamptz NOT NULL,
     last_seen_at timestamptz DEFAULT now() NOT NULL,
     revoked_at timestamptz,
-    revoked_by text DEFAULT '' NOT NULL,
-    user_agent text DEFAULT '' NOT NULL,
-    address text DEFAULT '' NOT NULL,
+    remote_addr text DEFAULT '' NOT NULL,
     CONSTRAINT session_credential_digest_check CHECK (length(credential_digest) = 32),
     CONSTRAINT session_expires_after_it_was_issued CHECK (expires_at > issued_at),
     CONSTRAINT session_credential_digest_is_unique UNIQUE (credential_digest),
@@ -569,9 +558,9 @@ CREATE INDEX incident_org_idx ON incident (org_id, last_seen_at DESC, incident_i
 
 CREATE INDEX integration_connect_flow_expiry_idx ON integration_connect_flow (expires_at);
 
-CREATE INDEX webhook_delivery_accepted_idx ON webhook_delivery (integration_id, received_at DESC) WHERE (outcome = 1);
+CREATE INDEX webhook_delivery_received_idx ON webhook_delivery (org_id, received_at DESC, delivery_id DESC);
 
-CREATE UNIQUE INDEX webhook_delivery_accepted_provider_identity_is_unique ON webhook_delivery (integration_id, provider_identity, lifecycle_phase) WHERE (outcome = 1);
+CREATE UNIQUE INDEX webhook_delivery_provider_identity_is_unique ON webhook_delivery (integration_id, provider_identity, lifecycle_phase);
 
 CREATE INDEX webhook_delivery_integration_idx ON webhook_delivery (org_id, integration_id, received_at DESC, delivery_id DESC);
 

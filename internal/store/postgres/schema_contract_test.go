@@ -77,7 +77,7 @@ func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 2 FROM schema_migration`,
+		`SELECT count(*) = 3 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -165,8 +165,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 2 {
-		t.Fatalf("concurrent startup applied %d migrations, want two", applied)
+	if applied != 3 {
+		t.Fatalf("concurrent startup applied %d migrations, want three", applied)
 	}
 }
 
@@ -243,7 +243,9 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
-	if err != nil || !reflect.DeepEqual(applied, []string{"0002_simplify_integrations"}) {
+	if err != nil || !reflect.DeepEqual(applied, []string{
+		"0002_simplify_integrations", "0003_simplify_deliveries_and_sessions",
+	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
@@ -290,5 +292,106 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 	_, err = tool.Run(ctx, integrations.ToolRequest{Integration: loaded})
 	if !errors.Is(err, githubintegration.ErrNoApp) {
 		t.Fatalf("migrated GitHub identity did not reach Tool execution: %v", err)
+	}
+}
+
+func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+
+	_, err = connection.Exec(ctx, `
+		CREATE TABLE schema_migration (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES ('0001_schema'), ('0002_simplify_integrations');
+		CREATE TABLE webhook_delivery (
+			delivery_id uuid PRIMARY KEY, org_id uuid NOT NULL, integration_id uuid NOT NULL,
+			outcome smallint NOT NULL, body_digest bytea, reason text NOT NULL DEFAULT '',
+			alert_event_count integer NOT NULL DEFAULT 0, truncated integer NOT NULL DEFAULT 0,
+			received_at timestamptz NOT NULL DEFAULT now(), provider_identity text,
+			lifecycle_phase text, request_id text NOT NULL DEFAULT '',
+			CONSTRAINT webhook_delivery_identity_is_org_scoped UNIQUE (org_id, delivery_id)
+		);
+		CREATE UNIQUE INDEX webhook_delivery_accepted_provider_identity_is_unique
+			ON webhook_delivery (integration_id, provider_identity, lifecycle_phase) WHERE outcome = 1;
+		CREATE INDEX webhook_delivery_accepted_idx
+			ON webhook_delivery (integration_id, received_at DESC) WHERE outcome = 1;
+		CREATE INDEX webhook_delivery_integration_idx
+			ON webhook_delivery (org_id, integration_id, received_at DESC, delivery_id DESC);
+		CREATE TABLE webhook_job (
+			job_id uuid PRIMARY KEY, org_id uuid NOT NULL, delivery_id uuid NOT NULL,
+			CONSTRAINT webhook_job_delivery_is_in_the_same_org FOREIGN KEY (org_id, delivery_id)
+				REFERENCES webhook_delivery(org_id, delivery_id)
+		);
+		CREATE TABLE session (
+			session_id uuid PRIMARY KEY, revoked_by text NOT NULL DEFAULT '',
+			user_agent text NOT NULL DEFAULT '', address text NOT NULL DEFAULT ''
+		);
+		INSERT INTO webhook_delivery
+			(delivery_id, org_id, integration_id, outcome, body_digest, reason,
+			 alert_event_count, truncated, provider_identity, lifecycle_phase, request_id)
+		VALUES
+			('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001',
+			 '10000000-0000-0000-0000-000000000001', 1, decode(repeat('11',32),'hex'), '',
+			 1, 7, 'event-1', 'firing', 'request-1'),
+			('30000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000001',
+			 '10000000-0000-0000-0000-000000000001', 2, NULL, '', 0, 0, NULL, NULL, ''),
+			('30000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001',
+			 '10000000-0000-0000-0000-000000000001', 3, NULL, 'malformed', 0, 0, NULL, NULL, '');
+		INSERT INTO webhook_job(job_id, org_id, delivery_id)
+		VALUES ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001',
+			'30000000-0000-0000-0000-000000000001');
+		INSERT INTO session(session_id, revoked_by, user_agent, address)
+		VALUES ('50000000-0000-0000-0000-000000000001', 'actor', 'browser', '127.0.0.1:8080');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{"0003_simplify_deliveries_and_sessions"}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+
+	var deliveries, jobs, truncated int
+	var deliveryID, digest string
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM webhook_delivery`).Scan(&deliveries); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT delivery_id::text, encode(content_digest, 'hex'), truncated
+		FROM webhook_delivery`).Scan(&deliveryID, &digest, &truncated); err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 1 || deliveryID != "30000000-0000-0000-0000-000000000001" ||
+		digest != "1111111111111111111111111111111111111111111111111111111111111111" || truncated != 7 {
+		t.Fatalf("accepted delivery after migration = %d/%s/%s/%d", deliveries, deliveryID, digest, truncated)
+	}
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM webhook_job`).Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatalf("dependent Webhook Jobs = %d, error = %v", jobs, err)
+	}
+
+	var contracted bool
+	if err = connection.QueryRow(ctx, `SELECT
+		NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='webhook_delivery'
+			AND column_name IN ('outcome','reason','body_digest','alert_event_count'))
+		AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='webhook_delivery'
+			AND column_name='content_digest' AND is_nullable='NO')
+		AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session'
+			AND column_name IN ('revoked_by','user_agent','address'))
+		AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session'
+			AND column_name='remote_addr')`).Scan(&contracted); err != nil || !contracted {
+		t.Fatalf("cleanup schema contract = %t, error = %v", contracted, err)
+	}
+	if _, err = connection.Exec(ctx, `UPDATE webhook_delivery SET content_digest = decode('01','hex')`); err == nil {
+		t.Fatal("migrated schema accepted a content digest that is not SHA-256 sized")
+	}
+	if _, err = connection.Exec(ctx, `INSERT INTO webhook_delivery
+		(delivery_id,org_id,integration_id,content_digest,truncated,provider_identity,lifecycle_phase)
+		VALUES ('30000000-0000-0000-0000-000000000004','20000000-0000-0000-0000-000000000001',
+		'10000000-0000-0000-0000-000000000001',decode(repeat('22',32),'hex'),0,'event-1','firing')`); err == nil {
+		t.Fatal("migrated schema accepted a reused provider identity and lifecycle phase")
 	}
 }
