@@ -128,9 +128,6 @@ func httpRoutes(process assembled) (http.Handler, error) {
 	}
 	mux.Handle("/api/", operatorRoutes)
 
-	// ---- Info ----
-	//Retired pre-release route families. May be removed later.
-	// ---- Info ----
 	mux.HandleFunc("/operator/", http.NotFound)
 	mux.HandleFunc("/operator", http.NotFound)
 	mux.HandleFunc("/intake/", http.NotFound)
