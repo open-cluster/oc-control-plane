@@ -26,7 +26,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -513,15 +512,8 @@ func (g *alertmanagerGate) alertEventsNamed(t *testing.T, alertname string) []re
 	return recorded
 }
 
-// countDeliveries reports how many delivery attempts this Integration recorded with one
-// disposition and reason. This record is what makes "no alerts arrived" distinguishable from
-// "alerts were turned away", so the gate counts each kind rather than counting attempts.
-//
-// The disposition and the refusal reasons are storage's own, never a second copy: the
-// persisted values are frozen there, and a copy here would drift without anything noticing.
-func (g *alertmanagerGate) countDeliveries(
-	t *testing.T, disposition storage.DeliveryDisposition, reason string,
-) int {
+// countDeliveries reports how many accepted deliveries this Integration recorded.
+func (g *alertmanagerGate) countDeliveries(t *testing.T) int {
 	t.Helper()
 	ctx := context.Background()
 
@@ -534,8 +526,7 @@ func (g *alertmanagerGate) countDeliveries(
 	var counted int
 	err = connection.QueryRow(ctx, `
 		SELECT count(*) FROM webhook_delivery
-		 WHERE integration_id = $1 AND outcome = $2 AND reason = $3`,
-		g.integration, int16(disposition), reason).Scan(&counted)
+		 WHERE integration_id = $1`, g.integration).Scan(&counted)
 	if err != nil {
 		t.Fatalf("counting deliveries: %v", err)
 	}

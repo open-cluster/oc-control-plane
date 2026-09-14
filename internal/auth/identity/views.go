@@ -147,8 +147,7 @@ type liveSessionView struct {
 	IssuedAt   time.Time `json:"issuedAt"`
 	ExpiresAt  time.Time `json:"expiresAt"`
 	LastSeenAt time.Time `json:"lastSeenAt"`
-	UserAgent  string    `json:"userAgent"`
-	Address    string    `json:"address"`
+	RemoteAddr string    `json:"remoteAddr"`
 }
 
 type liveSessionListView struct {
@@ -163,8 +162,7 @@ func liveSessionViewOf(live session.Session) liveSessionView {
 		IssuedAt:   live.IssuedAt,
 		ExpiresAt:  live.ExpiresAt,
 		LastSeenAt: live.LastSeenAt,
-		UserAgent:  live.UserAgent,
-		Address:    live.Address,
+		RemoteAddr: live.RemoteAddr,
 	}
 }
 

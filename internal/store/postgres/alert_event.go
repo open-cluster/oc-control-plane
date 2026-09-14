@@ -61,7 +61,7 @@ type Delivery struct {
 	ProviderIdentity string
 	LifecyclePhase   string
 	RequestID        string
-	BodyDigest       []byte
+	ContentDigest    []byte
 	// Truncated is how many alerts the source says it left out. Non-zero means this record
 	// of the moment is incomplete because the sender chose not to send the rest.
 	Truncated   int
@@ -99,59 +99,12 @@ type DeliveryOutcome struct {
 	IncidentsJoined int
 }
 
-// DeliveryDisposition is what happened to one delivery attempt, as the history records it.
-type DeliveryDisposition int16
-
-const (
-	DeliveryAccepted DeliveryDisposition = iota + 1
-	DeliveryDuplicate
-	DeliveryRejected
-)
-
-// Why a delivery was rejected, in the vocabulary the history stores.
-const (
-	RefusedUnauthenticated = "unauthenticated"
-	RefusedMalformed       = "malformed"
-	RefusedOversized       = "oversized"
-	RefusedIncomplete      = "incomplete"
-)
-
-// DeliveryAttempt is one entry in an Integration's delivery history: a duplicate or a
-// rejection. An ACCEPTED delivery needs no attempt record — the accepting transaction
-// writes its own row, and that row is also the idempotence key.
-type DeliveryAttempt struct {
-	Integration uuid.UUID
-	Disposition DeliveryDisposition
-	// Reason says why, for a rejection, and is empty otherwise.
-	Reason string
-}
-
-// RecordDeliveryAttempt puts a duplicate or a rejection in the history, so a source that
-// is delivering and being turned away is distinguishable from a source that has gone
-// quiet. Those two call for opposite actions at three in the morning.
-func (p *Database) RecordDeliveryAttempt(
-	ctx context.Context, organization tenancy.Organization, attempt DeliveryAttempt,
-) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO webhook_delivery (delivery_id, org_id, integration_id, outcome, reason)
-		VALUES ($1, $2, $3, $4, $5)`,
-		uuid.New(), organization.String(), attempt.Integration,
-		int16(attempt.Disposition), attempt.Reason); err != nil {
-		return fmt.Errorf("recording a delivery attempt: %w", err)
-	}
-	return nil
-}
-
 // RecordDelivery accepts one delivery and everything in it, in one transaction.
 //
 // Both halves commit together or neither does. A delivery marked accepted whose alertEvents
 // were not written would be silently dropped and never retried, because the source would
 // be told it succeeded; alertEvents written without the delivery recorded would be applied
-// again on the next retry. The unique constraint on the body digest is what resolves two
+// again on the next retry. The unique provider identity and lifecycle key resolves two
 // concurrent retries — the database decides, rather than a read-then-write both could pass.
 func (p *Database) RecordDelivery(
 	ctx context.Context, organization tenancy.Organization, delivery Delivery,
@@ -240,9 +193,9 @@ func compareAlertEvents(a, b AlertEvent) int {
 	return a.StartedAt.Compare(b.StartedAt)
 }
 
-// claimDelivery records the accepted delivery, reporting false when this body was already
-// accepted. The row it writes is both the history entry and the idempotence key: the
-// partial unique index on accepted rows is what makes an at-least-once webhook safe.
+// claimDelivery records accepted content, reporting false when the provider identity and
+// lifecycle phase were already accepted. Their unique key makes retries idempotent; the
+// digest detects a provider identity reused for different content.
 func claimDelivery(
 	ctx context.Context, transaction pgx.Tx,
 	organization tenancy.Organization, delivery Delivery,
@@ -250,18 +203,18 @@ func claimDelivery(
 	deliveryID := uuid.New()
 	providerIdentity := delivery.ProviderIdentity
 	if providerIdentity == "" {
-		providerIdentity = fmt.Sprintf("%x", delivery.BodyDigest)
+		providerIdentity = fmt.Sprintf("%x", delivery.ContentDigest)
 	}
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_delivery
-			(delivery_id, org_id, integration_id, outcome, body_digest, provider_identity,
-			 lifecycle_phase, request_id, alert_event_count, truncated)
-		VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9)
+			(delivery_id, org_id, integration_id, content_digest, provider_identity,
+			 lifecycle_phase, request_id, truncated)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
-		WHERE outcome = 1 DO NOTHING`,
-		deliveryID, organization.String(), delivery.Integration, delivery.BodyDigest,
+		DO NOTHING`,
+		deliveryID, organization.String(), delivery.Integration, delivery.ContentDigest,
 		providerIdentity, delivery.LifecyclePhase, delivery.RequestID,
-		len(delivery.AlertEvents), delivery.Truncated)
+		delivery.Truncated)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("recording delivery: %w", err)
 	}
@@ -270,14 +223,14 @@ func claimDelivery(
 	}
 	var acceptedDigest []byte
 	if err := transaction.QueryRow(ctx, `
-		SELECT body_digest FROM webhook_delivery
+		SELECT content_digest FROM webhook_delivery
 		 WHERE org_id = $1 AND integration_id = $2
-		   AND provider_identity = $3 AND lifecycle_phase = $4 AND outcome = 1`,
+		   AND provider_identity = $3 AND lifecycle_phase = $4`,
 		organization.String(), delivery.Integration, providerIdentity,
 		delivery.LifecyclePhase).Scan(&acceptedDigest); err != nil {
 		return uuid.Nil, false, fmt.Errorf("reading accepted delivery identity: %w", err)
 	}
-	if !slices.Equal(acceptedDigest, delivery.BodyDigest) {
+	if !slices.Equal(acceptedDigest, delivery.ContentDigest) {
 		return uuid.Nil, false, ErrDeliveryIdentityConflict
 	}
 	return deliveryID, false, nil

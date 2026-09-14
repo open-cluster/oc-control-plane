@@ -703,7 +703,7 @@ func (p *Database) LastAcceptedDelivery(
 	err = pool.QueryRow(ctx, `
 		SELECT received_at
 		  FROM webhook_delivery
-		 WHERE integration_id = $1 AND org_id = $2 AND outcome = 1
+		 WHERE integration_id = $1 AND org_id = $2
 		 ORDER BY received_at DESC
 		 LIMIT 1`, id, organization.String()).Scan(&last)
 	if errors.Is(err, pgx.ErrNoRows) {

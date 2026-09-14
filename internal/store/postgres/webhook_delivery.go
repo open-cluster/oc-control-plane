@@ -134,7 +134,7 @@ const deliveryProjection = `
 		  FROM webhook_delivery AS delivery
 		  LEFT JOIN webhook_job AS work
 		    ON work.org_id = delivery.org_id AND work.delivery_id = delivery.delivery_id
-		 WHERE delivery.org_id = $1 AND delivery.outcome = 1
+		 WHERE delivery.org_id = $1
 		 GROUP BY delivery.delivery_id, delivery.integration_id, delivery.provider_identity,
 		          delivery.lifecycle_phase, delivery.request_id, delivery.received_at
 	)`

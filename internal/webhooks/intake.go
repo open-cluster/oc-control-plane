@@ -200,12 +200,6 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 			writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 			return
 		}
-		// Recorded against the Integration when there IS one — which is what makes a source
-		// delivering with a wrong secret visible as a rejection rather than as silence. When
-		// the identifier resolved to nothing there is no tenant to attribute it to and
-		// nothing is written, which is also what bounds this: an attacker with random
-		// identifiers writes no rows.
-		h.recordRefusal(ctx, integration, storage.RefusedUnauthenticated)
 		h.refuse(ctx, request, "unauthenticated")
 		h.counters.countDelivery(ctx, dispositionUnauthenticated)
 		// One status and one message however it failed. A missing header, a wrong secret,
@@ -240,7 +234,6 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		// The payload is not what this type's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
-		h.recordRefusal(ctx, integration, storage.RefusedMalformed)
 		h.refuse(ctx, request, "malformed")
 		h.counters.countDelivery(ctx, dispositionMalformed)
 		writeStatus(writer, http.StatusBadRequest, "payload not understood")
@@ -252,7 +245,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		ProviderIdentity: normalized.ProviderIdentity,
 		LifecyclePhase:   normalized.LifecyclePhase,
 		RequestID:        requestID,
-		BodyDigest:       normalized.ContentDigest,
+		ContentDigest:    normalized.ContentDigest,
 		Truncated:        normalized.Truncated,
 		AlertEvents:      normalized.AlertEvents,
 	})
@@ -265,9 +258,11 @@ func (h *surface) record(
 ) {
 	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery)
 	if errors.Is(err, storage.ErrDeliveryIdentityConflict) {
-		h.recordRefusal(ctx, integrations.Integration{ID: delivery.Integration,
-			OrgID: organization.String()}, storage.RefusedMalformed)
 		h.counters.countDelivery(ctx, dispositionMalformed)
+		h.Logger.WarnContext(ctx, "delivery refused",
+			slog.String("org_id", organization.String()),
+			slog.String("integration_id", delivery.Integration.String()),
+			slog.String("reason", "identity conflict"))
 		writeStatus(writer, http.StatusBadRequest, "event identity conflicts with accepted content")
 		return
 	}
@@ -284,7 +279,6 @@ func (h *surface) record(
 	}
 
 	if outcome.Duplicate {
-		h.recordAttempt(ctx, organization, delivery.Integration, storage.DeliveryDuplicate)
 		h.counters.countDelivery(ctx, dispositionDuplicate)
 		// This body was already accepted through this Integration. That covers both a source
 		// retrying because it never saw a response — which has done nothing wrong, and whose
@@ -344,10 +338,6 @@ func (h *surface) authenticate(
 		return integrations.Integration{}, nil, err
 	}
 
-	// The row is returned alongside every refusal below, so a rejection can be recorded
-	// against the Integration it was aimed at. That is what makes a source delivering with
-	// a stale secret VISIBLE as a rejection instead of as silence — and it is safe because
-	// the row was found by primary key, not by anything the caller asserted about a tenant.
 	adapter, served := h.Adapters[integration.Type]
 	if !served {
 		if !integrations.AuthenticateWebhookToken(request.Header, integration) {
@@ -413,62 +403,6 @@ func (h *surface) refuse(ctx context.Context, request *http.Request, reason stri
 		slog.String("integration_id", request.PathValue("integration")),
 		slog.String("caller", callerOf(request)),
 		slog.String("reason", reason))
-}
-
-// recordRefusal puts a rejected delivery in the Integration's own history, so an operator
-// can see that a source is delivering and being turned away.
-//
-// Without it, the two states an operator most needs to tell apart are identical from the
-// console: a source that has gone quiet and a source that is delivering every thirty
-// seconds with a stale secret both show no accepted deliveries. One of those is a quiet
-// night and the other is a broken intake, and they call for opposite actions at three in
-// the morning.
-//
-// It is skipped when no Integration was found, which is both correct and what bounds it:
-// there is no tenant to attribute an unknown identifier to, so an attacker guessing
-// identifiers writes no rows at all. Rate-limited deliveries are not recorded, so shedding
-// requests cannot amplify database writes.
-//
-// A failure to record is logged and does not change the answer. The delivery was already
-// refused and telling the source something different because our own history could not be
-// written would be reporting our problem as theirs.
-func (h *surface) recordRefusal(
-	ctx context.Context, found integrations.Integration, reason string,
-) {
-	if found.ID == uuid.Nil || found.OrgID == "" {
-		return
-	}
-	organization, err := tenancy.NewOrganization(found.OrgID)
-	if err != nil {
-		return
-	}
-	if err := h.Database.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
-		Integration: found.ID,
-		Disposition: storage.DeliveryRejected,
-		Reason:      reason,
-	}); err != nil {
-		h.Logger.ErrorContext(ctx, "a refused delivery could not be recorded",
-			slog.String("integration_id", found.ID.String()),
-			slog.String("reason", reason),
-			slog.String("error", err.Error()))
-	}
-}
-
-// recordAttempt puts a duplicate delivery in the history beside the refusals, so "last
-// received" and "last accepted" are answerable separately. An accepted delivery needs no
-// call here: the accepting transaction wrote its own row.
-func (h *surface) recordAttempt(
-	ctx context.Context, organization tenancy.Organization, integrationID uuid.UUID,
-	disposition storage.DeliveryDisposition,
-) {
-	if err := h.Database.RecordDeliveryAttempt(ctx, organization, storage.DeliveryAttempt{
-		Integration: integrationID,
-		Disposition: disposition,
-	}); err != nil {
-		h.Logger.ErrorContext(ctx, "a delivery could not be recorded in the history",
-			slog.String("integration_id", integrationID.String()),
-			slog.String("error", err.Error()))
-	}
 }
 
 // statusBody is what every answer this surface gives looks like.

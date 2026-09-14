@@ -12,10 +12,9 @@ import (
 
 // WHAT AN OPERATOR WATCHING INTAKE CAN SEE.
 //
-// A broken integration and a quiet night look identical from the outside, and the delivery history
-// answers that per Integration. What it cannot answer is the shape of the whole surface: whether
-// rejections are rising, whether a storm is under way, whether anybody's alert grouping is doing
-// anything. That is what these are for.
+// Accepted delivery history answers when an Integration last produced work. Metrics and structured
+// logs distinguish rejected or duplicate attempts from a quiet source and show the shape of the
+// whole surface: whether rejections are rising, a storm is under way, or alert grouping is active.
 //
 // NO ORGANIZATION LABEL, ON ANY OF THEM. Tenant identity belongs on a span; at the stated scale of
 // five thousand organizations a tenant label is a cardinality failure in any Prometheus-shaped

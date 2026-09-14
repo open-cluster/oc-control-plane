@@ -130,7 +130,7 @@ func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	said := storage.SlackMessage{Integration: integration.ID, BodyDigest: randomDigest(t),
+	said := storage.SlackMessage{Integration: integration.ID, ContentDigest: randomDigest(t),
 		Channel: "CQUEUE", Thread: "1.0", Subject: "queue", ActorID: "UQUEUE", Text: "first"}
 	if _, err := database.RecordSlackMessage(ctx, org, said); err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 	if outcome, err := database.RecordSlackMessage(ctx, org, said); err != nil || !outcome.Duplicate {
 		t.Fatalf("duplicate at capacity: %+v, %v", outcome, err)
 	}
-	said.BodyDigest = randomDigest(t)
+	said.ContentDigest = randomDigest(t)
 	said.Text = "retry after capacity is available"
 	if _, err := database.RecordSlackMessage(ctx, org, said); !errors.Is(err, conversation.ErrQueueFull) {
 		t.Fatalf("new Message at capacity: %v", err)

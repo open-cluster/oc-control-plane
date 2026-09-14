@@ -40,14 +40,10 @@ type Session struct {
 	ExpiresAt    time.Time
 	LastSeenAt   time.Time
 	RevokedAt    time.Time
-	UserAgent    string
-	Address      string
+	RemoteAddr   string
 }
 
-const (
-	MaxUserAgentLength = 256
-	MaxAddressLength   = 128
-)
+const MaxRemoteAddrLength = 128
 
 // Revoked reports whether an administrator ended this session.
 func (s Session) Revoked() bool { return !s.RevokedAt.IsZero() }

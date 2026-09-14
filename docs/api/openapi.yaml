@@ -2550,8 +2550,7 @@ components:
         - issuedAt
         - expiresAt
         - lastSeenAt
-        - userAgent
-        - address
+        - remoteAddr
       properties:
         id:
           $ref: '#/components/schemas/UUID'
@@ -2563,10 +2562,7 @@ components:
           $ref: '#/components/schemas/Timestamp'
         lastSeenAt:
           $ref: '#/components/schemas/Timestamp'
-        userAgent:
-          type: string
-          maxLength: 512
-        address:
+        remoteAddr:
           type: string
           maxLength: 128
     LiveSessionList:

@@ -358,17 +358,19 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 		"organization": identityOrg, "email": "member@example.test", "password": "member password long enough",
 	})
 	member := sessionCookie(t, login)
-	list := func(cookie string) []struct {
-		ID string `json:"id"`
-	} {
+	type listedSession struct {
+		ID         string          `json:"id"`
+		RemoteAddr string          `json:"remoteAddr"`
+		UserAgent  json.RawMessage `json:"userAgent"`
+		Address    json.RawMessage `json:"address"`
+	}
+	list := func(cookie string) []listedSession {
 		response := plane.call(t, http.MethodGet, base+"/sessions", nil, asSession(cookie))
 		if response.status != http.StatusOK {
 			t.Fatalf("list = %d: %s", response.status, response.body)
 		}
 		var body struct {
-			Sessions []struct {
-				ID string `json:"id"`
-			} `json:"sessions"`
+			Sessions []listedSession `json:"sessions"`
 		}
 		decodeInto(t, response.body, &body)
 		return body.Sessions
@@ -376,6 +378,9 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	owned := list(member)
 	if len(owned) != 1 {
 		t.Fatalf("member sessions = %+v", owned)
+	}
+	if owned[0].RemoteAddr == "" || owned[0].UserAgent != nil || owned[0].Address != nil {
+		t.Fatalf("member session client metadata = %+v", owned[0])
 	}
 	admins := list(admin)
 	if len(admins) != 1 || admins[0].ID == owned[0].ID {
