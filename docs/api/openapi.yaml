@@ -667,7 +667,7 @@ paths:
         - $ref: '#/components/parameters/Organization'
       responses:
         '200':
-          $ref: '#/components/responses/Integration'
+          $ref: '#/components/responses/IntegrationOperation'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: updateIntegration
@@ -758,7 +758,7 @@ paths:
         - $ref: '#/components/parameters/Organization'
       responses:
         '200':
-          $ref: '#/components/responses/Integration'
+          $ref: '#/components/responses/IntegrationOperation'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: verifyIntegration
@@ -1980,6 +1980,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Integration'
+    IntegrationOperation:
+      description: Integration after an operation, including its immediate verification diagnostic when one ran.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IntegrationOperation'
     SecretRotated:
       description: New webhook secret returned once; only its digest is retained.
       content:
@@ -2831,7 +2837,9 @@ components:
           enum:
             - connected
             - refused
-            - failed
+            - unproven
+            - unverified
+            - workspace-taken
         integrationId:
           $ref: '#/components/schemas/UUID'
         note:
@@ -2841,36 +2849,22 @@ components:
       type: object
       additionalProperties: false
       required:
-        - fingerprint
-        - createdAt
+        - configured
       properties:
-        fingerprint:
-          type: string
-          minLength: 8
-          maxLength: 128
-        createdAt:
-          $ref: '#/components/schemas/Timestamp'
-        rotatedAt:
-          $ref: '#/components/schemas/Timestamp'
+        configured:
+          type: boolean
     WebhookReference:
       type: object
       additionalProperties: false
       required:
         - url
-        - secretFingerprint
-        - secretCreatedAt
+        - configured
       properties:
         url:
           type: string
           format: uri-reference
-        secretFingerprint:
-          type: string
-          minLength: 8
-          maxLength: 128
-        secretCreatedAt:
-          $ref: '#/components/schemas/Timestamp'
-        secretRotatedAt:
-          $ref: '#/components/schemas/Timestamp'
+        configured:
+          type: boolean
     Integration:
       type: object
       additionalProperties: false
@@ -2883,7 +2877,6 @@ components:
         - configuration
         - toolAvailability
         - createdAt
-        - updatedAt
       properties:
         id:
           $ref: '#/components/schemas/UUID'
@@ -2895,37 +2888,25 @@ components:
           minLength: 1
           maxLength: 128
         status:
-          type: string
-          enum:
-            - configured
-            - active
-            - degraded
-            - failed
+          oneOf:
+            - type: string
+              enum:
+                - verified
+                - failed
+            - type: 'null'
         disabled:
           type: boolean
         configuration:
           type: object
           additionalProperties: true
-        labels:
-          type: object
-          maxProperties: 32
-          additionalProperties:
-            type: string
-            maxLength: 256
         relayId:
           $ref: '#/components/schemas/UUID'
         webhook:
           $ref: '#/components/schemas/WebhookReference'
         credential:
           $ref: '#/components/schemas/SecretReference'
-        lastVerifiedAt:
+        verifiedAt:
           $ref: '#/components/schemas/Timestamp'
-        verifyNote:
-          type: string
-          maxLength: 1024
-        verifyFacts:
-          type: object
-          additionalProperties: true
         inbound:
           type: object
           additionalProperties: false
@@ -2953,13 +2934,82 @@ components:
               reason:
                 type: string
                 maxLength: 1024
-        createdBy:
-          type: string
-          maxLength: 256
         createdAt:
           $ref: '#/components/schemas/Timestamp'
-        updatedAt:
+    IntegrationOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - name
+        - status
+        - disabled
+        - configuration
+        - toolAvailability
+        - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        type:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,63}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          oneOf:
+            - type: string
+              enum:
+                - verified
+                - failed
+            - type: 'null'
+        disabled:
+          type: boolean
+        configuration:
+          type: object
+          additionalProperties: true
+        relayId:
+          $ref: '#/components/schemas/UUID'
+        webhook:
+          $ref: '#/components/schemas/WebhookReference'
+        credential:
+          $ref: '#/components/schemas/SecretReference'
+        verifiedAt:
           $ref: '#/components/schemas/Timestamp'
+        inbound:
+          type: object
+          additionalProperties: false
+          required:
+            - available
+          properties:
+            available:
+              type: boolean
+            reason:
+              type: string
+              maxLength: 1024
+        toolAvailability:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - tool
+              - available
+            properties:
+              tool:
+                type: string
+              available:
+                type: boolean
+              reason:
+                type: string
+                maxLength: 1024
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        verificationNote:
+          type: string
+          maxLength: 1024
     PageMetadata:
       type: object
       required:
@@ -3033,7 +3083,6 @@ components:
         - type
         - name
         - configuration
-        - labels
       properties:
         type:
           type: string
@@ -3045,12 +3094,6 @@ components:
         configuration:
           type: object
           additionalProperties: true
-        labels:
-          type: object
-          maxProperties: 32
-          additionalProperties:
-            type: string
-            maxLength: 256
         relayId:
           oneOf:
             - $ref: '#/components/schemas/UUID'
@@ -3067,12 +3110,6 @@ components:
         configuration:
           type: object
           additionalProperties: true
-        labels:
-          type: object
-          maxProperties: 32
-          additionalProperties:
-            type: string
-            maxLength: 256
     CreatedIntegration:
       type: object
       additionalProperties: false
@@ -3080,7 +3117,7 @@ components:
         - integration
       properties:
         integration:
-          $ref: '#/components/schemas/Integration'
+          $ref: '#/components/schemas/IntegrationOperation'
         webhookSecret:
           type: string
           minLength: 32
@@ -3092,7 +3129,6 @@ components:
       additionalProperties: false
       required:
         - webhookSecret
-        - secretFingerprint
         - effect
       properties:
         webhookSecret:
@@ -3101,30 +3137,10 @@ components:
           maxLength: 512
           readOnly: true
           example: ocwh_placeholder_generated_once_1234
-        secretFingerprint:
-          type: string
-          minLength: 8
-          maxLength: 128
-          readOnly: true
-          example: sha256:12ab34cd
         effect:
           type: string
           minLength: 1
           maxLength: 1024
-    MaskedSecret:
-      type: object
-      additionalProperties: false
-      required:
-        - configured
-        - fingerprint
-      properties:
-        configured:
-          type: boolean
-        fingerprint:
-          type: string
-          minLength: 8
-          maxLength: 128
-          example: sha256:12ab34cd
     Relay:
       type: object
       additionalProperties: false
@@ -3303,12 +3319,12 @@ components:
           minLength: 1
           maxLength: 128
         status:
-          type: string
-          enum:
-            - configured
-            - active
-            - degraded
-            - failed
+          oneOf:
+            - type: string
+              enum:
+                - verified
+                - failed
+            - type: 'null'
         disabled:
           type: boolean
     RelayIntegrationList:

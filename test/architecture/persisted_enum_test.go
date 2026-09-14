@@ -65,14 +65,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"TypeGitHub", int(integrations.TypeGitHub), 4},
 		{"TypeGenericWebhook", int(integrations.TypeGenericWebhook), 5},
 
-		// An Integration's observed status. A value that moved here would silently
-		// re-label every existing row: an Integration stored as failed would start reading
-		// as degraded, which is the difference between paging somebody and not.
-		{"StatusConfigured", int(integrations.StatusConfigured), 1},
-		{"StatusActive", int(integrations.StatusActive), 2},
-		{"StatusDegraded", int(integrations.StatusDegraded), 3},
-		{"StatusFailed", int(integrations.StatusFailed), 4},
-
 		// Delivery dispositions, and the 1 the delivery health queries filter on.
 		{"DeliveryAccepted", int(storage.DeliveryAccepted), 1},
 		{"DeliveryDuplicate", int(storage.DeliveryDuplicate), 2},
@@ -140,6 +132,17 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 				"some of these, written as a literal in SQL, so changing it rewrites what every "+
 				"existing row means", constant.name, constant.got, constant.fixed)
 		}
+	}
+}
+
+func TestPersistedIntegrationStatusValuesAreFrozen(t *testing.T) {
+	t.Parallel()
+
+	if integrations.StatusVerified != "verified" {
+		t.Errorf("StatusVerified = %q, want verified", integrations.StatusVerified)
+	}
+	if integrations.StatusFailed != "failed" {
+		t.Errorf("StatusFailed = %q, want failed", integrations.StatusFailed)
 	}
 }
 

@@ -108,7 +108,7 @@ func readCommitTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.read_commit",
+		Name: toolReadCommit,
 		Description: "Reads one commit whole: its changed files and their patches, " +
 			"bounded — the change itself, not the message about it.",
 		WhenToUse: "When github.read_commits surfaced a suspicious commit and \"what " +
@@ -118,7 +118,7 @@ func readCommitTool(app *App, client *Client) integrations.Tool {
 			"every commit in the window — read the ones whose message or timing makes " +
 			"them suspects.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.read_commit"),
+		Permissions: permissionProse(toolReadCommit),
 		Output: "the commit's sha, message, author, permalink and changed files, each " +
 			"with path, status, line counts and a bounded patch; flags say when files " +
 			"or patches were cut, and a very large diff is refused by the vendor with " +
@@ -178,7 +178,7 @@ func readPullRequestTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.read_pull_request",
+		Name: toolReadPullRequest,
 		Description: "Reads one pull request whole: its description, changed files and " +
 			"CI check status — the intent and health of a change as one answer.",
 		WhenToUse: "When a commit references a pull request and \"why was this change " +
@@ -188,7 +188,7 @@ func readPullRequestTool(app *App, client *Client) integrations.Tool {
 			"github.read_commits carry it. Not for the raw diff of one commit; that " +
 			"is github.read_commit.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.read_pull_request"),
+		Permissions: permissionProse(toolReadPullRequest),
 		Output: "the pull request's title, description, state, merge time, author, " +
 			"branches and permalink; its changed files with bounded patches; and its " +
 			"CI check runs with status and conclusion — absent with the reason when " +
@@ -290,7 +290,7 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.read_workflow_runs",
+		Name: toolReadWorkflowRuns,
 		Description: "Reads a repository's CI/CD workflow runs inside a time window, " +
 			"newest first, with status and conclusion.",
 		WhenToUse: "To answer \"did the deploy pipeline object\": failed or cancelled " +
@@ -299,7 +299,7 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 		WhenNotToUse: "Not for the code change itself; that is github.read_commit. " +
 			"Not unbounded — the window is the incident's own.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.read_workflow_runs"),
+		Permissions: permissionProse(toolReadWorkflowRuns),
 		Output: "a bounded list of runs, each with id, workflow name, branch, head " +
 			"sha, trigger event, status, conclusion, start time and permalink, plus a " +
 			"truncated flag when the window holds more",
@@ -378,7 +378,7 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.read_job_log",
+		Name: toolReadJobLog,
 		Description: "Reads the log tail of a workflow run's failing job — the end of " +
 			"the log, where the failure speaks.",
 		WhenToUse: "When github.read_workflow_runs showed a failed run and \"what " +
@@ -386,7 +386,7 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 		WhenNotToUse: "Not on succeeded runs — their logs rarely answer anything. Not " +
 			"for the change that broke CI; that is github.read_commit.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.read_job_log"),
+		Permissions: permissionProse(toolReadJobLog),
 		Output: fmt.Sprintf("the run's jobs with status, conclusion and failed step, "+
 			"and the chosen job's last %d bytes of log; the truncated flag says the "+
 			"log held more", logTailBytes),
@@ -491,7 +491,7 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.read_file",
+		Name: toolReadFile,
 		Description: "Reads one file's contents at a ref, bounded — the configuration " +
 			"a commit touched can be inspected, not guessed.",
 		WhenToUse: "When a changed file's full context matters: the config value " +
@@ -502,7 +502,7 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 			"found by probing candidates. Not for the change itself; that is " +
 			"github.read_commit.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.read_file"),
+		Permissions: permissionProse(toolReadFile),
 		Output: fmt.Sprintf("the file's first %d bytes at the ref, with a truncated "+
 			"flag when it holds more", maxFileToolBytes),
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
@@ -563,7 +563,7 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.list_releases",
+		Name: toolListReleases,
 		Description: "Lists a repository's releases, newest first — what shipped, " +
 			"and when.",
 		WhenToUse: "To answer \"what shipped near the incident window\": a release " +
@@ -572,7 +572,7 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 			"github.read_commits with the window. Bare un-released tags are not " +
 			"listed, by the vendor's own rule.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.list_releases"),
+		Permissions: permissionProse(toolListReleases),
 		Output: "a bounded list of releases, each with name, tag, publish time, " +
 			"author, prerelease flag and permalink, plus a truncated flag when the " +
 			"repository holds more",

@@ -36,8 +36,8 @@ import (
 const installationInsert = `
 		INSERT INTO integration_installation
 			(integration_id, org_id, integration_type_id, application, enterprise,
-			 workspace, enterprise_wide, agent, authorizer, grants, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`
+			 workspace, enterprise_wide, agent, authorizer, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`
 
 // recordInstallation writes the routing record for a newly created Integration, inside the
 // transaction that created it.
@@ -78,7 +78,6 @@ func recordInstallationIn(
 		       enterprise_wide     = EXCLUDED.enterprise_wide,
 		       agent               = EXCLUDED.agent,
 		       authorizer          = EXCLUDED.authorizer,
-		       grants              = EXCLUDED.grants,
 		       updated_at          = now()`,
 		installationValues(organization, integration, typeID, installed)...)
 	return installationError(err)
@@ -92,7 +91,6 @@ func installationValues(
 		integration, organization.String(), int16(typeID),
 		installed.Application, installed.Enterprise, installed.Workspace,
 		installed.EnterpriseWide, installed.Agent, installed.Authorizer,
-		orEmptyGrants(installed.Grants),
 	}
 }
 
@@ -130,15 +128,14 @@ func (p *Database) IntegrationByInstallation(
 	)
 	row := p.pool.QueryRow(ctx, `
 			SELECT org_id, integration_id, application, enterprise, workspace,
-			       enterprise_wide, agent, authorizer, grants
+			       enterprise_wide, agent, authorizer
 			  FROM integration_installation
 			 WHERE integration_type_id = $1
 			   AND application = $2 AND enterprise = $3 AND workspace = $4`,
 		int16(typeID), key.Application, key.Enterprise, key.Workspace)
 	err := row.Scan(&organization, &integrationID,
 		&installed.Application, &installed.Enterprise, &installed.Workspace,
-		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer,
-		&installed.Grants)
+		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return integrations.Integration{}, integrations.Installation{}, integrations.ErrUnknown
@@ -171,12 +168,12 @@ func (p *Database) InstallationOf(
 	}
 	var installed integrations.Installation
 	err = pool.QueryRow(ctx, `
-		SELECT application, enterprise, workspace, enterprise_wide, agent, authorizer, grants
+		SELECT application, enterprise, workspace, enterprise_wide, agent, authorizer
 		  FROM integration_installation
 		 WHERE integration_id = $1 AND org_id = $2`,
 		integration, organization.String()).Scan(
 		&installed.Application, &installed.Enterprise, &installed.Workspace,
-		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer, &installed.Grants)
+		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return integrations.Installation{}, false, nil

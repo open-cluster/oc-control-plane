@@ -18,8 +18,11 @@ and every Organization-owned query predicates on its identifier. Webhook intake
 has separate authentication and contracts even though it shares the HTTP server;
 operational probes remain outside the product OpenAPI contract.
 
-The control plane offers closed, read-only Tool capabilities. Provider adapters or Relay
-execute them, and the Investigation engine records bounded Tool Runs and cited results.
+OpenCluster currently ships observation/read tools. The capability runtime does not assume
+that all future capabilities are reads. State-changing capabilities will require explicit
+authorization, approval, idempotency and audit semantics before they are enabled.
+
+Provider adapters or Relay execute eligible Tools, and the Investigation engine records bounded Tool Runs and cited results.
 Maintenance cleanup is conditional on those consumers. Relay conflict history is part of
 the audit record and follows each Organization's audit retention policy; captured workload changes
 stay durable until an equivalent shipped surface replaces them or the contract is explicitly

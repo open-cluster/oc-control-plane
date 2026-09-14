@@ -21,21 +21,17 @@ import (
 )
 
 const (
-	readTimeout   = 15 * time.Second
-	maxNameLength = 128
-	// Label bounds keep optional metadata optional: their only job is to stop the column
-	// becoming somewhere a caller can put a megabyte.
-	maxLabels           = 32
-	maxLabelKeyLength   = 64
-	maxLabelValueLength = 256
-	maxRequestBytes     = 16 << 10
+	readTimeout     = 15 * time.Second
+	maxNameLength   = 128
+	maxRequestBytes = 16 << 10
 )
 
 // Handlers is this domain surface's dependencies.
 type Handlers struct {
-	Store   Store
-	Catalog Catalog
-	Logger  *slog.Logger
+	Store        Store
+	Catalog      Catalog
+	WebhookTypes map[TypeID]bool
+	Logger       *slog.Logger
 	// Sealer closes over outbound credentials at rest. Unconfigured means this deployment
 	// cannot hold one, and submitting a secret field is refused with that reason — never
 	// stored in the clear and never silently dropped.
@@ -131,7 +127,8 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 	}
 	views := make([]typeView, 0, len(manifests))
 	for _, manifest := range manifests {
-		views = append(views, typeViewOf(manifest, configured[manifest.ID]))
+		definition, _ := h.Catalog.ByID(manifest.Type)
+		views = append(views, typeViewOf(definition, configured[manifest.Type], h.WebhookTypes[manifest.Type]))
 	}
 	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.Continuation(next)})
 }
@@ -175,11 +172,10 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 // createRequest is what an operator submits.
 type createRequest struct {
 	// Type is the Integration Type's stable key: "alertmanager", "kubernetes".
-	Type          string            `json:"type"`
-	Name          string            `json:"name"`
-	Configuration map[string]any    `json:"configuration"`
-	Labels        map[string]string `json:"labels"`
-	RelayID       string            `json:"relayId"`
+	Type          string         `json:"type"`
+	Name          string         `json:"name"`
+	Configuration map[string]any `json:"configuration"`
+	RelayID       string         `json:"relayId"`
 }
 
 // create records one configured installation.
@@ -203,7 +199,7 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 			errorView{Error: "type does not name an integration type this build serves"})
 		return
 	}
-	wanted, secret, credential, refusal := h.plan(definition, asked, principal)
+	wanted, secret, credential, refusal := h.plan(definition, asked)
 	if refusal != "" {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
 		return
@@ -231,6 +227,9 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 		slog.String("type", definition.Key))
 
 	view := createdView{IntegrationView: h.viewOf(created)}
+	if wanted.Verification != nil {
+		view.IntegrationView.VerificationNote = wanted.Verification.Note
+	}
 	if secret != "" {
 		// The one moment the secret exists in a response. It is not stored, not logged,
 		// and no path returns it again; an operator who loses it rotates.
@@ -244,14 +243,11 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 // digest, and the pasted credential, which after the probe exists only sealed. A refusal
 // is in the operator's language.
 func (h Handlers) plan(
-	definition Definition, asked createRequest, principal authz.Principal,
+	definition Definition, asked createRequest,
 ) (NewIntegration, string, string, string) {
 	name := strings.TrimSpace(asked.Name)
 	if name == "" || len(name) > maxNameLength {
 		return NewIntegration{}, "", "", "name must be between 1 and 128 characters"
-	}
-	if refusal := checkLabels(asked.Labels); refusal != "" {
-		return NewIntegration{}, "", "", refusal
 	}
 	configuration, credential, refusal := checkConfiguration(definition, asked.Configuration, true)
 	if refusal != "" {
@@ -262,11 +258,9 @@ func (h Handlers) plan(
 		// Minted here, before the probe seals anything, so the sealed credential can
 		// bind to the row it will live on.
 		ID:            uuid.New(),
-		Type:          definition.ID,
+		Type:          definition.Type,
 		Name:          name,
 		Configuration: configuration,
-		Labels:        asked.Labels,
-		CreatedBy:     principal.ID(),
 	}
 
 	relay := strings.TrimSpace(asked.RelayID)
@@ -283,19 +277,14 @@ func (h Handlers) plan(
 		wanted.RelayID = id
 	}
 
-	if !definition.ReceivesWebhooks {
+	if !h.WebhookTypes[definition.Type] {
 		return wanted, "", credential, ""
 	}
 	secret, err := GenerateSecret()
 	if err != nil {
 		return NewIntegration{}, "", "", "a webhook secret could not be generated; try again"
 	}
-	fingerprint, err := MintFingerprint()
-	if err != nil {
-		return NewIntegration{}, "", "", "a webhook secret could not be generated; try again"
-	}
 	wanted.WebhookSecretDigest = Digest(secret)
-	wanted.WebhookSecretFingerprint = fingerprint
 	return wanted, secret, credential, ""
 }
 
@@ -316,7 +305,6 @@ func (h Handlers) probeAndSeal(
 			Type:          wanted.Type,
 			Name:          wanted.Name,
 			Configuration: wanted.Configuration,
-			Labels:        wanted.Labels,
 		},
 		Credential: credential,
 	})
@@ -329,12 +317,11 @@ func (h Handlers) probeAndSeal(
 	if credential == "" {
 		return true
 	}
-	sealed, fingerprint, ok := h.sealCredential(writer, credential, wanted.ID)
+	sealed, ok := h.sealCredential(writer, credential, wanted.ID)
 	if !ok {
 		return false
 	}
 	wanted.CredentialSealed = sealed
-	wanted.CredentialFingerprint = fingerprint
 	return true
 }
 
@@ -361,9 +348,8 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 
 // reviseRequest is what a PATCH may change. Pointers distinguish "leave it" from "clear it".
 type reviseRequest struct {
-	Name          *string           `json:"name"`
-	Configuration map[string]any    `json:"configuration"`
-	Labels        map[string]string `json:"labels"`
+	Name          *string        `json:"name"`
+	Configuration map[string]any `json:"configuration"`
 }
 
 // revise changes part of an Integration and leaves its identity, its type, its relay
@@ -389,12 +375,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		asked.Name = &trimmed
-	}
-	if asked.Labels != nil {
-		if refusal := checkLabels(asked.Labels); refusal != "" {
-			writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
-			return
-		}
 	}
 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
@@ -442,7 +422,7 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				writeJSON(writer, http.StatusBadRequest, errorView{Error: verification.Note})
 				return
 			}
-			sealed, fingerprint, ok := h.sealCredential(writer, credential, id)
+			sealed, ok := h.sealCredential(writer, credential, id)
 			if !ok {
 				return
 			}
@@ -450,13 +430,15 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 			// nil installation: a credential typed into the configuration form names no
 			// vendor installation, so there is no routing record to refresh.
 			revised, err := h.Store.ReplaceIntegrationCredential(
-				ctx, principal, organization, id, Revision(asked), sealed, fingerprint,
+				ctx, principal, organization, id, Revision(asked), sealed,
 				verification, nil)
 			if err != nil {
 				h.fail(writer, request, err)
 				return
 			}
-			writeJSON(writer, http.StatusOK, h.viewOf(revised))
+			view := h.viewOf(revised)
+			view.VerificationNote = verification.Note
+			writeJSON(writer, http.StatusOK, view)
 			return
 		}
 	}
@@ -486,16 +468,14 @@ func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
 // a credential refuse through here, so they cannot drift into refusing differently.
 func (h Handlers) sealCredential(
 	writer http.ResponseWriter, credential string, id uuid.UUID,
-) ([]byte, string, bool) {
+) ([]byte, bool) {
 	sealed, err := h.Sealer.Seal(credential, CredentialBinding(id))
 	if err == nil {
-		if fingerprint, mintErr := MintFingerprint(); mintErr == nil {
-			return sealed, fingerprint, true
-		}
+		return sealed, true
 	}
 	writeJSON(writer, http.StatusServiceUnavailable,
 		errorView{Error: "the credential could not be stored; nothing was saved"})
-	return nil, "", false
+	return nil, false
 }
 
 // remove deletes an Integration nothing depends on. One with history is refused with the
@@ -580,13 +560,16 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	// An outbound type is verified by asking the provider itself; nothing gathered here
 	// could say whether the credential still works.
 	if definition.Probe != nil {
+		outcome := h.probeExisting(ctx, organization, definition, found)
 		verified, probeErr := h.Store.RecordIntegrationVerification(
-			ctx, principal, organization, id, h.probeExisting(ctx, organization, definition, found))
+			ctx, principal, organization, id, outcome)
 		if probeErr != nil {
 			h.fail(writer, request, probeErr)
 			return
 		}
-		writeJSON(writer, http.StatusOK, h.viewOf(verified))
+		view := h.viewOf(verified)
+		view.VerificationNote = outcome.Note
+		writeJSON(writer, http.StatusOK, view)
 		return
 	}
 
@@ -599,7 +582,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		}
 		input.RelayStatus = status
 	}
-	if definition.ReceivesWebhooks {
+	if h.WebhookTypes[definition.Type] {
 		last, lastErr := h.Store.LastAcceptedDelivery(ctx, organization, id)
 		if lastErr != nil {
 			h.fail(writer, request, lastErr)
@@ -608,13 +591,16 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		input.LastAcceptedDelivery = last
 	}
 
+	outcome := definition.Verify(input)
 	verified, err := h.Store.RecordIntegrationVerification(
-		ctx, principal, organization, id, definition.Verify(input))
+		ctx, principal, organization, id, outcome)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, h.viewOf(verified))
+	view := h.viewOf(verified)
+	view.VerificationNote = outcome.Note
+	writeJSON(writer, http.StatusOK, view)
 }
 
 // probeExisting asks the provider about an Integration as recorded, unsealing its
@@ -665,40 +651,18 @@ func (h Handlers) rotateSecret(writer http.ResponseWriter, request *http.Request
 		h.fail(writer, request, err)
 		return
 	}
-	fingerprint, err := MintFingerprint()
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
 	if err := h.Store.RotateIntegrationWebhookSecret(
-		ctx, principal, organization, id, Digest(secret), fingerprint); err != nil {
+		ctx, principal, organization, id, Digest(secret)); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, rotatedView{
 		WebhookSecret: secret,
-		Fingerprint:   fingerprint,
 		Effect:        "the previous webhook secret stopped working; there is no overlap window",
 	})
-}
-
-// checkLabels bounds optional metadata.
-func checkLabels(labels map[string]string) string {
-	if len(labels) > maxLabels {
-		return "at most " + strconv.Itoa(maxLabels) + " labels may be set"
-	}
-	for key, value := range labels {
-		if key == "" || len(key) > maxLabelKeyLength {
-			return "label keys must be between 1 and 64 characters"
-		}
-		if len(value) > maxLabelValueLength {
-			return "label values must be at most 256 characters"
-		}
-	}
-	return ""
 }
 
 // checkConfiguration reads submitted configuration against the type's declared fields.
@@ -717,12 +681,6 @@ func checkConfiguration(
 		if !declared {
 			return nil, "", "configuration field " + strconv.Quote(name) +
 				" is not one " + definition.Name + " declares"
-		}
-		if field.Recorded {
-			// Written by the installation flow and never by a caller. Refused rather than
-			// ignored: a value silently dropped is a caller who believes they set it.
-			return nil, "", "configuration field " + strconv.Quote(name) +
-				" is recorded by the connect flow and cannot be set"
 		}
 		if field.Secret {
 			pasted, isText := value.(string)
@@ -747,12 +705,12 @@ func checkConfiguration(
 		}
 		if field.Secret {
 			if requireSecret && credential == "" {
-				return nil, "", "configuration field " + strconv.Quote(field.Name) + " is required"
+				return nil, "", "configuration field " + strconv.Quote(field.Key) + " is required"
 			}
 			continue
 		}
-		if _, present := checked[field.Name]; !present {
-			return nil, "", "configuration field " + strconv.Quote(field.Name) + " is required"
+		if _, present := checked[field.Key]; !present {
+			return nil, "", "configuration field " + strconv.Quote(field.Key) + " is required"
 		}
 	}
 	return checked, credential, ""
@@ -760,7 +718,7 @@ func checkConfiguration(
 
 func checkFieldValue(field Field, value any) string {
 	refuse := func() string {
-		return "configuration field " + strconv.Quote(field.Name) +
+		return "configuration field " + strconv.Quote(field.Key) +
 			" must be a " + string(field.Type)
 	}
 	switch field.Type {
@@ -769,13 +727,13 @@ func checkFieldValue(field Field, value any) string {
 		if !isText {
 			return refuse()
 		}
-		if len(field.Enum) > 0 {
-			for _, allowed := range field.Enum {
+		if len(field.Options) > 0 {
+			for _, allowed := range field.Options {
 				if text == allowed {
 					return ""
 				}
 			}
-			return "configuration field " + strconv.Quote(field.Name) +
+			return "configuration field " + strconv.Quote(field.Key) +
 				" must be one of its declared values"
 		}
 	case FieldInteger:
@@ -816,7 +774,7 @@ func (h Handlers) listQuery(
 				errorView{Error: "type does not name an integration type this build serves"})
 			return Query{}, false
 		}
-		query.Type = definition.ID
+		query.Type = definition.Type
 	}
 	if named := parsed.Filter("relay"); named != "" {
 		relay, err := uuid.Parse(named)
@@ -907,8 +865,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "integration not found"})
-	case errors.Is(err, ErrNameTaken):
-		writeJSON(writer, http.StatusConflict, errorView{Error: ErrNameTaken.Error()})
 	case errors.Is(err, ErrCrossTenant):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrCrossTenant.Error()})
 	case errors.Is(err, ErrInUse):

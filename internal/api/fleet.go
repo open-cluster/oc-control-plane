@@ -162,8 +162,10 @@ func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Re
 		view := servedIntegrationView{
 			ID:       found.ID.String(),
 			Name:     found.Name,
-			Status:   found.Status.String(),
-			Disabled: found.Disabled(),
+			Disabled: found.Disabled,
+		}
+		if status := found.Status.String(); status != "" {
+			view.Status = &status
 		}
 		if definition, known := h.Catalog.ByID(found.Type); known {
 			view.Type = definition.Key

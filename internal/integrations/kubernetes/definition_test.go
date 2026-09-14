@@ -34,10 +34,10 @@ func TestVerify_JudgesTheRelayHonestly(t *testing.T) {
 			integrations.StatusFailed, "not connected"},
 		{"relay missing a Relay Capability",
 			integrations.RelayStatus{Bound: true, Connected: true, Capabilities: all[:1]},
-			integrations.StatusDegraded, "does not advertise"},
+			integrations.StatusVerified, "does not advertise"},
 		{"relay advertising everything",
 			integrations.RelayStatus{Bound: true, Connected: true, Capabilities: all},
-			integrations.StatusActive, "every Relay Capability"},
+			integrations.StatusVerified, "every Relay Capability"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -197,13 +197,13 @@ func TestDefinition_DeclaresTheRelayShape(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition()
-	if definition.ID != integrations.TypeKubernetes || definition.Key != "kubernetes" {
-		t.Errorf("the definition's identity is (%d, %q)", definition.ID, definition.Key)
+	if definition.Type != integrations.TypeKubernetes || definition.Key != "kubernetes" {
+		t.Errorf("the definition's identity is (%d, %q)", definition.Type, definition.Key)
 	}
 	if definition.Category != integrations.Category("infrastructure") {
 		t.Errorf("category = %q, want infrastructure", definition.Category)
 	}
-	if !definition.RequiresRelay || definition.ReceivesWebhooks {
+	if !definition.RequiresRelay {
 		t.Error("kubernetes is relay-served and receives no webhooks")
 	}
 	if len(definition.Tools) != 3 {

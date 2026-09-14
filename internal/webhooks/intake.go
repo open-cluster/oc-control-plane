@@ -358,7 +358,7 @@ func (h *surface) authenticate(
 	if !adapter.Authenticate(request.Header, integration) {
 		return integration, adapter, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
 	}
-	if integration.Disabled() {
+	if integration.Disabled {
 		// An operator who turned an Integration off wants deliveries refused, not merely
 		// recorded.
 		return integration, adapter, fmt.Errorf("%w: integration is disabled", errNotAuthenticated)

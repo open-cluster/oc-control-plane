@@ -11,14 +11,14 @@ func TestDefinitionDeclaresProviderContract(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition(NewClient(""), nil, false)
-	if definition.ID != integrations.TypeSlack || definition.Key != "slack" {
-		t.Errorf("identity = %d %q", definition.ID, definition.Key)
+	if definition.Type != integrations.TypeSlack || definition.Key != "slack" {
+		t.Errorf("identity = %d %q", definition.Type, definition.Key)
 	}
 	if definition.Category != integrations.CategoryCollaboration {
 		t.Errorf("category = %q", definition.Category)
 	}
-	if definition.RequiresRelay || definition.ReceivesWebhooks {
-		t.Error("slack is reached outbound with a token; no relay, no webhooks")
+	if definition.RequiresRelay {
+		t.Error("slack needs no relay")
 	}
 	if definition.Verify != nil {
 		t.Error("a credential-bearing type verifies by probing live, not from gathered facts")
@@ -36,8 +36,8 @@ func TestDefinitionDeclaresProviderContract(t *testing.T) {
 func TestSlackInboundAvailabilityExplainsInstallationAndDeploymentSetup(t *testing.T) {
 	t.Parallel()
 
-	installed := integrations.Integration{Configuration: map[string]any{
-		TeamIDField: "T123", AppIDField: "A123",
+	installed := integrations.Integration{Installation: &integrations.Installation{
+		Application: "A123", Workspace: "T123",
 	}}
 	tests := []struct {
 		name          string
@@ -72,30 +72,21 @@ func TestSlackInboundAvailabilityExplainsInstallationAndDeploymentSetup(t *testi
 func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
 	t.Parallel()
 
-	// One SECRET field and no more. The other declared fields are non-secret facts the
-	// connect flow records — which workspace, which app — and a second secret would be a
-	// second credential path to review.
 	definition := Definition(NewClient(""), nil, false)
 	for _, field := range definition.Config {
-		if field.Secret && field.Name != "botToken" {
-			t.Errorf("%s is a second secret configuration field", field.Name)
+		if field.Secret && field.Key != "botToken" {
+			t.Errorf("%s is a second secret configuration field", field.Key)
 		}
-		if field.Required && field.Name != "botToken" {
-			t.Errorf("%s is required, so the connect flow could not omit it", field.Name)
+		if field.Required && field.Key != "botToken" {
+			t.Errorf("%s is required, so the connect flow could not omit it", field.Key)
 		}
 	}
 	token := definition.Config[0]
-	if token.Name != "botToken" || !token.Secret || !token.Required {
+	if token.Key != "botToken" || !token.Secret || !token.Required {
 		t.Errorf("botToken = %+v; it must be required and secret", token)
 	}
-	if token.Title != "Slack token" {
-		t.Errorf("token title = %q, want Slack token", token.Title)
-	}
-	const wantTokenDescription = "A bot token (xoxb-…) for public-channel reads, or a user " +
-		"token (xoxp-… or xoxe.xoxp-…) for message search. It is verified live against " +
-		"Slack before being saved, stored sealed, and never shown again."
-	if token.Description != wantTokenDescription {
-		t.Errorf("token description = %q, want %q", token.Description, wantTokenDescription)
+	if token.Label != "Slack token" {
+		t.Errorf("token label = %q, want Slack token", token.Label)
 	}
 	if !strings.Contains(string(definition.ConfigurationSchema()), `"writeOnly":true`) {
 		t.Error("the rendered schema does not say the token is write-only")

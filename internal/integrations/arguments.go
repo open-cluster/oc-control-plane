@@ -7,19 +7,11 @@ import (
 	"time"
 )
 
-// The shared argument reader. Every provider's tools read their calls through this one
-// implementation, so the refusal semantics — undeclared arguments refused rather than
-// dropped, whole numbers required rather than truncated — cannot drift copy by copy. The
-// third provider gets these lines for free instead of copying the ones a security
-// invariant lives in.
-
 // Arguments is one call's inputs after the undeclared ones were refused.
 type Arguments struct {
 	values map[string]any
 }
 
-// ReadArguments refuses an argument nothing declares. Dropped arguments are the quiet
-// failure mode of tool calling: the caller believes it narrowed the read and it did not.
 func ReadArguments(declared []ToolArgument, given map[string]any) (Arguments, error) {
 	for name := range given {
 		if !declaresArgument(declared, name) {

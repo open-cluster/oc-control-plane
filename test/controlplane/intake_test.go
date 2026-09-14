@@ -87,11 +87,9 @@ func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.U
 	digest := sha256.Sum256([]byte(secret))
 	_, err = database.Exec(ctx, `
 		INSERT INTO integration
-			(integration_id, org_id, integration_type_id, name,
-			 webhook_secret_digest, webhook_secret_fingerprint, webhook_secret_created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), now())`,
-		id, organization, alertmanagerTypeID, "the source "+id.String(), digest[:],
-		id.String()[:8])
+			(integration_id, org_id, integration_type_id, name, webhook_secret_digest)
+		VALUES ($1, $2, $3, $4, $5)`,
+		id, organization, alertmanagerTypeID, "the source "+id.String(), digest[:])
 	if err != nil {
 		t.Fatalf("configuring the integration: %v", err)
 	}
@@ -253,14 +251,9 @@ func (p *intakePlane) setDisabled(t *testing.T, disabled bool) {
 	}
 	defer func() { _ = database.Close(ctx) }()
 
-	var at *time.Time
-	if disabled {
-		now := time.Now()
-		at = &now
-	}
 	if _, err = database.Exec(ctx,
-		`UPDATE integration SET disabled_at = $2 WHERE integration_id = $1`,
-		p.integration, at); err != nil {
+		`UPDATE integration SET disabled = $2 WHERE integration_id = $1`,
+		p.integration, disabled); err != nil {
 		t.Fatalf("setting the disabled state: %v", err)
 	}
 }

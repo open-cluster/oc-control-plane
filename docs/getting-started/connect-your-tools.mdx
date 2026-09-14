@@ -30,9 +30,9 @@ outbound connection to the control plane.
 4. For an inbound alert Integration, send one test delivery.
 
 Credentials are write-only after submission. Webhook secrets are displayed once. A
-successful read Integration becomes `active`; it can be `degraded` when only some
-evidence is available. A webhook Integration remains `configured` until its first valid
-delivery and then becomes `active`.
+successful Verification sets the Integration to `verified`; individual Tools are offered
+only when their verified grants are present. Before the first Verification the status is
+empty, and an unsuccessful Verification sets it to `failed`.
 
 If verification fails, check the provider URL, credential, least-privilege permissions,
 and network access before replacing the credential. Verification proves current access;

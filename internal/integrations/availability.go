@@ -3,10 +3,7 @@ package integrations
 import (
 	"sort"
 	"strings"
-	"time"
 )
-
-const verificationMaxAge = 24 * time.Hour
 
 // ToolAvailability reports whether one declared Tool can be offered from the grants
 // established by the Integration's latest Verification.
@@ -52,28 +49,21 @@ func SupportedTools(definition Definition, integration Integration) []Tool {
 }
 
 func integrationEligible(integration Integration) (bool, string) {
-	if integration.Disabled() {
+	if integration.Disabled {
 		return false, "this Integration is disabled"
 	}
-	if integration.Status == 0 && integration.LastVerifiedAt.IsZero() {
-		// Zero-valued records occur only in domain fixtures; persisted rows have a frozen status.
-		return true, ""
-	}
-	if integration.Status != StatusActive && integration.Status != StatusDegraded {
+	if integration.Status != StatusVerified {
 		return false, "this Integration does not have a successful Verification"
 	}
-	if integration.LastVerifiedAt.IsZero() {
+	if integration.VerifiedAt.IsZero() {
 		return false, "this Integration has not recorded a Verification"
-	}
-	if time.Since(integration.LastVerifiedAt) > verificationMaxAge {
-		return false, "this Integration's Verification has expired"
 	}
 	return true, ""
 }
 
 func recordedGrants(integration Integration) map[string]bool {
-	recorded := make(map[string]bool, len(integration.VerifyGrants))
-	for _, grant := range integration.VerifyGrants {
+	recorded := make(map[string]bool, len(integration.VerificationGrants))
+	for _, grant := range integration.VerificationGrants {
 		recorded[grant] = true
 	}
 	return recorded
@@ -91,7 +81,7 @@ func missingGrants(tool Tool, recorded map[string]bool) []string {
 
 func reasonFor(integration Integration, missing []string) string {
 	named := strings.Join(missing, ", ")
-	if len(integration.VerifyGrants) == 0 {
+	if len(integration.VerificationGrants) == 0 {
 		return "this integration has not recorded a successful verification, so nothing " +
 			"is known to be granted; it needs " + named
 	}

@@ -11,14 +11,14 @@ func TestDefinitionDeclaresProviderContract(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition(nil, NewClient(""))
-	if definition.ID != integrations.TypeGitHub || definition.Key != "github" {
-		t.Errorf("identity = %d %q", definition.ID, definition.Key)
+	if definition.Type != integrations.TypeGitHub || definition.Key != "github" {
+		t.Errorf("identity = %d %q", definition.Type, definition.Key)
 	}
 	if definition.Category != integrations.CategorySourceControl {
 		t.Errorf("category = %q", definition.Category)
 	}
-	if definition.RequiresRelay || definition.ReceivesWebhooks {
-		t.Error("github is reached outbound under the app credential; no relay, no webhooks")
+	if definition.RequiresRelay {
+		t.Error("github needs no relay")
 	}
 	if definition.Verify != nil || definition.Probe == nil {
 		t.Error("github verifies by probing the live installation, not from gathered facts")
@@ -30,20 +30,52 @@ func TestDefinitionDeclaresProviderContract(t *testing.T) {
 	}
 }
 
-// The App credential is deployment configuration, so the integration's own configuration
-// is the installation id alone — numeric, required, and NOT a secret: it identifies a
-// grant, it cannot exercise one.
-func TestTheOnlyConfigurationFieldIsTheInstallationID(t *testing.T) {
+func TestConfiguredAppProvidesConnectionFlow(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeGitHub(t)
+	fake.answer("/app", `{"slug":"opencluster"}`)
+	fake.answer("/app/installations/77", `{
+		"account":{"login":"acme-corp","type":"Organization"},
+		"repository_selection":"selected","suspended_at":null}`)
+	app, err := NewApp("12345", pemPKCS1(testKey(t)), NewClient(fake.URL))
+	if err != nil {
+		t.Fatalf("building app: %v", err)
+	}
+
+	connected := Definition(app, NewClient(fake.URL)).Connect
+	if connected == nil {
+		t.Fatal("configured GitHub app has no connection flow")
+	}
+	location, err := connected.Authorize(testContext(t), "opaque-state", "https://control.example/callback")
+	if err != nil || !strings.Contains(location, "/apps/opencluster/installations/new?state=opaque-state") {
+		t.Fatalf("authorization location = %q, error = %v", location, err)
+	}
+	bound, err := connected.Redeem(testContext(t), integrations.ConnectReturn{
+		Query: map[string][]string{"installation_id": {"77"}},
+	})
+	if err != nil {
+		t.Fatalf("redeeming installation: %v", err)
+	}
+	if bound.Name != "GitHub — acme-corp" || len(bound.Configuration) != 0 {
+		t.Errorf("binding = %+v", bound)
+	}
+	if bound.Installation == nil || bound.Installation.Application != "github" ||
+		bound.Installation.Workspace != "77" {
+		t.Errorf("installation = %+v", bound.Installation)
+	}
+	if fake.called("/app") != 1 || fake.called("/app/installations/77") != 1 {
+		t.Errorf("provider calls: app=%d installation=%d", fake.called("/app"),
+			fake.called("/app/installations/77"))
+	}
+}
+
+func TestInstallationIdentityIsNotEditableConfiguration(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition(nil, NewClient(""))
-	if len(definition.Config) != 1 {
-		t.Fatalf("config declares %d fields, want the installation id alone", len(definition.Config))
-	}
-	field := definition.Config[0]
-	if field.Name != "installationId" || field.Type != integrations.FieldInteger ||
-		!field.Required || field.Secret {
-		t.Errorf("installationId = %+v", field)
+	if len(definition.Config) != 0 {
+		t.Fatalf("config declares discovered fields: %+v", definition.Config)
 	}
 }
 
@@ -80,20 +112,19 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 func TestInstallationOfRefusesWhatIsNotAnID(t *testing.T) {
 	t.Parallel()
 
-	for name, configuration := range map[string]map[string]any{
-		"absent":     {},
-		"text":       {"installationId": "77"},
-		"fractional": {"installationId": 77.5},
-		"negative":   {"installationId": float64(-1)},
+	for name, installed := range map[string]*integrations.Installation{
+		"absent":   nil,
+		"text":     {Workspace: "abc"},
+		"negative": {Workspace: "-1"},
 	} {
-		integration := integrations.Integration{Configuration: configuration}
+		integration := integrations.Integration{Installation: installed}
 		if _, err := installationOf(integration); err == nil {
 			t.Errorf("an %s installation id was accepted", name)
 		}
 	}
 
 	integration := integrations.Integration{
-		Configuration: map[string]any{"installationId": float64(77)},
+		Installation: &integrations.Installation{Workspace: "77"},
 	}
 	installation, err := installationOf(integration)
 	if err != nil || installation != 77 {

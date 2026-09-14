@@ -54,14 +54,6 @@ func (p *Database) BootstrapLocalUser(
 	if users != 0 {
 		return User{}, ErrLocalBootstrapComplete
 	}
-	tag, err := transaction.Exec(ctx, `INSERT INTO deployment_initialization (singleton) VALUES (true) ON CONFLICT DO NOTHING`)
-	if err != nil {
-		return User{}, fmt.Errorf("retiring bootstrap: %w", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return User{}, ErrLocalBootstrapComplete
-	}
-
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	var user User
 	if err = transaction.QueryRow(ctx, `

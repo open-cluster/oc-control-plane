@@ -35,44 +35,19 @@ const (
 )
 
 type Field struct {
-	Name        string
-	Title       string
-	Description string
-	Type        FieldType
-	Format      string
-	Required    bool
-	Secret      bool
-	// Recorded marks a value the INSTALLATION FLOW writes and a caller never may. It is
-	// declared so that an operator reading the record can see it and a schema can describe
-	// it, and it is refused on the way in — a field that only a proven connect can set
-	// must not be typeable, or a claim the flow established becomes a claim anybody with
-	// update permission can assert.
-	//
-	// The rendered schema says readOnly, which is exactly what it means.
-	Recorded bool
-	// Enum closes a field to a named set.
-	Enum []string
-	// Default is what the field means when it is left out.
-	Default any
+	Key      string
+	Label    string
+	Type     FieldType
+	Required bool
+	Secret   bool
+	Options  []string
 }
 
 // Verification is what a verify run established.
 type Verification struct {
 	Status Status
-	// Note says, in the operator's language, what this run proved or could not.
-	Note string
-	// Grants are facts the probe verified about the credential, in the provider's own
-	// vocabulary — Slack records granted scopes plus the token's kind. Tool
-	// availability derives from them: a tool whose Requires are not all recorded here
-	// is absent from an investigation's set instead of failing at call time. Nil means
-	// nothing was recorded, and gated tools stay absent.
+	Note   string
 	Grants []string
-	// Facts are non-secret, provider-shaped things this run established about what is
-	// connected — GitHub records the account, its type, and how far the installation's
-	// repository grant reaches. They are for display and for support and are never
-	// consulted by an authorization decision, which is what keeps them separate from
-	// Grants. Nil means the run established none.
-	Facts map[string]any
 }
 type VerifyInput struct {
 	Integration          Integration
@@ -128,18 +103,15 @@ type Definition struct {
 // Manifest is the authoritative provider declaration used by runtime routing, database
 // reconciliation, docs, and clients that render the catalog.
 type Manifest struct {
-	ID                TypeID
+	Type              TypeID
 	Key               string
 	Name              string
 	Description       string
 	Logo              string
 	Category          Category
-	Available         bool
 	DocumentationSlug string
 	SourceURL         string
-	ReceivesWebhooks  bool
 	RequiresRelay     bool
-	SupportsConnect   bool
 	Config            []Field
 	Tools             []Tool
 }
@@ -170,28 +142,18 @@ func (m Manifest) ConfigurationSchema() json.RawMessage {
 
 	for _, field := range m.Config {
 		property := map[string]any{
-			"type":        string(field.Type),
-			"title":       field.Title,
-			"description": field.Description,
+			"type":  string(field.Type),
+			"title": field.Label,
 		}
-		if field.Format != "" {
-			property["format"] = field.Format
-		}
-		if len(field.Enum) > 0 {
-			property["enum"] = field.Enum
-		}
-		if field.Default != nil {
-			property["default"] = field.Default
+		if len(field.Options) > 0 {
+			property["enum"] = field.Options
 		}
 		if field.Secret {
 			property["writeOnly"] = true
 		}
-		if field.Recorded {
-			property["readOnly"] = true
-		}
-		properties[field.Name] = property
+		properties[field.Key] = property
 		if field.Required {
-			required = append(required, field.Name)
+			required = append(required, field.Key)
 		}
 	}
 	sort.Strings(required)
@@ -229,7 +191,7 @@ func (m Manifest) SecretFields() []string {
 	fields := make([]string, 0, len(m.Config))
 	for _, field := range m.Config {
 		if field.Secret {
-			fields = append(fields, field.Name)
+			fields = append(fields, field.Key)
 		}
 	}
 	return fields
@@ -237,9 +199,9 @@ func (m Manifest) SecretFields() []string {
 
 // Field resolves one configuration field by name. It is the single lookup: Declares reads
 // it, and so does the check that decides whether a submitted value may be stored.
-func (d Definition) Field(name string) (Field, bool) {
+func (d Definition) Field(key string) (Field, bool) {
 	for _, field := range d.Config {
-		if field.Name == name {
+		if field.Key == key {
 			return field, true
 		}
 	}
@@ -275,7 +237,7 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 		byID:    make(map[TypeID]Definition, len(definitions)),
 	}
 	for _, definition := range definitions {
-		if definition.Key == "" || definition.ID == 0 {
+		if definition.Key == "" || definition.Type == 0 {
 			return Catalog{}, fmt.Errorf("integration definition %q has no identity", definition.Key)
 		}
 		if err := checkDefinition(definition); err != nil {
@@ -284,12 +246,12 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 		if _, taken := catalog.byKey[definition.Key]; taken {
 			return Catalog{}, fmt.Errorf("integration type key %q is declared twice", definition.Key)
 		}
-		if _, taken := catalog.byID[definition.ID]; taken {
-			return Catalog{}, fmt.Errorf("integration type id %d is declared twice", definition.ID)
+		if _, taken := catalog.byID[definition.Type]; taken {
+			return Catalog{}, fmt.Errorf("integration type id %d is declared twice", definition.Type)
 		}
 		catalog.ordered = append(catalog.ordered, definition)
 		catalog.byKey[definition.Key] = definition
-		catalog.byID[definition.ID] = definition
+		catalog.byID[definition.Type] = definition
 	}
 	sort.Slice(catalog.ordered, func(i, j int) bool {
 		return catalog.ordered[i].Key < catalog.ordered[j].Key
@@ -302,9 +264,6 @@ func checkDefinition(definition Definition) error {
 	if definition.DocumentationSlug != "" && definition.DocumentationSlug != wantDocumentationSlug {
 		return fmt.Errorf("integration type %q documentation slug is %q, want %q",
 			definition.Key, definition.DocumentationSlug, wantDocumentationSlug)
-	}
-	if definition.SupportsConnect != definition.Connectable() {
-		return fmt.Errorf("integration type %q manifest connect availability does not match its behavior", definition.Key)
 	}
 	if (definition.Verify == nil) == (definition.Probe == nil) {
 		return fmt.Errorf("integration type %q must declare exactly one of Verify and Probe",
@@ -378,6 +337,9 @@ func (c Catalog) Manifests() []Manifest {
 	for _, definition := range c.ordered {
 		manifest := definition.Manifest
 		manifest.Config = append([]Field(nil), manifest.Config...)
+		for index := range manifest.Config {
+			manifest.Config[index].Options = append([]string(nil), manifest.Config[index].Options...)
+		}
 		manifest.Tools = append([]Tool(nil), manifest.Tools...)
 		for index := range manifest.Tools {
 			manifest.Tools[index].Arguments = append([]ToolArgument(nil), manifest.Tools[index].Arguments...)

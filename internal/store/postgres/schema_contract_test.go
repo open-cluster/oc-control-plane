@@ -2,12 +2,15 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	githubintegration "github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -40,7 +43,7 @@ VALUES ($1,'Organization A','test')`, org.String()); err != nil {
 	}
 }
 
-func TestFreshSchemaUsesOneFinalBaseline(t *testing.T) {
+func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 	ctx := context.Background()
 	dsn := postgresDSN(t)
 	database := openDatabaseForTest(t, dsn)
@@ -57,11 +60,10 @@ func TestFreshSchemaUsesOneFinalBaseline(t *testing.T) {
 	defer func() { _ = connection.Close(ctx) }()
 	wantTables := []string{
 		"alert_event", "app_user", "audit_event", "change_event", "change_scope",
-		"conversation", "conversation_message", "deployment_initialization",
-		"deployment_sign_in_flow", "incident", "integration", "integration_connect_flow",
-		"integration_installation", "investigation", "investigation_event",
-		"investigation_tool_run", "local_password", "organization", "organization_membership",
-		"postmortem", "relay_bootstrap_token", "relay_job", "relay_registration",
+		"conversation", "conversation_message", "incident", "integration",
+		"integration_connect_flow", "integration_installation", "investigation", "investigation_event",
+		"investigation_tool_run", "local_password", "oidc_sign_in_flow", "organization",
+		"organization_membership", "postmortem", "relay_bootstrap_token", "relay_job", "relay_registration",
 		"schema_migration", "session", "slack_conversation", "slack_reply",
 		"webhook_delivery", "webhook_job",
 	}
@@ -75,7 +77,15 @@ func TestFreshSchemaUsesOneFinalBaseline(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 1 FROM schema_migration`,
+		`SELECT count(*) = 2 FROM schema_migration`,
+		`SELECT to_regclass('deployment_initialization') IS NULL`,
+		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
+		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integration' AND column_name IN
+			('labels','verify_facts','verify_note','disabled_at','created_by','updated_at','credential_fingerprint','webhook_secret_fingerprint'))`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name IN ('oidc_sign_in_flow','integration_connect_flow')
+			AND column_name IN ('flow_id','created_at','consumed_at'))`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integration' AND column_name='verification_grants' AND data_type='ARRAY')`,
 		`SELECT to_regclass('organization_policy') IS NULL`,
 		`SELECT to_regclass('integration_type') IS NULL`,
 		`SELECT to_regclass('operator_session') IS NULL`,
@@ -155,8 +165,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 1 {
-		t.Fatalf("concurrent startup applied %d migrations, want one", applied)
+	if applied != 2 {
+		t.Fatalf("concurrent startup applied %d migrations, want two", applied)
 	}
 }
 
@@ -179,5 +189,106 @@ func TestBaselineFailureRollsBackCompletely(t *testing.T) {
 	if err = connection.QueryRow(ctx, `SELECT to_regclass('alert_event') IS NULL
 		AND to_regclass('schema_migration') IS NULL`).Scan(&rolledBack); err != nil || !rolledBack {
 		t.Fatalf("failed baseline left partial schema: %v", err)
+	}
+}
+
+func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+
+	_, err = connection.Exec(ctx, `
+		CREATE TABLE schema_migration (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES ('0001_schema');
+		CREATE TABLE integration (
+			integration_id uuid PRIMARY KEY, org_id uuid NOT NULL, integration_type_id smallint NOT NULL,
+			name text NOT NULL, configuration jsonb NOT NULL DEFAULT '{}', webhook_secret_digest bytea,
+			webhook_secret_fingerprint text, webhook_secret_created_at timestamptz, webhook_secret_rotated_at timestamptz,
+			labels jsonb NOT NULL DEFAULT '{}', relay_id uuid, status smallint NOT NULL DEFAULT 1,
+			last_verified_at timestamptz, verify_note text NOT NULL DEFAULT '', disabled_at timestamptz,
+			created_by text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL,
+			credential_sealed bytea, credential_fingerprint text, credential_created_at timestamptz,
+			credential_rotated_at timestamptz, verify_grants jsonb, verify_facts jsonb,
+			CONSTRAINT integration_credential_is_whole CHECK (true),
+			CONSTRAINT integration_status_check CHECK (status = ANY (ARRAY[1,2,3,4])),
+			CONSTRAINT integration_supported_kind CHECK (integration_type_id = ANY (ARRAY[1,2,3,4,5])),
+			CONSTRAINT integration_webhook_secret_is_whole CHECK (true),
+			CONSTRAINT integration_name_is_unique_per_org UNIQUE (org_id,name)
+		);
+		CREATE TABLE integration_installation (
+			integration_id uuid PRIMARY KEY, org_id uuid NOT NULL, integration_type_id smallint NOT NULL,
+			application text NOT NULL, enterprise text NOT NULL DEFAULT '', workspace text NOT NULL,
+			enterprise_wide boolean NOT NULL DEFAULT false, agent text NOT NULL DEFAULT '',
+			authorizer text NOT NULL DEFAULT '', grants text[] NOT NULL DEFAULT '{}',
+			installed_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL,
+			CONSTRAINT integration_installation_supported_kind CHECK (integration_type_id = ANY (ARRAY[1,2,3,4,5]))
+		);
+		CREATE UNIQUE INDEX integration_installation_is_one_workspace
+			ON integration_installation (integration_type_id, application, enterprise, workspace);
+		INSERT INTO integration(integration_id,org_id,integration_type_id,name,configuration,status,last_verified_at,
+			updated_at,verify_grants,verify_facts) VALUES
+			('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',3,'Slack',
+			 '{"appID":"A1","teamId":"T1"}',2,now(),now(),'["channels:read"]','{"botUserId":"U1"}'),
+			('10000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000001',4,'GitHub',
+			 '{"installationId":77}',2,now(),now(),'[]','{"account":"acme"}'),
+			('10000000-0000-0000-0000-000000000003','20000000-0000-0000-0000-000000000001',4,'GitHub duplicate',
+			 '{"installationId":77}',2,now(),now(),'[]','{"account":"acme"}');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{"0002_simplify_integrations"}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+
+	rows, err := connection.Query(ctx, `SELECT application,workspace,agent
+		FROM integration_installation ORDER BY integration_type_id,application`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got [][3]string
+	for rows.Next() {
+		var installed [3]string
+		if err := rows.Scan(&installed[0], &installed[1], &installed[2]); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, installed)
+	}
+	if len(got) != 3 || got[0] != [3]string{"A1", "T1", "U1"} ||
+		got[1] != [3]string{"github", "77", "acme"} ||
+		got[2][1] != "77" || got[2][2] != "acme" {
+		t.Fatalf("installations = %v", got)
+	}
+	routed, _, err := database.IntegrationByInstallation(ctx, integrations.TypeSlack,
+		integrations.InstallationKey{Application: "A1", Workspace: "T1"})
+	if err != nil || routed.ID != uuid.MustParse("10000000-0000-0000-0000-000000000001") ||
+		routed.OrgID != "20000000-0000-0000-0000-000000000001" {
+		t.Fatalf("migrated Slack routing = %+v, %v", routed, err)
+	}
+	var configurations []string
+	if err := connection.QueryRow(ctx, `SELECT array_agg(configuration::text ORDER BY integration_type_id) FROM integration`).Scan(&configurations); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(configurations, []string{"{}", "{}", "{}"}) {
+		t.Fatalf("editable configurations = %v", configurations)
+	}
+
+	org := organization(t, "20000000-0000-0000-0000-000000000001")
+	loaded, err := database.Integration(ctx, org,
+		uuid.MustParse("10000000-0000-0000-0000-000000000002"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := githubintegration.Definition(nil, githubintegration.NewClient("")).Tools[0]
+	_, err = tool.Run(ctx, integrations.ToolRequest{Integration: loaded})
+	if !errors.Is(err, githubintegration.ErrNoApp) {
+		t.Fatalf("migrated GitHub identity did not reach Tool execution: %v", err)
 	}
 }

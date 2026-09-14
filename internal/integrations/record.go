@@ -7,45 +7,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status is where an Integration has got to, as observed rather than as declared. Persisted
-// as the integer in the column; the values are frozen.
-//
-// `disabled` is deliberately not in this list: DisabledAt says an operator turned it off,
-// and collapsing the two would lose whether it was working when they did — which is what
-// they need to know when they turn it back on during an incident.
-type Status int16
+type Status string
 
 const (
-	// StatusConfigured is the state an Integration is created in: it exists and nothing
-	// has checked it.
-	StatusConfigured Status = iota + 1
-	StatusActive
-	// StatusDegraded makes partial success visible on the record itself: the far end
-	// answered and some of what this type offers is unavailable.
-	StatusDegraded
-	StatusFailed
+	StatusVerified Status = "verified"
+	StatusFailed   Status = "failed"
 )
 
 func (s Status) String() string {
-	switch s {
-	case StatusConfigured:
-		return "configured"
-	case StatusActive:
-		return "active"
-	case StatusDegraded:
-		return "degraded"
-	case StatusFailed:
-		return "failed"
-	default:
-		return "unrecognised"
-	}
+	return string(s)
 }
 
 // Refusals a mutation can produce. Declared here because the Integration domain owns its
 // vocabulary; persistence returns these.
 var (
-	// ErrNameTaken reports a name another Integration in the organization holds.
-	ErrNameTaken = errors.New("integration name is already used in this organization")
 	// ErrUnknown reports an Integration this organization does not have.
 	ErrUnknown = errors.New("integration unknown")
 	// ErrCrossTenant reports an Integration whose Relay does not belong to the
@@ -74,31 +49,6 @@ var (
 	ErrInvalidInstallation = errors.New("installation cannot be recorded")
 )
 
-// WebhookSecret is what a read may say about the inbound secret, which is never the secret:
-// a minted identity so an operator can tell one secret from the next after a rotation.
-type WebhookSecret struct {
-	Fingerprint string
-	CreatedAt   time.Time
-	// RotatedAt is zero for a secret that has never been rotated.
-	RotatedAt time.Time
-}
-
-// Held reports whether this Integration carries a webhook secret at all.
-func (w WebhookSecret) Held() bool { return w.Fingerprint != "" }
-
-// Credential is what a read may say about the outbound credential, which is never the
-// credential: a minted identity so an operator can tell one pasted token from the next
-// after a replacement.
-type Credential struct {
-	Fingerprint string
-	CreatedAt   time.Time
-	// RotatedAt is zero for a credential that has never been replaced.
-	RotatedAt time.Time
-}
-
-// Held reports whether this Integration carries an outbound credential at all.
-func (c Credential) Held() bool { return c.Fingerprint != "" }
-
 // Integration is one configured installation belonging to an organization.
 type Integration struct {
 	ID    uuid.UUID
@@ -108,7 +58,6 @@ type Integration struct {
 	// Configuration is the provider-specific non-secret settings, shaped by the type's
 	// schema. It never holds a credential.
 	Configuration map[string]any
-	Labels        map[string]string
 	// RelayID is the installation that serves this Integration, and the zero UUID when
 	// none does.
 	RelayID uuid.UUID
@@ -116,32 +65,17 @@ type Integration struct {
 	// Empty for a type that receives no webhooks. The secret itself exists only at
 	// creation and rotation and is never read back.
 	WebhookSecretDigest []byte
-	WebhookSecret       WebhookSecret
 	// CredentialSealed is the outbound credential, sealed under the deployment's key.
 	// Nil for a type that presents none. It is opened only to be presented to the
 	// provider — verification and tool calls — and no view renders it.
-	CredentialSealed []byte
-	Credential       Credential
-	Status           Status
-	LastVerifiedAt   time.Time
-	VerifyNote       string
-	// VerifyGrants are the facts the last verification recorded about the credential
-	// (scopes, token kind); tool availability derives from them. Nil when none were
-	// recorded.
-	VerifyGrants []string
-	// VerifyFacts are the non-secret, provider-shaped things the last verification
-	// established about what is connected — the account, its type, how far the grant
-	// reaches. For display and for support; never consulted by an authorization
-	// decision. Nil when none were recorded.
-	VerifyFacts map[string]any
-	DisabledAt  time.Time
-	CreatedBy   string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	CredentialSealed   []byte
+	Status             Status
+	VerifiedAt         time.Time
+	VerificationGrants []string
+	Disabled           bool
+	CreatedAt          time.Time
+	Installation       *Installation
 }
-
-// Disabled reports whether this Integration has been turned off.
-func (i Integration) Disabled() bool { return !i.DisabledAt.IsZero() }
 
 // CredentialBinding is what an Integration's sealed credential is bound to: the row's
 // own identity. One derivation, used by everything that seals or opens, so a blob moved
@@ -155,20 +89,13 @@ func CredentialBinding(id uuid.UUID) []byte { return id[:] }
 type NewIntegration struct {
 	// ID is minted by the handler BEFORE anything is sealed, because the sealed
 	// credential is bound to the row's identity and the binding must exist first.
-	ID            uuid.UUID
-	Type          TypeID
-	Name          string
-	Configuration map[string]any
-	Labels        map[string]string
-	RelayID       uuid.UUID
-	// WebhookSecretDigest and Fingerprint are set by the handler for a webhook-receiving
-	// type; the secret itself is returned to the operator once and never stored.
-	WebhookSecretDigest      []byte
-	WebhookSecretFingerprint string
-	// CredentialSealed and its fingerprint are set by the handler for a credential-bearing
-	// type, after the probe accepted the plaintext and the sealer closed over it.
-	CredentialSealed      []byte
-	CredentialFingerprint string
+	ID                  uuid.UUID
+	Type                TypeID
+	Name                string
+	Configuration       map[string]any
+	RelayID             uuid.UUID
+	WebhookSecretDigest []byte
+	CredentialSealed    []byte
 	// Verification, when non-nil, is what the pre-creation probe established: the
 	// Integration is born verified, in the same transaction that records it. Nil means it
 	// is born configured, with nothing having checked it.
@@ -178,26 +105,10 @@ type NewIntegration struct {
 	// receives no events and for a credential pasted into the configuration form, which
 	// names no installation to route to.
 	Installation *Installation
-	CreatedBy    string
 }
 
-// AN INSTALLATION IS ROUTING, AND ONLY ROUTING.
-//
-// It is how an event arriving from a vendor resolves to exactly one Integration and
-// therefore exactly one organization. Resolution always runs installation -> integration ->
-// organization; no vendor identifier ever looks anything up directly, which is the property
-// that stops an identifier from one tenant reaching another's records.
-//
-// What an operator READS about a connected installation is not here — it is on the
-// Integration's verify facts, recorded by the verification. The two are deliberately apart:
-// facts are what the last verification established and may go stale, and this is the key
-// that decides whose event this is, which may not.
-//
-// The vocabulary is neutral because the shared connect flow carries it and that flow knows
-// no provider. The persistence layer dispatches on the Integration's type to the table that
-// holds it.
-
-// Installation is one vendor-side installation, as the routing record holds it.
+// Installation is durable provider identity used for reconnect matching, inbound routing,
+// and provider Tool credentials. Capability evidence remains in VerificationGrants.
 type Installation struct {
 	// Application is the vendor application the installation was made under. It is part of
 	// the key because one deployment may serve more than one registration over its life,
@@ -220,14 +131,8 @@ type Installation struct {
 	// Load-bearing rather than informational: a message authored by this identity is
 	// discarded before anything else looks at it, which is what stops the agent answering
 	// itself and looping until a rate limit ends it.
-	Agent string
-	// Authorizer is who authorized the installation, in the vendor's own identifiers.
-	// Recorded for the trail; no decision reads it.
+	Agent      string
 	Authorizer string
-	// Grants is what the installation carried when it was made. The authoritative copy for
-	// tool availability is the verification's; this is what an operator needs when the two
-	// disagree.
-	Grants []string
 }
 
 // Key is what an inbound event resolves BY.
@@ -258,7 +163,6 @@ func (k InstallationKey) Complete() bool {
 type Revision struct {
 	Name          *string
 	Configuration map[string]any
-	Labels        map[string]string
 }
 
 // Page is a position in a listing.

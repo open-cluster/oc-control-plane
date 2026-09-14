@@ -16,7 +16,6 @@ import (
 )
 
 type DeploymentSignInFlow struct {
-	ID           uuid.UUID
 	Organization string
 	CodeVerifier string
 	Nonce        string
@@ -32,13 +31,13 @@ func (p *Database) StartDeploymentSignIn(ctx context.Context, organization tenan
 	if err != nil {
 		return err
 	}
-	if _, err = pool.Exec(ctx, `DELETE FROM deployment_sign_in_flow
-		WHERE org_id=$1 AND (expires_at<=now() OR consumed_at IS NOT NULL)`, organization.String()); err != nil {
+	if _, err = pool.Exec(ctx, `DELETE FROM oidc_sign_in_flow
+		WHERE org_id=$1 AND expires_at<=now()`, organization.String()); err != nil {
 		return fmt.Errorf("expiring deployment sign-ins: %w", err)
 	}
-	_, err = pool.Exec(ctx, `INSERT INTO deployment_sign_in_flow
-		(flow_id, org_id, state_digest, code_verifier, nonce, return_to, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`, flow.ID, organization.String(), digest[:], nullableText(flow.CodeVerifier), nullableText(flow.Nonce), flow.ReturnTo, flow.ExpiresAt)
+	_, err = pool.Exec(ctx, `INSERT INTO oidc_sign_in_flow
+		(org_id, state_digest, code_verifier, nonce, return_to, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6)`, organization.String(), digest[:], nullableText(flow.CodeVerifier), nullableText(flow.Nonce), flow.ReturnTo, flow.ExpiresAt)
 	if err != nil {
 		return fmt.Errorf("starting deployment sign-in: %w", err)
 	}
@@ -49,9 +48,9 @@ func (p *Database) RedeemDeploymentSignIn(ctx context.Context, state string) (De
 	digest := sha256.Sum256([]byte(state))
 	var flow DeploymentSignInFlow
 	var verifier, nonce *string
-	err := p.pool.QueryRow(ctx, `DELETE FROM deployment_sign_in_flow
-		WHERE state_digest=$1 AND consumed_at IS NULL AND expires_at>now()
-		RETURNING flow_id,org_id,code_verifier,nonce,return_to,expires_at`, digest[:]).Scan(&flow.ID, &flow.Organization, &verifier, &nonce, &flow.ReturnTo, &flow.ExpiresAt)
+	err := p.pool.QueryRow(ctx, `DELETE FROM oidc_sign_in_flow
+		WHERE state_digest=$1 AND expires_at>now()
+		RETURNING org_id,code_verifier,nonce,return_to,expires_at`, digest[:]).Scan(&flow.Organization, &verifier, &nonce, &flow.ReturnTo, &flow.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return flow, ErrFlowUnknown
 	}

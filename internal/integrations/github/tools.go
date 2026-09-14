@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -68,7 +67,7 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.list_repositories",
+		Name: toolListRepositories,
 		Description: "Lists the repositories this installation selected, by stable id, " +
 			"with names and descriptions.",
 		WhenToUse: "First, to find which repository holds the failing service: filter by " +
@@ -76,7 +75,7 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 		WhenNotToUse: "Not for commit or pull-request content — it returns none. Never " +
 			"repeatedly inside one investigation; the selection does not change mid-incident.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.list_repositories"),
+		Permissions: permissionProse(toolListRepositories),
 		Output: "a bounded list of repositories, each with id, name, full name, privacy, " +
 			"archive state, default branch and description, plus a truncated flag when " +
 			"more matched than were returned or the walk stopped early",
@@ -167,7 +166,7 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "github.read_commits",
+		Name: toolReadCommits,
 		Description: "Reads one repository's commits inside a time window, newest first, " +
 			"bounded and flagged when the window holds more.",
 		WhenToUse: "To answer \"what changed before this broke\": read the incident's " +
@@ -177,7 +176,7 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			"history: every read is clamped into the investigation's own window, which " +
 			"may be short, and the result states the window it actually covered.",
 		Arguments:   declared,
-		Permissions: permissionProse("github.read_commits"),
+		Permissions: permissionProse(toolReadCommits),
 		Output: "a bounded list of commits, each with sha, message, author, authored " +
 			"time and permalink, plus a truncated flag when the window holds more; an " +
 			"empty repository answers an empty list; a message like \"Merge pull " +
@@ -260,15 +259,4 @@ func matchesRepository(repository Repository, needle string) bool {
 	return strings.Contains(strings.ToLower(repository.Name), needle) ||
 		strings.Contains(strings.ToLower(repository.FullName), needle) ||
 		strings.Contains(strings.ToLower(repository.Description), needle)
-}
-
-// wholePositiveID is the one reading of a stable id from decoded JSON configuration.
-// Numbers arrive as float64; a whole positive value is required, not merely truncated.
-// Tool arguments read theirs through the shared integrations.Arguments instead.
-func wholePositiveID(value any) (int64, error) {
-	number, isNumber := value.(float64)
-	if !isNumber || number != float64(int64(number)) || number < 1 {
-		return 0, errors.New("not a whole positive number")
-	}
-	return int64(number), nil
 }

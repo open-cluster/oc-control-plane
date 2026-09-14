@@ -109,7 +109,12 @@ func (r *records) TriggerIncident(context.Context, tenancy.Organization, uuid.UU
 	return r.trigger, nil
 }
 func (r *records) InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error) {
-	return []integrations.Integration{r.candidate}, nil
+	candidate := r.candidate
+	if candidate.Type != 0 && candidate.Status == "" {
+		candidate.Status = integrations.StatusVerified
+		candidate.VerifiedAt = time.Now().UTC()
+	}
+	return []integrations.Integration{candidate}, nil
 }
 func (r *records) RecordCredentialUnseal(context.Context, tenancy.Organization, uuid.UUID, string) error {
 	r.mu.Lock()
@@ -148,9 +153,9 @@ func (r *records) AppendEvent(
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Available: true, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value.", WhenToUse: "To answer.", WhenNotToUse: "Never.", Permissions: "read", Output: "value", Run: run}}},
+		Manifest: integrations.Manifest{Type: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value.", WhenToUse: "To answer.", WhenNotToUse: "Never.", Permissions: "read", Output: "value", Run: run}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
+			return integrations.Verification{Status: integrations.StatusVerified}
 		},
 	})
 	if err != nil {
@@ -266,9 +271,9 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 		{Name: "kubernetes.pod.logs", Description: "logs", WhenToUse: "diagnosis", WhenNotToUse: "never", Permissions: "read", Output: "logs", Run: run},
 	}
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{ID: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Available: true, Tools: tools},
+		Manifest: integrations.Manifest{Type: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
+			return integrations.Verification{Status: integrations.StatusVerified}
 		},
 	})
 	if err != nil {
@@ -334,6 +339,10 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			storeCandidates := []integrations.Integration{
 				store.candidate, {ID: other, Type: 99, Name: "other"},
 			}
+			for index := range storeCandidates {
+				storeCandidates[index].Status = integrations.StatusVerified
+				storeCandidates[index].VerifiedAt = time.Now().UTC()
+			}
 			reads := 0
 			read := func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 				reads++
@@ -343,12 +352,12 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 				return integrations.ToolResult{Summary: "origin thread", Content: "origin thread"}, nil
 			}
 			catalog, err := integrations.NewCatalog(integrations.Definition{
-				Manifest: integrations.Manifest{ID: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Available: true, Tools: []integrations.Tool{
+				Manifest: integrations.Manifest{Type: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
 					{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", SupportsThreadScope: true, Run: read},
 					{Name: "chat.channel", Description: "channel", WhenToUse: "broad", WhenNotToUse: "mentions", Permissions: "read", Output: "messages", Run: read},
 				}},
 				Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-					return integrations.Verification{Status: integrations.StatusActive}
+					return integrations.Verification{Status: integrations.StatusVerified}
 				},
 			})
 			if err != nil {

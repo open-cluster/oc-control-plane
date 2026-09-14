@@ -24,7 +24,8 @@ and audit attribution.
 
 One configured installation belonging to an Organization, such as Production
 Alertmanager or the platform Slack workspace. It holds non-secret configuration,
-verification facts, and sealed or digested credentials where required.
+verified capability grants, explicit provider installation identity, and sealed or digested
+credentials where required.
 
 ## Tool
 

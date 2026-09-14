@@ -49,8 +49,7 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			_, err := database.CreateIntegration(ctx, stranger, organization,
 				integrations.NewIntegration{
 					Type: integrations.TypeAlertmanager, Name: "trespass",
-					WebhookSecretDigest:      randomDigest(t),
-					WebhookSecretFingerprint: "fingerprint",
+					WebhookSecretDigest: randomDigest(t),
 				})
 			return err
 		},
@@ -67,11 +66,11 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		},
 		"RotateIntegrationWebhookSecret": func() error {
 			return database.RotateIntegrationWebhookSecret(
-				ctx, stranger, organization, somebody, randomDigest(t), "fingerprint")
+				ctx, stranger, organization, somebody, randomDigest(t))
 		},
 		"RecordIntegrationVerification": func() error {
 			_, err := database.RecordIntegrationVerification(ctx, stranger, organization,
-				somebody, integrations.Verification{Status: integrations.StatusActive})
+				somebody, integrations.Verification{Status: integrations.StatusVerified})
 			return err
 		},
 		"ListRelays": func() error {

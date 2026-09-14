@@ -11,8 +11,7 @@ import (
 
 func assembledWith(argument ToolArgument) error {
 	_, err := NewCatalog(Definition{
-		Manifest: Manifest{ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
-			Available: true,
+		Manifest: Manifest{Type: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
 			Tools: []Tool{{
 				Name: "stub.read", Description: "reads",
 				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
@@ -20,7 +19,7 @@ func assembledWith(argument ToolArgument) error {
 				Run: func(context.Context, ToolRequest) (ToolResult, error) { return ToolResult{}, nil },
 			}}},
 		Probe: func(context.Context, ProbeInput) Verification {
-			return Verification{Status: StatusActive}
+			return Verification{Status: StatusVerified}
 		},
 	})
 	return err
@@ -51,8 +50,7 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewCatalog(Definition{
-		Manifest: Manifest{ID: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
-			Available: true,
+		Manifest: Manifest{Type: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
 			Tools: []Tool{{
 				Name: "stub.read", Description: "reads",
 				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
@@ -64,7 +62,7 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 				Run: func(context.Context, ToolRequest) (ToolResult, error) { return ToolResult{}, nil },
 			}}},
 		Probe: func(context.Context, ProbeInput) Verification {
-			return Verification{Status: StatusActive}
+			return Verification{Status: StatusVerified}
 		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "limit") {

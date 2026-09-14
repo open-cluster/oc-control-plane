@@ -30,7 +30,6 @@ func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	err = h.Database.StartDeploymentSignIn(ctx, organization, storage.DeploymentSignInFlow{
-		ID:           newFlowID(),
 		Organization: organization.String(),
 		CodeVerifier: authorization.CodeVerifier,
 		Nonce:        authorization.Nonce,

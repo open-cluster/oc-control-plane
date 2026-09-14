@@ -51,16 +51,14 @@ failure states; they are never rewritten as evidence that nothing exists.
     namespace reachable by the Relay service account.
   </Step>
   <Step title="Verify the Relay">
-    Select **Verify**. An active result means the Relay is connected and supports all three
-    required read operations. A degraded result names any unavailable reads; only currently
-    verified reads are offered.
+    Select **Verify**. A `verified` result means the Relay is connected. Only reads whose
+    capability grants were verified are offered.
   </Step>
 </Steps>
 
 ## Verify
 
-An `active` result confirms that the selected Relay is connected and all three bounded
-read capabilities are available. A `degraded` result names the unavailable capability.
+Individual Tool availability names any missing Relay capability after Verification.
 Run one read during an Investigation and confirm its Integration, namespace, source read
 time, effective bounds, and truncation status.
 

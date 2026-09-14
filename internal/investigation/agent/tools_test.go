@@ -166,15 +166,16 @@ func TestARunWithNoWindowStatesNone(t *testing.T) {
 }
 
 func stubIntegration(name string) integrations.Integration {
-	return integrations.Integration{ID: uuid.New(), Type: 99, Name: name}
+	return integrations.Integration{ID: uuid.New(), Type: 99, Name: name,
+		Status: integrations.StatusVerified, VerifiedAt: time.Now().UTC()}
 }
 
 func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *testing.T) {
 	t.Parallel()
 
 	definition := integrations.Definition{
-		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
-			Category: integrations.CategoryAlerting, Available: true,
+		Manifest: integrations.Manifest{Type: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{{
 				Name: "stub.read", Description: "reads", WhenToUse: "when asked",
 				WhenNotToUse: "without a question", Permissions: "read", Output: "items",
@@ -183,7 +184,7 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 				},
 			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
+			return integrations.Verification{Status: integrations.StatusVerified}
 		},
 	}
 	catalog, err := integrations.NewCatalog(definition)
@@ -191,17 +192,16 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 		t.Fatal(err)
 	}
 	first := stubIntegration("First")
-	first.Status, first.LastVerifiedAt = integrations.StatusActive, time.Now().UTC()
+	first.Status, first.VerifiedAt = integrations.StatusVerified, time.Now().UTC()
 	second := stubIntegration("Second")
-	second.Status, second.LastVerifiedAt = integrations.StatusDegraded, time.Now().UTC()
 	configured := stubIntegration("Configured")
-	configured.Status, configured.LastVerifiedAt = integrations.StatusConfigured, time.Now().UTC()
+	configured.Status, configured.VerifiedAt = "", time.Time{}
 	stale := stubIntegration("Stale")
-	stale.Status, stale.LastVerifiedAt = integrations.StatusActive, time.Now().Add(-25*time.Hour)
+	stale.Status, stale.VerifiedAt = integrations.StatusVerified, time.Now().Add(-30*24*time.Hour)
 
 	offered := offeredSources(catalog, []integrations.Integration{first, second, configured, stale})
-	if len(offered) != 2 {
-		t.Fatalf("offered %d sources, want only the two currently verified sources", len(offered))
+	if len(offered) != 3 {
+		t.Fatalf("offered %d sources, want every successfully verified source", len(offered))
 	}
 	selected := make([]selection, 0, len(offered))
 	for _, source := range offered {
@@ -219,7 +219,7 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 		}
 		seen[source.integration.ID.String()] = true
 	}
-	if !seen[first.ID.String()] || !seen[second.ID.String()] {
+	if !seen[first.ID.String()] || !seen[second.ID.String()] || !seen[stale.ID.String()] {
 		t.Fatalf("same-type Integrations were not both reachable: %v", seen)
 	}
 	if _, _, ok := toolNamed(selected, "stub.read"); ok {
@@ -235,8 +235,8 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	t.Parallel()
 
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{ID: 99, Key: "stub", Name: "Stub",
-			Category: integrations.CategoryAlerting, Available: true,
+		Manifest: integrations.Manifest{Type: 99, Key: "stub", Name: "Stub",
+			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{
 				{
 					Name: "stub.read", Description: "reads",
@@ -256,7 +256,7 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 				},
 			}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
+			return integrations.Verification{Status: integrations.StatusVerified}
 		},
 	})
 	if err != nil {
@@ -264,9 +264,9 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	}
 
 	granted := stubIntegration("Fully Granted")
-	granted.VerifyGrants = []string{"search:read", "user_token", "channels:read"}
+	granted.VerificationGrants = []string{"search:read", "user_token", "channels:read"}
 	partial := stubIntegration("Bot Token")
-	partial.VerifyGrants = []string{"search:read"}
+	partial.VerificationGrants = []string{"search:read"}
 	unrecorded := stubIntegration("Never Verified")
 
 	toolNames := func(candidate integrations.Integration) []string {
@@ -292,8 +292,8 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	}
 
 	searchOnly := integrations.Definition{
-		Manifest: integrations.Manifest{ID: 98, Key: "gated", Name: "Gated",
-			Category: integrations.CategoryAlerting, Available: true,
+		Manifest: integrations.Manifest{Type: 98, Key: "gated", Name: "Gated",
+			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{{
 				Name: "gated.search", Description: "searches",
 				WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
@@ -303,7 +303,7 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 				},
 			}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
+			return integrations.Verification{Status: integrations.StatusVerified}
 		},
 	}
 	gatedCatalog, err := integrations.NewCatalog(searchOnly)
@@ -324,8 +324,8 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 		return integrations.ToolResult{}, nil
 	}
 	definition := integrations.Definition{
-		Manifest: integrations.Manifest{ID: 99, Key: "chat", Name: "Chat",
-			Category: integrations.CategoryAlerting, Available: true,
+		Manifest: integrations.Manifest{Type: 99, Key: "chat", Name: "Chat",
+			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{
 				{
 					Name: "chat.thread", Description: "reads the originating thread",
@@ -339,7 +339,7 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 				},
 			}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
-			return integrations.Verification{Status: integrations.StatusActive}
+			return integrations.Verification{Status: integrations.StatusVerified}
 		},
 	}
 	catalog, err := integrations.NewCatalog(definition)

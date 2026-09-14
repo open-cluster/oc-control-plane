@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -82,7 +81,6 @@ type connectStartedView struct {
 	ExpiresAt        string `json:"expiresAt"`
 }
 
-// startConnect begins a provider installation flow.
 func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -117,8 +115,6 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	// returnTo travels in the query rather than in a body: it is the only thing this
-	// operation takes, and a body would be one more shape to get wrong for no gain.
 	returnTo, ok := h.returnTarget(writer, request.URL.Query().Get("returnTo"))
 	if !ok {
 		return
@@ -129,19 +125,18 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		h.fail(writer, request, err)
 		return
 	}
-	authorization, err := definition.Connect.Authorize(state, h.callbackURL())
+	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
+	defer cancel()
+
+	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL())
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
-	defer cancel()
-
 	flow := ConnectFlow{
-		ID:           uuid.New(),
 		Organization: organization.String(),
-		Type:         definition.ID,
+		Provider:     definition.Key,
 		Principal:    principal.ID(),
 		ReturnTo:     returnTo,
 		ExpiresAt:    time.Now().Add(connectFlowLifetime),
@@ -197,11 +192,11 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 		return
 	}
-	definition, known := h.Catalog.ByID(flow.Type)
+	definition, known := h.Catalog.Lookup(flow.Provider)
 	if !known || !definition.Connectable() {
 		h.fail(writer, request, fmt.Errorf(
-			"connect flow %s names type %d, which this build no longer connects",
-			flow.ID, flow.Type))
+			"connect flow names provider %q, which this build no longer connects",
+			flow.Provider))
 		return
 	}
 
@@ -228,12 +223,24 @@ func (h Handlers) record(
 	principal authz.Principal, organization tenancy.Organization, definition Definition,
 	returnTo string, bound ConnectBinding,
 ) {
-	existing, err := h.Store.IntegrationConfiguredAs(
-		ctx, organization, definition.ID, bound.Configuration)
+	var existing Integration
+	var err error
+	if bound.Installation != nil {
+		existing, _, err = h.Store.IntegrationByInstallation(
+			ctx, definition.Type, bound.Installation.Key())
+		if err == nil && existing.OrgID != organization.String() {
+			err = ErrWorkspaceTaken
+		}
+	} else {
+		err = ErrUnknown
+	}
 	switch {
 	case err == nil:
 		h.reconnect(ctx, writer, request, principal, organization, definition, returnTo,
 			existing, bound)
+		return
+	case errors.Is(err, ErrWorkspaceTaken):
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, "")
 		return
 	case !errors.Is(err, ErrUnknown):
 		h.fail(writer, request, err)
@@ -242,23 +249,21 @@ func (h Handlers) record(
 
 	wanted := NewIntegration{
 		ID:            uuid.New(),
-		Type:          definition.ID,
+		Type:          definition.Type,
 		Name:          bound.Name,
 		Configuration: bound.Configuration,
 		Installation:  bound.Installation,
-		CreatedBy:     principal.ID(),
 	}
 	verification := definition.Probe(ctx, ProbeInput{
 		Integration: Integration{
 			Type:          wanted.Type,
 			Name:          wanted.Name,
 			Configuration: wanted.Configuration,
+			Installation:  wanted.Installation,
 		},
 		Credential: bound.Credential,
 	})
 	if verification.Status == StatusFailed {
-		// Proven association, and the installation would not answer. Nothing is recorded:
-		// an Integration born failed is one an operator has to clean up.
 		h.Logger.WarnContext(ctx, "a proven integration connect did not verify",
 			slog.String("org_id", organization.String()),
 			slog.String("type", definition.Key),
@@ -269,21 +274,16 @@ func (h Handlers) record(
 	wanted.Verification = &verification
 
 	if bound.Credential != "" {
-		sealed, fingerprint, ok := h.sealCredential(writer, bound.Credential, wanted.ID)
+		sealed, ok := h.sealCredential(writer, bound.Credential, wanted.ID)
 		if !ok {
 			// Answered by sealCredential. Nothing is created: an Integration recorded
 			// without the credential it needs would read as connected and never work.
 			return
 		}
 		wanted.CredentialSealed = sealed
-		wanted.CredentialFingerprint = fingerprint
 	}
 
 	created, err := h.Store.CreateIntegration(ctx, principal, organization, wanted)
-	if errors.Is(err, ErrNameTaken) {
-		wanted.Name = disambiguate(bound.Name, wanted.ID)
-		created, err = h.Store.CreateIntegration(ctx, principal, organization, wanted)
-	}
 	if errors.Is(err, ErrWorkspaceTaken) {
 		h.Logger.WarnContext(ctx, "a connect named a workspace already installed elsewhere",
 			slog.String("org_id", organization.String()),
@@ -335,12 +335,12 @@ func (h Handlers) reconnect(
 		return
 	}
 
-	sealed, fingerprint, ok := h.sealCredential(writer, bound.Credential, existing.ID)
+	sealed, ok := h.sealCredential(writer, bound.Credential, existing.ID)
 	if !ok {
 		return
 	}
 	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
-		existing.ID, Revision{}, sealed, fingerprint, verification, bound.Installation)
+		existing.ID, Revision{}, sealed, verification, bound.Installation)
 	if errors.Is(err, ErrWorkspaceTaken) {
 		h.Logger.WarnContext(ctx, "a reconnect named a workspace already installed elsewhere",
 			slog.String("org_id", organization.String()),
@@ -359,28 +359,9 @@ func (h Handlers) reconnect(
 	h.landConnect(writer, request, returnTo, definition.Key, outcomeFor(verified), verified.ID.String())
 }
 
-// disambiguate names the second Integration for one account: reinstalling on the same
-// account suggests the same name under a different installation. The suffix is the row's
-// own identity rather than a counter, which would need a read to know where it had got to,
-// and it is stable for the record it names.
-func disambiguate(name string, id uuid.UUID) string {
-	suffix := " (" + id.String()[:8] + ")"
-	// Trimmed by runes rather than by bytes. A suggested name is a provider's own text and
-	// carries an em dash; cutting it mid-rune would produce a name that is not valid UTF-8,
-	// which the database refuses at the end of a flow the customer has already finished.
-	room := maxNameLength - len(suffix)
-	for len(name) > room {
-		name = name[:len(name)-1]
-		for len(name) > 0 && !utf8.ValidString(name) {
-			name = name[:len(name)-1]
-		}
-	}
-	return name + suffix
-}
-
 // outcomeFor reports how the console should read what landed.
 func outcomeFor(integration Integration) connectOutcome {
-	if integration.Status == StatusActive {
+	if integration.Status == StatusVerified {
 		return outcomeConnected
 	}
 	return outcomeUnverified

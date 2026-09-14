@@ -11,9 +11,9 @@ import (
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			ID: integrations.TypeGenericWebhook, Key: "generic_webhook", Name: "Generic Webhook",
-			Description: "Create incidents from canonical firing and resolved Alert Events delivered through an authenticated webhook.",
-			Category:    integrations.CategoryAlerting, Available: true, ReceivesWebhooks: true,
+			Type: integrations.TypeGenericWebhook, Key: "generic_webhook", Name: "Generic Webhook",
+			Description:       "Create incidents from canonical firing and resolved Alert Events delivered through an authenticated webhook.",
+			Category:          integrations.CategoryAlerting,
 			DocumentationSlug: "integrations/alerting/generic_webhook",
 		},
 		Verify: verify,
@@ -23,12 +23,12 @@ func Definition() integrations.Definition {
 func verify(input integrations.VerifyInput) integrations.Verification {
 	if input.LastAcceptedDelivery.IsZero() {
 		return integrations.Verification{
-			Status: integrations.StatusConfigured,
+			Status: integrations.StatusFailed,
 			Note:   "configured to accept deliveries; no canonical Alert Event has arrived yet",
 		}
 	}
 	return integrations.Verification{
-		Status: integrations.StatusActive,
+		Status: integrations.StatusVerified,
 		Note: "a canonical Alert Event was accepted at " +
 			input.LastAcceptedDelivery.UTC().Format(time.RFC3339),
 	}

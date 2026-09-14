@@ -23,12 +23,12 @@ func Definition(executors ...Executor) integrations.Definition {
 	}
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			ID:   integrations.TypeKubernetes,
+			Type: integrations.TypeKubernetes,
 			Key:  "kubernetes",
 			Name: "Kubernetes",
 			Description: "Give investigations read-only access to Kubernetes workload " +
 				"runtime, namespace events, and bounded container logs through an outbound Relay.",
-			Logo: "kubernetes", Category: integrations.CategoryInfrastructure, Available: true,
+			Logo: "kubernetes", Category: integrations.CategoryInfrastructure,
 			SourceURL:         "https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole",
 			DocumentationSlug: "integrations/infrastructure/kubernetes",
 			// There is deliberately no "cluster name" field. The Integration is already named
@@ -37,17 +37,15 @@ func Definition(executors ...Executor) integrations.Definition {
 			// disagree with two others.
 			Config: []integrations.Field{
 				{
-					Name: "namespaceAllowList",
-					Title: "Namespaces this integration may read (comma separated; " +
+					Key: "namespaceAllowList",
+					Label: "Namespaces this integration may read (comma separated; " +
 						"empty means every namespace the Relay's service account can reach)",
-					Description: "A narrowing on top of the Relay's own permissions, never a " +
-						"widening: this cannot grant access the service account does not already have.",
 					Type: integrations.FieldString,
 				},
 			},
 			// Relay only. A cluster's API server is usually private, which is the whole reason
 			// the Relay exists.
-			RequiresRelay: true, ReceivesWebhooks: false, Tools: tools(executor),
+			RequiresRelay: true, Tools: tools(executor),
 		},
 		Verify: verify,
 	}
@@ -156,14 +154,14 @@ func verify(input integrations.VerifyInput) integrations.Verification {
 			}
 		}
 		return integrations.Verification{
-			Status: integrations.StatusDegraded,
+			Status: integrations.StatusVerified,
 			Note: "the relay is connected and does not advertise: " +
 				strings.Join(missing, ", "),
 			Grants: granted,
 		}
 	}
 	return integrations.Verification{
-		Status: integrations.StatusActive,
+		Status: integrations.StatusVerified,
 		Note:   "the relay is connected and advertises every Relay Capability this type declares",
 		Grants: relayCapabilities(),
 	}

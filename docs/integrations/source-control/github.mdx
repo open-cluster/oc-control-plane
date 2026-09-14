@@ -43,8 +43,8 @@ No write permission is required.
     and shows the permissions above for approval. The choice is made in GitHub.
   </Step>
   <Step title="Land back in OpenCluster">
-    GitHub returns you to OpenCluster, which confirms with GitHub that you can
-    administer the installation, checks it, and shows it as `active`. There is no
+    GitHub returns you to OpenCluster, which validates the installation with GitHub,
+    checks its repository access, and shows it as `verified`. There is no
     second step and no ID to copy.
   </Step>
 </Steps>
@@ -53,52 +53,23 @@ Connect once for each GitHub account or organization. Repeating the flow for an 
 that is already connected re-checks it instead of adding a duplicate — which is also what
 happens when you change an existing installation's repositories.
 
-OpenCluster stores no GitHub credential. During the connection it uses a short-lived
-GitHub token to confirm you can administer the installation, then discards it. Every later
-read uses a short-lived installation token created on demand from the deployment's App.
-
-### Connect without the one-click flow
-
-A self-hosted deployment that has not registered the App's OAuth client shows a form
-instead of the button. Install the App in GitHub, open the installation's settings, and
-enter the numeric ID from the end of its URL — such as
-`…/settings/installations/12345678` — with a name. OpenCluster checks the installation
-before storing it.
+OpenCluster stores no GitHub installation token. It creates short-lived installation tokens
+on demand from the deployment's App.
 
 ## Configure the App for a self-hosted deployment
 
 Create the App in GitHub with the permissions above. It needs no webhook. Generate a
 private key, then set the deployment's App ID and private-key file as described in the
-[configuration reference](/self-hosting/configuration#environment-reference). For GitHub Enterprise
-Server, also set the API and web URLs.
-
-To offer **Connect GitHub**, enable **Request user authorization (OAuth) during
-installation** on the App and set its callback URL to
-`https://YOUR-OPENCLUSTER/api/v1/integrations/connect/callback`. Then set the App's
-slug, OAuth client ID, and client secret file in the deployment configuration.
-
-Two details matter:
-
-- The callback URL must match the deployment's public URL exactly, scheme included.
-- If the App registers several callback URLs, this one must be **first**. GitHub returns
-  the browser to the first callback URL when the authorization request does not name one.
-
-Enabling this option removes the App's setup URL field. That is expected: the callback URL
-replaces it, and the customer is returned there with everything OpenCluster needs.
-
-The private key and client secret stay on the deployment.
+[configuration reference](/self-hosting/configuration#environment-reference). Set the App's
+setup URL to `https://YOUR-OPENCLUSTER/api/v1/integrations/connect/callback` and enable
+redirect on update. The callback URL must match the deployment's public URL exactly,
+scheme included. The private key stays on the deployment.
 
 ## Verify
 
-Verification checks the App installation and its repository selection. `active` means the
-installation is available with at least one repository. An installation with no
-repositories is `degraded`. A suspended installation, one that was uninstalled or had its
-access revoked, and an ID GitHub does not recognise each fail with their own reason.
-
-A verified integration records the connected account, whether the installation covers all
-repositories or a selection, how many it reaches, and a link to the installation's settings
-in GitHub — so you can tell one connected account from another, and change what it may read
-without going through OpenCluster.
+Verification checks the App installation and its repository selection. `verified` means
+GitHub answered for the installation; individual Tools remain limited by verified grants.
+A suspended, removed, or inaccessible installation is `failed` until verification succeeds.
 
 ## Change which repositories are read
 
@@ -144,9 +115,8 @@ incident; all repositories and data types are not read automatically.
 
 For a self-hosted GitHub App, generate a replacement private key, replace the mounted
 private-key file, restart the control plane, and verify the Integration before revoking
-the old key. Replace the OAuth client-secret file and restart before using **Connect
-GitHub** again. Existing Integration reads use installation tokens created from the App
-private key; the OAuth client secret is used only by the connection flow.
+the old key. Existing Integration reads use installation tokens created from the App
+private key.
 
 Disable the integration to remove GitHub from new investigations while retaining the
 record. Deletion is refused when investigation records depend on it. Uninstalling the App

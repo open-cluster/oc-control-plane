@@ -240,8 +240,8 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	select {
 	case failed := <-completed:
 		t.Fatalf("the Relay-backed Tool failed before dispatch: %v (status=%s grants=%v note=%q verified=%s relay=%s)",
-			failed.err, integration.Status.String(), integration.VerifyGrants,
-			integration.VerifyNote, integration.LastVerifiedAt, integration.RelayID)
+			failed.err, integration.Status.String(), integration.VerificationGrants,
+			"", integration.VerifiedAt, integration.RelayID)
 	case <-time.After(500 * time.Millisecond):
 	}
 	assignment := awaitAssignment(t, stream)
@@ -343,7 +343,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		t.Fatalf("the cancelled Job did not retain its terminal outcome: status=%d error=%v", jobStatus, err)
 	}
 	if _, err = pool.Exec(context.Background(), `
-		UPDATE integration SET verify_grants = '[]'::jsonb
+		UPDATE integration SET verification_grants = '{}'
 		 WHERE org_id = $1 AND integration_id = $2`, organization.String(), integration.ID); err != nil {
 		t.Fatalf("revoking the Integration's verified read: %v", err)
 	}

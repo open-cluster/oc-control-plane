@@ -20,9 +20,8 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 	digest := sha256.Sum256([]byte(secret))
 	if _, err := h.truth.pool.Exec(ctx, `
 		INSERT INTO integration
-			(integration_id, org_id, integration_type_id, name, webhook_secret_digest,
-			 webhook_secret_fingerprint, webhook_secret_created_at, updated_at)
-		VALUES ($1, $2, 5, 'E2E Generic Webhook', $3, 'e2e-generic', now(), now())`,
+			(integration_id, org_id, integration_type_id, name, webhook_secret_digest)
+		VALUES ($1, $2, 5, 'E2E Generic Webhook', $3)`,
 		integrationID, organization, digest[:]); err != nil {
 		t.Fatalf("creating generic webhook integration: %v", err)
 	}
