@@ -131,23 +131,25 @@ inside the customer boundary.
 
 Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 
-## Read-only security model
+## Capability security model
 
 - Customer data and Tool execution are Organization-scoped; authentication and User-owned sessions are deployment-wide.
 - Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
 - Background cleanup removes unusable sessions in bounded passes, including before any Organization exists.
-- Webhooks have bounded preauthentication admission and separate authenticated Integration quotas; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
+- Webhooks have bounded pre-authentication admission and separate authenticated Integration quotas; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
 - Organization-scoped API requests select one active Organization with
   `X-OpenCluster-Organization`; authorization verifies membership before handlers run.
 - Users can belong to several Organizations; Organization Admins cannot replace an existing User's password or revoke their global sessions.
 - Local Users change their own password after reauthentication. Deployment operators can recover an existing local User through stdin; see [credential recovery](docs/security/overview.mdx).
 - Connected content and prior history remain untrusted data. Current assigned Messages express requests within the verified tool scope.
-- The model selects from eligible read-only tools; each call is validated and records an operator-visible purpose.
+- The application supplies every security-eligible Tool; the model chooses relevance and sequence. Each call is validated and records an operator-visible purpose.
 - Workload and namespace names alone never trigger reads across Integrations.
 - Secrets are file-backed or sealed; credential-shaped fields are removed from logs, events, audit details, prompts, and
   API responses.
 - OpenCluster proposes production changes but exposes no execution endpoint.
 - State-changing proposals always require human approval.
+
+OpenCluster currently ships observation/read tools. The capability runtime does not assume that all future capabilities are reads. State-changing capabilities will require explicit authorization, approval, idempotency and audit semantics before they are enabled.
 
 See [SECURITY.md](./SECURITY.md) and the
 [security model](./docs/security/overview.mdx).
@@ -173,7 +175,7 @@ validation, and evaluation gates. The real Relay protocol E2E proof lives in the
 - [Architecture](./ARCHITECTURE.md)
 - [Contributor requirements](./AGENTS.md)
 
-The Mintlify site is authored in `docs/`. Every shipped Integration must have a navigable product page. Run `make docs`
+Every shipped Integration must have a navigable product page. Run `make docs`
 for navigation, frontmatter, internal-link, publication, credential-literal, accessibility, Integration-page, OpenAPI
 drift, API-surface, and configuration-key checks; `make verify` includes it.
 

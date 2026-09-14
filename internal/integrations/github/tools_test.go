@@ -39,7 +39,7 @@ func run(
 	t.Helper()
 	return toolNamed(t, app, client, name).Run(testContext(t), integrations.ToolRequest{
 		Integration: integrations.Integration{
-			Configuration: map[string]any{"installationId": float64(77)},
+			Installation: &integrations.Installation{Workspace: "77"},
 		},
 		Arguments: args,
 	})
@@ -300,7 +300,7 @@ func TestReadWorkflowRunsClampsTheWindow(t *testing.T) {
 	tool := toolNamed(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_workflow_runs")
 	_, err := tool.Run(testContext(t), integrations.ToolRequest{
 		Integration: integrations.Integration{
-			Configuration: map[string]any{"installationId": float64(77)},
+			Installation: &integrations.Installation{Workspace: "77"},
 		},
 		Arguments: map[string]any{
 			"repositoryId": float64(1296269),

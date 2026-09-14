@@ -15,8 +15,8 @@ func TestVerify_SaysWhatADeliveryProved(t *testing.T) {
 	t.Parallel()
 
 	fresh := Definition().Verify(integrations.VerifyInput{})
-	if fresh.Status != integrations.StatusConfigured {
-		t.Errorf("an integration nothing has delivered to verifies as %v, want configured",
+	if fresh.Status != integrations.StatusFailed {
+		t.Errorf("an integration nothing has delivered to verifies as %v, want failed",
 			fresh.Status)
 	}
 	if !strings.Contains(fresh.Note, "nothing has arrived yet") {
@@ -26,8 +26,8 @@ func TestVerify_SaysWhatADeliveryProved(t *testing.T) {
 	delivered := Definition().Verify(integrations.VerifyInput{
 		LastAcceptedDelivery: time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC),
 	})
-	if delivered.Status != integrations.StatusActive {
-		t.Errorf("an integration that accepted a delivery verifies as %v, want active",
+	if delivered.Status != integrations.StatusVerified {
+		t.Errorf("an integration that accepted a delivery verifies as %v, want verified",
 			delivered.Status)
 	}
 	if !strings.Contains(delivered.Note, "2026-01-02T15:04:05Z") {
@@ -39,11 +39,11 @@ func TestDefinition_DeclaresTheInboundShape(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition()
-	if definition.ID != integrations.TypeAlertmanager || definition.Key != "alertmanager" {
-		t.Errorf("the definition's identity is (%d, %q)", definition.ID, definition.Key)
+	if definition.Type != integrations.TypeAlertmanager || definition.Key != "alertmanager" {
+		t.Errorf("the definition's identity is (%d, %q)", definition.Type, definition.Key)
 	}
-	if !definition.ReceivesWebhooks || definition.RequiresRelay {
-		t.Error("alertmanager is reached inbound and needs no relay")
+	if definition.RequiresRelay {
+		t.Error("alertmanager needs no relay")
 	}
 	const wantDescription = "Create incidents from firing and resolved Alertmanager alerts " +
 		"delivered through an authenticated webhook."

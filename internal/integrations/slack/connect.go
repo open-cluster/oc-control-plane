@@ -13,39 +13,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// ONE-CLICK INSTALLATION, AND WHY IT IS THE ONLY PATH WORTH HAVING.
-//
-// Connecting Slack used to mean the customer created their own Slack app, chose scopes
-// from our documentation, installed it, copied an xoxb- token out of Slack's settings and
-// pasted it into a form. That is a workshop procedure, and it is the first thing a design
-// partner sees. Worse, it puts a live credential through somebody's clipboard.
-//
-// Here the deployment registers ONE Slack app and the customer presses a button. The
-// credential is exchanged server-side and never touches the browser.
-//
-// The pasted form is not deleted. A deployment that registered no Slack app still serves
-// it, because an air-gapped install has no other way in — and every integration already
-// connected that way keeps working untouched, unmigrated and unre-verified. There is one
-// Slack integration with one client and one Tool set; how the
-// credential was obtained is the only thing that differs.
-
-// TeamIDField is where the installed workspace's own identifier is recorded.
-//
-// Non-secret, and load-bearing twice over. It is the identity a repeat connection is
-// recognised by, so reconnecting a workspace RE-VERIFIES the integration that exists
-// instead of silently creating a second one beside it. And its presence is what
-// distinguishes an app installation from a pasted token: a pasted token names no
-// installation, so nothing can route an inbound event to it.
-const TeamIDField = "teamId"
-
-// AppIDField is the app the workspace installed. Recorded beside the team because the
-// resolution key for an inbound event is the app AND the workspace: one deployment may
-// serve more than one app registration over its life, and a team id alone would collide.
-const AppIDField = "appID"
-
-// requestedScopes is what the app asks a workspace for. Least privilege, and every entry
-// is here for a reason a customer could be told.
-//
+// requestedScopes is the least-privilege bot grant for connection and inbound mentions.
 // search:read IS NOT REQUESTED. The security story is that OpenCluster reasons over
 // conversations it has deliberately been invited into, not everything an employee can see.
 // If workspace-wide search is ever worth having it becomes an explicit elevated Tool,
@@ -55,20 +23,12 @@ const AppIDField = "appID"
 // platform is moving quickly, and a scope name that has been renamed fails at install time
 // in front of a customer.
 var requestedScopes = []string{
-	// The agent surface itself: the app appears as an agent and the native streaming
-	// methods become usable.
 	"assistant:write",
-	// Post and stream the reply.
 	"chat:write",
-	// Receive @OpenCluster in channels the app is in.
 	"app_mentions:read",
-	// Read the public channel or thread OpenCluster was asked about.
 	"channels:history",
-	// Resolve and list public channels.
 	"channels:read",
-	// Resolve authors to names, for display and for audit.
 	"users:read",
-	// Private channels the app has been explicitly invited to.
 	"groups:history",
 }
 
@@ -128,7 +88,9 @@ func connect(installer *Installer, client *Client) *integrations.Connect {
 		// that refusal happen at the start rather than after the customer has granted
 		// real permissions in their own workspace.
 		SealsCredential: true,
-		Authorize:       installer.authorize,
+		Authorize: func(_ context.Context, state, callback string) (string, error) {
+			return installer.authorize(state, callback)
+		},
 		Redeem: func(ctx context.Context, returned integrations.ConnectReturn) (
 			integrations.ConnectBinding, error,
 		) {
@@ -215,12 +177,9 @@ func (i *Installer) redeem(
 		agent = installed.BotUserID
 	}
 	return integrations.ConnectBinding{
-		Name:       "Slack — " + name,
-		Credential: token,
-		Configuration: map[string]any{
-			TeamIDField: installed.TeamID,
-			AppIDField:  installed.AppID,
-		},
+		Name:          "Slack — " + name,
+		Credential:    token,
+		Configuration: map[string]any{},
 		// The routing record, written in the same transaction as the Integration. Without
 		// it the integration exists and no event can reach it, which is a customer who
 		// pressed Connect, authorized, and has an agent that never answers.
@@ -231,7 +190,6 @@ func (i *Installer) redeem(
 			Workspace:      installed.TeamID,
 			Agent:          agent,
 			Authorizer:     installed.AuthedUserID,
-			Grants:         installed.Scopes,
 		},
 	}, nil
 }

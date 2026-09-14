@@ -178,28 +178,22 @@ func decodeInto(t *testing.T, body string, into any) {
 }
 
 type integrationBody struct {
-	ID            string            `json:"id"`
-	Type          string            `json:"type"`
-	Name          string            `json:"name"`
-	Status        string            `json:"status"`
-	Disabled      bool              `json:"disabled"`
-	Configuration map[string]any    `json:"configuration"`
-	Labels        map[string]string `json:"labels"`
-	RelayID       string            `json:"relayId"`
+	ID            string         `json:"id"`
+	Type          string         `json:"type"`
+	Name          string         `json:"name"`
+	Status        string         `json:"status"`
+	Disabled      bool           `json:"disabled"`
+	Configuration map[string]any `json:"configuration"`
+	RelayID       string         `json:"relayId"`
 	Webhook       *struct {
-		URL         string `json:"url"`
-		Fingerprint string `json:"secretFingerprint"`
-		CreatedAt   string `json:"secretCreatedAt"`
-		RotatedAt   string `json:"secretRotatedAt"`
+		URL        string `json:"url"`
+		Configured bool   `json:"configured"`
 	} `json:"webhook"`
 	Credential *struct {
-		Fingerprint string `json:"fingerprint"`
-		CreatedAt   string `json:"createdAt"`
-		RotatedAt   string `json:"rotatedAt"`
+		Configured bool `json:"configured"`
 	} `json:"credential"`
-	LastVerifiedAt   string                 `json:"lastVerifiedAt"`
-	VerifyNote       string                 `json:"verifyNote"`
-	VerifyFacts      map[string]any         `json:"verifyFacts"`
+	VerifiedAt       string                 `json:"verifiedAt"`
+	VerificationNote string                 `json:"verificationNote"`
 	ToolAvailability []toolAvailabilityBody `json:"toolAvailability"`
 	Inbound          *struct {
 		Available bool   `json:"available"`
@@ -377,8 +371,8 @@ func TestIntegrationLifecycle(t *testing.T) {
 			t.Errorf("the webhook address %q does not name this integration",
 				created.Integration.Webhook.URL)
 		}
-		if created.Integration.Webhook.Fingerprint == "" {
-			t.Error("no secret fingerprint; an operator cannot tell one secret from the next")
+		if !created.Integration.Webhook.Configured {
+			t.Error("the response does not report the webhook token as configured")
 		}
 
 		status, body := plane.call(t, http.MethodGet,
@@ -398,13 +392,18 @@ func TestIntegrationLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a duplicate name is refused with a conflict", func(t *testing.T) {
+	t.Run("duplicate display names remain addressable by id", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost, base+"/integrations", map[string]any{
 			"type": "alertmanager",
 			"name": "Production Alertmanager",
 		})
-		if status != http.StatusConflict {
-			t.Errorf("a duplicate name = %d, want 409: %s", status, body)
+		if status != http.StatusCreated {
+			t.Fatalf("a duplicate display name = %d: %s", status, body)
+		}
+		var duplicate createdBody
+		decodeInto(t, body, &duplicate)
+		if duplicate.Integration.ID == created.Integration.ID {
+			t.Fatal("duplicate display names collapsed to one integration")
 		}
 	})
 
@@ -588,11 +587,11 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 		}
 		var verified integrationBody
 		decodeInto(t, body, &verified)
-		if verified.Status != "active" {
-			t.Errorf("an integration that accepted a delivery verifies as %q, want active; "+
-				"note: %s", verified.Status, verified.VerifyNote)
+		if verified.Status != "verified" {
+			t.Errorf("an integration that accepted a delivery verifies as %q, want verified; "+
+				"note: %s", verified.Status, verified.VerificationNote)
 		}
-		if verified.LastVerifiedAt == "" {
+		if verified.VerifiedAt == "" {
 			t.Error("no last-verified time; an operator cannot tell a fresh check from a stale one")
 		}
 	})
@@ -605,7 +604,7 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 		}
 		var rotated struct {
 			WebhookSecret string `json:"webhookSecret"`
-			Fingerprint   string `json:"secretFingerprint"`
+			Effect        string `json:"effect"`
 		}
 		decodeInto(t, body, &rotated)
 		if rotated.WebhookSecret == "" || rotated.WebhookSecret == created.WebhookSecret {
@@ -664,9 +663,7 @@ func TestKubernetesVerification(t *testing.T) {
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	// The harness enrols the relay and opens no session, so the honest verification is a
-	// failure that says the relay is not connected — never an "active" resting on a form
-	// having validated.
+	// The harness enrols the relay and opens no session, so verification must fail.
 	status, body = plane.call(t, http.MethodPost,
 		base+"/integrations/"+created.Integration.ID+"/verify", nil)
 	if status != http.StatusOK {
@@ -676,10 +673,10 @@ func TestKubernetesVerification(t *testing.T) {
 	decodeInto(t, body, &verified)
 	if verified.Status != "failed" {
 		t.Errorf("a cluster whose relay never connected verifies as %q, want failed; note: %s",
-			verified.Status, verified.VerifyNote)
+			verified.Status, verified.VerificationNote)
 	}
-	if !strings.Contains(verified.VerifyNote, "not connected") {
+	if !strings.Contains(verified.VerificationNote, "not connected") {
 		t.Errorf("the note %q does not say what is wrong in the operator's language",
-			verified.VerifyNote)
+			verified.VerificationNote)
 	}
 }

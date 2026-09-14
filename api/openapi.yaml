@@ -474,7 +474,7 @@ paths:
             schema: { $ref: "#/components/schemas/UpdateIntegrationRequest" }
         required: true
       responses:
-        "200": { $ref: "#/components/responses/Integration" }
+        "200": { $ref: "#/components/responses/IntegrationOperation" }
         default: { $ref: "#/components/responses/ErrorResponse" }
     delete:
       <<: *privileged-write
@@ -516,7 +516,7 @@ paths:
       summary: Verify integration
       tags: [Integrations]
       responses:
-        "200": { $ref: "#/components/responses/Integration" }
+        "200": { $ref: "#/components/responses/IntegrationOperation" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/integrations/{integration}/rotate-webhook-secret:
     parameters: *integration-path
@@ -1185,6 +1185,7 @@ components:
     IntegrationList: { description: Configured Integrations., content: { application/json: { schema: { $ref: "#/components/schemas/IntegrationList" } } } }
     IntegrationCreated: { description: Integration created; webhookSecret is present only in this response when applicable., content: { application/json: { schema: { $ref: "#/components/schemas/CreatedIntegration" } } } }
     Integration: { description: Configured Integration., content: { application/json: { schema: { $ref: "#/components/schemas/Integration" } } } }
+    IntegrationOperation: { description: "Integration after an operation, including its immediate verification diagnostic when one ran.", content: { application/json: { schema: { $ref: "#/components/schemas/IntegrationOperation" } } } }
     SecretRotated: { description: New webhook secret returned once; only its digest is retained., content: { application/json: { schema: { $ref: "#/components/schemas/RotatedSecret" } } } }
     RelayList: { description: Relay roster., content: { application/json: { schema: { $ref: "#/components/schemas/RelayList" } } } }
     RelayFleetSummary: { description: Relay fleet assessment., content: { application/json: { schema: { $ref: "#/components/schemas/RelayFleetSummary" } } } }
@@ -1479,49 +1480,47 @@ components:
       additionalProperties: false
       required: [connect]
       properties:
-        connect: { type: string, enum: [connected, refused, failed] }
+        connect: { type: string, enum: [connected, refused, unproven, unverified, workspace-taken] }
         integrationId: { $ref: "#/components/schemas/UUID" }
         note: { type: string, maxLength: 1024 }
     SecretReference:
       type: object
       additionalProperties: false
-      required: [fingerprint, createdAt]
+      required: [configured]
       properties:
-        fingerprint: { type: string, minLength: 8, maxLength: 128 }
-        createdAt: { $ref: "#/components/schemas/Timestamp" }
-        rotatedAt: { $ref: "#/components/schemas/Timestamp" }
+        configured: { type: boolean }
     WebhookReference:
       type: object
       additionalProperties: false
-      required: [url, secretFingerprint, secretCreatedAt]
+      required: [url, configured]
       properties:
         url: { type: string, format: uri-reference }
-        secretFingerprint: { type: string, minLength: 8, maxLength: 128 }
-        secretCreatedAt: { $ref: "#/components/schemas/Timestamp" }
-        secretRotatedAt: { $ref: "#/components/schemas/Timestamp" }
+        configured: { type: boolean }
     Integration:
       type: object
       additionalProperties: false
-      required: [id, type, name, status, disabled, configuration, toolAvailability, createdAt, updatedAt]
-      properties:
+      required: [id, type, name, status, disabled, configuration, toolAvailability, createdAt]
+      properties: &integration-properties
         id: { $ref: "#/components/schemas/UUID" }
         type: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
         name: { type: string, minLength: 1, maxLength: 128 }
-        status: { type: string, enum: [configured, active, degraded, failed] }
+        status: { oneOf: [{ type: string, enum: [verified, failed] }, { type: "null" }] }
         disabled: { type: boolean }
         configuration: { type: object, additionalProperties: true }
-        labels: { type: object, maxProperties: 32, additionalProperties: { type: string, maxLength: 256 } }
         relayId: { $ref: "#/components/schemas/UUID" }
         webhook: { $ref: "#/components/schemas/WebhookReference" }
         credential: { $ref: "#/components/schemas/SecretReference" }
-        lastVerifiedAt: { $ref: "#/components/schemas/Timestamp" }
-        verifyNote: { type: string, maxLength: 1024 }
-        verifyFacts: { type: object, additionalProperties: true }
+        verifiedAt: { $ref: "#/components/schemas/Timestamp" }
         inbound: { type: object, additionalProperties: false, required: [available], properties: { available: { type: boolean }, reason: { type: string, maxLength: 1024 } } }
         toolAvailability: { type: array, items: { type: object, additionalProperties: false, required: [tool, available], properties: { tool: { type: string }, available: { type: boolean }, reason: { type: string, maxLength: 1024 } } } }
-        createdBy: { type: string, maxLength: 256 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
-        updatedAt: { $ref: "#/components/schemas/Timestamp" }
+    IntegrationOperation:
+      type: object
+      additionalProperties: false
+      required: [id, type, name, status, disabled, configuration, toolAvailability, createdAt]
+      properties:
+        <<: *integration-properties
+        verificationNote: { type: string, maxLength: 1024 }
     PageMetadata:
       type: object
       required: [next, total, partial]
@@ -1539,15 +1538,11 @@ components:
     CreateIntegrationRequest:
       type: object
       additionalProperties: false
-      required: [type, name, configuration, labels]
+      required: [type, name, configuration]
       properties:
         type: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
         name: { type: string, minLength: 1, maxLength: 128 }
         configuration: { type: object, additionalProperties: true }
-        labels:
-          type: object
-          maxProperties: 32
-          additionalProperties: { type: string, maxLength: 256 }
         relayId: { oneOf: [{ $ref: "#/components/schemas/UUID" }, { type: "null" }] }
     UpdateIntegrationRequest:
       type: object
@@ -1556,29 +1551,20 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 128 }
         configuration: { type: object, additionalProperties: true }
-        labels: { type: object, maxProperties: 32, additionalProperties: { type: string, maxLength: 256 } }
     CreatedIntegration:
       type: object
       additionalProperties: false
       required: [integration]
       properties:
-        integration: { $ref: "#/components/schemas/Integration" }
+        integration: { $ref: "#/components/schemas/IntegrationOperation" }
         webhookSecret: { type: string, minLength: 32, maxLength: 512, readOnly: true, example: ocwh_placeholder_generated_once_1234 }
     RotatedSecret:
       type: object
       additionalProperties: false
-      required: [webhookSecret, secretFingerprint, effect]
+      required: [webhookSecret, effect]
       properties:
         webhookSecret: { type: string, minLength: 32, maxLength: 512, readOnly: true, example: ocwh_placeholder_generated_once_1234 }
-        secretFingerprint: { type: string, minLength: 8, maxLength: 128, readOnly: true, example: sha256:12ab34cd }
         effect: { type: string, minLength: 1, maxLength: 1024 }
-    MaskedSecret:
-      type: object
-      additionalProperties: false
-      required: [configured, fingerprint]
-      properties:
-        configured: { type: boolean }
-        fingerprint: { type: string, minLength: 8, maxLength: 128, example: sha256:12ab34cd }
     Relay:
       type: object
       additionalProperties: false
@@ -1632,7 +1618,7 @@ components:
         id: { $ref: "#/components/schemas/UUID" }
         type: { type: string, minLength: 1, maxLength: 64 }
         name: { type: string, minLength: 1, maxLength: 128 }
-        status: { type: string, enum: [configured, active, degraded, failed] }
+        status: { oneOf: [{ type: string, enum: [verified, failed] }, { type: "null" }] }
         disabled: { type: boolean }
     RelayIntegrationList:
       type: object

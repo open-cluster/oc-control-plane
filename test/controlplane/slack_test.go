@@ -176,13 +176,13 @@ func TestSlackCreateVerifiesLiveBeforeSaving(t *testing.T) {
 	}
 	var created createdBody
 	decodeInto(t, body, &created)
-	if created.Integration.Status != "active" {
-		t.Errorf("a live-verified integration is %q, want active; note: %s",
-			created.Integration.Status, created.Integration.VerifyNote)
+	if created.Integration.Status != "verified" {
+		t.Errorf("a live-verified integration is %q, want verified; note: %s",
+			created.Integration.Status, created.Integration.VerificationNote)
 	}
-	if !strings.Contains(created.Integration.VerifyNote, "Acme") {
+	if !strings.Contains(created.Integration.VerificationNote, "Acme") {
 		t.Errorf("the note %q does not name the workspace that answered",
-			created.Integration.VerifyNote)
+			created.Integration.VerificationNote)
 	}
 	if created.WebhookSecret != "" {
 		t.Error("a slack integration was handed a webhook secret it cannot use")
@@ -213,14 +213,13 @@ func TestSlackCreateVerifiesLiveBeforeSaving(t *testing.T) {
 		}
 		var read struct {
 			Credential *struct {
-				Fingerprint string `json:"fingerprint"`
-				CreatedAt   string `json:"createdAt"`
+				Configured bool `json:"configured"`
 			} `json:"credential"`
 			Configuration map[string]any `json:"configuration"`
 		}
 		decodeInto(t, answer, &read)
-		if read.Credential == nil || read.Credential.Fingerprint == "" {
-			t.Errorf("no credential identity; an operator cannot tell one token from the next: %s", answer)
+		if read.Credential == nil || !read.Credential.Configured {
+			t.Errorf("the response does not report a configured credential: %s", answer)
 		}
 		if _, leaked := read.Configuration["botToken"]; leaked {
 			t.Error("the token reached configuration; a secret never lives in that column")
@@ -277,14 +276,14 @@ func TestSlackVerifyReProbesTheRealFarEnd(t *testing.T) {
 	decodeInto(t, answer, &verified)
 	if verified.Status != "failed" {
 		t.Errorf("a revoked token verifies as %q, want failed; note: %s",
-			verified.Status, verified.VerifyNote)
+			verified.Status, verified.VerificationNote)
 	}
-	if !strings.Contains(verified.VerifyNote, "invalid_auth") {
-		t.Errorf("the note %q does not say what the vendor said", verified.VerifyNote)
+	if !strings.Contains(verified.VerificationNote, "invalid_auth") {
+		t.Errorf("the note %q does not say what the vendor said", verified.VerificationNote)
 	}
 }
 
-func TestSlackMissingScopesSurfaceAsDegraded(t *testing.T) {
+func TestSlackMissingScopesLimitTools(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	vendor.grant("channels:read,channels:history")
 	plane := startSlackPlane(t, vendor)
@@ -295,20 +294,20 @@ func TestSlackMissingScopesSurfaceAsDegraded(t *testing.T) {
 	}
 	var created createdBody
 	decodeInto(t, body, &created)
-	if created.Integration.Status != "degraded" {
-		t.Errorf("status = %q, want degraded; note: %s",
-			created.Integration.Status, created.Integration.VerifyNote)
+	if created.Integration.Status != "verified" {
+		t.Errorf("status = %q, want verified; note: %s",
+			created.Integration.Status, created.Integration.VerificationNote)
 	}
-	if !strings.Contains(created.Integration.VerifyNote, "users:read") {
+	if !strings.Contains(created.Integration.VerificationNote, "users:read") {
 		t.Errorf("the note %q does not name the missing scope users:read",
-			created.Integration.VerifyNote)
+			created.Integration.VerificationNote)
 	}
 	// search:read is NOT named. Degraded means a capability this integration was
 	// configured to provide is failing, and workspace-wide search was never asked for —
 	// listing it here is what made every correct installation look broken.
-	if strings.Contains(created.Integration.VerifyNote, "search:read") {
+	if strings.Contains(created.Integration.VerificationNote, "search:read") {
 		t.Errorf("the note %q holds a scope this product never requests",
-			created.Integration.VerifyNote)
+			created.Integration.VerificationNote)
 	}
 }
 
@@ -320,8 +319,6 @@ func TestSlackPatchReplacesTheCredentialWriteOnly(t *testing.T) {
 	_, body := plane.createSlack(t, "Acme Slack", "xoxb-first-token-1234")
 	var created createdBody
 	decodeInto(t, body, &created)
-
-	firstFingerprint := credentialFingerprint(t, body)
 
 	// The rotation at the vendor: the old token dies, a new one is issued and pasted.
 	vendor.accept("xoxb-second-token-5678")
@@ -338,12 +335,12 @@ func TestSlackPatchReplacesTheCredentialWriteOnly(t *testing.T) {
 	}
 	var revised integrationBody
 	decodeInto(t, answer, &revised)
-	if revised.Status != "active" {
-		t.Errorf("a replaced-and-verified credential reads %q, want active; note: %s",
-			revised.Status, revised.VerifyNote)
+	if revised.Status != "verified" {
+		t.Errorf("a replaced-and-verified credential reads %q, want verified; note: %s",
+			revised.Status, revised.VerificationNote)
 	}
-	if next := credentialFingerprint(t, answer); next == "" || next == firstFingerprint {
-		t.Error("the credential identity did not change; an operator cannot see the replacement")
+	if revised.Credential == nil || !revised.Credential.Configured {
+		t.Error("the replacement credential is not configured")
 	}
 
 	t.Run("a replacement the vendor refuses changes nothing", func(t *testing.T) {
@@ -362,9 +359,9 @@ func TestSlackPatchReplacesTheCredentialWriteOnly(t *testing.T) {
 		}
 		var verified integrationBody
 		decodeInto(t, verifyAnswer, &verified)
-		if verified.Status != "active" {
+		if verified.Status != "verified" {
 			t.Errorf("the stored credential should still be the working one, got %q; note: %s",
-				verified.Status, verified.VerifyNote)
+				verified.Status, verified.VerificationNote)
 		}
 	})
 }
@@ -455,34 +452,7 @@ func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 	}
 }
 
-// credentialFingerprint digs the credential identity out of either response shape.
-func credentialFingerprint(t *testing.T, body string) string {
-	t.Helper()
-	var shapes struct {
-		Credential *struct {
-			Fingerprint string `json:"fingerprint"`
-		} `json:"credential"`
-		Integration *struct {
-			Credential *struct {
-				Fingerprint string `json:"fingerprint"`
-			} `json:"credential"`
-		} `json:"integration"`
-	}
-	decodeInto(t, body, &shapes)
-	if shapes.Credential != nil {
-		return shapes.Credential.Fingerprint
-	}
-	if shapes.Integration != nil && shapes.Integration.Credential != nil {
-		return shapes.Integration.Credential.Fingerprint
-	}
-	return ""
-}
-
-// The correction this release exists for. A bot token holding every scope OpenCluster asks
-// for is a CORRECT installation, and it used to report degraded because it lacked
-// workspace-wide search — a permission this product deliberately declines to request. The
-// customer was being told to fix something that was not broken.
-func TestSlackRecommendedBotInstallationIsActiveWithSearchUnavailable(t *testing.T) {
+func TestSlackRecommendedBotInstallationIsVerifiedWithSearchUnavailable(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	vendor.grant("channels:read,channels:history,users:read")
 	plane := startSlackPlane(t, vendor)
@@ -494,10 +464,10 @@ func TestSlackRecommendedBotInstallationIsActiveWithSearchUnavailable(t *testing
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	if created.Integration.Status != "active" {
-		t.Fatalf("status = %q, want active — a correct installation must not report "+
+	if created.Integration.Status != "verified" {
+		t.Fatalf("status = %q, want verified — a correct installation must not report "+
 			"itself broken; note: %s",
-			created.Integration.Status, created.Integration.VerifyNote)
+			created.Integration.Status, created.Integration.VerificationNote)
 	}
 
 	// Unavailable, not missing. Its absence is a stated choice, and saying so is what

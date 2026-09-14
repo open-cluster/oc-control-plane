@@ -109,7 +109,7 @@ func (p *Database) EnqueueJob(
 		  FROM integration
 		 WHERE integration.integration_id = $3
 		   AND integration.org_id         = $2
-		   AND integration.disabled_at   IS NULL
+		   AND NOT integration.disabled
 		   -- The registration is taken FROM the Integration and compared to the one the
 		   -- job names, rather than trusted from the job. A caller that got it wrong is
 		   -- refused instead of silently redirected.
@@ -145,24 +145,23 @@ func (p *Database) EnqueueVerifiedJob(
 		INSERT INTO relay_job
 			(job_id, org_id, integration_id, registration_id,
 			 capability_id, capability_version, arguments, investigation_id)
-		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7, $10
+		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7, $8
 		  FROM integration
 		 WHERE integration.integration_id = $3
 		   AND integration.org_id = $2
 		   AND integration.relay_id = $4
-		   AND integration.disabled_at IS NULL
-		   AND integration.status IN ($8, $9)
-		   AND integration.last_verified_at IS NOT NULL
-		   AND coalesce(integration.verify_grants, '[]'::jsonb) @> to_jsonb(ARRAY[$5]::text[])
-		   AND ($10::uuid IS NULL OR EXISTS (
+		   AND NOT integration.disabled
+		   AND integration.verification_status = 'verified'
+		   AND integration.verified_at IS NOT NULL
+		   AND $5 = ANY(integration.verification_grants)
+		   AND ($8::uuid IS NULL OR EXISTS (
 		       SELECT 1 FROM investigation
 		        WHERE investigation.org_id = $2
-		          AND investigation.investigation_id = $10
-		          AND investigation.status = $11
+		          AND investigation.investigation_id = $8
+		          AND investigation.status = $9
 		          FOR NO KEY UPDATE))`,
 		job.ID, organization.String(), job.IntegrationID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments,
-		int16(integrations.StatusActive), int16(integrations.StatusDegraded),
 		nullableUUID(job.InvestigationID), int16(1))
 	if err != nil {
 		return fmt.Errorf("enqueueing verified job: %w", err)
@@ -187,7 +186,7 @@ func (p *Database) explainRefusedJob(
 		return JobIntegrationUnknown, ErrJobRefused
 	case err != nil:
 		return 0, fmt.Errorf("auditing a refused job: %w", err)
-	case integration.Disabled():
+	case integration.Disabled:
 		return JobIntegrationUnknown, ErrJobRefused
 	default:
 		return JobRelayIsNotTheIntegrations, ErrJobRefused

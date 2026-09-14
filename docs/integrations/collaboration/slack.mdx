@@ -63,7 +63,7 @@ explicitly accepting its broader boundary.
 ## Connect
 
 Select **Connect Slack**, authorize in Slack, and you are returned to an integration that
-is already verified and active. Nothing is pasted, and no token passes through your
+is already `verified`. Nothing is pasted, and no token passes through your
 clipboard or your browser. This is the only path hosted OpenCluster offers, and a
 self-hosted deployment gets the identical experience once it registers its own Slack app
 and configures the app's client credentials.
@@ -98,18 +98,18 @@ connected this way keep working unchanged; there is nothing to migrate.
 
 ## Verify
 
-Select **Verify** on the integration. Verification records the workspace, identity,
-token type, and granted scopes.
+Select **Verify** on the integration. Verification checks the credential and records its
+granted scopes. The connected workspace identity comes from the completed connection and
+is not editable configuration.
 
-A bot token holding the scopes OpenCluster asks for reports `active`. Workspace-wide
+A bot token holding the scopes OpenCluster asks for reports `verified`. Workspace-wide
 search is listed as an unavailable Tool rather than a missing scope, because
 OpenCluster does not request `search:read` — its absence is a deliberate boundary, not a
 gap to close.
 
-`degraded` means a verified read this integration was configured to provide has stopped
-working: a scope was revoked, or Slack is refusing the token. The integration read reports
-each Tool individually, with the reason when one is unavailable. A token with none
-of the usable scopes cannot be offered to investigations.
+The integration read reports each Tool individually, with the reason when a required grant
+is unavailable. A failed credential check sets the Integration to `failed`; a token with
+none of the usable scopes cannot be offered to investigations.
 
 ## During investigations
 

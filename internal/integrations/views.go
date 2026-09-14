@@ -8,9 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// What this surface says on the wire. Kept apart from the handlers because it is a
-// contract: a field renamed here is a client broken somewhere else.
-
 type errorView struct {
 	Error string `json:"error"`
 }
@@ -73,9 +70,10 @@ type typeListView struct {
 	Next  *string    `json:"next"`
 }
 
-func typeViewOf(manifest Manifest, configured int) typeView {
-	tools := make([]toolView, 0, len(manifest.Tools))
-	for _, tool := range manifest.Tools {
+func typeViewOf(definition Definition, configured int, receivesWebhooks bool) typeView {
+	manifest := definition.Manifest
+	tools := make([]toolView, 0, len(definition.Tools))
+	for _, tool := range definition.Tools {
 		arguments := make([]toolArgumentView, 0, len(tool.Arguments))
 		for _, argument := range tool.Arguments {
 			arguments = append(arguments, toolArgumentView{
@@ -101,15 +99,15 @@ func typeViewOf(manifest Manifest, configured int) typeView {
 		Description:             manifest.Description,
 		Logo:                    manifest.Logo,
 		Category:                string(manifest.Category),
-		Available:               manifest.Available,
+		Available:               true,
 		Capabilities:            manifest.Capabilities(),
 		SecretFields:            manifest.SecretFields(),
 		DocumentationSlug:       manifest.DocumentationSlug,
 		DocumentationURL:        manifest.SourceURL,
 		ProductDocumentationURL: manifest.ProductDocumentationURL(),
 		RequiresRelay:           manifest.RequiresRelay,
-		ReceivesWebhooks:        manifest.ReceivesWebhooks,
-		SupportsConnect:         manifest.SupportsConnect,
+		ReceivesWebhooks:        receivesWebhooks,
+		SupportsConnect:         definition.Connectable(),
 		ConfigurationSchema:     manifest.ConfigurationSchema(),
 		Tools:                   tools,
 		Configured:              configured,
@@ -121,41 +119,32 @@ func typeViewOf(manifest Manifest, configured int) typeView {
 type webhookView struct {
 	// URL is where the source delivers, when this deployment has been told its public
 	// intake origin; the path alone otherwise.
-	URL         string `json:"url"`
-	Fingerprint string `json:"secretFingerprint"`
-	CreatedAt   string `json:"secretCreatedAt"`
-	RotatedAt   string `json:"secretRotatedAt,omitempty"`
+	URL        string `json:"url"`
+	Configured bool   `json:"configured"`
 }
 
 // credentialView is what a read says about the outbound credential: its minted identity
 // and its lifecycle — never the credential and never the sealed bytes.
 type credentialView struct {
-	Fingerprint string `json:"fingerprint"`
-	CreatedAt   string `json:"createdAt"`
-	RotatedAt   string `json:"rotatedAt,omitempty"`
+	Configured bool `json:"configured"`
 }
 
 // integrationView is what an Integration looks like to an operator. It carries no secret
 // and no digest: publishing the digest would let anyone holding a database dump confirm a
 // guess offline, which is exactly the property digest-only storage exists for.
 type integrationView struct {
-	ID     string `json:"id"`
-	Type   string `json:"type"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID     string  `json:"id"`
+	Type   string  `json:"type"`
+	Name   string  `json:"name"`
+	Status *string `json:"status"`
 	// Disabled is the operator's own switch, orthogonal to status.
-	Disabled       bool              `json:"disabled"`
-	Configuration  map[string]any    `json:"configuration"`
-	Labels         map[string]string `json:"labels,omitempty"`
-	RelayID        string            `json:"relayId,omitempty"`
-	Webhook        *webhookView      `json:"webhook,omitempty"`
-	Credential     *credentialView   `json:"credential,omitempty"`
-	LastVerifiedAt string            `json:"lastVerifiedAt,omitempty"`
-	VerifyNote     string            `json:"verifyNote,omitempty"`
-	// VerifyFacts is what the last verification established about what is connected —
-	// the account, its type, how far its grant reaches. Non-secret by construction: a
-	// provider records only what an operator would read off the provider's own screen.
-	VerifyFacts map[string]any `json:"verifyFacts,omitempty"`
+	Disabled         bool            `json:"disabled"`
+	Configuration    map[string]any  `json:"configuration"`
+	RelayID          string          `json:"relayId,omitempty"`
+	Webhook          *webhookView    `json:"webhook,omitempty"`
+	Credential       *credentialView `json:"credential,omitempty"`
+	VerifiedAt       string          `json:"verifiedAt,omitempty"`
+	VerificationNote string          `json:"verificationNote,omitempty"`
 	// Inbound reports provider-specific interaction setup separately from investigation
 	// Tools; a credential can support reads without supporting inbound app mentions.
 	Inbound *inboundAvailabilityView `json:"inbound,omitempty"`
@@ -167,9 +156,7 @@ type integrationView struct {
 	// the join needs the type's declarations, the integration's grants and — for some
 	// providers — deployment configuration a browser cannot see.
 	ToolAvailability []toolAvailabilityView `json:"toolAvailability"`
-	CreatedBy        string                 `json:"createdBy,omitempty"`
 	CreatedAt        string                 `json:"createdAt"`
-	UpdatedAt        string                 `json:"updatedAt"`
 }
 
 type toolAvailabilityView struct {
@@ -192,15 +179,11 @@ type createdView struct {
 // rotatedView answers a rotation: the new secret, once, and what the rotation cost.
 type rotatedView struct {
 	WebhookSecret string `json:"webhookSecret"`
-	Fingerprint   string `json:"secretFingerprint"`
 	Effect        string `json:"effect"`
 }
 
 func (h Handlers) viewOf(found Integration) integrationView {
 	typeKey := ""
-	// An empty list rather than null, for the reason the catalog's is: "this integration
-	// offers nothing" is a fact worth rendering, and a client should not have to handle
-	// two spellings of it.
 	availability := []toolAvailabilityView{}
 	var inbound *inboundAvailabilityView
 	if definition, known := h.Catalog.ByID(found.Type); known {
@@ -223,44 +206,26 @@ func (h Handlers) viewOf(found Integration) integrationView {
 		ID:               found.ID.String(),
 		Type:             typeKey,
 		Name:             found.Name,
-		Status:           found.Status.String(),
-		Disabled:         found.Disabled(),
+		Disabled:         found.Disabled,
 		Configuration:    found.Configuration,
-		Labels:           found.Labels,
-		CreatedBy:        found.CreatedBy,
 		CreatedAt:        stamp(found.CreatedAt),
-		UpdatedAt:        stamp(found.UpdatedAt),
-		VerifyNote:       found.VerifyNote,
-		VerifyFacts:      found.VerifyFacts,
 		Inbound:          inbound,
 		ToolAvailability: availability,
+	}
+	if status := found.Status.String(); status != "" {
+		view.Status = &status
 	}
 	if found.RelayID != uuid.Nil {
 		view.RelayID = found.RelayID.String()
 	}
-	if !found.LastVerifiedAt.IsZero() {
-		view.LastVerifiedAt = stamp(found.LastVerifiedAt)
+	if !found.VerifiedAt.IsZero() {
+		view.VerifiedAt = stamp(found.VerifiedAt)
 	}
-	if found.WebhookSecret.Held() {
-		webhook := webhookView{
-			URL:         h.webhookURL(found.ID),
-			Fingerprint: found.WebhookSecret.Fingerprint,
-			CreatedAt:   stamp(found.WebhookSecret.CreatedAt),
-		}
-		if !found.WebhookSecret.RotatedAt.IsZero() {
-			webhook.RotatedAt = stamp(found.WebhookSecret.RotatedAt)
-		}
-		view.Webhook = &webhook
+	if len(found.WebhookSecretDigest) > 0 {
+		view.Webhook = &webhookView{URL: h.webhookURL(found.ID), Configured: true}
 	}
-	if found.Credential.Held() {
-		credential := credentialView{
-			Fingerprint: found.Credential.Fingerprint,
-			CreatedAt:   stamp(found.Credential.CreatedAt),
-		}
-		if !found.Credential.RotatedAt.IsZero() {
-			credential.RotatedAt = stamp(found.Credential.RotatedAt)
-		}
-		view.Credential = &credential
+	if len(found.CredentialSealed) > 0 {
+		view.Credential = &credentialView{Configured: true}
 	}
 	return view
 }

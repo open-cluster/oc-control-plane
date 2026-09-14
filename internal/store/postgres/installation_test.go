@@ -25,7 +25,6 @@ func slackInstallation(workspace string) *integrations.Installation {
 		Workspace:   workspace,
 		Agent:       "U0BOT",
 		Authorizer:  "U0ADMIN",
-		Grants:      []string{"chat:write", "app_mentions:read"},
 	}
 }
 
@@ -103,9 +102,6 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	// act on.
 	if routing.Agent != installed.Agent {
 		t.Errorf("resolved agent %q, want %q", routing.Agent, installed.Agent)
-	}
-	if len(routing.Grants) != len(installed.Grants) {
-		t.Errorf("resolved grants %v, want %v", routing.Grants, installed.Grants)
 	}
 }
 

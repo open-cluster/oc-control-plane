@@ -516,7 +516,7 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 		t.Fatalf("OIDC session = %+v", who)
 	}
 	var flows int
-	if err = connection.QueryRow(context.Background(), `SELECT count(*) FROM deployment_sign_in_flow`).Scan(&flows); err != nil || flows != 0 {
+	if err = connection.QueryRow(context.Background(), `SELECT count(*) FROM oidc_sign_in_flow`).Scan(&flows); err != nil || flows != 0 {
 		t.Fatalf("completed OIDC flows retained = %d (%v)", flows, err)
 	}
 

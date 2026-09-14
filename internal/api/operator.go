@@ -31,6 +31,7 @@ type Handlers struct {
 	Logger                  *slog.Logger
 	Identity                identity.Handlers
 	Catalog                 integrations.Catalog
+	WebhookTypes            map[integrations.TypeID]bool
 	Investigations          *investigation.Runner
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
@@ -106,6 +107,7 @@ func (h Handlers) Routes() authz.Table {
 	routes = append(routes, integrations.Handlers{
 		Store:         h.Database,
 		Catalog:       h.Catalog,
+		WebhookTypes:  h.WebhookTypes,
 		Logger:        h.Logger,
 		Sealer:        h.Sealer,
 		IntakeBaseURL: h.IntakeBaseURL,

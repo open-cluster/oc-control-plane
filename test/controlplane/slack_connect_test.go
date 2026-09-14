@@ -131,20 +131,18 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 		t.Fatalf("the tenant holds %d integrations, want one", len(listed))
 	}
 	installed := listed[0]
-	if installed.Status != "active" {
-		t.Errorf("status = %q, want active", installed.Status)
+	if installed.Status != "verified" {
+		t.Errorf("status = %q, want verified", installed.Status)
 	}
 
-	// The workspace is recorded and visible, so an operator can confirm they connected
-	// the right one, and so that reconnecting re-verifies rather than duplicating.
-	if installed.Configuration["teamId"] != "T0ACME" {
-		t.Errorf("configuration = %+v; the workspace was not recorded",
-			installed.Configuration)
+	if len(installed.Configuration) != 0 || installed.Inbound == nil || !installed.Inbound.Available {
+		t.Errorf("discovered workspace identity leaked into configuration or routing was lost: %+v",
+			installed)
 	}
 
 	// The bot token is sealed and never rendered. A credential that reached a response
 	// once has reached a browser history, a proxy log and a screenshot.
-	if installed.Credential == nil || installed.Credential.Fingerprint == "" {
+	if installed.Credential == nil || !installed.Credential.Configured {
 		t.Fatal("no credential is recorded; the integration cannot read anything")
 	}
 	if strings.Contains(landed, "xoxb-installed-token") {
@@ -187,9 +185,8 @@ func TestTheSlackCallbackIgnoresAnOrganizationInItsQuery(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("the starting tenant holds %d integrations, want one", len(listed))
 	}
-	if listed[0].Configuration["teamId"] != "T0ACME" {
-		t.Errorf("configuration = %+v; the callback steered what was recorded",
-			listed[0].Configuration)
+	if len(listed[0].Configuration) != 0 || listed[0].Inbound == nil || !listed[0].Inbound.Available {
+		t.Errorf("callback changed editable configuration or lost routing state: %+v", listed[0])
 	}
 	// The bootstrap credential reaches one organization, so the neighbour is answered 404
 	// by the guard — which is also the proof that nothing was written there under a

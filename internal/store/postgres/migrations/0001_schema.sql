@@ -155,26 +155,15 @@ CREATE TABLE conversation_message (
     CONSTRAINT conversation_message_pkey PRIMARY KEY (org_id, conversation_id, sequence)
 );
 
-CREATE TABLE deployment_initialization (
-    singleton boolean DEFAULT true NOT NULL,
-    initialized_at timestamptz DEFAULT now() NOT NULL,
-    CONSTRAINT deployment_initialization_singleton_check CHECK (singleton),
-    CONSTRAINT deployment_initialization_pkey PRIMARY KEY (singleton)
-);
-
-CREATE TABLE deployment_sign_in_flow (
-    flow_id uuid NOT NULL,
+CREATE TABLE oidc_sign_in_flow (
     org_id uuid NOT NULL,
     state_digest bytea NOT NULL,
     code_verifier text,
     nonce text,
     return_to text NOT NULL,
     expires_at timestamptz NOT NULL,
-    consumed_at timestamptz,
-    created_at timestamptz DEFAULT now() NOT NULL,
-    CONSTRAINT deployment_sign_in_flow_state_digest_check CHECK (octet_length(state_digest) = 32),
-    CONSTRAINT deployment_sign_in_flow_pkey PRIMARY KEY (flow_id),
-    CONSTRAINT deployment_sign_in_flow_state_digest_key UNIQUE (state_digest)
+    CONSTRAINT oidc_sign_in_flow_state_digest_check CHECK (octet_length(state_digest) = 32),
+    CONSTRAINT oidc_sign_in_flow_pkey PRIMARY KEY (state_digest)
 );
 
 CREATE TABLE incident (
@@ -210,50 +199,29 @@ CREATE TABLE integration (
     name text NOT NULL,
     configuration jsonb DEFAULT '{}'::jsonb NOT NULL,
     webhook_secret_digest bytea,
-    webhook_secret_fingerprint text,
-    webhook_secret_created_at timestamptz,
-    webhook_secret_rotated_at timestamptz,
-    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     relay_id uuid,
-    status smallint DEFAULT 1 NOT NULL, -- 1=configured, 2=active, 3=degraded, 4=failed
-    last_verified_at timestamptz,
-    verify_note text DEFAULT '' NOT NULL,
-    disabled_at timestamptz,
-    created_by text DEFAULT '' NOT NULL,
+    verification_status text,
+    verified_at timestamptz,
+    verification_grants text[] DEFAULT '{}' NOT NULL,
+    disabled boolean DEFAULT false NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
-    updated_at timestamptz NOT NULL,
     credential_sealed bytea,
-    credential_fingerprint text,
-    credential_created_at timestamptz,
-    credential_rotated_at timestamptz,
-    verify_grants jsonb,
-    verify_facts jsonb,
-    CONSTRAINT integration_credential_is_whole CHECK (((credential_sealed IS NULL) AND (credential_fingerprint IS NULL) AND (credential_created_at IS NULL)) OR ((credential_sealed IS NOT NULL) AND (credential_fingerprint IS NOT NULL) AND (credential_created_at IS NOT NULL))),
-    CONSTRAINT integration_status_check CHECK (status = ANY (ARRAY[1, 2, 3, 4])),
-    CONSTRAINT integration_supported_kind CHECK (integration_type_id = ANY (ARRAY[1, 2, 3, 4, 5])),
+    CONSTRAINT integration_verification_status_check CHECK (verification_status IS NULL OR verification_status = ANY (ARRAY['verified', 'failed'])),
     CONSTRAINT integration_webhook_secret_digest_check CHECK ((webhook_secret_digest IS NULL) OR (length(webhook_secret_digest) = 32)),
-    CONSTRAINT integration_webhook_secret_is_whole CHECK (((webhook_secret_digest IS NULL) AND (webhook_secret_fingerprint IS NULL) AND (webhook_secret_created_at IS NULL)) OR ((webhook_secret_digest IS NOT NULL) AND (webhook_secret_fingerprint IS NOT NULL) AND (webhook_secret_created_at IS NOT NULL))),
     CONSTRAINT integration_identity_is_org_scoped UNIQUE (org_id, integration_id),
-    CONSTRAINT integration_name_is_unique_per_org UNIQUE (org_id, name),
     CONSTRAINT integration_org_id_kind_unique UNIQUE (org_id, integration_id, integration_type_id),
     CONSTRAINT integration_pkey PRIMARY KEY (integration_id)
 );
 
 CREATE TABLE integration_connect_flow (
-    flow_id uuid NOT NULL,
     org_id uuid NOT NULL,
-    integration_type_id smallint NOT NULL, -- 1=Alertmanager, 2=Kubernetes, 3=Slack, 4=GitHub, 5=generic webhook
+    provider text NOT NULL,
     principal text NOT NULL,
     state_digest bytea NOT NULL,
     return_to text DEFAULT '/' NOT NULL,
-    created_at timestamptz DEFAULT now() NOT NULL,
     expires_at timestamptz NOT NULL,
-    consumed_at timestamptz,
-    CONSTRAINT integration_connect_flow_expires_after_it_started CHECK (expires_at > created_at),
     CONSTRAINT integration_connect_flow_state_digest_check CHECK (length(state_digest) = 32),
-    CONSTRAINT integration_connect_flow_supported_kind CHECK (integration_type_id = ANY (ARRAY[1, 2, 3, 4, 5])),
-    CONSTRAINT integration_connect_flow_pkey PRIMARY KEY (flow_id),
-    CONSTRAINT integration_connect_flow_state_is_unique UNIQUE (state_digest)
+    CONSTRAINT integration_connect_flow_pkey PRIMARY KEY (state_digest)
 );
 
 CREATE TABLE webhook_delivery (
@@ -292,10 +260,8 @@ CREATE TABLE integration_installation (
     enterprise_wide boolean DEFAULT false NOT NULL,
     agent text DEFAULT '' NOT NULL,
     authorizer text DEFAULT '' NOT NULL,
-    grants text[] DEFAULT '{}' NOT NULL,
     installed_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz NOT NULL,
-    CONSTRAINT integration_installation_supported_kind CHECK (integration_type_id = ANY (ARRAY[1, 2, 3, 4, 5])),
     CONSTRAINT integration_installation_pkey PRIMARY KEY (integration_id)
 );
 
@@ -595,7 +561,7 @@ CREATE INDEX conversation_message_queued_idx ON conversation_message (org_id, co
 
 CREATE INDEX conversation_org_idx ON conversation (org_id, last_activity_at DESC, conversation_id DESC);
 
-CREATE INDEX deployment_sign_in_flow_expiry ON deployment_sign_in_flow (expires_at);
+CREATE INDEX oidc_sign_in_flow_expiry ON oidc_sign_in_flow (expires_at);
 
 CREATE UNIQUE INDEX incident_open_key_idx ON incident (integration_id, grouping_key) WHERE (status = 1);
 
@@ -689,8 +655,8 @@ ALTER TABLE conversation_message
 ALTER TABLE conversation
     ADD CONSTRAINT conversation_organization_exists FOREIGN KEY (org_id) REFERENCES organization(org_id);
 
-ALTER TABLE deployment_sign_in_flow
-    ADD CONSTRAINT deployment_sign_in_flow_organization_exists FOREIGN KEY (org_id) REFERENCES organization(org_id);
+ALTER TABLE oidc_sign_in_flow
+    ADD CONSTRAINT oidc_sign_in_flow_organization_exists FOREIGN KEY (org_id) REFERENCES organization(org_id);
 
 ALTER TABLE incident
     ADD CONSTRAINT incident_integration_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES integration(org_id, integration_id);

@@ -17,7 +17,7 @@ func TestAvailabilityIsReportedPerToolWithoutAGenericCapabilityDeclaration(t *te
 	t.Parallel()
 
 	found := ToolAvailabilityFor(definitionWithTools(),
-		Integration{VerifyGrants: []string{"search:read"}})
+		Integration{Status: StatusVerified, VerifiedAt: time.Now(), VerificationGrants: []string{"search:read"}})
 	if len(found) != 2 {
 		t.Fatalf("reported %d tools, want both declared tools: %+v", len(found), found)
 	}
@@ -29,7 +29,7 @@ func TestAvailabilityIsReportedPerToolWithoutAGenericCapabilityDeclaration(t *te
 func TestAToolMissingItsGrantIsUnavailableAndSaysWhich(t *testing.T) {
 	t.Parallel()
 
-	found := ToolAvailabilityFor(definitionWithTools(), Integration{})
+	found := ToolAvailabilityFor(definitionWithTools(), Integration{Status: StatusVerified, VerifiedAt: time.Now()})
 	for _, one := range found {
 		if one.Tool != "slack.search_messages" {
 			continue
@@ -45,12 +45,12 @@ func TestAToolMissingItsGrantIsUnavailableAndSaysWhich(t *testing.T) {
 func TestSupportedToolsUsesTheSameVerifiedGrantDecision(t *testing.T) {
 	t.Parallel()
 
-	without := SupportedTools(definitionWithTools(), Integration{})
+	without := SupportedTools(definitionWithTools(), Integration{Status: StatusVerified, VerifiedAt: time.Now()})
 	if len(without) != 1 || without[0].Name != "slack.list_channels" {
 		t.Fatalf("ungranted Tool was offered: %+v", without)
 	}
 	with := SupportedTools(definitionWithTools(),
-		Integration{VerifyGrants: []string{"search:read"}})
+		Integration{Status: StatusVerified, VerifiedAt: time.Now(), VerificationGrants: []string{"search:read"}})
 	if len(with) != 2 {
 		t.Fatalf("verified grant did not offer both Tools: %+v", with)
 	}
@@ -66,13 +66,10 @@ func TestToolAvailabilitySharesIntegrationEligibilityWithTheOffer(t *testing.T) 
 		reason      string
 		available   bool
 	}{
-		{"disabled", Integration{Status: StatusActive, LastVerifiedAt: now, DisabledAt: now}, "disabled", false},
-		{"configured", Integration{Status: StatusConfigured, LastVerifiedAt: now}, "successful Verification", false},
-		{"failed", Integration{Status: StatusFailed, LastVerifiedAt: now}, "successful Verification", false},
-		{"unverified", Integration{Status: StatusActive}, "has not recorded a Verification", false},
-		{"expired successful verification", Integration{Status: StatusActive, LastVerifiedAt: now.Add(-25 * time.Hour)}, "Verification has expired", false},
-		{"recent successful verification", Integration{Status: StatusActive, LastVerifiedAt: now.Add(-23 * time.Hour)}, "", true},
-		{"degraded current", Integration{Status: StatusDegraded, LastVerifiedAt: now}, "", true},
+		{"disabled", Integration{Status: StatusVerified, VerifiedAt: now, Disabled: true}, "disabled", false},
+		{"failed", Integration{Status: StatusFailed, VerifiedAt: now}, "successful Verification", false},
+		{"never verified", Integration{}, "successful Verification", false},
+		{"old successful verification", Integration{Status: StatusVerified, VerifiedAt: now.Add(-30 * 24 * time.Hour)}, "", true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			available := ToolAvailabilityFor(definitionWithTools(), scenario.integration)[0]

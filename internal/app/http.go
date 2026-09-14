@@ -127,8 +127,10 @@ func httpRoutes(process assembled) (http.Handler, error) {
 		return nil, err
 	}
 	mux.Handle("/api/", operatorRoutes)
-	// Retired pre-release route families must stay absent instead of falling through to
-	// the browser application's deep-link handler.
+
+	// ---- Info ----
+	//Retired pre-release route families. May be removed later.
+	// ---- Info ----
 	mux.HandleFunc("/operator/", http.NotFound)
 	mux.HandleFunc("/operator", http.NotFound)
 	mux.HandleFunc("/intake/", http.NotFound)
@@ -164,6 +166,7 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		Identity:                identities,
 		Origins:                 []string{cfg.OperatorPublicURL},
 		Catalog:                 process.catalog,
+		WebhookTypes:            webhookTypes(webhookAdapters()),
 		Sealer:                  process.sealer,
 		Investigations:          process.investigations,
 		StreamContext:           process.streamContext,
@@ -220,10 +223,22 @@ func intakeRouter(process assembled) http.Handler {
 	return webhooks.Handlers{
 		Database: process.database,
 		Logger:   process.logger,
-		Adapters: webhooks.Adapters{
-			integrations.TypeAlertmanager:   alertmanager.Adapter{},
-			integrations.TypeGenericWebhook: genericwebhook.Adapter{},
-		},
-		Slack: newSlackAgent(cfg),
+		Adapters: webhookAdapters(),
+		Slack:    newSlackAgent(cfg),
 	}.Router()
+}
+
+func webhookAdapters() webhooks.Adapters {
+	return webhooks.Adapters{
+		integrations.TypeAlertmanager:   alertmanager.Adapter{},
+		integrations.TypeGenericWebhook: genericwebhook.Adapter{},
+	}
+}
+
+func webhookTypes(adapters webhooks.Adapters) map[integrations.TypeID]bool {
+	types := make(map[integrations.TypeID]bool, len(adapters))
+	for typeID := range adapters {
+		types[typeID] = true
+	}
+	return types
 }

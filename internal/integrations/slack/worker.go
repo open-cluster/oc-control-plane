@@ -368,7 +368,7 @@ func (w Worker) credential(ctx context.Context, reply Reply) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if integration.Disabled() {
+	if integration.Disabled {
 		// An operator turned it off. Reading stops and answering stops.
 		return "", errors.New("slack: this integration is disabled")
 	}

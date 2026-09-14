@@ -83,9 +83,9 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 	}
 	var verified integrationBody
 	decodeInto(t, verifyBody, &verified)
-	if verified.Status != "active" {
+	if verified.Status != "verified" {
 		t.Errorf("after a real alertmanager delivery the integration verifies as %q, want "+
-			"active; note: %s", verified.Status, verified.VerifyNote)
+			"verified; note: %s", verified.Status, verified.VerificationNote)
 	}
 
 	// The incident, grouped on the identity ALERTMANAGER supplied. Nothing here infers it.

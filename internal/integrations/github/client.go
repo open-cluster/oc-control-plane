@@ -108,6 +108,20 @@ type Installation struct {
 	RepositorySelection string
 }
 
+func (c *Client) App(ctx context.Context, jwt string) (string, error) {
+	var decoded struct {
+		Slug string `json:"slug"`
+	}
+	_, err := c.call(ctx, jwt, http.MethodGet, "/app", nil, &decoded)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(decoded.Slug) == "" {
+		return "", errors.New("github returned no app slug")
+	}
+	return decoded.Slug, nil
+}
+
 // Repository is one repository as the installation sees it. The numeric ID is the stable
 // identity everything downstream stores: it survives renames and transfers, which names
 // do not.

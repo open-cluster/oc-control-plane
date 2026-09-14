@@ -59,11 +59,11 @@ type fleetView struct {
 // servedIntegrationView is one Integration a Relay serves, which is what disabling that
 // Relay would cost.
 type servedIntegrationView struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Disabled bool   `json:"disabled"`
+	ID       string  `json:"id"`
+	Type     string  `json:"type"`
+	Name     string  `json:"name"`
+	Status   *string `json:"status"`
+	Disabled bool    `json:"disabled"`
 }
 
 // relayFailureView is one execution a Relay did not complete. It carries no reason, and the

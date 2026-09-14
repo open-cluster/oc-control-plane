@@ -192,7 +192,7 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 	// is not told succeeded, and retrying an event this build deliberately ignores would be
 	// a storm this deployment asked for.
 	switch {
-	case integration.Disabled():
+	case integration.Disabled:
 		// An operator turned this integration off. Reading stops and answering stops, and
 		// the event is dropped rather than queued: a switch that quietly accumulated work
 		// to do later is not a switch.

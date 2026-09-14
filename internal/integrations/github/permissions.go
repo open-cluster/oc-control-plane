@@ -55,22 +55,22 @@ const resolveRepository = "GET /installation/repositories"
 // build does not declare, fails the provider's own test.
 var toolGrants = []toolGrant{
 	{
-		Tool:        "github.list_repositories",
+		Tool:        toolListRepositories,
 		Endpoints:   []string{resolveRepository},
 		Permissions: []AppPermission{PermissionMetadata},
 	},
 	{
-		Tool:        "github.read_commits",
+		Tool:        toolReadCommits,
 		Endpoints:   []string{resolveRepository, "GET /repos/{owner}/{repo}/commits"},
 		Permissions: []AppPermission{PermissionMetadata, PermissionContents},
 	},
 	{
-		Tool:        "github.read_commit",
+		Tool:        toolReadCommit,
 		Endpoints:   []string{resolveRepository, "GET /repos/{owner}/{repo}/commits/{sha}"},
 		Permissions: []AppPermission{PermissionMetadata, PermissionContents},
 	},
 	{
-		Tool: "github.read_pull_request",
+		Tool: toolReadPullRequest,
 		Endpoints: []string{
 			resolveRepository,
 			"GET /repos/{owner}/{repo}/pulls/{number}",
@@ -82,12 +82,12 @@ var toolGrants = []toolGrant{
 		},
 	},
 	{
-		Tool:        "github.read_workflow_runs",
+		Tool:        toolReadWorkflowRuns,
 		Endpoints:   []string{resolveRepository, "GET /repos/{owner}/{repo}/actions/runs"},
 		Permissions: []AppPermission{PermissionMetadata, PermissionActions},
 	},
 	{
-		Tool: "github.read_job_log",
+		Tool: toolReadJobLog,
 		Endpoints: []string{
 			resolveRepository,
 			"GET /repos/{owner}/{repo}/actions/runs/{run}/jobs",
@@ -96,12 +96,12 @@ var toolGrants = []toolGrant{
 		Permissions: []AppPermission{PermissionMetadata, PermissionActions},
 	},
 	{
-		Tool:        "github.read_file",
+		Tool:        toolReadFile,
 		Endpoints:   []string{resolveRepository, "GET /repos/{owner}/{repo}/contents/{path}"},
 		Permissions: []AppPermission{PermissionMetadata, PermissionContents},
 	},
 	{
-		Tool:        "github.list_releases",
+		Tool:        toolListReleases,
 		Endpoints:   []string{resolveRepository, "GET /repos/{owner}/{repo}/releases"},
 		Permissions: []AppPermission{PermissionMetadata, PermissionContents},
 	},

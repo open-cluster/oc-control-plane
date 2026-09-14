@@ -118,10 +118,9 @@ func alertmanagerIntegration(
 	created, err := database.CreateIntegration(
 		context.Background(), ownerOf(t, organization), organization,
 		integrations.NewIntegration{
-			Type:                     integrations.TypeAlertmanager,
-			Name:                     "alertmanager " + uuid.NewString(),
-			WebhookSecretDigest:      randomDigest(t),
-			WebhookSecretFingerprint: "fingerprint",
+			Type:                integrations.TypeAlertmanager,
+			Name:                "alertmanager " + uuid.NewString(),
+			WebhookSecretDigest: randomDigest(t),
 		})
 	if err != nil {
 		t.Fatalf("creating an alertmanager integration: %v", err)

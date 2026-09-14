@@ -407,7 +407,7 @@ func searchMessagesTool(client *Client) integrations.Tool {
 		Arguments: declared,
 		Permissions: "classic message search works only with a user token granted the " +
 			"search:read scope; a bot token is never offered this tool",
-		Requires: []string{"search:read", GrantUserToken},
+		Requires: []string{"search:read", grantUserToken},
 		Output: "a bounded list of matches, each with ts, author, text, the channel name " +
 			"and id it was said in and a permalink, plus a truncated flag when more " +
 			"matched",

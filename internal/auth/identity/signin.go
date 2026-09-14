@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
@@ -17,9 +18,6 @@ import (
 
 const noWayIn = "no way in is configured here"
 
-func newFlowID() uuid.UUID {
-	return uuid.New()
-}
 func nowPlus(d time.Duration) time.Time {
 	return time.Now().Add(d)
 }
