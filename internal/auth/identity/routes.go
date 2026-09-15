@@ -40,9 +40,9 @@ func (h Handlers) Routes() authz.Table {
 			authz.MemberRead, http.HandlerFunc(h.listMembers)),
 		authz.Privileged(http.MethodPost, Base+"/local-users",
 			authz.MemberManage, http.HandlerFunc(h.createMember)),
-		authz.Privileged(http.MethodPatch, Base+"/members/{membership}",
+		authz.Privileged(http.MethodPatch, Base+"/members/{user}",
 			authz.MemberManage, http.HandlerFunc(h.setMember)),
-		authz.Privileged(http.MethodDelete, Base+"/members/{membership}",
+		authz.Privileged(http.MethodDelete, Base+"/members/{user}",
 			authz.MemberManage, http.HandlerFunc(h.removeMember)),
 
 		// Live sessions and their revocation.

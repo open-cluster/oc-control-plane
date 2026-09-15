@@ -434,8 +434,8 @@ func seedTestOrganization(t *testing.T, dsn, organization, email string) {
 		t.Fatal(err)
 	}
 	if _, err = transaction.Exec(ctx, `INSERT INTO organization_membership
-		(membership_id,org_id,user_id,role,source,granted_by,updated_at)
-		VALUES ($1,$2,$3,'admin',1,$4,now())`, uuid.New(), organization, userID, userID.String()); err != nil {
+		(org_id,user_id,role)
+		VALUES ($1,$2,'admin')`, organization, userID); err != nil {
 		t.Fatal(err)
 	}
 	if err = transaction.Commit(ctx); err != nil {

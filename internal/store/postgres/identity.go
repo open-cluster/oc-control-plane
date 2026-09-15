@@ -28,32 +28,6 @@ var (
 	ErrLastAdmin = errors.New("an organization must keep at least one admin")
 )
 
-// MembershipSource is how a membership came to exist. It is persisted as an integer and
-// constrained by the schema baseline.
-type MembershipSource int16
-
-const (
-	// SourceManual is a membership an administrator granted.
-	SourceManual MembershipSource = 1
-	// SourceJIT is one created at a first sign-in under the provider's policy.
-	SourceJIT MembershipSource = 2
-	// SourceSCIM is one a directory owns.
-	SourceSCIM MembershipSource = 3
-)
-
-func (s MembershipSource) String() string {
-	switch s {
-	case SourceManual:
-		return "manual"
-	case SourceJIT:
-		return "jit"
-	case SourceSCIM:
-		return "scim"
-	default:
-		return "unrecognised"
-	}
-}
-
 // User is a person who may sign in.
 type User struct {
 	ID            uuid.UUID
@@ -82,20 +56,11 @@ type Identity struct {
 // Member is one person's membership in one organization, with enough of the person to render a
 // list without a second read.
 type Member struct {
-	MembershipID uuid.UUID
-	UserID       uuid.UUID
-	Email        string
-	DisplayName  string
-	Role         authz.Role
-	Source       MembershipSource
-	// ExternalID is the directory's own identifier for this person, and is empty for a
-	// membership an administrator granted by hand.
-	ExternalID string
-	// Active is whether this membership grants anything. A directory sets it false rather than
-	// removing the row, and an administrator reading the list needs to see the difference
-	// before they act on it.
-	Active   bool
-	Disabled bool
+	UserID      uuid.UUID
+	Email       string
+	DisplayName string
+	Role        authz.Role
+	Disabled    bool
 
 	CreatedAt time.Time
 }
@@ -131,22 +96,15 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
 }
 
-// membershipsOf resolves what a person may reach RIGHT NOW.
-//
-// Two things must both hold, and they are different facts. The membership must be ACTIVE — the
-// directory's statement that this person is enabled, which it sets false rather than deleting,
-// because SCIM has no "gone". And it must HOLD A ROLE — a directory-provisioned person in no
-// mapped group has none, and being in the company is not being in this product.
-//
-// Filtering here rather than at each call site is what makes both take effect on the person's
-// next request rather than at their next sign-in, for every route at once.
+// membershipsOf resolves what a person may reach RIGHT NOW. Row presence grants the stored
+// Role, so a removal takes effect on the person's next request rather than their next sign-in.
 func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Membership, error) {
 	rows, err := on.Query(ctx, `
-		SELECT membership.membership_id, membership.org_id, organization.display_name,
+		SELECT membership.org_id, organization.display_name,
 		       membership.role
 		  FROM organization_membership membership
 		  JOIN organization ON organization.org_id = membership.org_id
-		 WHERE membership.user_id = $1 AND membership.active AND membership.role IS NOT NULL
+		 WHERE membership.user_id = $1
 		 ORDER BY membership.org_id`, user)
 	if err != nil {
 		return nil, fmt.Errorf("reading memberships: %w", err)
@@ -155,9 +113,8 @@ func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Mem
 
 	memberships := make([]authz.Membership, 0, 4)
 	for rows.Next() {
-		var membershipID uuid.UUID
 		var name, displayName, role string
-		if err := rows.Scan(&membershipID, &name, &displayName, &role); err != nil {
+		if err := rows.Scan(&name, &displayName, &role); err != nil {
 			return nil, fmt.Errorf("scanning a membership: %w", err)
 		}
 		organization, err := tenancy.NewOrganization(name)
@@ -172,8 +129,7 @@ func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Mem
 			continue
 		}
 		memberships = append(memberships, authz.Membership{
-			ID: membershipID.String(), Organization: organization,
-			DisplayName: displayName, Role: parsed,
+			Organization: organization, DisplayName: displayName, Role: parsed,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -200,15 +156,14 @@ func (p *Database) ListMembers(
 
 	limit := pageLimit(page.Limit)
 	rows, err := pool.Query(ctx, `
-		SELECT membership.membership_id, membership.user_id, person.email, person.display_name,
-		       membership.role, membership.source, membership.external_id, membership.active,
-		       person.disabled_at, membership.created_at
+		SELECT membership.user_id, person.email, person.display_name,
+		       membership.role, person.disabled_at, membership.created_at
 		  FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
 		 WHERE membership.org_id = $1
 		   AND ($2::TIMESTAMPTZ IS NULL
-		        OR (membership.created_at, membership.membership_id) > ($2::TIMESTAMPTZ, $3::UUID))
-		 ORDER BY membership.created_at, membership.membership_id
+		        OR (membership.created_at, membership.user_id) > ($2::TIMESTAMPTZ, $3::UUID))
+		 ORDER BY membership.created_at, membership.user_id
 		 LIMIT $4`,
 		organization.String(), after, afterID, limit+1)
 	if err != nil {
@@ -221,23 +176,19 @@ func (p *Database) ListMembers(
 	for rows.Next() {
 		var (
 			member   Member
-			role     *string
-			source   int16
-			external *string
+			role     string
 			disabled *time.Time
 		)
-		if err := rows.Scan(&member.MembershipID, &member.UserID, &member.Email,
-			&member.DisplayName, &role, &source, &external, &member.Active, &disabled,
-			&member.CreatedAt); err != nil {
+		if err := rows.Scan(&member.UserID, &member.Email, &member.DisplayName, &role,
+			&disabled, &member.CreatedAt); err != nil {
 			return MemberList{}, fmt.Errorf("scanning a member: %w", err)
 		}
-		member.ExternalID = orEmptyText(external)
 		if len(members) == limit {
 			last := members[limit-1]
-			next = encodeCursor("createdAt", last.CreatedAt, last.MembershipID)
+			next = encodeCursor("createdAt", last.CreatedAt, last.UserID)
 			break
 		}
-		member.Source = MembershipSource(source)
+		member.Role = authz.Role(role)
 		member.Disabled = disabled != nil
 		members = append(members, member)
 	}
@@ -259,12 +210,15 @@ func (p *Database) SetMembership(
 	action := audit.ActionMembershipChanged
 	return audited(ctx, p, principal, organization, action,
 		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
-			var held *string
+			var held string
 			err := transaction.QueryRow(ctx, `
 				SELECT role FROM organization_membership
-				 WHERE org_id = $1 AND user_id = $2 AND active FOR UPDATE`,
+				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
 				organization.String(), user).Scan(&held)
-			previous := orEmptyText(held)
+			previous := held
+			if errors.Is(err, pgx.ErrNoRows) {
+				previous = ""
+			}
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
 			}
@@ -276,22 +230,13 @@ func (p *Database) SetMembership(
 
 			var member Member
 			if err := transaction.QueryRow(ctx, `
-				INSERT INTO organization_membership (membership_id, org_id, user_id, role,
-				                                     source, granted_by, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, now())
+				INSERT INTO organization_membership (org_id, user_id, role)
+				VALUES ($1, $2, $3)
 				ON CONFLICT (org_id, user_id) DO UPDATE
-				    SET role       = EXCLUDED.role,
-				        source     = EXCLUDED.source,
-				        granted_by = EXCLUDED.granted_by,
-				        -- An administrator granting a role means the person may reach the
-				        -- tenant, whatever a directory said about them. A change that left the
-				        -- membership inactive would be one that appeared to work and did not.
-				        active     = TRUE,
-				        updated_at = now()
-				RETURNING membership_id, user_id, role, source, created_at`,
-				uuid.New(), organization.String(), user, string(role),
-				int16(SourceManual), principal.ID()).Scan(&member.MembershipID, &member.UserID,
-				&member.Role, &member.Source, &member.CreatedAt); err != nil {
+				    SET role = EXCLUDED.role
+				RETURNING user_id, role, created_at`,
+				organization.String(), user, string(role)).Scan(&member.UserID,
+				&member.Role, &member.CreatedAt); err != nil {
 				if isForeignKeyViolation(err) {
 					return Member{}, audit.Target{}, nil, ErrUserUnknown
 				}
@@ -302,82 +247,66 @@ func (p *Database) SetMembership(
 				action = audit.ActionMembershipGranted
 			}
 			return member,
-				audit.Target{Kind: audit.TargetMembership, ID: member.MembershipID.String()},
-				audit.Detail{"userId": user.String(), "before": previous, "after": string(role)},
+				audit.Target{Kind: audit.TargetUser, ID: user.String()},
+				audit.Detail{"before": previous, "after": string(role)},
 				nil
 		})
 }
 
-// UpdateMembership changes the supported Role and active state in one audited transaction.
+// UpdateMembership changes the supported Role in one audited transaction.
 func (p *Database) UpdateMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	membership uuid.UUID, wantedRole *authz.Role, wantedActive *bool,
+	user uuid.UUID, wantedRole authz.Role,
 ) (Member, error) {
 	return audited(ctx, p, principal, organization, audit.ActionMembershipChanged,
 		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
-			var user uuid.UUID
-			var currentRole *string
-			var currentActive bool
+			var currentRole string
 			err := transaction.QueryRow(ctx, `
-				SELECT user_id, role, active
+				SELECT role
 				  FROM organization_membership
-				 WHERE org_id = $1 AND membership_id = $2 FOR UPDATE`,
-				organization.String(), membership).Scan(&user, &currentRole, &currentActive)
+				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
+				organization.String(), user).Scan(&currentRole)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Member{}, audit.Target{}, nil, ErrMembershipUnknown
 			}
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
 			}
-			role := orEmptyText(currentRole)
-			active := currentActive
-			if wantedRole != nil {
-				role = string(*wantedRole)
-			}
-			if wantedActive != nil {
-				active = *wantedActive
-			}
-			if currentActive && orEmptyText(currentRole) == string(authz.Admin) &&
-				(!active || role != string(authz.Admin)) {
+			role := string(wantedRole)
+			if currentRole == string(authz.Admin) && role != string(authz.Admin) {
 				if err := refuseIfLastAdmin(ctx, transaction, organization, user); err != nil {
 					return Member{}, audit.Target{}, nil, err
 				}
 			}
 			if _, err = transaction.Exec(ctx, `
 				UPDATE organization_membership
-				   SET role = $3, active = $4, granted_by = $5, updated_at = now()
-				 WHERE org_id = $1 AND membership_id = $2`, organization.String(), membership, role,
-				active, principal.ID()); err != nil {
+				   SET role = $3
+				 WHERE org_id = $1 AND user_id = $2`, organization.String(), user, role,
+			); err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("updating a membership: %w", err)
 			}
 
 			var member Member
-			var external *string
 			var disabled *time.Time
 			var storedRole string
-			var source int16
 			err = transaction.QueryRow(ctx, `
-				SELECT membership.membership_id, membership.user_id, person.email,
-				       person.display_name, membership.role, membership.source,
-				       membership.external_id, membership.active, person.disabled_at,
+				SELECT membership.user_id, person.email,
+				       person.display_name, membership.role, person.disabled_at,
 				       membership.created_at
 				  FROM organization_membership membership
 				  JOIN app_user person ON person.user_id = membership.user_id
-				 WHERE membership.membership_id = $1 AND membership.org_id = $2`,
-				membership, organization.String()).Scan(
-				&member.MembershipID, &member.UserID, &member.Email, &member.DisplayName,
-				&storedRole, &source, &external, &member.Active, &disabled, &member.CreatedAt)
+				 WHERE membership.user_id = $1 AND membership.org_id = $2`,
+				user, organization.String()).Scan(
+				&member.UserID, &member.Email, &member.DisplayName,
+				&storedRole, &disabled, &member.CreatedAt)
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("reading updated membership: %w", err)
 			}
 			member.Role = authz.Role(storedRole)
-			member.Source = MembershipSource(source)
-			member.ExternalID = orEmptyText(external)
 			member.Disabled = disabled != nil
-			return member, audit.Target{Kind: audit.TargetMembership, ID: membership.String()},
+			return member, audit.Target{Kind: audit.TargetUser, ID: user.String()},
 				audit.Detail{
-					"beforeRole": orEmptyText(currentRole), "afterRole": role,
-					"beforeActive": currentActive, "afterActive": active,
+					"beforeRole": currentRole, "afterRole": role,
 				}, nil
 		})
 }
@@ -387,17 +316,16 @@ func (p *Database) UpdateMembership(
 // identifier nothing resolves.
 func (p *Database) RemoveMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	membership uuid.UUID,
+	user uuid.UUID,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionMembershipRevoked,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var held *string
-			var user uuid.UUID
+			var held string
 			err := transaction.QueryRow(ctx, `
-				SELECT user_id, role FROM organization_membership
-				 WHERE org_id = $1 AND membership_id = $2 FOR UPDATE`,
-				organization.String(), membership).Scan(&user, &held)
-			role := orEmptyText(held)
+				SELECT role FROM organization_membership
+				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
+				organization.String(), user).Scan(&held)
+			role := held
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, ErrMembershipUnknown
 			}
@@ -411,13 +339,13 @@ func (p *Database) RemoveMembership(
 			}
 
 			if _, err := transaction.Exec(ctx, `
-				DELETE FROM organization_membership WHERE membership_id = $1`,
-				membership); err != nil {
+				DELETE FROM organization_membership WHERE org_id = $1 AND user_id = $2`,
+				organization.String(), user); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("removing a membership: %w", err)
 			}
 			return struct{}{},
-				audit.Target{Kind: audit.TargetMembership, ID: membership.String()},
-				audit.Detail{"userId": user.String(), "before": role}, nil
+				audit.Target{Kind: audit.TargetUser, ID: user.String()},
+				audit.Detail{"before": role}, nil
 		})
 	return err
 }
@@ -430,7 +358,7 @@ func refuseIfLastAdmin(
 	var remaining int
 	if err := transaction.QueryRow(ctx, `
 		SELECT count(*) FROM organization_membership
-		 WHERE org_id = $1 AND role = $2 AND user_id <> $3 AND active`,
+		 WHERE org_id = $1 AND role = $2 AND user_id <> $3`,
 		organization.String(), string(authz.Admin), except).Scan(&remaining); err != nil {
 		return fmt.Errorf("counting admins: %w", err)
 	}

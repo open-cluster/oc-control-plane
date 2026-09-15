@@ -46,7 +46,6 @@ type principalView struct {
 }
 
 type membershipView struct {
-	ID           string `json:"id"`
 	Organization string `json:"organizationId"`
 	DisplayName  string `json:"displayName"`
 	Role         string `json:"role"`
@@ -66,7 +65,6 @@ func sessionViewOf(
 
 	for _, membership := range memberships {
 		organizations = append(organizations, membershipView{
-			ID:           membership.ID,
 			Organization: membership.Organization.String(),
 			DisplayName:  membership.DisplayName,
 			Role:         string(membership.Role),
@@ -111,13 +109,10 @@ type signOutView struct {
 }
 
 type memberView struct {
-	ID          string    `json:"id"`
 	UserID      string    `json:"userId"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"displayName"`
 	Role        string    `json:"role"`
-	Source      string    `json:"source"`
-	Active      bool      `json:"active"`
 	Disabled    bool      `json:"disabled"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -129,13 +124,10 @@ type memberListView struct {
 
 func memberViewOf(member storage.Member) memberView {
 	return memberView{
-		ID:          member.MembershipID.String(),
 		UserID:      member.UserID.String(),
 		Email:       member.Email,
 		DisplayName: member.DisplayName,
 		Role:        string(member.Role),
-		Source:      member.Source.String(),
-		Active:      member.Active,
 		Disabled:    member.Disabled,
 		CreatedAt:   member.CreatedAt,
 	}

@@ -281,7 +281,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 			for _, parameter := range append(path.Parameters, operation.Parameters...) {
 				name := strings.TrimPrefix(parameter.Ref, "#/components/parameters/")
 				switch name {
-				case "", "Organization", "OptionalOrganization", "UserID", "MembershipID",
+				case "", "Organization", "OptionalOrganization", "UserID",
 					"SessionID", "IntegrationID", "IntegrationType", "RelayRegistrationID",
 					"IncidentID", "InvestigationID", "ConversationID", "WebhookDeliveryID":
 					continue

@@ -93,7 +93,6 @@ const (
 	TargetIncident        TargetKind = "incident"
 	TargetPostmortem      TargetKind = "postmortem"
 	TargetRelay           TargetKind = "relay"
-	TargetMembership      TargetKind = "membership"
 	TargetSession         TargetKind = "session"
 	TargetOrganization    TargetKind = "organization"
 	TargetRoute           TargetKind = "route"

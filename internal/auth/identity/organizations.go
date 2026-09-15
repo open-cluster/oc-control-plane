@@ -13,7 +13,6 @@ type organizationView struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Membership  struct {
-		ID   string `json:"id"`
 		Role string `json:"role"`
 	} `json:"membership"`
 }
@@ -51,7 +50,6 @@ func (h Handlers) organizations(writer http.ResponseWriter, request *http.Reques
 		view := organizationView{
 			ID: membership.Organization.String(), DisplayName: membership.DisplayName,
 		}
-		view.Membership.ID = membership.ID
 		view.Membership.Role = string(membership.Role)
 		views = append(views, view)
 	}
@@ -88,7 +86,6 @@ func (h Handlers) createOrganization(writer http.ResponseWriter, request *http.R
 		return
 	}
 	view := organizationView{ID: membership.Organization.String(), DisplayName: displayName}
-	view.Membership.ID = membership.ID
 	view.Membership.Role = string(membership.Role)
 	writeJSON(writer, http.StatusCreated, view)
 }
