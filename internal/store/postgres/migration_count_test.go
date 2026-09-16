@@ -7,7 +7,7 @@ import (
 )
 
 func TestBinaryCarriesBaselineAndCompatibilityMigrations(t *testing.T) {
-	if got := storage.MigrationCount(); got != 6 {
-		t.Fatalf("embedded migrations = %d, want baseline plus five compatibility migrations", got)
+	if got := storage.MigrationCount(); got != 7 {
+		t.Fatalf("embedded migrations = %d, want baseline plus six compatibility migrations", got)
 	}
 }

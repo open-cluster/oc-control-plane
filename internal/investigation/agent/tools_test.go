@@ -166,7 +166,7 @@ func TestARunWithNoWindowStatesNone(t *testing.T) {
 }
 
 func stubIntegration(name string) integrations.Integration {
-	return integrations.Integration{ID: uuid.New(), Type: 99, Name: name,
+	return integrations.Integration{ID: uuid.New(), Provider: "stub", Name: name,
 		Status: integrations.StatusVerified, VerifiedAt: time.Now().UTC()}
 }
 
@@ -174,7 +174,7 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 	t.Parallel()
 
 	definition := integrations.Definition{
-		Manifest: integrations.Manifest{Type: 99, Key: "stub", Name: "Stub",
+		Manifest: integrations.Manifest{Key: "stub", Name: "Stub",
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{{
 				Name: "stub.read", Description: "reads", WhenToUse: "when asked",
@@ -235,7 +235,7 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	t.Parallel()
 
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Type: 99, Key: "stub", Name: "Stub",
+		Manifest: integrations.Manifest{Key: "stub", Name: "Stub",
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{
 				{
@@ -292,7 +292,7 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	}
 
 	searchOnly := integrations.Definition{
-		Manifest: integrations.Manifest{Type: 98, Key: "gated", Name: "Gated",
+		Manifest: integrations.Manifest{Key: "gated", Name: "Gated",
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{{
 				Name: "gated.search", Description: "searches",
@@ -310,7 +310,7 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	botOnly := integrations.Integration{Type: 98, Name: "Bot Only"}
+	botOnly := integrations.Integration{Provider: "gated", Name: "Bot Only"}
 	if offered := offeredSources(gatedCatalog,
 		[]integrations.Integration{botOnly}); len(offered) != 0 {
 		t.Errorf("a candidate with no offerable tool was offered: %+v", offered)
@@ -324,7 +324,7 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 		return integrations.ToolResult{}, nil
 	}
 	definition := integrations.Definition{
-		Manifest: integrations.Manifest{Type: 99, Key: "chat", Name: "Chat",
+		Manifest: integrations.Manifest{Key: "chat", Name: "Chat",
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{
 				{
@@ -348,6 +348,8 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 	}
 	origin := stubIntegration("Origin workspace")
 	other := stubIntegration("Other workspace")
+	origin.Provider = "chat"
+	other.Provider = "chat"
 	scope := &investigation.ConversationOrigin{
 		IntegrationID: origin.ID,
 		Channel:       "C-INCIDENT",

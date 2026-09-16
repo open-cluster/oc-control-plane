@@ -13,7 +13,7 @@ import (
 )
 
 func TestRunEmitsDocumentedToolStartedProperties(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "Production source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "Production source"}}
 	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
 		if call == 1 {
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "read", Name: "stub.read",

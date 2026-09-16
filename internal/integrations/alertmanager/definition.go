@@ -8,7 +8,6 @@ import (
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			Type: integrations.TypeAlertmanager,
 			Key:  "alertmanager",
 			Name: "Prometheus Alertmanager",
 			Description: "Create incidents from firing and resolved Alertmanager alerts " +

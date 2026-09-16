@@ -39,8 +39,8 @@ func TestDefinition_DeclaresTheInboundShape(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition()
-	if definition.Type != integrations.TypeAlertmanager || definition.Key != "alertmanager" {
-		t.Errorf("the definition's identity is (%d, %q)", definition.Type, definition.Key)
+	if definition.Key != "alertmanager" {
+		t.Errorf("the definition's identity is %q", definition.Key)
 	}
 	if definition.RequiresRelay {
 		t.Error("alertmanager needs no relay")

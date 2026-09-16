@@ -709,7 +709,7 @@ func offeredSources(
 ) []offeredSource {
 	var sources []offeredSource
 	for _, candidate := range candidates {
-		definition, known := catalog.ByID(candidate.Type)
+		definition, known := catalog.Lookup(candidate.Provider)
 		if !known {
 			continue
 		}
@@ -739,11 +739,11 @@ func offeredSourcesForConversation(
 		return nil
 	}
 
-	var originType integrations.TypeID
+	var originProvider integrations.Provider
 	found := false
 	for _, candidate := range candidates {
 		if candidate.ID == origin.IntegrationID {
-			originType = candidate.Type
+			originProvider = candidate.Provider
 			found = true
 			break
 		}
@@ -754,14 +754,14 @@ func offeredSourcesForConversation(
 
 	allowed := make([]integrations.Integration, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.Type != originType || candidate.ID == origin.IntegrationID {
+		if candidate.Provider != originProvider || candidate.ID == origin.IntegrationID {
 			allowed = append(allowed, candidate)
 		}
 	}
 
 	var scoped []offeredSource
 	for _, source := range offeredSources(catalog, allowed) {
-		if source.Integration.Type != originType {
+		if source.Integration.Provider != originProvider {
 			scoped = append(scoped, source)
 			continue
 		}

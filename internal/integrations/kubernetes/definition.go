@@ -23,7 +23,6 @@ func Definition(executors ...Executor) integrations.Definition {
 	}
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			Type: integrations.TypeKubernetes,
 			Key:  "kubernetes",
 			Name: "Kubernetes",
 			Description: "Give investigations read-only access to Kubernetes workload " +

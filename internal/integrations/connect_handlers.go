@@ -90,7 +90,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	definition, known := h.Catalog.Lookup(strings.TrimSpace(request.PathValue("type")))
+	definition, known := h.Catalog.Lookup(Provider(strings.TrimSpace(request.PathValue("type"))))
 	if !known {
 		writeJSON(writer, http.StatusNotFound,
 			errorView{Error: "this build serves no integration type by that key"})
@@ -147,7 +147,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	}
 	h.Logger.InfoContext(ctx, "integration connect started",
 		slog.String("org_id", organization.String()),
-		slog.String("type", definition.Key))
+		slog.String("type", string(definition.Key)))
 
 	writeJSON(writer, http.StatusOK, connectStartedView{
 		AuthorizationURL: authorization,
@@ -206,7 +206,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 	if err != nil {
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",
 			slog.String("org_id", organization.String()),
-			slog.String("type", definition.Key),
+			slog.String("type", string(definition.Key)),
 			slog.String("reason", err.Error()))
 		h.landConnect(writer, request, flow.ReturnTo, definition.Key, outcomeUnproven, "")
 		return
@@ -227,7 +227,7 @@ func (h Handlers) record(
 	var err error
 	if bound.Installation != nil {
 		existing, _, err = h.Store.IntegrationByInstallation(
-			ctx, definition.Type, bound.Installation.Key())
+			ctx, definition.Key, bound.Installation.Key())
 		if err == nil && existing.OrgID != organization.String() {
 			err = ErrWorkspaceTaken
 		}
@@ -249,14 +249,14 @@ func (h Handlers) record(
 
 	wanted := NewIntegration{
 		ID:            uuid.New(),
-		Type:          definition.Type,
+		Provider:      definition.Key,
 		Name:          bound.Name,
 		Configuration: bound.Configuration,
 		Installation:  bound.Installation,
 	}
 	verification := definition.Probe(ctx, ProbeInput{
 		Integration: Integration{
-			Type:          wanted.Type,
+			Provider:      wanted.Provider,
 			Name:          wanted.Name,
 			Configuration: wanted.Configuration,
 			Installation:  wanted.Installation,
@@ -266,7 +266,7 @@ func (h Handlers) record(
 	if verification.Status == StatusFailed {
 		h.Logger.WarnContext(ctx, "a proven integration connect did not verify",
 			slog.String("org_id", organization.String()),
-			slog.String("type", definition.Key),
+			slog.String("type", string(definition.Key)),
 			slog.String("note", verification.Note))
 		h.landConnect(writer, request, returnTo, definition.Key, outcomeUnverified, "")
 		return
@@ -287,7 +287,7 @@ func (h Handlers) record(
 	if errors.Is(err, ErrWorkspaceTaken) {
 		h.Logger.WarnContext(ctx, "a connect named a workspace already installed elsewhere",
 			slog.String("org_id", organization.String()),
-			slog.String("type", definition.Key))
+			slog.String("type", string(definition.Key)))
 		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, "")
 		return
 	}
@@ -298,7 +298,7 @@ func (h Handlers) record(
 	h.Logger.InfoContext(ctx, "integration connected",
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", created.ID.String()),
-		slog.String("type", definition.Key))
+		slog.String("type", string(definition.Key)))
 
 	h.landConnect(writer, request, returnTo, definition.Key, outcomeFor(created), created.ID.String())
 }
@@ -329,7 +329,7 @@ func (h Handlers) reconnect(
 		h.Logger.WarnContext(ctx, "a reconnected integration did not verify",
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", existing.ID.String()),
-			slog.String("type", definition.Key),
+			slog.String("type", string(definition.Key)),
 			slog.String("note", verification.Note))
 		h.landConnect(writer, request, returnTo, definition.Key, outcomeUnverified, existing.ID.String())
 		return
@@ -344,7 +344,7 @@ func (h Handlers) reconnect(
 	if errors.Is(err, ErrWorkspaceTaken) {
 		h.Logger.WarnContext(ctx, "a reconnect named a workspace already installed elsewhere",
 			slog.String("org_id", organization.String()),
-			slog.String("type", definition.Key))
+			slog.String("type", string(definition.Key)))
 		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, existing.ID.String())
 		return
 	}
@@ -355,7 +355,7 @@ func (h Handlers) reconnect(
 	h.Logger.InfoContext(ctx, "integration reconnected",
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", verified.ID.String()),
-		slog.String("type", definition.Key))
+		slog.String("type", string(definition.Key)))
 	h.landConnect(writer, request, returnTo, definition.Key, outcomeFor(verified), verified.ID.String())
 }
 
@@ -392,12 +392,12 @@ func (h Handlers) refuseConnect(
 func (h Handlers) landConnect(
 	writer http.ResponseWriter,
 	request *http.Request,
-	returnTo,
-	typeKey string,
+	returnTo string,
+	typeKey Provider,
 	outcome connectOutcome,
 	id string,
 ) {
-	countConnect(request.Context(), typeKey, outcome)
+	countConnect(request.Context(), string(typeKey), outcome)
 
 	target, sendable := h.consoleTarget(returnTo, outcome, id)
 	if !sendable {

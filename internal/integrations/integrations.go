@@ -8,15 +8,8 @@ import (
 	"time"
 )
 
-type TypeID int16
-
-const (
-	TypeAlertmanager   TypeID = 1
-	TypeKubernetes     TypeID = 2
-	TypeSlack          TypeID = 3
-	TypeGitHub         TypeID = 4
-	TypeGenericWebhook TypeID = 5
-)
+// Provider is the stable, readable key a provider definition owns.
+type Provider string
 
 type Category string
 
@@ -103,8 +96,7 @@ type Definition struct {
 // Manifest is the authoritative provider declaration used by runtime routing, database
 // reconciliation, docs, and clients that render the catalog.
 type Manifest struct {
-	Type              TypeID
-	Key               string
+	Key               Provider
 	Name              string
 	Description       string
 	Logo              string
@@ -160,7 +152,7 @@ func (m Manifest) ConfigurationSchema() json.RawMessage {
 
 	schema := map[string]any{
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  "https://opencluster.dev/schemas/integration/" + m.Key + "/configuration.json",
+		"$id":                  "https://opencluster.dev/schemas/integration/" + string(m.Key) + "/configuration.json",
 		"title":                m.Name + " configuration",
 		"type":                 "object",
 		"additionalProperties": false,
@@ -226,18 +218,16 @@ func (d Definition) SecretField() (Field, bool) {
 
 type Catalog struct {
 	ordered []Definition
-	byKey   map[string]Definition
-	byID    map[TypeID]Definition
+	byKey   map[Provider]Definition
 }
 
 func NewCatalog(definitions ...Definition) (Catalog, error) {
 	catalog := Catalog{
 		ordered: make([]Definition, 0, len(definitions)),
-		byKey:   make(map[string]Definition, len(definitions)),
-		byID:    make(map[TypeID]Definition, len(definitions)),
+		byKey:   make(map[Provider]Definition, len(definitions)),
 	}
 	for _, definition := range definitions {
-		if definition.Key == "" || definition.Type == 0 {
+		if definition.Key == "" {
 			return Catalog{}, fmt.Errorf("integration definition %q has no identity", definition.Key)
 		}
 		if err := checkDefinition(definition); err != nil {
@@ -246,12 +236,8 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 		if _, taken := catalog.byKey[definition.Key]; taken {
 			return Catalog{}, fmt.Errorf("integration type key %q is declared twice", definition.Key)
 		}
-		if _, taken := catalog.byID[definition.Type]; taken {
-			return Catalog{}, fmt.Errorf("integration type id %d is declared twice", definition.Type)
-		}
 		catalog.ordered = append(catalog.ordered, definition)
 		catalog.byKey[definition.Key] = definition
-		catalog.byID[definition.Type] = definition
 	}
 	sort.Slice(catalog.ordered, func(i, j int) bool {
 		return catalog.ordered[i].Key < catalog.ordered[j].Key
@@ -260,7 +246,7 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 }
 
 func checkDefinition(definition Definition) error {
-	wantDocumentationSlug := "integrations/" + string(definition.Category) + "/" + definition.Key
+	wantDocumentationSlug := "integrations/" + string(definition.Category) + "/" + string(definition.Key)
 	if definition.DocumentationSlug != "" && definition.DocumentationSlug != wantDocumentationSlug {
 		return fmt.Errorf("integration type %q documentation slug is %q, want %q",
 			definition.Key, definition.DocumentationSlug, wantDocumentationSlug)
@@ -302,7 +288,7 @@ func checkDefinition(definition Definition) error {
 				"contract; the model routes by the composed description, and an empty "+
 				"field is a tool that gets used wrongly", definition.Key, tool.Name)
 		}
-		if err := checkArguments(definition.Key, tool); err != nil {
+		if err := checkArguments(string(definition.Key), tool); err != nil {
 			return err
 		}
 		names[tool.Name] = true
@@ -359,14 +345,8 @@ func (c Catalog) Tools() []Tool {
 }
 
 // Lookup resolves a definition from its stable key.
-func (c Catalog) Lookup(key string) (Definition, bool) {
+func (c Catalog) Lookup(key Provider) (Definition, bool) {
 	definition, ok := c.byKey[key]
-	return definition, ok
-}
-
-// ByID resolves a definition from its persisted type id.
-func (c Catalog) ByID(id TypeID) (Definition, bool) {
-	definition, ok := c.byID[id]
 	return definition, ok
 }
 
@@ -374,7 +354,7 @@ func (c Catalog) CredentialBearing() []string {
 	var keys []string
 	for _, definition := range c.ordered {
 		if _, holds := definition.SecretField(); holds {
-			keys = append(keys, definition.Key)
+			keys = append(keys, string(definition.Key))
 		}
 	}
 	return keys

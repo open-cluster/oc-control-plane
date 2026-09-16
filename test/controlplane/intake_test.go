@@ -56,10 +56,6 @@ func startIntake(t *testing.T) *intakePlane {
 	}
 }
 
-// alertmanagerTypeID mirrors the compiled Alertmanager Integration kind code. Written out
-// so a code rename cannot silently change what a configured database row means.
-const alertmanagerTypeID = 1
-
 // listeningAddress pulls a surface's bound address out of the startup log, which is the only
 // place an ephemeral port is reported for a listener the test did not open itself.
 func listeningAddress(t *testing.T, plane *controlPlane, message string) string {
@@ -87,16 +83,16 @@ func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.U
 	digest := sha256.Sum256([]byte(secret))
 	_, err = database.Exec(ctx, `
 		INSERT INTO integration
-			(integration_id, org_id, integration_type_id, name, webhook_secret_digest)
+			(integration_id, org_id, provider, name, webhook_secret_digest)
 		VALUES ($1, $2, $3, $4, $5)`,
-		id, organization, alertmanagerTypeID, "the source "+id.String(), digest[:])
+		id, organization, "alertmanager", "the source "+id.String(), digest[:])
 	if err != nil {
 		t.Fatalf("configuring the integration: %v", err)
 	}
 	return id
 }
 
-func (p *intakePlane) setIntegrationType(t *testing.T, typeID int) {
+func (p *intakePlane) setIntegrationProvider(t *testing.T, provider string) {
 	t.Helper()
 	connection, err := pgx.Connect(context.Background(), p.dsn)
 	if err != nil {
@@ -104,9 +100,9 @@ func (p *intakePlane) setIntegrationType(t *testing.T, typeID int) {
 	}
 	defer func() { _ = connection.Close(context.Background()) }()
 	if _, err = connection.Exec(context.Background(),
-		`UPDATE integration SET integration_type_id = $2 WHERE integration_id = $1`,
-		p.integration, typeID); err != nil {
-		t.Fatalf("setting integration type: %v", err)
+		`UPDATE integration SET provider = $2 WHERE integration_id = $1`,
+		p.integration, provider); err != nil {
+		t.Fatalf("setting integration provider: %v", err)
 	}
 }
 
@@ -317,7 +313,7 @@ func alertmanagerBody(
 
 func TestGenericWebhookLifecycleIsCanonicalIdempotentAndDoesNotInventIncidents(t *testing.T) {
 	plane := startIntake(t)
-	plane.setIntegrationType(t, 5)
+	plane.setIntegrationProvider(t, "generic_webhook")
 
 	firingBody := `{
 	  "eventId":"generic-42","status":"firing","title":"  Database latency  ",

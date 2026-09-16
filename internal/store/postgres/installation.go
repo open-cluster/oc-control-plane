@@ -35,7 +35,7 @@ import (
 // column added to one path and forgotten in the other.
 const installationInsert = `
 		INSERT INTO integration_installation
-			(integration_id, org_id, integration_type_id, application, enterprise,
+			(integration_id, org_id, provider, application, enterprise,
 			 workspace, enterprise_wide, agent, authorizer, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`
 
@@ -43,14 +43,14 @@ const installationInsert = `
 // transaction that created it.
 func recordInstallation(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	integration uuid.UUID, typeID integrations.TypeID, installed integrations.Installation,
+	integration uuid.UUID, provider integrations.Provider, installed integrations.Installation,
 ) error {
 	if !installed.Key().Complete() {
 		return fmt.Errorf("%w: an installation must name an application and a workspace",
 			integrations.ErrInvalidInstallation)
 	}
 	_, err := transaction.Exec(ctx, installationInsert,
-		installationValues(organization, integration, typeID, installed)...)
+		installationValues(organization, integration, provider, installed)...)
 	return installationError(err)
 }
 
@@ -63,7 +63,7 @@ func recordInstallation(
 // credential with stale routing — an agent that answers as somebody it no longer is.
 func recordInstallationIn(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
-	integration uuid.UUID, typeID integrations.TypeID, installed integrations.Installation,
+	integration uuid.UUID, provider integrations.Provider, installed integrations.Installation,
 ) error {
 	if !installed.Key().Complete() {
 		return fmt.Errorf("%w: an installation must name an application and a workspace",
@@ -71,7 +71,7 @@ func recordInstallationIn(
 	}
 	_, err := transaction.Exec(ctx, installationInsert+`
 		ON CONFLICT (integration_id) DO UPDATE
-		   SET integration_type_id = EXCLUDED.integration_type_id,
+		   SET provider            = EXCLUDED.provider,
 		       application         = EXCLUDED.application,
 		       enterprise          = EXCLUDED.enterprise,
 		       workspace           = EXCLUDED.workspace,
@@ -79,16 +79,16 @@ func recordInstallationIn(
 		       agent               = EXCLUDED.agent,
 		       authorizer          = EXCLUDED.authorizer,
 		       updated_at          = now()`,
-		installationValues(organization, integration, typeID, installed)...)
+		installationValues(organization, integration, provider, installed)...)
 	return installationError(err)
 }
 
 func installationValues(
 	organization tenancy.Organization, integration uuid.UUID,
-	typeID integrations.TypeID, installed integrations.Installation,
+	provider integrations.Provider, installed integrations.Installation,
 ) []any {
 	return []any{
-		integration, organization.String(), int16(typeID),
+		integration, organization.String(), provider,
 		installed.Application, installed.Enterprise, installed.Workspace,
 		installed.EnterpriseWide, installed.Agent, installed.Authorizer,
 	}
@@ -115,7 +115,7 @@ func installationError(err error) error {
 // Like IntegrationByID, it takes no organization, and for the same reason: an inbound caller
 // names no tenant, because a caller who could name one could try every one.
 func (p *Database) IntegrationByInstallation(
-	ctx context.Context, typeID integrations.TypeID, key integrations.InstallationKey,
+	ctx context.Context, provider integrations.Provider, key integrations.InstallationKey,
 ) (integrations.Integration, integrations.Installation, error) {
 	if !key.Complete() {
 		return integrations.Integration{}, integrations.Installation{}, integrations.ErrUnknown
@@ -130,9 +130,9 @@ func (p *Database) IntegrationByInstallation(
 			SELECT org_id, integration_id, application, enterprise, workspace,
 			       enterprise_wide, agent, authorizer
 			  FROM integration_installation
-			 WHERE integration_type_id = $1
+			 WHERE provider = $1
 			   AND application = $2 AND enterprise = $3 AND workspace = $4`,
-		int16(typeID), key.Application, key.Enterprise, key.Workspace)
+		provider, key.Application, key.Enterprise, key.Workspace)
 	err := row.Scan(&organization, &integrationID,
 		&installed.Application, &installed.Enterprise, &installed.Workspace,
 		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer)

@@ -32,7 +32,7 @@ func TestEveryIntegrationHasItsDocumentedProductRolePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, manifest := range catalog.Manifests() {
-		slug := "integrations/" + string(manifest.Category) + "/" + manifest.Key
+		slug := "integrations/" + string(manifest.Category) + "/" + string(manifest.Key)
 		if manifest.DocumentationSlug != slug {
 			t.Errorf("Integration %q documentation slug = %q, want %q", manifest.Key, manifest.DocumentationSlug, slug)
 		}

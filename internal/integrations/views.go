@@ -94,7 +94,7 @@ func typeViewOf(definition Definition, configured int, receivesWebhooks bool) ty
 		})
 	}
 	return typeView{
-		Key:                     manifest.Key,
+		Key:                     string(manifest.Key),
 		Name:                    manifest.Name,
 		Description:             manifest.Description,
 		Logo:                    manifest.Logo,
@@ -186,8 +186,8 @@ func (h Handlers) viewOf(found Integration) integrationView {
 	typeKey := ""
 	availability := []toolAvailabilityView{}
 	var inbound *inboundAvailabilityView
-	if definition, known := h.Catalog.ByID(found.Type); known {
-		typeKey = definition.Key
+	if definition, known := h.Catalog.Lookup(found.Provider); known {
+		typeKey = string(definition.Key)
 		if definition.Inbound != nil {
 			reported := definition.Inbound(found)
 			inbound = &inboundAvailabilityView{

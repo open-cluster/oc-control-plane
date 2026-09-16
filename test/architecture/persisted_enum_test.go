@@ -58,13 +58,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"AlertEventFiring", int(storage.AlertEventFiring), 1},
 		{"AlertEventResolved", int(storage.AlertEventResolved), 2},
 
-		// Integration kind codes retain their meaning across schema upgrades.
-		{"TypeAlertmanager", int(integrations.TypeAlertmanager), 1},
-		{"TypeKubernetes", int(integrations.TypeKubernetes), 2},
-		{"TypeSlack", int(integrations.TypeSlack), 3},
-		{"TypeGitHub", int(integrations.TypeGitHub), 4},
-		{"TypeGenericWebhook", int(integrations.TypeGenericWebhook), 5},
-
 		// An incident's vocabulary is the capability's rather than persistence's, because
 		// the capability owns what it defines. What is frozen is the same thing either
 		// way: the integers the SQL writes as bare literals.
@@ -182,11 +175,6 @@ var (
 		int(investigation.StatusRunning), int(investigation.StatusConcluded),
 		int(investigation.StatusFailed), int(investigation.StatusCancelled),
 	}
-	integrationTypeValues = []int{
-		int(integrations.TypeAlertmanager), int(integrations.TypeKubernetes),
-		int(integrations.TypeSlack), int(integrations.TypeGitHub),
-		int(integrations.TypeGenericWebhook),
-	}
 	changeKindValues = []int{
 		int(changes.ChangeBaseline), int(changes.ChangeCreated),
 		int(changes.ChangeModified), int(changes.ChangeDeleted),
@@ -253,18 +241,14 @@ var enumColumns = map[string]map[string][]int{
 	"conversation_window.go":   {"role": conversationRoleValues},
 	"conversation_history.go":  {"status": investigationStatusValues},
 	"investigation_message.go": {"role": conversationRoleValues},
-	// The change history opens scopes only for kubernetes Integrations and excludes baselines from
-	// every change query.
-	"changes.go": {
-		"integration_type_id": integrationTypeValues,
-		"change_kind":         changeKindValues,
-	},
+	// The change history excludes baselines from every change query.
+	"changes.go": {"change_kind": changeKindValues},
 }
 
 // scannedColumns is every column name the gate reads comparisons against. A column absent from
 // this list is invisible to the gate, so extending the persisted vocabulary starts here.
 var scannedColumns = []string{
-	"status", "outcome", "integration_type_id", "change_kind", "role",
+	"status", "outcome", "change_kind", "role",
 }
 
 // Every integer an enum column is compared against must be a value some constant holds. This
@@ -336,8 +320,6 @@ func TestEnumLiteralScannerReadsTheFormsInUse(t *testing.T) {
 	}{
 		{"qualified equality", `AND held.status = 1`, "status", []int{1}},
 		{"disjunction", `AND (status = 0 OR (status = 1 AND at <= now()))`, "status", []int{0, 1}},
-		{"in list", `AND integration.integration_type_id IN (2, 3)`,
-			"integration_type_id", []int{2, 3}},
 		{"bare in list", `AND outcome IN (1, 3)`, "outcome", []int{1, 3}},
 		{"bound parameter is not a literal", `SET status = $4`, "status", nil},
 		{"bound parameters in a list are not literals", `AND status IN ($8, $9)`, "status", nil},

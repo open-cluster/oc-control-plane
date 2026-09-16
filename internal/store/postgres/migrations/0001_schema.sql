@@ -192,21 +192,21 @@ CREATE TABLE incident (
 CREATE TABLE integration (
     integration_id uuid NOT NULL,
     org_id uuid NOT NULL,
-    integration_type_id smallint NOT NULL, -- 1=Alertmanager, 2=Kubernetes, 3=Slack, 4=GitHub, 5=generic webhook
+    provider text NOT NULL,
     name text NOT NULL,
     configuration jsonb DEFAULT '{}'::jsonb NOT NULL,
-    webhook_secret_digest bytea,
     relay_id uuid,
+    credential_sealed bytea,
+    webhook_secret_digest bytea,
     verification_status text,
     verified_at timestamptz,
     verification_grants text[] DEFAULT '{}' NOT NULL,
     disabled boolean DEFAULT false NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
-    credential_sealed bytea,
     CONSTRAINT integration_verification_status_check CHECK (verification_status IS NULL OR verification_status = ANY (ARRAY['verified', 'failed'])),
     CONSTRAINT integration_webhook_secret_digest_check CHECK ((webhook_secret_digest IS NULL) OR (length(webhook_secret_digest) = 32)),
     CONSTRAINT integration_identity_is_org_scoped UNIQUE (org_id, integration_id),
-    CONSTRAINT integration_org_id_kind_unique UNIQUE (org_id, integration_id, integration_type_id),
+    CONSTRAINT integration_org_id_provider_unique UNIQUE (org_id, integration_id, provider),
     CONSTRAINT integration_pkey PRIMARY KEY (integration_id)
 );
 
@@ -241,7 +241,7 @@ CREATE TABLE webhook_delivery (
 CREATE TABLE integration_installation (
     integration_id uuid NOT NULL,
     org_id uuid NOT NULL,
-    integration_type_id smallint NOT NULL, -- 1=Alertmanager, 2=Kubernetes, 3=Slack, 4=GitHub, 5=generic webhook
+    provider text NOT NULL,
     application text NOT NULL,
     enterprise text DEFAULT '' NOT NULL,
     workspace text NOT NULL,
@@ -553,7 +553,7 @@ CREATE UNIQUE INDEX webhook_delivery_provider_identity_is_unique ON webhook_deli
 
 CREATE INDEX webhook_delivery_integration_idx ON webhook_delivery (org_id, integration_id, received_at DESC, delivery_id DESC);
 
-CREATE UNIQUE INDEX integration_installation_is_one_workspace ON integration_installation (integration_type_id, application, enterprise, workspace);
+CREATE UNIQUE INDEX integration_installation_is_one_workspace ON integration_installation (provider, application, enterprise, workspace);
 
 CREATE INDEX integration_org_idx ON integration (org_id, created_at DESC);
 
@@ -647,7 +647,7 @@ ALTER TABLE webhook_delivery
     ADD CONSTRAINT webhook_delivery_is_in_the_same_org FOREIGN KEY (org_id, integration_id) REFERENCES integration(org_id, integration_id);
 
 ALTER TABLE integration_installation
-    ADD CONSTRAINT integration_installation_matches_parent_kind FOREIGN KEY (org_id, integration_id, integration_type_id) REFERENCES integration(org_id, integration_id, integration_type_id);
+    ADD CONSTRAINT integration_installation_matches_parent_provider FOREIGN KEY (org_id, integration_id, provider) REFERENCES integration(org_id, integration_id, provider);
 
 ALTER TABLE integration
     ADD CONSTRAINT integration_organization_exists FOREIGN KEY (org_id) REFERENCES organization(org_id);

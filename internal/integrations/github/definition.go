@@ -25,7 +25,7 @@ func Definition(app *App, client *Client) integrations.Definition {
 	where := deployment{app: app, client: client}
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			Type: integrations.TypeGitHub, Key: "github", Name: "GitHub",
+			Key: "github", Name: "GitHub",
 			Description: "Give investigations read-only access to selected repositories for " +
 				"commits, pull requests, CI failures, files, and releases.",
 			Logo: "github", Category: integrations.CategorySourceControl,

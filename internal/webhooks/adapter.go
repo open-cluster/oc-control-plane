@@ -31,4 +31,4 @@ type Adapter interface {
 // Type the payload belongs to. An Integration naming a type absent from this map is a
 // deployment configured by a newer version, which intake treats as its own fault rather
 // than the caller's.
-type Adapters map[integrations.TypeID]Adapter
+type Adapters map[integrations.Provider]Adapter

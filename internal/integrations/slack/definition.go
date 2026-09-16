@@ -10,7 +10,6 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 	connection := connect(installer, client)
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			Type: integrations.TypeSlack,
 			Key:  "slack",
 			Name: "Slack",
 			Description: "Give investigations read-only access to Slack conversations visible " +

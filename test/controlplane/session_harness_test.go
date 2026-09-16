@@ -389,9 +389,9 @@ func kubernetesIntegration(
 
 	acting := ownerOf(t, organization)
 	created, err := database.CreateIntegration(ctx, acting, organization, integrations.NewIntegration{
-		Type:    integrations.TypeKubernetes,
-		Name:    "cluster " + uuid.NewString(),
-		RelayID: registration,
+		Provider: "kubernetes",
+		Name:     "cluster " + uuid.NewString(),
+		RelayID:  registration,
 	})
 	if err != nil {
 		t.Fatalf("creating a kubernetes integration: %v", err)

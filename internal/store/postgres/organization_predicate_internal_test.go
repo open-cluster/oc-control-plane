@@ -57,8 +57,8 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 	seed.Queue(`INSERT INTO organization (org_id, display_name, created_by)
 		VALUES ($1, 'First', 'test'), ($2, 'Second', 'test')`, first.String(), second.String())
 	seed.Queue(`
-		INSERT INTO integration (integration_id, org_id, integration_type_id, name)
-		VALUES ($1, $2, 1, 'tenant predicate test')`, integrationID, first.String())
+		INSERT INTO integration (integration_id, org_id, provider, name)
+		VALUES ($1, $2, 'alertmanager', 'tenant predicate test')`, integrationID, first.String())
 	seed.Queue(`
 		INSERT INTO conversation
 			(conversation_id, org_id, surface, subject, created_by)

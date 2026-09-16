@@ -167,8 +167,8 @@ func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Re
 		if status := found.Status.String(); status != "" {
 			view.Status = &status
 		}
-		if definition, known := h.Catalog.ByID(found.Type); known {
-			view.Type = definition.Key
+		if definition, known := h.Catalog.Lookup(found.Provider); known {
+			view.Type = string(definition.Key)
 		}
 		served = append(served, view)
 	}

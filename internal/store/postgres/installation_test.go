@@ -36,7 +36,7 @@ func connectSlack(
 
 	return database.CreateIntegration(context.Background(), ownerOf(t, organization),
 		organization, integrations.NewIntegration{
-			Type:          integrations.TypeSlack,
+			Provider:      "slack",
 			Name:          name,
 			Configuration: map[string]any{"teamId": installed.Workspace},
 			Installation:  installed,
@@ -87,7 +87,7 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	}
 
 	found, routing, err := database.IntegrationByInstallation(context.Background(),
-		integrations.TypeSlack, installed.Key())
+		"slack", installed.Key())
 	if err != nil {
 		t.Fatalf("resolving the installation: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestAWorkspaceNobodyInstalledResolvesToNothing(t *testing.T) {
 		"nothing at all":    {},
 	} {
 		_, _, err := database.IntegrationByInstallation(context.Background(),
-			integrations.TypeSlack, key)
+			"slack", key)
 		if !errors.Is(err, integrations.ErrUnknown) {
 			t.Errorf("%s resolved to %v, want unknown", name, err)
 		}
@@ -159,8 +159,8 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 	}
 	var count int
 	if err := pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM integration WHERE org_id = $1 AND integration_type_id = $2`,
-		organization.String(), int16(integrations.TypeSlack)).Scan(&count); err != nil {
+		`SELECT count(*) FROM integration WHERE org_id = $1 AND provider = $2`,
+		organization.String(), "slack").Scan(&count); err != nil {
 		t.Fatalf("counting integrations: %v", err)
 	}
 	if count != 1 {
@@ -177,8 +177,8 @@ func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	created, err := database.CreateIntegration(context.Background(),
 		ownerOf(t, organization), organization, integrations.NewIntegration{
-			Type: integrations.TypeSlack,
-			Name: "Slack — pasted",
+			Provider: "slack",
+			Name:     "Slack — pasted",
 		})
 	if err != nil {
 		t.Fatalf("creating a pasted-token slack integration: %v", err)
@@ -208,7 +208,7 @@ func TestAnInstallationCannotNameNothing(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	_, err := database.CreateIntegration(context.Background(), ownerOf(t, organization),
 		organization, integrations.NewIntegration{
-			Type:         integrations.TypeSlack,
+			Provider:     "slack",
 			Name:         "Slack — nowhere",
 			Installation: &integrations.Installation{Agent: "U0BOT"},
 		})
@@ -235,7 +235,7 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 	}
 
 	_, _, err = database.IntegrationByInstallation(context.Background(),
-		integrations.TypeSlack, installed.Key())
+		"slack", installed.Key())
 	if !errors.Is(err, integrations.ErrUnknown) {
 		t.Errorf("a disconnected workspace still resolves: %v", err)
 	}
