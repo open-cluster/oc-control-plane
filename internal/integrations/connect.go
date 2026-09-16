@@ -13,7 +13,7 @@ const connectFlowLifetime = 15 * time.Minute
 
 type ConnectFlow struct {
 	Organization string
-	Provider     string
+	Provider     Provider
 	Principal    string
 	ReturnTo     string
 	ExpiresAt    time.Time

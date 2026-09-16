@@ -10,8 +10,8 @@ func TestDefinitionDeclaresGenericWebhook(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition()
-	if definition.Type != integrations.TypeGenericWebhook || definition.Key != "generic_webhook" {
-		t.Errorf("identity = (%d, %q), want generic_webhook", definition.Type, definition.Key)
+	if definition.Key != "generic_webhook" {
+		t.Errorf("identity = %q, want generic_webhook", definition.Key)
 	}
 	if definition.Category != integrations.CategoryAlerting || definition.RequiresRelay {
 		t.Errorf("generic webhook definition has the wrong delivery shape: %+v", definition)

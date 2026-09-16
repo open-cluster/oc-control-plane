@@ -338,12 +338,12 @@ func (h *surface) authenticate(
 		return integrations.Integration{}, nil, err
 	}
 
-	adapter, served := h.Adapters[integration.Type]
+	adapter, served := h.Adapters[integration.Provider]
 	if !served {
 		if !integrations.AuthenticateWebhookToken(request.Header, integration) {
 			return integration, nil, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
 		}
-		return integration, nil, fmt.Errorf("integration type %d is not served", integration.Type)
+		return integration, nil, fmt.Errorf("integration provider %q is not served", integration.Provider)
 	}
 	if !adapter.Authenticate(request.Header, integration) {
 		return integration, adapter, fmt.Errorf("%w: credential does not match", errNotAuthenticated)

@@ -227,15 +227,15 @@ func intakeRouter(process assembled) http.Handler {
 
 func webhookAdapters() webhooks.Adapters {
 	return webhooks.Adapters{
-		integrations.TypeAlertmanager:   alertmanager.Adapter{},
-		integrations.TypeGenericWebhook: genericwebhook.Adapter{},
+		"alertmanager":    alertmanager.Adapter{},
+		"generic_webhook": genericwebhook.Adapter{},
 	}
 }
 
-func webhookTypes(adapters webhooks.Adapters) map[integrations.TypeID]bool {
-	types := make(map[integrations.TypeID]bool, len(adapters))
-	for typeID := range adapters {
-		types[typeID] = true
+func webhookTypes(adapters webhooks.Adapters) map[integrations.Provider]bool {
+	types := make(map[integrations.Provider]bool, len(adapters))
+	for provider := range adapters {
+		types[provider] = true
 	}
 	return types
 }

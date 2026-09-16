@@ -16,14 +16,14 @@ type Store interface {
 	IntegrationByID(ctx context.Context, id uuid.UUID) (Integration, error)
 	// Integration reads one, scoped to the tenant.
 	Integration(ctx context.Context, org tenancy.Organization, id uuid.UUID) (Integration, error)
-	IntegrationByInstallation(ctx context.Context, typeID TypeID,
+	IntegrationByInstallation(ctx context.Context, provider Provider,
 		key InstallationKey) (Integration, Installation, error)
 	// QueryIntegrations reports a page of a tenant's Integrations, narrowed, ordered and
 	// paged by the database.
 	QueryIntegrations(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		query Query) (List, error)
-	CountIntegrationsByType(ctx context.Context, who authz.Principal,
-		org tenancy.Organization) ([]TypeCount, error)
+	CountIntegrationsByProvider(ctx context.Context, who authz.Principal,
+		org tenancy.Organization) ([]ProviderCount, error)
 	// ReviseIntegration changes what a PATCH may change and increments nothing secret.
 	ReviseIntegration(ctx context.Context, who authz.Principal, org tenancy.Organization,
 		id uuid.UUID, revision Revision) (Integration, error)

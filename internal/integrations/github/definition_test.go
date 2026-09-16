@@ -11,8 +11,8 @@ func TestDefinitionDeclaresProviderContract(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition(nil, NewClient(""))
-	if definition.Type != integrations.TypeGitHub || definition.Key != "github" {
-		t.Errorf("identity = %d %q", definition.Type, definition.Key)
+	if definition.Key != "github" {
+		t.Errorf("identity = %q", definition.Key)
 	}
 	if definition.Category != integrations.CategorySourceControl {
 		t.Errorf("category = %q", definition.Category)

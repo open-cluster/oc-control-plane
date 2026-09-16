@@ -43,13 +43,13 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 			return err
 		},
 		"CountIntegrationsByType": func() error {
-			_, err := database.CountIntegrationsByType(ctx, stranger, organization)
+			_, err := database.CountIntegrationsByProvider(ctx, stranger, organization)
 			return err
 		},
 		"CreateIntegration": func() error {
 			_, err := database.CreateIntegration(ctx, stranger, organization,
 				integrations.NewIntegration{
-					Type: integrations.TypeAlertmanager, Name: "trespass",
+					Provider: "alertmanager", Name: "trespass",
 					WebhookSecretDigest: randomDigest(t),
 				})
 			return err

@@ -197,8 +197,8 @@ func TestDefinition_DeclaresTheRelayShape(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition()
-	if definition.Type != integrations.TypeKubernetes || definition.Key != "kubernetes" {
-		t.Errorf("the definition's identity is (%d, %q)", definition.Type, definition.Key)
+	if definition.Key != "kubernetes" {
+		t.Errorf("the definition's identity is %q", definition.Key)
 	}
 	if definition.Category != integrations.Category("infrastructure") {
 		t.Errorf("category = %q, want infrastructure", definition.Category)

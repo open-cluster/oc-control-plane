@@ -41,7 +41,7 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 // which is the case that cannot proceed without somewhere to seal it.
 func sealingDefinition(authorized *bool) Definition {
 	return Definition{
-		Manifest: Manifest{Type: 99, Key: "stub", Name: "Stub", Category: CategoryCollaboration,
+		Manifest: Manifest{Key: "stub", Name: "Stub", Category: CategoryCollaboration,
 			Config: []Field{{Key: "token", Label: "Token",
 				Type: FieldString, Required: true, Secret: true}}},
 		Probe: func(context.Context, ProbeInput) Verification {
@@ -191,10 +191,10 @@ func (s *capturingStore) RedeemConnectFlow(context.Context, string) (ConnectFlow
 }
 
 func (s *capturingStore) IntegrationByInstallation(
-	context.Context, TypeID, InstallationKey,
+	context.Context, Provider, InstallationKey,
 ) (Integration, Installation, error) {
 	if s.existing {
-		return Integration{ID: uuid.New(), OrgID: "11111111-1111-4111-8111-111111111111", Type: 99}, Installation{}, nil
+		return Integration{ID: uuid.New(), OrgID: "11111111-1111-4111-8111-111111111111", Provider: "stub"}, Installation{}, nil
 	}
 	return Integration{}, Installation{}, ErrUnknown
 }
@@ -204,7 +204,7 @@ func (s *capturingStore) CreateIntegration(
 ) (Integration, error) {
 	s.created = wanted
 	return Integration{
-		ID: wanted.ID, Type: wanted.Type, Name: wanted.Name,
+		ID: wanted.ID, Provider: wanted.Provider, Name: wanted.Name,
 		Status: StatusVerified, CredentialSealed: wanted.CredentialSealed,
 	}, nil
 }
@@ -297,7 +297,7 @@ func (s *capturingStore) ReplaceIntegrationCredential(
 ) (Integration, error) {
 	s.replaced = sealed
 	s.reinstalled = installed
-	return Integration{ID: id, Type: 99, Status: verification.Status}, nil
+	return Integration{ID: id, Provider: "stub", Status: verification.Status}, nil
 }
 
 func (s *capturingStore) RecordIntegrationVerification(
@@ -305,7 +305,7 @@ func (s *capturingStore) RecordIntegrationVerification(
 	verification Verification,
 ) (Integration, error) {
 	s.reVerified = true
-	return Integration{ID: id, Type: 99, Status: verification.Status}, nil
+	return Integration{ID: id, Provider: "stub", Status: verification.Status}, nil
 }
 
 // Reconnecting a workspace this tenant already has must take the credential the flow just

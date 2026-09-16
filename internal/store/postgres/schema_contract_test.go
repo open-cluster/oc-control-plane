@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -79,7 +80,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 6 FROM schema_migration`,
+		`SELECT count(*) = 7 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -88,6 +89,11 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name IN ('oidc_sign_in_flow','integration_connect_flow')
 			AND column_name IN ('flow_id','created_at','consumed_at'))`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='integration' AND column_name='verification_grants' AND data_type='ARRAY')`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['integration_id','org_id','provider','name','configuration','relay_id',
+			      'credential_sealed','webhook_secret_digest','verification_status','verified_at',
+			      'verification_grants','disabled','created_at']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='integration'`,
 		`SELECT to_regclass('organization_policy') IS NULL`,
 		`SELECT to_regclass('integration_type') IS NULL`,
 		`SELECT to_regclass('operator_session') IS NULL`,
@@ -195,7 +201,9 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
-	if err != nil || !reflect.DeepEqual(applied, []string{"0006_simplify_identity_rows"}) {
+	if err != nil || !reflect.DeepEqual(applied, []string{
+		"0006_simplify_identity_rows", "0007_readable_integration_provider",
+	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
@@ -248,8 +256,105 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 6 {
-		t.Fatalf("concurrent startup applied %d migrations, want six", applied)
+	if applied != 7 {
+		t.Fatalf("concurrent startup applied %d migrations, want seven", applied)
+	}
+}
+
+func TestReadableProviderMigrationMapsEveryCurrentProvider(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+
+	_, err = connection.Exec(ctx, `
+		CREATE TABLE schema_migration (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES
+			('0001_schema'), ('0002_simplify_integrations'), ('0003_simplify_deliveries_and_sessions'),
+			('0004_simplify_membership_lifecycle'), ('0005_remove_membership_identity'),
+			('0006_simplify_identity_rows');
+		CREATE TABLE integration (
+			integration_id uuid PRIMARY KEY, org_id uuid NOT NULL, integration_type_id smallint NOT NULL,
+			name text NOT NULL, configuration jsonb NOT NULL DEFAULT '{}', webhook_secret_digest bytea,
+			relay_id uuid, verification_status text, verified_at timestamptz,
+			verification_grants text[] NOT NULL DEFAULT '{}', disabled boolean NOT NULL DEFAULT false,
+			created_at timestamptz NOT NULL DEFAULT now(), credential_sealed bytea,
+			CONSTRAINT integration_identity_is_org_scoped UNIQUE (org_id,integration_id),
+			CONSTRAINT integration_org_id_kind_unique UNIQUE (org_id,integration_id,integration_type_id)
+		);
+		CREATE TABLE integration_installation (
+			integration_id uuid PRIMARY KEY, org_id uuid NOT NULL, integration_type_id smallint NOT NULL,
+			application text NOT NULL, enterprise text NOT NULL DEFAULT '', workspace text NOT NULL,
+			enterprise_wide boolean NOT NULL DEFAULT false, agent text NOT NULL DEFAULT '',
+			authorizer text NOT NULL DEFAULT '', installed_at timestamptz NOT NULL DEFAULT now(),
+			updated_at timestamptz NOT NULL,
+			CONSTRAINT integration_installation_matches_parent_kind
+				FOREIGN KEY (org_id,integration_id,integration_type_id)
+				REFERENCES integration(org_id,integration_id,integration_type_id)
+		);
+		CREATE UNIQUE INDEX integration_installation_is_one_workspace
+			ON integration_installation(integration_type_id,application,enterprise,workspace);
+		INSERT INTO integration(integration_id,org_id,integration_type_id,name,configuration)
+		SELECT ('10000000-0000-0000-0000-00000000000' || kind)::uuid,
+			('20000000-0000-0000-0000-00000000000' || kind)::uuid,
+			kind, 'provider-' || kind, jsonb_build_object('kind', kind)
+		FROM generate_series(1,5) kind;
+		INSERT INTO integration_installation
+			(integration_id,org_id,integration_type_id,application,workspace,updated_at)
+		VALUES ('10000000-0000-0000-0000-000000000003','20000000-0000-0000-0000-000000000003',
+			3,'A1','T1',now());`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{"0007_readable_integration_provider"}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+
+	rows, err := connection.Query(ctx, `SELECT org_id::text,provider,configuration->>'kind'
+		FROM integration ORDER BY integration_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := []string{"alertmanager", "kubernetes", "slack", "github", "generic_webhook"}
+	index := 0
+	for rows.Next() {
+		if index == len(want) {
+			t.Fatal("migration produced more Integration rows than it received")
+		}
+		var organization, provider, configurationKind string
+		if err := rows.Scan(&organization, &provider, &configurationKind); err != nil {
+			t.Fatal(err)
+		}
+		kind := strconv.Itoa(index + 1)
+		if organization != "20000000-0000-0000-0000-00000000000"+kind ||
+			provider != want[index] || configurationKind != kind {
+			t.Fatalf("migrated row %d = %q/%q/%q", index, organization, provider, configurationKind)
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil || index != len(want) {
+		t.Fatalf("read %d migrated rows: %v", index, err)
+	}
+	var exactIntegrationRow bool
+	if err := connection.QueryRow(ctx, `SELECT array_agg(column_name::text ORDER BY column_name) =
+		ARRAY['configuration','created_at','credential_sealed','disabled','integration_id','name',
+		      'org_id','provider','relay_id','verification_grants','verification_status','verified_at',
+		      'webhook_secret_digest']
+		FROM information_schema.columns WHERE table_schema='public' AND table_name='integration'`).
+		Scan(&exactIntegrationRow); err != nil || !exactIntegrationRow {
+		t.Fatalf("migrated Integration row is not exact: %v", err)
+	}
+	var installationProvider string
+	if err := connection.QueryRow(ctx, `SELECT provider FROM integration_installation`).
+		Scan(&installationProvider); err != nil || installationProvider != "slack" {
+		t.Fatalf("installation provider = %q, error = %v", installationProvider, err)
 	}
 }
 
@@ -329,13 +434,13 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0002_simplify_integrations", "0003_simplify_deliveries_and_sessions",
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
-		"0006_simplify_identity_rows",
+		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
 	rows, err := connection.Query(ctx, `SELECT application,workspace,agent
-		FROM integration_installation ORDER BY integration_type_id,application`)
+		FROM integration_installation ORDER BY application`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,14 +458,14 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 		got[2][1] != "77" || got[2][2] != "acme" {
 		t.Fatalf("installations = %v", got)
 	}
-	routed, _, err := database.IntegrationByInstallation(ctx, integrations.TypeSlack,
+	routed, _, err := database.IntegrationByInstallation(ctx, "slack",
 		integrations.InstallationKey{Application: "A1", Workspace: "T1"})
 	if err != nil || routed.ID != uuid.MustParse("10000000-0000-0000-0000-000000000001") ||
 		routed.OrgID != "20000000-0000-0000-0000-000000000001" {
 		t.Fatalf("migrated Slack routing = %+v, %v", routed, err)
 	}
 	var configurations []string
-	if err := connection.QueryRow(ctx, `SELECT array_agg(configuration::text ORDER BY integration_type_id) FROM integration`).Scan(&configurations); err != nil {
+	if err := connection.QueryRow(ctx, `SELECT array_agg(configuration::text ORDER BY provider) FROM integration`).Scan(&configurations); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(configurations, []string{"{}", "{}", "{}"}) {
@@ -440,6 +545,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0003_simplify_deliveries_and_sessions", "0004_simplify_membership_lifecycle",
 		"0005_remove_membership_identity", "0006_simplify_identity_rows",
+		"0007_readable_integration_provider",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -534,7 +640,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
-		"0006_simplify_identity_rows",
+		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

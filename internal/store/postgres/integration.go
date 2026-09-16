@@ -39,7 +39,7 @@ func validateCredentialEnvelope(sealed []byte) error {
 // integrationColumns is every column an Integration is read from, named once. One list
 // rather than five copies, because a column added to one query and forgotten in another is
 // a field that is silently always zero.
-const integrationColumns = `integration_id, integration_type_id, name, configuration,
+const integrationColumns = `integration_id, provider, name, configuration,
 	       webhook_secret_digest, credential_sealed, relay_id, verification_status,
 	       verified_at, verification_grants, disabled, created_at,
 	       (SELECT jsonb_build_object(
@@ -93,14 +93,14 @@ func (p *Database) CreateIntegration(
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
 			row := transaction.QueryRow(ctx, `
-				INSERT INTO integration (integration_id, org_id, integration_type_id, name,
+				INSERT INTO integration (integration_id, org_id, provider, name,
 				                         configuration, relay_id, webhook_secret_digest,
 				                         credential_sealed, verification_status, verified_at,
 				                         verification_grants)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 				        CASE WHEN $10 THEN now() END, $11)
 				RETURNING `+integrationColumns,
-				identityOrNew(wanted.ID), organization.String(), int16(wanted.Type), wanted.Name,
+				identityOrNew(wanted.ID), organization.String(), wanted.Provider, wanted.Name,
 				configuration, nullableUUID(wanted.RelayID), wanted.WebhookSecretDigest,
 				wanted.CredentialSealed, status, verified, grants)
 
@@ -118,7 +118,7 @@ func (p *Database) CreateIntegration(
 			// integration whose events resolve somewhere else.
 			if wanted.Installation != nil {
 				if err := recordInstallation(ctx, transaction, organization, created.ID,
-					created.Type, *wanted.Installation); err != nil {
+					created.Provider, *wanted.Installation); err != nil {
 					return integrations.Integration{}, audit.Target{}, nil, err
 				}
 				installed := *wanted.Installation
@@ -130,8 +130,8 @@ func (p *Database) CreateIntegration(
 			return created,
 				audit.Target{Kind: audit.TargetIntegration, ID: created.ID.String()},
 				audit.Detail{
-					"name": created.Name,
-					"type": int(created.Type),
+					"name":     created.Name,
+					"provider": created.Provider,
 				}, nil
 		})
 }
@@ -221,8 +221,8 @@ func (p *Database) QueryIntegrations(
 		where = append(where, fmt.Sprintf(clause, len(arguments)))
 	}
 
-	if query.Type != 0 {
-		add("integration_type_id = $%d", int16(query.Type))
+	if query.Provider != "" {
+		add("provider = $%d", query.Provider)
 	}
 	if query.Relay != uuid.Nil {
 		add("relay_id = $%d", query.Relay)
@@ -285,12 +285,12 @@ func (p *Database) QueryIntegrations(
 	return list, nil
 }
 
-// CountIntegrationsByType reports how many Integrations of each type a tenant has, for
+// CountIntegrationsByProvider reports how many Integrations of each type a tenant has, for
 // the catalog's "3 configured" column. Counted by the database rather than by walking a
 // bounded page, so the number cannot be silently short.
-func (p *Database) CountIntegrationsByType(
+func (p *Database) CountIntegrationsByProvider(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-) ([]integrations.TypeCount, error) {
+) ([]integrations.ProviderCount, error) {
 	if !principal.MemberOf(organization) {
 		return nil, ErrNotAMember
 	}
@@ -300,26 +300,26 @@ func (p *Database) CountIntegrationsByType(
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT integration_type_id, count(*)
+		SELECT provider, count(*)
 		  FROM integration
 		 WHERE org_id = $1
-		 GROUP BY integration_type_id`, organization.String())
+		 GROUP BY provider`, organization.String())
 	if err != nil {
 		return nil, fmt.Errorf("counting integrations: %w", err)
 	}
 	defer rows.Close()
 
-	counts := make([]integrations.TypeCount, 0, 4)
+	counts := make([]integrations.ProviderCount, 0, 4)
 	for rows.Next() {
 		var (
-			typeID int16
-			count  int
+			provider integrations.Provider
+			count    int
 		)
-		if err := rows.Scan(&typeID, &count); err != nil {
+		if err := rows.Scan(&provider, &count); err != nil {
 			return nil, fmt.Errorf("scanning an integration count: %w", err)
 		}
-		counts = append(counts, integrations.TypeCount{
-			Type: integrations.TypeID(typeID), Count: count})
+		counts = append(counts, integrations.ProviderCount{
+			Provider: provider, Count: count})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("counting integrations: %w", err)
@@ -572,7 +572,7 @@ func (p *Database) ReplaceIntegrationCredential(
 			// it no longer holds — which is how an agent starts replying to itself.
 			if installed != nil {
 				if err := recordInstallationIn(ctx, transaction, organization, id,
-					replaced.Type, *installed); err != nil {
+					replaced.Provider, *installed); err != nil {
 					return integrations.Integration{}, audit.Target{}, nil, err
 				}
 				copy := *installed
@@ -730,7 +730,7 @@ type nullableIntegration struct {
 // method rather than an inline list so the two scanners cannot drift apart.
 func (n *nullableIntegration) destinations(found *integrations.Integration) []any {
 	return []any{
-		&found.ID, &found.Type, &found.Name, &n.configuration,
+		&found.ID, &found.Provider, &found.Name, &n.configuration,
 		&found.WebhookSecretDigest, &found.CredentialSealed, &n.relay, &n.status,
 		&n.verifiedAt, &found.VerificationGrants, &found.Disabled, &found.CreatedAt,
 		&n.installation,

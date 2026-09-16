@@ -11,8 +11,8 @@ func TestDefinitionDeclaresProviderContract(t *testing.T) {
 	t.Parallel()
 
 	definition := Definition(NewClient(""), nil, false)
-	if definition.Type != integrations.TypeSlack || definition.Key != "slack" {
-		t.Errorf("identity = %d %q", definition.Type, definition.Key)
+	if definition.Key != "slack" {
+		t.Errorf("identity = %q", definition.Key)
 	}
 	if definition.Category != integrations.CategoryCollaboration {
 		t.Errorf("category = %q", definition.Category)

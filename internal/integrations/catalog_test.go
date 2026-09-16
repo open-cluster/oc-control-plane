@@ -11,7 +11,7 @@ import (
 
 func assembledWith(argument ToolArgument) error {
 	_, err := NewCatalog(Definition{
-		Manifest: Manifest{Type: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
+		Manifest: Manifest{Key: "stub", Name: "Stub", Category: CategoryAlerting,
 			Tools: []Tool{{
 				Name: "stub.read", Description: "reads",
 				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
@@ -50,7 +50,7 @@ func TestCatalogRefusesDuplicateArgumentNames(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewCatalog(Definition{
-		Manifest: Manifest{Type: 99, Key: "stub", Name: "Stub", Category: CategoryAlerting,
+		Manifest: Manifest{Key: "stub", Name: "Stub", Category: CategoryAlerting,
 			Tools: []Tool{{
 				Name: "stub.read", Description: "reads",
 				WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",

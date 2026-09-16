@@ -30,7 +30,7 @@ const (
 type Handlers struct {
 	Store        Store
 	Catalog      Catalog
-	WebhookTypes map[TypeID]bool
+	WebhookTypes map[Provider]bool
 	Logger       *slog.Logger
 	// Sealer closes over outbound credentials at rest. Unconfigured means this deployment
 	// cannot hold one, and submitting a secret field is refused with that reason — never
@@ -110,14 +110,14 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	counts, err := h.Store.CountIntegrationsByType(ctx, principal, organization)
+	counts, err := h.Store.CountIntegrationsByProvider(ctx, principal, organization)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	configured := make(map[TypeID]int, len(counts))
+	configured := make(map[Provider]int, len(counts))
 	for _, count := range counts {
-		configured[count.Type] = count.Count
+		configured[count.Provider] = count.Count
 	}
 
 	manifests, next, err := listing.Cut(h.Catalog.Manifests(), query)
@@ -127,8 +127,8 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 	}
 	views := make([]typeView, 0, len(manifests))
 	for _, manifest := range manifests {
-		definition, _ := h.Catalog.ByID(manifest.Type)
-		views = append(views, typeViewOf(definition, configured[manifest.Type], h.WebhookTypes[manifest.Type]))
+		definition, _ := h.Catalog.Lookup(manifest.Key)
+		views = append(views, typeViewOf(definition, configured[manifest.Key], h.WebhookTypes[manifest.Key]))
 	}
 	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.Continuation(next)})
 }
@@ -193,7 +193,7 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	definition, known := h.Catalog.Lookup(strings.TrimSpace(asked.Type))
+	definition, known := h.Catalog.Lookup(Provider(strings.TrimSpace(asked.Type)))
 	if !known {
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "type does not name an integration type this build serves"})
@@ -224,7 +224,7 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 	h.Logger.InfoContext(ctx, "integration created",
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", created.ID.String()),
-		slog.String("type", definition.Key))
+		slog.String("type", string(definition.Key)))
 
 	view := createdView{IntegrationView: h.viewOf(created)}
 	if wanted.Verification != nil {
@@ -258,7 +258,7 @@ func (h Handlers) plan(
 		// Minted here, before the probe seals anything, so the sealed credential can
 		// bind to the row it will live on.
 		ID:            uuid.New(),
-		Type:          definition.Type,
+		Provider:      definition.Key,
 		Name:          name,
 		Configuration: configuration,
 	}
@@ -277,7 +277,7 @@ func (h Handlers) plan(
 		wanted.RelayID = id
 	}
 
-	if !h.WebhookTypes[definition.Type] {
+	if !h.WebhookTypes[definition.Key] {
 		return wanted, "", credential, ""
 	}
 	secret, err := GenerateSecret()
@@ -302,7 +302,7 @@ func (h Handlers) probeAndSeal(
 
 	verification := definition.Probe(ctx, ProbeInput{
 		Integration: Integration{
-			Type:          wanted.Type,
+			Provider:      wanted.Provider,
 			Name:          wanted.Name,
 			Configuration: wanted.Configuration,
 		},
@@ -390,10 +390,10 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		known := false
-		definition, known = h.Catalog.ByID(current.Type)
+		definition, known = h.Catalog.Lookup(current.Provider)
 		if !known {
 			h.fail(writer, request, fmt.Errorf(
-				"integration %s has type %d this build does not serve", id, current.Type))
+				"integration %s has provider %q this build does not serve", id, current.Provider))
 			return
 		}
 		// A secret field may be absent here, unlike at creation: absence means "keep the
@@ -550,10 +550,10 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
-	definition, known := h.Catalog.ByID(found.Type)
+	definition, known := h.Catalog.Lookup(found.Provider)
 	if !known {
 		h.fail(writer, request, fmt.Errorf(
-			"integration %s has type %d this build does not serve", id, found.Type))
+			"integration %s has provider %q this build does not serve", id, found.Provider))
 		return
 	}
 
@@ -582,7 +582,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		}
 		input.RelayStatus = status
 	}
-	if h.WebhookTypes[definition.Type] {
+	if h.WebhookTypes[definition.Key] {
 		last, lastErr := h.Store.LastAcceptedDelivery(ctx, organization, id)
 		if lastErr != nil {
 			h.fail(writer, request, lastErr)
@@ -768,13 +768,13 @@ func (h Handlers) listQuery(
 		Sort:   parsed.Sort.Field, Descending: parsed.Sort.Descending,
 	}
 	if key := parsed.Filter("type"); key != "" {
-		definition, known := h.Catalog.Lookup(key)
+		definition, known := h.Catalog.Lookup(Provider(key))
 		if !known {
 			writeJSON(writer, http.StatusBadRequest,
 				errorView{Error: "type does not name an integration type this build serves"})
 			return Query{}, false
 		}
-		query.Type = definition.Type
+		query.Provider = definition.Key
 	}
 	if named := parsed.Filter("relay"); named != "" {
 		relay, err := uuid.Parse(named)

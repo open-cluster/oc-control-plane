@@ -110,7 +110,7 @@ func (r *records) TriggerIncident(context.Context, tenancy.Organization, uuid.UU
 }
 func (r *records) InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error) {
 	candidate := r.candidate
-	if candidate.Type != 0 && candidate.Status == "" {
+	if candidate.Provider != "" && candidate.Status == "" {
 		candidate.Status = integrations.StatusVerified
 		candidate.VerifiedAt = time.Now().UTC()
 	}
@@ -153,7 +153,7 @@ func (r *records) AppendEvent(
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Type: 99, Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value.", WhenToUse: "To answer.", WhenNotToUse: "Never.", Permissions: "read", Output: "value", Run: run}}},
+		Manifest: integrations.Manifest{Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value.", WhenToUse: "To answer.", WhenNotToUse: "Never.", Permissions: "read", Output: "value", Run: run}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusVerified}
 		},
@@ -220,7 +220,7 @@ func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
 }
 
 func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	catalog := testCatalog(t, func(_ context.Context, _ integrations.ToolRequest) (integrations.ToolResult, error) {
 		store.mu.Lock()
 		defer store.mu.Unlock()
@@ -253,7 +253,7 @@ func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) {
 	integrationID, incidentID := uuid.New(), uuid.New()
 	store := &records{
-		candidate: integrations.Integration{ID: integrationID, Type: integrations.TypeKubernetes, Name: "cluster"},
+		candidate: integrations.Integration{ID: integrationID, Provider: "kubernetes", Name: "cluster"},
 		trigger: investigation.Trigger{IncidentID: incidentID, Labels: map[string]string{
 			"namespace": "payments", "workload_kind": "Deployment", "workload_name": "checkout-api",
 		}},
@@ -271,7 +271,7 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 		{Name: "kubernetes.pod.logs", Description: "logs", WhenToUse: "diagnosis", WhenNotToUse: "never", Permissions: "read", Output: "logs", Run: run},
 	}
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Type: integrations.TypeKubernetes, Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools},
+		Manifest: integrations.Manifest{Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusVerified}
 		},
@@ -322,7 +322,7 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 		t.Run(fmt.Sprintf("history_available_%t", historyAvailable), func(t *testing.T) {
 			origin, other, conversationID := uuid.New(), uuid.New(), uuid.New()
 			store := &records{
-				candidate: integrations.Integration{ID: origin, Type: 99, Name: "origin"},
+				candidate: integrations.Integration{ID: origin, Provider: "chat", Name: "origin"},
 				origin:    &investigation.ConversationOrigin{IntegrationID: origin, Channel: "C1", Thread: "T1"},
 			}
 			if !historyAvailable {
@@ -337,7 +337,7 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 				t.Fatal(err)
 			}
 			storeCandidates := []integrations.Integration{
-				store.candidate, {ID: other, Type: 99, Name: "other"},
+				store.candidate, {ID: other, Provider: "chat", Name: "other"},
 			}
 			for index := range storeCandidates {
 				storeCandidates[index].Status = integrations.StatusVerified
@@ -352,7 +352,7 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 				return integrations.ToolResult{Summary: "origin thread", Content: "origin thread"}, nil
 			}
 			catalog, err := integrations.NewCatalog(integrations.Definition{
-				Manifest: integrations.Manifest{Type: 99, Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
+				Manifest: integrations.Manifest{Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
 					{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", SupportsThreadScope: true, Run: read},
 					{Name: "chat.channel", Description: "channel", WhenToUse: "broad", WhenNotToUse: "mentions", Permissions: "read", Output: "messages", Run: read},
 				}},
@@ -411,7 +411,7 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate := integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}
+	candidate := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}
 	candidate.CredentialSealed, err = sealer.Seal("secret", integrations.CredentialBinding(candidate.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -445,7 +445,7 @@ func TestRunStopsWhenCredentialAccessCannotBeAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate := integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}
+	candidate := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}
 	candidate.CredentialSealed, err = sealer.Seal("secret", integrations.CredentialBinding(candidate.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -563,7 +563,7 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 }
 
 func TestRunRejectsStateChangingActionWithoutApproval(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	unsafe, err := json.Marshal(map[string]any{
 		"status": "answer_only", "summary": "Fix it.",
 		"impact":   map[string]any{"status": "unknown", "current_state": "unknown", "affected_services": []string{}, "affected_users": []string{}, "summary": "unknown", "run_refs": []int{}},
@@ -617,7 +617,7 @@ func TestRunReturnsAnErrorWhenTheTerminalRecordCannotBeWritten(t *testing.T) {
 }
 
 func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	executed := 0
 	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		executed++
@@ -653,7 +653,7 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 }
 
 func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, errors.New("source unavailable")
 	})
@@ -699,7 +699,7 @@ func TestRunDurablyFailsWhenTheModelIsUnavailable(t *testing.T) {
 }
 
 func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -729,7 +729,7 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 }
 
 func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	model := &scriptedModel{
 		size: func(prompt Prompt) (int, error) {
 			if prompt.ForceTool == ConcludeToolName {
@@ -763,7 +763,7 @@ func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.
 }
 
 func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	var rejectedTurns, rejectedContent []byte
 	var rejectedOutput int64
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
@@ -812,7 +812,7 @@ func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
 }
 
 func TestRunReservesTheDeploymentOutputFromTheContextWindow(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	model := &scriptedModel{size: func(prompt Prompt) (int, error) {
 		if prompt.ForceTool == ConcludeToolName {
 			return 1, nil
@@ -866,7 +866,7 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+			store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 			arguments := test.arguments
 			if arguments == nil {
 				arguments = json.RawMessage(`{"purpose":"read it","input":{}}`)
@@ -936,7 +936,7 @@ func TestRunKeepsADurableConclusionWhenEventsFail(t *testing.T) {
 }
 
 func TestRunStopsAfterCancellationWithoutAnotherModelOrToolCall(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Type: 99, Name: "source"}}
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	started := make(chan struct{})
 	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
 		close(started)

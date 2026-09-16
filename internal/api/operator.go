@@ -31,7 +31,7 @@ type Handlers struct {
 	Logger                  *slog.Logger
 	Identity                identity.Handlers
 	Catalog                 integrations.Catalog
-	WebhookTypes            map[integrations.TypeID]bool
+	WebhookTypes            map[integrations.Provider]bool
 	Investigations          *investigation.Runner
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration

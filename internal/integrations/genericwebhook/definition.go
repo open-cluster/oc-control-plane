@@ -11,7 +11,7 @@ import (
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
-			Type: integrations.TypeGenericWebhook, Key: "generic_webhook", Name: "Generic Webhook",
+			Key: "generic_webhook", Name: "Generic Webhook",
 			Description:       "Create incidents from canonical firing and resolved Alert Events delivered through an authenticated webhook.",
 			Category:          integrations.CategoryAlerting,
 			DocumentationSlug: "integrations/alerting/generic_webhook",

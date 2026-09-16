@@ -145,7 +145,7 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 	}
 
 	integration, routing, err := h.Database.IntegrationByInstallation(ctx,
-		integrations.TypeSlack, integrations.InstallationKey(envelope.Key()))
+		"slack", integrations.InstallationKey(envelope.Key()))
 	if err != nil {
 		if errors.Is(err, integrations.ErrUnknown) {
 			// A workspace this deployment does not know. Refused WITHOUT saying so: the

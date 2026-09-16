@@ -51,10 +51,10 @@ var (
 
 // Integration is one configured installation belonging to an organization.
 type Integration struct {
-	ID    uuid.UUID
-	OrgID string
-	Type  TypeID
-	Name  string
+	ID       uuid.UUID
+	OrgID    string
+	Provider Provider
+	Name     string
 	// Configuration is the provider-specific non-secret settings, shaped by the type's
 	// schema. It never holds a credential.
 	Configuration map[string]any
@@ -90,7 +90,7 @@ type NewIntegration struct {
 	// ID is minted by the handler BEFORE anything is sealed, because the sealed
 	// credential is bound to the row's identity and the binding must exist first.
 	ID                  uuid.UUID
-	Type                TypeID
+	Provider            Provider
 	Name                string
 	Configuration       map[string]any
 	RelayID             uuid.UUID
@@ -176,8 +176,8 @@ type Query struct {
 	Page       Page
 	Sort       string
 	Descending bool
-	// Type narrows to one Integration Type; zero means all.
-	Type TypeID
+	// Provider narrows to one Integration Type; empty means all.
+	Provider Provider
 	// Relay narrows to the Integrations one Relay serves, which is what disabling it would
 	// cost.
 	Relay uuid.UUID
@@ -195,8 +195,8 @@ type List struct {
 	Next         string
 }
 
-// TypeCount is how many Integrations of one type an organization has configured.
-type TypeCount struct {
-	Type  TypeID
-	Count int
+// ProviderCount is how many Integrations of one provider an organization has configured.
+type ProviderCount struct {
+	Provider Provider
+	Count    int
 }

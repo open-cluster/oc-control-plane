@@ -41,7 +41,7 @@ func (p *Database) OpenInventoryScopes(
 			 WHERE org_id = $1
 			   AND relay_id = $2
 			   -- 2 is the kubernetes integration type, the one kind a Relay watches.
-			   AND integration_type_id = 2
+			   AND provider = 'kubernetes'
 			   AND NOT disabled
 		)
 		INSERT INTO change_scope

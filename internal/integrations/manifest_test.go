@@ -8,7 +8,7 @@ import (
 func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 	catalog, err := NewCatalog(Definition{
 		Manifest: Manifest{
-			Type: 7, Key: "example", Name: "Example", Description: "Reads examples.",
+			Key: "example", Name: "Example", Description: "Reads examples.",
 			Logo: "example", Category: CategoryCollaboration,
 			SourceURL: "https://example.com/docs", RequiresRelay: true,
 			DocumentationSlug: "integrations/collaboration/example",
@@ -24,7 +24,7 @@ func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifests := catalog.Manifests()
-	if len(manifests) != 1 || manifests[0].Type != 7 || manifests[0].Key != "example" ||
+	if len(manifests) != 1 || manifests[0].Key != "example" ||
 		manifests[0].Category != CategoryCollaboration ||
 		!manifests[0].RequiresRelay ||
 		manifests[0].SourceURL != "https://example.com/docs" ||
@@ -44,7 +44,7 @@ func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 		catalog.Manifests()[0].SecretFields()[0] != "token" {
 		t.Fatal("manifest caller mutated nested metadata")
 	}
-	definition, _ := catalog.ByID(7)
+	definition, _ := catalog.Lookup("example")
 	view := typeViewOf(definition, 0, true)
 	if !view.Available || !view.ReceivesWebhooks || view.DocumentationSlug != "integrations/collaboration/example" ||
 		view.DocumentationURL != "https://example.com/docs" || len(view.Capabilities) != 1 ||

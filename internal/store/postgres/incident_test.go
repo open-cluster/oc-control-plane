@@ -118,7 +118,7 @@ func alertmanagerIntegration(
 	created, err := database.CreateIntegration(
 		context.Background(), ownerOf(t, organization), organization,
 		integrations.NewIntegration{
-			Type:                integrations.TypeAlertmanager,
+			Provider:            "alertmanager",
 			Name:                "alertmanager " + uuid.NewString(),
 			WebhookSecretDigest: randomDigest(t),
 		})
