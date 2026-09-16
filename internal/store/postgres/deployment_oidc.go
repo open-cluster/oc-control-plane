@@ -76,14 +76,14 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 			}
 			var member Member
 			err = tx.QueryRow(ctx, `INSERT INTO organization_membership
-				(membership_id,org_id,user_id,role,source,granted_by,updated_at)
-				VALUES ($1,$2,$3,$4,$5,$6,now()) RETURNING membership_id,user_id,role,source,created_at`,
-				uuid.New(), organization.String(), userID, string(role), int16(SourceManual), principal.ID()).Scan(&member.MembershipID, &member.UserID, &member.Role, &member.Source, &member.CreatedAt)
+				(org_id,user_id,role)
+				VALUES ($1,$2,$3) RETURNING user_id,role,created_at`,
+				organization.String(), userID, string(role)).Scan(&member.UserID, &member.Role, &member.CreatedAt)
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("granting an OIDC membership: %w", err)
 			}
-			member.Email, member.DisplayName, member.Active = identity.Email, identity.DisplayName, true
-			return member, audit.Target{Kind: audit.TargetMembership, ID: member.MembershipID.String()}, audit.Detail{"userId": userID.String(), "role": string(role), "source": SourceManual.String()}, nil
+			member.Email, member.DisplayName = identity.Email, identity.DisplayName
+			return member, audit.Target{Kind: audit.TargetUser, ID: userID.String()}, audit.Detail{"role": string(role)}, nil
 		})
 }
 
@@ -98,8 +98,7 @@ func (p *Database) OIDCIdentity(ctx context.Context, organization tenancy.Organi
 		display_name=$3,last_sign_in=now(),updated_at=now()
 		WHERE issuer=$4 AND subject=$5
 		  AND EXISTS (SELECT 1 FROM organization_membership membership
-		              WHERE membership.user_id=person.user_id AND membership.org_id=$6
-		                AND membership.active AND membership.role IS NOT NULL)
+		              WHERE membership.user_id=person.user_id AND membership.org_id=$6)
 		RETURNING user_id,issuer,subject,email,email_verified,display_name,disabled_at,created_at`,
 		identity.Email, identity.EmailVerified, identity.DisplayName, identity.Issuer, identity.Subject,
 		organization.String()).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email, &user.EmailVerified, &user.DisplayName, &disabled, &user.CreatedAt)

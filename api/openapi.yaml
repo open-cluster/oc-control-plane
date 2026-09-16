@@ -294,9 +294,9 @@ paths:
       responses:
         "201": { $ref: "#/components/responses/Member" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/members/{membership}:
-    parameters: &membership-path
-      - { $ref: "#/components/parameters/MembershipID" }
+  /api/v1/members/{user}:
+    parameters: &member-user-path
+      - { $ref: "#/components/parameters/UserID" }
     patch:
       <<: *privileged-write
       operationId: updateMember
@@ -316,7 +316,7 @@ paths:
       summary: Remove member
       tags: [Members]
       responses:
-        "204": { description: Membership removed and its sessions revoked. }
+        "204": { description: Membership removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1125,7 +1125,7 @@ components:
       in: query
       required: true
       schema: { type: string, minLength: 32, maxLength: 4096 }
-    MembershipID: { name: membership, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    UserID: { name: user, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     SessionID: { name: session, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationID: { name: integration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationType: { name: type, in: path, required: true, schema: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" } }
@@ -1284,16 +1284,14 @@ components:
     OrganizationMembership:
       type: object
       additionalProperties: false
-      required: [id, role]
+      required: [role]
       properties:
-        id: { $ref: "#/components/schemas/UUID" }
         role: { type: string, enum: [admin, editor, viewer] }
     Membership:
       type: object
       additionalProperties: false
-      required: [id, organizationId, displayName, role]
+      required: [organizationId, displayName, role]
       properties:
-        id: { $ref: "#/components/schemas/UUID" }
         organizationId: { $ref: "#/components/schemas/OrganizationID" }
         displayName: { type: string, minLength: 1, maxLength: 256 }
         role: { type: string, enum: [admin, editor, viewer] }
@@ -1354,15 +1352,12 @@ components:
     Member:
       type: object
       additionalProperties: false
-      required: [id, userId, email, displayName, role, source, active, disabled, createdAt]
+      required: [userId, email, displayName, role, disabled, createdAt]
       properties:
-        id: { $ref: "#/components/schemas/UUID" }
         userId: { $ref: "#/components/schemas/UUID" }
         email: { type: string, format: email, maxLength: 254 }
         displayName: { type: string, minLength: 1, maxLength: 256 }
         role: { type: string, enum: [admin, editor, viewer] }
-        source: { type: string, enum: [manual, jit, scim] }
-        active: { type: boolean }
         disabled: { type: boolean }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
     MemberList:
@@ -1426,10 +1421,9 @@ components:
     UpdateMemberRequest:
       type: object
       additionalProperties: false
-      minProperties: 1
+      required: [role]
       properties:
         role: { type: string, enum: [admin, editor, viewer] }
-        active: { type: boolean }
     Policy:
       type: object
       additionalProperties: false

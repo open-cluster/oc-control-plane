@@ -371,20 +371,12 @@ CREATE TABLE organization (
 );
 
 CREATE TABLE organization_membership (
-    membership_id uuid NOT NULL,
     org_id uuid NOT NULL,
     user_id uuid NOT NULL,
     role text NOT NULL,
-    source smallint NOT NULL, -- 1=manual, 2=JIT, 3=SCIM
-    external_id text,
-    active boolean DEFAULT true NOT NULL,
-    granted_by text DEFAULT '' NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
-    updated_at timestamptz NOT NULL,
     CONSTRAINT organization_membership_role_check CHECK (role = ANY (ARRAY['admin', 'editor', 'viewer'])),
-    CONSTRAINT organization_membership_source_check CHECK (source = ANY (ARRAY[1, 2, 3])),
-    CONSTRAINT organization_membership_is_one_per_tenant UNIQUE (org_id, user_id),
-    CONSTRAINT organization_membership_pkey PRIMARY KEY (membership_id)
+    CONSTRAINT organization_membership_pkey PRIMARY KEY (org_id, user_id)
 );
 
 CREATE TABLE postmortem (
@@ -586,9 +578,7 @@ CREATE INDEX session_expiry_idx ON session (expires_at);
 
 CREATE INDEX session_user_idx ON session (user_id, issued_at DESC);
 
-CREATE UNIQUE INDEX organization_membership_external_id_is_unique_per_org ON organization_membership (org_id, external_id) WHERE (external_id IS NOT NULL);
-
-CREATE INDEX organization_membership_org_idx ON organization_membership (org_id, created_at DESC);
+CREATE INDEX organization_membership_org_idx ON organization_membership (org_id, created_at, user_id);
 
 CREATE INDEX organization_membership_user_idx ON organization_membership (user_id);
 

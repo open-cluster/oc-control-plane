@@ -110,7 +110,7 @@ func (p *Database) LocalIdentityByEmail(
 		  JOIN local_password credential ON credential.user_id = person.user_id
 		  JOIN organization_membership membership ON membership.user_id = person.user_id
 		 WHERE person.issuer = $1 AND lower(person.email) = lower($2)
-		   AND membership.org_id = $3 AND membership.active AND membership.role IS NOT NULL`,
+		   AND membership.org_id = $3`,
 		LocalIssuer, strings.TrimSpace(email), organization.String()).Scan(
 		&found.User.ID, &found.User.Issuer, &found.User.Subject, &found.User.Email,
 		&found.User.EmailVerified, &found.User.DisplayName, &disabled,
@@ -144,7 +144,7 @@ func (p *Database) RehashLocalPassword(
 		UPDATE local_password SET password_hash = $1, updated_at = now()
 		 WHERE user_id = $2 AND password_hash = $3
 		   AND EXISTS (SELECT 1 FROM organization_membership
-		                WHERE org_id = $4 AND user_id = $2 AND active)`,
+		                WHERE org_id = $4 AND user_id = $2)`,
 		replacement, user, previous, organization.String())
 	if err != nil {
 		return fmt.Errorf("rehashing a local password: %w", err)
@@ -178,20 +178,17 @@ func (p *Database) CreateLocalMember(
 			var member Member
 			if err := transaction.QueryRow(ctx, `
 				INSERT INTO organization_membership
-					(membership_id, org_id, user_id, role, source, granted_by, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, now())
-				RETURNING membership_id, user_id, role, source, created_at`,
-				uuid.New(), organization.String(), userID, string(role), int16(SourceManual),
-				principal.ID()).Scan(&member.MembershipID, &member.UserID, &member.Role,
-				&member.Source, &member.CreatedAt); err != nil {
+					(org_id, user_id, role)
+				VALUES ($1, $2, $3)
+				RETURNING user_id, role, created_at`,
+				organization.String(), userID, string(role)).Scan(&member.UserID, &member.Role,
+				&member.CreatedAt); err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("granting a local membership: %w", err)
 			}
 			member.Email = normalized
 			member.DisplayName = displayName
-			member.Active = true
 			return member,
-				audit.Target{Kind: audit.TargetMembership, ID: member.MembershipID.String()},
-				audit.Detail{"userId": userID.String(), "email": normalized,
-					"role": string(role), "source": SourceManual.String()}, nil
+				audit.Target{Kind: audit.TargetUser, ID: userID.String()},
+				audit.Detail{"email": normalized, "role": string(role)}, nil
 		})
 }

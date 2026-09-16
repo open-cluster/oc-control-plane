@@ -111,6 +111,24 @@ func audited[T any](
 	action audit.Action,
 	mutate func(context.Context, pgx.Tx) (T, audit.Target, audit.Detail, error),
 ) (T, error) {
+	return auditedWithAction(ctx, p, principal, organization,
+		func(ctx context.Context, transaction pgx.Tx) (
+			T, audit.Action, audit.Target, audit.Detail, error,
+		) {
+			result, target, detail, err := mutate(ctx, transaction)
+			return result, action, target, detail, err
+		})
+}
+
+// auditedWithAction is the audited transaction for a mutation whose action depends on the
+// state locked inside that transaction.
+func auditedWithAction[T any](
+	ctx context.Context,
+	p *Database,
+	principal authz.Principal,
+	organization tenancy.Organization,
+	mutate func(context.Context, pgx.Tx) (T, audit.Action, audit.Target, audit.Detail, error),
+) (T, error) {
 	var zero T
 	if !principal.MemberOf(organization) {
 		return zero, ErrNotAMember
@@ -131,7 +149,7 @@ func audited[T any](
 		}
 	}()
 
-	result, target, detail, err := mutate(ctx, transaction)
+	result, action, target, detail, err := mutate(ctx, transaction)
 	if err != nil {
 		return zero, err
 	}

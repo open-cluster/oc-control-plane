@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -77,7 +78,7 @@ func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 3 FROM schema_migration`,
+		`SELECT count(*) = 5 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -102,6 +103,8 @@ func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND column_name='organization_id')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization' AND column_name='audit_retention_days')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session' AND column_name='credential_digest')`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) = ARRAY['org_id','user_id','role','created_at']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='organization_membership'`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='relay_bootstrap_token' AND column_name='bootstrap_digest')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='incident' AND column_name='alert_event_count')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM pg_tables t WHERE schemaname='public' AND NOT EXISTS
@@ -165,8 +168,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 3 {
-		t.Fatalf("concurrent startup applied %d migrations, want three", applied)
+	if applied != 5 {
+		t.Fatalf("concurrent startup applied %d migrations, want five", applied)
 	}
 }
 
@@ -245,6 +248,7 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0002_simplify_integrations", "0003_simplify_deliveries_and_sessions",
+		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -352,7 +356,10 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
-	if err != nil || !reflect.DeepEqual(applied, []string{"0003_simplify_deliveries_and_sessions"}) {
+	if err != nil || !reflect.DeepEqual(applied, []string{
+		"0003_simplify_deliveries_and_sessions", "0004_simplify_membership_lifecycle",
+		"0005_remove_membership_identity",
+	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
@@ -393,5 +400,97 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		VALUES ('30000000-0000-0000-0000-000000000004','20000000-0000-0000-0000-000000000001',
 		'10000000-0000-0000-0000-000000000001',decode(repeat('22',32),'hex'),0,'event-1','firing')`); err == nil {
 		t.Fatal("migrated schema accepted a reused provider identity and lifecycle phase")
+	}
+}
+
+func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+
+	_, err = connection.Exec(ctx, `
+		CREATE TABLE schema_migration (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES
+			('0001_schema'), ('0002_simplify_integrations'), ('0003_simplify_deliveries_and_sessions');
+		CREATE TABLE organization (org_id uuid PRIMARY KEY);
+		CREATE TABLE app_user (user_id uuid PRIMARY KEY);
+		CREATE TABLE organization_membership (
+			membership_id uuid PRIMARY KEY, org_id uuid NOT NULL, user_id uuid NOT NULL,
+			role text NOT NULL, source smallint NOT NULL, external_id text, active boolean NOT NULL,
+			granted_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+			CONSTRAINT organization_membership_role_check CHECK (role = ANY (ARRAY['admin','editor','viewer'])),
+			CONSTRAINT organization_membership_source_check CHECK (source = ANY (ARRAY[1,2,3])),
+			CONSTRAINT organization_membership_is_one_per_tenant UNIQUE (org_id,user_id),
+			CONSTRAINT organization_membership_organization_exists FOREIGN KEY (org_id) REFERENCES organization(org_id),
+			CONSTRAINT organization_membership_user_id_fkey FOREIGN KEY (user_id) REFERENCES app_user(user_id)
+		);
+		CREATE UNIQUE INDEX organization_membership_external_id_is_unique_per_org
+			ON organization_membership (org_id,external_id) WHERE external_id IS NOT NULL;
+		INSERT INTO organization VALUES ('20000000-0000-0000-0000-000000000001');
+		INSERT INTO app_user VALUES
+			('30000000-0000-0000-0000-000000000001'),
+			('30000000-0000-0000-0000-000000000002');
+		INSERT INTO organization_membership VALUES
+			('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+			 '30000000-0000-0000-0000-000000000001','admin',1,NULL,true,'actor','2026-01-01','2026-01-02'),
+			('40000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000001',
+			 '30000000-0000-0000-0000-000000000002','viewer',1,NULL,false,'actor','2026-01-03','2026-01-04');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{
+		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
+	}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+
+	var users, memberships int
+	var role string
+	var created time.Time
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM app_user`).Scan(&users); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT count(*),min(role),min(created_at)
+		FROM organization_membership`).Scan(&memberships, &role, &created); err != nil {
+		t.Fatal(err)
+	}
+	if users != 2 || memberships != 1 || role != "admin" ||
+		!created.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("migrated Memberships = users:%d rows:%d role:%q created:%s",
+			users, memberships, role, created)
+	}
+
+	var columns, primaryKey []string
+	if err = connection.QueryRow(ctx, `SELECT array_agg(column_name ORDER BY ordinal_position)
+		FROM information_schema.columns
+		WHERE table_schema='public' AND table_name='organization_membership'`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT array_agg(attribute.attname ORDER BY key.ordinality)
+		FROM pg_constraint constraint_record
+		CROSS JOIN LATERAL unnest(constraint_record.conkey) WITH ORDINALITY AS key(attnum,ordinality)
+		JOIN pg_attribute attribute ON attribute.attrelid=constraint_record.conrelid AND attribute.attnum=key.attnum
+		WHERE constraint_record.conrelid='organization_membership'::regclass
+		  AND constraint_record.contype='p'`).Scan(&primaryKey); err != nil {
+		t.Fatal(err)
+	}
+	wantColumns := []string{"org_id", "user_id", "role", "created_at"}
+	if !reflect.DeepEqual(columns, wantColumns) || !reflect.DeepEqual(primaryKey, []string{"org_id", "user_id"}) {
+		t.Fatalf("Membership contract = columns:%v primary key:%v", columns, primaryKey)
+	}
+	var constraints int
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM pg_constraint
+		WHERE conrelid='organization_membership'::regclass
+		  AND conname IN ('organization_membership_role_check',
+		                  'organization_membership_organization_exists',
+		                  'organization_membership_user_id_fkey')`).Scan(&constraints); err != nil || constraints != 3 {
+		t.Fatalf("retained Membership constraints = %d, error = %v", constraints, err)
 	}
 }

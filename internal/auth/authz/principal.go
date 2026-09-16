@@ -52,7 +52,6 @@ func (p Principal) SessionInfo() SessionInfo { return p.sessionInfo }
 
 // Membership is one organization and the role held in it.
 type Membership struct {
-	ID           string
 	Organization tenancy.Organization
 	DisplayName  string
 	Role         Role

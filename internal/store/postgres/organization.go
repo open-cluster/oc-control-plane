@@ -53,30 +53,26 @@ func (d *Database) CreateOrganization(
 	if err != nil {
 		return authz.Membership{}, fmt.Errorf("reading created organization: %w", err)
 	}
-	membershipID := uuid.New()
 	if _, err = transaction.Exec(ctx, `
 		INSERT INTO organization_membership
-			(membership_id, org_id, user_id, role, source, granted_by, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now())`, membershipID, organization.String(), userID,
-		string(authz.Admin), int16(SourceManual), principal.ID()); err != nil {
+			(org_id, user_id, role)
+		VALUES ($1, $2, $3)`, organization.String(), userID, string(authz.Admin)); err != nil {
 		return authz.Membership{}, fmt.Errorf("granting organization creator: %w", err)
 	}
 	if err = writeEvent(ctx, transaction, audit.Event{
-		Organization: organization.String(),
-		Actor:        principal.Actor(),
-		Action:       audit.ActionMembershipGranted,
-		Target:       audit.Target{Kind: audit.TargetMembership, ID: membershipID.String()},
-		Outcome:      audit.OutcomeAllowed,
-		Detail: audit.Detail{
-			"role": string(authz.Admin), "source": SourceManual.String(),
-		},
+		Organization:  organization.String(),
+		Actor:         principal.Actor(),
+		Action:        audit.ActionMembershipGranted,
+		Target:        audit.Target{Kind: audit.TargetUser, ID: userID.String()},
+		Outcome:       audit.OutcomeAllowed,
+		SourceAddress: principal.SourceAddress(),
+		RequestID:     principal.RequestID(),
+		Detail:        audit.Detail{"role": string(authz.Admin)},
 	}); err != nil {
 		return authz.Membership{}, err
 	}
 	if err = transaction.Commit(ctx); err != nil {
 		return authz.Membership{}, fmt.Errorf("committing organization creation: %w", err)
 	}
-	return authz.Membership{
-		ID: membershipID.String(), Organization: organization, Role: authz.Admin,
-	}, nil
+	return authz.Membership{Organization: organization, Role: authz.Admin}, nil
 }

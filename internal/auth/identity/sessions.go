@@ -16,8 +16,7 @@ import (
 //
 // It requires a credential and no permission. Requiring one would mean an Auditor could not
 // discover what they may do, and a person who has signed in with no membership yet could not
-// be told that they have none — which is exactly the state just-in-time provisioning being off
-// leaves somebody in, and the one they most need explained.
+// be told that they have none.
 func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -30,8 +29,8 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 		for _, membership := range principal.Memberships() {
 			if membership.Organization.String() == organization.String() {
 				active = &membershipView{
-					ID: membership.ID, Organization: organization.String(),
-					DisplayName: membership.DisplayName, Role: string(membership.Role),
+					Organization: organization.String(),
+					DisplayName:  membership.DisplayName, Role: string(membership.Role),
 				}
 				break
 			}

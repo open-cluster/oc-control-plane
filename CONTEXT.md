@@ -11,8 +11,8 @@ credential, Integration, or request body.
 
 ## User
 
-A person who can sign in. A User may belong to several Organizations with a fixed Admin,
-Editor, or Viewer role in each.
+A person who can sign in. A Membership is a User's current relation to one Organization,
+with a fixed Admin, Editor, or Viewer role and no separate identity or inactive state.
 
 ## Principal
 
