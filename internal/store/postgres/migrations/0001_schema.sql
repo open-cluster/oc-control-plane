@@ -239,18 +239,17 @@ CREATE TABLE webhook_delivery (
 );
 
 CREATE TABLE integration_installation (
-    integration_id uuid NOT NULL,
     org_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
     provider text NOT NULL,
-    application text NOT NULL,
-    enterprise text DEFAULT '' NOT NULL,
-    workspace text NOT NULL,
-    enterprise_wide boolean DEFAULT false NOT NULL,
-    agent text DEFAULT '' NOT NULL,
-    authorizer text DEFAULT '' NOT NULL,
-    installed_at timestamptz DEFAULT now() NOT NULL,
-    updated_at timestamptz NOT NULL,
-    CONSTRAINT integration_installation_pkey PRIMARY KEY (integration_id)
+    installation_key text[] NOT NULL,
+    provider_actor_id text,
+    CONSTRAINT integration_installation_key_is_complete CHECK (
+        cardinality(installation_key) > 0
+        AND array_position(installation_key, ''::text) IS NULL
+        AND array_position(installation_key, NULL::text) IS NULL
+    ),
+    CONSTRAINT integration_installation_pkey PRIMARY KEY (org_id, integration_id)
 );
 
 CREATE TABLE investigation (
@@ -553,7 +552,7 @@ CREATE UNIQUE INDEX webhook_delivery_provider_identity_is_unique ON webhook_deli
 
 CREATE INDEX webhook_delivery_integration_idx ON webhook_delivery (org_id, integration_id, received_at DESC, delivery_id DESC);
 
-CREATE UNIQUE INDEX integration_installation_is_one_workspace ON integration_installation (provider, application, enterprise, workspace);
+CREATE UNIQUE INDEX integration_installation_provider_key_unique ON integration_installation (provider, installation_key);
 
 CREATE INDEX integration_org_idx ON integration (org_id, created_at DESC);
 

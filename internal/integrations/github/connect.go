@@ -53,9 +53,7 @@ func connect(app *App, client *Client) *integrations.Connect {
 				Name:          "GitHub — " + installed.Account,
 				Configuration: map[string]any{},
 				Installation: &integrations.Installation{
-					Application: "github",
-					Workspace:   strconv.FormatInt(id, 10),
-					Agent:       installed.Account,
+					Key: integrations.InstallationKey{strconv.FormatInt(id, 10)},
 				},
 			}, nil
 		},

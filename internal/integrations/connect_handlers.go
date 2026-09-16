@@ -39,10 +39,10 @@ const (
 	// answer. Nothing is created, and verifying the record again is what tells an operator
 	// more.
 	outcomeUnverified connectOutcome = "unverified"
-	// outcomeWorkspaceTaken is a vendor workspace another Integration in this deployment
-	// is already installed in. It says nothing about WHERE the other one is: an
+	// outcomeInstallationTaken is a provider installation another Integration in this
+	// deployment already owns. It says nothing about WHERE the other one is: an
 	// organization is not a fact a caller in a different one may learn.
-	outcomeWorkspaceTaken connectOutcome = "workspace-taken"
+	outcomeInstallationTaken connectOutcome = "installation-taken"
 )
 
 // status is the answer where there is no console to send the browser to.
@@ -64,8 +64,8 @@ func (o connectOutcome) note() string {
 	case outcomeUnverified:
 		return "the association was proven and the provider did not then answer, so " +
 			"nothing was connected; start again"
-	case outcomeWorkspaceTaken:
-		return "that workspace is already connected to OpenCluster, so nothing was " +
+	case outcomeInstallationTaken:
+		return "that provider installation is already connected to OpenCluster, so nothing was " +
 			"connected; disconnect it there before connecting it here"
 	default:
 		return refusedConnect
@@ -227,9 +227,9 @@ func (h Handlers) record(
 	var err error
 	if bound.Installation != nil {
 		existing, _, err = h.Store.IntegrationByInstallation(
-			ctx, definition.Key, bound.Installation.Key())
+			ctx, definition.Key, bound.Installation.Key)
 		if err == nil && existing.OrgID != organization.String() {
-			err = ErrWorkspaceTaken
+			err = ErrInstallationTaken
 		}
 	} else {
 		err = ErrUnknown
@@ -239,8 +239,8 @@ func (h Handlers) record(
 		h.reconnect(ctx, writer, request, principal, organization, definition, returnTo,
 			existing, bound)
 		return
-	case errors.Is(err, ErrWorkspaceTaken):
-		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, "")
+	case errors.Is(err, ErrInstallationTaken):
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeInstallationTaken, "")
 		return
 	case !errors.Is(err, ErrUnknown):
 		h.fail(writer, request, err)
@@ -284,11 +284,11 @@ func (h Handlers) record(
 	}
 
 	created, err := h.Store.CreateIntegration(ctx, principal, organization, wanted)
-	if errors.Is(err, ErrWorkspaceTaken) {
-		h.Logger.WarnContext(ctx, "a connect named a workspace already installed elsewhere",
+	if errors.Is(err, ErrInstallationTaken) {
+		h.Logger.WarnContext(ctx, "a connect named a provider installation already owned elsewhere",
 			slog.String("org_id", organization.String()),
 			slog.String("type", string(definition.Key)))
-		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, "")
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeInstallationTaken, "")
 		return
 	}
 	if err != nil {
@@ -341,11 +341,11 @@ func (h Handlers) reconnect(
 	}
 	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
 		existing.ID, Revision{}, sealed, verification, bound.Installation)
-	if errors.Is(err, ErrWorkspaceTaken) {
-		h.Logger.WarnContext(ctx, "a reconnect named a workspace already installed elsewhere",
+	if errors.Is(err, ErrInstallationTaken) {
+		h.Logger.WarnContext(ctx, "a reconnect named a provider installation already owned elsewhere",
 			slog.String("org_id", organization.String()),
 			slog.String("type", string(definition.Key)))
-		h.landConnect(writer, request, returnTo, definition.Key, outcomeWorkspaceTaken, existing.ID.String())
+		h.landConnect(writer, request, returnTo, definition.Key, outcomeInstallationTaken, existing.ID.String())
 		return
 	}
 	if err != nil {

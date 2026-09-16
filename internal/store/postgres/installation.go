@@ -20,24 +20,20 @@ import (
 // permits has no good answer: a customer who pressed Connect, authorized in their workspace,
 // and now holds a connected integration whose mentions silently never work.
 //
-// THE TABLE IS NEUTRAL, AND THAT IS WHAT KEEPS THIS FILE FREE OF ANY PROVIDER. One table per
-// vendor would mean dispatching from an Integration's type to a table, and this repository
-// permits no switch over integration types anywhere. What every inbound installation has in
-// common is exactly the routing key and the identity we answer as, which is all this holds — so
-// a second provider reuses it and adds no schema, the way integration_connect_flow already is.
+// THE TABLE IS NEUTRAL, AND THAT IS WHAT KEEPS THIS FILE FREE OF ANY PROVIDER. Provider
+// adapters own their ordered installation keys; persistence only enforces that each key is
+// complete, matches its parent Integration, and has one owner deployment-wide.
 //
-// ErrWorkspaceTaken is what the deployment-wide uniqueness produces, and it is a REFUSAL rather
-// than a failure: the workspace is already installed against another Integration, and resolving
-// one event to two tenants is the thing the constraint exists to make impossible.
+// ErrInstallationTaken is what deployment-wide uniqueness produces. It is a refusal rather
+// than a failure because resolving one provider installation to two tenants must be impossible.
 
 // installationInsert is the one write both paths make. Written once because the two differ only
 // in what they do about a row that already exists, and a second copy of the column list is a
 // column added to one path and forgotten in the other.
 const installationInsert = `
 		INSERT INTO integration_installation
-			(integration_id, org_id, provider, application, enterprise,
-			 workspace, enterprise_wide, agent, authorizer, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`
+			(org_id, integration_id, provider, installation_key, provider_actor_id)
+		VALUES ($1, $2, $3, $4, $5)`
 
 // recordInstallation writes the routing record for a newly created Integration, inside the
 // transaction that created it.
@@ -45,8 +41,8 @@ func recordInstallation(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	integration uuid.UUID, provider integrations.Provider, installed integrations.Installation,
 ) error {
-	if !installed.Key().Complete() {
-		return fmt.Errorf("%w: an installation must name an application and a workspace",
+	if !installed.Key.Complete() {
+		return fmt.Errorf("%w: an installation key must contain only non-empty values",
 			integrations.ErrInvalidInstallation)
 	}
 	_, err := transaction.Exec(ctx, installationInsert,
@@ -65,20 +61,15 @@ func recordInstallationIn(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	integration uuid.UUID, provider integrations.Provider, installed integrations.Installation,
 ) error {
-	if !installed.Key().Complete() {
-		return fmt.Errorf("%w: an installation must name an application and a workspace",
+	if !installed.Key.Complete() {
+		return fmt.Errorf("%w: an installation key must contain only non-empty values",
 			integrations.ErrInvalidInstallation)
 	}
 	_, err := transaction.Exec(ctx, installationInsert+`
-		ON CONFLICT (integration_id) DO UPDATE
-		   SET provider            = EXCLUDED.provider,
-		       application         = EXCLUDED.application,
-		       enterprise          = EXCLUDED.enterprise,
-		       workspace           = EXCLUDED.workspace,
-		       enterprise_wide     = EXCLUDED.enterprise_wide,
-		       agent               = EXCLUDED.agent,
-		       authorizer          = EXCLUDED.authorizer,
-		       updated_at          = now()`,
+		ON CONFLICT (org_id, integration_id) DO UPDATE
+		   SET provider          = EXCLUDED.provider,
+		       installation_key = EXCLUDED.installation_key,
+		       provider_actor_id = EXCLUDED.provider_actor_id`,
 		installationValues(organization, integration, provider, installed)...)
 	return installationError(err)
 }
@@ -88,16 +79,15 @@ func installationValues(
 	provider integrations.Provider, installed integrations.Installation,
 ) []any {
 	return []any{
-		integration, organization.String(), provider,
-		installed.Application, installed.Enterprise, installed.Workspace,
-		installed.EnterpriseWide, installed.Agent, installed.Authorizer,
+		organization.String(), integration, provider,
+		[]string(installed.Key), nullableText(installed.ProviderActorID),
 	}
 }
 
 func installationError(err error) error {
 	switch {
-	case isUniqueViolation(err, "integration_installation_is_one_workspace"):
-		return integrations.ErrWorkspaceTaken
+	case isUniqueViolation(err, "integration_installation_provider_key_unique"):
+		return integrations.ErrInstallationTaken
 	case err != nil:
 		return fmt.Errorf("recording an integration installation: %w", err)
 	}
@@ -122,20 +112,19 @@ func (p *Database) IntegrationByInstallation(
 	}
 
 	var (
-		organization  string
-		installed     integrations.Installation
-		integrationID uuid.UUID
+		organization    string
+		installed       integrations.Installation
+		integrationID   uuid.UUID
+		providerActor   *string
+		installationKey []string
 	)
 	row := p.pool.QueryRow(ctx, `
-			SELECT org_id, integration_id, application, enterprise, workspace,
-			       enterprise_wide, agent, authorizer
+			SELECT org_id, integration_id, installation_key, provider_actor_id
 			  FROM integration_installation
 			 WHERE provider = $1
-			   AND application = $2 AND enterprise = $3 AND workspace = $4`,
-		provider, key.Application, key.Enterprise, key.Workspace)
-	err := row.Scan(&organization, &integrationID,
-		&installed.Application, &installed.Enterprise, &installed.Workspace,
-		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer)
+			   AND installation_key = $2`,
+		provider, []string(key))
+	err := row.Scan(&organization, &integrationID, &installationKey, &providerActor)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return integrations.Integration{}, integrations.Installation{}, integrations.ErrUnknown
@@ -143,6 +132,10 @@ func (p *Database) IntegrationByInstallation(
 		return integrations.Integration{}, integrations.Installation{},
 			fmt.Errorf("resolving an integration installation: %w", err)
 	}
+	if providerActor != nil {
+		installed.ProviderActorID = *providerActor
+	}
+	installed.Key = integrations.InstallationKey(installationKey)
 
 	organizationName, err := tenancy.NewOrganization(organization)
 	if err != nil {
@@ -167,13 +160,13 @@ func (p *Database) InstallationOf(
 		return integrations.Installation{}, false, err
 	}
 	var installed integrations.Installation
+	var providerActor *string
+	var installationKey []string
 	err = pool.QueryRow(ctx, `
-		SELECT application, enterprise, workspace, enterprise_wide, agent, authorizer
+		SELECT installation_key, provider_actor_id
 		  FROM integration_installation
 		 WHERE integration_id = $1 AND org_id = $2`,
-		integration, organization.String()).Scan(
-		&installed.Application, &installed.Enterprise, &installed.Workspace,
-		&installed.EnterpriseWide, &installed.Agent, &installed.Authorizer)
+		integration, organization.String()).Scan(&installationKey, &providerActor)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return integrations.Installation{}, false, nil
@@ -181,6 +174,10 @@ func (p *Database) InstallationOf(
 		return integrations.Installation{}, false,
 			fmt.Errorf("reading an integration installation: %w", err)
 	}
+	if providerActor != nil {
+		installed.ProviderActorID = *providerActor
+	}
+	installed.Key = integrations.InstallationKey(installationKey)
 	return installed, true, nil
 }
 

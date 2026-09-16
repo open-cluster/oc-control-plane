@@ -1,6 +1,7 @@
 package github
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,8 +61,8 @@ func TestConfiguredAppProvidesConnectionFlow(t *testing.T) {
 	if bound.Name != "GitHub — acme-corp" || len(bound.Configuration) != 0 {
 		t.Errorf("binding = %+v", bound)
 	}
-	if bound.Installation == nil || bound.Installation.Application != "github" ||
-		bound.Installation.Workspace != "77" {
+	if bound.Installation == nil ||
+		!reflect.DeepEqual(bound.Installation.Key, integrations.InstallationKey{"77"}) {
 		t.Errorf("installation = %+v", bound.Installation)
 	}
 	if fake.called("/app") != 1 || fake.called("/app/installations/77") != 1 {
@@ -114,8 +115,9 @@ func TestInstallationOfRefusesWhatIsNotAnID(t *testing.T) {
 
 	for name, installed := range map[string]*integrations.Installation{
 		"absent":   nil,
-		"text":     {Workspace: "abc"},
-		"negative": {Workspace: "-1"},
+		"text":     {Key: integrations.InstallationKey{"abc"}},
+		"negative": {Key: integrations.InstallationKey{"-1"}},
+		"compound": {Key: integrations.InstallationKey{"77", "extra"}},
 	} {
 		integration := integrations.Integration{Installation: installed}
 		if _, err := installationOf(integration); err == nil {
@@ -124,7 +126,7 @@ func TestInstallationOfRefusesWhatIsNotAnID(t *testing.T) {
 	}
 
 	integration := integrations.Integration{
-		Installation: &integrations.Installation{Workspace: "77"},
+		Installation: &integrations.Installation{Key: integrations.InstallationKey{"77"}},
 	}
 	installation, err := installationOf(integration)
 	if err != nil || installation != 77 {

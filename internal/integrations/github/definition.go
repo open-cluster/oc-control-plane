@@ -54,7 +54,10 @@ func installationOf(integration integrations.Integration) (int64, error) {
 	if integration.Installation == nil {
 		return 0, errors.New("installationId is not a whole positive number")
 	}
-	id, err := strconv.ParseInt(integration.Installation.Workspace, 10, 64)
+	if len(integration.Installation.Key) != 1 {
+		return 0, errors.New("installationId is not a whole positive number")
+	}
+	id, err := strconv.ParseInt(integration.Installation.Key[0], 10, 64)
 	if err != nil || id <= 0 {
 		return 0, errors.New("installationId is not a whole positive number")
 	}

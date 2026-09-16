@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -166,7 +167,7 @@ func TestAnEnvelopeNamesTheInstallationItResolvesThrough(t *testing.T) {
 		t.Fatalf("parsing: %v", err)
 	}
 	key := envelope.Key()
-	if key.Application != "A0OPENCLUSTER" || key.Workspace != "T0ACME" {
+	if !reflect.DeepEqual(key, []string{"A0OPENCLUSTER", "T0ACME"}) {
 		t.Errorf("key = %+v", key)
 	}
 }
@@ -189,7 +190,7 @@ func TestAGridInstallResolvesThroughItsEnterpriseAndWorkspace(t *testing.T) {
 		t.Fatalf("parsing: %v", err)
 	}
 	key := envelope.Key()
-	if key.Enterprise != "E0GRID" || key.Workspace != "T0DIVISION" {
+	if !reflect.DeepEqual(key, []string{"A0OPENCLUSTER", "E0GRID", "T0DIVISION"}) {
 		t.Errorf("key = %+v, want the division's workspace under the grid", key)
 	}
 }

@@ -80,7 +80,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 7 FROM schema_migration`,
+		`SELECT count(*) = 8 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -94,6 +94,9 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 			      'credential_sealed','webhook_secret_digest','verification_status','verified_at',
 			      'verification_grants','disabled','created_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='integration'`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['org_id','integration_id','provider','installation_key','provider_actor_id']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='integration_installation'`,
 		`SELECT to_regclass('organization_policy') IS NULL`,
 		`SELECT to_regclass('integration_type') IS NULL`,
 		`SELECT to_regclass('operator_session') IS NULL`,
@@ -203,6 +206,7 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
+		"0008_contract_provider_installation",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -256,8 +260,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 7 {
-		t.Fatalf("concurrent startup applied %d migrations, want seven", applied)
+	if applied != 8 {
+		t.Fatalf("concurrent startup applied %d migrations, want eight", applied)
 	}
 }
 
@@ -312,7 +316,9 @@ func TestReadableProviderMigrationMapsEveryCurrentProvider(t *testing.T) {
 
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
-	if err != nil || !reflect.DeepEqual(applied, []string{"0007_readable_integration_provider"}) {
+	if err != nil || !reflect.DeepEqual(applied, []string{
+		"0007_readable_integration_provider", "0008_contract_provider_installation",
+	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
@@ -435,31 +441,39 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 		"0002_simplify_integrations", "0003_simplify_deliveries_and_sessions",
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
+		"0008_contract_provider_installation",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
-	rows, err := connection.Query(ctx, `SELECT application,workspace,agent
-		FROM integration_installation ORDER BY application`)
+	rows, err := connection.Query(ctx, `SELECT provider,installation_key,provider_actor_id
+		FROM integration_installation ORDER BY provider`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var got [][3]string
+	type migratedInstallation struct {
+		provider string
+		key      []string
+		actor    *string
+	}
+	var got []migratedInstallation
 	for rows.Next() {
-		var installed [3]string
-		if err := rows.Scan(&installed[0], &installed[1], &installed[2]); err != nil {
+		var installed migratedInstallation
+		if err := rows.Scan(&installed.provider, &installed.key, &installed.actor); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, installed)
 	}
-	if len(got) != 3 || got[0] != [3]string{"A1", "T1", "U1"} ||
-		got[1] != [3]string{"github", "77", "acme"} ||
-		got[2][1] != "77" || got[2][2] != "acme" {
+	if len(got) != 2 || got[0].provider != "github" ||
+		!reflect.DeepEqual(got[0].key, []string{"77"}) || got[0].actor != nil ||
+		got[1].provider != "slack" ||
+		!reflect.DeepEqual(got[1].key, []string{"A1", "T1"}) ||
+		got[1].actor == nil || *got[1].actor != "U1" {
 		t.Fatalf("installations = %v", got)
 	}
 	routed, _, err := database.IntegrationByInstallation(ctx, "slack",
-		integrations.InstallationKey{Application: "A1", Workspace: "T1"})
+		integrations.InstallationKey{"A1", "T1"})
 	if err != nil || routed.ID != uuid.MustParse("10000000-0000-0000-0000-000000000001") ||
 		routed.OrgID != "20000000-0000-0000-0000-000000000001" {
 		t.Fatalf("migrated Slack routing = %+v, %v", routed, err)
@@ -470,6 +484,27 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 	}
 	if !reflect.DeepEqual(configurations, []string{"{}", "{}", "{}"}) {
 		t.Fatalf("editable configurations = %v", configurations)
+	}
+	duplicate, found, err := database.InstallationOf(ctx,
+		organization(t, "20000000-0000-0000-0000-000000000001"),
+		uuid.MustParse("10000000-0000-0000-0000-000000000003"))
+	if err != nil || found {
+		t.Fatalf("ambiguous legacy installation survived as %+v: %v", duplicate, err)
+	}
+	var contracted bool
+	if err := connection.QueryRow(ctx, `SELECT
+		(SELECT pg_get_constraintdef(oid) = 'PRIMARY KEY (org_id, integration_id)'
+		 FROM pg_constraint WHERE conrelid='integration_installation'::regclass AND contype='p')
+		AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public'
+		 AND indexname='integration_installation_provider_key_unique'
+		 AND indexdef LIKE '%UNIQUE INDEX% (provider, installation_key)')
+		AND EXISTS (SELECT 1 FROM pg_constraint
+		 WHERE conrelid='integration_installation'::regclass
+		 AND conname='integration_installation_matches_parent_provider'
+		 AND pg_get_constraintdef(oid) =
+		 'FOREIGN KEY (org_id, integration_id, provider) REFERENCES integration(org_id, integration_id, provider)')`).
+		Scan(&contracted); err != nil || !contracted {
+		t.Fatalf("Provider Installation constraints are not exact: %v", err)
 	}
 
 	org := organization(t, "20000000-0000-0000-0000-000000000001")
@@ -545,7 +580,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0003_simplify_deliveries_and_sessions", "0004_simplify_membership_lifecycle",
 		"0005_remove_membership_identity", "0006_simplify_identity_rows",
-		"0007_readable_integration_provider",
+		"0007_readable_integration_provider", "0008_contract_provider_installation",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -641,6 +676,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
+		"0008_contract_provider_installation",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

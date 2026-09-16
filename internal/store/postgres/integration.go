@@ -43,12 +43,8 @@ const integrationColumns = `integration_id, provider, name, configuration,
 	       webhook_secret_digest, credential_sealed, relay_id, verification_status,
 	       verified_at, verification_grants, disabled, created_at,
 	       (SELECT jsonb_build_object(
-	           'application', installed.application,
-	           'enterprise', installed.enterprise,
-	           'workspace', installed.workspace,
-	           'enterpriseWide', installed.enterprise_wide,
-	           'agent', installed.agent,
-	           'authorizer', installed.authorizer)
+	           'key', installed.installation_key,
+	           'providerActorId', installed.provider_actor_id)
 	          FROM integration_installation installed
 	         WHERE installed.integration_id = integration.integration_id
 	           AND installed.org_id = integration.org_id)`
@@ -113,7 +109,7 @@ func (p *Database) CreateIntegration(
 					fmt.Errorf("creating an integration: %w", err)
 			}
 			// The routing record lands in the SAME transaction, so an Integration that
-			// exists is one an inbound event can reach. A workspace another Integration
+			// exists is one an inbound event can reach. A provider installation another Integration
 			// already holds refuses the whole creation rather than leaving a connected
 			// integration whose events resolve somewhere else.
 			if wanted.Installation != nil {

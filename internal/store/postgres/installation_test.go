@@ -15,16 +15,14 @@ import (
 // THE ROUTING RECORD, AT THE SEAM THAT DECIDES WHOSE EVENT AN INBOUND MESSAGE IS.
 //
 // Two properties matter here and nothing else does. An Integration that exists is one an
-// event can reach, because the two rows are written together. And one workspace resolves to
-// exactly one Integration ACROSS THE DEPLOYMENT — not per tenant — because the first hop of
-// installation to integration to organization is what everything after it trusts.
+// event can reach, because the two rows are written together. And one Provider Installation
+// resolves to exactly one Integration ACROSS THE DEPLOYMENT — not per tenant — because the
+// first hop of installation to Integration to Organization is what everything after it trusts.
 
 func slackInstallation(workspace string) *integrations.Installation {
 	return &integrations.Installation{
-		Application: "A0OPENCLUSTER",
-		Workspace:   workspace,
-		Agent:       "U0BOT",
-		Authorizer:  "U0ADMIN",
+		Key:             integrations.InstallationKey{"A0OPENCLUSTER", workspace},
+		ProviderActorID: "U0BOT",
 	}
 }
 
@@ -38,7 +36,7 @@ func connectSlack(
 		organization, integrations.NewIntegration{
 			Provider:      "slack",
 			Name:          name,
-			Configuration: map[string]any{"teamId": installed.Workspace},
+			Configuration: map[string]any{"teamId": installed.Key[len(installed.Key)-1]},
 			Installation:  installed,
 		})
 }
@@ -87,7 +85,7 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	}
 
 	found, routing, err := database.IntegrationByInstallation(context.Background(),
-		"slack", installed.Key())
+		"slack", installed.Key)
 	if err != nil {
 		t.Fatalf("resolving the installation: %v", err)
 	}
@@ -100,8 +98,9 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	// The bot's own identity comes back with it. It is what stops the agent answering its
 	// own message, so a resolution that did not carry it would be one the endpoint cannot
 	// act on.
-	if routing.Agent != installed.Agent {
-		t.Errorf("resolved agent %q, want %q", routing.Agent, installed.Agent)
+	if routing.ProviderActorID != installed.ProviderActorID {
+		t.Errorf("resolved provider actor %q, want %q",
+			routing.ProviderActorID, installed.ProviderActorID)
 	}
 }
 
@@ -118,9 +117,9 @@ func TestAWorkspaceNobodyInstalledResolvesToNothing(t *testing.T) {
 	// the same: unknown. An event resolving through a partial key would be an event
 	// resolved through a wildcard.
 	for name, key := range map[string]integrations.InstallationKey{
-		"another workspace": {Application: "A0OPENCLUSTER", Workspace: "T0STRANGER"},
-		"another app":       {Application: "A0SOMETHINGELSE", Workspace: "T0ACME"},
-		"no workspace":      {Application: "A0OPENCLUSTER"},
+		"another workspace": {"A0OPENCLUSTER", "T0STRANGER"},
+		"another app":       {"A0SOMETHINGELSE", "T0ACME"},
+		"no workspace":      {"A0OPENCLUSTER"},
 		"nothing at all":    {},
 	} {
 		_, _, err := database.IntegrationByInstallation(context.Background(),
@@ -147,8 +146,8 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 
 	_, err := connectSlack(t, database, organization, "Slack — second",
 		slackInstallation("T0ACME"))
-	if !errors.Is(err, integrations.ErrWorkspaceTaken) {
-		t.Fatalf("a second claim on one workspace = %v, want ErrWorkspaceTaken", err)
+	if !errors.Is(err, integrations.ErrInstallationTaken) {
+		t.Fatalf("a second claim on one installation = %v, want ErrInstallationTaken", err)
 	}
 
 	// And nothing was left behind. The refusal has to take the Integration with it, or the
@@ -210,7 +209,7 @@ func TestAnInstallationCannotNameNothing(t *testing.T) {
 		organization, integrations.NewIntegration{
 			Provider:     "slack",
 			Name:         "Slack — nowhere",
-			Installation: &integrations.Installation{Agent: "U0BOT"},
+			Installation: &integrations.Installation{ProviderActorID: "U0BOT"},
 		})
 	if !errors.Is(err, integrations.ErrInvalidInstallation) {
 		t.Fatalf("an installation naming nothing = %v, want ErrInvalidInstallation", err)
@@ -235,7 +234,7 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 	}
 
 	_, _, err = database.IntegrationByInstallation(context.Background(),
-		"slack", installed.Key())
+		"slack", installed.Key)
 	if !errors.Is(err, integrations.ErrUnknown) {
 		t.Errorf("a disconnected workspace still resolves: %v", err)
 	}
@@ -259,8 +258,8 @@ func TestAnotherTenantCannotTakeAConnectedWorkspace(t *testing.T) {
 		t.Fatalf("connecting slack in the first tenant: %v", err)
 	}
 	_, err := connectSlack(t, database, second, "Slack — second",
-		slackInstallation(installed.Workspace))
-	if !errors.Is(err, integrations.ErrWorkspaceTaken) {
-		t.Fatalf("a neighbour claiming the same workspace = %v, want ErrWorkspaceTaken", err)
+		slackInstallation(installed.Key[len(installed.Key)-1]))
+	if !errors.Is(err, integrations.ErrInstallationTaken) {
+		t.Fatalf("a neighbour claiming the same installation = %v, want ErrInstallationTaken", err)
 	}
 }

@@ -37,7 +37,7 @@ func TestSlackInboundAvailabilityExplainsInstallationAndDeploymentSetup(t *testi
 	t.Parallel()
 
 	installed := integrations.Integration{Installation: &integrations.Installation{
-		Application: "A123", Workspace: "T123",
+		Key: integrations.InstallationKey{"A123", "T123"},
 	}}
 	tests := []struct {
 		name          string
