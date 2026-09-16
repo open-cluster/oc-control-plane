@@ -60,12 +60,14 @@ func (d *Database) CreateOrganization(
 		return authz.Membership{}, fmt.Errorf("granting organization creator: %w", err)
 	}
 	if err = writeEvent(ctx, transaction, audit.Event{
-		Organization: organization.String(),
-		Actor:        principal.Actor(),
-		Action:       audit.ActionMembershipGranted,
-		Target:       audit.Target{Kind: audit.TargetUser, ID: userID.String()},
-		Outcome:      audit.OutcomeAllowed,
-		Detail:       audit.Detail{"role": string(authz.Admin)},
+		Organization:  organization.String(),
+		Actor:         principal.Actor(),
+		Action:        audit.ActionMembershipGranted,
+		Target:        audit.Target{Kind: audit.TargetUser, ID: userID.String()},
+		Outcome:       audit.OutcomeAllowed,
+		SourceAddress: principal.SourceAddress(),
+		RequestID:     principal.RequestID(),
+		Detail:        audit.Detail{"role": string(authz.Admin)},
 	}); err != nil {
 		return authz.Membership{}, err
 	}

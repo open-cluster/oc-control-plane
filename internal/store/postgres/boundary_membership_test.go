@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
@@ -123,4 +124,60 @@ func TestBoundary_EveryOperatorStoreFunctionRefusesANonMember(t *testing.T) {
 		})
 	}
 
+}
+
+func TestMembershipGrantAuditUsesTheUserAndRequestContext(t *testing.T) {
+	database, organization := migratedDatabase(t)
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actorID, userID := uuid.New(), uuid.New()
+	for id, subject := range map[uuid.UUID]string{actorID: "actor", userID: "member"} {
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO app_user (user_id, issuer, subject, email, updated_at)
+			VALUES ($1, 'test', $2, $2 || '@example.test', now())`, id, subject); err != nil {
+			t.Fatal(err)
+		}
+	}
+	principal, err := authz.NewPrincipal(authz.KindUser, actorID.String(), "Administrator",
+		[]authz.Membership{{Organization: organization, Role: authz.Admin}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal = principal.WithRequest("192.0.2.10:1234", "request-under-test")
+
+	if _, err := database.SetMembership(
+		context.Background(), principal, organization, userID, authz.Viewer); err != nil {
+		t.Fatal(err)
+	}
+	assertMembershipGrantAudit(t, pool, organization.String(), userID, authz.Viewer,
+		"192.0.2.10:1234", "request-under-test")
+
+	created, err := database.CreateOrganization(context.Background(), principal, "Created")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMembershipGrantAudit(t, pool, created.Organization.String(), actorID, authz.Admin,
+		"192.0.2.10:1234", "request-under-test")
+}
+
+func assertMembershipGrantAudit(
+	t *testing.T, pool *pgxpool.Pool, organization string, user uuid.UUID, role authz.Role,
+	sourceAddress, requestID string,
+) {
+	t.Helper()
+	var matches bool
+	if err := pool.QueryRow(context.Background(), `SELECT EXISTS (
+		SELECT 1 FROM audit_event
+		 WHERE org_id = $1 AND action = 'membership.granted'
+		   AND target_kind = 'user' AND target_id = $2
+		   AND source_address = $3 AND request_id = $4
+		   AND detail = jsonb_build_object('role', $5::text)
+	)`, organization, user.String(), sourceAddress, requestID, string(role)).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if !matches {
+		t.Fatal("membership grant audit omitted its User, Role, or request context")
+	}
 }

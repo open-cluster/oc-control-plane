@@ -200,16 +200,17 @@ func (p *Database) ListMembers(
 
 // SetMembership grants or changes a person's role in an organization.
 //
-// It refuses the change that would leave the tenant with no owner. That check and the write
-// share one transaction, so two administrators demoting the last two owners at once cannot
+// It refuses the change that would leave the Organization with no Admin. That check and the
+// write share one transaction, so two administrators demoting the last two Admins at once cannot
 // both pass it.
 func (p *Database) SetMembership(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	user uuid.UUID, role authz.Role,
 ) (Member, error) {
-	action := audit.ActionMembershipChanged
-	return audited(ctx, p, principal, organization, action,
-		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
+	return auditedWithAction(ctx, p, principal, organization,
+		func(ctx context.Context, transaction pgx.Tx) (
+			Member, audit.Action, audit.Target, audit.Detail, error,
+		) {
 			var held string
 			err := transaction.QueryRow(ctx, `
 				SELECT role FROM organization_membership
@@ -220,11 +221,12 @@ func (p *Database) SetMembership(
 				previous = ""
 			}
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return Member{}, audit.Target{}, nil, fmt.Errorf("reading a membership: %w", err)
+				return Member{}, "", audit.Target{}, nil,
+					fmt.Errorf("reading a membership: %w", err)
 			}
 			if previous == string(authz.Admin) && role != authz.Admin {
 				if err := refuseIfLastAdmin(ctx, transaction, organization, user); err != nil {
-					return Member{}, audit.Target{}, nil, err
+					return Member{}, "", audit.Target{}, nil, err
 				}
 			}
 
@@ -238,17 +240,21 @@ func (p *Database) SetMembership(
 				organization.String(), user, string(role)).Scan(&member.UserID,
 				&member.Role, &member.CreatedAt); err != nil {
 				if isForeignKeyViolation(err) {
-					return Member{}, audit.Target{}, nil, ErrUserUnknown
+					return Member{}, "", audit.Target{}, nil, ErrUserUnknown
 				}
-				return Member{}, audit.Target{}, nil, fmt.Errorf("writing a membership: %w", err)
+				return Member{}, "", audit.Target{}, nil,
+					fmt.Errorf("writing a membership: %w", err)
 			}
 
+			action := audit.ActionMembershipChanged
+			detail := audit.Detail{"beforeRole": previous, "afterRole": string(role)}
 			if previous == "" {
 				action = audit.ActionMembershipGranted
+				detail = audit.Detail{"role": string(role)}
 			}
-			return member,
+			return member, action,
 				audit.Target{Kind: audit.TargetUser, ID: user.String()},
-				audit.Detail{"before": previous, "after": string(role)},
+				detail,
 				nil
 		})
 }
