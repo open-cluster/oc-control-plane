@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,36 +19,16 @@ func (s Status) String() string {
 	return string(s)
 }
 
-// Refusals a mutation can produce. Declared here because the Integration domain owns its
-// vocabulary; persistence returns these.
 var (
-	// ErrUnknown reports an Integration this organization does not have.
-	ErrUnknown = errors.New("integration unknown")
-	// ErrCrossTenant reports an Integration whose Relay does not belong to the
-	// organization the request named. A single error on purpose: which half of a crossed
-	// boundary was wrong is not a fact worth returning to whoever tried it.
-	ErrCrossTenant = errors.New("integration names something outside its organization")
-	// ErrInUse refuses a delete while durable records depend on the Integration. The
-	// record of what a source produced must survive, which is why disabling exists.
-	ErrInUse = errors.New("integration has records depending on it; disable it instead")
-	// ErrBadCursor reports a page position that did not come from a previous response.
-	ErrBadCursor = errors.New("after is not a page position from a previous response")
-	// ErrInstallationTaken refuses a provider installation another Integration already
-	// owns anywhere in this deployment.
-	//
-	// It is a REFUSAL rather than a failure, and the deployment-wide scope is the point:
-	// an inbound event resolves provider installation to Integration to organization, and
-	// an installation two tenants could both claim would have two answers at the moment
-	// the product starts trusting that chain.
+	ErrUnknown           = errors.New("integration unknown")
+	ErrCrossTenant       = errors.New("integration names something outside its organization")
+	ErrInUse             = errors.New("integration has records depending on it; disable it instead")
+	ErrBadCursor         = errors.New("after is not a page position from a previous response")
 	ErrInstallationTaken = errors.New(
 		"another integration in this deployment already owns that provider installation")
-	// ErrInvalidInstallation reports an empty or partial provider-owned key. It is a
-	// programming error rather than a caller's, and it is refused loudly because the
-	// alternative is discovering it at the first inbound event, as silence.
 	ErrInvalidInstallation = errors.New("installation cannot be recorded")
 )
 
-// Integration is one configured installation belonging to an organization.
 type Integration struct {
 	ID       uuid.UUID
 	OrgID    string
@@ -126,12 +107,7 @@ func (k InstallationKey) Complete() bool {
 	if len(k) == 0 {
 		return false
 	}
-	for _, part := range k {
-		if part == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(k, "")
 }
 
 // Revision is what a PATCH may change. Nil means "leave it alone", which is different from
@@ -165,7 +141,6 @@ type Query struct {
 	Disabled *bool
 }
 
-// List is a page of an organization's Integrations.
 type List struct {
 	Integrations []Integration
 	Next         string

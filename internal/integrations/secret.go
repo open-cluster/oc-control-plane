@@ -58,8 +58,6 @@ func CheckSecretStrength(secret string) error {
 		return fmt.Errorf("%w: it must be at most %d characters", ErrWeakSecret, MaxSecretLength)
 	}
 	for _, character := range secret {
-		// A control character or whitespace cannot survive a round trip through an HTTP
-		// header intact, so a secret containing one would authenticate inconsistently.
 		if unicode.IsControl(character) || unicode.IsSpace(character) {
 			return fmt.Errorf(
 				"%w: it must not contain whitespace or control characters", ErrWeakSecret)

@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// The native tool definition: the single declarative Tool contract rendered into what a
-// provider's tool-calling API is given. These tests pin that the composed description
-// carries every part an investigator routes by — including Output, which used to be
-// validated as mandatory and shown to nobody — and that the generated input schema is
-// closed and typed.
-
 func definedTool() Tool {
 	return Tool{
 		Name:        "example.read_things",
