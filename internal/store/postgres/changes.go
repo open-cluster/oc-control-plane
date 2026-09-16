@@ -15,10 +15,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
-// Changes persistence. The vocabulary lives in internal/changes; this
-// file reconstructs it from rows and writes it into them, and decides nothing about
-// what a change means.
-
 // OpenInventoryScopes upserts one synchronization scope per Kubernetes Integration
 // served by this registration and reports them, so the session can send one policy each.
 func (p *Database) OpenInventoryScopes(
