@@ -2531,7 +2531,6 @@ components:
         - issuedAt
         - expiresAt
         - lastSeenAt
-        - remoteAddr
       properties:
         id:
           $ref: '#/components/schemas/UUID'
@@ -2543,6 +2542,9 @@ components:
           $ref: '#/components/schemas/Timestamp'
         lastSeenAt:
           $ref: '#/components/schemas/Timestamp'
+        clientUserAgent:
+          type: string
+          maxLength: 512
         remoteAddr:
           type: string
           maxLength: 128

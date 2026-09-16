@@ -57,7 +57,7 @@ func (p *Database) replaceLocalPassword(ctx context.Context, user uuid.UUID, pre
 		return fmt.Errorf("begin password change: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	tag, err := transaction.Exec(ctx, `UPDATE local_password SET password_hash = $3, updated_at = now()
+	tag, err := transaction.Exec(ctx, `UPDATE local_password SET password_hash = $3, changed_at = now()
 		WHERE user_id = $1 AND ($2::text IS NULL OR password_hash = $2)
 		AND EXISTS (SELECT 1 FROM app_user WHERE user_id = $1 AND issuer = $4 AND disabled_at IS NULL)`, user, previous, replacement, LocalIssuer)
 	if err != nil {

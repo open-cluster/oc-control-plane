@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ VALUES ($1,'Organization A','test')`, org.String()); err != nil {
 	}
 }
 
-func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
+func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	ctx := context.Background()
 	dsn := postgresDSN(t)
 	database := openDatabaseForTest(t, dsn)
@@ -78,7 +79,7 @@ func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 5 FROM schema_migration`,
+		`SELECT count(*) = 6 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -103,6 +104,16 @@ func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND column_name='organization_id')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization' AND column_name='audit_retention_days')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session' AND column_name='credential_digest')`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['user_id','issuer','subject','email','display_name','disabled_at','created_at']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='app_user'`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['user_id','password_hash','changed_at']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='local_password'`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['session_id','credential_digest','user_id','org_id','issued_at','expires_at',
+			      'last_seen_at','revoked_at','client_user_agent','remote_addr']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='session'`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) = ARRAY['org_id','user_id','role','created_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='organization_membership'`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='relay_bootstrap_token' AND column_name='bootstrap_digest')`,
@@ -138,9 +149,78 @@ func TestFreshSchemaUsesContractedIntegrationState(t *testing.T) {
 		uuid.New(), uuid.New()); err == nil {
 		t.Fatal("fresh schema accepted a tenant-root row without an Organization")
 	}
-	if _, err := connection.Exec(ctx, `INSERT INTO app_user (user_id,issuer,subject,email)
-		VALUES ($1,'test','missing-update-time','test@example.test')`, uuid.New()); err == nil {
-		t.Fatal("fresh schema defaulted caller-owned updated_at")
+}
+
+func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+
+	_, err = connection.Exec(ctx, `
+		CREATE TABLE schema_migration (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES
+			('0001_schema'), ('0002_simplify_integrations'), ('0003_simplify_deliveries_and_sessions'),
+			('0004_simplify_membership_lifecycle'), ('0005_remove_membership_identity');
+		CREATE TABLE app_user (
+			user_id uuid PRIMARY KEY, issuer text NOT NULL, subject text NOT NULL, email text NOT NULL,
+			email_verified boolean NOT NULL, display_name text NOT NULL, disabled_at timestamptz,
+			last_sign_in timestamptz, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
+		);
+		CREATE TABLE local_password (
+			user_id uuid PRIMARY KEY, password_hash text NOT NULL,
+			password_changed_at timestamptz NOT NULL, updated_at timestamptz NOT NULL
+		);
+		CREATE TABLE session (
+			session_id uuid PRIMARY KEY, credential_digest bytea NOT NULL, user_id uuid NOT NULL,
+			org_id uuid, issued_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+			last_seen_at timestamptz NOT NULL, revoked_at timestamptz, remote_addr text NOT NULL
+		);
+		INSERT INTO app_user VALUES
+			('10000000-0000-0000-0000-000000000001','issuer','subject','user@example.test',true,
+			 'User',NULL,'2026-01-02T00:00:00Z','2026-01-01T00:00:00Z','2026-01-03T00:00:00Z');
+		INSERT INTO local_password VALUES
+			('10000000-0000-0000-0000-000000000001',repeat('x',32),
+			 '2026-01-01T00:00:00Z','2026-01-04T00:00:00Z');
+		INSERT INTO session VALUES
+			('20000000-0000-0000-0000-000000000001',decode(repeat('01',32),'hex'),
+			 '10000000-0000-0000-0000-000000000001',NULL,'2026-01-01T00:00:00Z',
+			 '2026-02-01T00:00:00Z','2026-01-02T00:00:00Z',NULL,'192.0.2.10:443');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{"0006_simplify_identity_rows"}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+
+	var email, displayName, passwordHash, remoteAddr string
+	var changedAt, createdAt time.Time
+	var clientUserAgent *string
+	if err = connection.QueryRow(ctx, `SELECT email,display_name,created_at FROM app_user`).
+		Scan(&email, &displayName, &createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT password_hash,changed_at FROM local_password`).
+		Scan(&passwordHash, &changedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT client_user_agent,remote_addr FROM session`).
+		Scan(&clientUserAgent, &remoteAddr); err != nil {
+		t.Fatal(err)
+	}
+	if email != "user@example.test" || displayName != "User" ||
+		!createdAt.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) ||
+		passwordHash != strings.Repeat("x", 32) ||
+		!changedAt.Equal(time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)) ||
+		clientUserAgent != nil || remoteAddr != "192.0.2.10:443" {
+		t.Fatalf("identity rows not preserved: email=%q name=%q created=%s password=%q changed=%s agent=%v remote=%q",
+			email, displayName, createdAt, passwordHash, changedAt, clientUserAgent, remoteAddr)
 	}
 }
 
@@ -168,8 +248,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 5 {
-		t.Fatalf("concurrent startup applied %d migrations, want five", applied)
+	if applied != 6 {
+		t.Fatalf("concurrent startup applied %d migrations, want six", applied)
 	}
 }
 
@@ -249,6 +329,7 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0002_simplify_integrations", "0003_simplify_deliveries_and_sessions",
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
+		"0006_simplify_identity_rows",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -358,7 +439,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0003_simplify_deliveries_and_sessions", "0004_simplify_membership_lifecycle",
-		"0005_remove_membership_identity",
+		"0005_remove_membership_identity", "0006_simplify_identity_rows",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -389,8 +470,14 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session'
 			AND column_name IN ('revoked_by','user_agent','address'))
 		AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session'
-			AND column_name='remote_addr')`).Scan(&contracted); err != nil || !contracted {
+			AND column_name IN ('client_user_agent','remote_addr') GROUP BY table_name HAVING count(*)=2)`).Scan(&contracted); err != nil || !contracted {
 		t.Fatalf("cleanup schema contract = %t, error = %v", contracted, err)
+	}
+	var clientUserAgent *string
+	var remoteAddr string
+	if err = connection.QueryRow(ctx, `SELECT client_user_agent,remote_addr FROM session`).
+		Scan(&clientUserAgent, &remoteAddr); err != nil || clientUserAgent != nil || remoteAddr != "127.0.0.1:8080" {
+		t.Fatalf("session metadata = %v/%q, error = %v", clientUserAgent, remoteAddr, err)
 	}
 	if _, err = connection.Exec(ctx, `UPDATE webhook_delivery SET content_digest = decode('01','hex')`); err == nil {
 		t.Fatal("migrated schema accepted a content digest that is not SHA-256 sized")
@@ -447,6 +534,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
+		"0006_simplify_identity_rows",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

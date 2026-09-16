@@ -1370,13 +1370,14 @@ components:
     LiveSession:
       type: object
       additionalProperties: false
-      required: [id, userId, issuedAt, expiresAt, lastSeenAt, remoteAddr]
+      required: [id, userId, issuedAt, expiresAt, lastSeenAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
         userId: { $ref: "#/components/schemas/UUID" }
         issuedAt: { $ref: "#/components/schemas/Timestamp" }
         expiresAt: { $ref: "#/components/schemas/Timestamp" }
         lastSeenAt: { $ref: "#/components/schemas/Timestamp" }
+        clientUserAgent: { type: string, maxLength: 512 }
         remoteAddr: { type: string, maxLength: 128 }
     LiveSessionList:
       type: object

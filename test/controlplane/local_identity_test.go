@@ -365,10 +365,11 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	})
 	member := sessionCookie(t, login)
 	type listedSession struct {
-		ID         string          `json:"id"`
-		RemoteAddr string          `json:"remoteAddr"`
-		UserAgent  json.RawMessage `json:"userAgent"`
-		Address    json.RawMessage `json:"address"`
+		ID              string          `json:"id"`
+		ClientUserAgent string          `json:"clientUserAgent"`
+		RemoteAddr      string          `json:"remoteAddr"`
+		UserAgent       json.RawMessage `json:"userAgent"`
+		Address         json.RawMessage `json:"address"`
 	}
 	list := func(cookie string) []listedSession {
 		response := plane.call(t, http.MethodGet, base+"/sessions", nil, asSession(cookie))
@@ -385,7 +386,8 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	if len(owned) != 1 {
 		t.Fatalf("member sessions = %+v", owned)
 	}
-	if owned[0].RemoteAddr == "" || owned[0].UserAgent != nil || owned[0].Address != nil {
+	if owned[0].ClientUserAgent == "" || owned[0].RemoteAddr == "" ||
+		owned[0].UserAgent != nil || owned[0].Address != nil {
 		t.Fatalf("member session client metadata = %+v", owned[0])
 	}
 	admins := list(admin)
@@ -498,8 +500,8 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	oidcUser := uuid.New()
 	if _, err = connection.Exec(context.Background(), `
 		INSERT INTO app_user
-			(user_id,issuer,subject,email,email_verified,display_name,updated_at)
-		VALUES ($1,$2,'operator-1','ada@example.test',TRUE,'Ada Lovelace',now())`,
+			(user_id,issuer,subject,email,display_name)
+		VALUES ($1,$2,'operator-1','ada@example.test','Ada Lovelace')`,
 		oidcUser, issuer.url()); err != nil {
 		t.Fatalf("seed OIDC User: %v", err)
 	}

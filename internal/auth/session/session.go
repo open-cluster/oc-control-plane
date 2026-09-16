@@ -33,17 +33,21 @@ type Token string
 
 // Session is one signed-in operator, as the server holds it.
 type Session struct {
-	ID           uuid.UUID
-	UserID       uuid.UUID
-	Organization string
-	IssuedAt     time.Time
-	ExpiresAt    time.Time
-	LastSeenAt   time.Time
-	RevokedAt    time.Time
-	RemoteAddr   string
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	Organization    string
+	IssuedAt        time.Time
+	ExpiresAt       time.Time
+	LastSeenAt      time.Time
+	RevokedAt       time.Time
+	ClientUserAgent string
+	RemoteAddr      string
 }
 
-const MaxRemoteAddrLength = 128
+const (
+	MaxClientUserAgentLength = 512
+	MaxRemoteAddrLength      = 128
+)
 
 // Revoked reports whether an administrator ended this session.
 func (s Session) Revoked() bool { return !s.RevokedAt.IsZero() }
