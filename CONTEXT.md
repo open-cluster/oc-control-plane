@@ -27,6 +27,12 @@ Alertmanager or the platform Slack workspace. It holds non-secret configuration,
 verified capability grants, explicit provider installation identity, and sealed or digested
 credentials where required.
 
+## Provider Installation
+
+The durable provider-side identity bound to an Integration after provider authorization.
+It supports reconnect matching, exclusive provider ownership, and inbound routing. It is
+backend state, not a setup guide or the signal that makes Connect appear in the console.
+
 ## Tool
 
 A bounded operation offered by an Integration. Its definition declares when it

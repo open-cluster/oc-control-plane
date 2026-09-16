@@ -221,19 +221,16 @@ func Parse(body []byte) (Envelope, error) {
 	return envelope, nil
 }
 
-// Key is the installation this envelope resolves through.
-func (e Envelope) Key() InstallationKey {
-	return InstallationKey{
-		Application: e.Application, Enterprise: e.Enterprise, Workspace: e.Workspace,
-	}
+// Key is the provider-owned ordered tuple this envelope resolves through.
+func (e Envelope) Key() []string {
+	return providerInstallationKey(e.Application, e.Enterprise, e.Workspace)
 }
 
-// InstallationKey mirrors the neutral key the persistence layer resolves by, so this package
-// can compose one without importing the shape of a lookup it does not perform.
-type InstallationKey struct {
-	Application string
-	Enterprise  string
-	Workspace   string
+func providerInstallationKey(application, enterprise, workspace string) []string {
+	if enterprise == "" {
+		return []string{application, workspace}
+	}
+	return []string{application, enterprise, workspace}
 }
 
 // AddressedToUs reports whether this event is a person speaking TO OpenCluster.

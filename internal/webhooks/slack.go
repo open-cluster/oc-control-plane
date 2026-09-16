@@ -205,7 +205,7 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 		h.counters.countSlackEvent(ctx, slackOutsideRollout)
 		writeStatus(writer, http.StatusOK, "ignored")
 		return
-	case !envelope.AddressedToUs(routing.Agent):
+	case !envelope.AddressedToUs(routing.ProviderActorID):
 		// Not a person speaking to us: a channel join, an edit, a reaction, another app
 		// posting, or OUR OWN message — which is checked first inside, because an agent
 		// that answers its own message answers its answer until a rate limit ends it.

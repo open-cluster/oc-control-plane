@@ -1474,7 +1474,7 @@ components:
       additionalProperties: false
       required: [connect]
       properties:
-        connect: { type: string, enum: [connected, refused, unproven, unverified, workspace-taken] }
+        connect: { type: string, enum: [connected, refused, unproven, unverified, installation-taken] }
         integrationId: { $ref: "#/components/schemas/UUID" }
         note: { type: string, maxLength: 1024 }
     SecretReference:

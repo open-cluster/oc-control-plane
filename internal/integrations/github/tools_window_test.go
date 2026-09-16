@@ -25,7 +25,7 @@ func runInWindow(
 	t.Helper()
 	return toolNamed(t, app, client, name).Run(testContext(t), integrations.ToolRequest{
 		Integration: integrations.Integration{
-			Installation: &integrations.Installation{Workspace: "77"},
+			Installation: &integrations.Installation{Key: integrations.InstallationKey{"77"}},
 		},
 		Arguments:   args,
 		WindowFrom:  from,

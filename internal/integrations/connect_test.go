@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -55,7 +56,7 @@ func sealingDefinition(authorized *bool) Definition {
 			},
 			Redeem: func(context.Context, ConnectReturn) (ConnectBinding, error) {
 				return ConnectBinding{Name: "Stub", Credential: "a-token", Installation: &Installation{
-					Application: "app", Workspace: "workspace",
+					Key: InstallationKey{"app", "workspace"},
 				}}, nil
 			},
 		},
@@ -271,7 +272,8 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 	if probed != "a-token" {
 		t.Errorf("the probe was given %q, want the credential the flow obtained", probed)
 	}
-	if probedInstallation == nil || probedInstallation.Workspace != "workspace" {
+	if probedInstallation == nil || !reflect.DeepEqual(
+		probedInstallation.Key, InstallationKey{"app", "workspace"}) {
 		t.Fatalf("the probe did not receive the established installation: %#v", probedInstallation)
 	}
 	if len(store.created.CredentialSealed) == 0 {

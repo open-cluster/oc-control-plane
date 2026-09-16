@@ -2817,7 +2817,7 @@ components:
             - refused
             - unproven
             - unverified
-            - workspace-taken
+            - installation-taken
         integrationId:
           $ref: '#/components/schemas/UUID'
         note:

@@ -32,20 +32,18 @@ var (
 	ErrInUse = errors.New("integration has records depending on it; disable it instead")
 	// ErrBadCursor reports a page position that did not come from a previous response.
 	ErrBadCursor = errors.New("after is not a page position from a previous response")
-	// ErrWorkspaceTaken refuses a connection to a vendor workspace another Integration is
-	// already installed in, anywhere in this deployment.
+	// ErrInstallationTaken refuses a provider installation another Integration already
+	// owns anywhere in this deployment.
 	//
 	// It is a REFUSAL rather than a failure, and the deployment-wide scope is the point:
-	// an inbound event resolves workspace to Integration to organization, and a workspace
-	// two tenants could both claim would resolve to two answers at exactly the moment the
-	// product starts trusting that chain.
-	ErrWorkspaceTaken = errors.New(
-		"another integration in this deployment is already installed in that workspace")
-	// ErrInvalidInstallation reports a routing record that could not be written: a key
-	// naming no application or no workspace, or a type this build holds no installation
-	// table for. It is a programming error rather than a caller's, and it is refused
-	// loudly because the alternative is discovering it at the first inbound event, as
-	// silence.
+	// an inbound event resolves provider installation to Integration to organization, and
+	// an installation two tenants could both claim would have two answers at the moment
+	// the product starts trusting that chain.
+	ErrInstallationTaken = errors.New(
+		"another integration in this deployment already owns that provider installation")
+	// ErrInvalidInstallation reports an empty or partial provider-owned key. It is a
+	// programming error rather than a caller's, and it is refused loudly because the
+	// alternative is discovering it at the first inbound event, as silence.
 	ErrInvalidInstallation = errors.New("installation cannot be recorded")
 )
 
@@ -107,55 +105,33 @@ type NewIntegration struct {
 	Installation *Installation
 }
 
-// Installation is durable provider identity used for reconnect matching, inbound routing,
-// and provider Tool credentials. Capability evidence remains in VerificationGrants.
+// Installation is the durable provider-side identity bound to an Integration. It is used
+// for reconnect matching, inbound routing, and provider Tool credentials.
 type Installation struct {
-	// Application is the vendor application the installation was made under. It is part of
-	// the key because one deployment may serve more than one registration over its life,
-	// and a workspace identifier alone would collide across them.
-	Application string
-	// Enterprise is the vendor's enterprise or grid identity, empty where there is none.
-	// Empty rather than absent: two absent values must compare equal, or the same
-	// workspace could be installed twice under rows that look distinct.
-	Enterprise string
-	// EnterpriseWide reports an installation made across a whole enterprise rather than
-	// into one workspace inside it. It is NOT derivable from Enterprise being set: a
-	// workspace-scoped install inside a grid carries an enterprise identity and is not
-	// enterprise-wide, and treating the two as one would mislabel exactly the case the
-	// enterprise fields exist to identify correctly.
-	EnterpriseWide bool
-	// Workspace is the vendor's own identity for the place the installation lives.
-	Workspace string
-	// Agent is the identity this product answers AS in that workspace.
-	//
-	// Load-bearing rather than informational: a message authored by this identity is
-	// discarded before anything else looks at it, which is what stops the agent answering
-	// itself and looping until a rate limit ends it.
-	Agent      string
-	Authorizer string
+	Key InstallationKey `json:"key"`
+	// ProviderActorID is the provider identity OpenCluster acts as. Slack uses its bot
+	// User ID to discard self-authored events before they can form a reply loop.
+	ProviderActorID string `json:"providerActorId,omitempty"`
 }
 
-// Key is what an inbound event resolves BY.
-func (i Installation) Key() InstallationKey {
-	return InstallationKey{
-		Application: i.Application, Enterprise: i.Enterprise, Workspace: i.Workspace,
-	}
-}
+// InstallationKey is the provider-owned ordered tuple persisted as text[]. GitHub uses
+// [installation_id]. Slack uses [app_id, team_id], or [app_id, enterprise_id, team_id]
+// when the installation belongs to a Slack Enterprise. It is deployment-unique together
+// with Provider because an inbound provider event names no OpenCluster organization.
+type InstallationKey []string
 
-// InstallationKey is the identity an inbound event is resolved through. It is unique across
-// the whole deployment and deliberately not scoped to an organization: the value of the
-// chain is that its first hop is single-valued, and a per-tenant uniqueness would let two
-// tenants claim one workspace and make it ambiguous exactly when an event arrives.
-type InstallationKey struct {
-	Application string
-	Enterprise  string
-	Workspace   string
-}
-
-// Complete reports whether this key names an installation at all. An event resolved through
-// a partial key would be an event resolved through a wildcard.
+// Complete reports whether the tuple is non-empty and contains no empty element. Each
+// provider adapter owns its required arity and order.
 func (k InstallationKey) Complete() bool {
-	return k.Application != "" && k.Workspace != ""
+	if len(k) == 0 {
+		return false
+	}
+	for _, part := range k {
+		if part == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // Revision is what a PATCH may change. Nil means "leave it alone", which is different from
