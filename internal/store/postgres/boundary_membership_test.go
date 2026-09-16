@@ -135,8 +135,8 @@ func TestMembershipGrantAuditUsesTheUserAndRequestContext(t *testing.T) {
 	actorID, userID := uuid.New(), uuid.New()
 	for id, subject := range map[uuid.UUID]string{actorID: "actor", userID: "member"} {
 		if _, err := pool.Exec(context.Background(), `
-			INSERT INTO app_user (user_id, issuer, subject, email, updated_at)
-			VALUES ($1, 'test', $2, $2 || '@example.test', now())`, id, subject); err != nil {
+			INSERT INTO app_user (user_id, issuer, subject, email)
+			VALUES ($1, 'test', $2, $2 || '@example.test')`, id, subject); err != nil {
 			t.Fatal(err)
 		}
 	}

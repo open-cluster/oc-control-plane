@@ -66,10 +66,10 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 		func(ctx context.Context, tx pgx.Tx) (Member, audit.Target, audit.Detail, error) {
 			var userID uuid.UUID
 			err := tx.QueryRow(ctx, `INSERT INTO app_user
-				(user_id,issuer,subject,email,email_verified,display_name,updated_at)
-				VALUES ($1,$2,$3,$4,FALSE,$5,now())
+				(user_id,issuer,subject,email,display_name)
+				VALUES ($1,$2,$3,$4,$5)
 				ON CONFLICT (issuer,subject) DO UPDATE SET email=EXCLUDED.email,
-					display_name=EXCLUDED.display_name,updated_at=now()
+					display_name=EXCLUDED.display_name
 				RETURNING user_id`, uuid.New(), identity.Issuer, identity.Subject, identity.Email, identity.DisplayName).Scan(&userID)
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("creating an OIDC member: %w", err)
@@ -94,14 +94,14 @@ func (p *Database) OIDCIdentity(ctx context.Context, organization tenancy.Organi
 	}
 	var user User
 	var disabled *time.Time
-	err = pool.QueryRow(ctx, `UPDATE app_user person SET email=$1,email_verified=$2,
-		display_name=$3,last_sign_in=now(),updated_at=now()
-		WHERE issuer=$4 AND subject=$5
+	err = pool.QueryRow(ctx, `UPDATE app_user person SET email=$1,display_name=$2
+		WHERE issuer=$3 AND subject=$4
 		  AND EXISTS (SELECT 1 FROM organization_membership membership
-		              WHERE membership.user_id=person.user_id AND membership.org_id=$6)
-		RETURNING user_id,issuer,subject,email,email_verified,display_name,disabled_at,created_at`,
-		identity.Email, identity.EmailVerified, identity.DisplayName, identity.Issuer, identity.Subject,
-		organization.String()).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email, &user.EmailVerified, &user.DisplayName, &disabled, &user.CreatedAt)
+		              WHERE membership.user_id=person.user_id AND membership.org_id=$5)
+		RETURNING user_id,issuer,subject,email,display_name,disabled_at,created_at`,
+		identity.Email, identity.DisplayName, identity.Issuer, identity.Subject,
+		organization.String()).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email,
+		&user.DisplayName, &disabled, &user.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, nil, ErrLocalCredentialUnknown
 	}

@@ -30,15 +30,13 @@ var (
 
 // User is a person who may sign in.
 type User struct {
-	ID            uuid.UUID
-	Issuer        string
-	Subject       string
-	Email         string
-	EmailVerified bool
-	DisplayName   string
-	DisabledAt    time.Time
-	LastSignIn    time.Time
-	CreatedAt     time.Time
+	ID          uuid.UUID
+	Issuer      string
+	Subject     string
+	Email       string
+	DisplayName string
+	DisabledAt  time.Time
+	CreatedAt   time.Time
 }
 
 // Disabled reports whether this user may sign in to anything.

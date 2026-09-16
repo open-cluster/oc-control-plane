@@ -50,12 +50,9 @@ CREATE TABLE app_user (
     issuer text NOT NULL,
     subject text NOT NULL,
     email text NOT NULL,
-    email_verified boolean DEFAULT false NOT NULL,
     display_name text DEFAULT '' NOT NULL,
     disabled_at timestamptz,
-    last_sign_in timestamptz,
     created_at timestamptz DEFAULT now() NOT NULL,
-    updated_at timestamptz NOT NULL,
     CONSTRAINT app_user_identity_is_the_issuer_and_subject UNIQUE (issuer, subject),
     CONSTRAINT app_user_pkey PRIMARY KEY (user_id)
 );
@@ -338,8 +335,7 @@ CREATE TABLE investigation_tool_run (
 CREATE TABLE local_password (
     user_id uuid NOT NULL,
     password_hash text NOT NULL,
-    password_changed_at timestamptz DEFAULT now() NOT NULL,
-    updated_at timestamptz NOT NULL,
+    changed_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT local_password_password_hash_check CHECK ((length(password_hash) >= 32) AND (length(password_hash) <= 512)),
     CONSTRAINT local_password_pkey PRIMARY KEY (user_id)
 );
@@ -353,7 +349,8 @@ CREATE TABLE session (
     expires_at timestamptz NOT NULL,
     last_seen_at timestamptz DEFAULT now() NOT NULL,
     revoked_at timestamptz,
-    remote_addr text DEFAULT '' NOT NULL,
+    client_user_agent text,
+    remote_addr text,
     CONSTRAINT session_credential_digest_check CHECK (length(credential_digest) = 32),
     CONSTRAINT session_expires_after_it_was_issued CHECK (expires_at > issued_at),
     CONSTRAINT session_credential_digest_is_unique UNIQUE (credential_digest),

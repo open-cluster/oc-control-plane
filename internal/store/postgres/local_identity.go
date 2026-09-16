@@ -58,26 +58,28 @@ func (p *Database) BootstrapLocalUser(
 	var user User
 	if err = transaction.QueryRow(ctx, `
 		INSERT INTO app_user
-			(user_id, issuer, subject, email, email_verified, display_name, last_sign_in, updated_at)
-		VALUES ($1, $2, $3, $3, TRUE, $4, now(), now())
-		RETURNING user_id, issuer, subject, email, email_verified, display_name, created_at`,
+			(user_id, issuer, subject, email, display_name)
+		VALUES ($1, $2, $3, $3, $4)
+		RETURNING user_id, issuer, subject, email, display_name, created_at`,
 		uuid.New(), LocalIssuer, normalized, displayName).Scan(
-		&user.ID, &user.Issuer, &user.Subject, &user.Email, &user.EmailVerified,
+		&user.ID, &user.Issuer, &user.Subject, &user.Email,
 		&user.DisplayName, &user.CreatedAt); err != nil {
 		return User{}, fmt.Errorf("creating the first local user: %w", err)
 	}
 	if _, err = transaction.Exec(ctx,
-		`INSERT INTO local_password (user_id, password_hash, updated_at) VALUES ($1, $2, now())`,
+		`INSERT INTO local_password (user_id, password_hash) VALUES ($1, $2)`,
 		user.ID, passwordHash); err != nil {
 		return User{}, fmt.Errorf("storing the first local password: %w", err)
 	}
 	issued.UserID = user.ID
 	if _, err = transaction.Exec(ctx, `
 		INSERT INTO session (session_id, credential_digest, user_id, org_id,
-		                              issued_at, expires_at, last_seen_at, remote_addr)
-		VALUES ($1, $2, $3, NULL, $4, $5, $4, $6)`,
+		                              issued_at, expires_at, last_seen_at,
+		                              client_user_agent, remote_addr)
+		VALUES ($1, $2, $3, NULL, $4, $5, $4, $6, $7)`,
 		issued.ID, digest, issued.UserID, issued.IssuedAt, issued.ExpiresAt,
-		truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength)); err != nil {
+		nullableText(truncateTo(issued.ClientUserAgent, session.MaxClientUserAgentLength)),
+		nullableText(truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength))); err != nil {
 		return User{}, fmt.Errorf("issuing the bootstrap session: %w", err)
 	}
 	if err = writeEvent(ctx, transaction, audit.Event{
@@ -104,7 +106,7 @@ func (p *Database) LocalIdentityByEmail(
 	var disabled *time.Time
 	err = pool.QueryRow(ctx, `
 		SELECT person.user_id, person.issuer, person.subject, person.email,
-		       person.email_verified, person.display_name, person.disabled_at,
+		       person.display_name, person.disabled_at,
 		       person.created_at, credential.password_hash
 		  FROM app_user person
 		  JOIN local_password credential ON credential.user_id = person.user_id
@@ -113,7 +115,7 @@ func (p *Database) LocalIdentityByEmail(
 		   AND membership.org_id = $3`,
 		LocalIssuer, strings.TrimSpace(email), organization.String()).Scan(
 		&found.User.ID, &found.User.Issuer, &found.User.Subject, &found.User.Email,
-		&found.User.EmailVerified, &found.User.DisplayName, &disabled,
+		&found.User.DisplayName, &disabled,
 		&found.User.CreatedAt, &found.PasswordHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LocalIdentity{}, ErrLocalCredentialUnknown
@@ -141,7 +143,7 @@ func (p *Database) RehashLocalPassword(
 		return err
 	}
 	_, err = pool.Exec(ctx, `
-		UPDATE local_password SET password_hash = $1, updated_at = now()
+		UPDATE local_password SET password_hash = $1, changed_at = now()
 		 WHERE user_id = $2 AND password_hash = $3
 		   AND EXISTS (SELECT 1 FROM organization_membership
 		                WHERE org_id = $4 AND user_id = $2)`,
@@ -162,8 +164,8 @@ func (p *Database) CreateLocalMember(
 			userID := uuid.New()
 			if _, err := transaction.Exec(ctx, `
 				INSERT INTO app_user
-					(user_id, issuer, subject, email, email_verified, display_name, updated_at)
-				VALUES ($1, $2, $3, $3, TRUE, $4, now())`,
+					(user_id, issuer, subject, email, display_name)
+				VALUES ($1, $2, $3, $3, $4)`,
 				userID, LocalIssuer, normalized, displayName); err != nil {
 				if isUniqueViolation(err, "app_user_identity_is_the_issuer_and_subject") {
 					return Member{}, audit.Target{}, nil, ErrLocalAccountExists
@@ -171,7 +173,7 @@ func (p *Database) CreateLocalMember(
 				return Member{}, audit.Target{}, nil, fmt.Errorf("creating a local member: %w", err)
 			}
 			if _, err := transaction.Exec(ctx, `
-				INSERT INTO local_password (user_id, password_hash, updated_at) VALUES ($1, $2, now())`,
+				INSERT INTO local_password (user_id, password_hash) VALUES ($1, $2)`,
 				userID, passwordHash); err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("storing a local password: %w", err)
 			}

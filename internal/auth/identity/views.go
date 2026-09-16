@@ -134,12 +134,13 @@ func memberViewOf(member storage.Member) memberView {
 }
 
 type liveSessionView struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"userId"`
-	IssuedAt   time.Time `json:"issuedAt"`
-	ExpiresAt  time.Time `json:"expiresAt"`
-	LastSeenAt time.Time `json:"lastSeenAt"`
-	RemoteAddr string    `json:"remoteAddr"`
+	ID              string    `json:"id"`
+	UserID          string    `json:"userId"`
+	IssuedAt        time.Time `json:"issuedAt"`
+	ExpiresAt       time.Time `json:"expiresAt"`
+	LastSeenAt      time.Time `json:"lastSeenAt"`
+	ClientUserAgent string    `json:"clientUserAgent,omitempty"`
+	RemoteAddr      string    `json:"remoteAddr,omitempty"`
 }
 
 type liveSessionListView struct {
@@ -149,12 +150,13 @@ type liveSessionListView struct {
 
 func liveSessionViewOf(live session.Session) liveSessionView {
 	return liveSessionView{
-		ID:         live.ID.String(),
-		UserID:     live.UserID.String(),
-		IssuedAt:   live.IssuedAt,
-		ExpiresAt:  live.ExpiresAt,
-		LastSeenAt: live.LastSeenAt,
-		RemoteAddr: live.RemoteAddr,
+		ID:              live.ID.String(),
+		UserID:          live.UserID.String(),
+		IssuedAt:        live.IssuedAt,
+		ExpiresAt:       live.ExpiresAt,
+		LastSeenAt:      live.LastSeenAt,
+		ClientUserAgent: live.ClientUserAgent,
+		RemoteAddr:      live.RemoteAddr,
 	}
 }
 

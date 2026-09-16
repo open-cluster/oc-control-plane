@@ -105,10 +105,13 @@ func issueSessionIn(
 ) error {
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO session (session_id, credential_digest, user_id, org_id,
-		                              issued_at, expires_at, last_seen_at, remote_addr)
-		VALUES ($1, $2, $3, $4, $5, $6, $5, $7)`,
+		                              issued_at, expires_at, last_seen_at,
+		                              client_user_agent, remote_addr)
+		VALUES ($1, $2, $3, $4, $5, $6, $5, $7, $8)`,
 		issued.ID, digest, issued.UserID, organization.String(), issued.IssuedAt,
-		issued.ExpiresAt, truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength)); err != nil {
+		issued.ExpiresAt,
+		nullableText(truncateTo(issued.ClientUserAgent, session.MaxClientUserAgentLength)),
+		nullableText(truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength))); err != nil {
 		return fmt.Errorf("issuing a session: %w", err)
 	}
 	if err := writeEvent(ctx, transaction, audit.Event{
@@ -155,12 +158,14 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		)
 		SELECT s.session_id, s.user_id, s.org_id, s.issued_at, s.expires_at,
 		       COALESCE((SELECT last_seen_at FROM touched), s.last_seen_at),
-		       s.revoked_at, s.remote_addr, u.email, u.issuer, u.display_name, u.disabled_at
+		       s.revoked_at, COALESCE(s.client_user_agent, ''), COALESCE(s.remote_addr, ''),
+		       u.email, u.issuer, u.display_name, u.disabled_at
 		FROM session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
 		&organizationID, &found.Session.IssuedAt, &found.Session.ExpiresAt,
-		&found.Session.LastSeenAt, &revoked, &found.Session.RemoteAddr,
+		&found.Session.LastSeenAt, &revoked, &found.Session.ClientUserAgent,
+		&found.Session.RemoteAddr,
 		&found.User.Email, &found.User.Issuer, &found.User.DisplayName, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SignedIn{}, session.ErrUnknown
@@ -262,7 +267,7 @@ func (p *Database) ListSessions(
 
 	rows, err := p.pool.Query(ctx, `
 		SELECT session_id, user_id, issued_at, expires_at, last_seen_at, revoked_at,
-		       remote_addr
+		       COALESCE(client_user_agent, ''), COALESCE(remote_addr, '')
 		  FROM session
 		 WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
 		   AND ($2::timestamptz IS NULL OR (last_seen_at, session_id) < ($2, $3))
@@ -280,7 +285,7 @@ func (p *Database) ListSessions(
 			revoked *time.Time
 		)
 		if err := rows.Scan(&live.ID, &live.UserID, &live.IssuedAt, &live.ExpiresAt,
-			&live.LastSeenAt, &revoked, &live.RemoteAddr); err != nil {
+			&live.LastSeenAt, &revoked, &live.ClientUserAgent, &live.RemoteAddr); err != nil {
 			return SessionList{}, fmt.Errorf("scanning a session: %w", err)
 		}
 		if revoked != nil {
