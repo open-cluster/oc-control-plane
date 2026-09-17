@@ -36,10 +36,10 @@ type Store interface {
 	FailInvestigation(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, string, investigation.Usage) error
 }
 
-// Agent runs investigations against one validated model deployment.
+// Agent runs investigations against one validated model configuration.
 type Agent struct {
-	model            Model
-	deployment       Deployment
+	completer        Completer
+	modelConfig      ModelConfig
 	telemetry        *Telemetry
 	Store            Store
 	Catalog          integrations.Catalog
@@ -50,13 +50,13 @@ type Agent struct {
 	MaxTurns         int
 }
 
-// NewAgent binds one validated model deployment to the Investigation runtime.
-func NewAgent(deployment Deployment, model Model) (*Agent, error) {
-	if deployment.ContextWindowTokens <= 0 || deployment.MaxOutputTokens <= 0 ||
-		int64(deployment.ContextWindowTokens) <= deployment.MaxOutputTokens {
-		return nil, fmt.Errorf("the model deployment must have valid context and output limits")
+// NewAgent binds one validated model configuration to the Investigation runtime.
+func NewAgent(config ModelConfig, completer Completer) (*Agent, error) {
+	if config.ContextWindowTokens <= 0 || config.MaxOutputTokens <= 0 ||
+		int64(config.ContextWindowTokens) <= config.MaxOutputTokens {
+		return nil, fmt.Errorf("model configuration must have valid context and output limits")
 	}
-	return &Agent{model: model, deployment: deployment}, nil
+	return &Agent{completer: completer, modelConfig: config}, nil
 }
 
 func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
@@ -218,7 +218,7 @@ func (r *Agent) Run(
 		state.maxTurns = defaultMaxTurns
 	}
 	if len(messages) > 0 {
-		inputCapacity := r.deployment.ContextWindowTokens - int(r.deployment.MaxOutputTokens)
+		inputCapacity := r.modelConfig.ContextWindowTokens - int(r.modelConfig.MaxOutputTokens)
 		inputTokens, err := r.initialInputTokens(oriented)
 		if err != nil {
 			return failRun("the assigned input budget could not be established", investigation.Usage{})
@@ -314,7 +314,7 @@ func (r *Agent) Run(
 		for attempt := range 2 {
 			prompt, fits, budgetErr := r.budgetPrompt(modelPrompt(r, state, forced), forced)
 			if budgetErr != nil {
-				err = Failed(OutcomeRejected, r.deployment.Provider, r.deployment.Model,
+				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model,
 					"the provider request could not be budgeted: "+budgetErr.Error())
 				break
 			}
@@ -331,11 +331,11 @@ func (r *Agent) Run(
 				if budgetErr != nil {
 					detail = "the provider request could not be budgeted: " + budgetErr.Error()
 				}
-				err = Failed(OutcomeRejected, r.deployment.Provider, r.deployment.Model, detail)
+				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model, detail)
 				break
 			}
 			completion, completeErr := r.telemetry.complete(
-				moveCtx, r.model, r.deployment, prompt)
+				moveCtx, r.completer, r.modelConfig, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
 			if completeErr != nil {
 				if attempt == 0 && !forced && errors.Is(completeErr, ErrContextWindow) {
@@ -352,7 +352,7 @@ func (r *Agent) Run(
 
 			switch completion.Stop {
 			case StopRefused:
-				err = Failed(OutcomeRefused, r.deployment.Provider,
+				err = Failed(OutcomeRefused, r.modelConfig.Provider,
 					completion.Model, "the provider's safeguards declined the investigation")
 			case StopTruncated:
 				continue
@@ -376,7 +376,7 @@ func (r *Agent) Run(
 					if attempt == 0 {
 						continue
 					}
-					err = Failed(OutcomeMalformed, r.deployment.Provider,
+					err = Failed(OutcomeMalformed, r.modelConfig.Provider,
 						completion.Model, decodeErr.Error())
 					break
 				}
@@ -396,12 +396,12 @@ func (r *Agent) Run(
 				forced = true
 				continue
 			}
-			err = Failed(OutcomeMalformed, r.deployment.Provider, r.deployment.Model,
+			err = Failed(OutcomeMalformed, r.modelConfig.Provider, r.modelConfig.Model,
 				"the answer was truncated or carried no usable call twice")
 		}
 		done()
 		if err == nil && move.Conclusion == nil && len(move.Calls) == 0 {
-			err = Failed(OutcomeMalformed, r.deployment.Provider, r.deployment.Model,
+			err = Failed(OutcomeMalformed, r.modelConfig.Provider, r.modelConfig.Model,
 				"the answer was truncated or carried no usable call twice")
 		}
 		if err != nil {
@@ -555,7 +555,7 @@ func (r *Agent) Run(
 // modelPrompt renders the immutable orientation and the transcript Agent.Run owns.
 func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
 	prompt := Prompt{
-		Model: r.deployment.Model,
+		Model: r.modelConfig.Model,
 		System: []Block{
 			{Text: safetyPolicy, Cache: true},
 			{Text: state.task, Cache: true},
@@ -563,8 +563,8 @@ func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
 		Content:         []Block{{Text: state.orientationText, Cache: true}},
 		Tools:           state.tools,
 		Turns:           state.transcript,
-		MaxOutputTokens: r.deployment.MaxOutputTokens,
-		Effort:          r.deployment.Effort,
+		MaxOutputTokens: r.modelConfig.MaxOutputTokens,
+		Effort:          r.modelConfig.Effort,
 	}
 	if state.opening != "" {
 		prompt.Content = append(prompt.Content, Block{Text: state.opening})

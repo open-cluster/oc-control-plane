@@ -88,7 +88,7 @@ const cachedUsage = `{"prompt_tokens":5000,"completion_tokens":300,"total_tokens
 func providerUnder(t *testing.T, responses ...*http.Response) (*zai.Provider, *transport) {
 	t.Helper()
 	round := &transport{responses: responses}
-	provider, err := zai.New(reasoning.Deployment{
+	provider, err := zai.New(reasoning.ModelConfig{
 		Provider:        zai.Name,
 		Model:           "glm-4.7",
 		Effort:          reasoning.EffortHigh,

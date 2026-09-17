@@ -8,11 +8,11 @@ var modelCapabilities = map[string]reasoning.ModelCapabilities{
 	"claude-haiku-4-5-20251001": {ContextWindowTokens: 200_000, MaxOutputTokens: 64_000},
 }
 
-// ResolveDeployment applies the limits published for an exact Anthropic model identifier.
-func ResolveDeployment(deployment reasoning.Deployment) (reasoning.Deployment, error) {
-	capabilities, known := modelCapabilities[deployment.Model]
+// ResolveModelConfig applies the limits published for an exact Anthropic model identifier.
+func ResolveModelConfig(config reasoning.ModelConfig) (reasoning.ModelConfig, error) {
+	capabilities, known := modelCapabilities[config.Model]
 	if !known {
-		return reasoning.ResolveModelCapabilities(deployment, nil)
+		return reasoning.ResolveModelCapabilities(config, nil)
 	}
-	return reasoning.ResolveModelCapabilities(deployment, &capabilities)
+	return reasoning.ResolveModelCapabilities(config, &capabilities)
 }

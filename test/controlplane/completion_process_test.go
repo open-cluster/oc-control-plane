@@ -34,7 +34,7 @@ func TestCompletionProcessHelper(t *testing.T) {
 	if err := json.Unmarshal(contents, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.Run(context.Background(), cfg, os.Stderr, app.Options{Model: concludingModel{}}); err != nil {
+	if err := app.Run(context.Background(), cfg, os.Stderr, app.Options{Completer: concludingModel{}}); err != nil {
 		t.Fatal(err)
 	}
 }

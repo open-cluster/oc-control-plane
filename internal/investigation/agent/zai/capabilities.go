@@ -6,11 +6,11 @@ var modelCapabilities = map[string]reasoning.ModelCapabilities{
 	"glm-4.7": {ContextWindowTokens: 204_800, MaxOutputTokens: 131_072},
 }
 
-// ResolveDeployment applies the limits published for an exact Z.AI model identifier.
-func ResolveDeployment(deployment reasoning.Deployment) (reasoning.Deployment, error) {
-	capabilities, known := modelCapabilities[deployment.Model]
+// ResolveModelConfig applies the limits published for an exact Z.AI model identifier.
+func ResolveModelConfig(config reasoning.ModelConfig) (reasoning.ModelConfig, error) {
+	capabilities, known := modelCapabilities[config.Model]
 	if !known {
-		return reasoning.ResolveModelCapabilities(deployment, nil)
+		return reasoning.ResolveModelCapabilities(config, nil)
 	}
-	return reasoning.ResolveModelCapabilities(deployment, &capabilities)
+	return reasoning.ResolveModelCapabilities(config, &capabilities)
 }

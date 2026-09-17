@@ -18,7 +18,7 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
-	}, app.Options{Model: concludingModel{}})
+	}, app.Options{Completer: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	id, first := plane.openConversation(t, "paginated conversation", "first question")
 	plane.awaitInvestigation(t, first)

@@ -65,7 +65,7 @@ func (o Outcome) sentinel() error {
 	}
 }
 
-// Failure is one named failure with the deployment it happened on.
+// Failure is one named failure with the provider and model it happened on.
 type Failure struct {
 	Outcome  Outcome
 	Provider string

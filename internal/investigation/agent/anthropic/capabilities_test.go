@@ -8,8 +8,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
 )
 
-func TestResolveDeploymentUsesExactModelCapabilities(t *testing.T) {
-	resolved, err := anthropic.ResolveDeployment(reasoning.Deployment{Model: "claude-sonnet-5"})
+func TestResolveModelConfigUsesExactModelCapabilities(t *testing.T) {
+	resolved, err := anthropic.ResolveModelConfig(reasoning.ModelConfig{Model: "claude-sonnet-5"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,15 +18,15 @@ func TestResolveDeploymentUsesExactModelCapabilities(t *testing.T) {
 	}
 }
 
-func TestResolveDeploymentRequiresBothLimitsForACustomModel(t *testing.T) {
-	_, err := anthropic.ResolveDeployment(reasoning.Deployment{
+func TestResolveModelConfigRequiresBothLimitsForACustomModel(t *testing.T) {
+	_, err := anthropic.ResolveModelConfig(reasoning.ModelConfig{
 		Model: "claude-private", ContextWindowTokens: 300_000,
 	})
 	if err == nil || !strings.Contains(err.Error(), "context and output") {
 		t.Fatalf("error = %v", err)
 	}
 
-	resolved, err := anthropic.ResolveDeployment(reasoning.Deployment{
+	resolved, err := anthropic.ResolveModelConfig(reasoning.ModelConfig{
 		Model: "claude-private", ContextWindowTokens: 300_000, MaxOutputTokens: 48_000,
 	})
 	if err != nil {
@@ -37,11 +37,32 @@ func TestResolveDeploymentRequiresBothLimitsForACustomModel(t *testing.T) {
 	}
 }
 
-func TestResolveDeploymentRefusesLimitAboveKnownModel(t *testing.T) {
-	_, err := anthropic.ResolveDeployment(reasoning.Deployment{
+func TestResolveModelConfigRefusesLimitAboveKnownModel(t *testing.T) {
+	_, err := anthropic.ResolveModelConfig(reasoning.ModelConfig{
 		Model: "claude-sonnet-5", ContextWindowTokens: 1_000_001,
 	})
 	if err == nil || !strings.Contains(err.Error(), "context") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestResolveModelConfigAcceptsConservativeLimits(t *testing.T) {
+	resolved, err := anthropic.ResolveModelConfig(reasoning.ModelConfig{
+		Model: "claude-sonnet-5", ContextWindowTokens: 900_000, MaxOutputTokens: 64_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ContextWindowTokens != 900_000 || resolved.MaxOutputTokens != 64_000 {
+		t.Fatalf("limits = context %d output %d", resolved.ContextWindowTokens, resolved.MaxOutputTokens)
+	}
+}
+
+func TestResolveModelConfigRequiresContextAboveOutput(t *testing.T) {
+	_, err := anthropic.ResolveModelConfig(reasoning.ModelConfig{
+		Model: "claude-private", ContextWindowTokens: 64_000, MaxOutputTokens: 64_000,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must exceed") {
 		t.Fatalf("error = %v", err)
 	}
 }
