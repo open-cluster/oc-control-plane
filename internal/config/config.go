@@ -22,11 +22,11 @@ const (
 )
 
 var SupportedEnvironmentKeys = []string{
-	// ========= Required ENVs =========
+	// Required ENVs
 	EnvDatabaseDSN,
 	EnvDatabaseDSNFile,
 
-	// ========= Optional ENVs =========
+	// Optional ENVs
 	EnvHTTPAddress,
 	EnvOperatorPublicURL,
 	EnvLogLevel,
@@ -67,11 +67,11 @@ var SupportedEnvironmentKeys = []string{
 }
 
 const (
-	// ========= Required ENVs =========
+	// Required ENVs
 	EnvDatabaseDSN     = "OC_DATABASE_DSN"
 	EnvDatabaseDSNFile = "OC_DATABASE_DSN_FILE"
 
-	// ========= Optional ENVs =========
+	// Optional ENVs
 	EnvHTTPAddress       = "OC_SERVER_ADDRESS"
 	EnvOperatorPublicURL = "OC_PUBLIC_URL"
 	EnvLogLevel          = "OC_LOG_LEVEL"
@@ -111,58 +111,61 @@ const (
 	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 )
 
-// Config is the validated process configuration.
 type Config struct {
-	// ========= Server =========
-	LogLevel          slog.Level
-	HTTPAddress       string
-	OperatorPublicURL string
-	DatabaseDSN       string
-	OTLPEndpoint      string
+	LogLevel slog.Level
 
-	// ========= Authentication =========
-	AuthenticationMode string
-	OIDCIssuer         string
-	OIDCClientID       string
-	OIDCClientSecret   string
-	SessionLifetime    time.Duration
-	// Only the digest is retained; the bootstrap token is discarded after loading.
+	// Server
+	HTTPListenAddress  string
+	RelayListenAddress string
+	PublicURL          string
+	OTLPEndpoint       string
+
+	// Database
+	DatabaseDSN string
+
+	// Security
 	OperatorTokenDigest []byte
-	// SealingKey encrypts credentials that must be presented again.
-	SealingKey []byte
+	SealingKey          []byte
 
-	// ========= Relay =========
-	RelayAddress  string
+	// RelaySPKIPins contains accepted control-plane public key pins.
+	// Multiple pins allow key rotation without disconnecting Relays.
 	RelaySPKIPins []string
 
-	// ========= Integrations =========
+	// Authentication
+	AuthMode         string
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+
+	// Integrations
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
-	GitHubAppID        string
-	GitHubAppKey       []byte
 
-	// ========= Model runtime =========
-	ModelProvider            string
-	ModelName                string
-	ModelKey                 string
-	ModelContextWindowTokens int
-	ModelMaxOutputTokens     int64
+	GitHubAppID         string
+	GitHubAppPrivateKey []byte
 
-	// ========= Investigation =========
-	InvestigationWorkers                    int
-	MaxPendingInvestigationsPerOrganization int
+	// AI
+	ModelProvider        string
+	ModelName            string
+	ModelAPIKey          string
+	ModelContextWindow   int
+	ModelMaxOutputTokens int64
+
+	// Runtime
+	InvestigationWorkers     int
+	MaxPendingInvestigations int
+	SessionLifetime          time.Duration
 }
 
-// Load reads configuration through lookup (os.LookupEnv in production) and validates every
-// value, failing on the first problem and naming the offending variable.
+// Load reads and validates the application configuration.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	cfg := Config{
-		HTTPAddress:                             ":8080",
-		AuthenticationMode:                      defaultAuthenticationMode,
-		InvestigationWorkers:                    defaultInvestigationWorkers,
-		MaxPendingInvestigationsPerOrganization: defaultInvestigationMaxPendingPerOrganization,
-		SessionLifetime:                         defaultSessionLifetime,
+		HTTPListenAddress:        ":8080",
+		AuthMode:                 defaultAuthenticationMode,
+		InvestigationWorkers:     defaultInvestigationWorkers,
+		MaxPendingInvestigations: defaultInvestigationMaxPendingPerOrganization,
+		SessionLifetime:          defaultSessionLifetime,
 	}
 
 	var err error
@@ -172,9 +175,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		}
 	}
 	if raw, ok := lookup(EnvHTTPAddress); ok && strings.TrimSpace(raw) != "" {
-		cfg.HTTPAddress = strings.TrimSpace(raw)
+		cfg.HTTPListenAddress = strings.TrimSpace(raw)
 	}
-	if err = validateHostPort(cfg.HTTPAddress); err != nil {
+	if err = validateHostPort(cfg.HTTPListenAddress); err != nil {
 		return Config{}, fmt.Errorf("%s must be a host:port listen address: %w", EnvHTTPAddress, err)
 	}
 	if cfg.DatabaseDSN, err = databaseDSN(lookup); err != nil {
@@ -186,20 +189,20 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.OTLPEndpoint, err = optionalHostPort(lookup, EnvOTLPEndpoint); err != nil {
 		return Config{}, err
 	}
-	if cfg.RelayAddress, err = optionalHostPort(lookup, EnvRelayAddress); err != nil {
+	if cfg.RelayListenAddress, err = optionalHostPort(lookup, EnvRelayAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayAddress); err != nil {
+	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayListenAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.HTTPAddress); err != nil {
+	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.HTTPListenAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.OperatorPublicURL, err = optionalBrowserURL(lookup, EnvOperatorPublicURL); err != nil {
+	if cfg.PublicURL, err = optionalBrowserURL(lookup, EnvOperatorPublicURL); err != nil {
 		return Config{}, err
 	}
-	if cfg.OperatorPublicURL == "" {
-		cfg.OperatorPublicURL = "http://localhost:8080"
+	if cfg.PublicURL == "" {
+		cfg.PublicURL = "http://localhost:8080"
 	}
 	if err = authentication(lookup, &cfg); err != nil {
 		return Config{}, err
@@ -207,7 +210,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.SealingKey, err = sealingKey(lookup); err != nil {
 		return Config{}, err
 	}
-	if cfg.GitHubAppID, cfg.GitHubAppKey, err = gitHubApp(lookup); err != nil {
+	if cfg.GitHubAppID, cfg.GitHubAppPrivateKey, err = gitHubApp(lookup); err != nil {
 		return Config{}, err
 	}
 	if err = slackApp(lookup, &cfg); err != nil {
@@ -217,7 +220,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 
-	if cfg.ModelContextWindowTokens, err = positiveInteger(lookup,
+	if cfg.ModelContextWindow, err = positiveInteger(lookup,
 		EnvModelContextWindowSize,
 		0); err != nil {
 		return Config{}, err
@@ -232,7 +235,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		defaultInvestigationWorkers); err != nil {
 		return Config{}, err
 	}
-	if cfg.MaxPendingInvestigationsPerOrganization, err = positiveInteger(lookup,
+	if cfg.MaxPendingInvestigations, err = positiveInteger(lookup,
 		EnvInvestigationMaxPendingPerOrganization,
 		defaultInvestigationMaxPendingPerOrganization); err != nil {
 		return Config{}, err
@@ -286,7 +289,7 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 	if mode != "local" && mode != "local+oidc" {
 		return fmt.Errorf("%s must be local or oidc", EnvAuthenticationMode)
 	}
-	cfg.AuthenticationMode = mode
+	cfg.AuthMode = mode
 	issuer, _ := lookup(EnvOIDCIssuer)
 	clientID, _ := lookup(EnvOIDCClientID)
 	secret, err := readSecretText(lookup, EnvOIDCClientSecretFile)
@@ -372,7 +375,7 @@ func modelConfiguration(lookup func(string) (string, bool), cfg *Config) error {
 		return fmt.Errorf("%s or %s is required when %s is set",
 			EnvModelKey, EnvModelKeyFile, EnvModelProvider)
 	}
-	cfg.ModelKey = key
+	cfg.ModelAPIKey = key
 	return nil
 }
 

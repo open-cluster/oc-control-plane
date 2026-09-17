@@ -42,7 +42,7 @@ func startWebhookJob(ctx context.Context, group *errgroup.Group, process assembl
 		Handlers: webhooks.JobHandlers{
 			storage.WebhookJobAlert: alertwork.JobHandler{
 				Database: process.database, WindowLead: defaultInvestigationWindowLead,
-				MaxWaitingTurns: process.config.MaxPendingInvestigationsPerOrganization,
+				MaxWaitingTurns: process.config.MaxPendingInvestigations,
 			},
 			storage.WebhookJobSlack: slackwork.JobHandler{
 				Jobs: process.database,
@@ -51,7 +51,7 @@ func startWebhookJob(ctx context.Context, group *errgroup.Group, process assembl
 					Client: slackClient, Sealer: process.sealer,
 				},
 				WindowLead:      defaultInvestigationWindowLead,
-				MaxWaitingTurns: process.config.MaxPendingInvestigationsPerOrganization,
+				MaxWaitingTurns: process.config.MaxPendingInvestigations,
 				Logger:          process.logger,
 			},
 		},
@@ -107,7 +107,7 @@ func newSlackAgent(cfg config.Config) *webhooks.SlackAgent {
 		SigningSecret:   cfg.SlackSigningSecret,
 		Enabled:         func(tenancy.Organization) bool { return true },
 		WindowLead:      defaultInvestigationWindowLead,
-		MaxWaitingTurns: cfg.MaxPendingInvestigationsPerOrganization,
+		MaxWaitingTurns: cfg.MaxPendingInvestigations,
 	}
 }
 
@@ -125,7 +125,7 @@ func startSlackReplyWorker(
 		Sealer:     process.sealer,
 		Logger:     process.logger,
 		Counters:   slack.NewInstruments(process.logger),
-		ConsoleURL: process.config.OperatorPublicURL,
+		ConsoleURL: process.config.PublicURL,
 	}
 
 	group.Go(func() error {

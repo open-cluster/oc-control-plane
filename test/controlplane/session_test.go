@@ -37,7 +37,7 @@ func TestRelaySession(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -341,7 +341,7 @@ func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -396,7 +396,7 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -482,7 +482,7 @@ func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -547,7 +547,7 @@ func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -639,7 +639,7 @@ func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -693,7 +693,7 @@ func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
@@ -727,7 +727,7 @@ func TestRelaySessionRefusesUnprovenIdentity(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})

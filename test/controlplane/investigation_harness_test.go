@@ -43,9 +43,9 @@ func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *ve
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	operatorAddress := freeAddress(t)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPListenAddress = operatorAddress
 		cfg.InvestigationWorkers = 1
-		cfg.MaxPendingInvestigationsPerOrganization = 1
+		cfg.MaxPendingInvestigations = 1
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 	}, app.Options{Agent: agent, SlackAPIURL: vendor.URL})
