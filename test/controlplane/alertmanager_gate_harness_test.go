@@ -69,7 +69,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 		cfg.ModelName = "glm-4.7"
 		cfg.ModelKey = "scripted-model-key"
 		dsn = cfg.DatabaseDSN
-	}, app.Options{Model: concludingModel{prompts: prompts}})
+	}, app.Options{Completer: concludingModel{prompts: prompts}})
 
 	surface := &integrationPlane{
 		controlPlane: plane, operator: operatorAddress, intake: intakeAddress, dsn: dsn,

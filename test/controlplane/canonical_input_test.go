@@ -19,7 +19,7 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
-	}, app.Options{Model: concludingModel{prompts: prompts}})
+	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	request := strings.Repeat("context ", 300) + "Use the corrected region eu-west-2 and exclude eu-central-1."
 	_, turn := plane.openConversation(t, "complete request", request)
@@ -48,7 +48,7 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
 		cfg.ModelContextWindowTokens = 33000
 		cfg.ModelMaxOutputTokens = 32000
-	}, app.Options{Model: concludingModel{prompts: prompts}})
+	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	_, turn := plane.openConversation(t, "oversized input", strings.Repeat("界", 8192))
 	final := plane.awaitInvestigation(t, turn)

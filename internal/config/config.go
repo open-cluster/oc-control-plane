@@ -149,7 +149,7 @@ type Config struct {
 	GitHubAppID  string
 	GitHubAppKey []byte
 
-	// The model deployment. ModelProvider empty means this deployment cannot investigate,
+	// The model configuration. ModelProvider empty means this deployment cannot investigate,
 	// and opening one is refused with that reason. The credential travels as a file's
 	// contents, never as an environment value.
 	ModelProvider            string
@@ -223,7 +223,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = slackApp(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
-	if err = modelDeployment(lookup, &cfg); err != nil {
+	if err = modelConfiguration(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 
@@ -356,9 +356,9 @@ func validateHostPort(address string) error {
 	return nil
 }
 
-// modelDeployment reads the model settings. A provider set demands a model name and a
-// key: half a deployment would serve an investigations surface that fails on first use
-func modelDeployment(lookup func(string) (string, bool), cfg *Config) error {
+// modelConfiguration reads the model settings. A provider set demands a model name and a
+// key: half a configuration would serve an investigations surface that fails on first use.
+func modelConfiguration(lookup func(string) (string, bool), cfg *Config) error {
 	provider, _ := lookup(EnvModelProvider)
 	cfg.ModelProvider = strings.TrimSpace(provider)
 	name, _ := lookup(EnvModelName)

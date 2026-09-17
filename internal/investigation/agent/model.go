@@ -26,9 +26,9 @@ func (Secret) LogValue() any                { return redacted }
 func (s Secret) Reveal() string             { return string(s) }
 func (s Secret) Empty() bool                { return strings.TrimSpace(string(s)) == "" }
 
-// Deployment is one configured provider, model and the bounds it runs under.
-type Deployment struct {
-	// Provider names the adapter that serves this deployment.
+// ModelConfig names one provider, model, and the bounds it runs under.
+type ModelConfig struct {
+	// Provider names the adapter that serves this model.
 	Provider string
 	Model    string
 	// Effort is how hard to think, the primary resource and latency lever.
@@ -38,7 +38,7 @@ type Deployment struct {
 	// MaxOutputTokens bounds one answer. It is set generously where thinking and answer share the
 	// bound, because a value sized around the answer alone truncates mid-thought.
 	MaxOutputTokens int64
-	// BaseURL overrides where the provider is reached. It is also the ONLY host this deployment
+	// BaseURL overrides where the provider is reached. It is also the ONLY host this model
 	// may reach: the allowed host is derived from configuration rather than from anything a
 	// response contains, so a redirect cannot move where the credential is sent.
 	BaseURL string
@@ -58,7 +58,7 @@ const (
 )
 
 // WithDefaults fills what an operator did not name. It never loosens what they did.
-func (d Deployment) WithDefaults() Deployment {
+func (d ModelConfig) WithDefaults() ModelConfig {
 	if d.Effort == "" {
 		d.Effort = EffortHigh
 	}
@@ -71,20 +71,20 @@ func (d Deployment) WithDefaults() Deployment {
 	return d
 }
 
-// Validate refuses a deployment that could not work, at startup, where the person who chose the
+// Validate refuses model configuration that could not work, at startup, where the person who chose the
 // values is still the person reading the error. The alternative is discovering it on the first
 // round at 03:00, by which time nobody remembers configuring it.
-func (d Deployment) Validate() error {
+func (d ModelConfig) Validate() error {
 	switch {
 	case strings.TrimSpace(d.Provider) == "":
-		return fmt.Errorf("a model deployment must name a provider")
+		return fmt.Errorf("model configuration must name a provider")
 	case strings.TrimSpace(d.Model) == "":
-		return fmt.Errorf("the %s deployment must name an exact model identifier", d.Provider)
+		return fmt.Errorf("the %s provider must name an exact model identifier", d.Provider)
 	case !d.Effort.Valid():
-		return fmt.Errorf("the %s deployment names effort %q, which is not one of low, medium, "+
+		return fmt.Errorf("the %s provider names effort %q, which is not one of low, medium, "+
 			"high, xhigh or max", d.Provider, d.Effort)
 	case d.Credential.Empty():
-		return fmt.Errorf("the %s deployment has no credential; it is read from a file path so "+
+		return fmt.Errorf("the %s provider has no credential; it is read from a file path so "+
 			"that it cannot leak through a process listing", d.Provider)
 	}
 	if d.BaseURL != "" {
@@ -97,15 +97,15 @@ func (d Deployment) Validate() error {
 		if err != nil || parsed.Host == "" ||
 			(parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback)) {
 			return fmt.Errorf(
-				"the %s deployment names a base url that is not an https host or local "+
+				"the %s provider names a base url that is not an https host or local "+
 					"loopback; the adapter may reach that host and nothing else", d.Provider)
 		}
 	}
 	return nil
 }
 
-// String renders a deployment for a log line. The credential is a Secret, so it cannot appear here.
-func (d Deployment) String() string {
+// String renders model configuration for a log line. The credential is a Secret, so it cannot appear here.
+func (d ModelConfig) String() string {
 	return fmt.Sprintf("%s/%s effort=%s context=%d max_output=%d", d.Provider, d.Model, d.Effort,
 		d.ContextWindowTokens, d.MaxOutputTokens)
 }
@@ -119,39 +119,39 @@ type ModelCapabilities struct {
 // ResolveModelCapabilities applies optional operator overrides to an exact provider capability.
 // A nil capability represents a custom model and therefore requires both limits explicitly.
 func ResolveModelCapabilities(
-	deployment Deployment, published *ModelCapabilities,
-) (Deployment, error) {
+	config ModelConfig, published *ModelCapabilities,
+) (ModelConfig, error) {
 	if published == nil {
-		if deployment.ContextWindowTokens <= 0 || deployment.MaxOutputTokens <= 0 {
-			return Deployment{}, fmt.Errorf("the custom model %q requires explicit context and output limits",
-				deployment.Model)
+		if config.ContextWindowTokens <= 0 || config.MaxOutputTokens <= 0 {
+			return ModelConfig{}, fmt.Errorf("the custom model %q requires explicit context and output limits",
+				config.Model)
 		}
 	} else {
-		if deployment.ContextWindowTokens <= 0 {
-			deployment.ContextWindowTokens = published.ContextWindowTokens
-		} else if deployment.ContextWindowTokens > published.ContextWindowTokens {
-			return Deployment{}, fmt.Errorf("the context limit %d exceeds model %q's published limit %d",
-				deployment.ContextWindowTokens, deployment.Model, published.ContextWindowTokens)
+		if config.ContextWindowTokens <= 0 {
+			config.ContextWindowTokens = published.ContextWindowTokens
+		} else if config.ContextWindowTokens > published.ContextWindowTokens {
+			return ModelConfig{}, fmt.Errorf("the context limit %d exceeds model %q's published limit %d",
+				config.ContextWindowTokens, config.Model, published.ContextWindowTokens)
 		}
-		if deployment.MaxOutputTokens <= 0 {
-			deployment.MaxOutputTokens = published.MaxOutputTokens
-		} else if deployment.MaxOutputTokens > published.MaxOutputTokens {
-			return Deployment{}, fmt.Errorf("the output limit %d exceeds model %q's published limit %d",
-				deployment.MaxOutputTokens, deployment.Model, published.MaxOutputTokens)
+		if config.MaxOutputTokens <= 0 {
+			config.MaxOutputTokens = published.MaxOutputTokens
+		} else if config.MaxOutputTokens > published.MaxOutputTokens {
+			return ModelConfig{}, fmt.Errorf("the output limit %d exceeds model %q's published limit %d",
+				config.MaxOutputTokens, config.Model, published.MaxOutputTokens)
 		}
 	}
-	if int64(deployment.ContextWindowTokens) <= deployment.MaxOutputTokens {
-		return Deployment{}, fmt.Errorf("model %q's context limit must exceed its output limit", deployment.Model)
+	if int64(config.ContextWindowTokens) <= config.MaxOutputTokens {
+		return ModelConfig{}, fmt.Errorf("model %q's context limit must exceed its output limit", config.Model)
 	}
-	return deployment, nil
+	return config, nil
 }
 
-// Model performs one provider completion.
+// Completer performs one provider completion.
 //
 // It is deliberately small. A provider does not hold a conversation, manage an investigation,
 // decide when to stop or interpret evidence: it is handed a rendered prompt and a declared output
 // schema, and returns a document.
-type Model interface {
+type Completer interface {
 	// Complete asks for one document.
 	//
 	// The returned Completion is populated even when the error is non-nil, because a refused or

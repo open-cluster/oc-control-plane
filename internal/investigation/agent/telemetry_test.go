@@ -36,7 +36,7 @@ func TestModelCallTelemetryKeepsOperationsSignalsWithoutBillingState(t *testing.
 	}}
 	telemetry := NewTelemetry(slog.New(slog.DiscardHandler))
 	if _, err := telemetry.complete(context.Background(), model,
-		Deployment{Provider: "anthropic", Model: "configured-model"}, Prompt{}); err != nil {
+		ModelConfig{Provider: "anthropic", Model: "configured-model"}, Prompt{}); err != nil {
 		t.Fatal(err)
 	}
 
