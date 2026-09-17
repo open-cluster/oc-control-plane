@@ -19,6 +19,8 @@ import (
 // Name is how this provider is written in configuration and telemetry.
 const Name = "anthropic"
 
+const maxAttempts = 3
+
 // Provider is one configured Anthropic deployment.
 type Provider struct {
 	client sdk.Client
@@ -146,7 +148,7 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 		// One attempt plus the retries that make up the rest. Retrying is what turns a rate limit
 		// into an answer rather than an outage, and bounding it is what keeps the wall clock a
 		// single call can consume inside the round's deadline.
-		option.WithMaxRetries(config.MaxAttempts - 1),
+		option.WithMaxRetries(maxAttempts - 1),
 		option.WithRequestTimeout(config.RequestTimeout),
 	}
 	if config.BaseURL != "" {

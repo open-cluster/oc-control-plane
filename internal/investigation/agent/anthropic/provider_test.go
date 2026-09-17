@@ -135,7 +135,6 @@ func providerUnder(t *testing.T, responses ...*http.Response) (*anthropic.Provid
 		Effort:          reasoning.EffortHigh,
 		Credential:      reasoning.Secret("sk-test-credential"),
 		MaxOutputTokens: 32_000,
-		MaxAttempts:     2,
 		RequestTimeout:  5 * time.Second,
 	}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
 	if err != nil {
@@ -308,12 +307,22 @@ func TestComplete_RateLimitingFollowedBySuccessReturnsTheAnswer(t *testing.T) {
 }
 
 func TestComplete_RateLimitingThroughoutBecomesAnOutage(t *testing.T) {
-	provider, _ := providerUnder(t,
-		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`))
+	responses := []*http.Response{
+		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
+		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
+		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
+	}
+	for _, response := range responses {
+		response.Header.Set("Retry-After", "0")
+	}
+	provider, round := providerUnder(t, responses...)
 
 	_, err := provider.Complete(context.Background(), promptFixture())
 	if !errors.Is(err, reasoning.ErrOutage) {
 		t.Fatalf("got %v, want rate limiting past the retry budget to be an outage", err)
+	}
+	if calls := round.callCount(); calls != 3 {
+		t.Fatalf("provider calls = %d, want 3 total attempts", calls)
 	}
 }
 
@@ -389,7 +398,7 @@ func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.
 	provider, err := anthropic.New(reasoning.ModelConfig{
 		Provider: anthropic.Name, Model: "claude-haiku-4-5",
 		Effort: reasoning.EffortMedium, Credential: reasoning.Secret("sk-test-credential"),
-		MaxOutputTokens: 32_000, MaxAttempts: 2, RequestTimeout: 5 * time.Second,
+		MaxOutputTokens: 32_000, RequestTimeout: 5 * time.Second,
 	}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
 	if err != nil {
 		t.Fatalf("building the Haiku provider: %v", err)
