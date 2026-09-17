@@ -9,12 +9,16 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	defaultAuthenticationMode                     = "local"
 	defaultInvestigationWorkers                   = 8
 	defaultInvestigationMaxPendingPerOrganization = 100
+	defaultSessionLifetime                        = 12 * time.Hour
+	minimumSessionLifetime                        = 5 * time.Minute
+	maximumSessionLifetime                        = 30 * 24 * time.Hour
 )
 
 var SupportedEnvironmentKeys = []string{
@@ -160,7 +164,7 @@ type Config struct {
 
 	InvestigationWorkers                    int
 	MaxPendingInvestigationsPerOrganization int
-	SessionLifetimeSeconds                  int
+	SessionLifetime                         time.Duration
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -171,7 +175,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		AuthenticationMode:                      defaultAuthenticationMode,
 		InvestigationWorkers:                    defaultInvestigationWorkers,
 		MaxPendingInvestigationsPerOrganization: defaultInvestigationMaxPendingPerOrganization,
-		SessionLifetimeSeconds:                  43200,
+		SessionLifetime:                         defaultSessionLifetime,
 	}
 
 	var err error
@@ -247,10 +251,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		defaultInvestigationMaxPendingPerOrganization); err != nil {
 		return Config{}, err
 	}
-	if cfg.SessionLifetimeSeconds, err = boundedInteger(lookup,
-		EnvSessionLifetimeSeconds, cfg.SessionLifetimeSeconds, 300, 2592000); err != nil {
+	var sessionLifetimeSeconds int
+	if sessionLifetimeSeconds, err = boundedInteger(lookup, EnvSessionLifetimeSeconds,
+		int(cfg.SessionLifetime.Seconds()), int(minimumSessionLifetime.Seconds()),
+		int(maximumSessionLifetime.Seconds())); err != nil {
 		return Config{}, err
 	}
+	cfg.SessionLifetime = time.Duration(sessionLifetimeSeconds) * time.Second
 
 	return cfg, nil
 }

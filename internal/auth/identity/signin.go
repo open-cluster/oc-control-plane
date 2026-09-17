@@ -64,15 +64,12 @@ func (h Handlers) prepareSession(
 			return "", nil, session.Session{}, nil, err
 		}
 	}
-	lifetime := session.ClampLifetime(h.SessionLifetime)
-	token, digest, err := session.NewToken()
+	token, digest, issued, err := session.Issue(userID, organization.String(), h.SessionLifetime)
 	if err != nil {
 		return "", nil, session.Session{}, nil, err
 	}
-	now := time.Now().UTC()
-	issued := session.Session{ID: uuid.New(), UserID: userID, Organization: organization.String(),
-		IssuedAt: now, ExpiresAt: now.Add(lifetime), ClientUserAgent: request.UserAgent(),
-		RemoteAddr: request.RemoteAddr}
+	issued.ClientUserAgent = request.UserAgent()
+	issued.RemoteAddr = request.RemoteAddr
 	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
 		"memberships": membershipCount, "requestId": correlation.From(request.Context())}
 	return token, digest, issued, detail, nil

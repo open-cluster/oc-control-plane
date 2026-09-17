@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func secretFile(t *testing.T, value string) string {
@@ -67,8 +68,8 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 		t.Fatalf("investigation defaults = workers %d pending %d",
 			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
 	}
-	if cfg.SessionLifetimeSeconds != 43200 {
-		t.Fatalf("session lifetime default = %d", cfg.SessionLifetimeSeconds)
+	if cfg.SessionLifetime != 12*time.Hour {
+		t.Fatalf("session lifetime default = %v", cfg.SessionLifetime)
 	}
 	if cfg.ModelContextWindowTokens != 0 || cfg.ModelMaxOutputTokens != 0 {
 		t.Fatalf("model limit overrides = context %d output %d",
@@ -83,8 +84,20 @@ func TestLoadSessionLifetimeFromEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SessionLifetimeSeconds != 900 {
-		t.Fatalf("session lifetime = %d", cfg.SessionLifetimeSeconds)
+	if cfg.SessionLifetime != 15*time.Minute {
+		t.Fatalf("session lifetime = %v", cfg.SessionLifetime)
+	}
+}
+
+func TestLoadRejectsInvalidSessionLifetime(t *testing.T) {
+	for _, value := range []string{"0", "-1", "299", "2592001"} {
+		t.Run(value, func(t *testing.T) {
+			values := essentialEnvironment(t)
+			values[EnvSessionLifetimeSeconds] = value
+			if _, err := Load(lookup(values)); err == nil || !strings.Contains(err.Error(), EnvSessionLifetimeSeconds) {
+				t.Fatalf("loading lifetime %q returned %v", value, err)
+			}
+		})
 	}
 }
 
