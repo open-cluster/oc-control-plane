@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +28,12 @@ const completionsPath = "/api/paas/v4/chat/completions"
 
 const maxResponseBytes = 8 << 20
 
-// Provider is one configured Z.AI deployment.
+// Provider is one configured Z.AI model.
 type Provider struct {
 	client   *http.Client
 	endpoint string
 	config   reasoning.ModelConfig
+	wait     func(context.Context, time.Duration) error
 }
 
 func usageOf(reported usage) reasoning.TokenUsage {
@@ -81,8 +84,9 @@ func classify(model string, status int, identifier string, payload []byte) error
 	switch {
 	case status == http.StatusBadRequest && isContextLimitError(message):
 		return reasoning.ContextRejected(Name, model, detail, nil)
-	case status == http.StatusTooManyRequests:
-		return reasoning.Failed(reasoning.OutcomeOutage, Name, model, detail+": rate limited")
+	case status == http.StatusRequestTimeout || status == http.StatusConflict ||
+		status == http.StatusTooManyRequests:
+		return reasoning.Failed(reasoning.OutcomeOutage, Name, model, detail+": transient provider failure")
 	case status >= 500:
 		return reasoning.Failed(reasoning.OutcomeOutage, Name, model,
 			detail+": the provider failed on its own side")
@@ -145,10 +149,10 @@ func transportFailure(model string, cause error) error {
 		"the provider could not be reached", cause)
 }
 
-// Options is what a caller may put in place of the real thing. There is exactly one entry and it
-// is the HTTP round-tripper, which is the seam every test in this package uses.
+// Options is what a caller may put in place of the real thing for an offline test.
 type Options struct {
 	HTTPClient *http.Client
+	Wait       func(context.Context, time.Duration) error
 }
 
 // New builds a provider for one model configuration, refusing a configuration that could not work.
@@ -174,14 +178,23 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 			},
 		}
 	}
+	wait := options.Wait
+	if wait == nil {
+		wait = waitForRetry
+	}
 	return &Provider{
 		client:   client,
 		endpoint: strings.TrimSuffix(base, "/") + completionsPath,
 		config:   config,
+		wait:     wait,
 	}, nil
 }
 
-const retryBackoff = 500 * time.Millisecond
+const (
+	maxAttempts   = 3
+	retryBase     = 500 * time.Millisecond
+	retryDelayCap = 30 * time.Second
+)
 
 // RequestTokens sizes the same provider request structure Complete sends.
 func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
@@ -209,33 +222,56 @@ func (p *Provider) Complete(
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < p.config.MaxAttempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-time.After(retryBackoff):
-			case <-ctx.Done():
-				return reasoning.Completion{}, transportFailure(prompt.Model, ctx.Err())
-			}
-		}
-		completion, err := p.once(ctx, prompt, body)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		completion, instructedDelay, err := p.once(ctx, prompt, body)
 		if err == nil {
 			return completion, nil
 		}
 		lastErr = err
-		if !errors.Is(err, reasoning.ErrOutage) || ctx.Err() != nil {
+		if !errors.Is(err, reasoning.ErrOutage) || ctx.Err() != nil || attempt == maxAttempts-1 {
 			return completion, err
+		}
+		delay := instructedDelay
+		if delay < 0 {
+			delay = retryDelay(attempt)
+		}
+		if err := p.wait(ctx, delay); err != nil {
+			return reasoning.Completion{}, transportFailure(prompt.Model, err)
 		}
 	}
 	return reasoning.Completion{}, lastErr
 }
 
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func retryDelay(attempt int) time.Duration {
+	ceiling := retryBase << attempt
+	if ceiling > retryDelayCap {
+		ceiling = retryDelayCap
+	}
+	floor := ceiling / 2
+	return floor + time.Duration(rand.Int64N(int64(ceiling-floor)+1))
+}
+
 // once performs one attempt.
 func (p *Provider) once(
 	ctx context.Context, prompt reasoning.Prompt, body []byte,
-) (reasoning.Completion, error) {
+) (reasoning.Completion, time.Duration, error) {
 	response, err := p.send(ctx, body)
 	if err != nil {
-		return reasoning.Completion{}, transportFailure(prompt.Model, err)
+		return reasoning.Completion{}, -1, transportFailure(prompt.Model, err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBytes))
@@ -244,13 +280,32 @@ func (p *Provider) once(
 
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
 	if err != nil {
-		return reasoning.Completion{}, transportFailure(prompt.Model, err)
+		return reasoning.Completion{}, -1, transportFailure(prompt.Model, err)
 	}
 	if response.StatusCode != http.StatusOK {
-		return reasoning.Completion{}, classify(
+		return reasoning.Completion{}, retryAfter(response.Header.Get("Retry-After"), time.Now()), classify(
 			prompt.Model, response.StatusCode, requestIdentifier(response, payload), payload)
 	}
-	return p.answer(prompt, response, payload)
+	completion, err := p.answer(prompt, response, payload)
+	return completion, -1, err
+}
+
+func retryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return -1
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		if seconds >= int64(retryDelayCap/time.Second) {
+			return retryDelayCap
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return -1
+	}
+	return min(max(at.Sub(now), 0), retryDelayCap)
 }
 
 // send performs the request. The credential travels in a header and appears nowhere else.

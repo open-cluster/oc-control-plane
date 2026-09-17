@@ -88,18 +88,25 @@ const cachedUsage = `{"prompt_tokens":5000,"completion_tokens":300,"total_tokens
 func providerUnder(t *testing.T, responses ...*http.Response) (*zai.Provider, *transport) {
 	t.Helper()
 	round := &transport{responses: responses}
-	provider, err := zai.New(reasoning.ModelConfig{
+	provider, err := zai.New(modelConfigFixture(), zai.Options{
+		HTTPClient: &http.Client{Transport: round},
+		Wait:       func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("building the provider: %v", err)
+	}
+	return provider, round
+}
+
+func modelConfigFixture() reasoning.ModelConfig {
+	return reasoning.ModelConfig{
 		Provider:        zai.Name,
 		Model:           "glm-4.7",
 		Effort:          reasoning.EffortHigh,
 		Credential:      reasoning.Secret("zai-test-credential"),
 		MaxOutputTokens: 32_000,
 		RequestTimeout:  5 * time.Second,
-	}, zai.Options{HTTPClient: &http.Client{Transport: round}})
-	if err != nil {
-		t.Fatalf("building the provider: %v", err)
 	}
-	return provider, round
 }
 
 func promptFixture() reasoning.Prompt {
@@ -132,7 +139,7 @@ func promptFixture() reasoning.Prompt {
 	}
 }
 
-func TestComplete_RetriesATransientServerFailureWithinMaxAttempts(t *testing.T) {
+func TestComplete_RetriesATransientServerFailureWithinTheAttemptLimit(t *testing.T) {
 	provider, round := providerUnder(t,
 		answered(500, `{"error":{"message":"upstream hiccup"}}`),
 		answered(200, completion(`{"findings":[]}`, "stop", cachedUsage)))
@@ -152,7 +159,84 @@ func TestComplete_RetriesATransientServerFailureWithinMaxAttempts(t *testing.T) 
 	}
 }
 
-func TestComplete_StopsRetryingAtMaxAttempts(t *testing.T) {
+func TestComplete_HonorsRetryAfterWithoutSleepingPastTheProviderInstruction(t *testing.T) {
+	limited := answered(http.StatusTooManyRequests, `{"error":{"message":"slow down"}}`)
+	limited.Header.Set("Retry-After", "7")
+	round := &transport{responses: []*http.Response{
+		limited,
+		answered(http.StatusOK, completion(`{"findings":[]}`, "stop", cachedUsage)),
+	}}
+	var waited time.Duration
+	provider, err := zai.New(modelConfigFixture(), zai.Options{
+		HTTPClient: &http.Client{Transport: round},
+		Wait: func(_ context.Context, delay time.Duration) error {
+			waited = delay
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = provider.Complete(context.Background(), promptFixture()); err != nil {
+		t.Fatal(err)
+	}
+	if waited != 7*time.Second {
+		t.Fatalf("waited %v, want the provider's 7s Retry-After", waited)
+	}
+}
+
+func TestComplete_UsesBoundedJitteredBackoffWithoutRetryAfter(t *testing.T) {
+	round := &transport{responses: []*http.Response{
+		answered(http.StatusInternalServerError, `{"error":{"message":"upstream hiccup"}}`),
+		answered(http.StatusOK, completion(`{"findings":[]}`, "stop", cachedUsage)),
+	}}
+	var waited time.Duration
+	provider, err := zai.New(modelConfigFixture(), zai.Options{
+		HTTPClient: &http.Client{Transport: round},
+		Wait: func(_ context.Context, delay time.Duration) error {
+			waited = delay
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = provider.Complete(context.Background(), promptFixture()); err != nil {
+		t.Fatal(err)
+	}
+	if waited < 250*time.Millisecond || waited > 500*time.Millisecond {
+		t.Fatalf("first retry delay = %v, want bounded jitter between 250ms and 500ms", waited)
+	}
+}
+
+func TestComplete_CancellationDuringBackoffStopsRetries(t *testing.T) {
+	round := &transport{responses: []*http.Response{
+		answered(http.StatusInternalServerError, `{"error":{"message":"upstream hiccup"}}`),
+		answered(http.StatusOK, completion(`{"findings":[]}`, "stop", cachedUsage)),
+	}}
+	provider, err := zai.New(modelConfigFixture(), zai.Options{
+		HTTPClient: &http.Client{Transport: round},
+		Wait:       func(context.Context, time.Duration) error { return context.Canceled },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = provider.Complete(context.Background(), promptFixture())
+	if !errors.Is(err, reasoning.ErrTimeout) {
+		t.Fatalf("error = %v, want cancellation", err)
+	}
+	round.mutex.Lock()
+	calls := round.calls
+	round.mutex.Unlock()
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want cancellation before a retry", calls)
+	}
+}
+
+func TestComplete_StopsRetryingAtTheInternalAttemptLimit(t *testing.T) {
 	provider, round := providerUnder(t,
 		answered(500, `{"error":{"message":"down"}}`))
 
@@ -164,7 +248,7 @@ func TestComplete_StopsRetryingAtMaxAttempts(t *testing.T) {
 	calls := round.calls
 	round.mutex.Unlock()
 	if calls != 3 {
-		t.Errorf("the call was tried %d times, want the deployment's MaxAttempts of 3", calls)
+		t.Errorf("the call was tried %d times, want the internal limit of 3", calls)
 	}
 }
 

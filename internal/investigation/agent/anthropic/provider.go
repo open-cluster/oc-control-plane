@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -19,7 +21,10 @@ import (
 // Name is how this provider is written in configuration and telemetry.
 const Name = "anthropic"
 
-// Provider is one configured Anthropic deployment.
+const maxAttempts = 3
+const retryAfterCap = 30 * time.Second
+
+// Provider is one configured Anthropic model.
 type Provider struct {
 	client sdk.Client
 	config reasoning.ModelConfig
@@ -73,9 +78,10 @@ func classify(provider, model string, status int, identifier string, cause error
 	switch {
 	case status == http.StatusBadRequest && isContextLimitError(cause.Error()):
 		return reasoning.ContextRejected(provider, model, detail+": the request exceeded the model context", cause)
-	case status == http.StatusTooManyRequests:
+	case status == http.StatusRequestTimeout || status == http.StatusConflict ||
+		status == http.StatusTooManyRequests:
 		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
-			detail+": rate limited past the configured retry budget", cause)
+			detail+": transient provider failure exhausted the retry budget", cause)
 	case status >= 500:
 		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
 			detail+": the provider failed on its own side", cause)
@@ -146,7 +152,7 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 		// One attempt plus the retries that make up the rest. Retrying is what turns a rate limit
 		// into an answer rather than an outage, and bounding it is what keeps the wall clock a
 		// single call can consume inside the round's deadline.
-		option.WithMaxRetries(config.MaxAttempts - 1),
+		option.WithMaxRetries(maxAttempts - 1),
 		option.WithRequestTimeout(config.RequestTimeout),
 	}
 	if config.BaseURL != "" {
@@ -164,8 +170,42 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 			},
 		}
 	}
+	clientCopy := *client
+	transport := clientCopy.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	clientCopy.Transport = boundedRetryAfterTransport{base: transport}
+	client = &clientCopy
 	requestOptions = append(requestOptions, option.WithHTTPClient(client))
 	return &Provider{client: sdk.NewClient(requestOptions...), config: config}, nil
+}
+
+type boundedRetryAfterTransport struct{ base http.RoundTripper }
+
+func (t boundedRetryAfterTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(request)
+	if response != nil {
+		if bounded, ok := boundedRetryAfter(response.Header.Get("Retry-After"), time.Now()); ok {
+			response.Header.Set("Retry-After", strconv.FormatInt(int64(bounded/time.Second), 10))
+		}
+	}
+	return response, err
+}
+
+func boundedRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		if seconds >= int64(retryAfterCap/time.Second) {
+			return retryAfterCap, true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	return min(max(at.Sub(now), 0), retryAfterCap), true
 }
 
 // RequestTokens sizes the same provider request structure Complete sends.
