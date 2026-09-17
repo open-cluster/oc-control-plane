@@ -25,19 +25,19 @@ func EstimatePromptTokens(prompt Prompt) (int, error) {
 	return EstimateSerializedRequest(encoded), nil
 }
 
-func requestTokens(model Model, prompt Prompt) (int, error) {
-	if sizer, ok := model.(requestSizer); ok {
+func requestTokens(completer Completer, prompt Prompt) (int, error) {
+	if sizer, ok := completer.(requestSizer); ok {
 		return sizer.RequestTokens(prompt)
 	}
 	return EstimatePromptTokens(prompt)
 }
 
 func (r *Agent) budgetPrompt(prompt Prompt, mayReduceOutput bool) (Prompt, bool, error) {
-	input, err := requestTokens(r.model, prompt)
+	input, err := requestTokens(r.completer, prompt)
 	if err != nil {
 		return Prompt{}, false, err
 	}
-	remaining := int64(r.deployment.ContextWindowTokens - input)
+	remaining := int64(r.modelConfig.ContextWindowTokens - input)
 	if remaining >= prompt.MaxOutputTokens {
 		return prompt, true, nil
 	}
@@ -45,11 +45,11 @@ func (r *Agent) budgetPrompt(prompt Prompt, mayReduceOutput bool) (Prompt, bool,
 		return prompt, false, nil
 	}
 	prompt.MaxOutputTokens = remaining
-	input, err = requestTokens(r.model, prompt)
+	input, err = requestTokens(r.completer, prompt)
 	if err != nil {
 		return Prompt{}, false, err
 	}
-	remaining = int64(r.deployment.ContextWindowTokens - input)
+	remaining = int64(r.modelConfig.ContextWindowTokens - input)
 	if remaining <= 0 {
 		return prompt, false, nil
 	}

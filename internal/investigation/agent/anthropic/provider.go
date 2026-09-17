@@ -21,8 +21,8 @@ const Name = "anthropic"
 
 // Provider is one configured Anthropic deployment.
 type Provider struct {
-	client     sdk.Client
-	deployment reasoning.Deployment
+	client sdk.Client
+	config reasoning.ModelConfig
 }
 
 func usageOf(usage sdk.Usage) reasoning.TokenUsage {
@@ -75,7 +75,7 @@ func classify(provider, model string, status int, identifier string, cause error
 		return reasoning.ContextRejected(provider, model, detail+": the request exceeded the model context", cause)
 	case status == http.StatusTooManyRequests:
 		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
-			detail+": rate limited past the retries this deployment allows", cause)
+			detail+": rate limited past the configured retry budget", cause)
 	case status >= 500:
 		return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
 			detail+": the provider failed on its own side", cause)
@@ -116,7 +116,7 @@ func transportFailure(provider, model string, cause error) error {
 	var timeout net.Error
 	if errors.As(cause, &timeout) && timeout.Timeout() {
 		return reasoning.FailedBecause(reasoning.OutcomeTimeout, provider, model,
-			"the provider did not answer within this deployment's request timeout", cause)
+			"the provider did not answer within the configured request timeout", cause)
 	}
 	return reasoning.FailedBecause(reasoning.OutcomeOutage, provider, model,
 		"the provider could not be reached", cause)
@@ -130,27 +130,27 @@ type Options struct {
 	HTTPClient *http.Client
 }
 
-// New builds a provider for one deployment, refusing a configuration that could not work.
+// New builds a provider for one model configuration, refusing a configuration that could not work.
 //
 // The base URL is also the only host this provider may reach. It is taken from configuration
 // rather than from anything a response contains, so a redirect cannot move where the credential is
 // sent.
-func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
-	deployment = deployment.WithDefaults()
-	if err := deployment.Validate(); err != nil {
+func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
+	config = config.WithDefaults()
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 
 	requestOptions := []option.RequestOption{
-		option.WithAPIKey(deployment.Credential.Reveal()),
+		option.WithAPIKey(config.Credential.Reveal()),
 		// One attempt plus the retries that make up the rest. Retrying is what turns a rate limit
 		// into an answer rather than an outage, and bounding it is what keeps the wall clock a
 		// single call can consume inside the round's deadline.
-		option.WithMaxRetries(deployment.MaxAttempts - 1),
-		option.WithRequestTimeout(deployment.RequestTimeout),
+		option.WithMaxRetries(config.MaxAttempts - 1),
+		option.WithRequestTimeout(config.RequestTimeout),
 	}
-	if deployment.BaseURL != "" {
-		requestOptions = append(requestOptions, option.WithBaseURL(deployment.BaseURL))
+	if config.BaseURL != "" {
+		requestOptions = append(requestOptions, option.WithBaseURL(config.BaseURL))
 	}
 	// A redirect is refused rather than followed, on the client this adapter actually uses. The
 	// host it may reach comes from configuration, and following a redirect would let a response
@@ -165,7 +165,7 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 		}
 	}
 	requestOptions = append(requestOptions, option.WithHTTPClient(client))
-	return &Provider{client: sdk.NewClient(requestOptions...), deployment: deployment}, nil
+	return &Provider{client: sdk.NewClient(requestOptions...), config: config}, nil
 }
 
 // RequestTokens sizes the same provider request structure Complete sends.
@@ -212,10 +212,10 @@ func (p *Provider) Complete(
 	// presents an empty or partial response as a conclusion.
 	switch completion.Stop {
 	case reasoning.StopRefused:
-		return completion, refused(p.deployment.Provider, completion.Model, message.StopDetails)
+		return completion, refused(p.config.Provider, completion.Model, message.StopDetails)
 	case reasoning.StopTruncated:
 		return completion, reasoning.Failed(reasoning.OutcomeMalformed,
-			p.deployment.Provider, completion.Model,
+			p.config.Provider, completion.Model,
 			"the answer reached the output ceiling before it finished, so the document is "+
 				"incomplete")
 	}
@@ -305,7 +305,7 @@ func (p *Provider) failure(prompt reasoning.Prompt, identifier string, err error
 		if identifier == "" {
 			identifier = apiError.RequestID
 		}
-		return classify(p.deployment.Provider, prompt.Model, apiError.StatusCode, identifier, err)
+		return classify(p.config.Provider, prompt.Model, apiError.StatusCode, identifier, err)
 	}
-	return transportFailure(p.deployment.Provider, prompt.Model, err)
+	return transportFailure(p.config.Provider, prompt.Model, err)
 }

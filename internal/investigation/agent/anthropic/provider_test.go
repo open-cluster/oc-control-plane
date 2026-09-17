@@ -129,7 +129,7 @@ const fullUsage = `{"input_tokens":1000,"output_tokens":250,` +
 func providerUnder(t *testing.T, responses ...*http.Response) (*anthropic.Provider, *transport) {
 	t.Helper()
 	round := &transport{responses: responses}
-	provider, err := anthropic.New(reasoning.Deployment{
+	provider, err := anthropic.New(reasoning.ModelConfig{
 		Provider:        anthropic.Name,
 		Model:           "claude-opus-5",
 		Effort:          reasoning.EffortHigh,
@@ -386,7 +386,7 @@ func TestComplete_SendsTheDeclaredSchemaEffortAndCacheBreakpoints(t *testing.T) 
 
 func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.T) {
 	round := &transport{responses: []*http.Response{streamed(`{}`, fullUsage, "end_turn", "")}}
-	provider, err := anthropic.New(reasoning.Deployment{
+	provider, err := anthropic.New(reasoning.ModelConfig{
 		Provider: anthropic.Name, Model: "claude-haiku-4-5",
 		Effort: reasoning.EffortMedium, Credential: reasoning.Secret("sk-test-credential"),
 		MaxOutputTokens: 32_000, MaxAttempts: 2, RequestTimeout: 5 * time.Second,
@@ -437,7 +437,7 @@ func TestComplete_TheCredentialAppearsInNoErrorReturnedToTheCaller(t *testing.T)
 }
 
 func TestNew_RefusesADeploymentThatCouldNotWork(t *testing.T) {
-	cases := map[string]reasoning.Deployment{
+	cases := map[string]reasoning.ModelConfig{
 		"no model":      {Provider: anthropic.Name, Credential: reasoning.Secret("k")},
 		"no credential": {Provider: anthropic.Name, Model: "claude-opus-5"},
 		"an effort level that does not exist": {

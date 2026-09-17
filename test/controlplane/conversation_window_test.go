@@ -16,7 +16,7 @@ func TestConversationAcceptsExplicitQuestionWindow(t *testing.T) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
-	}, app.Options{Model: concludingModel{}})
+	}, app.Options{Completer: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	for _, invalid := range []map[string]any{
 		{"windowFrom": "2026-08-01T08:00:00Z"},

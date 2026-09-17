@@ -28,9 +28,9 @@ const maxResponseBytes = 8 << 20
 
 // Provider is one configured Z.AI deployment.
 type Provider struct {
-	client     *http.Client
-	endpoint   string
-	deployment reasoning.Deployment
+	client   *http.Client
+	endpoint string
+	config   reasoning.ModelConfig
 }
 
 func usageOf(reported usage) reasoning.TokenUsage {
@@ -139,7 +139,7 @@ func transportFailure(model string, cause error) error {
 	var timeout net.Error
 	if errors.As(cause, &timeout) && timeout.Timeout() {
 		return reasoning.FailedBecause(reasoning.OutcomeTimeout, Name, model,
-			"the provider did not answer within this deployment's request timeout", cause)
+			"the provider did not answer within the configured request timeout", cause)
 	}
 	return reasoning.FailedBecause(reasoning.OutcomeOutage, Name, model,
 		"the provider could not be reached", cause)
@@ -151,21 +151,21 @@ type Options struct {
 	HTTPClient *http.Client
 }
 
-// New builds a provider for one deployment, refusing a configuration that could not work.
-func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
-	deployment = deployment.WithDefaults()
-	if err := deployment.Validate(); err != nil {
+// New builds a provider for one model configuration, refusing a configuration that could not work.
+func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
+	config = config.WithDefaults()
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 
-	base := deployment.BaseURL
+	base := config.BaseURL
 	if base == "" {
 		base = defaultBaseURL
 	}
 	client := options.HTTPClient
 	if client == nil {
 		client = &http.Client{
-			Timeout: deployment.RequestTimeout,
+			Timeout: config.RequestTimeout,
 			// A redirect is refused rather than followed. The host this adapter may reach comes
 			// from configuration, and following a redirect would let a response decide where the
 			// credential is sent next.
@@ -175,9 +175,9 @@ func New(deployment reasoning.Deployment, options Options) (*Provider, error) {
 		}
 	}
 	return &Provider{
-		client:     client,
-		endpoint:   strings.TrimSuffix(base, "/") + completionsPath,
-		deployment: deployment,
+		client:   client,
+		endpoint: strings.TrimSuffix(base, "/") + completionsPath,
+		config:   config,
 	}, nil
 }
 
@@ -209,7 +209,7 @@ func (p *Provider) Complete(
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < p.deployment.MaxAttempts; attempt++ {
+	for attempt := 0; attempt < p.config.MaxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-time.After(retryBackoff):
@@ -262,7 +262,7 @@ func (p *Provider) send(ctx context.Context, body []byte) (*http.Response, error
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+p.deployment.Credential.Reveal())
+	request.Header.Set("Authorization", "Bearer "+p.config.Credential.Reveal())
 	return p.client.Do(request)
 }
 

@@ -71,22 +71,22 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 // complete runs one provider call inside its span and emits the call's telemetry. It is
 // the one wrapper around Provider.Complete, so no call can happen unobserved.
 func (t *Telemetry) complete(
-	ctx context.Context, provider Model, deployment Deployment, prompt Prompt,
+	ctx context.Context, provider Completer, config ModelConfig, prompt Prompt,
 ) (Completion, error) {
 	if t == nil {
 		return provider.Complete(ctx, prompt)
 	}
 
-	// The configured provider and model: bounded, this deployment's own strings. The
+	// The configured provider and model: bounded, this process's own strings. The
 	// model that ANSWERED goes on the span and the log line, never on a metric.
 	measured := metric.WithAttributes(
-		attribute.String("provider", deployment.Provider),
-		attribute.String("model", deployment.Model),
+		attribute.String("provider", config.Provider),
+		attribute.String("model", config.Model),
 	)
 
 	ctx, span := t.tracer.Start(ctx, "reasoning.complete", trace.WithAttributes(
-		attribute.String("oc.reasoning.provider", deployment.Provider),
-		attribute.String("oc.reasoning.model", deployment.Model),
+		attribute.String("oc.reasoning.provider", config.Provider),
+		attribute.String("oc.reasoning.model", config.Model),
 	))
 	defer span.End()
 
@@ -123,8 +123,8 @@ func (t *Telemetry) complete(
 	}
 
 	entry := []any{
-		slog.String("provider", deployment.Provider),
-		slog.String("model", deployment.Model),
+		slog.String("provider", config.Provider),
+		slog.String("model", config.Model),
 		slog.String("model_answered", completion.Model),
 		slog.String("request_id", completion.RequestID),
 		slog.String("stop", completion.Stop.String()),
