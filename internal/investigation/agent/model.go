@@ -48,13 +48,10 @@ type ModelConfig struct {
 	// consume is this multiplied by the attempts allowed; the product must still fit inside the
 	// round's deadline.
 	RequestTimeout time.Duration
-	// MaxAttempts is how many times one call may be tried before the outcome is an outage.
-	MaxAttempts int
 }
 
 const (
 	defaultRequestTimeout = 5 * time.Minute
-	defaultMaxAttempts    = 3
 )
 
 // WithDefaults fills what an operator did not name. It never loosens what they did.
@@ -64,9 +61,6 @@ func (d ModelConfig) WithDefaults() ModelConfig {
 	}
 	if d.RequestTimeout <= 0 {
 		d.RequestTimeout = defaultRequestTimeout
-	}
-	if d.MaxAttempts <= 0 {
-		d.MaxAttempts = defaultMaxAttempts
 	}
 	return d
 }
