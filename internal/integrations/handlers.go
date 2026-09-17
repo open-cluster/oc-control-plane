@@ -59,6 +59,7 @@ func (h Handlers) Routes() authz.Table {
 	const base = "/api/v1"
 
 	return authz.Table{
+
 		authz.Privileged(http.MethodGet, base+"/integration-types", authz.IntegrationRead,
 			http.HandlerFunc(h.types)),
 		authz.Privileged(http.MethodGet, base+"/integrations", authz.IntegrationRead,
