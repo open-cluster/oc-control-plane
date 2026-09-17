@@ -183,9 +183,9 @@ func validConclusion(t *testing.T, refs []int) json.RawMessage {
 	return raw
 }
 
-func configuredTestAgent(t *testing.T, store *records, model Model, catalog integrations.Catalog) *Agent {
+func configuredTestAgent(t *testing.T, store *records, completer Completer, catalog integrations.Catalog) *Agent {
 	t.Helper()
-	return &Agent{model: model, deployment: Deployment{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
+	return &Agent{completer: completer, modelConfig: ModelConfig{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
 }
 
 func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
@@ -195,7 +195,7 @@ func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
 			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
 		}}}, nil
 	}}
-	built, err := NewAgent(Deployment{
+	built, err := NewAgent(ModelConfig{
 		Provider: "anthropic", Model: "claude-future-release",
 		ContextWindowTokens: 128_000, MaxOutputTokens: 1_024,
 	}, model)
@@ -750,7 +750,7 @@ func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	runner.deployment.ContextWindowTokens = 1_500
+	runner.modelConfig.ContextWindowTokens = 1_500
 
 	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), organization,
@@ -830,7 +830,7 @@ func TestRunReservesTheDeploymentOutputFromTheContextWindow(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	agent.deployment.ContextWindowTokens = 1_026
+	agent.modelConfig.ContextWindowTokens = 1_026
 
 	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization,
@@ -860,9 +860,9 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 				return context.WithTimeout(context.Background(), time.Minute)
 			}},
 		{name: "context", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.deployment.ContextWindowTokens = 1_025 }},
+			configure: func(a *Agent) { a.modelConfig.ContextWindowTokens = 1_025 }},
 		{name: "context exhausted by reserved output", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.deployment.ContextWindowTokens = 1_024 }},
+			configure: func(a *Agent) { a.modelConfig.ContextWindowTokens = 1_024 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

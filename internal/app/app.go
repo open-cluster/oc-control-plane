@@ -46,7 +46,7 @@ type Options struct {
 	Version           string
 	OnListen          func(net.Addr)
 	Agent             investigation.Agent
-	Model             agent.Model
+	Completer         agent.Completer
 	ModelEffort       string
 	ModelBaseURL      string
 	InventoryInterval time.Duration
@@ -191,7 +191,7 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 
 // modelBoundary validates and builds the configured model-backed agent.
 func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*agent.Agent, error) {
-	deployment := agent.Deployment{
+	modelConfig := agent.ModelConfig{
 		Provider:            cfg.ModelProvider,
 		Model:               cfg.ModelName,
 		Effort:              agent.Effort(options.ModelEffort),
@@ -200,36 +200,36 @@ func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*ag
 		ContextWindowTokens: cfg.ModelContextWindowTokens,
 		MaxOutputTokens:     cfg.ModelMaxOutputTokens,
 	}.WithDefaults()
-	if err := deployment.Validate(); err != nil {
+	if err := modelConfig.Validate(); err != nil {
 		return nil, err
 	}
-	model := options.Model
+	completer := options.Completer
 	var openErr error
-	switch deployment.Provider {
+	switch modelConfig.Provider {
 	case anthropic.Name:
-		deployment, openErr = anthropic.ResolveDeployment(deployment)
-		if openErr == nil && model == nil {
-			model, openErr = anthropic.New(deployment, anthropic.Options{})
+		modelConfig, openErr = anthropic.ResolveModelConfig(modelConfig)
+		if openErr == nil && completer == nil {
+			completer, openErr = anthropic.New(modelConfig, anthropic.Options{})
 		}
 	case zai.Name:
-		deployment, openErr = zai.ResolveDeployment(deployment)
-		if openErr == nil && model == nil {
-			model, openErr = zai.New(deployment, zai.Options{})
+		modelConfig, openErr = zai.ResolveModelConfig(modelConfig)
+		if openErr == nil && completer == nil {
+			completer, openErr = zai.New(modelConfig, zai.Options{})
 		}
 	default:
 		return nil, fmt.Errorf("%q is not a model provider this build serves; it serves [%s, %s]",
-			deployment.Provider, anthropic.Name, zai.Name)
+			modelConfig.Provider, anthropic.Name, zai.Name)
 	}
 	if openErr != nil {
 		return nil, openErr
 	}
-	built, err := agent.NewAgent(deployment, model)
+	built, err := agent.NewAgent(modelConfig, completer)
 	if err != nil {
 		return nil, err
 	}
 	built.Instrument(agent.NewTelemetry(logger))
 	logger.Info("model boundary configured",
-		slog.String("deployment", deployment.String()))
+		slog.String("model_config", modelConfig.String()))
 	return built, nil
 }
 

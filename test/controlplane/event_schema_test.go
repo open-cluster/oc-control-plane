@@ -31,7 +31,7 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
-	}, app.Options{Model: failedEventModel{}})
+	}, app.Options{Completer: failedEventModel{}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	_, turn := plane.openConversation(t, "failure schema", "investigate checkout")
 	plane.awaitInvestigation(t, turn)

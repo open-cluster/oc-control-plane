@@ -10,7 +10,7 @@ import (
 func (r *Agent) initialInputTokens(oriented orientation) (int, error) {
 	candidate := runState{task: taskInstruction(oriented),
 		orientationText: renderOrientation(oriented), tools: exchangeTools(oriented)}
-	return requestTokens(r.model, modelPrompt(r, &candidate, false))
+	return requestTokens(r.completer, modelPrompt(r, &candidate, false))
 }
 
 func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messages []investigation.AssignedMessage) error {
