@@ -81,8 +81,3 @@ func memberOf(
 	}
 	return principal
 }
-
-func aStranger(t *testing.T) authz.Principal {
-	t.Helper()
-	return memberOf(t, organization(t, "somebody else"), authz.Admin)
-}
