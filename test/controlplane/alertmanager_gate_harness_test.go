@@ -61,13 +61,13 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	var dsn string
 	prompts := make(chan modelagent.Prompt, 1)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = operatorAddress
-		cfg.HTTPAddress = intakeAddress
+		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = intakeAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider = "zai"
 		cfg.ModelName = "glm-4.7"
-		cfg.ModelKey = "scripted-model-key"
+		cfg.ModelAPIKey = "scripted-model-key"
 		dsn = cfg.DatabaseDSN
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 

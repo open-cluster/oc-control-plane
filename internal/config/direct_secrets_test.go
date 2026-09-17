@@ -68,11 +68,11 @@ func TestSecretFilesAreReadAtStartupAndFailuresAreRedacted(t *testing.T) {
 	if err := os.WriteFile(values[EnvModelKeyFile], []byte("rotated-model-key"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ModelKey != "model-key" {
+	if cfg.ModelAPIKey != "model-key" {
 		t.Fatal("file change altered loaded configuration")
 	}
 	restarted, err := Load(lookup(values))
-	if err != nil || restarted.ModelKey != "rotated-model-key" {
+	if err != nil || restarted.ModelAPIKey != "rotated-model-key" {
 		t.Fatalf("restart did not read rotated key: %v", err)
 	}
 	for _, invalid := range []map[string]string{

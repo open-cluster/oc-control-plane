@@ -60,9 +60,9 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = operatorAddress
-		cfg.HTTPAddress = intakeAddress
-		cfg.RelayAddress = relayAddress
+		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = intakeAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]

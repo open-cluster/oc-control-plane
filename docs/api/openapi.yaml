@@ -490,7 +490,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Policy'
+              $ref: '#/components/schemas/PolicyUpdateRequest'
         required: true
   /api/v1/audit-events:
     get:
@@ -2688,6 +2688,7 @@ components:
           type: integer
           minimum: 300
           maximum: 2592000
+          readOnly: true
         auditRetentionDays:
           type: integer
           minimum: 1
@@ -2695,6 +2696,16 @@ components:
         auditRetentionEnforced:
           type: boolean
           readOnly: true
+    PolicyUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - auditRetentionDays
+      properties:
+        auditRetentionDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
     IntegrationType:
       type: object
       additionalProperties: false

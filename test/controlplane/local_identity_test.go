@@ -7,9 +7,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
@@ -69,6 +71,49 @@ func TestLocalBootstrapCreatesUserWithoutOrganization(t *testing.T) {
 	who := readSession(t, plane, sessionCookie(t, created))
 	if who.Principal.DisplayName != "Ada Lovelace" || len(who.Organizations) != 0 {
 		t.Fatalf("bootstrap session = %+v", who)
+	}
+}
+
+func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
+	const lifetime = 37 * time.Minute
+	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.SessionLifetime = lifetime })
+	before := time.Now().UTC()
+	created := plane.call(t, http.MethodPost,
+		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+			"email": "admin@example.test", "displayName": "Admin",
+			"password": "initial administrator password",
+		}, asBootstrap)
+	token := sessionCookie(t, created)
+	var expires time.Time
+	for _, cookie := range created.cookies {
+		if cookie.Name == session.CookieName {
+			expires = cookie.Expires
+		}
+	}
+	if expires.Before(before.Add(lifetime-time.Second)) || expires.After(time.Now().UTC().Add(lifetime+time.Second)) {
+		t.Fatalf("session expires at %v for configured lifetime %v", expires, lifetime)
+	}
+
+	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
+	url := plane.base(identityOrg) + "/policy"
+	refused := plane.call(t, http.MethodPut, url, map[string]any{
+		"sessionLifetimeSeconds": int(lifetime.Seconds()), "auditRetentionDays": 45,
+	}, asSession(token))
+	if refused.status != http.StatusBadRequest {
+		t.Fatalf("writable session lifetime = %d: %s", refused.status, refused.body)
+	}
+	updated := plane.call(t, http.MethodPut, url,
+		map[string]any{"auditRetentionDays": 45}, asSession(token))
+	if updated.status != http.StatusOK {
+		t.Fatalf("audit retention update = %d: %s", updated.status, updated.body)
+	}
+	var policy struct {
+		SessionLifetimeSeconds int `json:"sessionLifetimeSeconds"`
+		AuditRetentionDays     int `json:"auditRetentionDays"`
+	}
+	decodeAnswer(t, updated, &policy)
+	if policy.SessionLifetimeSeconds != int(lifetime.Seconds()) || policy.AuditRetentionDays != 45 {
+		t.Fatalf("effective policy = %+v", policy)
 	}
 }
 
@@ -485,7 +530,7 @@ func TestLocalSignInBoundsParallelPasswordChecks(t *testing.T) {
 func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	issuer := newMockIssuer(t)
 	plane := startIdentityPlane(t, func(cfg *config.Config) {
-		cfg.AuthenticationMode = "local+oidc"
+		cfg.AuthMode = "local+oidc"
 		cfg.OIDCIssuer = issuer.url()
 		cfg.OIDCClientID = "oc-console"
 		cfg.OIDCClientSecret = "test-client-secret"

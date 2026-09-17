@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -41,9 +40,9 @@ func serve(ctx context.Context, process assembled) error {
 		BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 
-	listener, err := net.Listen("tcp", cfg.HTTPAddress)
+	listener, err := net.Listen("tcp", cfg.HTTPListenAddress)
 	if err != nil {
-		return fmt.Errorf("listening on %s: %w", cfg.HTTPAddress, err)
+		return fmt.Errorf("listening on %s: %w", cfg.HTTPListenAddress, err)
 	}
 	logger.Info("listening", slog.String("address", listener.Addr().String()))
 
@@ -161,7 +160,7 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		Database:                process.database,
 		Logger:                  process.logger,
 		Identity:                identities,
-		Origins:                 []string{cfg.OperatorPublicURL},
+		Origins:                 []string{cfg.PublicURL},
 		Catalog:                 process.catalog,
 		WebhookTypes:            webhookTypes(webhookAdapters()),
 		Sealer:                  process.sealer,
@@ -169,10 +168,10 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		StreamContext:           process.streamContext,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		ConversationsEnabled:    true,
-		MaxWaitingTurns:         cfg.MaxPendingInvestigationsPerOrganization,
-		IntakeBaseURL:           cfg.OperatorPublicURL,
-		PublicURL:               cfg.OperatorPublicURL,
-		ConsoleURL:              cfg.OperatorPublicURL,
+		MaxWaitingTurns:         cfg.MaxPendingInvestigations,
+		IntakeBaseURL:           cfg.PublicURL,
+		PublicURL:               cfg.PublicURL,
+		ConsoleURL:              cfg.PublicURL,
 		MinimumRelayVersion:     "",
 	}.Router()
 	if err != nil {
@@ -191,9 +190,9 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		OIDCIssuer:       cfg.OIDCIssuer,
 		OIDCClientID:     cfg.OIDCClientID,
 		OIDCClientSecret: cfg.OIDCClientSecret,
-		PublicURL:        cfg.OperatorPublicURL,
-		ConsoleURL:       cfg.OperatorPublicURL,
-		SessionLifetime:  time.Duration(cfg.SessionLifetimeSeconds) * time.Second,
+		PublicURL:        cfg.PublicURL,
+		ConsoleURL:       cfg.PublicURL,
+		SessionLifetime:  cfg.SessionLifetime,
 		// This process starts the pruner unconditionally, so the policy surface may say that a
 		// declared retention schedule is applied. It is passed rather than assumed because the
 		// statement is made to an auditor, and the only way to keep it true is for the component

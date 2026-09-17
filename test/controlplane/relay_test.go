@@ -39,7 +39,7 @@ func TestRelayRegistration(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})

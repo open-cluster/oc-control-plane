@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func secretFile(t *testing.T, value string) string {
@@ -43,6 +44,26 @@ func TestLoadWithoutBootstrapCredential(t *testing.T) {
 	}
 }
 
+func TestMissingSecretsNameDirectAndFileInputs(t *testing.T) {
+	t.Run("database", func(t *testing.T) {
+		values := essentialEnvironment(t)
+		delete(values, EnvDatabaseDSNFile)
+		_, err := Load(lookup(values))
+		if err == nil || !strings.Contains(err.Error(), EnvDatabaseDSN+" or "+EnvDatabaseDSNFile) {
+			t.Fatalf("missing database secret = %v", err)
+		}
+	})
+
+	t.Run("model", func(t *testing.T) {
+		values := essentialEnvironment(t)
+		delete(values, EnvModelKeyFile)
+		_, err := Load(lookup(values))
+		if err == nil || !strings.Contains(err.Error(), EnvModelKey+" or "+EnvModelKeyFile) {
+			t.Fatalf("missing model secret = %v", err)
+		}
+	})
+}
+
 func TestRecoveryNeedsOnlyDeploymentDatabaseConfiguration(t *testing.T) {
 	values := map[string]string{EnvDatabaseDSNFile: secretFile(t, "postgres://user:password@localhost/opencluster"), EnvModelProvider: "anthropic"}
 	dsn, err := LoadRecoveryDatabase(lookup(values))
@@ -57,22 +78,22 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HTTPAddress != ":8080" {
-		t.Fatalf("shared HTTP default = %q", cfg.HTTPAddress)
+	if cfg.HTTPListenAddress != ":8080" {
+		t.Fatalf("shared HTTP default = %q", cfg.HTTPListenAddress)
 	}
-	if cfg.OperatorPublicURL != "http://localhost:8080" {
-		t.Fatalf("public URL default = %q", cfg.OperatorPublicURL)
+	if cfg.PublicURL != "http://localhost:8080" {
+		t.Fatalf("public URL default = %q", cfg.PublicURL)
 	}
-	if cfg.InvestigationWorkers != 8 || cfg.MaxPendingInvestigationsPerOrganization != 100 {
+	if cfg.InvestigationWorkers != 8 || cfg.MaxPendingInvestigations != 100 {
 		t.Fatalf("investigation defaults = workers %d pending %d",
-			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
+			cfg.InvestigationWorkers, cfg.MaxPendingInvestigations)
 	}
-	if cfg.SessionLifetimeSeconds != 43200 {
-		t.Fatalf("session lifetime default = %d", cfg.SessionLifetimeSeconds)
+	if cfg.SessionLifetime != 12*time.Hour {
+		t.Fatalf("session lifetime default = %v", cfg.SessionLifetime)
 	}
-	if cfg.ModelContextWindowTokens != 0 || cfg.ModelMaxOutputTokens != 0 {
+	if cfg.ModelContextWindow != 0 || cfg.ModelMaxOutputTokens != 0 {
 		t.Fatalf("model limit overrides = context %d output %d",
-			cfg.ModelContextWindowTokens, cfg.ModelMaxOutputTokens)
+			cfg.ModelContextWindow, cfg.ModelMaxOutputTokens)
 	}
 }
 
@@ -83,8 +104,20 @@ func TestLoadSessionLifetimeFromEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SessionLifetimeSeconds != 900 {
-		t.Fatalf("session lifetime = %d", cfg.SessionLifetimeSeconds)
+	if cfg.SessionLifetime != 15*time.Minute {
+		t.Fatalf("session lifetime = %v", cfg.SessionLifetime)
+	}
+}
+
+func TestLoadRejectsInvalidSessionLifetime(t *testing.T) {
+	for _, value := range []string{"0", "-1", "299", "2592001"} {
+		t.Run(value, func(t *testing.T) {
+			values := essentialEnvironment(t)
+			values[EnvSessionLifetimeSeconds] = value
+			if _, err := Load(lookup(values)); err == nil || !strings.Contains(err.Error(), EnvSessionLifetimeSeconds) {
+				t.Fatalf("loading lifetime %q returned %v", value, err)
+			}
+		})
 	}
 }
 
@@ -96,9 +129,9 @@ func TestLoadInvestigationLimitsFromEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.InvestigationWorkers != 3 || cfg.MaxPendingInvestigationsPerOrganization != 40 {
+	if cfg.InvestigationWorkers != 3 || cfg.MaxPendingInvestigations != 40 {
 		t.Fatalf("investigation limits = workers %d pending %d",
-			cfg.InvestigationWorkers, cfg.MaxPendingInvestigationsPerOrganization)
+			cfg.InvestigationWorkers, cfg.MaxPendingInvestigations)
 	}
 }
 
@@ -109,8 +142,8 @@ func TestLoadModelContextWindowFromEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ModelContextWindowTokens != 200_000 {
-		t.Fatalf("model context window = %d", cfg.ModelContextWindowTokens)
+	if cfg.ModelContextWindow != 200_000 {
+		t.Fatalf("model context window = %d", cfg.ModelContextWindow)
 	}
 }
 
@@ -155,7 +188,7 @@ func TestLoadRejectsInvalidModelLimits(t *testing.T) {
 func TestLoadProcessAcceptsEnvironmentAndRejectsRetiredConfiguration(t *testing.T) {
 	values := essentialEnvironment(t)
 	cfg, err := LoadProcess([]string{"--server-address", ":9100"}, lookup(values))
-	if err != nil || cfg.HTTPAddress != ":9100" {
+	if err != nil || cfg.HTTPListenAddress != ":9100" {
 		t.Fatalf("startup configuration: %v", err)
 	}
 	if _, err := LoadProcess([]string{"--config", "private-path"}, lookup(values)); err == nil || strings.Contains(err.Error(), "private-path") {

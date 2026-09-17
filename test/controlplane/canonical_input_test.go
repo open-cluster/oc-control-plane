@@ -15,10 +15,10 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	address := freeAddress(t)
 	prompts := make(chan modelagent.Prompt, 4)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = address
+		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
+		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	request := strings.Repeat("context ", 300) + "Use the corrected region eu-west-2 and exclude eu-central-1."
@@ -42,11 +42,11 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 	address := freeAddress(t)
 	prompts := make(chan modelagent.Prompt, 4)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = address
+		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
-		cfg.ModelContextWindowTokens = 33000
+		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
+		cfg.ModelContextWindow = 33000
 		cfg.ModelMaxOutputTokens = 32000
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}

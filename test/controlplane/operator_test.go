@@ -42,9 +42,9 @@ func TestOperatorSurface(t *testing.T) {
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.RelayAddress = relayAddress
+		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(bootstrapToken))
 		cfg.OperatorTokenDigest = digest[:]
 		// The credential names the one tenant it reaches. That binding is the whole difference

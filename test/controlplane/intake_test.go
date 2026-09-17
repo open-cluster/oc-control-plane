@@ -44,7 +44,7 @@ func startIntake(t *testing.T) *intakePlane {
 
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = "127.0.0.1:0"
+		cfg.HTTPListenAddress = "127.0.0.1:0"
 		dsn = cfg.DatabaseDSN
 	})
 
@@ -752,7 +752,7 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = "127.0.0.1:0"
+		cfg.HTTPListenAddress = "127.0.0.1:0"
 		dsn = cfg.DatabaseDSN
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
@@ -795,7 +795,7 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = "127.0.0.1:0"
+		cfg.HTTPListenAddress = "127.0.0.1:0"
 		dsn = cfg.DatabaseDSN
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")

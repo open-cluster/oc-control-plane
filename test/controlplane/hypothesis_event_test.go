@@ -83,10 +83,10 @@ func assertModelEventSchema(t *testing.T, model *hypothesisEventModel, want []st
 	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"}]}`
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = address
+		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
-		cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
+		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {

@@ -59,12 +59,12 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	operatorAddress := freeAddress(t)
 	var dsn string
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.ModelProvider = "zai"
 		cfg.ModelName = "glm-4.7"
-		cfg.ModelKey = "test-provider-key"
+		cfg.ModelAPIKey = "test-provider-key"
 		dsn = cfg.DatabaseDSN
 	}, app.Options{ModelBaseURL: provider.URL})
 	plane := &integrationPlane{controlPlane: running, operator: operatorAddress,

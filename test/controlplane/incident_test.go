@@ -46,8 +46,8 @@ func startIncidents(t *testing.T) *incidentPlane {
 	operatorAddress := freeAddress(t)
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = "127.0.0.1:0"
-		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPListenAddress = "127.0.0.1:0"
+		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		dsn = cfg.DatabaseDSN
