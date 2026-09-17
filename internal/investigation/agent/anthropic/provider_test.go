@@ -52,6 +52,18 @@ func (t *transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	return t.responses[index], nil
 }
 
+type closeSignalBody struct {
+	io.ReadCloser
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *closeSignalBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(func() { close(b.closed) })
+	return err
+}
+
 func (t *transport) callCount() int {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
@@ -135,7 +147,6 @@ func providerUnder(t *testing.T, responses ...*http.Response) (*anthropic.Provid
 		Effort:          reasoning.EffortHigh,
 		Credential:      reasoning.Secret("sk-test-credential"),
 		MaxOutputTokens: 32_000,
-		MaxAttempts:     2,
 		RequestTimeout:  5 * time.Second,
 	}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
 	if err != nil {
@@ -273,13 +284,17 @@ func TestComplete_TellsARejectedRequestApartFromAnOutage(t *testing.T) {
 		{"a malformed request is this build's defect", 400, reasoning.ErrRejected},
 		{"a rejected credential is this deployment's problem", 401, reasoning.ErrRejected},
 		{"an unknown model is a configuration mistake", 404, reasoning.ErrRejected},
+		{"a request timeout is transient", 408, reasoning.ErrOutage},
+		{"a conflict is transient", 409, reasoning.ErrOutage},
 		{"a server error is the vendor's", 500, reasoning.ErrOutage},
 		{"an overloaded provider is the vendor's", 529, reasoning.ErrOutage},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			provider, _ := providerUnder(t, failedWith(testCase.status,
-				`{"type":"error","error":{"type":"x","message":"y"}}`))
+			response := failedWith(testCase.status,
+				`{"type":"error","error":{"type":"x","message":"y"}}`)
+			response.Header.Set("Retry-After", "0")
+			provider, _ := providerUnder(t, response)
 
 			_, err := provider.Complete(context.Background(), promptFixture())
 			if !errors.Is(err, testCase.want) {
@@ -308,12 +323,57 @@ func TestComplete_RateLimitingFollowedBySuccessReturnsTheAnswer(t *testing.T) {
 }
 
 func TestComplete_RateLimitingThroughoutBecomesAnOutage(t *testing.T) {
-	provider, _ := providerUnder(t,
-		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`))
+	responses := []*http.Response{
+		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
+		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
+		failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`),
+	}
+	for _, response := range responses {
+		response.Header.Set("Retry-After", "0")
+	}
+	provider, round := providerUnder(t, responses...)
 
 	_, err := provider.Complete(context.Background(), promptFixture())
 	if !errors.Is(err, reasoning.ErrOutage) {
 		t.Fatalf("got %v, want rate limiting past the retry budget to be an outage", err)
+	}
+	if calls := round.callCount(); calls != 3 {
+		t.Fatalf("provider calls = %d, want 3 total attempts", calls)
+	}
+}
+
+func TestComplete_BoundsRetryAfterAndCancelsDuringBackoff(t *testing.T) {
+	for name, retryAfter := range map[string]string{
+		"delay seconds": "3600",
+		"HTTP date":     time.Now().Add(time.Hour).UTC().Format(http.TimeFormat),
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`)
+			response.Header.Set("Retry-After", retryAfter)
+			closed := make(chan struct{})
+			response.Body = &closeSignalBody{ReadCloser: response.Body, closed: closed}
+			provider, round := providerUnder(t, response)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				_, err := provider.Complete(ctx, promptFixture())
+				done <- err
+			}()
+			<-closed
+			cancel()
+
+			select {
+			case err := <-done:
+				if !errors.Is(err, reasoning.ErrTimeout) {
+					t.Fatalf("got %v, want cancellation to stop retry backoff", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("cancellation did not stop retry backoff")
+			}
+			if round.callCount() != 1 || response.Header.Get("Retry-After") != "30" {
+				t.Fatalf("calls=%d bounded Retry-After=%q", round.callCount(), response.Header.Get("Retry-After"))
+			}
+		})
 	}
 }
 
@@ -389,7 +449,7 @@ func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.
 	provider, err := anthropic.New(reasoning.ModelConfig{
 		Provider: anthropic.Name, Model: "claude-haiku-4-5",
 		Effort: reasoning.EffortMedium, Credential: reasoning.Secret("sk-test-credential"),
-		MaxOutputTokens: 32_000, MaxAttempts: 2, RequestTimeout: 5 * time.Second,
+		MaxOutputTokens: 32_000, RequestTimeout: 5 * time.Second,
 	}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
 	if err != nil {
 		t.Fatalf("building the Haiku provider: %v", err)
@@ -436,7 +496,7 @@ func TestComplete_TheCredentialAppearsInNoErrorReturnedToTheCaller(t *testing.T)
 	}
 }
 
-func TestNew_RefusesADeploymentThatCouldNotWork(t *testing.T) {
+func TestNew_RefusesModelConfigurationThatCouldNotWork(t *testing.T) {
 	cases := map[string]reasoning.ModelConfig{
 		"no model":      {Provider: anthropic.Name, Credential: reasoning.Secret("k")},
 		"no credential": {Provider: anthropic.Name, Model: "claude-opus-5"},
@@ -449,10 +509,10 @@ func TestNew_RefusesADeploymentThatCouldNotWork(t *testing.T) {
 			Credential: reasoning.Secret("k"), BaseURL: "http://insecure.example",
 		},
 	}
-	for name, deployment := range cases {
+	for name, config := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := anthropic.New(deployment, anthropic.Options{}); err == nil {
-				t.Error("a deployment that could not work was accepted at startup")
+			if _, err := anthropic.New(config, anthropic.Options{}); err == nil {
+				t.Error("model configuration that could not work was accepted at startup")
 			}
 		})
 	}
