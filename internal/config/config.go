@@ -22,19 +22,30 @@ const (
 )
 
 var SupportedEnvironmentKeys = []string{
-	EnvHTTPAddress,
-	EnvOperatorPublicURL,
+	// ========= Required ENVs =========
 	EnvDatabaseDSN,
 	EnvDatabaseDSNFile,
+
+	// ========= Optional ENVs =========
+	EnvHTTPAddress,
+	EnvOperatorPublicURL,
+	EnvLogLevel,
+	EnvOTLPEndpoint,
+
 	EnvAuthenticationMode,
+	EnvSessionLifetimeSeconds,
 	EnvOperatorToken,
 	EnvOperatorTokenFile,
+	EnvSealingKey,
+	EnvSealingKeyFile,
 	EnvOIDCIssuer,
 	EnvOIDCClientID,
 	EnvOIDCClientSecret,
 	EnvOIDCClientSecretFile,
+
 	EnvRelayAddress,
 	EnvRelaySPKIPins,
+
 	EnvModelProvider,
 	EnvModelName,
 	EnvModelKey,
@@ -43,35 +54,43 @@ var SupportedEnvironmentKeys = []string{
 	EnvModelMaxOutputTokens,
 	EnvInvestigationWorkers,
 	EnvInvestigationMaxPendingPerOrganization,
-	EnvSessionLifetimeSeconds,
-	EnvSealingKey,
-	EnvSealingKeyFile,
-	EnvLogLevel,
-	EnvOTLPEndpoint,
+
 	EnvSlackClientID,
 	EnvSlackClientSecret,
 	EnvSlackClientSecretFile,
 	EnvSlackSigningSecret,
 	EnvSlackSigningSecretFile,
+
 	EnvGitHubAppID,
 	EnvGitHubAppKey,
 	EnvGitHubAppKeyFile,
 }
 
 const (
-	EnvHTTPAddress                            = "OC_SERVER_ADDRESS"
-	EnvOperatorPublicURL                      = "OC_PUBLIC_URL"
-	EnvDatabaseDSN                            = "OC_DATABASE_DSN"
-	EnvDatabaseDSNFile                        = "OC_DATABASE_DSN_FILE"
-	EnvAuthenticationMode                     = "OC_AUTH_MODE"
-	EnvOperatorToken                          = "OC_BOOTSTRAP_TOKEN"
-	EnvOperatorTokenFile                      = "OC_BOOTSTRAP_TOKEN_FILE"
-	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
-	EnvOIDCClientID                           = "OC_OIDC_CLIENT_ID"
-	EnvOIDCClientSecret                       = "OC_OIDC_CLIENT_SECRET"
-	EnvOIDCClientSecretFile                   = "OC_OIDC_CLIENT_SECRET_FILE"
-	EnvRelayAddress                           = "OC_RELAY_ADDRESS"
-	EnvRelaySPKIPins                          = "OC_RELAY_SPKI_PINS"
+	// ========= Required ENVs =========
+	EnvDatabaseDSN     = "OC_DATABASE_DSN"
+	EnvDatabaseDSNFile = "OC_DATABASE_DSN_FILE"
+
+	// ========= Optional ENVs =========
+	EnvHTTPAddress       = "OC_SERVER_ADDRESS"
+	EnvOperatorPublicURL = "OC_PUBLIC_URL"
+	EnvLogLevel          = "OC_LOG_LEVEL"
+	EnvOTLPEndpoint      = "OC_OTLP_ENDPOINT"
+
+	EnvAuthenticationMode     = "OC_AUTH_MODE"
+	EnvSessionLifetimeSeconds = "OC_SESSION_LIFETIME_SECONDS"
+	EnvOperatorToken          = "OC_BOOTSTRAP_TOKEN"
+	EnvOperatorTokenFile      = "OC_BOOTSTRAP_TOKEN_FILE"
+	EnvSealingKey             = "OC_ENCRYPTION_KEY"
+	EnvSealingKeyFile         = "OC_ENCRYPTION_KEY_FILE"
+	EnvOIDCIssuer             = "OC_OIDC_ISSUER"
+	EnvOIDCClientID           = "OC_OIDC_CLIENT_ID"
+	EnvOIDCClientSecret       = "OC_OIDC_CLIENT_SECRET"
+	EnvOIDCClientSecretFile   = "OC_OIDC_CLIENT_SECRET_FILE"
+
+	EnvRelayAddress  = "OC_RELAY_ADDRESS"
+	EnvRelaySPKIPins = "OC_RELAY_SPKI_PINS"
+
 	EnvModelProvider                          = "OC_AI_PROVIDER"
 	EnvModelName                              = "OC_AI_MODEL"
 	EnvModelKey                               = "OC_AI_API_KEY"
@@ -80,91 +99,59 @@ const (
 	EnvModelMaxOutputTokens                   = "OC_AI_MAX_OUTPUT_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
-	EnvSessionLifetimeSeconds                 = "OC_SESSION_LIFETIME_SECONDS"
-	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
-	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
-	EnvLogLevel                               = "OC_LOG_LEVEL"
-	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
-	EnvSlackClientID                          = "OC_SLACK_CLIENT_ID"
-	EnvSlackClientSecret                      = "OC_SLACK_CLIENT_SECRET"
-	EnvSlackClientSecretFile                  = "OC_SLACK_CLIENT_SECRET_FILE"
-	EnvSlackSigningSecret                     = "OC_SLACK_SIGNING_SECRET"
-	EnvSlackSigningSecretFile                 = "OC_SLACK_SIGNING_SECRET_FILE"
-	EnvGitHubAppID                            = "OC_GITHUB_APP_ID"
-	EnvGitHubAppKey                           = "OC_GITHUB_APP_PRIVATE_KEY"
-	EnvGitHubAppKeyFile                       = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
+
+	EnvSlackClientID          = "OC_SLACK_CLIENT_ID"
+	EnvSlackClientSecret      = "OC_SLACK_CLIENT_SECRET"
+	EnvSlackClientSecretFile  = "OC_SLACK_CLIENT_SECRET_FILE"
+	EnvSlackSigningSecret     = "OC_SLACK_SIGNING_SECRET"
+	EnvSlackSigningSecretFile = "OC_SLACK_SIGNING_SECRET_FILE"
+
+	EnvGitHubAppID      = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKey     = "OC_GITHUB_APP_PRIVATE_KEY"
+	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 )
 
 // Config is the validated process configuration.
 type Config struct {
-	LogLevel slog.Level
-	// HTTPAddress is the shared listen address for every HTTP route group.
-	HTTPAddress string
-
-	// DatabaseDSN is the single deployment database connection string, resolved from
-	// a direct environment value or the configured file.
-	DatabaseDSN string
-
-	// OTLPEndpoint is the trace collector, host:port. Empty disables trace export, which
-	// is the correct default for a process with no collector configured.
-	OTLPEndpoint string
-
-	// RelayAddress is the listen address for the Relay endpoint,
-	// which is deliberately separate from the HTTP surface;
-	RelayAddress string
-
-	// RelaySPKIPins are this control plane's own public key digests, handed to a Relay at
-	// enrolment so every later connection is pinned to a key rather than trusting a
-	// certificate authority. More than one exists so a rotation can overlap.
-	RelaySPKIPins []string
-
-	// OperatorTokenDigest is the SHA-256 of the bootstrap token. The token is read from the file
-	// the operator named, reduced to this, and discarded: the process holds no copy of it, so
-	// there is nothing here to log or echo by accident.
-	OperatorTokenDigest []byte
-
-	// OperatorPublicURL is where this surface is reachable from a browser, and what the redirect
-	// URI registered with an identity provider is built from.
+	// ========= Server =========
+	LogLevel          slog.Level
+	HTTPAddress       string
 	OperatorPublicURL string
+	DatabaseDSN       string
+	OTLPEndpoint      string
 
-	// AuthenticationMode is local by default. local+oidc keeps local recovery available and
-	// adds one deployment-configured generic OIDC adapter.
+	// ========= Authentication =========
 	AuthenticationMode string
 	OIDCIssuer         string
 	OIDCClientID       string
 	OIDCClientSecret   string
-
-	// SealingKey seals presentable credentials at rest: an identity provider's client
-	// secret, an integration's outbound token. Empty means this deployment cannot hold
-	// one, and submitting one is refused with that reason rather than stored in the clear.
+	SessionLifetime    time.Duration
+	// Only the digest is retained; the bootstrap token is discarded after loading.
+	OperatorTokenDigest []byte
+	// SealingKey encrypts credentials that must be presented again.
 	SealingKey []byte
 
-	// SlackClientID and SlackClientSecret are the OpenCluster Slack app's OAuth client.
-	// Both empty means this deployment offers no one-click Slack install and serves the
-	// pasted-token form instead. SlackSigningSecret is what inbound events are verified
-	// against; empty means the events endpoint is not served at all, and the integration
-	// truthfully reports its inbound capabilities as unavailable.
+	// ========= Relay =========
+	RelayAddress  string
+	RelaySPKIPins []string
+
+	// ========= Integrations =========
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
-	// GitHubAppID and GitHubAppKey are the deployment's GitHub App credential; both empty
-	// means this deployment cannot reach GitHub, and connecting it is refused live with
-	// that reason.
-	GitHubAppID  string
-	GitHubAppKey []byte
+	GitHubAppID        string
+	GitHubAppKey       []byte
 
-	// The model configuration. ModelProvider empty means this deployment cannot investigate,
-	// and opening one is refused with that reason. The credential travels as a file's
-	// contents, never as an environment value.
+	// ========= Model runtime =========
 	ModelProvider            string
 	ModelName                string
 	ModelKey                 string
 	ModelContextWindowTokens int
 	ModelMaxOutputTokens     int64
 
+	// ========= Investigation =========
 	InvestigationWorkers                    int
 	MaxPendingInvestigationsPerOrganization int
-	SessionLifetime                         time.Duration
 }
 
 // Load reads configuration through lookup (os.LookupEnv in production) and validates every
@@ -194,8 +181,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.DatabaseDSN == "" {
-
-		return Config{}, fmt.Errorf("%s is required", EnvDatabaseDSNFile)
+		return Config{}, fmt.Errorf("%s or %s is required", EnvDatabaseDSN, EnvDatabaseDSNFile)
 	}
 	if cfg.OTLPEndpoint, err = optionalHostPort(lookup, EnvOTLPEndpoint); err != nil {
 		return Config{}, err
@@ -317,8 +303,8 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 		return nil
 	}
 	if issuer == "" || clientID == "" || secret == "" {
-		return fmt.Errorf("%s, %s, and %s are all required in local+oidc mode",
-			EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecretFile)
+		return fmt.Errorf("%s, %s, and either %s or %s are required in local+oidc mode",
+			EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecret, EnvOIDCClientSecretFile)
 	}
 	parsed, err := url.Parse(issuer)
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" ||
@@ -363,8 +349,6 @@ func validateHostPort(address string) error {
 	return nil
 }
 
-// modelConfiguration reads the model settings. A provider set demands a model name and a
-// key: half a configuration would serve an investigations surface that fails on first use.
 func modelConfiguration(lookup func(string) (string, bool), cfg *Config) error {
 	provider, _ := lookup(EnvModelProvider)
 	cfg.ModelProvider = strings.TrimSpace(provider)
@@ -385,13 +369,13 @@ func modelConfiguration(lookup func(string) (string, bool), cfg *Config) error {
 			"is a 404 at best", EnvModelName, EnvModelProvider)
 	}
 	if key == "" {
-		return fmt.Errorf("%s is required when %s is set", EnvModelKeyFile, EnvModelProvider)
+		return fmt.Errorf("%s or %s is required when %s is set",
+			EnvModelKey, EnvModelKeyFile, EnvModelProvider)
 	}
 	cfg.ModelKey = key
 	return nil
 }
 
-// gitHubApp reads the deployment's GitHub App credential;
 func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 	id, _ := lookup(EnvGitHubAppID)
 	id = strings.TrimSpace(id)
@@ -400,20 +384,12 @@ func gitHubApp(lookup func(string) (string, bool)) (string, []byte, error) {
 		return "", nil, err
 	}
 	if (id == "") != (len(key) == 0) {
-		return "", nil, fmt.Errorf("%s and a GitHub App private key must be configured together", EnvGitHubAppID)
+		return "", nil, fmt.Errorf("%s and either %s or %s must be configured together",
+			EnvGitHubAppID, EnvGitHubAppKey, EnvGitHubAppKeyFile)
 	}
 	return id, key, nil
 }
 
-// slackApp reads the deployment's Slack app registration.
-//
-// Two independent halves. The OAuth client is both parts or neither, for the reason the
-// GitHub one is: half of it offers a connect button that cannot finish, and the person who
-// set one variable is still reading when this refuses. The signing secret stands alone —
-// it serves the events endpoint rather than the connect flow, and a deployment may
-// legitimately have one without the other in either direction.
-//
-// Neither secret's contents ever appear in an error.
 func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	clientID, _ := lookup(EnvSlackClientID)
 	clientID = strings.TrimSpace(clientID)
@@ -422,7 +398,8 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 		return err
 	}
 	if (clientID == "") != (secret == "") {
-		return fmt.Errorf("%s and %s or its direct value must be configured together", EnvSlackClientID, EnvSlackClientSecretFile)
+		return fmt.Errorf("%s and either %s or %s must be configured together",
+			EnvSlackClientID, EnvSlackClientSecret, EnvSlackClientSecretFile)
 	}
 	signing, err := readSecretText(lookup, EnvSlackSigningSecretFile)
 	if err != nil {
@@ -432,10 +409,7 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	return nil
 }
 
-// relaySPKIPins reads the pin set the Relay endpoint advertises at enrolment. Pins are
-// required whenever the endpoint is enabled: a Relay handed no pin has no trust anchor for
-// its next connection and would have to fall back to trusting a certificate authority,
-// which is the property key pinning exists to remove.
+// Relay pins are required when the Relay listener is enabled.
 func relaySPKIPins(lookup func(string) (string, bool), relayAddress string) ([]string, error) {
 	raw, _ := lookup(EnvRelaySPKIPins)
 	fields := strings.Split(raw, ",")

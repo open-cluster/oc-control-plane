@@ -44,6 +44,26 @@ func TestLoadWithoutBootstrapCredential(t *testing.T) {
 	}
 }
 
+func TestMissingSecretsNameDirectAndFileInputs(t *testing.T) {
+	t.Run("database", func(t *testing.T) {
+		values := essentialEnvironment(t)
+		delete(values, EnvDatabaseDSNFile)
+		_, err := Load(lookup(values))
+		if err == nil || !strings.Contains(err.Error(), EnvDatabaseDSN+" or "+EnvDatabaseDSNFile) {
+			t.Fatalf("missing database secret = %v", err)
+		}
+	})
+
+	t.Run("model", func(t *testing.T) {
+		values := essentialEnvironment(t)
+		delete(values, EnvModelKeyFile)
+		_, err := Load(lookup(values))
+		if err == nil || !strings.Contains(err.Error(), EnvModelKey+" or "+EnvModelKeyFile) {
+			t.Fatalf("missing model secret = %v", err)
+		}
+	})
+}
+
 func TestRecoveryNeedsOnlyDeploymentDatabaseConfiguration(t *testing.T) {
 	values := map[string]string{EnvDatabaseDSNFile: secretFile(t, "postgres://user:password@localhost/opencluster"), EnvModelProvider: "anthropic"}
 	dsn, err := LoadRecoveryDatabase(lookup(values))

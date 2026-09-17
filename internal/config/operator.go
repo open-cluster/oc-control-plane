@@ -24,9 +24,9 @@ func operatorTokenDigest(
 		return nil, nil
 	}
 	if len(token) < minOperatorTokenLength {
-		return nil, fmt.Errorf("%s: the token must be at least %d characters; the surface it "+
+		return nil, fmt.Errorf("%s or %s: the token must be at least %d characters; the surface it "+
 			"guards reads across every tenant this instance serves",
-			EnvOperatorTokenFile, minOperatorTokenLength)
+			EnvOperatorToken, EnvOperatorTokenFile, minOperatorTokenLength)
 	}
 	digest := sha256.Sum256([]byte(token))
 	return digest[:], nil
@@ -80,8 +80,8 @@ func sealingKey(lookup func(string) (string, bool)) ([]byte, error) {
 	if len(raw) == sealingKeyLength {
 		return raw, nil
 	}
-	return nil, fmt.Errorf("%s: the key must be %d bytes, raw or base64-encoded",
-		EnvSealingKeyFile, sealingKeyLength)
+	return nil, fmt.Errorf("%s or %s: the key must be %d bytes, raw or base64-encoded",
+		EnvSealingKey, EnvSealingKeyFile, sealingKeyLength)
 }
 
 // sealingKeyLength is AES-256's key size. It is stated here rather than imported so that
