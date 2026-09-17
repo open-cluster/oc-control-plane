@@ -43,8 +43,8 @@ func (d Detail) Safe() Detail {
 		}
 	}
 	sort.Strings(keys)
-	if len(keys) > MaxDetailEntries {
-		keys = keys[:MaxDetailEntries]
+	if len(keys) > maxAuditDetailEntries {
+		keys = keys[:maxAuditDetailEntries]
 	}
 
 	safe := make(Detail, len(keys))
@@ -55,47 +55,6 @@ func (d Detail) Safe() Detail {
 		return nil
 	}
 	return safe
-}
-
-func safeDetailForAction(action Action, detail Detail) Detail {
-	if action == ActionPolicyChanged {
-		return safePolicyChangeDetail(detail)
-	}
-	return detail.Safe()
-}
-
-func safePolicyChangeDetail(detail Detail) Detail {
-	before := safeRetentionMetadata(detail["before"])
-	after := safeRetentionMetadata(detail["after"])
-	if before == nil && after == nil {
-		return nil
-	}
-	safe := Detail{}
-	if before != nil {
-		safe["before"] = before
-	}
-	if after != nil {
-		safe["after"] = after
-	}
-	return safe
-}
-
-func safeRetentionMetadata(value any) Detail {
-	detail, ok := value.(map[string]any)
-	if !ok {
-		if typed, isDetail := value.(Detail); isDetail {
-			detail = typed
-			ok = true
-		}
-	}
-	if !ok {
-		return nil
-	}
-	value, ok = detail["auditRetentionDays"]
-	if !ok {
-		return nil
-	}
-	return Detail{"auditRetentionDays": boundedValue(value)}
 }
 
 func NamesACredential(key string) bool { return namesACredential(key) }
@@ -113,7 +72,7 @@ func namesACredential(key string) bool {
 func boundedValue(value any) any {
 	switch typed := value.(type) {
 	case string:
-		return truncate(typed, MaxDetailValueLength)
+		return truncate(typed, maxAuditTextLength)
 	case Detail:
 		return typed.Safe()
 	case map[string]any:

@@ -6,17 +6,15 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrWriteFailed = errors.New("the audit record could not be written")
 
 const (
-	MaxTargetIDLength    = 256
-	MaxDisplayNameLength = 256
-	MaxSourceAddrLength  = 128
-	MaxRequestIDLength   = 128
-	MaxDetailValueLength = 512
-	MaxDetailEntries     = 32
+	maxAuditTextLength     = 512
+	maxAuditMetadataLength = 128
+	maxAuditDetailEntries  = 32
 )
 
 type ActorKind int16
@@ -135,33 +133,27 @@ type Event struct {
 // Bounded returns the event with every attacker-influenced string cut to its limit and the
 // detail sanitised. Storage calls it on the way in, so no call site has to remember.
 func (e Event) Bounded() Event {
-	e.Actor.DisplayName = truncate(e.Actor.DisplayName, MaxDisplayNameLength)
-	e.Actor.ID = truncate(e.Actor.ID, MaxTargetIDLength)
-	e.Target.ID = truncate(e.Target.ID, MaxTargetIDLength)
-	e.SourceAddress = truncate(e.SourceAddress, MaxSourceAddrLength)
-	e.RequestID = truncate(e.RequestID, MaxRequestIDLength)
-	e.Detail = safeDetailForAction(e.Action, e.Detail)
+	e.Actor.DisplayName = truncate(e.Actor.DisplayName, maxAuditTextLength)
+	e.Actor.ID = truncate(e.Actor.ID, maxAuditTextLength)
+	e.Target.ID = truncate(e.Target.ID, maxAuditTextLength)
+	e.SourceAddress = truncate(e.SourceAddress, maxAuditMetadataLength)
+	e.RequestID = truncate(e.RequestID, maxAuditMetadataLength)
+	e.Detail = e.Detail.Safe()
 	return e
 }
 
 func truncate(value string, limit int) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= limit {
+	if utf8.RuneCountInString(value) <= limit {
 		return value
 	}
 	const marker = "..."
-	if limit <= len(marker) {
-		return value[:limit]
+	markerLength := utf8.RuneCountInString(marker)
+	runes := []rune(value)
+	if limit <= markerLength {
+		return string(runes[:limit])
 	}
-	cut := limit - len(marker)
-	last := 0
-	for index := range value {
-		if index > cut {
-			return value[:last] + marker
-		}
-		last = index
-	}
-	return value[:cut] + marker
+	return string(runes[:limit-markerLength]) + marker
 }
 
 // Page is a position in the record, so an auditor reading a long history pages through it
