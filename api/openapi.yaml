@@ -1394,11 +1394,11 @@ components:
         id: { $ref: "#/components/schemas/UUID" }
         occurredAt: { $ref: "#/components/schemas/Timestamp" }
         actorKind: { type: string, enum: [user, automation, system] }
-        actorId: { type: string, maxLength: 256 }
-        actorName: { type: string, maxLength: 256 }
+        actorId: { type: string, maxLength: 512 }
+        actorName: { type: string, maxLength: 512 }
         action: { type: string, minLength: 1, maxLength: 128 }
         targetKind: { type: string, minLength: 1, maxLength: 128 }
-        targetId: { type: string, maxLength: 256 }
+        targetId: { type: string, maxLength: 512 }
         outcome: { type: string, enum: [allowed, denied, failed] }
         sourceAddress: { type: string, maxLength: 128 }
         requestId: { type: string, maxLength: 128 }

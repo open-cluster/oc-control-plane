@@ -254,7 +254,7 @@ func sortedKeys(payload map[string]any) []string {
 	return keys
 }
 
-const maxPayloadEntries = audit.MaxDetailEntries
+const maxPayloadEntries = 32
 
 const (
 	// eventPollInterval is how often a following connection looks for more. There is no
