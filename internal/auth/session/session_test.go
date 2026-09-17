@@ -75,32 +75,6 @@ func TestASessionSaysWhyItMayNotAuthenticate(t *testing.T) {
 	}
 }
 
-// Story 11: an organization sets its own lifetime. It may tighten past the default and may not
-// widen past what this build is willing to serve — a policy is a customer's decision inside a
-// product's bounds, not instead of them.
-func TestAnOrganizationsLifetimeIsHeldInsideWhatTheBuildServes(t *testing.T) {
-	t.Parallel()
-
-	for _, testCase := range []struct {
-		name       string
-		configured time.Duration
-		want       time.Duration
-	}{
-		{"unset takes the default", 0, session.DefaultLifetime},
-		{"negative takes the default", -time.Hour, session.DefaultLifetime},
-		{"tighter is honoured", time.Hour, time.Hour},
-		{"below the floor is raised", time.Second, session.MinLifetime},
-		{"beyond the ceiling is capped", 365 * 24 * time.Hour, session.MaxLifetime},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			if got := session.ClampLifetime(testCase.configured); got != testCase.want {
-				t.Errorf("clamped %v to %v, want %v", testCase.configured, got, testCase.want)
-			}
-		})
-	}
-}
-
 // The cookie's attributes are the transport half of the design, and every one of them is
 // load-bearing: HttpOnly against script, Secure against a plaintext hop, Lax against a
 // cross-site post, Path=/ so one cookie serves the surface. The __Host- prefix makes the

@@ -15,12 +15,6 @@ import (
 const CookieName = "__Host-oc_session"
 const tokenBytes = 32
 
-const (
-	MinLifetime     = 5 * time.Minute
-	MaxLifetime     = 30 * 24 * time.Hour
-	DefaultLifetime = 12 * time.Hour
-)
-
 var (
 	ErrUnknown = errors.New("session unknown")
 	ErrExpired = errors.New("session expired")
@@ -85,6 +79,23 @@ func NewToken() (Token, []byte, error) {
 	return token, Digest(token), nil
 }
 
+// Issue creates the stored session facts and the one-time credential presented to the client.
+// The lifetime is deployment policy that configuration has already validated.
+func Issue(userID uuid.UUID, organization string, lifetime time.Duration) (Token, []byte, Session, error) {
+	token, digest, err := NewToken()
+	if err != nil {
+		return "", nil, Session{}, err
+	}
+	now := time.Now().UTC()
+	return token, digest, Session{
+		ID:           uuid.New(),
+		UserID:       userID,
+		Organization: organization,
+		IssuedAt:     now,
+		ExpiresAt:    now.Add(lifetime),
+	}, nil
+}
+
 // Digest is what is stored for a token. SHA-256 rather than a password hash on purpose: the
 // input is 256 bits of uniform randomness this process generated, so there is no dictionary to
 // slow an attacker down against, and a slow hash on every request would be a cost paid per
@@ -92,21 +103,6 @@ func NewToken() (Token, []byte, error) {
 func Digest(token Token) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
-}
-
-// ClampLifetime holds an organization's configured session lifetime inside what this build
-// serves. Zero means the organization has configured none and takes the default.
-func ClampLifetime(configured time.Duration) time.Duration {
-	switch {
-	case configured <= 0:
-		return DefaultLifetime
-	case configured < MinLifetime:
-		return MinLifetime
-	case configured > MaxLifetime:
-		return MaxLifetime
-	default:
-		return configured
-	}
 }
 
 // Set writes the session cookie.

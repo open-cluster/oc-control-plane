@@ -5,7 +5,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -104,8 +103,7 @@ func (h Handlers) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 type policyRequest struct {
-	SessionLifetimeSeconds int `json:"sessionLifetimeSeconds"`
-	AuditRetentionDays     int `json:"auditRetentionDays"`
+	AuditRetentionDays int `json:"auditRetentionDays"`
 }
 
 func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +122,7 @@ func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, policyView{
-		SessionLifetimeSeconds: int(session.ClampLifetime(h.SessionLifetime).Seconds()),
+		SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()),
 		AuditRetentionDays:     retention,
 		AuditRetentionEnforced: h.RetentionEnforced})
 }
@@ -142,13 +140,8 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	if body.SessionLifetimeSeconds < 0 || body.AuditRetentionDays < 0 {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "a policy value must not be negative"})
-		return
-	}
-	configuredLifetimeSeconds := int(session.ClampLifetime(h.SessionLifetime).Seconds())
-	if body.SessionLifetimeSeconds != 0 && body.SessionLifetimeSeconds != configuredLifetimeSeconds {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "sessionLifetimeSeconds is deployment configuration"})
+	if body.AuditRetentionDays < 0 {
+		writeJSON(w, http.StatusBadRequest, errorView{Error: "auditRetentionDays must not be negative"})
 		return
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
@@ -157,5 +150,5 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: configuredLifetimeSeconds, AuditRetentionDays: body.AuditRetentionDays, AuditRetentionEnforced: h.RetentionEnforced})
+	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()), AuditRetentionDays: body.AuditRetentionDays, AuditRetentionEnforced: h.RetentionEnforced})
 }
