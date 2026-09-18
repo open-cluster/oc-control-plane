@@ -105,8 +105,8 @@ func Run(
 	// cannot sign refuses startup, where whoever supplied it is still reading.
 	gitHubClient := github.NewClient(options.GitHubAPIURL)
 	var gitHubApp *github.App
-	if len(cfg.GitHubAppKey) > 0 {
-		gitHubApp, err = github.NewApp(cfg.GitHubAppID, cfg.GitHubAppKey, gitHubClient)
+	if len(cfg.GitHubAppPrivateKey) > 0 {
+		gitHubApp, err = github.NewApp(cfg.GitHubAppID, cfg.GitHubAppPrivateKey, gitHubClient)
 		if err != nil {
 			return fmt.Errorf("%s: %w", config.EnvGitHubAppKeyFile, err)
 		}
@@ -166,7 +166,7 @@ func Run(
 		Store:      database,
 		Agent:      investigationAgent,
 		Workers:    cfg.InvestigationWorkers,
-		MaxPending: cfg.MaxPendingInvestigationsPerOrganization,
+		MaxPending: cfg.MaxPendingInvestigations,
 		WindowLead: defaultInvestigationWindowLead,
 		Telemetry:  investigation.NewTelemetry(logger),
 		Logger:     logger,
@@ -196,8 +196,8 @@ func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*ag
 		Model:               cfg.ModelName,
 		Effort:              agent.Effort(options.ModelEffort),
 		BaseURL:             options.ModelBaseURL,
-		Credential:          agent.Secret(cfg.ModelKey),
-		ContextWindowTokens: cfg.ModelContextWindowTokens,
+		Credential:          agent.Secret(cfg.ModelAPIKey),
+		ContextWindowTokens: cfg.ModelContextWindow,
 		MaxOutputTokens:     cfg.ModelMaxOutputTokens,
 	}.WithDefaults()
 	if err := modelConfig.Validate(); err != nil {

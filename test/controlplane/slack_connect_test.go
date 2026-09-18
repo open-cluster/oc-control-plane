@@ -28,14 +28,14 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 
 	operatorAddress := freeAddress(t)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = "the-slack-signing-secret"
-		cfg.OperatorPublicURL = "http://" + operatorAddress
-		cfg.OperatorPublicURL = console
+		cfg.PublicURL = "http://" + operatorAddress
+		cfg.PublicURL = console
 	}, app.Options{SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, operator: operatorAddress}
 }

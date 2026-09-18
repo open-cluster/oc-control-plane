@@ -24,13 +24,13 @@ type relayEndpoint struct {
 
 func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint, error) {
 	cfg := process.config
-	if cfg.RelayAddress == "" {
+	if cfg.RelayListenAddress == "" {
 		return nil, nil
 	}
 
-	listener, err := net.Listen("tcp", cfg.RelayAddress)
+	listener, err := net.Listen("tcp", cfg.RelayListenAddress)
 	if err != nil {
-		return nil, fmt.Errorf("listening for relays on %s: %w", cfg.RelayAddress, err)
+		return nil, fmt.Errorf("listening for relays on %s: %w", cfg.RelayListenAddress, err)
 	}
 
 	endpoint := &relayEndpoint{

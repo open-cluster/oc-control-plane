@@ -49,13 +49,13 @@ func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 	intakeAddress := operatorAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = operatorAddress
+		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.OperatorTokenDigest = digest[:]
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = slackSigningSecret
-		cfg.OperatorPublicURL = "http://" + operatorAddress
+		cfg.PublicURL = "http://" + operatorAddress
 		dsn = cfg.DatabaseDSN
 	}, app.Options{SlackAPIURL: vendor.URL})
 	return &slackEventPlane{
@@ -516,7 +516,7 @@ func TestSlackEvents_OpenClusterDoesNotAnswerItself(t *testing.T) {
 func TestSlackEvents_ADeploymentWithNoSigningSecretServesNoEndpoint(t *testing.T) {
 	intakeAddress := freeAddress(t)
 	startControlPlane(t, func(cfg *config.Config) {
-		cfg.HTTPAddress = intakeAddress
+		cfg.HTTPListenAddress = intakeAddress
 		cfg.SlackSigningSecret = ""
 	})
 

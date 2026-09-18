@@ -323,8 +323,8 @@ func startControlPlaneRunning(
 		"@" + gate.address() + "/" + upstream.Database + "?sslmode=disable"
 
 	cfg := config.Config{
-		HTTPAddress: freeAddress(t),
-		DatabaseDSN: gatedDSN,
+		HTTPListenAddress: freeAddress(t),
+		DatabaseDSN:       gatedDSN,
 		// A default sealing key, because the catalog serves a credential-bearing type and
 		// an operator surface without a key refuses to start. A test proving that refusal
 		// clears this deliberately.
@@ -333,8 +333,8 @@ func startControlPlaneRunning(
 	if adjust != nil {
 		adjust(&cfg)
 	}
-	if cfg.OperatorPublicURL == "" {
-		cfg.OperatorPublicURL = "http://" + cfg.HTTPAddress
+	if cfg.PublicURL == "" {
+		cfg.PublicURL = "http://" + cfg.HTTPListenAddress
 	}
 
 	runCtx, stop := context.WithCancel(context.Background())
@@ -367,7 +367,7 @@ func startControlPlaneRunning(
 	surfaceDigest := sha256.Sum256([]byte(surfaceToken))
 	if bytes.Equal(cfg.OperatorTokenDigest, surfaceDigest[:]) {
 		plane.bootstrapAdmin(t, surfaceOrg, surfaceToken,
-			cfg.OperatorPublicURL, cfg.DatabaseDSN)
+			cfg.PublicURL, cfg.DatabaseDSN)
 	}
 	return plane
 }
@@ -829,8 +829,8 @@ func TestRun_RefusesAnUnusableListenAddress(t *testing.T) {
 	// serving nothing.
 	occupied := strings.TrimPrefix(plane.baseURL, "http://")
 	cfg := config.Config{
-		HTTPAddress: occupied,
-		DatabaseDSN: "postgres://u:p@127.0.0.1:1/db?sslmode=disable",
+		HTTPListenAddress: occupied,
+		DatabaseDSN:       "postgres://u:p@127.0.0.1:1/db?sslmode=disable",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

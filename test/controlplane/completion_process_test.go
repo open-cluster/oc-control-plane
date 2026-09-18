@@ -41,10 +41,10 @@ func TestCompletionProcessHelper(t *testing.T) {
 
 func startCompletionProcess(t *testing.T, cfg config.Config) (string, func()) {
 	t.Helper()
-	cfg.HTTPAddress = freeAddress(t)
-	cfg.OperatorPublicURL = "http://" + cfg.HTTPAddress
+	cfg.HTTPListenAddress = freeAddress(t)
+	cfg.PublicURL = "http://" + cfg.HTTPListenAddress
 	cfg.OperatorTokenDigest = nil
-	cfg.ModelProvider, cfg.ModelName, cfg.ModelKey = "zai", "glm-4.7", "scripted-model-key"
+	cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	contents, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -65,11 +65,11 @@ func startCompletionProcess(t *testing.T, cfg config.Config) (string, func()) {
 	t.Cleanup(kill)
 	client := &http.Client{Timeout: time.Second}
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
-		response, err := client.Get(cfg.OperatorPublicURL + "/healthz")
+		response, err := client.Get(cfg.PublicURL + "/healthz")
 		if err == nil {
 			_ = response.Body.Close()
 			if response.StatusCode == http.StatusOK {
-				return cfg.HTTPAddress, kill
+				return cfg.HTTPListenAddress, kill
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -82,7 +82,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	var cfg config.Config
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(value *config.Config) {
-		value.HTTPAddress = address
+		value.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		value.OperatorTokenDigest = digest[:]
 		cfg = *value

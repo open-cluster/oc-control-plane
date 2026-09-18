@@ -530,7 +530,7 @@ func TestLocalSignInBoundsParallelPasswordChecks(t *testing.T) {
 func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	issuer := newMockIssuer(t)
 	plane := startIdentityPlane(t, func(cfg *config.Config) {
-		cfg.AuthenticationMode = "local+oidc"
+		cfg.AuthMode = "local+oidc"
 		cfg.OIDCIssuer = issuer.url()
 		cfg.OIDCClientID = "oc-console"
 		cfg.OIDCClientSecret = "test-client-secret"

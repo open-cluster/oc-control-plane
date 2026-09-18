@@ -28,7 +28,7 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 			address := freeAddress(t)
 			var dsn string
 			running := startControlPlaneRunning(t, func(cfg *config.Config) {
-				cfg.HTTPAddress = address
+				cfg.HTTPListenAddress = address
 				digest := sha256.Sum256([]byte(surfaceToken))
 				cfg.OperatorTokenDigest = digest[:]
 				dsn = cfg.DatabaseDSN
