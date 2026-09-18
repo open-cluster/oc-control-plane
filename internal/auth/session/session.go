@@ -21,11 +21,8 @@ var (
 	ErrRevoked = errors.New("session revoked")
 )
 
-// Token is the opaque credential a browser holds. It exists in a readable form exactly once,
-// in the response that issues it, and is never stored or logged.
 type Token string
 
-// Session is one signed-in operator, as the server holds it.
 type Session struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID

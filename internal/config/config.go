@@ -22,11 +22,11 @@ const (
 )
 
 var SupportedEnvironmentKeys = []string{
-	// Required ENVs
+	// ---------------- Required ENVs ----------------
 	EnvDatabaseDSN,
 	EnvDatabaseDSNFile,
 
-	// Optional ENVs
+	// ---------------- Optional ENVs ----------------
 	EnvHTTPAddress,
 	EnvOperatorPublicURL,
 	EnvLogLevel,
@@ -67,30 +67,24 @@ var SupportedEnvironmentKeys = []string{
 }
 
 const (
-	// Required ENVs
-	EnvDatabaseDSN     = "OC_DATABASE_DSN"
-	EnvDatabaseDSNFile = "OC_DATABASE_DSN_FILE"
-
-	// Optional ENVs
-	EnvHTTPAddress       = "OC_SERVER_ADDRESS"
-	EnvOperatorPublicURL = "OC_PUBLIC_URL"
-	EnvLogLevel          = "OC_LOG_LEVEL"
-	EnvOTLPEndpoint      = "OC_OTLP_ENDPOINT"
-
-	EnvAuthenticationMode     = "OC_AUTH_MODE"
-	EnvSessionLifetimeSeconds = "OC_SESSION_LIFETIME_SECONDS"
-	EnvOperatorToken          = "OC_BOOTSTRAP_TOKEN"
-	EnvOperatorTokenFile      = "OC_BOOTSTRAP_TOKEN_FILE"
-	EnvSealingKey             = "OC_ENCRYPTION_KEY"
-	EnvSealingKeyFile         = "OC_ENCRYPTION_KEY_FILE"
-	EnvOIDCIssuer             = "OC_OIDC_ISSUER"
-	EnvOIDCClientID           = "OC_OIDC_CLIENT_ID"
-	EnvOIDCClientSecret       = "OC_OIDC_CLIENT_SECRET"
-	EnvOIDCClientSecretFile   = "OC_OIDC_CLIENT_SECRET_FILE"
-
-	EnvRelayAddress  = "OC_RELAY_ADDRESS"
-	EnvRelaySPKIPins = "OC_RELAY_SPKI_PINS"
-
+	EnvDatabaseDSN                            = "OC_DATABASE_DSN"
+	EnvDatabaseDSNFile                        = "OC_DATABASE_DSN_FILE"
+	EnvHTTPAddress                            = "OC_SERVER_ADDRESS"
+	EnvOperatorPublicURL                      = "OC_PUBLIC_URL"
+	EnvLogLevel                               = "OC_LOG_LEVEL"
+	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
+	EnvAuthenticationMode                     = "OC_AUTH_MODE"
+	EnvSessionLifetimeSeconds                 = "OC_SESSION_LIFETIME_SECONDS"
+	EnvOperatorToken                          = "OC_BOOTSTRAP_TOKEN"
+	EnvOperatorTokenFile                      = "OC_BOOTSTRAP_TOKEN_FILE"
+	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
+	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
+	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
+	EnvOIDCClientID                           = "OC_OIDC_CLIENT_ID"
+	EnvOIDCClientSecret                       = "OC_OIDC_CLIENT_SECRET"
+	EnvOIDCClientSecretFile                   = "OC_OIDC_CLIENT_SECRET_FILE"
+	EnvRelayAddress                           = "OC_RELAY_ADDRESS"
+	EnvRelaySPKIPins                          = "OC_RELAY_SPKI_PINS"
 	EnvModelProvider                          = "OC_AI_PROVIDER"
 	EnvModelName                              = "OC_AI_MODEL"
 	EnvModelKey                               = "OC_AI_API_KEY"
@@ -99,16 +93,14 @@ const (
 	EnvModelMaxOutputTokens                   = "OC_AI_MAX_OUTPUT_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
-
-	EnvSlackClientID          = "OC_SLACK_CLIENT_ID"
-	EnvSlackClientSecret      = "OC_SLACK_CLIENT_SECRET"
-	EnvSlackClientSecretFile  = "OC_SLACK_CLIENT_SECRET_FILE"
-	EnvSlackSigningSecret     = "OC_SLACK_SIGNING_SECRET"
-	EnvSlackSigningSecretFile = "OC_SLACK_SIGNING_SECRET_FILE"
-
-	EnvGitHubAppID      = "OC_GITHUB_APP_ID"
-	EnvGitHubAppKey     = "OC_GITHUB_APP_PRIVATE_KEY"
-	EnvGitHubAppKeyFile = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
+	EnvSlackClientID                          = "OC_SLACK_CLIENT_ID"
+	EnvSlackClientSecret                      = "OC_SLACK_CLIENT_SECRET"
+	EnvSlackClientSecretFile                  = "OC_SLACK_CLIENT_SECRET_FILE"
+	EnvSlackSigningSecret                     = "OC_SLACK_SIGNING_SECRET"
+	EnvSlackSigningSecretFile                 = "OC_SLACK_SIGNING_SECRET_FILE"
+	EnvGitHubAppID                            = "OC_GITHUB_APP_ID"
+	EnvGitHubAppKey                           = "OC_GITHUB_APP_PRIVATE_KEY"
+	EnvGitHubAppKeyFile                       = "OC_GITHUB_APP_PRIVATE_KEY_FILE"
 )
 
 type Config struct {

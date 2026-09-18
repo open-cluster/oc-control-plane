@@ -1,22 +1,3 @@
-// Package identity owns who an operator is: how they sign in, which tenants they belong to,
-// what automation runs as, and the record of every change to any of it.
-//
-// It exists because the control plane had no principal. The frontend sends a cookie session
-// and the control plane required one shared static bearer token, so every browser request to a
-// real control plane answered 401 — and behind that, whoever held the one token could read and
-// mutate any Organization by editing a URL path segment.
-//
-// Local authentication is always available. A deployment may add one generic OIDC Authorization
-// Code flow with PKCE. What is deliberately not delegated is the tenancy and authorization
-// decision: memberships, roles and sessions remain this control plane's durable truth.
-//
-// The routes live on the operator surface, which owns the listener. This package owns what
-// they mean; internal/auth/authz owns who may reach them.
-//
-// A deployment note that follows from the design rather than from taste: the console must be
-// served from the same registrable domain as this surface. The session cookie is SameSite=Lax
-// with no separate CSRF token, which is the trade the specification chose, and Lax means a
-// cross-SITE console would never send the cookie at all.
 package identity
 
 import (
@@ -35,15 +16,9 @@ import (
 )
 
 const (
-	// readTimeout bounds one read, so a query cannot outlive the attention of whoever made it.
-	readTimeout = 15 * time.Second
-	// signInTimeout is longer: completing a sign-in calls a third party's token endpoint and
-	// then writes, and a timeout halfway through is worse than one that takes a moment.
+	readTimeout   = 15 * time.Second
 	signInTimeout = 30 * time.Second
-	// flowLifetime is how long a started sign-in may take to come back. Long enough for a
-	// password manager, a second factor and a consent screen; short enough that an abandoned
-	// attempt is not a credential lying around.
-	flowLifetime = 10 * time.Minute
+	flowLifetime  = 10 * time.Minute
 )
 
 // scopes are what every authorization request asks for. Nothing beyond identity: this product

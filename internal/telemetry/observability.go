@@ -1,14 +1,3 @@
-// Package observability assembles the process's telemetry: structured logs, traces, and metrics.
-//
-//   - Metrics are instrumented through the OpenTelemetry API but exported for Prometheus
-//     scrape. A scrape endpoint is what Kubernetes operators already collect; instrumenting
-//     through OTel means an OTLP exporter can be added later without touching a call site.
-//   - Organization identity belongs on spans, never on a metric label. At the stated scale
-//     of five thousand organizations a tenant label is a cardinality failure in any
-//     Prometheus-shaped backend; exemplars connect an aggregate metric to a trace instead.
-//   - Logs stay on log/slog with trace and span identifiers injected as attributes. The
-//     OpenTelemetry logs signal is the least mature of the three in Go, and correlation by
-//     attribute already satisfies what an on-call engineer needs.
 package observability
 
 import (
