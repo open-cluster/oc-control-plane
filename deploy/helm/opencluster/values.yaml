@@ -11,12 +11,11 @@ database:
 
 credentials:
   existingSecret: opencluster-credentials
-  operatorTokenKey: operator-token
+  bootstrapTokenKey: bootstrap-token
   sealingKey: sealing-key
   modelKey: model-key
 
-operator:
-  organization: local
+server:
   publicURL: "http://localhost:8080"
 
 model:

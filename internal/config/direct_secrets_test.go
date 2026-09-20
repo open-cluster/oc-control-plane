@@ -10,8 +10,8 @@ import (
 func TestLoadAcceptsDirectSecretsWithoutChangingConfiguration(t *testing.T) {
 	files := essentialEnvironment(t)
 	for key, value := range map[string]string{
-		EnvAuthenticationMode: "local+oidc", EnvOIDCIssuer: "https://identity.example.com",
-		EnvOIDCClientID: "client", EnvSlackClientID: "slack-client", EnvGitHubAppID: "123",
+		EnvOIDCIssuer: "https://identity.example.com", EnvOIDCClientID: "client",
+		EnvSlackClientID: "slack-client", EnvGitHubAppID: "123",
 	} {
 		files[key] = value
 	}
@@ -32,7 +32,7 @@ func TestLoadAcceptsDirectSecretsWithoutChangingConfiguration(t *testing.T) {
 		"OC_ENCRYPTION_KEY":  strings.Repeat("k", 32),
 		EnvModelProvider:     "anthropic", EnvModelName: "model", "OC_AI_API_KEY": "model-key",
 	}
-	for _, key := range []string{EnvAuthenticationMode, EnvOIDCIssuer, EnvOIDCClientID, EnvSlackClientID, EnvGitHubAppID} {
+	for _, key := range []string{EnvOIDCIssuer, EnvOIDCClientID, EnvSlackClientID, EnvGitHubAppID} {
 		direct[key] = files[key]
 	}
 	for key, value := range secrets {
@@ -45,7 +45,7 @@ func TestLoadAcceptsDirectSecretsWithoutChangingConfiguration(t *testing.T) {
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatal("direct and file inputs produced different configuration")
 	}
-	for _, key := range []string{EnvDatabaseDSN, EnvOperatorToken, EnvSealingKey, EnvModelKey,
+	for _, key := range []string{EnvDatabaseDSN, EnvBootstrapToken, EnvSealingKey, EnvModelKey,
 		EnvOIDCClientSecret, EnvSlackClientSecret, EnvSlackSigningSecret, EnvGitHubAppKey} {
 		conflicting := make(map[string]string, len(direct)+1)
 		for name, value := range direct {

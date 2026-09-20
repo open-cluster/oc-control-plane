@@ -99,7 +99,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "run", "../../cmd/controlplane", "recover-local-password", "--user", who.Principal.ID)
 	command.Env = append(os.Environ(),
-		config.EnvDatabaseDSN+"=", config.EnvOperatorTokenFile+"=",
+		config.EnvDatabaseDSN+"=", config.EnvBootstrapTokenFile+"=",
 		config.EnvDatabaseDSNFile+"="+writeSecret("dsn", plane.dsn),
 		config.EnvSealingKeyFile+"=", config.EnvModelProvider+"=anthropic",
 		config.EnvModelName+"=", config.EnvModelKeyFile+"=")
@@ -114,7 +114,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	}
 	restarted := startIdentityPlane(t, func(cfg *config.Config) {
 		cfg.DatabaseDSN = plane.dsn
-		cfg.OperatorTokenDigest = nil
+		cfg.BootstrapTokenDigest = nil
 	})
 	base := "http://" + restarted.operator + "/api/v1"
 	stale := restarted.call(t, http.MethodGet, base+"/session", nil, asSession(cookie))

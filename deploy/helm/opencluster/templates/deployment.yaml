@@ -33,10 +33,10 @@ spec:
             - name: OC_SERVER_ADDRESS
               value: ":{{ .Values.service.httpPort }}"
             - name: OC_PUBLIC_URL
-              value: {{ .Values.operator.publicURL | quote }}
+              value: {{ .Values.server.publicURL | quote }}
             - name: OC_DATABASE_DSN_FILE
               value: "/run/opencluster/secrets/{{ .Values.database.dsnKey }}"
-            {{- with .Values.credentials.operatorTokenKey }}
+            {{- with .Values.credentials.bootstrapTokenKey }}
             - name: OC_BOOTSTRAP_TOKEN_FILE
               value: "/run/opencluster/credentials/{{ . }}"
             {{- end }}

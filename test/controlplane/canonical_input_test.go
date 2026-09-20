@@ -17,7 +17,7 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
@@ -44,7 +44,7 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 		cfg.ModelContextWindow = 33000
 		cfg.ModelMaxOutputTokens = 32000

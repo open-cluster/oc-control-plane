@@ -43,7 +43,7 @@ func startCompletionProcess(t *testing.T, cfg config.Config) (string, func()) {
 	t.Helper()
 	cfg.HTTPListenAddress = freeAddress(t)
 	cfg.PublicURL = "http://" + cfg.HTTPListenAddress
-	cfg.OperatorTokenDigest = nil
+	cfg.BootstrapTokenDigest = nil
 	cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	contents, err := json.Marshal(cfg)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	running := startControlPlaneRunning(t, func(value *config.Config) {
 		value.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
-		value.OperatorTokenDigest = digest[:]
+		value.BootstrapTokenDigest = digest[:]
 		cfg = *value
 	}, app.Options{})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}

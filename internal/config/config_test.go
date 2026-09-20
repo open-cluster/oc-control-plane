@@ -24,22 +24,22 @@ func lookup(values map[string]string) func(string) (string, bool) {
 func essentialEnvironment(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		EnvDatabaseDSNFile:   secretFile(t, "postgres://user:password@localhost/opencluster"),
-		EnvOperatorTokenFile: secretFile(t, strings.Repeat("b", 32)),
-		EnvSealingKeyFile:    secretFile(t, strings.Repeat("k", 32)),
-		EnvModelProvider:     "anthropic", EnvModelName: "model",
+		EnvDatabaseDSNFile:    secretFile(t, "postgres://user:password@localhost/opencluster"),
+		EnvBootstrapTokenFile: secretFile(t, strings.Repeat("b", 32)),
+		EnvSealingKeyFile:     secretFile(t, strings.Repeat("k", 32)),
+		EnvModelProvider:      "anthropic", EnvModelName: "model",
 		EnvModelKeyFile: secretFile(t, "model-key"),
 	}
 }
 
 func TestLoadWithoutBootstrapCredential(t *testing.T) {
 	values := essentialEnvironment(t)
-	delete(values, EnvOperatorTokenFile)
+	delete(values, EnvBootstrapTokenFile)
 	cfg, err := Load(lookup(values))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.OperatorTokenDigest) != 0 {
+	if len(cfg.BootstrapTokenDigest) != 0 {
 		t.Fatal("bootstrap was enabled without a credential")
 	}
 }
@@ -185,17 +185,10 @@ func TestLoadRejectsInvalidModelLimits(t *testing.T) {
 	}
 }
 
-func TestLoadProcessAcceptsEnvironmentAndRejectsRetiredConfiguration(t *testing.T) {
+func TestLoadRejectsPartialOIDCConfiguration(t *testing.T) {
 	values := essentialEnvironment(t)
-	cfg, err := LoadProcess([]string{"--server-address", ":9100"}, lookup(values))
-	if err != nil || cfg.HTTPListenAddress != ":9100" {
-		t.Fatalf("startup configuration: %v", err)
-	}
-	if _, err := LoadProcess([]string{"--config", "private-path"}, lookup(values)); err == nil || strings.Contains(err.Error(), "private-path") {
-		t.Fatalf("retired flag: %v", err)
-	}
-	values["OC_CONFIG_FILE"] = "private-path"
-	if _, err := LoadProcess(nil, lookup(values)); err == nil || strings.Contains(err.Error(), "private-path") {
-		t.Fatalf("retired setting: %v", err)
+	values[EnvOIDCIssuer] = "https://identity.example.com"
+	if _, err := Load(lookup(values)); err == nil || !strings.Contains(err.Error(), EnvOIDCClientID) {
+		t.Fatalf("partial OIDC configuration = %v", err)
 	}
 }

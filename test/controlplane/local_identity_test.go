@@ -487,7 +487,7 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 }
 
 func TestLocalBootstrapRefusesWhenCredentialIsRetired(t *testing.T) {
-	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.OperatorTokenDigest = nil })
+	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.BootstrapTokenDigest = nil })
 	answer := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
 		"email": "viewer@example.test", "displayName": "Viewer",
 		"password": "correct horse battery staple",
@@ -530,7 +530,6 @@ func TestLocalSignInBoundsParallelPasswordChecks(t *testing.T) {
 func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	issuer := newMockIssuer(t)
 	plane := startIdentityPlane(t, func(cfg *config.Config) {
-		cfg.AuthMode = "local+oidc"
 		cfg.OIDCIssuer = issuer.url()
 		cfg.OIDCClientID = "oc-console"
 		cfg.OIDCClientSecret = "test-client-secret"

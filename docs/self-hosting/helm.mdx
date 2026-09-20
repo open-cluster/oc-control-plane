@@ -15,9 +15,9 @@ You need Kubernetes, Helm 3, a reachable PostgreSQL database, outbound HTTPS acc
 the selected model provider, and two Secrets:
 
 - `opencluster-database` with key `postgres-dsn`;
-- `opencluster-credentials` with keys `operator-token`, `sealing-key`, and `model-key`.
+- `opencluster-credentials` with keys `bootstrap-token`, `sealing-key`, and `model-key`.
 
-The shipped chart names these Secret keys `operator-token` and `sealing-key`; they supply
+The shipped chart names these Secret keys `bootstrap-token` and `sealing-key`; they supply
 the administrator bootstrap token and 32-byte credential-encryption key respectively.
 The bootstrap token must be at least 32 characters and the encryption key exactly 32 bytes.
 Do not put their values in Helm values or command history.
@@ -31,7 +31,7 @@ image:
   repository: IMAGE_REPOSITORY
   tag: VERSION
   pullPolicy: IfNotPresent
-operator:
+server:
   publicURL: https://opencluster.example.com
 model:
   provider: anthropic

@@ -46,7 +46,7 @@ func TestOperatorSurface(t *testing.T) {
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(bootstrapToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 		// The credential names the one tenant it reaches. That binding is the whole difference
 		// between it and the shared token it replaces, and the last case in this test asserts
 		// that a second organization is not reachable with it.
@@ -224,7 +224,7 @@ func TestOperatorSurface(t *testing.T) {
 
 	t.Run("the token reaches no log line", func(t *testing.T) {
 		if strings.Contains(plane.logs.String(), token) {
-			t.Error("the operator token appears in the logs")
+			t.Error("the bootstrap token appears in the logs")
 		}
 	})
 }
@@ -232,7 +232,7 @@ func TestOperatorSurface(t *testing.T) {
 func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 	})
 	const path = "/api/v1/relays"
 
@@ -284,7 +284,7 @@ func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
 	}
 }
 
-func TestOperatorTokenComesFromAFile(t *testing.T) {
+func TestBootstrapTokenComesFromAFile(t *testing.T) {
 	t.Parallel()
 
 	address := "127.0.0.1:8080"
@@ -294,7 +294,7 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		cfg, err := config.Load(environment(t, map[string]string{
 			config.EnvHTTPAddress: address,
 		}))
-		if err != nil || len(cfg.OperatorTokenDigest) != 0 {
+		if err != nil || len(cfg.BootstrapTokenDigest) != 0 {
 			t.Fatalf("bootstrap retirement failed: %v", err)
 		}
 	})
@@ -302,8 +302,8 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 	t.Run("a token too short to matter is refused", func(t *testing.T) {
 		t.Parallel()
 		_, err := config.Load(environment(t, map[string]string{
-			config.EnvHTTPAddress:       address,
-			config.EnvOperatorTokenFile: secretFile(t, "token", "short"),
+			config.EnvHTTPAddress:        address,
+			config.EnvBootstrapTokenFile: secretFile(t, "token", "short"),
 		}))
 		if err == nil {
 			t.Fatal("a guessable token was accepted")
@@ -315,14 +315,14 @@ func TestOperatorTokenComesFromAFile(t *testing.T) {
 		const token = "a-token-long-enough-to-be-worth-something"
 
 		cfg, err := config.Load(environment(t, map[string]string{
-			config.EnvHTTPAddress:       address,
-			config.EnvOperatorTokenFile: secretFile(t, "token", token),
+			config.EnvHTTPAddress:        address,
+			config.EnvBootstrapTokenFile: secretFile(t, "token", token),
 		}))
 		if err != nil {
 			t.Fatalf("loading: %v", err)
 		}
 		digest := sha256.Sum256([]byte(token))
-		if string(cfg.OperatorTokenDigest) != string(digest[:]) {
+		if string(cfg.BootstrapTokenDigest) != string(digest[:]) {
 			t.Error("the configured digest does not match the token in the file")
 		}
 	})
