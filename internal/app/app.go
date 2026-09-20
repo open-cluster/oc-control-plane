@@ -21,7 +21,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/zai"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
@@ -186,7 +186,7 @@ func Run(
 }
 
 func configuredSealer(cfg config.Config) (seal.Sealer, error) {
-	return seal.NewKeyring(seal.Key{ID: "primary", Material: cfg.SealingKey})
+	return seal.New(cfg.SealingKey)
 }
 
 // modelBoundary validates and builds the configured model-backed agent.

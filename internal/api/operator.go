@@ -19,7 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )

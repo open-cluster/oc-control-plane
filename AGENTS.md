@@ -40,7 +40,7 @@ Postgres containers and real listeners; nothing mocks the database.
 - Every operator route is declared `(method, pattern, permission)` in a `Routes()` table;
   a mux registration anywhere else fails the gates.
 - Secrets: accept direct environment values or optional _FILE inputs, reject conflicts, and redact errors; inbound secrets are digests;
-  presentable credentials are sealed via `internal/secrets`; audit details drop
+  presentable credentials are sealed via `internal/seal`; audit details drop
   credential-shaped keys mechanically.
 
 ## Style
