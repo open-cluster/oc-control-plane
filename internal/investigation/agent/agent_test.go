@@ -10,7 +10,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
+	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"log/slog"
 	"strings"
 	"sync"

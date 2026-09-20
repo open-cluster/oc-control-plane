@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -41,10 +40,6 @@ type Handlers struct {
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
-	// Sealer holds the key a provider's client secret is stored under. An unconfigured sealer
-	// means this deployment cannot hold one, and configuring a provider is refused with that
-	// reason rather than storing a secret in the clear.
-	Sealer seal.Sealer
 	// PublicURL is where this surface is reachable from a browser. It is what the redirect URI
 	// registered with the identity provider is built from, and it is configuration rather than
 	// a value read from the Host header — a caller-controlled host in a redirect URI is how an

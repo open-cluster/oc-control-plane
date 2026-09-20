@@ -184,8 +184,6 @@ func authHandlers(process assembled) (identity.Handlers, error) {
 		SessionLifetime:  cfg.SessionLifetime,
 	}
 
-	handlers.Sealer = process.sealer
-
 	if len(cfg.BootstrapTokenDigest) == 0 {
 		return handlers, nil
 	}

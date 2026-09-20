@@ -15,7 +15,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	authsession "github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -143,9 +142,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	case errors.Is(err, storage.ErrLastAdmin):
 		writeJSON(writer, http.StatusConflict, errorView{
 			Error: "an organization must keep at least one admin; appoint another first"})
-	case errors.Is(err, seal.ErrNoKey):
-		writeJSON(writer, http.StatusServiceUnavailable, errorView{
-			Error: "this deployment has no sealing key and cannot hold a client secret"})
 	case errors.Is(err, ErrProviderUnreachable):
 		writeJSON(writer, http.StatusBadGateway,
 			errorView{Error: "the identity provider could not be reached"})

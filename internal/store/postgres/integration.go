@@ -15,26 +15,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/secrets"
 )
 
 // The integrations capability owns its vocabulary; this file is its persistence. The
 // contract is asserted here so a drifted method signature is a compile error.
 var _ integrations.Store = (*Database)(nil)
-
-func validateCredentialEnvelope(sealed []byte) error {
-	if len(sealed) == 0 {
-		return nil
-	}
-	if sealed[0] == seal.LegacyKeyVersion {
-		return nil
-	}
-	_, err := seal.EnvelopeKeyID(sealed)
-	if err != nil {
-		return errors.New("storing an integration credential: invalid sealed envelope")
-	}
-	return nil
-}
 
 // integrationColumns is every column an Integration is read from, named once. One list
 // rather than five copies, because a column added to one query and forgotten in another is
@@ -85,9 +70,6 @@ func (p *Database) CreateIntegration(
 				}
 			}
 
-			if err := validateCredentialEnvelope(wanted.CredentialSealed); err != nil {
-				return integrations.Integration{}, audit.Target{}, nil, err
-			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO integration (integration_id, org_id, provider, name,
 				                         configuration, relay_id, webhook_secret_digest,
@@ -534,10 +516,6 @@ func (p *Database) ReplaceIntegrationCredential(
 				}
 			}
 			grants := verificationGrants(verification)
-			if err := validateCredentialEnvelope(sealed); err != nil {
-				return integrations.Integration{}, audit.Target{}, nil, err
-			}
-
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
 				   SET name                = coalesce($3, name),
