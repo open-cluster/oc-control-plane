@@ -85,7 +85,7 @@ func assertModelEventSchema(t *testing.T, model *hypothesisEventModel, want []st
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
 	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}

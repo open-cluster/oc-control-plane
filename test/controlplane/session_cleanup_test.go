@@ -32,7 +32,7 @@ func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 	}
 	restarted := startIdentityPlane(t, func(cfg *config.Config) {
 		cfg.DatabaseDSN = plane.dsn
-		cfg.OperatorTokenDigest = nil
+		cfg.BootstrapTokenDigest = nil
 	})
 	deadline := time.Now().Add(5 * time.Second)
 	for {

@@ -23,7 +23,7 @@ services:
       dockerfile: deploy/compose/Dockerfile
     environment:
       OC_DATABASE_DSN_FILE: /run/secrets/postgres_dsn
-      OC_BOOTSTRAP_TOKEN_FILE: /run/secrets/operator_token
+      OC_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap_token
       OC_ENCRYPTION_KEY_FILE: /run/secrets/sealing_key
       OC_AI_API_KEY_FILE: /run/secrets/model_key
       OC_LOG_LEVEL: ${OPENCLUSTER_LOG_LEVEL:-info}
@@ -44,7 +44,7 @@ services:
       - "8080"
     secrets:
       - postgres_dsn
-      - operator_token
+      - bootstrap_token
       - sealing_key
       - model_key
     read_only: true
@@ -99,7 +99,7 @@ secrets:
     file: ${OPENCLUSTER_POSTGRES_PASSWORD_FILE:?set the PostgreSQL password file path}
   postgres_dsn:
     file: ${OPENCLUSTER_DATABASE_DSN_FILE:?set the PostgreSQL DSN file path}
-  operator_token:
+  bootstrap_token:
     file: ${OPENCLUSTER_BOOTSTRAP_TOKEN_FILE:?set the administrator bootstrap token file path}
   sealing_key:
     file: ${OPENCLUSTER_ENCRYPTION_KEY_FILE:?set the 32-byte encryption key file path}

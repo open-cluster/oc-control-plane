@@ -49,7 +49,7 @@ func startIncidents(t *testing.T) *incidentPlane {
 		cfg.HTTPListenAddress = "127.0.0.1:0"
 		cfg.HTTPListenAddress = operatorAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 		dsn = cfg.DatabaseDSN
 	})
 

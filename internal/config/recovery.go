@@ -4,6 +4,11 @@ import "fmt"
 
 // LoadRecoveryDatabase reads deployment database configuration without requiring server dependencies.
 func LoadRecoveryDatabase(lookup func(string) (string, bool)) (string, error) {
+	effective, err := effectiveLookup(lookup)
+	if err != nil {
+		return "", err
+	}
+	lookup = effective
 	dsn, err := databaseDSN(lookup)
 	if err != nil {
 		return "", err

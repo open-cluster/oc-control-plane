@@ -34,8 +34,11 @@ func start() error {
 	if len(os.Args) > 1 && os.Args[1] == "recover-local-password" {
 		return recoverLocalPassword(ctx, os.Args[2:], os.Stdin, os.Stderr, os.LookupEnv)
 	}
+	if len(os.Args) > 1 {
+		return errors.New("startup accepts no service arguments; use OC_CONFIG_FILE or OC_* environment variables")
+	}
 
-	cfg, err := config.LoadProcess(os.Args[1:], os.LookupEnv)
+	cfg, err := config.Load(os.LookupEnv)
 	if err != nil {
 		return err
 	}

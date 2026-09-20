@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	defaultAuthenticationMode                     = "local"
 	defaultInvestigationWorkers                   = 8
 	defaultInvestigationMaxPendingPerOrganization = 100
 	defaultSessionLifetime                        = 12 * time.Hour
@@ -27,15 +26,15 @@ var SupportedEnvironmentKeys = []string{
 	EnvDatabaseDSNFile,
 
 	// ---------------- Optional ENVs ----------------
+	EnvConfigFile,
 	EnvHTTPAddress,
-	EnvOperatorPublicURL,
+	EnvPublicURL,
 	EnvLogLevel,
 	EnvOTLPEndpoint,
 
-	EnvAuthenticationMode,
 	EnvSessionLifetimeSeconds,
-	EnvOperatorToken,
-	EnvOperatorTokenFile,
+	EnvBootstrapToken,
+	EnvBootstrapTokenFile,
 	EnvSealingKey,
 	EnvSealingKeyFile,
 	EnvOIDCIssuer,
@@ -69,14 +68,14 @@ var SupportedEnvironmentKeys = []string{
 const (
 	EnvDatabaseDSN                            = "OC_DATABASE_DSN"
 	EnvDatabaseDSNFile                        = "OC_DATABASE_DSN_FILE"
+	EnvConfigFile                             = "OC_CONFIG_FILE"
 	EnvHTTPAddress                            = "OC_SERVER_ADDRESS"
-	EnvOperatorPublicURL                      = "OC_PUBLIC_URL"
+	EnvPublicURL                              = "OC_PUBLIC_URL"
 	EnvLogLevel                               = "OC_LOG_LEVEL"
 	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
-	EnvAuthenticationMode                     = "OC_AUTH_MODE"
 	EnvSessionLifetimeSeconds                 = "OC_SESSION_LIFETIME_SECONDS"
-	EnvOperatorToken                          = "OC_BOOTSTRAP_TOKEN"
-	EnvOperatorTokenFile                      = "OC_BOOTSTRAP_TOKEN_FILE"
+	EnvBootstrapToken                         = "OC_BOOTSTRAP_TOKEN"
+	EnvBootstrapTokenFile                     = "OC_BOOTSTRAP_TOKEN_FILE"
 	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
 	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
@@ -116,15 +115,14 @@ type Config struct {
 	DatabaseDSN string
 
 	// Security
-	OperatorTokenDigest []byte
-	SealingKey          []byte
+	BootstrapTokenDigest []byte
+	SealingKey           []byte
 
 	// RelaySPKIPins contains accepted control-plane public key pins.
 	// Multiple pins allow key rotation without disconnecting Relays.
 	RelaySPKIPins []string
 
 	// Authentication
-	AuthMode         string
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
@@ -152,15 +150,18 @@ type Config struct {
 
 // Load reads and validates the application configuration.
 func Load(lookup func(string) (string, bool)) (Config, error) {
+	effective, err := effectiveLookup(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	lookup = effective
 	cfg := Config{
 		HTTPListenAddress:        ":8080",
-		AuthMode:                 defaultAuthenticationMode,
 		InvestigationWorkers:     defaultInvestigationWorkers,
 		MaxPendingInvestigations: defaultInvestigationMaxPendingPerOrganization,
 		SessionLifetime:          defaultSessionLifetime,
 	}
 
-	var err error
 	if raw, _ := lookup(EnvLogLevel); strings.TrimSpace(raw) != "" {
 		if err := cfg.LogLevel.UnmarshalText([]byte(strings.TrimSpace(raw))); err != nil {
 			return Config{}, fmt.Errorf("%s must be debug, info, warn, or error", EnvLogLevel)
@@ -187,10 +188,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayListenAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.OperatorTokenDigest, err = operatorTokenDigest(lookup, cfg.HTTPListenAddress); err != nil {
+	if cfg.BootstrapTokenDigest, err = bootstrapTokenDigest(lookup, cfg.HTTPListenAddress); err != nil {
 		return Config{}, err
 	}
-	if cfg.PublicURL, err = optionalBrowserURL(lookup, EnvOperatorPublicURL); err != nil {
+	if cfg.PublicURL, err = optionalBrowserURL(lookup, EnvPublicURL); err != nil {
 		return Config{}, err
 	}
 	if cfg.PublicURL == "" {
@@ -271,17 +272,6 @@ func positiveInteger(
 }
 
 func authentication(lookup func(string) (string, bool), cfg *Config) error {
-	mode := defaultAuthenticationMode
-	if raw, ok := lookup(EnvAuthenticationMode); ok && strings.TrimSpace(raw) != "" {
-		mode = strings.ToLower(strings.TrimSpace(raw))
-	}
-	if mode == "oidc" {
-		mode = "local+oidc"
-	}
-	if mode != "local" && mode != "local+oidc" {
-		return fmt.Errorf("%s must be local or oidc", EnvAuthenticationMode)
-	}
-	cfg.AuthMode = mode
 	issuer, _ := lookup(EnvOIDCIssuer)
 	clientID, _ := lookup(EnvOIDCClientID)
 	secret, err := readSecretText(lookup, EnvOIDCClientSecretFile)
@@ -290,15 +280,11 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 	}
 	issuer, clientID = strings.TrimSpace(issuer), strings.TrimSpace(clientID)
 	configured := issuer != "" || clientID != "" || secret != ""
-	if mode == "local" {
-		if configured {
-			return fmt.Errorf("%s must be local+oidc when OIDC settings are present",
-				EnvAuthenticationMode)
-		}
+	if !configured {
 		return nil
 	}
 	if issuer == "" || clientID == "" || secret == "" {
-		return fmt.Errorf("%s, %s, and either %s or %s are required in local+oidc mode",
+		return fmt.Errorf("%s, %s, and either %s or %s must be configured together",
 			EnvOIDCIssuer, EnvOIDCClientID, EnvOIDCClientSecret, EnvOIDCClientSecretFile)
 	}
 	parsed, err := url.Parse(issuer)

@@ -186,10 +186,10 @@ func authHandlers(process assembled) (identity.Handlers, error) {
 
 	handlers.Sealer = process.sealer
 
-	if len(cfg.OperatorTokenDigest) == 0 {
+	if len(cfg.BootstrapTokenDigest) == 0 {
 		return handlers, nil
 	}
-	handlers.Bootstrap = identity.Bootstrap{Digest: cfg.OperatorTokenDigest}
+	handlers.Bootstrap = identity.Bootstrap{Digest: cfg.BootstrapTokenDigest}
 	process.logger.Info("one-time bootstrap credential configured")
 	return handlers, nil
 }

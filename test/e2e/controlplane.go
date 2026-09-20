@@ -16,8 +16,8 @@ import (
 // controlPlaneStartTimeout bounds how long the process may take to bind and report ready. It
 // includes applying the migrations, which is the slowest thing a first start does.
 const (
-	controlPlaneStartTimeout   = 2 * time.Minute
-	investigationOperatorToken = "e2e-investigation-operator-token-with-sufficient-entropy"
+	controlPlaneStartTimeout    = 2 * time.Minute
+	investigationBootstrapToken = "e2e-investigation-bootstrap-token-with-sufficient-entropy"
 )
 
 var organization string
@@ -35,16 +35,16 @@ type controlPlane struct {
 	output *syncBuffer
 	starts int
 
-	httpAddress  string
-	relayAddress string
-	spkiPin      string
-	dsnPath      string
-	operatorPath string
-	modelKeyPath string
-	sealingPath  string
-	modelURL     string
-	workDir      string
-	session      *http.Cookie
+	httpAddress   string
+	relayAddress  string
+	spkiPin       string
+	dsnPath       string
+	bootstrapPath string
+	modelKeyPath  string
+	sealingPath   string
+	modelURL      string
+	workDir       string
+	session       *http.Cookie
 }
 
 // newControlPlane reserves the addresses the control plane will serve on, without starting
@@ -55,9 +55,9 @@ func newControlPlane(workDir, dsn, modelURL string) (*controlPlane, error) {
 	if err := os.WriteFile(dsnPath, []byte(dsn), 0o600); err != nil {
 		return nil, fmt.Errorf("writing the database dsn: %w", err)
 	}
-	operatorPath := filepath.Join(workDir, "operator.token")
-	if err := os.WriteFile(operatorPath, []byte(investigationOperatorToken), 0o600); err != nil {
-		return nil, fmt.Errorf("writing the operator token: %w", err)
+	bootstrapPath := filepath.Join(workDir, "bootstrap.token")
+	if err := os.WriteFile(bootstrapPath, []byte(investigationBootstrapToken), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the bootstrap token: %w", err)
 	}
 	modelKeyPath := filepath.Join(workDir, "model.key")
 	if err := os.WriteFile(modelKeyPath, []byte("e2e-scripted-model-credential"), 0o600); err != nil {
@@ -73,15 +73,15 @@ func newControlPlane(workDir, dsn, modelURL string) (*controlPlane, error) {
 		return nil, err
 	}
 	return &controlPlane{
-		output:       &syncBuffer{},
-		httpAddress:  net.JoinHostPort("127.0.0.1", strconv.Itoa(httpPort)),
-		relayAddress: net.JoinHostPort("127.0.0.1", strconv.Itoa(relayPort)),
-		dsnPath:      dsnPath,
-		operatorPath: operatorPath,
-		modelKeyPath: modelKeyPath,
-		sealingPath:  sealingPath,
-		modelURL:     modelURL,
-		workDir:      workDir,
+		output:        &syncBuffer{},
+		httpAddress:   net.JoinHostPort("127.0.0.1", strconv.Itoa(httpPort)),
+		relayAddress:  net.JoinHostPort("127.0.0.1", strconv.Itoa(relayPort)),
+		dsnPath:       dsnPath,
+		bootstrapPath: bootstrapPath,
+		modelKeyPath:  modelKeyPath,
+		sealingPath:   sealingPath,
+		modelURL:      modelURL,
+		workDir:       workDir,
 	}, nil
 }
 
@@ -104,7 +104,7 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 		"OC_DATABASE_DSN_FILE":    c.dsnPath,
 		"OC_RELAY_ADDRESS":        c.relayAddress,
 		"OC_RELAY_SPKI_PINS":      spkiPin,
-		"OC_BOOTSTRAP_TOKEN_FILE": c.operatorPath,
+		"OC_BOOTSTRAP_TOKEN_FILE": c.bootstrapPath,
 		"OC_AI_PROVIDER":          "anthropic",
 		"OC_AI_MODEL":             "claude-sonnet-5",
 		"OC_AI_API_KEY_FILE":      c.modelKeyPath,
@@ -133,7 +133,7 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+investigationOperatorToken)
+	request.Header.Set("Authorization", "Bearer "+investigationBootstrapToken)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "http://"+c.httpAddress)
 	response, err := http.DefaultClient.Do(request)

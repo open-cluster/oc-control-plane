@@ -325,6 +325,7 @@ func startControlPlaneRunning(
 	cfg := config.Config{
 		HTTPListenAddress: freeAddress(t),
 		DatabaseDSN:       gatedDSN,
+		SessionLifetime:   12 * time.Hour,
 		// A default sealing key, because the catalog serves a credential-bearing type and
 		// an operator surface without a key refuses to start. A test proving that refusal
 		// clears this deliberately.
@@ -365,7 +366,7 @@ func startControlPlaneRunning(
 	}
 	t.Cleanup(plane.shutdown)
 	surfaceDigest := sha256.Sum256([]byte(surfaceToken))
-	if bytes.Equal(cfg.OperatorTokenDigest, surfaceDigest[:]) {
+	if bytes.Equal(cfg.BootstrapTokenDigest, surfaceDigest[:]) {
 		plane.bootstrapAdmin(t, surfaceOrg, surfaceToken,
 			cfg.PublicURL, cfg.DatabaseDSN)
 	}

@@ -18,9 +18,14 @@ func main() {
 }
 
 func run() int {
+	if len(os.Args) > 1 {
+		_, _ = fmt.Fprintln(os.Stderr,
+			"control plane e2e exiting: startup accepts no service arguments; use OC_CONFIG_FILE or OC_* environment variables")
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg, err := config.LoadProcess(os.Args[1:], os.LookupEnv)
+	cfg, err := config.Load(os.LookupEnv)
 	if err == nil {
 		err = app.Run(ctx, cfg, os.Stderr, app.Options{
 			Version: "e2e", ModelBaseURL: os.Getenv("OC_E2E_MODEL_BASE_URL"),

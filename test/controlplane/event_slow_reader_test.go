@@ -30,7 +30,7 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 			running := startControlPlaneRunning(t, func(cfg *config.Config) {
 				cfg.HTTPListenAddress = address
 				digest := sha256.Sum256([]byte(surfaceToken))
-				cfg.OperatorTokenDigest = digest[:]
+				cfg.BootstrapTokenDigest = digest[:]
 				dsn = cfg.DatabaseDSN
 			}, app.Options{Agent: &blockingAgentMain{}})
 			plane := &integrationPlane{controlPlane: running, operator: address, intake: address}

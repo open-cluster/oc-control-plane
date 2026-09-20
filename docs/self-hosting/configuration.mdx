@@ -8,16 +8,20 @@ telemetry, investigation limits, concurrency, retention, retries, request timeou
 shutdown. A normal installation supplies database, AI, and encryption files plus its
 public URL. Supply the bootstrap credential only for initial setup, then remove it.
 
-Use environment settings at startup. For each secret, supply either the direct value or
-its optional `_FILE` path. Setting both stops startup with a redacted error. Mounted
-files work with Kubernetes Secrets and external secret managers without an additional
-client in OpenCluster.
+OpenCluster resolves configuration in this order:
+
+1. Built-in defaults.
+2. The optional YAML file named by `OC_CONFIG_FILE`.
+3. `OC_*` environment variables.
+
+Environment variables override only the corresponding file values. Unknown YAML fields,
+invalid values, and additional YAML documents stop startup instead of being ignored.
 
 ## Minimal configuration
 
 ```sh
 export OC_DATABASE_DSN_FILE=/run/secrets/postgres_dsn
-export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/operator_token
+export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
 export OC_ENCRYPTION_KEY_FILE=/run/secrets/sealing_key
 export OC_AI_PROVIDER=anthropic
 export OC_AI_MODEL=claude-sonnet-5
@@ -26,8 +30,62 @@ controlplane
 ```
 
 Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_KEY`.
-Supply these through your deployment's secret tooling. Remove the bootstrap input after
-initial setup. Application YAML, `OC_CONFIG_FILE`, and `--config` are retired.
+Use direct values for local development and mounted files for production when practical.
+Never set both forms of one secret. Remove the bootstrap input after initial setup.
+
+## Configuration file
+
+Set `OC_CONFIG_FILE` to load product-oriented YAML. Plaintext secrets are not accepted in
+YAML; reference mounted files instead:
+
+```yaml
+server:
+  address: ":8080"
+  publicURL: "https://opencluster.example"
+telemetry:
+  logLevel: info
+  otlpEndpoint: "otel-collector:4317"
+database:
+  dsnFile: /run/secrets/postgres_dsn
+session:
+  lifetime: 12h
+relay:
+  address: ":8443"
+  spkiPins:
+    - "BASE64_SHA256_PIN"
+ai:
+  provider: anthropic
+  model: claude-sonnet-5
+  apiKeyFile: /run/secrets/model_key
+  contextWindow: 200000
+  maxOutputTokens: 32000
+investigations:
+  workers: 8
+  maxPendingPerOrganization: 100
+oidc:
+  issuer: "https://id.example.com"
+  clientID: opencluster
+  clientSecretFile: /run/secrets/oidc_secret
+slack:
+  clientID: slack-client
+  clientSecretFile: /run/secrets/slack_client_secret
+  signingSecretFile: /run/secrets/slack_signing_secret
+github:
+  appID: "12345"
+  privateKeyFile: /run/secrets/github_private_key
+security:
+  encryptionKeyFile: /run/secrets/encryption_key
+  bootstrapTokenFile: /run/secrets/bootstrap_token
+```
+
+Omit optional sections that the deployment does not use. Values are strings except
+`relay.spkiPins` (an array), `ai.contextWindow`, `ai.maxOutputTokens`,
+`investigations.workers`, and `investigations.maxPendingPerOrganization` (integers).
+`session.lifetime` is a Go duration such as `12h`.
+
+Relative secret paths in YAML are resolved from the configuration file's directory.
+`_FILE` environment paths remain process-relative. An environment list setting such as
+`OC_RELAY_SPKI_PINS` replaces the entire YAML list.
 
 ## Applying changes
 
@@ -41,8 +99,9 @@ Investigation before considering the change complete.
 
 Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`; the default is `info`.
 Use `OC_OTLP_ENDPOINT` when exporting traces to a collector.
-Local authentication is the default. `oidc` adds the configured provider while local
-Admin recovery remains available. Relay is optional and listens separately from HTTP;
+Local authentication is always available. OIDC is enabled when its issuer, client ID, and
+client secret are all configured; a partial OIDC configuration stops startup. Relay is
+optional and listens separately from HTTP;
 customer Relays initiate outbound connections and pin the configured control-plane key.
 `OC_SESSION_LIFETIME_SECONDS` is deployment-owned and defaults to 43,200 seconds.
 Organizations start with 90 days of audit retention and can configure it independently;
@@ -79,10 +138,10 @@ and training terms before production use.
 
 | Variable | Purpose |
 | --- | --- |
+| `OC_CONFIG_FILE` | Optional strict YAML configuration file. |
 | `OC_SERVER_ADDRESS` | HTTP listen address; default `:8080`. |
 | `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8080`. |
 | `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file; do not set both. |
-| `OC_AUTH_MODE` | `local` or `oidc`. |
 | `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds; default `43200`, range `300`–`2592000`. |
 | `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file; do not set both. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |

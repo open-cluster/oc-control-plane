@@ -30,7 +30,7 @@ import (
 // tenant is refused as if nothing existed.
 
 const (
-	surfaceToken   = "operator-token-for-the-integration-surface"
+	surfaceToken   = "bootstrap-token-for-the-integration-surface"
 	surfaceOrg     = "11111111-1111-4111-8111-111111111111"
 	neighbourOrg   = "22222222-2222-4222-8222-222222222222"
 	alertmanagerAt = "2026-01-02T15:04:05Z"
@@ -65,7 +65,7 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.OperatorTokenDigest = digest[:]
+		cfg.BootstrapTokenDigest = digest[:]
 		// The bootstrap credential is bound to ONE organization. A request naming the
 		// neighbour below is refused by the authorization middleware before it reaches a
 		// query — the cross-tenant assertions assert that refusal.
