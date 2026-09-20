@@ -141,7 +141,7 @@ func detailViewOf(detail Detail) detailView {
 		conversationView: conversationViewOf(detail.Conversation),
 		Messages:         make([]messageView, 0, len(detail.Messages)),
 		Turns:            make([]turnView, 0, len(detail.Turns)),
-		TurnsNext:        listing.Continuation(detail.TurnsNext),
+		TurnsNext:        listing.CursorPtr(detail.TurnsNext),
 	}
 	for _, message := range detail.Messages {
 		view.Messages = append(view.Messages, messageViewOf(message))

@@ -37,9 +37,9 @@ const (
 )
 
 const (
-	operatorReadTimeout  = 30 * time.Second
-	operatorWriteTimeout = 30 * time.Second
-	operatorIdleTimeout  = 60 * time.Second
+	serverReadTimeout  = 30 * time.Second
+	serverWriteTimeout = 30 * time.Second
+	serverIdleTimeout  = 60 * time.Second
 )
 
 type Options struct {

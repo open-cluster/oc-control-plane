@@ -24,29 +24,7 @@ tags:
   - name: Postmortems
   - name: Webhook Deliveries
   - name: Webhook Intake
-  - name: Metadata
 paths:
-  /api/v1/meta:
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      responses:
-        '200':
-          description: Edition-neutral capabilities supported by this deployment.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CapabilityMetadataList'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: getCapabilityMetadata
-      summary: Get capability metadata
-      tags:
-        - Metadata
   /api/v1/auth/local/bootstrap:
     post:
       security:
@@ -3004,7 +2982,6 @@ components:
       required:
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3016,19 +2993,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
     IntegrationList:
       type: object
       additionalProperties: false
@@ -3036,7 +3000,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3048,19 +3011,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -3195,7 +3145,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3207,19 +3156,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -3232,11 +3168,9 @@ components:
         - connected
         - disconnected
         - revoked
-        - outdated
         - degraded
         - activeRequests
         - livenessSeconds
-        - outdatedCounted
       properties:
         total:
           type: integer
@@ -3250,9 +3184,6 @@ components:
         revoked:
           type: integer
           minimum: 0
-        outdated:
-          type: integer
-          minimum: 0
         degraded:
           type: integer
           minimum: 0
@@ -3262,11 +3193,6 @@ components:
         livenessSeconds:
           type: integer
           minimum: 1
-        minimumVersion:
-          type: string
-          maxLength: 64
-        outdatedCounted:
-          type: boolean
     RelayBootstrapToken:
       type: object
       additionalProperties: false
@@ -3323,7 +3249,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3335,19 +3260,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -3388,7 +3300,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3400,19 +3311,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -3503,7 +3401,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3515,19 +3412,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -3579,7 +3463,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3591,19 +3474,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -3954,7 +3824,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -3966,19 +3835,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -4724,7 +4580,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -4736,19 +4591,6 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
@@ -5261,7 +5103,6 @@ components:
         - items
         - next
         - total
-        - partial
       properties:
         next:
           oneOf:
@@ -5273,57 +5114,10 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
-        partial:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - field
-              - reason
-            properties:
-              field:
-                type: string
-              reason:
-                type: string
         items:
           type: array
           items:
             $ref: '#/components/schemas/WebhookDelivery'
-    CapabilityMetadata:
-      type: object
-      additionalProperties: false
-      required:
-        - key
-        - enabled
-        - availability
-      properties:
-        key:
-          type: string
-          pattern: ^[a-z][a-z0-9_]{0,63}$
-        enabled:
-          type: boolean
-        availability:
-          type: string
-          enum:
-            - available
-            - unavailable
-            - degraded
-        reason:
-          oneOf:
-            - type: string
-              maxLength: 1024
-            - type: 'null'
-    CapabilityMetadataList:
-      type: object
-      additionalProperties: false
-      required:
-        - capabilities
-      properties:
-        capabilities:
-          type: array
-          items:
-            $ref: '#/components/schemas/CapabilityMetadata'
 x-opencluster-operation-templates:
   public-read:
     security: []

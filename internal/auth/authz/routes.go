@@ -30,7 +30,7 @@ func (a Access) String() string {
 	}
 }
 
-// Route is one entry in the table that IS the operator API's index.
+// Route is one entry in the table that is the application API's index.
 type Route struct {
 	method               string
 	pattern              string

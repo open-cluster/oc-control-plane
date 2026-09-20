@@ -18,7 +18,7 @@ import (
 
 const bootstrapTokenLifetime = time.Hour
 
-var fleetSpec = listing.Spec{
+var relayListSpec = listing.Spec{
 	Searchable:  true,
 	Sortable:    []string{"registeredAt", "lastSeenAt", "version", "fingerprint"},
 	DefaultSort: listing.Sort{Field: "registeredAt", Descending: true},
@@ -34,7 +34,7 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	if !ok {
 		return
 	}
-	query, ok := h.query(writer, request, fleetSpec)
+	query, ok := h.query(writer, request, relayListSpec)
 	if !ok {
 		return
 	}
@@ -80,25 +80,15 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	for _, summary := range roster.Relays {
 		relays = append(relays, viewOf(summary))
 	}
-	writeJSON(writer, http.StatusOK,
-		listing.Answer(relays, roster.Next, nil, h.fleetPartials()...))
+	writeJSON(writer, http.StatusOK, listing.NewPage(relays, roster.Next, nil))
 }
 
-func (h Handlers) fleetPartials() []listing.Partial {
-	return []listing.Partial{{
-		Field: "availableVersion",
-		Reason: "this deployment has no release channel configured, so there is nothing to say " +
-			"what a relay could be upgraded to. Its current version is served; what is newer " +
-			"than it is not something this control plane knows",
-	}}
-}
-
-// fleetSummary counts an organization's relays.
+// relaySummary counts an organization's relays.
 //
 // It exists because a hundred rows is not an assessment. Every number comes from one query, so
 // the counts cannot disagree with each other the way separate reads at separate moments would —
 // a summary saying eleven connected out of ten is worse than no summary.
-func (h Handlers) fleetSummary(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) relaySummary(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
 		return
@@ -110,23 +100,19 @@ func (h Handlers) fleetSummary(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	fleet, err := h.Database.FleetSummary(ctx, principal, organization, relay.LivenessAllowance,
-		h.MinimumRelayVersion)
+	summary, err := h.Database.FleetSummary(ctx, principal, organization, relay.LivenessAllowance)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, fleetView{
-		Total:           fleet.Total,
-		Connected:       fleet.Connected,
-		Disconnected:    fleet.Disconnected,
-		Revoked:         fleet.Revoked,
-		Outdated:        fleet.Outdated,
-		Degraded:        fleet.Degraded,
-		ActiveRequests:  fleet.ActiveRequests,
-		LivenessSeconds: int(fleet.LivenessWindow.Seconds()),
-		MinimumVersion:  fleet.MinimumVersion,
-		OutdatedCounted: fleet.MinimumVersion != "",
+	writeJSON(writer, http.StatusOK, relaySummaryView{
+		Total:           summary.Total,
+		Connected:       summary.Connected,
+		Disconnected:    summary.Disconnected,
+		Revoked:         summary.Revoked,
+		Degraded:        summary.Degraded,
+		ActiveRequests:  summary.ActiveRequests,
+		LivenessSeconds: int(summary.LivenessWindow.Seconds()),
 	})
 }
 
@@ -172,7 +158,7 @@ func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Re
 		}
 		served = append(served, view)
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(served, list.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.NewPage(served, list.Next, nil))
 }
 
 func (h Handlers) relayFailures(writer http.ResponseWriter, request *http.Request) {
@@ -208,11 +194,7 @@ func (h Handlers) relayFailures(writer http.ResponseWriter, request *http.Reques
 			At:                failure.At,
 		})
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(failures, list.Next, nil, listing.Partial{
-		Field: "reason",
-		Reason: "a job records that it failed and not what the relay said about it, so why each " +
-			"one failed is not something this control plane holds",
-	}))
+	writeJSON(writer, http.StatusOK, listing.NewPage(failures, list.Next, nil))
 }
 
 func outcomeOf(cancelled bool) string {

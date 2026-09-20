@@ -29,10 +29,6 @@ const (
 type Handlers struct {
 	Store  Store
 	Logger *slog.Logger
-	// Enabled is the per-deployment switch. Conversations stay off until a deployment
-	// turns them on; every route answers 404 while they are, so a deployment that has not
-	// enabled them does not advertise a surface it does not serve.
-	Enabled bool
 	// WindowLead is how far before an incident began a turn's window reaches back, and how
 	// far back a turn with no incident looks.
 	WindowLead time.Duration
@@ -43,7 +39,7 @@ type Handlers struct {
 	MaxWaitingTurns int
 }
 
-// Routes is this capability's contribution to the operator API's index.
+// Routes is this capability's contribution to the application API's index.
 func (h Handlers) Routes() authz.Table {
 	const base = "/api/v1/conversations"
 
@@ -287,7 +283,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range listed.Conversations {
 		views = append(views, conversationViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.NewPage(views, listed.Next, nil))
 }
 
 // read answers one conversation with its recent transcript and first page of turns.
@@ -307,8 +303,7 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, detailViewOf(detail))
 }
 
-// caller resolves the principal and the organization, and refuses everything while
-// conversations are switched off in this deployment.
+// caller resolves the principal and the organization.
 func (h Handlers) caller(
 	writer http.ResponseWriter, request *http.Request,
 ) (authz.Principal, tenancy.Organization, bool) {
@@ -326,13 +321,6 @@ func (h Handlers) caller(
 			"a handler ran with no verified active organization",
 			slog.String("path", request.URL.Path))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, tenancy.Organization{}, false
-	}
-	if !h.Enabled {
-		// 404 rather than 501. A deployment with conversations off does not have this
-		// surface, and saying "not implemented" would advertise one that is coming.
-		writeJSON(writer, http.StatusNotFound,
-			errorView{Error: "conversations are not enabled in this deployment"})
 		return authz.Principal{}, tenancy.Organization{}, false
 	}
 	return principal, organization, true

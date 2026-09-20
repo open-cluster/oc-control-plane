@@ -36,7 +36,6 @@ type Handlers struct {
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
 	Sealer                  seal.Sealer
-	ConversationsEnabled    bool
 	// Origins are the browser origins a cookie-authenticated unsafe request may come from.
 	// Empty means no browser may make one, which is the correct posture for a deployment that
 	// has not said where its console is served from.
@@ -44,22 +43,15 @@ type Handlers struct {
 	// MaxWaitingTurns bounds one organization's unclaimed turns, so overload is a plain
 	// refusal rather than a queue that grows without bound.
 	MaxWaitingTurns int
-	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
-	// configured rather than derived from a request
-	IntakeBaseURL string
-	// PublicURL is where this surface is reachable from a browser, and ConsoleURL is where
-	// a browser is sent afterward. Both are configuration for the reason IntakeBaseURL is:
+	// PublicURL is where this surface is reachable from a browser and where a browser is sent
+	// afterward. It is configuration because
 	// a provider's redirect URI must be absolute and must not be assembled from a
 	// caller-controlled Host header. Empty PublicURL means no provider installation flow
 	// can be started, and starting one says so.
-	PublicURL  string
-	ConsoleURL string
-	// MinimumRelayVersion is the floor the fleet summary counts `outdated` against.
-	// Empty means the build states no floor.
-	MinimumRelayVersion string
+	PublicURL string
 }
 
-// Router returns the operator surface, or the reason it cannot be built.
+// Router returns the API surface, or the reason it cannot be built.
 func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
 		Resolve:             h.Identity.Resolve,
@@ -77,18 +69,17 @@ func (h Handlers) Router() (http.Handler, error) {
 	return correlation.Middleware(router), nil
 }
 
-// Routes is the whole operator API.
+// Routes is the whole application API.
 func (h Handlers) Routes() authz.Table {
 	const relays = "/api/v1/relays"
 
 	routes := authz.Table{
-		authz.Authenticated(http.MethodGet, "/api/v1/meta", http.HandlerFunc(h.meta)),
 		authz.Privileged(http.MethodGet, relays, authz.RelayRead,
 			http.HandlerFunc(h.listRelays)),
 		// The summary comes BEFORE the fleet in the table for the same reason it comes before it
 		// on a page: a hundred relays is a hundred rows, and a hundred rows is not an assessment.
 		authz.Privileged(http.MethodGet, relays+"/summary", authz.RelayRead,
-			http.HandlerFunc(h.fleetSummary)),
+			http.HandlerFunc(h.relaySummary)),
 		authz.Privileged(http.MethodGet, relays+"/{registration}/integrations", authz.RelayRead,
 			http.HandlerFunc(h.relayIntegrations)),
 		authz.Privileged(http.MethodGet, relays+"/{registration}/failures", authz.RelayRead,
@@ -105,14 +96,12 @@ func (h Handlers) Routes() authz.Table {
 
 	routes = append(routes, h.Identity.Routes()...)
 	routes = append(routes, integrations.Handlers{
-		Store:         h.Database,
-		Catalog:       h.Catalog,
-		WebhookTypes:  h.WebhookTypes,
-		Logger:        h.Logger,
-		Sealer:        h.Sealer,
-		IntakeBaseURL: h.IntakeBaseURL,
-		PublicURL:     h.PublicURL,
-		ConsoleURL:    h.ConsoleURL,
+		Store:        h.Database,
+		Catalog:      h.Catalog,
+		WebhookTypes: h.WebhookTypes,
+		Logger:       h.Logger,
+		Sealer:       h.Sealer,
+		PublicURL:    h.PublicURL,
 	}.Routes()...)
 	routes = append(routes, incident.Handlers{
 		Store:  h.Database,
@@ -133,7 +122,6 @@ func (h Handlers) Routes() authz.Table {
 	routes = append(routes, conversation.Handlers{
 		Store:           h.Database,
 		Logger:          h.Logger,
-		Enabled:         h.ConversationsEnabled,
 		WindowLead:      h.InvestigationWindowLead,
 		MaxWaitingTurns: h.MaxWaitingTurns,
 	}.Routes()...)
@@ -143,30 +131,6 @@ func (h Handlers) Routes() authz.Table {
 		Counters: webhooks.NewJobInstruments(h.Logger),
 	}.Routes()...)
 	return routes
-}
-
-// meta reports stable product capabilities without exposing vendor, credential, or
-// deployment configuration. It is authenticated but not Organization-scoped because the
-// answer describes this composition, not tenant-owned state.
-func (h Handlers) meta(writer http.ResponseWriter, _ *http.Request) {
-	capabilities := []capabilityView{
-		{Key: "integration_catalog", Enabled: true, Availability: "available"},
-		{Key: "relay", Enabled: true, Availability: "available"},
-		{Key: "webhook_delivery", Enabled: true, Availability: "available"},
-		{Key: "postmortems", Enabled: true, Availability: "available"},
-		{Key: "investigations", Enabled: h.Investigations != nil && h.Investigations.Agent != nil,
-			Availability: availabilityOf(h.Investigations != nil && h.Investigations.Agent != nil)},
-		{Key: "conversations", Enabled: h.ConversationsEnabled,
-			Availability: availabilityOf(h.ConversationsEnabled)},
-	}
-	writeJSON(writer, http.StatusOK, capabilityMetadataView{Capabilities: capabilities})
-}
-
-func availabilityOf(enabled bool) string {
-	if enabled {
-		return "available"
-	}
-	return "unavailable"
 }
 
 // recordRefusal writes an authorization denial to the tenant's record.

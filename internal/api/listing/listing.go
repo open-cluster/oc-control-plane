@@ -144,41 +144,32 @@ func contains(values []string, wanted string) bool {
 	return slices.Contains(values, wanted)
 }
 
-type Partial struct {
-	Field  string `json:"field"`
-	Reason string `json:"reason"`
-}
-
 type Envelope[T any] struct {
-	Items   []T       `json:"items"`
-	Next    *string   `json:"next"`
-	Total   *int      `json:"total"`
-	Partial []Partial `json:"partial"`
+	Items []T     `json:"items"`
+	Next  *string `json:"next"`
+	Total *int    `json:"total"`
 }
 
-func Answer[T any](items []T, next string, total *int, partial ...Partial) Envelope[T] {
+func NewPage[T any](items []T, next string, total *int) Envelope[T] {
 	if items == nil {
 		items = []T{}
 	}
-	if partial == nil {
-		partial = []Partial{}
-	}
-	envelope := Envelope[T]{Items: items, Total: total, Partial: partial}
+	envelope := Envelope[T]{Items: items, Total: total}
 	if next != "" {
 		envelope.Next = &next
 	}
 	return envelope
 }
 
-func Continuation(next string) *string {
+func CursorPtr(next string) *string {
 	if next == "" {
 		return nil
 	}
 	return &next
 }
 
-// Cut pages a stable in-memory collection with an ordinal cursor.
-func Cut[T any](items []T, query Query) ([]T, string, error) {
+// SlicePage pages a stable in-memory collection with an ordinal cursor.
+func SlicePage[T any](items []T, query Query) ([]T, string, error) {
 	scope := query.Sort.Field
 	if query.Sort.Descending {
 		scope = "-" + scope

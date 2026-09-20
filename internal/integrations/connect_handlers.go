@@ -415,13 +415,13 @@ func (h Handlers) landConnect(
 func (h Handlers) consoleTarget(
 	returnTo string, outcome connectOutcome, id string,
 ) (string, bool) {
-	if h.ConsoleURL == "" {
+	if h.PublicURL == "" {
 		return "", false
 	}
 	if returnTo == "" {
 		returnTo = "/"
 	}
-	target, err := url.Parse(strings.TrimSuffix(h.ConsoleURL, "/") + returnTo)
+	target, err := url.Parse(strings.TrimSuffix(h.PublicURL, "/") + returnTo)
 	if err != nil {
 		return "", false
 	}

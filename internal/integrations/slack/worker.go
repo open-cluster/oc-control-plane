@@ -115,8 +115,8 @@ type Worker struct {
 	Logger  *slog.Logger
 	// Counters records what happened to each attempt, and may be its zero value.
 	Counters Instruments
-	// ConsoleURL is the trusted deployment origin used for terminal navigation links.
-	ConsoleURL string
+	// PublicURL is the trusted deployment origin used for terminal navigation links.
+	PublicURL string
 	// Interval is how often the worker looks when it found nothing to do. A pass that DID
 	// work looks again after the flush interval instead, which is what bounds how often
 	// one streaming turn calls Slack.
@@ -352,7 +352,7 @@ func visible(rendered Rendered, withStatus bool) string {
 }
 
 func (w Worker) navigation(_ context.Context, reply Reply) string {
-	base := strings.TrimSuffix(w.ConsoleURL, "/")
+	base := strings.TrimSuffix(w.PublicURL, "/")
 	if base == "" {
 		return ""
 	}

@@ -26,9 +26,6 @@ type Fleet struct {
 	Connected    int
 	Disconnected int
 	Revoked      int
-	// Outdated is how many are running a version below the floor this build states. It is a
-	// count of what needs upgrading, which is the question behind the version column.
-	Outdated int
 	// Degraded is how many carry an unresolved session conflict: something is holding that
 	// relay's credential alongside it. It is counted separately because it is the one state
 	// where a row looks healthy and is not.
@@ -40,10 +37,6 @@ type Fleet struct {
 	// LivenessWindow is how recently a relay must have been heard from to be counted connected.
 	// It is reported so a number nobody can interpret does not have to be.
 	LivenessWindow time.Duration
-	// MinimumVersion is the floor Outdated was counted against. Empty means this build states
-	// no floor, in which case Outdated is zero because nothing was compared rather than because
-	// everything is current — and the two are different facts.
-	MinimumVersion string
 }
 
 // FleetSummary counts an organization's relays.
@@ -53,7 +46,7 @@ type Fleet struct {
 // worse than no summary.
 func (p *Database) FleetSummary(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
-	liveness time.Duration, minimumVersion string,
+	liveness time.Duration,
 ) (Fleet, error) {
 	if !principal.MemberOf(organization) {
 		return Fleet{}, ErrNotAMember
@@ -63,27 +56,21 @@ func (p *Database) FleetSummary(
 		return Fleet{}, err
 	}
 
-	fleet := Fleet{LivenessWindow: liveness, MinimumVersion: minimumVersion}
+	fleet := Fleet{LivenessWindow: liveness}
 	err = pool.QueryRow(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE `+relayConnectedExpression+`),
 		       count(*) FILTER (WHERE NOT `+relayConnectedExpression+`
 		                          AND registration.revoked_at IS NULL),
 		       count(*) FILTER (WHERE registration.revoked_at IS NOT NULL),
-		       -- Outdated is counted only where a floor was stated. Comparing against an empty
-		       -- string would count every relay as outdated, which is a number that would send
-		       -- somebody to upgrade a fleet that is fine.
-		       count(*) FILTER (WHERE $3::text <> ''
-		                          AND registration.revoked_at IS NULL
-		                          AND registration.relay_version < $3::text),
 		       count(*) FILTER (WHERE registration.session_conflict_at IS NOT NULL),
 		       (SELECT count(*) FROM relay_job
 		         WHERE org_id = $1 AND status = 1)
 		  FROM relay_registration registration
 		 WHERE registration.org_id = $1`,
-		organization.String(), liveness, minimumVersion).
+		organization.String(), liveness).
 		Scan(&fleet.Total, &fleet.Connected, &fleet.Disconnected, &fleet.Revoked,
-			&fleet.Outdated, &fleet.Degraded, &fleet.ActiveRequests)
+			&fleet.Degraded, &fleet.ActiveRequests)
 	if err != nil {
 		return Fleet{}, fmt.Errorf("summarising a relay fleet: %w", err)
 	}

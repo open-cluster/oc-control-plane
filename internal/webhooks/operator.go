@@ -103,7 +103,7 @@ func (h DeliveryHandlers) list(writer http.ResponseWriter, request *http.Request
 	for _, delivery := range page.Deliveries {
 		views = append(views, viewOfDelivery(delivery))
 	}
-	writeDeliveryJSON(writer, http.StatusOK, listing.Answer(views, page.Next, nil))
+	writeDeliveryJSON(writer, http.StatusOK, listing.NewPage(views, page.Next, nil))
 }
 
 func validDeliveryState(state storage.WebhookDeliveryState) bool {

@@ -23,7 +23,6 @@ tags:
   - name: Postmortems
   - name: Webhook Deliveries
   - name: Webhook Intake
-  - name: Metadata
 
 # These anchors keep security policy identical across operations. The bundled release artifact
 # expands them; this file remains the only editable source.
@@ -97,19 +96,6 @@ x-opencluster-operation-templates:
     responses: *authenticated-responses
 
 paths:
-  /api/v1/meta:
-    get:
-      <<: *authenticated-read
-      operationId: getCapabilityMetadata
-      summary: Get capability metadata
-      tags: [Metadata]
-      responses:
-        "200":
-          description: Edition-neutral capabilities supported by this deployment.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CapabilityMetadataList" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/auth/local/bootstrap:
     post:
       <<: *public-write
@@ -1523,15 +1509,14 @@ components:
         verificationNote: { type: string, maxLength: 1024 }
     PageMetadata:
       type: object
-      required: [next, total, partial]
+      required: [next, total]
       properties: &page-metadata
         next: { oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
         total: { oneOf: [{ type: integer, minimum: 0 }, { type: "null" }] }
-        partial: { type: array, items: { type: object, additionalProperties: false, required: [field, reason], properties: { field: { type: string }, reason: { type: string } } } }
     IntegrationList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Integration" } }
@@ -1583,25 +1568,22 @@ components:
     RelayList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Relay" } }
     RelayFleetSummary:
       type: object
       additionalProperties: false
-      required: [total, connected, disconnected, revoked, outdated, degraded, activeRequests, livenessSeconds, outdatedCounted]
+      required: [total, connected, disconnected, revoked, degraded, activeRequests, livenessSeconds]
       properties:
         total: { type: integer, minimum: 0 }
         connected: { type: integer, minimum: 0 }
         disconnected: { type: integer, minimum: 0 }
         revoked: { type: integer, minimum: 0 }
-        outdated: { type: integer, minimum: 0 }
         degraded: { type: integer, minimum: 0 }
         activeRequests: { type: integer, minimum: 0 }
         livenessSeconds: { type: integer, minimum: 1 }
-        minimumVersion: { type: string, maxLength: 64 }
-        outdatedCounted: { type: boolean }
     RelayBootstrapToken:
       type: object
       additionalProperties: false
@@ -1623,7 +1605,7 @@ components:
     RelayIntegrationList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/RelayIntegration" } }
@@ -1641,7 +1623,7 @@ components:
     RelayFailureList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/RelayFailure" } }
@@ -1667,7 +1649,7 @@ components:
     IncidentList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Incident" } }
@@ -1687,7 +1669,7 @@ components:
     AlertEventList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/AlertEvent" } }
@@ -1797,7 +1779,7 @@ components:
     InvestigationList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Investigation" } }
@@ -2066,7 +2048,7 @@ components:
     ConversationList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/Conversation" } }
@@ -2257,24 +2239,7 @@ components:
     WebhookDeliveryList:
       type: object
       additionalProperties: false
-      required: [items, next, total, partial]
+      required: [items, next, total]
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/WebhookDelivery" } }
-    CapabilityMetadata:
-      type: object
-      additionalProperties: false
-      required: [key, enabled, availability]
-      properties:
-        key: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
-        enabled: { type: boolean }
-        availability: { type: string, enum: [available, unavailable, degraded] }
-        reason: { oneOf: [{ type: string, maxLength: 1024 }, { type: "null" }] }
-    CapabilityMetadataList:
-      type: object
-      additionalProperties: false
-      required: [capabilities]
-      properties:
-        capabilities:
-          type: array
-          items: { $ref: "#/components/schemas/CapabilityMetadata" }

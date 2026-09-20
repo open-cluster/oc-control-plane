@@ -576,7 +576,7 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 		t.Errorf("GET /healthz = %d", status)
 	}
 	if status, _ := plane.get(t, "/api/v1/session"); status != http.StatusUnauthorized {
-		t.Errorf("GET /api/v1/session = %d, want authentication refusal from the operator router", status)
+		t.Errorf("GET /api/v1/session = %d, want authentication refusal from the API router", status)
 	}
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		plane.baseURL+"/webhooks/v1/integrations/not-an-id/alert-events", strings.NewReader("{}"))
@@ -585,17 +585,18 @@ func TestControlPlane_ServesEveryHTTPRouteGroupOnOneAddress(t *testing.T) {
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		t.Fatalf("POST intake route: %v", err)
+		t.Fatalf("POST webhook route: %v", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusNotFound {
-		t.Errorf("POST intake route = %d, want the intake router to handle it", response.StatusCode)
+		t.Errorf("POST webhook route = %d, want the webhook router to handle it", response.StatusCode)
 	}
 }
 
-func TestControlPlane_DoesNotServePreReleaseRouteAliases(t *testing.T) {
+func TestControlPlane_TreatsRemovedAndUnknownRoutesTheSame(t *testing.T) {
 	plane := startControlPlane(t, nil)
 	for _, path := range []string{
+		"/api/v1/meta",
 		"/operator/v1/session",
 		"/intake/v1/integrations/example/signals",
 	} {

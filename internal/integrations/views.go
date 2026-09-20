@@ -118,7 +118,7 @@ func typeViewOf(definition Definition, configured int, receivesWebhooks bool) ty
 // the live secret and where deliveries go — never the secret.
 type webhookView struct {
 	// URL is where the source delivers, when this deployment has been told its public
-	// intake origin; the path alone otherwise.
+	// webhook origin; the path alone otherwise.
 	URL        string `json:"url"`
 	Configured bool   `json:"configured"`
 }
@@ -231,10 +231,10 @@ func (h Handlers) viewOf(found Integration) integrationView {
 }
 
 // webhookURL is where a source delivers to this Integration. The path is served even when
-// the deployment has not said where intake is publicly reachable, because the path is true
+// the deployment has not said where webhooks are publicly reachable, because the path is true
 // either way and an operator joining it to an origin they know beats a guess made here.
 func (h Handlers) webhookURL(id uuid.UUID) string {
-	return h.IntakeBaseURL + "/webhooks/v1/integrations/" + id.String() + "/alert-events"
+	return h.PublicURL + "/webhooks/v1/integrations/" + id.String() + "/alert-events"
 }
 
 func stamp(at time.Time) string { return at.UTC().Format(time.RFC3339) }

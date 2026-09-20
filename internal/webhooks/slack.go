@@ -18,12 +18,12 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// SLACK EVENTS LIVE ON INTAKE, NOT ON THE OPERATOR API.
+// SLACK EVENTS LIVE ON THE WEBHOOK SURFACE, NOT ON THE APPLICATION API.
 //
-// Intake is already the surface a customer's own infrastructure reaches inbound. It already
+// The webhook surface is already what a customer's own infrastructure reaches inbound. It
 // bounds bodies as they are read, already rate-limits per source, already refuses without
 // saying which half of a guess was right, and already owns the Delivery record this reuses
-// for deduplication. The operator API is the opposite of all of that: it reads across a
+// for deduplication. The application API is the opposite of all of that: it reads across a
 // tenant's records for an authenticated person and belongs on an interface a deployment can
 // keep private.
 //

@@ -40,7 +40,7 @@ func (h Handlers) organizations(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	memberships := principal.Memberships()
-	page, next, err := listing.Cut(memberships, query)
+	page, next, err := listing.SlicePage(memberships, query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
@@ -54,18 +54,13 @@ func (h Handlers) organizations(writer http.ResponseWriter, request *http.Reques
 		views = append(views, view)
 	}
 	writeJSON(writer, http.StatusOK, organizationListView{
-		Organizations: views, Next: listing.Continuation(next),
+		Organizations: views, Next: listing.CursorPtr(next),
 	})
 }
 
 func (h Handlers) createOrganization(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
-		return
-	}
-	if h.CanCreateOrganization == nil || !h.CanCreateOrganization(principal) {
-		writeJSON(writer, http.StatusForbidden,
-			errorView{Error: "organization creation is not permitted"})
 		return
 	}
 	var body createOrganizationRequest
@@ -117,7 +112,7 @@ func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request)
 		}
 	}
 	slices.Sort(permissions)
-	permissions, next, err := listing.Cut(permissions, query)
+	permissions, next, err := listing.SlicePage(permissions, query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
@@ -126,6 +121,6 @@ func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request)
 		"organizationId": organization.String(),
 		"role":           string(role),
 		"permissions":    permissions,
-		"next":           listing.Continuation(next),
+		"next":           listing.CursorPtr(next),
 	})
 }
