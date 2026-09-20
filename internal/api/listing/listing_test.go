@@ -186,11 +186,11 @@ func TestSearchAndCursorAreBounded(t *testing.T) {
 func TestTheEnvelopeEncodesAnAbsentTotalAsNullAndNoItemsAsAnEmptyArray(t *testing.T) {
 	t.Parallel()
 
-	encoded, err := json.Marshal(listing.Answer[string](nil, "", nil))
+	encoded, err := json.Marshal(listing.NewPage[string](nil, "", nil))
 	if err != nil {
 		t.Fatalf("encoding an empty answer: %v", err)
 	}
-	const want = `{"items":[],"next":null,"total":null,"partial":[]}`
+	const want = `{"items":[],"next":null,"total":null}`
 	if string(encoded) != want {
 		t.Errorf("an empty answer encoded as %s, want %s", encoded, want)
 	}
@@ -200,18 +200,29 @@ func TestTheEnvelopeCarriesTheCountItActuallyHas(t *testing.T) {
 	t.Parallel()
 
 	total := 2
-	answer := listing.Answer([]string{"a", "b"}, "next-page", &total)
+	answer := listing.NewPage([]string{"a", "b"}, "next-page", &total)
 	encoded, err := json.Marshal(answer)
 	if err != nil {
 		t.Fatalf("encoding: %v", err)
 	}
-	const want = `{"items":["a","b"],"next":"next-page","total":2,"partial":[]}`
+	const want = `{"items":["a","b"],"next":"next-page","total":2}`
 	if string(encoded) != want {
 		t.Errorf("encoded as %s, want %s", encoded, want)
 	}
 }
 
-func TestCutWalksAnInMemoryListingExactlyOnce(t *testing.T) {
+func TestCursorPtrRepresentsAnOptionalCursor(t *testing.T) {
+	t.Parallel()
+
+	if listing.CursorPtr("") != nil {
+		t.Fatal("an absent cursor was represented as present")
+	}
+	if cursor := listing.CursorPtr("next-page"); cursor == nil || *cursor != "next-page" {
+		t.Fatalf("cursor = %v, want next-page", cursor)
+	}
+}
+
+func TestSlicePageWalksAnInMemoryListingExactlyOnce(t *testing.T) {
 	t.Parallel()
 
 	items := make([]int, 0, 13)
@@ -226,7 +237,7 @@ func TestCutWalksAnInMemoryListingExactlyOnce(t *testing.T) {
 	}
 	pages := 0
 	for {
-		page, next, cutErr := listing.Cut(items, query)
+		page, next, cutErr := listing.SlicePage(items, query)
 		if cutErr != nil {
 			t.Fatalf("cutting page %d: %v", pages, cutErr)
 		}
@@ -253,49 +264,33 @@ func TestCutWalksAnInMemoryListingExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestCutRefusesATamperedCursor(t *testing.T) {
+func TestSlicePageRefusesATamperedCursor(t *testing.T) {
 	t.Parallel()
 
 	query, err := listing.Parse(url.Values{"cursor": {"not-a-position"}}, collectionSpec)
 	if err != nil {
 		t.Fatalf("parsing: %v", err)
 	}
-	if _, _, cutErr := listing.Cut([]int{1, 2, 3}, query); !errors.Is(cutErr, listing.ErrBadCursor) {
+	if _, _, cutErr := listing.SlicePage([]int{1, 2, 3}, query); !errors.Is(cutErr, listing.ErrBadCursor) {
 		t.Fatalf("a tampered cursor = %v, want ErrBadCursor: silently starting over shows an "+
 			"operator the first page again and lets them believe they have seen the last", cutErr)
 	}
 }
 
-func TestCutCursorIsBoundToItsOrdering(t *testing.T) {
+func TestSlicePageCursorIsBoundToItsOrdering(t *testing.T) {
 	t.Parallel()
 
 	query, err := listing.Parse(url.Values{"limit": {"1"}}, collectionSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, next, err := listing.Cut([]int{1, 2}, query)
+	_, next, err := listing.SlicePage([]int{1, 2}, query)
 	if err != nil || next == "" {
 		t.Fatalf("first page next=%q err=%v", next, err)
 	}
 	query.Cursor = next
 	query.Sort = listing.Sort{Field: "name"}
-	if _, _, err = listing.Cut([]int{1, 2}, query); !errors.Is(err, listing.ErrBadCursor) {
+	if _, _, err = listing.SlicePage([]int{1, 2}, query); !errors.Is(err, listing.ErrBadCursor) {
 		t.Fatalf("cursor reused with another order = %v, want ErrBadCursor", err)
-	}
-}
-
-func TestPartialNamesTheFieldAndTheReason(t *testing.T) {
-	t.Parallel()
-
-	answer := listing.Answer([]string{"a"}, "", nil,
-		listing.Partial{Field: "availableVersion", Reason: "no release channel is configured"})
-	encoded, err := json.Marshal(answer)
-	if err != nil {
-		t.Fatalf("encoding: %v", err)
-	}
-	const want = `{"items":["a"],"next":null,"total":null,` +
-		`"partial":[{"field":"availableVersion","reason":"no release channel is configured"}]}`
-	if string(encoded) != want {
-		t.Errorf("encoded as %s, want %s", encoded, want)
 	}
 }

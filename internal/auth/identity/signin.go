@@ -101,5 +101,5 @@ func (h Handlers) consoleTarget(returnTo string) string {
 	if returnTo == "" {
 		returnTo = "/"
 	}
-	return strings.TrimSuffix(h.ConsoleURL, "/") + returnTo
+	return strings.TrimSuffix(h.PublicURL, "/") + returnTo
 }

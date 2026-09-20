@@ -30,7 +30,7 @@ func (h Handlers) turns(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
-	view := turnPageView{Turns: make([]turnView, 0, len(page.Turns)), Next: listing.Continuation(page.Next)}
+	view := turnPageView{Turns: make([]turnView, 0, len(page.Turns)), Next: listing.CursorPtr(page.Next)}
 	for _, turn := range page.Turns {
 		view.Turns = append(view.Turns, turnViewOf(turn))
 	}

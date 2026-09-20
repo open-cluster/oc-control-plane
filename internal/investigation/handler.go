@@ -36,7 +36,7 @@ type Handlers struct {
 	WindowLead time.Duration
 }
 
-// HTTPStore is the durable state used by the Investigation operator surface.
+// HTTPStore is the durable state used by the Investigation API surface.
 type HTTPStore interface {
 	CreateInvestigation(context.Context, authz.Principal, tenancy.Organization,
 		NewInvestigation, int) (Investigation, error)
@@ -49,7 +49,7 @@ type HTTPStore interface {
 	Events(context.Context, tenancy.Organization, uuid.UUID, int64, int) ([]Event, error)
 }
 
-// Routes is this domain surface's contribution to the operator API's index.
+// Routes is this domain surface's contribution to the application API's index.
 func (h Handlers) Routes() authz.Table {
 	const base = "/api/v1"
 
@@ -230,7 +230,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range listed.Investigations {
 		views = append(views, investigationViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.NewPage(views, listed.Next, nil))
 }
 
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {

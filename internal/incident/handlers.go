@@ -26,7 +26,7 @@ type Handlers struct {
 	Logger *slog.Logger
 }
 
-// Routes is this capability's contribution to the operator API's index.
+// Routes is this capability's contribution to the application API's index.
 //
 // Reading a grouping and CHANGING one are separate permissions. Reading is what everybody looking
 // at the tenant does; regrouping decides what an incident is about, and so what an investigation
@@ -79,7 +79,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range page.Incidents {
 		views = append(views, viewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(views, page.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.NewPage(views, page.Next, nil))
 }
 
 func (h Handlers) incident(writer http.ResponseWriter, request *http.Request) {
@@ -124,7 +124,7 @@ func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request)
 	for _, found := range list.AlertEvents {
 		views = append(views, alertEventViewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(views, list.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.NewPage(views, list.Next, nil))
 }
 
 // merge records that two incidents an operator is looking at are one incident.

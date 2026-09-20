@@ -162,7 +162,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "the change was refused because it could not be recorded"})
 	default:
-		h.Logger.ErrorContext(request.Context(), "operator identity request failed",
+		h.Logger.ErrorContext(request.Context(), "identity request failed",
 			slog.String("path", request.URL.Path),
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})

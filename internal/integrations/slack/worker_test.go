@@ -344,7 +344,7 @@ func TestAFinalAnswerLinksOnlyTheInvestigation(t *testing.T) {
 
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn())
-	worker.ConsoleURL = "https://console.example.test/"
+	worker.PublicURL = "https://console.example.test/"
 	worker.answer(context.Background(), state.reply)
 
 	whole := strings.Join(fake.carried(), "")

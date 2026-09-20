@@ -10,7 +10,7 @@ import (
 
 // The vocabulary, asserted where nothing else can reach it.
 //
-// Grouping itself is asserted through the intake listener and the operator API at the composition
+// Grouping itself is asserted through the webhook listener and the application API at the composition
 // root, because that is where an operator observes it. What is left here is the small set of
 // properties that have no observable surface until they are already wrong: a status nobody can
 // name, a basis nobody can explain, a merge admitted that means nothing.

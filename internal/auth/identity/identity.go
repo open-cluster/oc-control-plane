@@ -50,25 +50,14 @@ type Handlers struct {
 	// a value read from the Host header — a caller-controlled host in a redirect URI is how an
 	// authorization code is delivered somewhere else.
 	PublicURL string
-	// ConsoleURL is where the browser is sent once signed in.
-	ConsoleURL string
-	Bootstrap  Bootstrap
+	Bootstrap Bootstrap
 	// SessionLifetime is deployment-owned. Organization policy may describe retention, but it
 	// cannot silently lengthen browser credentials for one tenant.
 	SessionLifetime time.Duration
-	// CanCreateOrganization is the edition policy seam. It decides only whether an
-	// authenticated User may create another Organization; persistence remains shared.
-	CanCreateOrganization func(authz.Principal) bool
-	// RetentionEnforced reports whether this deployment actually applies the audit retention
-	// schedule a tenant declares. It is wired from the composition root rather than assumed,
-	// because the policy surface states it to an auditor: a product reporting a retention period
-	// it does not enforce is worse than one reporting none, and the only way to keep that
-	// statement true is for the thing that starts the pruner to be the thing that says so.
-	RetentionEnforced bool
 }
 
 // Resolve turns whatever a request presents into the principal holding it. It is what the
-// operator surface hands internal/auth/authz, and it is the only place this build decides that a
+// API surface hands internal/auth/authz, and it is the only place this build decides that a
 // credential is good.
 func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 	requestID := correlation.From(request.Context())

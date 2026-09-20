@@ -120,12 +120,12 @@ func startSlackReplyWorker(
 ) {
 	isSlackConfigured(process.config)
 	worker := slack.Worker{
-		Replies:    process.database,
-		Client:     slack.NewClient(process.slackAPIURL),
-		Sealer:     process.sealer,
-		Logger:     process.logger,
-		Counters:   slack.NewInstruments(process.logger),
-		ConsoleURL: process.config.PublicURL,
+		Replies:   process.database,
+		Client:    slack.NewClient(process.slackAPIURL),
+		Sealer:    process.sealer,
+		Logger:    process.logger,
+		Counters:  slack.NewInstruments(process.logger),
+		PublicURL: process.config.PublicURL,
 	}
 
 	group.Go(func() error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,16 +18,13 @@ import (
 // a thousand is a page that works for everybody who has not deployed the product yet.
 
 type fleetSummaryBody struct {
-	Total           int    `json:"total"`
-	Connected       int    `json:"connected"`
-	Disconnected    int    `json:"disconnected"`
-	Revoked         int    `json:"revoked"`
-	Outdated        int    `json:"outdated"`
-	Degraded        int    `json:"degraded"`
-	ActiveRequests  int    `json:"activeRequests"`
-	LivenessSeconds int    `json:"livenessSeconds"`
-	MinimumVersion  string `json:"minimumVersion"`
-	OutdatedCounted bool   `json:"outdatedCounted"`
+	Total           int `json:"total"`
+	Connected       int `json:"connected"`
+	Disconnected    int `json:"disconnected"`
+	Revoked         int `json:"revoked"`
+	Degraded        int `json:"degraded"`
+	ActiveRequests  int `json:"activeRequests"`
+	LivenessSeconds int `json:"livenessSeconds"`
 }
 
 type fleetBody struct {
@@ -39,12 +37,8 @@ type fleetBody struct {
 		LastSeenAt         *time.Time `json:"lastSeenAt"`
 		Capabilities       []string   `json:"capabilities"`
 	} `json:"items"`
-	Next    *string `json:"next"`
-	Total   *int    `json:"total"`
-	Partial []struct {
-		Field  string `json:"field"`
-		Reason string `json:"reason"`
-	} `json:"partial"`
+	Next  *string `json:"next"`
+	Total *int    `json:"total"`
 }
 
 func TestRelayFleet(t *testing.T) {
@@ -70,12 +64,10 @@ func TestRelayFleet(t *testing.T) {
 			t.Error("the summary does not say how recently a relay must have been heard from, " +
 				"so `connected` is a number nobody can interpret")
 		}
-		// This deployment states no relay version floor, so nothing was compared. Reporting
-		// zero outdated without saying that would report a fleet as current on the strength of
-		// a missing setting.
-		if summary.OutdatedCounted {
-			t.Errorf("outdated was counted against %q and this deployment states no floor",
-				summary.MinimumVersion)
+		for _, unsupported := range []string{"outdated", "minimumVersion", "outdatedCounted"} {
+			if strings.Contains(body, `"`+unsupported+`"`) {
+				t.Errorf("the summary advertises unsupported field %q: %s", unsupported, body)
+			}
 		}
 	})
 
@@ -300,19 +292,10 @@ func TestRelayFleet(t *testing.T) {
 		}
 	})
 
-	t.Run("the envelope says what it served with no data behind it", func(t *testing.T) {
-		var listed fleetBody
+	t.Run("the list omits unsupported release metadata", func(t *testing.T) {
 		_, body := plane.call(t, http.MethodGet, relays, nil)
-		decodeInto(t, body, &listed)
-		if len(listed.Partial) == 0 {
-			t.Error("this deployment has no release channel and the envelope claims nothing was " +
-				"served incompletely; a console would render an availableVersion column of " +
-				"\"Not reported\" instead of one honest notice (story 33)")
-		}
-		for _, partial := range listed.Partial {
-			if partial.Field == "" || partial.Reason == "" {
-				t.Errorf("a partial with no field or no reason: %+v", partial)
-			}
+		if strings.Contains(body, `"partial"`) || strings.Contains(body, `"availableVersion"`) {
+			t.Errorf("the list advertises unsupported release metadata: %s", body)
 		}
 	})
 

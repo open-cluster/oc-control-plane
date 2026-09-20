@@ -94,7 +94,7 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 		views = append(views, liveSessionViewOf(found))
 	}
 	writeJSON(writer, http.StatusOK, liveSessionListView{
-		Sessions: views, Next: listing.Continuation(live.Next),
+		Sessions: views, Next: listing.CursorPtr(live.Next),
 	})
 }
 

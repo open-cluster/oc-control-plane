@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-cluster/oc-control-plane/internal/api"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/health"
@@ -34,9 +33,9 @@ func serve(ctx context.Context, process assembled) error {
 	server := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       operatorReadTimeout,
-		WriteTimeout:      operatorWriteTimeout,
-		IdleTimeout:       operatorIdleTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
 		BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 
@@ -120,17 +119,12 @@ func httpRoutes(process assembled) (http.Handler, error) {
 	mux.Handle("/readyz", healthRouter)
 	mux.Handle("/metrics", healthRouter)
 
-	mux.Handle("/webhooks/", intakeRouter(process))
-	operatorRoutes, err := operatorRouter(process)
+	mux.Handle("/webhooks/", webhookRouter(process))
+	apiRoutes, err := apiRouter(process)
 	if err != nil {
 		return nil, err
 	}
-	mux.Handle("/api/", operatorRoutes)
-
-	mux.HandleFunc("/operator/", http.NotFound)
-	mux.HandleFunc("/operator", http.NotFound)
-	mux.HandleFunc("/intake/", http.NotFound)
-	mux.HandleFunc("/intake", http.NotFound)
+	mux.Handle("/api/", apiRoutes)
 	return mux, nil
 }
 
@@ -142,8 +136,8 @@ func logMigrationSummary(logger *slog.Logger, applied []string) {
 	logger.Info("migrations applied", slog.Any("versions", applied))
 }
 
-// operatorRouter assembles the authenticated operator route table.
-func operatorRouter(process assembled) (http.Handler, error) {
+// apiRouter assembles the authenticated API route table.
+func apiRouter(process assembled) (http.Handler, error) {
 	cfg := process.config
 	if bearing := process.catalog.CredentialBearing(); len(bearing) > 0 &&
 		!process.sealer.Configured() {
@@ -152,7 +146,7 @@ func operatorRouter(process assembled) (http.Handler, error) {
 			config.EnvSealingKeyFile, strings.Join(bearing, ", "))
 	}
 
-	identities, err := operatorIdentity(process)
+	identities, err := authHandlers(process)
 	if err != nil {
 		return nil, err
 	}
@@ -167,21 +161,17 @@ func operatorRouter(process assembled) (http.Handler, error) {
 		Investigations:          process.investigations,
 		StreamContext:           process.streamContext,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
-		ConversationsEnabled:    true,
 		MaxWaitingTurns:         cfg.MaxPendingInvestigations,
-		IntakeBaseURL:           cfg.PublicURL,
 		PublicURL:               cfg.PublicURL,
-		ConsoleURL:              cfg.PublicURL,
-		MinimumRelayVersion:     "",
 	}.Router()
 	if err != nil {
-		return nil, fmt.Errorf("assembling the operator surface: %w", err)
+		return nil, fmt.Errorf("assembling the API surface: %w", err)
 	}
 	return router, nil
 }
 
-// operatorIdentity assembles who may reach the operator surface.
-func operatorIdentity(process assembled) (identity.Handlers, error) {
+// authHandlers assembles authentication and identity handlers.
+func authHandlers(process assembled) (identity.Handlers, error) {
 	cfg := process.config
 	handlers := identity.Handlers{
 		Database:         process.database,
@@ -191,16 +181,7 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 		OIDCClientID:     cfg.OIDCClientID,
 		OIDCClientSecret: cfg.OIDCClientSecret,
 		PublicURL:        cfg.PublicURL,
-		ConsoleURL:       cfg.PublicURL,
 		SessionLifetime:  cfg.SessionLifetime,
-		// This process starts the pruner unconditionally, so the policy surface may say that a
-		// declared retention schedule is applied. It is passed rather than assumed because the
-		// statement is made to an auditor, and the only way to keep it true is for the component
-		// that starts the pruner to be the one that says it did.
-		RetentionEnforced: true,
-		CanCreateOrganization: func(principal authz.Principal) bool {
-			return principal.Kind() == authz.KindUser
-		},
 	}
 
 	handlers.Sealer = process.sealer
@@ -213,8 +194,8 @@ func operatorIdentity(process assembled) (identity.Handlers, error) {
 	return handlers, nil
 }
 
-// intakeRouter assembles authenticated Alertmanager and Slack webhook routes.
-func intakeRouter(process assembled) http.Handler {
+// webhookRouter assembles authenticated Alertmanager and Slack webhook routes.
+func webhookRouter(process assembled) http.Handler {
 	cfg := process.config
 	return webhooks.Handlers{
 		Database: process.database,

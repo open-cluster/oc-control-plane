@@ -36,25 +36,12 @@ type Handlers struct {
 	// cannot hold one, and submitting a secret field is refused with that reason — never
 	// stored in the clear and never silently dropped.
 	Sealer seal.Sealer
-	// IntakeBaseURL is the public origin a customer's own system reaches intake at. It is
-	// CONFIGURED rather than derived from the request, because a URL assembled from the
-	// operator surface's own Host header would work from wherever the console is served
-	// and not from the customer's alerting — the one place it has to work. Empty is served
-	// as an absence rather than a guess.
-	IntakeBaseURL string
-	// PublicURL is where this surface is reachable from a browser, and what the redirect
-	// URI a provider returns an installation to is built from. Configured for the reason
-	// IntakeBaseURL is: a redirect URI assembled from a request's own Host header is how
-	// an authorization code is delivered somewhere else. Empty means no installation flow
-	// can be started, and starting one says so.
+	// PublicURL is where this API and its webhooks are publicly reachable. Provider redirect
+	// and webhook URLs are configured rather than derived from a caller-controlled Host header.
 	PublicURL string
-	// ConsoleURL is where a browser is sent once an installation flow has finished. Empty
-	// means the callback answers the outcome rather than redirecting to a console this
-	// deployment has not been told about.
-	ConsoleURL string
 }
 
-// Routes is this domain surface's contribution to the operator API's index.
+// Routes is this domain surface's contribution to the application API's index.
 func (h Handlers) Routes() authz.Table {
 	const base = "/api/v1"
 
@@ -121,7 +108,7 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 		configured[count.Provider] = count.Count
 	}
 
-	manifests, next, err := listing.Cut(h.Catalog.Manifests(), query)
+	manifests, next, err := listing.SlicePage(h.Catalog.Manifests(), query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
@@ -131,7 +118,7 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 		definition, _ := h.Catalog.Lookup(manifest.Key)
 		views = append(views, typeViewOf(definition, configured[manifest.Key], h.WebhookTypes[manifest.Key]))
 	}
-	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.Continuation(next)})
+	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.CursorPtr(next)})
 }
 
 var listSpec = listing.Spec{
@@ -167,7 +154,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	for _, found := range listed.Integrations {
 		views = append(views, h.viewOf(found))
 	}
-	writeJSON(writer, http.StatusOK, listing.Answer(views, listed.Next, nil))
+	writeJSON(writer, http.StatusOK, listing.NewPage(views, listed.Next, nil))
 }
 
 // createRequest is what an operator submits.

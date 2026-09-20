@@ -263,7 +263,7 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 		PublicURL: "https://opencluster.example",
 	}, principal)
 
-	if recorder.Code != http.StatusOK {
+	if recorder.Code != http.StatusFound {
 		t.Fatalf("a proven return = %d: %s", recorder.Code, recorder.Body.String())
 	}
 
@@ -347,7 +347,7 @@ func TestReconnectingReplacesTheCredentialRatherThanReverifyingTheOldOne(t *test
 		PublicURL: "https://opencluster.example",
 	}, principal)
 
-	if recorder.Code != http.StatusOK {
+	if recorder.Code != http.StatusFound {
 		t.Fatalf("reconnecting = %d: %s", recorder.Code, recorder.Body.String())
 	}
 	if store.reVerified {

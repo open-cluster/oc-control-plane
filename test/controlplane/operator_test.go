@@ -394,18 +394,14 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 // These mirror what the operator surface sends. They are spelled out rather than decoded into
 // a map so that a renamed field breaks here, where the contract is asserted, instead of in
 // whatever reads this months later and quietly stops seeing a finding.
-// The roster now answers in the SHARED table envelope: `items`, `next`, `total`, `partial`,
+// The roster answers in the shared table envelope: `items`, `next`, `total`,
 // the same shape every list endpoint on this surface uses. That is a deliberate breaking change
 // — one contract for a console to build one table against — and this type is where a regression
 // back to a bespoke shape would show up.
 type rosterResponse struct {
-	Relays  []relayResponse `json:"items"`
-	Next    *string         `json:"next"`
-	Total   *int            `json:"total"`
-	Partial []struct {
-		Field  string `json:"field"`
-		Reason string `json:"reason"`
-	} `json:"partial"`
+	Relays []relayResponse `json:"items"`
+	Next   *string         `json:"next"`
+	Total  *int            `json:"total"`
 }
 
 // next renders the resume position, so assertions read the same as they did when it was a plain

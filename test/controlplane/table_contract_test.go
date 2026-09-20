@@ -192,7 +192,7 @@ func TestListEnvelopeIsStable(t *testing.T) {
 			var envelope map[string]json.RawMessage
 			decodeInto(t, body, &envelope)
 
-			for _, key := range []string{"items", "next", "total", "partial"} {
+			for _, key := range []string{"items", "next", "total"} {
 				if _, present := envelope[key]; !present {
 					t.Errorf("%s answered without %q: %s", name, key, body)
 				}
@@ -200,8 +200,8 @@ func TestListEnvelopeIsStable(t *testing.T) {
 			if string(envelope["items"]) == "null" {
 				t.Errorf("%s answered items as null rather than []", name)
 			}
-			if string(envelope["partial"]) == "null" {
-				t.Errorf("%s answered partial as null rather than []", name)
+			if _, present := envelope["partial"]; present {
+				t.Errorf("%s answered with unsupported partial metadata: %s", name, body)
 			}
 		})
 	}

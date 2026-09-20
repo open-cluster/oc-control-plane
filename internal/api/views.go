@@ -8,7 +8,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// What the operator surface says on the wire. It is kept apart from the handlers because it is
+// What the API surface says on the wire. It is kept apart from the handlers because it is
 // a contract: a field renamed here is a dashboard broken somewhere else, which is not true of
 // anything in the handlers themselves.
 
@@ -36,24 +36,17 @@ type relayView struct {
 	SessionConflict *conflictView `json:"sessionConflict,omitempty"`
 }
 
-// fleetView is a hundred relays assessed rather than listed.
-type fleetView struct {
+// relaySummaryView is a hundred relays assessed rather than listed.
+type relaySummaryView struct {
 	Total          int `json:"total"`
 	Connected      int `json:"connected"`
 	Disconnected   int `json:"disconnected"`
 	Revoked        int `json:"revoked"`
-	Outdated       int `json:"outdated"`
 	Degraded       int `json:"degraded"`
 	ActiveRequests int `json:"activeRequests"`
 	// LivenessSeconds is how recently a relay must have been heard from to be counted connected.
 	// Reported so a number nobody could interpret does not have to be.
 	LivenessSeconds int `json:"livenessSeconds"`
-	// MinimumVersion is the floor `outdated` was counted against, and OutdatedCounted says
-	// whether it was counted at all. Zero outdated because nothing was compared and zero
-	// outdated because everything is current are different facts, and a console that could not
-	// tell them apart would report a fleet as current on the strength of a missing setting.
-	MinimumVersion  string `json:"minimumVersion,omitempty"`
-	OutdatedCounted bool   `json:"outdatedCounted"`
 }
 
 // servedIntegrationView is one Integration a Relay serves, which is what disabling that
@@ -66,8 +59,7 @@ type servedIntegrationView struct {
 	Disabled bool    `json:"disabled"`
 }
 
-// relayFailureView is one execution a Relay did not complete. It carries no reason, and the
-// envelope's `partial` says why rather than leaving an empty column to be read as "no reason".
+// relayFailureView is one execution a Relay did not complete.
 type relayFailureView struct {
 	JobID             string `json:"jobId"`
 	CapabilityID      string `json:"capabilityId"`
@@ -97,16 +89,6 @@ type conflictView struct {
 
 type errorView struct {
 	Error string `json:"error"`
-}
-
-type capabilityMetadataView struct {
-	Capabilities []capabilityView `json:"capabilities"`
-}
-
-type capabilityView struct {
-	Key          string `json:"key"`
-	Enabled      bool   `json:"enabled"`
-	Availability string `json:"availability"`
 }
 
 func viewOf(relay storage.RelaySummary) relayView {
