@@ -138,13 +138,13 @@ func TestRecoveryTargetsExistingLocalUserAndRevokesSessions(t *testing.T) {
 	if _, err = database.SessionByToken(ctx, digest); err != nil {
 		t.Fatalf("unknown recovery affected session: %v", err)
 	}
+	principal := sessionPrincipal(t, database, digest, user.ID)
 	if err = database.RecoverLocalPassword(ctx, user.ID, "replacement encoded password verifier"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.SessionByToken(ctx, digest); !errors.Is(err, session.ErrRevoked) {
 		t.Fatalf("recovery retained session: %v", err)
 	}
-	principal := sessionPrincipal(t, database, digest, user.ID)
 	if got, err := database.LocalPasswordHash(ctx, principal); err != nil || got != "replacement encoded password verifier" {
 		t.Fatalf("recovered verifier = %q: %v", got, err)
 	}
