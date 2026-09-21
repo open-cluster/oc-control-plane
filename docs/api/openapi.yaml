@@ -1400,7 +1400,7 @@ components:
         type: string
         enum:
           - createdAt
-          - '-createdAt'
+          - -createdAt
     RelaySort:
       name: sort
       in: query
@@ -1409,13 +1409,13 @@ components:
         type: string
         enum:
           - registeredAt
-          - '-registeredAt'
+          - -registeredAt
           - lastSeenAt
-          - '-lastSeenAt'
+          - -lastSeenAt
           - version
-          - '-version'
+          - -version
           - fingerprint
-          - '-fingerprint'
+          - -fingerprint
     IncidentSort:
       name: sort
       in: query
@@ -1424,13 +1424,13 @@ components:
         type: string
         enum:
           - lastSeenAt
-          - '-lastSeenAt'
+          - -lastSeenAt
           - firstSeenAt
-          - '-firstSeenAt'
+          - -firstSeenAt
           - title
-          - '-title'
+          - -title
           - alertEventCount
-          - '-alertEventCount'
+          - -alertEventCount
     ConversationSort:
       name: sort
       in: query
@@ -1439,7 +1439,7 @@ components:
         type: string
         enum:
           - lastActivityAt
-          - '-lastActivityAt'
+          - -lastActivityAt
     IntegrationTypeFilter:
       name: type
       in: query
