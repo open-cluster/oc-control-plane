@@ -36,8 +36,9 @@ configured public URL. Same-origin browser clients let the cookie jar manage the
 
 ## Organization identity
 
-Each authenticated User belongs to one Organization. Read its canonical ID from the
-current session:
+Each authenticated User belongs to one Organization. The server resolves that Organization
+and Role from the current session before it serves a protected operation. You can inspect the
+resolved identity with:
 
 ```bash
 export ORGANIZATION_ID="$(
@@ -50,18 +51,15 @@ export ORGANIZATION_ID="$(
 test -n "$ORGANIZATION_ID" && test "$ORGANIZATION_ID" != "null"
 ```
 
-Then call an Organization-owned operation:
+Then call an Organization-owned operation without supplying an Organization selector:
 
 ```bash
 curl --fail-with-body \
   --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
-  --header "X-OpenCluster-Organization: $ORGANIZATION_ID" \
   "$OPENCLUSTER_URL/api/v1/incidents"
 ```
 
-The current API still carries the resolved Organization in its header for Organization-owned
-operations. The server verifies it against the User's current Membership; callers cannot
-switch Organizations by changing the value.
+The Organization is never selected by a request header, body, query, or path value.
 
 ## Versioning
 

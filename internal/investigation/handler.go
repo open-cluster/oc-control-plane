@@ -50,20 +50,15 @@ type HTTPStore interface {
 }
 
 // Routes is this domain surface's contribution to the application API's index.
-func (h Handlers) Routes() authz.Table {
+func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1"
 
-	return authz.Table{
-		authz.Privileged(http.MethodGet, base+"/investigations", authz.InvestigationRead,
-			http.HandlerFunc(h.list)),
-		authz.Privileged(http.MethodPost, base+"/investigations", authz.InvestigationOpen,
-			http.HandlerFunc(h.open)),
-		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}",
-			authz.InvestigationRead, http.HandlerFunc(h.read)),
-		authz.Privileged(http.MethodPost, base+"/investigations/{investigation}/cancel",
-			authz.InvestigationCancel, http.HandlerFunc(h.cancel)),
-		authz.Privileged(http.MethodGet, base+"/investigations/{investigation}/events",
-			authz.InvestigationRead, http.HandlerFunc(h.streamEvents)),
+	return []authz.Route{
+		{Method: http.MethodGet, Pattern: base + "/investigations", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.list)},
+		{Method: http.MethodPost, Pattern: base + "/investigations", Permission: authz.InvestigationOpen, Handler: http.HandlerFunc(h.open)},
+		{Method: http.MethodGet, Pattern: base + "/investigations/{investigation}", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.read)},
+		{Method: http.MethodPost, Pattern: base + "/investigations/{investigation}/cancel", Permission: authz.InvestigationCancel, Handler: http.HandlerFunc(h.cancel)},
+		{Method: http.MethodGet, Pattern: base + "/investigations/{investigation}/events", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.streamEvents)},
 	}
 }
 
@@ -75,14 +70,8 @@ type openRequest struct {
 // open starts an investigation for one Incident and answers 202 with the running record;
 // the runner fills it in the background.
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	if h.Runner == nil || h.Runner.Agent == nil {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
@@ -186,14 +175,8 @@ var listSpec = listing.Spec{
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	parsed, err := listing.Parse(request.URL.Query(), listSpec)
 	if err != nil {
 		if listing.Refused(err) {
@@ -234,10 +217,7 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
-	_, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -259,10 +239,7 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -280,41 +257,18 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, investigationViewOf(ended))
 }
 
-func (h Handlers) caller(
-	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no principal; the route is mounted outside the permission table",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, false
-	}
-	return principal, true
+func (h Handlers) caller(request *http.Request) authz.Principal {
+	return authz.MustPrincipal(request.Context())
 }
 
-func (h Handlers) organization(
-	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, bool) {
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no verified active organization",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
+func (h Handlers) organization(request *http.Request) tenancy.Organization {
+	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
 ) (tenancy.Organization, uuid.UUID, bool) {
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return tenancy.Organization{}, uuid.UUID{}, false
-	}
+	organization := h.organization(request)
 	id, err := uuid.Parse(request.PathValue("investigation"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest,

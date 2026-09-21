@@ -83,7 +83,7 @@ func (p *Database) QueryConversations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	page conversation.Page,
 ) (conversation.List, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return conversation.List{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)

@@ -87,7 +87,7 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 }
 
 func (p *integrationPlane) base(organization string) string {
-	return "http://" + p.operator + "/api/v1/organizations/" + organization
+	return "http://" + p.operator + "/api/v1"
 }
 
 // call sends an authenticated operator request with an optional JSON body.
@@ -112,7 +112,6 @@ func (p *integrationPlane) call(
 		t.Fatalf("building the request: %v", err)
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
-	selectOrganizationFromURL(request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", "http://"+p.operator)
 	}

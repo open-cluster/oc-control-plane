@@ -19,11 +19,16 @@ func (g Guard) originIsAllowed(principal Principal, request *http.Request) bool 
 }
 
 func (g Guard) cookieOriginIsAllowed(request *http.Request) bool {
+	return CookieOriginAllowed(request, g.Origins)
+}
+
+// CookieOriginAllowed checks an unsafe cookie request against configured browser origins.
+func CookieOriginAllowed(request *http.Request, origins []string) bool {
 	origin := strings.TrimSpace(request.Header.Get("Origin"))
 	if origin == "" {
 		return false
 	}
-	for _, allowed := range g.Origins {
+	for _, allowed := range origins {
 		if sameOrigin(origin, allowed) {
 			return true
 		}

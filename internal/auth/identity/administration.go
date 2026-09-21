@@ -19,14 +19,8 @@ func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	principal, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(w, r)
-	if !ok {
-		return
-	}
+	principal := h.caller(r)
+	organization := h.organization(r)
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
 	list, err := h.Database.ListMembers(ctx, principal, organization, storage.Page{
@@ -48,14 +42,8 @@ func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) setMember(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(w, r)
-	if !ok {
-		return
-	}
+	principal := h.caller(r)
+	organization := h.organization(r)
 	user, ok := identifier(w, r, "user")
 	if !ok {
 		return
@@ -81,14 +69,8 @@ func (h Handlers) setMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) removeMember(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(w, r)
-	if !ok {
-		return
-	}
+	principal := h.caller(r)
+	organization := h.organization(r)
 	user, ok := identifier(w, r, "user")
 	if !ok {
 		return
@@ -107,13 +89,8 @@ type policyRequest struct {
 }
 
 func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.caller(w, r); !ok {
-		return
-	}
-	organization, ok := h.organization(w, r)
-	if !ok {
-		return
-	}
+	_ = h.caller(r)
+	organization := h.organization(r)
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
 	retention, err := h.Database.OrganizationAuditRetention(ctx, organization)
@@ -128,14 +105,8 @@ func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.caller(w, r)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(w, r)
-	if !ok {
-		return
-	}
+	principal := h.caller(r)
+	organization := h.organization(r)
 	var body policyRequest
 	if !decode(w, r, &body) {
 		return

@@ -26,15 +26,12 @@ var deliverySpec = listing.Spec{
 	Filters:     []string{"status"},
 }
 
-func (h DeliveryHandlers) Routes() authz.Table {
+func (h DeliveryHandlers) Routes() []authz.Route {
 	const base = "/api/v1/webhook-deliveries"
-	return authz.Table{
-		authz.Privileged(http.MethodGet, base, authz.InvestigationRead,
-			http.HandlerFunc(h.list)),
-		authz.Privileged(http.MethodGet, base+"/{delivery}", authz.InvestigationRead,
-			http.HandlerFunc(h.get)),
-		authz.Privileged(http.MethodPost, base+"/{delivery}/replay", authz.WebhookDeliveryReplay,
-			http.HandlerFunc(h.replay)),
+	return []authz.Route{
+		{Method: http.MethodGet, Pattern: base, Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.list)},
+		{Method: http.MethodGet, Pattern: base + "/{delivery}", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.get)},
+		{Method: http.MethodPost, Pattern: base + "/{delivery}/replay", Permission: authz.WebhookDeliveryReplay, Handler: http.HandlerFunc(h.replay)},
 	}
 }
 
@@ -72,10 +69,7 @@ func viewOfDelivery(delivery storage.WebhookDelivery) deliveryView {
 }
 
 func (h DeliveryHandlers) list(writer http.ResponseWriter, request *http.Request) {
-	organization, ok := deliveryOrganization(writer, request)
-	if !ok {
-		return
-	}
+	organization := authz.MustPrincipal(request.Context()).Organization()
 	query, err := listing.Parse(request.URL.Query(), deliverySpec)
 	if err != nil {
 		writeDeliveryJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -132,12 +126,7 @@ func (h DeliveryHandlers) get(writer http.ResponseWriter, request *http.Request)
 }
 
 func (h DeliveryHandlers) replay(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		writeDeliveryJSON(writer, http.StatusInternalServerError,
-			map[string]string{"error": "request failed"})
-		return
-	}
+	principal := authz.MustPrincipal(request.Context())
 	organization, deliveryID, ok := addressedDelivery(writer, request)
 	if !ok {
 		return
@@ -160,10 +149,7 @@ func (h DeliveryHandlers) replay(writer http.ResponseWriter, request *http.Reque
 func addressedDelivery(
 	writer http.ResponseWriter, request *http.Request,
 ) (tenancy.Organization, uuid.UUID, bool) {
-	organization, ok := deliveryOrganization(writer, request)
-	if !ok {
-		return tenancy.Organization{}, uuid.Nil, false
-	}
+	organization := authz.MustPrincipal(request.Context()).Organization()
 	id, err := uuid.Parse(request.PathValue("delivery"))
 	if err != nil {
 		writeDeliveryJSON(writer, http.StatusBadRequest,
@@ -171,18 +157,6 @@ func addressedDelivery(
 		return tenancy.Organization{}, uuid.Nil, false
 	}
 	return organization, id, true
-}
-
-func deliveryOrganization(
-	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, bool) {
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		writeDeliveryJSON(writer, http.StatusInternalServerError,
-			map[string]string{"error": "request failed"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
 }
 
 func (h DeliveryHandlers) fail(writer http.ResponseWriter, err error) {

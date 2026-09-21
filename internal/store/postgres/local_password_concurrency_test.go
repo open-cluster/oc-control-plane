@@ -30,12 +30,15 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			principal, _ := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
 			identity, err := database.LocalIdentityByEmail(ctx, "admin@example.test")
 			if err != nil {
 				t.Fatal(err)
 			}
 			organization := identity.Memberships[0].Organization
+			principal, err := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", identity.Memberships[0])
+			if err != nil {
+				t.Fatal(err)
+			}
 			connection, err := pgx.Connect(ctx, dsn)
 			if err != nil {
 				t.Fatal(err)

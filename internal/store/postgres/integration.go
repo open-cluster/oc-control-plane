@@ -169,7 +169,7 @@ func (p *Database) QueryIntegrations(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query integrations.Query,
 ) (integrations.List, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return integrations.List{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)
@@ -269,7 +269,7 @@ func (p *Database) QueryIntegrations(
 func (p *Database) CountIntegrationsByProvider(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 ) ([]integrations.ProviderCount, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return nil, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)

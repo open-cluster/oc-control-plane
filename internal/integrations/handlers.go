@@ -42,40 +42,27 @@ type Handlers struct {
 }
 
 // Routes is this domain surface's contribution to the application API's index.
-func (h Handlers) Routes() authz.Table {
+func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1"
 
-	return authz.Table{
-
-		authz.Privileged(http.MethodGet, base+"/integration-types", authz.IntegrationRead,
-			http.HandlerFunc(h.types)),
-		authz.Privileged(http.MethodGet, base+"/integrations", authz.IntegrationRead,
-			http.HandlerFunc(h.list)),
-		authz.Privileged(http.MethodPost, base+"/integrations", authz.IntegrationCreate,
-			http.HandlerFunc(h.create)),
-		authz.Privileged(http.MethodPost, base+"/integration-types/{type}/connect",
-			authz.IntegrationCreate, http.HandlerFunc(h.startConnect)),
+	return []authz.Route{
+		{Method: http.MethodGet, Pattern: base + "/integration-types", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.types)},
+		{Method: http.MethodGet, Pattern: base + "/integrations", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.list)},
+		{Method: http.MethodPost, Pattern: base + "/integrations", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.create)},
+		{Method: http.MethodPost, Pattern: base + "/integration-types/{type}/connect", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.startConnect)},
 		// The provider returns the browser HERE, to one path that names no tenant: a
 		// vendor registration holds a single redirect URI, and a tenant read out of a
 		// callback URL is a tenant the caller chose. What binds the return trip to an
 		// organization is the single-use state redeemed against the stored flow, and
 		// what binds it to a person is the credential this route still requires.
-		authz.Authenticated(http.MethodGet, CallbackPath,
-			http.HandlerFunc(h.completeConnect)),
-		authz.Privileged(http.MethodGet, base+"/integrations/{integration}",
-			authz.IntegrationRead, http.HandlerFunc(h.read)),
-		authz.Privileged(http.MethodPatch, base+"/integrations/{integration}",
-			authz.IntegrationUpdate, http.HandlerFunc(h.revise)),
-		authz.Privileged(http.MethodDelete, base+"/integrations/{integration}",
-			authz.IntegrationDelete, http.HandlerFunc(h.remove)),
-		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/enable",
-			authz.IntegrationUpdate, http.HandlerFunc(h.enable)),
-		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/disable",
-			authz.IntegrationUpdate, http.HandlerFunc(h.disable)),
-		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/verify",
-			authz.IntegrationVerify, http.HandlerFunc(h.verify)),
-		authz.Privileged(http.MethodPost, base+"/integrations/{integration}/rotate-webhook-secret",
-			authz.IntegrationSecretRotate, http.HandlerFunc(h.rotateSecret)),
+		{Method: http.MethodGet, Pattern: CallbackPath, Handler: http.HandlerFunc(h.completeConnect)},
+		{Method: http.MethodGet, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.read)},
+		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.revise)},
+		{Method: http.MethodDelete, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationDelete, Handler: http.HandlerFunc(h.remove)},
+		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/enable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.enable)},
+		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/disable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.disable)},
+		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/verify", Permission: authz.IntegrationVerify, Handler: http.HandlerFunc(h.verify)},
+		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/rotate-webhook-secret", Permission: authz.IntegrationSecretRotate, Handler: http.HandlerFunc(h.rotateSecret)},
 	}
 }
 
@@ -87,14 +74,8 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
 	}
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
@@ -130,14 +111,8 @@ var listSpec = listing.Spec{
 
 // list reports a page of the tenant's Integrations, newest first.
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	query, ok := h.listQuery(writer, request)
 	if !ok {
 		return
@@ -168,14 +143,8 @@ type createRequest struct {
 
 // create records one configured installation.
 func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	var asked createRequest
 	if !h.decode(writer, request, &asked) {
 		return
@@ -315,10 +284,7 @@ func (h Handlers) probeAndSeal(
 
 // read reports one Integration.
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
-	_, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -343,10 +309,7 @@ type reviseRequest struct {
 // revise changes part of an Integration and leaves its identity, its type, its relay
 // binding and its secret alone.
 func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -469,10 +432,7 @@ func (h Handlers) sealCredential(
 // remove deletes an Integration nothing depends on. One with history is refused with the
 // reason; disabling is the operation for retiring a source without losing its record.
 func (h Handlers) remove(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -498,10 +458,7 @@ func (h Handlers) disable(writer http.ResponseWriter, request *http.Request) {
 func (h Handlers) setDisabled(
 	writer http.ResponseWriter, request *http.Request, disabled bool,
 ) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -522,10 +479,7 @@ func (h Handlers) setDisabled(
 // records the judgement. "Verified" therefore means the far end actually answered — never
 // that a form was well-formed.
 func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -626,10 +580,7 @@ func (h Handlers) probeExisting(
 
 // rotateSecret replaces the webhook secret, returning the new value exactly once.
 func (h Handlers) rotateSecret(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -785,43 +736,19 @@ func (h Handlers) listQuery(
 }
 
 // caller resolves the principal the guard put on this request.
-func (h Handlers) caller(
-	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no principal; the route is mounted outside the permission table",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, false
-	}
-	return principal, true
+func (h Handlers) caller(request *http.Request) authz.Principal {
+	return authz.MustPrincipal(request.Context())
 }
 
-// organization returns the tenant verified by the authorization middleware.
-func (h Handlers) organization(
-	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, bool) {
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no verified active organization",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
+func (h Handlers) organization(request *http.Request) tenancy.Organization {
+	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 // addressed resolves the tenant and the Integration named in the path.
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
 ) (tenancy.Organization, uuid.UUID, bool) {
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return tenancy.Organization{}, uuid.UUID{}, false
-	}
+	organization := h.organization(request)
 	id, err := uuid.Parse(request.PathValue("integration"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "integration is not an identity"})

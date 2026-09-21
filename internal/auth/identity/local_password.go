@@ -14,10 +14,7 @@ type localPasswordChangeRequest struct {
 }
 
 func (h Handlers) changeLocalPassword(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	var body localPasswordChangeRequest
 	if !decode(writer, request, &body) {
 		return

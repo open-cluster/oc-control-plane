@@ -284,10 +284,7 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		defer stop()
 		request = request.WithContext(ctx)
 	}
-	_, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return

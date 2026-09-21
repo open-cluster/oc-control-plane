@@ -40,20 +40,15 @@ type Handlers struct {
 }
 
 // Routes is this capability's contribution to the application API's index.
-func (h Handlers) Routes() authz.Table {
+func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/conversations"
 
-	return authz.Table{
-		authz.Privileged(http.MethodGet, base, authz.ConversationRead,
-			http.HandlerFunc(h.list)),
-		authz.Privileged(http.MethodPost, base, authz.ConversationWrite,
-			http.HandlerFunc(h.open)),
-		authz.Privileged(http.MethodGet, base+"/{conversation}", authz.ConversationRead,
-			http.HandlerFunc(h.read)),
-		authz.Privileged(http.MethodGet, base+"/{conversation}/turns", authz.ConversationRead,
-			http.HandlerFunc(h.turns)),
-		authz.Privileged(http.MethodPost, base+"/{conversation}/messages",
-			authz.ConversationWrite, http.HandlerFunc(h.say)),
+	return []authz.Route{
+		{Method: http.MethodGet, Pattern: base, Permission: authz.ConversationRead, Handler: http.HandlerFunc(h.list)},
+		{Method: http.MethodPost, Pattern: base, Permission: authz.ConversationWrite, Handler: http.HandlerFunc(h.open)},
+		{Method: http.MethodGet, Pattern: base + "/{conversation}", Permission: authz.ConversationRead, Handler: http.HandlerFunc(h.read)},
+		{Method: http.MethodGet, Pattern: base + "/{conversation}/turns", Permission: authz.ConversationRead, Handler: http.HandlerFunc(h.turns)},
+		{Method: http.MethodPost, Pattern: base + "/{conversation}/messages", Permission: authz.ConversationWrite, Handler: http.HandlerFunc(h.say)},
 	}
 }
 
@@ -70,10 +65,7 @@ type openRequest struct {
 // first turn. A conversation opened from an incident already knows the alert, so nobody
 // has to paste labels into a chat box.
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
-	principal, organization, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal, organization := h.caller(request)
 	var asked openRequest
 	if !h.decode(writer, request, &asked) {
 		return
@@ -229,10 +221,7 @@ var listSpec = listing.Spec{
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
-	principal, organization, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal, organization := h.caller(request)
 	parsed, err := listing.Parse(request.URL.Query(), listSpec)
 	if err != nil {
 		if listing.Refused(err) {
@@ -304,35 +293,15 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 }
 
 // caller resolves the principal and the organization.
-func (h Handlers) caller(
-	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, tenancy.Organization, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no principal; the route is mounted outside the permission table",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, tenancy.Organization{}, false
-	}
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no verified active organization",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, tenancy.Organization{}, false
-	}
-	return principal, organization, true
+func (h Handlers) caller(request *http.Request) (authz.Principal, tenancy.Organization) {
+	principal := authz.MustPrincipal(request.Context())
+	return principal, principal.Organization()
 }
 
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
 ) (authz.Principal, tenancy.Organization, uuid.UUID, bool) {
-	principal, organization, ok := h.caller(writer, request)
-	if !ok {
-		return authz.Principal{}, tenancy.Organization{}, uuid.UUID{}, false
-	}
+	principal, organization := h.caller(request)
 	id, err := uuid.Parse(request.PathValue("conversation"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest,

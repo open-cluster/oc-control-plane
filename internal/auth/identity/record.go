@@ -21,14 +21,8 @@ func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request)
 	if !ok {
 		return
 	}
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 

@@ -133,7 +133,6 @@ func (h *harness) operatorRequest(t *testing.T, method, url string, payload any)
 		t.Fatalf("creating operator request: %v", err)
 	}
 	request.AddCookie(h.plane.session)
-	request.Header.Set("X-OpenCluster-Organization", organization)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", "http://"+h.plane.httpAddress)
 	}

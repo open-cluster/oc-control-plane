@@ -9,7 +9,7 @@ import (
 
 func TestOSSIdentityRoutesExcludeNativeEnterpriseProtocols(t *testing.T) {
 	for _, route := range (identity.Handlers{}).Routes() {
-		key := route.Key()
+		key := route.Method + " " + route.Pattern
 		for _, retired := range []string{
 			"/scim/", "/sign-in/saml/", "/identity-providers", "/directory-groups",
 		} {

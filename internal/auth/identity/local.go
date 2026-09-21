@@ -159,14 +159,8 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 }
 
 func (h Handlers) createMember(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	var body memberCreationRequest
 	if !decode(writer, request, &body) {
 		return

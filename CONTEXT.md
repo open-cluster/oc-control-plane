@@ -6,8 +6,9 @@ concept; do not introduce a synonym for the same record.
 ## Organization
 
 The tenant boundary. Every durable customer-owned record has an explicit Organization,
-and every query predicates on its identifier. An Organization is never inferred from a
-credential, Integration, or request body.
+and every query predicates on its identifier. Authentication resolves it from the User's
+current Membership; a credential does not store it, and a request cannot select it through
+a path, header, query, or body.
 
 ## User
 

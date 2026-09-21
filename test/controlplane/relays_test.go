@@ -11,13 +11,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The Relay fleet: counted, filtered, ordered and paged by the backend, plus what a Relay serves
+// Relays: counted, filtered, ordered and paged by the backend, plus what a Relay serves
 // and the token that adds one.
 //
 // The scale assertions matter more than they look. A page that is fast at ten relays and slow at
 // a thousand is a page that works for everybody who has not deployed the product yet.
 
-type fleetSummaryBody struct {
+type relaySummaryBody struct {
 	Total           int `json:"total"`
 	Connected       int `json:"connected"`
 	Disconnected    int `json:"disconnected"`
@@ -27,7 +27,7 @@ type fleetSummaryBody struct {
 	LivenessSeconds int `json:"livenessSeconds"`
 }
 
-type fleetBody struct {
+type relayListBody struct {
 	Items []struct {
 		RegistrationID     string     `json:"registrationId"`
 		ClusterFingerprint string     `json:"clusterFingerprint"`
@@ -41,17 +41,17 @@ type fleetBody struct {
 	Total *int    `json:"total"`
 }
 
-func TestRelayFleet(t *testing.T) {
+func TestRelays(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
 	relays := base + "/relays"
 
-	t.Run("the fleet is assessable without reading every row", func(t *testing.T) {
+	t.Run("relays are assessable without reading every row", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, relays+"/summary", nil)
 		if status != http.StatusOK {
-			t.Fatalf("reading the fleet summary = %d: %s", status, body)
+			t.Fatalf("reading the relay summary = %d: %s", status, body)
 		}
-		var summary fleetSummaryBody
+		var summary relaySummaryBody
 		decodeInto(t, body, &summary)
 
 		if summary.Total < 1 {
@@ -72,11 +72,11 @@ func TestRelayFleet(t *testing.T) {
 	})
 
 	t.Run("the summary agrees with the list", func(t *testing.T) {
-		var summary fleetSummaryBody
+		var summary relaySummaryBody
 		_, body := plane.call(t, http.MethodGet, relays+"/summary", nil)
 		decodeInto(t, body, &summary)
 
-		var listed fleetBody
+		var listed relayListBody
 		_, body = plane.call(t, http.MethodGet, relays+"?limit=200", nil)
 		decodeInto(t, body, &listed)
 
@@ -97,7 +97,7 @@ func TestRelayFleet(t *testing.T) {
 	})
 
 	t.Run("a relay that is holding a session reports as connected", func(t *testing.T) {
-		var listed fleetBody
+		var listed relayListBody
 		status, body := plane.call(t, http.MethodGet, relays, nil)
 		if status != http.StatusOK {
 			t.Fatalf("listing relays = %d: %s", status, body)
@@ -118,7 +118,7 @@ func TestRelayFleet(t *testing.T) {
 	})
 
 	t.Run("protocol compatibility survives registration and remains honest for historical rows", func(t *testing.T) {
-		var listed fleetBody
+		var listed relayListBody
 		status, body := plane.call(t, http.MethodGet, relays+"?limit=200", nil)
 		if status != http.StatusOK {
 			t.Fatalf("listing relays = %d: %s", status, body)
@@ -134,7 +134,7 @@ func TestRelayFleet(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatal("newly registered relay is absent from fleet")
+			t.Fatal("newly registered relay is absent from the list")
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -191,7 +191,7 @@ func TestRelayFleet(t *testing.T) {
 	t.Run("a relay's integrations are what disabling it would cost", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodPost, base+"/integrations", map[string]any{
 			"type":    "kubernetes",
-			"name":    "Fleet Cluster",
+			"name":    "Relay Cluster",
 			"relayId": plane.relay.registration.String(),
 		})
 		if status != http.StatusCreated {
@@ -227,7 +227,7 @@ func TestRelayFleet(t *testing.T) {
 			if status != http.StatusOK {
 				t.Fatalf("%s = %d: %s", narrowing.query, status, body)
 			}
-			var listed fleetBody
+			var listed relayListBody
 			decodeInto(t, body, &listed)
 			for _, relay := range listed.Items {
 				if !narrowing.wantAll(relay.Connected) {
@@ -241,7 +241,7 @@ func TestRelayFleet(t *testing.T) {
 	t.Run("a filter over a property the record does not have is refused", func(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, relays+"?environmentId=whatever", nil)
 		if status != http.StatusBadRequest {
-			t.Errorf("filtering a fleet by an unoffered property = %d, want 400: %s", status, body)
+			t.Errorf("filtering relays by an unoffered property = %d, want 400: %s", status, body)
 		}
 	})
 
@@ -251,7 +251,7 @@ func TestRelayFleet(t *testing.T) {
 			t.Errorf("sorting by an unoffered field = %d, want 400", status)
 		}
 		for _, field := range []string{"registeredAt", "lastSeenAt", "version", "fingerprint"} {
-			var ascending, descending fleetBody
+			var ascending, descending relayListBody
 			status, body := plane.call(t, http.MethodGet, relays+"?sort="+field, nil)
 			if status != http.StatusOK {
 				t.Fatalf("sort=%s = %d: %s", field, status, body)
@@ -337,14 +337,14 @@ func TestRelayFleet(t *testing.T) {
 	})
 }
 
-// The fleet at the sizes the specification names: 1, 20, 100 and 1000.
+// Relays at the sizes the specification names: 1, 20, 100 and 1000.
 //
 // Three properties are asserted at each size, and each is one an offset-paginated listing would
 // fail silently: the summary agrees with the rows under it, the cursor walks every row exactly
 // once, and the time to answer stays bounded. The third is the one that decides whether this
 // page works for a customer who has actually deployed the product — a listing that is fast at
 // ten relays and slow at a thousand is a listing that works for everybody who has not.
-func TestRelayFleetAtScale(t *testing.T) {
+func TestRelaysAtScale(t *testing.T) {
 	for _, size := range []int{1, 20, 100, 1000} {
 		t.Run(fmt.Sprintf("%d relays", size), func(t *testing.T) {
 			plane := startIntegrationPlane(t)
@@ -353,7 +353,7 @@ func TestRelayFleetAtScale(t *testing.T) {
 			plane.seedRelays(t, size-1)
 
 			started := time.Now()
-			var summary fleetSummaryBody
+			var summary relaySummaryBody
 			status, body := plane.call(t, http.MethodGet, relays+"/summary", nil)
 			if status != http.StatusOK {
 				t.Fatalf("summary = %d: %s", status, body)
@@ -381,7 +381,7 @@ func TestRelayFleetAtScale(t *testing.T) {
 				if status != http.StatusOK {
 					t.Fatalf("page %d = %d: %s", page, status, body)
 				}
-				var listed fleetBody
+				var listed relayListBody
 				decodeInto(t, body, &listed)
 				for _, relay := range listed.Items {
 					seen[relay.RegistrationID]++
@@ -412,7 +412,7 @@ func TestRelayFleetAtScale(t *testing.T) {
 			const summaryBudget = 5 * time.Second
 			if summaryTook > summaryBudget {
 				t.Errorf("the summary took %s at %d relays, past the %s budget; it is one query "+
-					"and should not grow with the fleet", summaryTook, size, summaryBudget)
+					"and should not grow with the relay count", summaryTook, size, summaryBudget)
 			}
 			t.Logf("%d relays: summary %s, full walk %s", size, summaryTook, walkTook)
 		})

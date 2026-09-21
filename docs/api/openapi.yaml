@@ -30,7 +30,6 @@ paths:
       security:
         - BootstrapToken: []
       x-opencluster-access: public
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-supported
       responses:
@@ -59,7 +58,6 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
       responses:
@@ -105,7 +103,6 @@ paths:
     post:
       security: []
       x-opencluster-access: public
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-supported
       responses:
@@ -131,7 +128,6 @@ paths:
     get:
       security: []
       x-opencluster-access: public
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
       responses:
@@ -149,7 +145,6 @@ paths:
     get:
       security: []
       x-opencluster-access: public
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
       responses:
@@ -171,7 +166,6 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
       responses:
@@ -189,7 +183,6 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
       responses:
@@ -209,13 +202,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/PermissionList'
@@ -225,18 +213,16 @@ paths:
       summary: List effective permissions
       tags:
         - Organizations
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/members:
     get:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/MemberList'
@@ -246,16 +232,16 @@ paths:
       summary: List members
       tags:
         - Members
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/local-users:
     post:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '201':
           $ref: '#/components/responses/Member'
@@ -278,11 +264,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Member'
@@ -302,11 +285,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           description: Membership removed.
@@ -325,7 +305,6 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
       responses:
@@ -347,7 +326,6 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
       responses:
@@ -368,11 +346,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Policy'
@@ -386,11 +361,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Policy'
@@ -411,13 +383,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/AuditEventList'
@@ -427,18 +394,16 @@ paths:
       summary: List audit events
       tags:
         - Audit
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/integration-types:
     get:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/IntegrationTypeList'
@@ -448,6 +413,9 @@ paths:
       summary: List integration types
       tags:
         - Integration Types
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/integration-types/{type}/connect:
     parameters:
       - $ref: '#/components/parameters/IntegrationType'
@@ -455,11 +423,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/ConnectStarted'
@@ -474,7 +439,6 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
       responses:
@@ -498,18 +462,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/IntegrationSearch'
-        - $ref: '#/components/parameters/IntegrationSort'
-        - $ref: '#/components/parameters/IntegrationTypeFilter'
-        - $ref: '#/components/parameters/RelayFilter'
-        - $ref: '#/components/parameters/DisabledFilter'
       responses:
         '200':
           $ref: '#/components/responses/IntegrationList'
@@ -519,15 +473,20 @@ paths:
       summary: List integrations
       tags:
         - Integrations
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/IntegrationSearch'
+        - $ref: '#/components/parameters/IntegrationSort'
+        - $ref: '#/components/parameters/IntegrationTypeFilter'
+        - $ref: '#/components/parameters/RelayFilter'
+        - $ref: '#/components/parameters/DisabledFilter'
     post:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '201':
           $ref: '#/components/responses/IntegrationCreated'
@@ -556,11 +515,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Integration'
@@ -574,11 +530,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/IntegrationOperation'
@@ -598,11 +551,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           description: Integration deleted.
@@ -623,11 +573,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: intrinsic
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -644,11 +591,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: intrinsic
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -665,11 +609,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/IntegrationOperation'
@@ -686,11 +627,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/SecretRotated'
@@ -709,18 +647,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/RelaySearch'
-        - $ref: '#/components/parameters/RelaySort'
-        - $ref: '#/components/parameters/RelayStateFilter'
-        - $ref: '#/components/parameters/RelayVersionFilter'
-        - $ref: '#/components/parameters/RelayCapabilityFilter'
       responses:
         '200':
           $ref: '#/components/responses/RelayList'
@@ -730,16 +658,21 @@ paths:
       summary: List relays
       tags:
         - Relays
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RelaySearch'
+        - $ref: '#/components/parameters/RelaySort'
+        - $ref: '#/components/parameters/RelayStateFilter'
+        - $ref: '#/components/parameters/RelayVersionFilter'
+        - $ref: '#/components/parameters/RelayCapabilityFilter'
   /api/v1/relays/summary:
     get:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/RelayFleetSummary'
@@ -754,11 +687,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '201':
           $ref: '#/components/responses/RelayBootstrapToken'
@@ -777,13 +707,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/RelayIntegrationList'
@@ -793,6 +718,9 @@ paths:
       summary: List relay integrations
       tags:
         - Relays
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/relays/{registration}/failures:
     parameters:
       - $ref: '#/components/parameters/RelayRegistrationID'
@@ -800,13 +728,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/RelayFailureList'
@@ -816,6 +739,9 @@ paths:
       summary: List relay failures
       tags:
         - Relays
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/relays/{registration}/clear-conflict:
     parameters:
       - $ref: '#/components/parameters/RelayRegistrationID'
@@ -823,11 +749,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -842,17 +765,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/IncidentSearch'
-        - $ref: '#/components/parameters/IncidentSort'
-        - $ref: '#/components/parameters/IncidentIntegrationFilter'
-        - $ref: '#/components/parameters/IncidentStatusFilter'
       responses:
         '200':
           $ref: '#/components/responses/IncidentList'
@@ -862,6 +776,13 @@ paths:
       summary: List incidents
       tags:
         - Incidents
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/IncidentSearch'
+        - $ref: '#/components/parameters/IncidentSort'
+        - $ref: '#/components/parameters/IncidentIntegrationFilter'
+        - $ref: '#/components/parameters/IncidentStatusFilter'
   /api/v1/incidents/{incident}:
     parameters:
       - $ref: '#/components/parameters/IncidentID'
@@ -869,11 +790,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Incident'
@@ -890,13 +808,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           $ref: '#/components/responses/AlertEventList'
@@ -906,6 +819,9 @@ paths:
       summary: List incident alert events
       tags:
         - Incidents
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
   /api/v1/incidents/{incident}/merge:
     parameters:
       - $ref: '#/components/parameters/IncidentID'
@@ -913,11 +829,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Incident'
@@ -938,14 +851,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/InvestigationIncidentFilter'
       responses:
         '200':
           $ref: '#/components/responses/InvestigationList'
@@ -955,15 +862,16 @@ paths:
       summary: List investigations
       tags:
         - Investigations
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/InvestigationIncidentFilter'
     post:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '202':
           $ref: '#/components/responses/Investigation'
@@ -994,11 +902,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/InvestigationDetail'
@@ -1015,11 +920,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Investigation'
@@ -1032,17 +934,13 @@ paths:
   /api/v1/investigations/{investigation}/events:
     parameters:
       - $ref: '#/components/parameters/InvestigationID'
-      - $ref: '#/components/parameters/Organization'
       - $ref: '#/components/parameters/LastEventID'
     get:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           description: Increasing event identifiers, named events, and comment heartbeats. Last-Event-ID resumes after the named event.
@@ -1077,17 +975,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/ConversationSearch'
-        - $ref: '#/components/parameters/ConversationSort'
-        - $ref: '#/components/parameters/ConversationIncidentFilter'
-        - $ref: '#/components/parameters/ConversationStateFilter'
       responses:
         '200':
           $ref: '#/components/responses/ConversationList'
@@ -1097,15 +986,19 @@ paths:
       summary: List conversations
       tags:
         - Conversations
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/ConversationSearch'
+        - $ref: '#/components/parameters/ConversationSort'
+        - $ref: '#/components/parameters/ConversationIncidentFilter'
+        - $ref: '#/components/parameters/ConversationStateFilter'
     post:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '201':
           $ref: '#/components/responses/ConversationOpened'
@@ -1128,11 +1021,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/ConversationDetail'
@@ -1149,13 +1039,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: A bounded page of turns.
@@ -1170,6 +1055,9 @@ paths:
       description: Returns turns ordered by turn number then Investigation ID, ascending. Cursors are scoped to the Organization, Conversation and ordering. Only limit and cursor are accepted.
       tags:
         - Conversations
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
   /api/v1/conversations/{conversation}/messages:
     parameters:
       - $ref: '#/components/parameters/ConversationID'
@@ -1177,11 +1065,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '202':
           $ref: '#/components/responses/ConversationMessageAccepted'
@@ -1212,11 +1097,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Postmortem'
@@ -1230,11 +1112,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '201':
           $ref: '#/components/responses/Postmortem'
@@ -1254,11 +1133,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Postmortem'
@@ -1281,11 +1157,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Postmortem'
@@ -1308,11 +1181,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/Postmortem'
@@ -1333,7 +1203,6 @@ paths:
       security:
         - WebhookToken: []
       x-opencluster-access: webhook
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: provider-identity-and-lifecycle
       requestBody:
@@ -1368,7 +1237,6 @@ paths:
       security:
         - SlackSignature: []
       x-opencluster-access: webhook
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: slack-event-identity
       requestBody:
@@ -1398,14 +1266,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/WebhookDeliveryStatus'
       responses:
         '200':
           $ref: '#/components/responses/WebhookDeliveryList'
@@ -1415,6 +1277,10 @@ paths:
       summary: List webhook deliveries
       tags:
         - Webhook Deliveries
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/WebhookDeliveryStatus'
   /api/v1/webhook-deliveries/{delivery}:
     parameters:
       - $ref: '#/components/parameters/WebhookDeliveryID'
@@ -1422,11 +1288,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '200':
           $ref: '#/components/responses/WebhookDelivery'
@@ -1443,11 +1306,8 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: privileged
-      x-opencluster-organization-selector: required
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       x-opencluster-idempotency: not-supported
-      parameters:
-        - $ref: '#/components/parameters/Organization'
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -1478,14 +1338,6 @@ components:
       name: X-Slack-Signature
       description: Slack request signature verified with the configured signing secret.
   parameters:
-    Organization:
-      name: X-OpenCluster-Organization
-      in: header
-      required: true
-      description: Selects the Organization whose data and membership are authorized.
-      schema:
-        $ref: '#/components/schemas/OrganizationID'
-      example: 7d722f19-1978-4dc1-a176-e9be92b7e154
     Cursor:
       name: cursor
       in: query
@@ -1815,7 +1667,7 @@ components:
           schema:
             $ref: '#/components/schemas/Session'
     PermissionList:
-      description: Effective permissions in the selected Organization.
+      description: Effective permissions in the authenticated User's Organization.
       content:
         application/json:
           schema:
@@ -2063,13 +1915,13 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Membership, permission, Organization selection, or cookie origin was rejected.
+      description: Membership, permission, or cookie origin was rejected.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     NotFound:
-      description: Resource not found in the selected Organization.
+      description: Resource not found in the authenticated User's Organization.
       content:
         application/json:
           schema:
@@ -2117,7 +1969,7 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
-          example: the selected Organization is not available to this caller
+          example: the requested resource is not available to this caller
         reason:
           type: string
           enum:
@@ -4993,7 +4845,6 @@ x-opencluster-operation-templates:
   public-read:
     security: []
     x-opencluster-access: public
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-applicable
     responses:
@@ -5002,7 +4853,6 @@ x-opencluster-operation-templates:
   public-write:
     security: []
     x-opencluster-access: public
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-supported
     responses:
@@ -5012,7 +4862,6 @@ x-opencluster-operation-templates:
     security:
       - SessionCookie: []
     x-opencluster-access: authenticated
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-applicable
     responses:
@@ -5022,21 +4871,8 @@ x-opencluster-operation-templates:
     security:
       - SessionCookie: []
     x-opencluster-access: authenticated
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
     x-opencluster-idempotency: not-supported
-    responses:
-      default:
-        $ref: '#/components/responses/ErrorResponse'
-  organization-read:
-    security:
-      - SessionCookie: []
-    x-opencluster-access: authenticated
-    x-opencluster-organization-selector: required
-    x-opencluster-cookie-csrf: not-required
-    x-opencluster-idempotency: not-applicable
-    parameters:
-      - $ref: '#/components/parameters/Organization'
     responses:
       default:
         $ref: '#/components/responses/ErrorResponse'
@@ -5044,11 +4880,8 @@ x-opencluster-operation-templates:
     security:
       - SessionCookie: []
     x-opencluster-access: privileged
-    x-opencluster-organization-selector: required
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-applicable
-    parameters:
-      - $ref: '#/components/parameters/Organization'
     responses:
       default:
         $ref: '#/components/responses/ErrorResponse'
@@ -5056,11 +4889,8 @@ x-opencluster-operation-templates:
     security:
       - SessionCookie: []
     x-opencluster-access: privileged
-    x-opencluster-organization-selector: required
     x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
     x-opencluster-idempotency: not-supported
-    parameters:
-      - $ref: '#/components/parameters/Organization'
     responses:
       default:
         $ref: '#/components/responses/ErrorResponse'

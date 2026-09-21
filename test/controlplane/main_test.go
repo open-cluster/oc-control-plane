@@ -24,7 +24,6 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
@@ -46,22 +45,6 @@ func TestMain(m *testing.M) {
 		// guards it must not be either.
 		goleak.IgnoreAnyFunction("github.com/testcontainers/testcontainers-go.(*Reaper).connect.func1"),
 	)
-}
-
-func selectOrganizationFromURL(request *http.Request) {
-	const prefix = "/api/v1/organizations/"
-	remainder, found := strings.CutPrefix(request.URL.Path, prefix)
-	if !found {
-		return
-	}
-	organization, resource, _ := strings.Cut(remainder, "/")
-	if organization != "" {
-		request.Header.Set(authz.OrganizationHeader, organization)
-		request.URL.Path = "/api/v1"
-		if resource != "" {
-			request.URL.Path += "/" + resource
-		}
-	}
 }
 
 // controlPlane starts one Postgres, runs the composition root against it, and returns the

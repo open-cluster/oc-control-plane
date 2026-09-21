@@ -65,33 +65,12 @@ func contextWithTimeout(
 }
 
 // caller resolves the principal the guard put on this request.
-func (h Handlers) caller(
-	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no principal; the route is mounted outside the permission table",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, false
-	}
-	return principal, true
+func (h Handlers) caller(request *http.Request) authz.Principal {
+	return authz.MustPrincipal(request.Context())
 }
 
-// organization returns the tenant verified by the authorization middleware.
-func (h Handlers) organization(
-	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, bool) {
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no verified active organization",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
+func (h Handlers) organization(request *http.Request) tenancy.Organization {
+	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 // identifier reads a UUID path segment, naming the segment in the refusal so an operator knows

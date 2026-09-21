@@ -50,10 +50,10 @@ type membershipView struct {
 func sessionViewOf(
 	principal authz.Principal, email string, expires time.Time, method string,
 ) sessionView {
-	membership := principal.Memberships()[0]
+	role := principal.Role()
 	scopes := make([]string, 0, len(authz.Permissions()))
 	for _, permission := range authz.Permissions() {
-		if membership.Role.Grants(permission) {
+		if role.Grants(permission) {
 			scopes = append(scopes, string(permission))
 		}
 	}
@@ -64,13 +64,13 @@ func sessionViewOf(
 			Kind:        audit.ActorKind(principal.Kind()).String(),
 			DisplayName: principal.DisplayName(),
 			Email:       email,
-			Roles:       []string{string(membership.Role)},
+			Roles:       []string{string(role)},
 			Scopes:      scopes,
 		},
 		Organization: membershipView{
-			Organization: membership.Organization.String(),
-			DisplayName:  membership.DisplayName,
-			Role:         string(membership.Role),
+			Organization: principal.Organization().String(),
+			DisplayName:  principal.OrganizationDisplayName(),
+			Role:         string(role),
 		},
 		AuthenticationMethod: method,
 		CSRF:                 csrfView{Mode: "origin", RequiredForUnsafeMethods: true},

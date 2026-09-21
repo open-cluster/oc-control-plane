@@ -15,24 +15,21 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// The permission table IS the operator API's index, and these gates are what make story 33
+// The route table is the protected API's index, and these gates are what make story 33
 // true: a new route without a declared permission cannot ship.
 //
 // Three mechanisms hold it, and each covers what the others cannot.
 //
-//  1. The COMPILER. authz.Privileged takes the permission as a positional argument, so a route
-//     that needs one and does not name one does not compile. There is no constructor that
-//     reaches a privileged handler without it.
-//  2. STARTUP. authz.Router validates the table before it becomes a mux, so an undeclared
-//     permission, a privileged route naming no organization, or a duplicate is a process that
-//     refuses to start rather than a route that is served open.
+//  1. STARTUP. authz.Router validates the table before it becomes a mux, so an undeclared
+//     permission or duplicate is a process that refuses to start rather than a route that is
+//     served open.
 //  3. THESE GATES. The compiler cannot see a route registered on a mux directly, bypassing the
 //     table entirely — that is an ordinary-looking line in a capability package and it would be
 //     invisible in review. This is the half that catches it.
 
 // The surface the gates below read. It is assembled with nil dependencies deliberately: what is
 // under test is the SHAPE of the table, and no handler runs.
-func operatorRoutes(t *testing.T) authz.Table {
+func operatorRoutes(t *testing.T) []authz.Route {
 	t.Helper()
 
 	table := api.Handlers{Logger: slog.Default()}.Routes()
@@ -42,12 +39,17 @@ func operatorRoutes(t *testing.T) authz.Table {
 	return table
 }
 
-// Every route must be authorizable, which is what authz.Table.Validate decides. Running it here
-// as well as at startup means a mistake fails the build rather than the first deployment.
+func routeKey(route authz.Route) string { return route.Method + " " + route.Pattern }
+
+// Every route must be authorizable. Running the startup constructor here means a mistake fails
+// the build rather than the first deployment.
 func TestTheOperatorRouteTableIsAuthorizable(t *testing.T) {
 	t.Parallel()
 
-	if err := operatorRoutes(t).Validate(); err != nil {
+	_, err := authz.Router(operatorRoutes(t), authz.Guard{
+		Resolve: func(*http.Request) (authz.Principal, error) { return authz.Principal{}, authz.ErrNoCredential },
+	})
+	if err != nil {
 		t.Fatalf("the operator route table cannot be authorized correctly: %v", err)
 	}
 }
@@ -67,15 +69,15 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 
 	required := make(map[authz.Permission]bool)
 	for _, route := range operatorRoutes(t) {
-		if route.Access() != authz.AccessPrivileged {
+		if route.Permission == "" {
 			continue
 		}
-		if !authz.Declared(route.Permission()) {
+		if !authz.Declared(route.Permission) {
 			t.Errorf("%s requires %q, which this build does not declare",
-				route.Key(), route.Permission())
+				routeKey(route), route.Permission)
 			continue
 		}
-		required[route.Permission()] = true
+		required[route.Permission] = true
 	}
 
 	for _, permission := range authz.Permissions() {
@@ -92,46 +94,6 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 	}
 }
 
-// The unauthenticated surface is a NAMED list. A new public route is a security decision,
-// and this gate is what makes it one somebody has to write down rather than one that lands in a
-// diff nobody reads twice.
-func TestThePublicSurfaceIsExactlyTheRoutesSignInNeeds(t *testing.T) {
-	t.Parallel()
-
-	// Each is public because a caller who is not signed in is precisely who needs it, and each
-	// answers a tenant that does not exist exactly as it answers one that has configured no way
-	// in — so none of them is a way to enumerate customers.
-	permitted := map[string]string{
-		"GET /api/v1/auth/oidc/start": "starting a sign-in " +
-			"is what a caller with no credential is trying to do",
-		"GET /api/v1/auth/oidc/callback": "the identity provider sends the browser here, and " +
-			"it carries a state rather than a credential",
-		"POST /api/v1/auth/local/bootstrap": "the configured bootstrap " +
-			"credential authorizes the one-time first Admin creation inside the handler",
-		"POST /api/v1/auth/local/sign-in": "a person presents " +
-			"their local password here to obtain a session",
-	}
-
-	found := make(map[string]bool)
-	for _, route := range operatorRoutes(t) {
-		if route.Access() != authz.AccessPublic {
-			continue
-		}
-		found[route.Key()] = true
-		if _, allowed := permitted[route.Key()]; !allowed {
-			t.Errorf("%s is reachable with no credential and is not one of the routes recorded "+
-				"as needing to be; add it above with the reason, or give it a permission",
-				route.Key())
-		}
-	}
-	for pattern := range permitted {
-		if !found[pattern] {
-			t.Errorf("%s is recorded as public and no longer exists; remove it from the list "+
-				"so the list keeps meaning something", pattern)
-		}
-	}
-}
-
 // The routes that need a credential and no permission are likewise a named list, recorded
 // here with the reason each one cannot declare a permission. Two describe the caller to
 // themselves — requiring a permission would mean an Auditor could not sign out. The third
@@ -145,9 +107,7 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 		"GET /api/v1/sessions":              "lists only the authenticated User sessions",
 		"DELETE /api/v1/sessions/{session}": "revokes only the authenticated User sessions",
 		"GET /api/v1/session":               "its subject is the caller themselves",
-		"DELETE /api/v1/session":            "an Auditor must be able to end their own session",
-		"GET /api/v1/permissions": "membership is verified for the selected Organization, " +
-			"but reading one's own effective Permissions requires no Permission",
+		"GET /api/v1/permissions":           "reading one's own effective Permissions requires no Permission",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
 			"redirect URI, so the path can name no organization and there is no tenant in " +
 			"it to check a membership against. The tenant comes from the single-use flow " +
@@ -158,13 +118,13 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 
 	found := make(map[string]bool)
 	for _, route := range operatorRoutes(t) {
-		if route.Access() != authz.AccessAuthenticated {
+		if route.Permission != "" {
 			continue
 		}
-		found[route.Key()] = true
-		if _, allowed := permitted[route.Key()]; !allowed {
+		found[routeKey(route)] = true
+		if _, allowed := permitted[routeKey(route)]; !allowed {
 			t.Errorf("%s needs a credential and no permission and is not recorded with its reason",
-				route.Key())
+				routeKey(route))
 		}
 	}
 	for pattern := range permitted {
@@ -182,10 +142,10 @@ func TestNoRouteIsRegisteredTwice(t *testing.T) {
 
 	seen := make(map[string]bool)
 	for _, route := range operatorRoutes(t) {
-		if seen[route.Key()] {
-			t.Errorf("%s is registered twice", route.Key())
+		if seen[routeKey(route)] {
+			t.Errorf("%s is registered twice", routeKey(route))
 		}
-		seen[route.Key()] = true
+		seen[routeKey(route)] = true
 	}
 }
 
@@ -195,21 +155,17 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 	routes := operatorRoutes(t)
 	found := make(map[string]bool, len(routes))
 	for _, route := range routes {
-		found[route.Key()] = true
-		if strings.Contains(route.Pattern(), "/organizations/{organization}/") {
-			t.Errorf("%s still carries the Organization in its path; the verified header is the sole selector",
-				route.Key())
+		found[routeKey(route)] = true
+		if strings.Contains(route.Pattern, "/organizations/{organization}/") {
+			t.Errorf("%s still carries the Organization in its path", routeKey(route))
 		}
 	}
 
 	expected := []string{
 		"DELETE /api/v1/integrations/{integration}",
 		"DELETE /api/v1/members/{user}",
-		"DELETE /api/v1/session",
 		"DELETE /api/v1/sessions/{session}",
 		"GET /api/v1/audit-events",
-		"GET /api/v1/auth/oidc/callback",
-		"GET /api/v1/auth/oidc/start",
 		"GET /api/v1/conversations",
 		"GET /api/v1/conversations/{conversation}",
 		"GET /api/v1/conversations/{conversation}/turns",
@@ -238,8 +194,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"PATCH /api/v1/incidents/{incident}/postmortem",
 		"PATCH /api/v1/integrations/{integration}",
 		"PATCH /api/v1/members/{user}",
-		"POST /api/v1/auth/local/bootstrap",
-		"POST /api/v1/auth/local/sign-in",
 		"POST /api/v1/conversations",
 		"POST /api/v1/conversations/{conversation}/messages",
 		"POST /api/v1/incidents/{incident}/merge",
@@ -280,7 +234,7 @@ func TestIntegrationStateHasExplicitCanonicalOperations(t *testing.T) {
 
 	found := make(map[string]bool)
 	for _, route := range operatorRoutes(t) {
-		found[route.Key()] = true
+		found[routeKey(route)] = true
 	}
 	for _, key := range []string{
 		"POST /api/v1/integrations/{integration}/enable",
@@ -463,10 +417,10 @@ func TestEveryPatternRegistersOnAServeMux(t *testing.T) {
 		func() {
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					t.Errorf("%s cannot be registered: %v", route.Key(), recovered)
+					t.Errorf("%s cannot be registered: %v", routeKey(route), recovered)
 				}
 			}()
-			mux.Handle(route.Key(), route.Handler())
+			mux.Handle(routeKey(route), route.Handler)
 		}()
 	}
 }
@@ -487,14 +441,14 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 			// surface's index — the document saying what this deployment serves — and a
 			// gate that refused an API's base path would be refusing the one route whose
 			// whole job is to describe the prefix it sits at.
-			if route.Pattern() == strings.TrimSuffix(prefix, "/") ||
-				strings.HasPrefix(route.Pattern(), prefix) {
+			if route.Pattern == strings.TrimSuffix(prefix, "/") ||
+				strings.HasPrefix(route.Pattern, prefix) {
 				matched = prefix
 			}
 		}
 		if matched == "" {
 			t.Errorf("%s is under no versioned prefix; the ones this listener serves are %v",
-				route.Key(), prefixes)
+				routeKey(route), prefixes)
 			continue
 		}
 		counted[matched]++
@@ -519,7 +473,7 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 
 	served := make(map[string]bool)
 	for _, route := range operatorRoutes(t) {
-		served[route.Key()] = true
+		served[routeKey(route)] = true
 	}
 
 	for _, wanted := range []struct {

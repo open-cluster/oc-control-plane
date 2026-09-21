@@ -416,7 +416,7 @@ func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
 	t.Helper()
 
 	principal, err := authz.NewPrincipal(authz.KindUser, "harness", "Test Harness",
-		[]authz.Membership{{Organization: organization, Role: authz.Admin}})
+		authz.Membership{Organization: organization, Role: authz.Admin})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)
 	}

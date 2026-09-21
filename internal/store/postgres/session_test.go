@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 )
 
@@ -24,10 +23,7 @@ func TestSessionRevocationRollsBackWhenDeploymentAuditFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	principal := sessionPrincipal(t, database, digest, user.ID)
 	principal = principal.WithCredential(issued.ID.String())
 	connection, err := pgx.Connect(ctx, dsn)
 	if err != nil {

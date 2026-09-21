@@ -13,15 +13,15 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// The fleet as a whole, and the durable presence that lets it be answered at all.
+// The relays as a whole, and the durable presence that lets their state be answered.
 //
 // A hundred relays is a hundred rows, and a hundred rows is not an assessment. What a platform
 // engineer needs before reading any of them is how many there are, how many are connected, how
 // many are behind, and how much work is in flight — which is one query rather than a hundred,
 // and which nothing in this product could answer before.
 
-// Fleet is an organization's relays counted rather than listed.
-type Fleet struct {
+// RelayCounts is an organization's relays counted rather than listed.
+type RelayCounts struct {
 	Total        int
 	Connected    int
 	Disconnected int
@@ -30,8 +30,8 @@ type Fleet struct {
 	// relay's credential alongside it. It is counted separately because it is the one state
 	// where a row looks healthy and is not.
 	Degraded int
-	// ActiveRequests is how much work the fleet is holding right now — jobs leased and not yet
-	// finished. It is the fleet's load, and it is read from the job table rather than from any
+	// ActiveRequests is how much work the relays are holding right now — jobs leased and not yet
+	// finished. It is read from the job table rather than from any
 	// relay's own account of itself.
 	ActiveRequests int
 	// LivenessWindow is how recently a relay must have been heard from to be counted connected.
@@ -39,24 +39,24 @@ type Fleet struct {
 	LivenessWindow time.Duration
 }
 
-// FleetSummary counts an organization's relays.
+// CountRelays counts an organization's relays.
 //
 // Every number comes from ONE query, so the counts cannot disagree with each other the way
 // separate reads at separate moments would — a summary saying eleven connected out of ten is
 // worse than no summary.
-func (p *Database) FleetSummary(
+func (p *Database) CountRelays(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	liveness time.Duration,
-) (Fleet, error) {
-	if !principal.MemberOf(organization) {
-		return Fleet{}, ErrNotAMember
+) (RelayCounts, error) {
+	if principal.Organization() != organization {
+		return RelayCounts{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return Fleet{}, err
+		return RelayCounts{}, err
 	}
 
-	fleet := Fleet{LivenessWindow: liveness}
+	summary := RelayCounts{LivenessWindow: liveness}
 	err = pool.QueryRow(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE `+relayConnectedExpression+`),
@@ -69,12 +69,12 @@ func (p *Database) FleetSummary(
 		  FROM relay_registration registration
 		 WHERE registration.org_id = $1`,
 		organization.String(), liveness).
-		Scan(&fleet.Total, &fleet.Connected, &fleet.Disconnected, &fleet.Revoked,
-			&fleet.Degraded, &fleet.ActiveRequests)
+		Scan(&summary.Total, &summary.Connected, &summary.Disconnected, &summary.Revoked,
+			&summary.Degraded, &summary.ActiveRequests)
 	if err != nil {
-		return Fleet{}, fmt.Errorf("summarising a relay fleet: %w", err)
+		return RelayCounts{}, fmt.Errorf("summarising relays: %w", err)
 	}
-	return fleet, nil
+	return summary, nil
 }
 
 // IssueOperatorBootstrapToken records a single-use enrolment token an operator asked for, and
@@ -124,8 +124,8 @@ func (p *Database) IssueOperatorBootstrapToken(
 // The session identifier is written with it and every later write is guarded on it, so a
 // session that has already been displaced cannot clear its successor's presence on the way out.
 // That is the same rule the in-memory registry follows, made durable — and it has to be durable,
-// because the registry is per process and a fleet summary built from one process's view would
-// report a fraction of the fleet as the fleet.
+// because the registry is per process and a summary built from one process's view would report
+// only a fraction of the deployment's relays.
 func (p *Database) RelaySessionOpened(
 	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
 	peer string,
@@ -234,7 +234,7 @@ func (p *Database) RelayFailures(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	registration uuid.UUID, page Page,
 ) (RelayFailureList, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return RelayFailureList{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)

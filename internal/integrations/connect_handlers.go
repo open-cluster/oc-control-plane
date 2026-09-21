@@ -82,14 +82,8 @@ type connectStartedView struct {
 }
 
 func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	definition, known := h.Catalog.Lookup(Provider(strings.TrimSpace(request.PathValue("type"))))
 	if !known {
 		writeJSON(writer, http.StatusNotFound,
@@ -157,10 +151,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 
 // completeConnect takes the browser back from the provider and binds the installation.
 func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	state := request.URL.Query().Get("state")
 	if state == "" {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: refusedConnect})
@@ -188,7 +179,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		h.fail(writer, request, err)
 		return
 	}
-	if !principal.CanDo(organization, authz.IntegrationCreate) {
+	if principal.Organization() != organization || !principal.Can(authz.IntegrationCreate) {
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 		return
 	}

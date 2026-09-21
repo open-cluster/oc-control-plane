@@ -130,7 +130,7 @@ func auditedWithAction[T any](
 	mutate func(context.Context, pgx.Tx) (T, audit.Action, audit.Target, audit.Detail, error),
 ) (T, error) {
 	var zero T
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return zero, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)
@@ -180,7 +180,7 @@ func (p *Database) AuditEvents(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	page audit.Page,
 ) (audit.List, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return audit.List{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)

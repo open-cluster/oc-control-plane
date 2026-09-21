@@ -25,14 +25,14 @@ type Handlers struct {
 	Logger  *slog.Logger
 }
 
-func (h Handlers) Routes() authz.Table {
+func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/incidents/{incident}/postmortem"
-	return authz.Table{
-		authz.Privileged(http.MethodGet, base, authz.PostmortemRead, http.HandlerFunc(h.get)),
-		authz.Privileged(http.MethodPost, base, authz.PostmortemWrite, http.HandlerFunc(h.generate)),
-		authz.Privileged(http.MethodPost, base+"/regenerate", authz.PostmortemWrite, http.HandlerFunc(h.regenerate)),
-		authz.Privileged(http.MethodPatch, base, authz.PostmortemWrite, http.HandlerFunc(h.correct)),
-		authz.Privileged(http.MethodPost, base+"/review", authz.PostmortemWrite, http.HandlerFunc(h.review)),
+	return []authz.Route{
+		{Method: http.MethodGet, Pattern: base, Permission: authz.PostmortemRead, Handler: http.HandlerFunc(h.get)},
+		{Method: http.MethodPost, Pattern: base, Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.generate)},
+		{Method: http.MethodPost, Pattern: base + "/regenerate", Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.regenerate)},
+		{Method: http.MethodPatch, Pattern: base, Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.correct)},
+		{Method: http.MethodPost, Pattern: base + "/review", Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.review)},
 	}
 }
 
@@ -127,16 +127,8 @@ func (h Handlers) addressed(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) (tenancy.Organization, uuid.UUID, authz.Principal, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, uuid.Nil, authz.Principal{}, false
-	}
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, uuid.Nil, authz.Principal{}, false
-	}
+	principal := authz.MustPrincipal(request.Context())
+	organization := principal.Organization()
 	incidentID, err := uuid.Parse(request.PathValue("incident"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "incident is not an identity"})

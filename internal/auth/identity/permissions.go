@@ -15,19 +15,9 @@ func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request)
 	if !ok {
 		return
 	}
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
-	role, member := principal.RoleIn(organization)
-	if !member {
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
-		return
-	}
+	principal := h.caller(request)
+	organization := principal.Organization()
+	role := principal.Role()
 	permissions := make([]string, 0, len(authz.Permissions()))
 	for _, permission := range authz.Permissions() {
 		if role.Grants(permission) {

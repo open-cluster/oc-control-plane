@@ -58,7 +58,7 @@ browser or API change.
 
 1. Write one failing test at the observable boundary affected by the change.
 2. Make the smallest implementation change that passes it.
-3. Keep Organization selection and PostgreSQL predicates explicit.
+3. Take Organization from the authenticated Principal and keep PostgreSQL predicates explicit.
 4. Update `api/openapi.yaml` when the public HTTP contract changes.
 5. Update only the affected public documentation. A shipped Integration change includes
    its provider guide.

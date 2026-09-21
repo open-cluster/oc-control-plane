@@ -161,7 +161,7 @@ func (p *Database) QueryInvestigations(
 	query investigation.Query,
 ) (investigation.List, error) {
 	page := query.Page
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return investigation.List{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)
