@@ -80,7 +80,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 8 FROM schema_migration`,
+		`SELECT count(*) = 9 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -120,9 +120,18 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 			ARRAY['user_id','password_hash','changed_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='local_password'`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
-			ARRAY['session_id','credential_digest','user_id','org_id','issued_at','expires_at',
+			ARRAY['session_id','credential_digest','user_id','issued_at','expires_at',
 			      'last_seen_at','revoked_at','client_user_agent','remote_addr']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='session'`,
+		`SELECT column_default = 'gen_random_uuid()' FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='app_user' AND column_name='user_id'`,
+		`SELECT column_default = 'gen_random_uuid()' FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='session' AND column_name='session_id'`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='oidc_sign_in_flow' AND column_name='org_id')`,
+		`SELECT EXISTS (SELECT 1 FROM pg_constraint
+			WHERE conrelid='organization_membership'::regclass
+			  AND contype='u' AND pg_get_constraintdef(oid)='UNIQUE (user_id)')`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) = ARRAY['org_id','user_id','role','created_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='organization_membership'`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='relay_bootstrap_token' AND column_name='bootstrap_digest')`,
@@ -206,7 +215,7 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
-		"0008_contract_provider_installation",
+		"0008_contract_provider_installation", "0009_single_organization_identity",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -260,8 +269,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 8 {
-		t.Fatalf("concurrent startup applied %d migrations, want eight", applied)
+	if applied != 9 {
+		t.Fatalf("concurrent startup applied %d migrations, want nine", applied)
 	}
 }
 
@@ -318,6 +327,7 @@ func TestReadableProviderMigrationMapsEveryCurrentProvider(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
+		"0009_single_organization_identity",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -441,7 +451,7 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 		"0002_simplify_integrations", "0003_simplify_deliveries_and_sessions",
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
-		"0008_contract_provider_installation",
+		"0008_contract_provider_installation", "0009_single_organization_identity",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -581,6 +591,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		"0003_simplify_deliveries_and_sessions", "0004_simplify_membership_lifecycle",
 		"0005_remove_membership_identity", "0006_simplify_identity_rows",
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
+		"0009_single_organization_identity",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -676,7 +687,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
-		"0008_contract_provider_installation",
+		"0008_contract_provider_installation", "0009_single_organization_identity",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

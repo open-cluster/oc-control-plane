@@ -146,9 +146,6 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 		"DELETE /api/v1/sessions/{session}": "revokes only the authenticated User sessions",
 		"GET /api/v1/session":               "its subject is the caller themselves",
 		"DELETE /api/v1/session":            "an Auditor must be able to end their own session",
-		"GET /api/v1/organizations":         "a User may list memberships before selecting one",
-		"POST /api/v1/organizations": "edition policy, not an existing tenant Permission, " +
-			"decides whether a User may create another Organization",
 		"GET /api/v1/permissions": "membership is verified for the selected Organization, " +
 			"but reading one's own effective Permissions requires no Permission",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
@@ -228,7 +225,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/investigations/{investigation}",
 		"GET /api/v1/investigations/{investigation}/events",
 		"GET /api/v1/members",
-		"GET /api/v1/organizations",
 		"GET /api/v1/permissions",
 		"GET /api/v1/policy",
 		"GET /api/v1/relays",
@@ -259,7 +255,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"POST /api/v1/investigations",
 		"POST /api/v1/investigations/{investigation}/cancel",
 		"POST /api/v1/local-users",
-		"POST /api/v1/organizations",
 		"POST /api/v1/relays/bootstrap-tokens",
 		"POST /api/v1/relays/{registration}/clear-conflict",
 		"POST /api/v1/webhook-deliveries/{delivery}/replay",

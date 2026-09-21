@@ -12,7 +12,8 @@ func TestLogoutRevokesSessionWithoutMembershipAndClearsCookie(t *testing.T) {
 	plane := startIdentityPlane(t)
 	base := "http://" + plane.operator + "/api/v1"
 	created := plane.call(t, http.MethodPost, base+"/auth/local/bootstrap", map[string]any{
-		"email": "admin@example.test", "displayName": "Admin",
+		"organizationName": "Operations",
+		"email":            "admin@example.test", "displayName": "Admin",
 		"password": "initial administrator password",
 	}, asBootstrap)
 	if created.status != http.StatusCreated {

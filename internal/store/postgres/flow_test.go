@@ -24,25 +24,22 @@ func TestOIDCFlowIsDisposable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(ctx) }()
-	org := organization(t, "oidc-flow")
-	ensureOrganization(t, connection, org)
-
 	wanted := storage.DeploymentSignInFlow{
-		Organization: org.String(), CodeVerifier: "verifier", Nonce: "nonce",
+		CodeVerifier: "verifier", Nonce: "nonce",
 		ReturnTo: "/incidents", ExpiresAt: time.Now().Add(time.Minute),
 	}
-	if err := database.StartDeploymentSignIn(ctx, org, wanted, "live-state"); err != nil {
+	if err := database.StartDeploymentSignIn(ctx, wanted, "live-state"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := database.RedeemDeploymentSignIn(ctx, "live-state")
-	if err != nil || got.Organization != wanted.Organization || got.ReturnTo != wanted.ReturnTo {
+	if err != nil || got.ReturnTo != wanted.ReturnTo {
 		t.Fatalf("redeemed flow = %+v, error = %v", got, err)
 	}
 	if _, err := database.RedeemDeploymentSignIn(ctx, "live-state"); !errors.Is(err, storage.ErrFlowUnknown) {
 		t.Fatalf("replay = %v", err)
 	}
-	if err := database.StartDeploymentSignIn(ctx, org, storage.DeploymentSignInFlow{
-		Organization: org.String(), ReturnTo: "/", ExpiresAt: time.Now().Add(-time.Minute),
+	if err := database.StartDeploymentSignIn(ctx, storage.DeploymentSignInFlow{
+		ReturnTo: "/", ExpiresAt: time.Now().Add(-time.Minute),
 	}, "expired-state"); err != nil {
 		t.Fatal(err)
 	}

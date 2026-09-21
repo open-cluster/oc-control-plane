@@ -252,7 +252,6 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 
 	paged := []string{"Cursor", "Limit"}
 	expected := map[string][]string{
-		"listOrganizations":        paged,
 		"listEffectivePermissions": paged,
 		"listMembers":              paged,
 		"listSessions":             paged,

@@ -19,12 +19,11 @@ import (
 // Principal contract the frontend already declares; the contract does not change here, the
 // control plane implements it.
 type sessionView struct {
-	Principal            principalView    `json:"principal"`
-	Organizations        []membershipView `json:"organizations"`
-	ActiveOrganization   *membershipView  `json:"activeOrganization,omitempty"`
-	AuthenticationMethod string           `json:"authenticationMethod"`
-	CSRF                 csrfView         `json:"csrf"`
-	ExpiresAt            time.Time        `json:"expiresAt"`
+	Principal            principalView  `json:"principal"`
+	Organization         membershipView `json:"organization"`
+	AuthenticationMethod string         `json:"authenticationMethod"`
+	CSRF                 csrfView       `json:"csrf"`
+	ExpiresAt            time.Time      `json:"expiresAt"`
 }
 
 type csrfView struct {
@@ -37,10 +36,7 @@ type principalView struct {
 	Kind        string `json:"kind"`
 	DisplayName string `json:"displayName"`
 	Email       string `json:"email,omitempty"`
-	// Roles and Scopes are the frontend's declared shape. Roles is every role this principal
-	// holds anywhere, and Scopes is every permission those roles carry — flattened, because an
-	// interface deciding whether to render a button asks about a permission and should not
-	// have to hold the role table to answer.
+	// Roles and Scopes retain the frontend's list shape even though a User has one Membership.
 	Roles  []string `json:"roles"`
 	Scopes []string `json:"scopes"`
 }
@@ -53,35 +49,12 @@ type membershipView struct {
 
 func sessionViewOf(
 	principal authz.Principal, email string, expires time.Time, method string,
-	active *membershipView,
 ) sessionView {
-	memberships := principal.Memberships()
-
-	organizations := make([]membershipView, 0, len(memberships))
-	roles := make([]string, 0, len(memberships))
-	seenRole := make(map[authz.Role]bool, len(memberships))
-	seenScope := make(map[authz.Permission]bool)
+	membership := principal.Memberships()[0]
 	scopes := make([]string, 0, len(authz.Permissions()))
-
-	for _, membership := range memberships {
-		organizations = append(organizations, membershipView{
-			Organization: membership.Organization.String(),
-			DisplayName:  membership.DisplayName,
-			Role:         string(membership.Role),
-		})
-		if !seenRole[membership.Role] {
-			seenRole[membership.Role] = true
-			roles = append(roles, string(membership.Role))
-		}
-	}
-	// Declared order, so the list is the same on every request and a client diffing it sees a
-	// change only when one happened.
 	for _, permission := range authz.Permissions() {
-		for _, membership := range memberships {
-			if membership.Role.Grants(permission) && !seenScope[permission] {
-				seenScope[permission] = true
-				scopes = append(scopes, string(permission))
-			}
+		if membership.Role.Grants(permission) {
+			scopes = append(scopes, string(permission))
 		}
 	}
 
@@ -91,11 +64,14 @@ func sessionViewOf(
 			Kind:        audit.ActorKind(principal.Kind()).String(),
 			DisplayName: principal.DisplayName(),
 			Email:       email,
-			Roles:       roles,
+			Roles:       []string{string(membership.Role)},
 			Scopes:      scopes,
 		},
-		Organizations:        organizations,
-		ActiveOrganization:   active,
+		Organization: membershipView{
+			Organization: membership.Organization.String(),
+			DisplayName:  membership.DisplayName,
+			Role:         string(membership.Role),
+		},
 		AuthenticationMethod: method,
 		CSRF:                 csrfView{Mode: "origin", RequiredForUnsafeMethods: true},
 		ExpiresAt:            expires,

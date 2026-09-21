@@ -127,7 +127,7 @@ func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 }
 
 func (c *controlPlane) bootstrap(ctx context.Context) error {
-	body := strings.NewReader(`{"email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
+	body := strings.NewReader(`{"organizationName":"E2E Organization","email":"sre@example.test","displayName":"E2E SRE","password":"temporary e2e administrator password"}`)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"http://"+c.httpAddress+"/api/v1/auth/local/bootstrap", body)
 	if err != nil {
@@ -147,31 +147,29 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 	for _, cookie := range response.Cookies() {
 		if cookie.Value != "" {
 			c.session = cookie
-			organizationBody := strings.NewReader(`{"displayName":"E2E Organization"}`)
-			organizationRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodPost,
-				"http://"+c.httpAddress+"/api/v1/organizations", organizationBody)
+			sessionRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodGet,
+				"http://"+c.httpAddress+"/api/v1/session", nil)
 			if requestErr != nil {
 				return requestErr
 			}
-			organizationRequest.Header.Set("Content-Type", "application/json")
-			organizationRequest.Header.Set("Origin", "http://"+c.httpAddress)
-			organizationRequest.AddCookie(c.session)
-			organizationResponse, requestErr := http.DefaultClient.Do(organizationRequest)
+			sessionRequest.AddCookie(c.session)
+			sessionResponse, requestErr := http.DefaultClient.Do(sessionRequest)
 			if requestErr != nil {
-				return fmt.Errorf("creating the e2e Organization: %w", requestErr)
+				return fmt.Errorf("reading the e2e session: %w", requestErr)
 			}
-			defer func() { _ = organizationResponse.Body.Close() }()
-			if organizationResponse.StatusCode != http.StatusCreated {
-				return fmt.Errorf("creating the e2e Organization returned %d",
-					organizationResponse.StatusCode)
+			defer func() { _ = sessionResponse.Body.Close() }()
+			if sessionResponse.StatusCode != http.StatusOK {
+				return fmt.Errorf("reading the e2e session returned %d", sessionResponse.StatusCode)
 			}
-			var created struct {
-				ID string `json:"id"`
+			var session struct {
+				Organization struct {
+					ID string `json:"organizationId"`
+				} `json:"organization"`
 			}
-			if requestErr = json.NewDecoder(organizationResponse.Body).Decode(&created); requestErr != nil {
-				return fmt.Errorf("reading the e2e Organization: %w", requestErr)
+			if requestErr = json.NewDecoder(sessionResponse.Body).Decode(&session); requestErr != nil {
+				return fmt.Errorf("decoding the e2e session: %w", requestErr)
 			}
-			organization = created.ID
+			organization = session.Organization.ID
 			return nil
 		}
 	}

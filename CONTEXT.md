@@ -17,8 +17,8 @@ with a fixed Admin, Editor, or Viewer role and no separate identity or inactive 
 ## Principal
 
 The authenticated actor for one request. It carries the User or automation identity,
-Organization memberships, source address, and request identifier used for authorization
-and audit attribution.
+one current Organization Membership, source address, and request identifier used for
+authorization and audit attribution.
 
 ## Integration
 

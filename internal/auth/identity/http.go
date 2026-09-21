@@ -94,18 +94,6 @@ func (h Handlers) organization(
 	return organization, true
 }
 
-// preAuthenticationOrganization parses an explicit selector before a Principal exists.
-func (h Handlers) preAuthenticationOrganization(
-	writer http.ResponseWriter, value string,
-) (tenancy.Organization, bool) {
-	organization, err := tenancy.NewOrganization(value)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "organization is not a name"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
-}
-
 // identifier reads a UUID path segment, naming the segment in the refusal so an operator knows
 // which one they got wrong.
 func identifier(

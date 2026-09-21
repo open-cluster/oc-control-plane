@@ -5,15 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
-	organization, ok := h.preAuthenticationOrganization(w, r.URL.Query().Get("organization"))
-	if !ok {
-		return
-	}
 	if strings.TrimSpace(h.OIDCIssuer) == "" {
 		writeJSON(w, http.StatusNotFound, errorView{Error: noWayIn})
 		return
@@ -29,8 +24,7 @@ func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Reque
 		h.fail(w, r, err)
 		return
 	}
-	err = h.Database.StartDeploymentSignIn(ctx, organization, storage.DeploymentSignInFlow{
-		Organization: organization.String(),
+	err = h.Database.StartDeploymentSignIn(ctx, storage.DeploymentSignInFlow{
 		CodeVerifier: authorization.CodeVerifier,
 		Nonce:        authorization.Nonce,
 		ReturnTo:     returnTo,
@@ -55,11 +49,6 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, errorView{Error: "this sign-in cannot be completed"})
 		return
 	}
-	organization, err := tenancy.NewOrganization(flow.Organization)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
 	asserted, err := h.OIDC.Exchange(
 		ctx,
 		h.OIDCIssuer,
@@ -74,7 +63,7 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})
 		return
 	}
-	user, memberships, err := h.Database.OIDCIdentity(ctx, organization, storage.Identity{
+	user, memberships, err := h.Database.OIDCIdentity(ctx, storage.Identity{
 		Issuer:        asserted.Issuer,
 		Subject:       asserted.Subject,
 		Email:         asserted.Email,
@@ -88,6 +77,7 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		h.fail(w, r, err)
 		return
 	}
+	organization := memberships[0].Organization
 	if err = h.issueSession(w, r, organization, user, memberships, ""); err != nil {
 		h.fail(w, r, err)
 		return

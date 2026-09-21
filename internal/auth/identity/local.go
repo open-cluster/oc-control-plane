@@ -21,15 +21,15 @@ const maxConcurrentPasswordChecks = 8
 var passwordCheckSlots = make(chan struct{}, maxConcurrentPasswordChecks)
 
 type localSignInRequest struct {
-	Organization string `json:"organization"`
-	Email        string `json:"email"`
-	Password     string `json:"password"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 type localBootstrapRequest struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName,omitempty"`
-	Password    string `json:"password"`
+	OrganizationName string `json:"organizationName"`
+	Email            string `json:"email"`
+	DisplayName      string `json:"displayName,omitempty"`
+	Password         string `json:"password"`
 }
 
 type memberCreationRequest struct {
@@ -62,6 +62,12 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 			errorView{Error: "displayName must be at most 256 characters"})
 		return
 	}
+	organizationName := strings.TrimSpace(body.OrganizationName)
+	if organizationName == "" || len(organizationName) > 256 {
+		writeJSON(writer, http.StatusBadRequest,
+			errorView{Error: "organizationName must be between 1 and 256 characters"})
+		return
+	}
 	encoded, err := hashPassword(body.Password)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
@@ -76,8 +82,8 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 	}
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
-	_, err = h.Database.BootstrapLocalUser(
-		ctx, email, displayName, encoded, issued, digest)
+	_, _, err = h.Database.BootstrapLocalUser(
+		ctx, organizationName, email, displayName, encoded, issued, digest)
 	if errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		writeJSON(writer, http.StatusConflict,
 			errorView{Error: "a local administrator already exists"})
@@ -104,10 +110,6 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 	if !decode(writer, request, &body) {
 		return
 	}
-	organization, ok := h.preAuthenticationOrganization(writer, body.Organization)
-	if !ok {
-		return
-	}
 	email, ok := localEmail(writer, body.Email)
 	if !ok {
 		return
@@ -115,7 +117,7 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
-	found, err := h.Database.LocalIdentityByEmail(ctx, organization, email)
+	found, err := h.Database.LocalIdentityByEmail(ctx, email)
 	encoded := dummyPasswordHash
 	if err == nil {
 		encoded = found.PasswordHash
@@ -136,13 +138,14 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 			h.fail(writer, request, hashErr)
 			return
 		}
-		if hashErr = h.Database.RehashLocalPassword(ctx, organization, found.User.ID,
+		if hashErr = h.Database.RehashLocalPassword(ctx, found.User.ID,
 			found.PasswordHash, replacement); hashErr != nil {
 			h.fail(writer, request, hashErr)
 			return
 		}
 		found.PasswordHash = replacement
 	}
+	organization := found.Memberships[0].Organization
 	if err := h.issueSession(writer, request, organization, found.User, found.Memberships,
 		found.PasswordHash); err != nil {
 		if errors.Is(err, storage.ErrLocalCredentialUnknown) {

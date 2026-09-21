@@ -18,7 +18,7 @@ func TestSessionCleanupIsGlobalAndBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
-	user, err := database.BootstrapLocalUser(ctx, "admin@example.test", "Admin",
+	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin",
 		"encoded password with sufficient length", issued, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)

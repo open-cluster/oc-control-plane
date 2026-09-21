@@ -88,18 +88,14 @@ paths before retrying.
 
 ## 3. Create the first User and Organization
 
-Expand **Set up the first administrator**. Enter the bootstrap token, email, display
-name, and password to create the first User. Bootstrap is deployment-wide and works only
-once; it does not create an Organization.
-
-Enter an Organization display name and submit the next step to create an Organization.
-OpenCluster generates its canonical identifier and gives the first User an **Admin**
-membership. The workspace opens with that Organization selected.
+Expand **Set up the first administrator**. Enter the bootstrap token, Organization display
+name, email, display name, and password. Bootstrap atomically creates the Organization,
+first User, **Admin** Membership, password, and browser session. It is deployment-wide and
+works only once.
 
 Verify that the console shows your User, the Organization display name, and the **Admin**
-Role. Bootstrap is complete when a second attempt is refused. If Organization creation
-fails, keep the current session and correct the display name; do not
-repeat bootstrap.
+Role. Bootstrap is complete when a second attempt is refused. A failed request commits
+nothing; correct the input and retry with the bootstrap token.
 
 The bootstrap token is deployment-wide and accepted only for the first local User. Keep
 it out of command history and remove access to the file after bootstrap succeeds. An
