@@ -3,9 +3,9 @@ title: "Core concepts"
 description: "Understand the records OpenCluster uses to isolate access and explain investigations."
 ---
 
-An Organization is the tenant boundary. A User holds an Admin, Editor, or Viewer
-membership in each Organization they may access. Organization selection is explicit on
-every tenant-owned request.
+An Organization is the tenant boundary. A User holds at most one current Membership,
+with an Admin, Editor, or Viewer Role. Authentication resolves that Membership rather
+than accepting an Organization during sign-in.
 
 An Integration is one configured source. It currently offers bounded observation/read Tools or accepts
 authenticated Alert Events. A Relay performs closed Kubernetes reads from inside the

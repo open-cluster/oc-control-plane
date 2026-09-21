@@ -1,6 +1,6 @@
 ---
 title: "API overview"
-description: "Authenticate, select an Organization, handle errors and pagination, and distinguish product and webhook routes."
+description: "Authenticate, use your Organization, handle errors and pagination, and distinguish product and webhook routes."
 ---
 
 OpenCluster serves JSON over the versioned `/api/v1` product API. The canonical contract
@@ -34,17 +34,17 @@ configured public URL. Same-origin browser clients let the cookie jar manage the
   `--header "Origin: $OPENCLUSTER_URL"`. Without it, OpenCluster returns `403`.
 </Warning>
 
-## Select an Organization
+## Organization identity
 
-Organization-owned operations require exactly one `X-OpenCluster-Organization` header.
-List the Organizations available to the current session and use a returned canonical ID:
+Each authenticated User belongs to one Organization. Read its canonical ID from the
+current session:
 
 ```bash
 export ORGANIZATION_ID="$(
   curl --fail-with-body --silent \
     --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
-    "$OPENCLUSTER_URL/api/v1/organizations" |
-  jq --raw-output '.organizations[0].id'
+    "$OPENCLUSTER_URL/api/v1/session" |
+  jq --raw-output '.organization.organizationId'
 )"
 
 test -n "$ORGANIZATION_ID" && test "$ORGANIZATION_ID" != "null"
@@ -59,10 +59,9 @@ curl --fail-with-body \
   "$OPENCLUSTER_URL/api/v1/incidents"
 ```
 
-The header selects a tenant boundary; it does not grant access. The server validates
-current membership and the operation's Permission. Do not send an Organization identifier
-in both the header and request body unless the generated operation contract explicitly
-requires both values for different purposes.
+The current API still carries the resolved Organization in its header for Organization-owned
+operations. The server verifies it against the User's current Membership; callers cannot
+switch Organizations by changing the value.
 
 ## Versioning
 

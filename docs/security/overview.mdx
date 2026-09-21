@@ -3,18 +3,17 @@ title: "Security model"
 description: "Understand identity, Organization isolation, data handling, read-only access, secrets, Relay, and model-provider boundaries."
 ---
 
-OpenCluster authenticates a Principal, verifies current Organization membership, and
-checks the route's Permission before tenant-owned logic runs. An Organization identifier
-is a selector, never authorization by itself.
+OpenCluster authenticates a Principal, resolves the User's sole current Organization
+Membership, and checks the route's Permission before tenant-owned logic runs.
 
 Report vulnerabilities through the process in `SECURITY.md`; do not open a public issue
 containing sensitive details.
 
 ## Authentication and authorization
 
-The one-time local bootstrap creates the first User and an opaque cookie session. The
-authenticated User then creates the first Organization. Protect and retire the
-file-backed bootstrap token after its one-time use.
+The one-time local bootstrap atomically creates the first Organization, its Admin User
+and Membership, the local password, and an opaque cookie session. Protect and retire the
+file-backed bootstrap token after that use.
 
 Normal product routes use the opaque `__Host-oc_session` cookie. General bearer API
 tokens are not shipped in OSS v0.1. Unsafe cookie requests require the configured
@@ -24,8 +23,8 @@ Roles grant fixed Permissions inside an Organization. Missing authentication ret
 `401`, insufficient Permission returns `403`, and inaccessible Organizations and unknown
 tenant records are indistinguishable.
 
-A User can belong to several Organizations. Organization Admins can create local Users
-and manage memberships, but cannot replace an existing User's password. Change your own
+A User has at most one current Organization Membership. Organization Admins can create
+local Users and manage that Membership, but cannot replace an existing User's password. Change your own
 local password with `PUT /api/v1/auth/local/password`, supplying `currentPassword` and
 `newPassword` without an Organization selector. Success ends all your sessions, including
 the current one, and requires sign-in again. Passwords accept 12–1024 bytes.
@@ -48,9 +47,10 @@ An omitted bootstrap credential disables initialization without preventing norma
 Initialization stays retired even if the initial User is later deleted. Retained
 installations acquire this protection through a forward migration.
 
-Sessions belong to the User across Organizations. List or revoke your own sessions without
-an Organization selector. Organization Admins cannot revoke another User's sessions;
-removing a membership ends access to that Organization on the next request.
+Sessions belong to the User and store no Organization or Role. Each request resolves the
+User's one current Membership, so Role changes take effect immediately and Membership
+removal prevents authentication without deleting identity history. Users may list or
+revoke only their own sessions.
 
 Logout clears the browser cookie and revokes the current session even without a membership.
 Expired sessions are cleaned up automatically. Unexpired revoked sessions become eligible
@@ -65,8 +65,8 @@ Customer Relays initiate outbound, pinned sessions; the control plane never rece
 cluster credentials. Integration and model providers remain external trust boundaries,
 and their returned content is always untrusted input.
 
-Selecting another Organization identifier does not grant access: the server rechecks
-current membership before a Tool is offered or a record is read. A Kubernetes read can
+Changing an Organization identifier does not change the User's identity: the server
+rejects a value that does not match the current Membership before a Tool is offered or a record is read. A Kubernetes read can
 cross the Relay boundary only when the registered capability and namespace allow-list
 both permit it.
 
@@ -83,7 +83,7 @@ chain-of-thought.
 An Investigation can perform live authorized reads, including bounded Kubernetes
 container logs through Relay and Slack channel or thread messages. A configured Slack App
 can also send originating-thread replies. These reads and replies remain constrained by
-the Integration's verified permissions and the active Organization.
+the Integration's verified permissions and the current Organization.
 
 Retention and backup policy are deployment responsibilities in OSS. Protect backups as
 production data and verify retention changes against legal and operational requirements.

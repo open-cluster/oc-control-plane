@@ -39,9 +39,9 @@ func (h Handlers) issueSession(
 	defer cancel()
 	actor := audit.Actor{Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}
 	if localPasswordHash != "" {
-		err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor, detail, localPasswordHash)
+		_, err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor, detail, localPasswordHash)
 	} else {
-		err = h.Database.IssueSession(ctx, organization, issued, digest, actor, detail)
+		_, err = h.Database.IssueSession(ctx, organization, issued, digest, actor, detail)
 	}
 	if err != nil {
 		return err
@@ -64,7 +64,7 @@ func (h Handlers) prepareSession(
 			return "", nil, session.Session{}, nil, err
 		}
 	}
-	token, digest, issued, err := session.Issue(userID, organization.String(), h.SessionLifetime)
+	token, digest, issued, err := session.Issue(userID, h.SessionLifetime)
 	if err != nil {
 		return "", nil, session.Session{}, nil, err
 	}

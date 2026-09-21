@@ -20,12 +20,12 @@ type sessionBody struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"displayName"`
 	} `json:"principal"`
-	Organizations []struct {
+	Organization struct {
 		ID           string `json:"id"`
 		Organization string `json:"organizationId"`
 		DisplayName  string `json:"displayName"`
 		Role         string `json:"role"`
-	} `json:"organizations"`
+	} `json:"organization"`
 }
 
 func readSession(t *testing.T, plane *identityPlane, cookie string) sessionBody {
@@ -45,7 +45,8 @@ func bootstrapIdentityAdmin(
 	t.Helper()
 	bootstrapped := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email": email, "displayName": displayName, "password": password,
+			"organizationName": "Operations", "email": email,
+			"displayName": displayName, "password": password,
 		}, asBootstrap)
 	if bootstrapped.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", bootstrapped.status, bootstrapped.body)
@@ -55,21 +56,23 @@ func bootstrapIdentityAdmin(
 	return cookie
 }
 
-func TestLocalBootstrapCreatesUserWithoutOrganization(t *testing.T) {
+func TestLocalBootstrapCreatesOrganizationAndAdmin(t *testing.T) {
 	plane := startIdentityPlane(t)
 
 	created := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email":       "ada@example.test",
-			"displayName": "Ada Lovelace",
-			"password":    "correct horse battery staple",
+			"organizationName": "Platform Team",
+			"email":            "ada@example.test",
+			"displayName":      "Ada Lovelace",
+			"password":         "correct horse battery staple",
 		}, asBootstrap)
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", created.status, created.body)
 	}
 
 	who := readSession(t, plane, sessionCookie(t, created))
-	if who.Principal.DisplayName != "Ada Lovelace" || len(who.Organizations) != 0 {
+	if who.Principal.DisplayName != "Ada Lovelace" ||
+		who.Organization.DisplayName != "Platform Team" || who.Organization.Role != "admin" {
 		t.Fatalf("bootstrap session = %+v", who)
 	}
 }
@@ -80,7 +83,8 @@ func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
 	before := time.Now().UTC()
 	created := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email": "admin@example.test", "displayName": "Admin",
+			"organizationName": "Operations",
+			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
 		}, asBootstrap)
 	token := sessionCookie(t, created)
@@ -117,51 +121,12 @@ func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
 	}
 }
 
-func TestBootstrappedUserCreatesFirstOrganizationFromDisplayName(t *testing.T) {
-	plane := startIdentityPlane(t)
-	bootstrapped := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email": "admin@example.test", "displayName": "Admin",
-			"password": "initial administrator password",
-		}, asBootstrap)
-	if bootstrapped.status != http.StatusCreated {
-		t.Fatalf("bootstrap = %d: %s", bootstrapped.status, bootstrapped.body)
-	}
-	legacy := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/organizations",
-		map[string]any{"displayName": "Platform Team", "requestedSlug": "platform-team"},
-		asSession(sessionCookie(t, bootstrapped)))
-	if legacy.status != http.StatusBadRequest {
-		t.Fatalf("Organization with caller-selected identity = %d: %s", legacy.status, legacy.body)
-	}
-
-	created := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/organizations",
-		map[string]any{"displayName": "Platform Team"},
-		asSession(sessionCookie(t, bootstrapped)))
-	if created.status != http.StatusCreated {
-		t.Fatalf("creating first Organization = %d: %s\nlogs:\n%s",
-			created.status, created.body, plane.logs.String())
-	}
-	var body struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"displayName"`
-		Membership  struct {
-			Role string `json:"role"`
-		} `json:"membership"`
-	}
-	decodeAnswer(t, created, &body)
-	if _, err := uuid.Parse(body.ID); err != nil ||
-		body.DisplayName != "Platform Team" || body.Membership.Role != "admin" {
-		t.Fatalf("created Organization = %+v", body)
-	}
-}
-
 func TestAdminCreatesLocalUserWithoutIdentityProviderChoice(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email": "admin@example.test", "displayName": "Admin",
+			"organizationName": "Operations",
+			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
 		}, asBootstrap)
 	admin := sessionCookie(t, bootstrapped)
@@ -189,7 +154,8 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email": "admin@example.test", "displayName": "Admin",
+			"organizationName": "Operations",
+			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
 		}, asBootstrap)
 	admin := sessionCookie(t, bootstrapped)
@@ -205,22 +171,17 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	decodeAnswer(t, created, &member)
 	signedIn := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/sign-in", map[string]any{
-			"organization": identityOrg,
-			"email":        "member@example.test", "password": "member password long enough",
+			"email": "member@example.test", "password": "member password long enough",
 		})
 	memberSession := sessionCookie(t, signedIn)
-	second := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/organizations",
-		map[string]any{"displayName": "Second"}, asSession(memberSession))
-	if second.status != http.StatusCreated {
-		t.Fatalf("creating second Organization = %d: %s", second.status, second.body)
-	}
-
 	changed := plane.call(t, http.MethodPatch,
 		"http://"+plane.operator+"/api/v1/members/"+member.UserID,
 		map[string]any{"role": "editor"}, asSession(admin), inOrganization(identityOrg))
 	if changed.status != http.StatusOK || !strings.Contains(changed.body, `"role":"editor"`) {
 		t.Fatalf("changing membership = %d: %s", changed.status, changed.body)
+	}
+	if who := readSession(t, plane, memberSession); who.Organization.Role != "editor" {
+		t.Fatalf("session retained stale Role: %+v", who.Organization)
 	}
 	removed := plane.call(t, http.MethodDelete,
 		"http://"+plane.operator+"/api/v1/members/"+member.UserID,
@@ -228,15 +189,25 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	if removed.status != http.StatusNoContent {
 		t.Fatalf("removing membership = %d: %s", removed.status, removed.body)
 	}
-	memberships := readSession(t, plane, memberSession).Organizations
-	if len(memberships) != 1 || memberships[0].Organization == identityOrg {
-		t.Fatalf("memberships after removal = %+v, want only the other Organization", memberships)
+	denied := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil,
+		asSession(memberSession))
+	if denied.status != http.StatusUnauthorized {
+		t.Fatalf("removed membership still authenticated = %d: %s", denied.status, denied.body)
 	}
-	denied := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/members", nil,
-		asSession(memberSession), inOrganization(identityOrg))
-	if denied.status != http.StatusNotFound {
-		t.Fatalf("removed membership still authorized = %d: %s", denied.status, denied.body)
+	refused := plane.call(t, http.MethodPost,
+		"http://"+plane.operator+"/api/v1/auth/local/sign-in",
+		map[string]any{"email": "member@example.test", "password": "member password long enough"})
+	if refused.status != http.StatusForbidden {
+		t.Fatalf("membership-free User signed in = %d: %s", refused.status, refused.body)
+	}
+	connection, err := pgx.Connect(context.Background(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	var users int
+	if err = connection.QueryRow(context.Background(), `SELECT count(*) FROM app_user WHERE user_id=$1`, member.UserID).Scan(&users); err != nil || users != 1 {
+		t.Fatalf("durable User after membership removal = %d: %v", users, err)
 	}
 }
 
@@ -269,24 +240,25 @@ func TestSessionListsOrganizationMetadataAndRole(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost,
 		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-			"email": "admin@example.test", "password": "initial administrator password",
+			"organizationName": "Operations",
+			"email":            "admin@example.test", "password": "initial administrator password",
 		}, asBootstrap)
 	admin := sessionCookie(t, bootstrapped)
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 
 	who := readSession(t, plane, admin)
-	if len(who.Organizations) != 1 || who.Organizations[0].Organization != identityOrg ||
-		who.Organizations[0].DisplayName != "Operations" {
-		t.Fatalf("session Organizations = %+v", who.Organizations)
+	if who.Organization.Organization != identityOrg || who.Organization.DisplayName != "Operations" {
+		t.Fatalf("session Organization = %+v", who.Organization)
 	}
 }
 
 func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	plane := startIdentityPlane(t)
 	created := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-		"email":       "ada@example.test",
-		"displayName": "Ada Lovelace",
-		"password":    "correct horse battery staple",
+		"organizationName": "Operations",
+		"email":            "ada@example.test",
+		"displayName":      "Ada Lovelace",
+		"password":         "correct horse battery staple",
 	}, asBootstrap)
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", created.status, created.body)
@@ -299,15 +271,16 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	}
 
 	who := readSession(t, plane, bootstrapCookie)
-	if who.Principal.DisplayName != "Ada Lovelace" || len(who.Organizations) != 0 {
+	if who.Principal.DisplayName != "Ada Lovelace" || who.Organization.Role != "admin" {
 		t.Fatalf("bootstrap session = %+v", who)
 	}
 	seedTestOrganization(t, plane.dsn, identityOrg, "ada@example.test")
 
 	again := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-		"email":       "grace@example.test",
-		"displayName": "Grace Hopper",
-		"password":    "another correct horse battery staple",
+		"organizationName": "Operations",
+		"email":            "grace@example.test",
+		"displayName":      "Grace Hopper",
+		"password":         "another correct horse battery staple",
 	}, asBootstrap)
 	if again.status != http.StatusConflict || !strings.Contains(again.body, "already") {
 		t.Fatalf("second bootstrap = %d: %s", again.status, again.body)
@@ -315,9 +288,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 
 	signedIn := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
 		map[string]any{
-			"organization": identityOrg,
-			"email":        "ADA@example.test",
-			"password":     "correct horse battery staple",
+			"email": "ADA@example.test", "password": "correct horse battery staple",
 		})
 	if signedIn.status != http.StatusOK {
 		t.Fatalf("local sign-in = %d: %s", signedIn.status, signedIn.body)
@@ -326,50 +297,26 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 
 	refused := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
 		map[string]any{
-			"organization": identityOrg,
-			"email":        "ada@example.test",
-			"password":     "wrong password",
+			"email": "ada@example.test", "password": "wrong password",
 		})
 	if refused.status != http.StatusForbidden || strings.Contains(refused.body, "password") {
 		t.Fatalf("wrong password = %d: %s", refused.status, refused.body)
 	}
 }
 
-func TestAnAuthenticatedUserCanCreateAndSelectAnOrganization(t *testing.T) {
+func TestAuthenticatedOrganizationManagementIsNotExposed(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
 	organizationsURL := "http://" + plane.operator + "/api/v1/organizations"
-
-	createdOrganization := plane.call(t, http.MethodPost, organizationsURL,
-		map[string]any{"displayName": "Second"}, asSession(admin))
-	if createdOrganization.status != http.StatusCreated {
-		t.Fatalf("creating an Organization = %d: %s",
-			createdOrganization.status, createdOrganization.body)
-	}
-
-	var created struct {
-		ID string `json:"id"`
-	}
-	decodeAnswer(t, createdOrganization, &created)
-	if _, err := uuid.Parse(created.ID); err != nil {
-		t.Fatalf("created Organization id = %q: %v", created.ID, err)
-	}
-
-	listed := plane.call(t, http.MethodGet, organizationsURL, nil, asSession(admin))
-	if listed.status != http.StatusOK ||
-		!strings.Contains(listed.body, `"id":"`+identityOrg+`"`) ||
-		!strings.Contains(listed.body, `"id":"`+created.ID+`"`) {
-		t.Fatalf("organizations = %d: %s", listed.status, listed.body)
-	}
-
-	permissions := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/permissions", nil,
-		asSession(admin), inOrganization(created.ID))
-	if permissions.status != http.StatusOK ||
-		!strings.Contains(permissions.body, `"role":"admin"`) ||
-		!strings.Contains(permissions.body, `"permissions"`) {
-		t.Fatalf("permissions = %d: %s", permissions.status, permissions.body)
+	for _, answer := range []answer{
+		plane.call(t, http.MethodGet, organizationsURL, nil, asSession(admin)),
+		plane.call(t, http.MethodPost, organizationsURL,
+			map[string]any{"displayName": "Second"}, asSession(admin)),
+	} {
+		if answer.status != http.StatusNotFound {
+			t.Fatalf("Organization management = %d: %s", answer.status, answer.body)
+		}
 	}
 }
 
@@ -406,7 +353,7 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 		t.Fatalf("create member = %d: %s", created.status, created.body)
 	}
 	login := plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
-		"organization": identityOrg, "email": "member@example.test", "password": "member password long enough",
+		"email": "member@example.test", "password": "member password long enough",
 	})
 	member := sessionCookie(t, login)
 	type listedSession struct {
@@ -444,15 +391,6 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 		t.Fatalf("admin revoking another User = %d: %s", refused.status, refused.body)
 	}
 	readSession(t, plane, member)
-	other := plane.call(t, http.MethodPost, base+"/organizations", map[string]any{
-		"displayName": "Second",
-	}, asSession(member))
-	if other.status != http.StatusCreated {
-		t.Fatalf("second Organization = %d: %s", other.status, other.body)
-	}
-	if len(list(member)) != 1 {
-		t.Fatal("Organization creation changed global sessions")
-	}
 	revoked := plane.call(t, http.MethodDelete, base+"/sessions/"+owned[0].ID, nil, asSession(member))
 	if revoked.status != http.StatusNoContent {
 		t.Fatalf("own revocation = %d: %s", revoked.status, revoked.body)
@@ -475,8 +413,7 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 		t.Fatalf("session = %d: %s", who.status, who.body)
 	}
 	for _, fact := range []string{
-		`"activeOrganization":{"organizationId":"`,
-		`"organizationId":"` + identityOrg + `","displayName":"Operations","role":"admin"`,
+		`"organization":{"organizationId":"` + identityOrg + `","displayName":"Operations","role":"admin"`,
 		`"authenticationMethod":"local"`,
 		`"csrf":{"mode":"origin","requiredForUnsafeMethods":true}`,
 	} {
@@ -489,7 +426,8 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 func TestLocalBootstrapRefusesWhenCredentialIsRetired(t *testing.T) {
 	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.BootstrapTokenDigest = nil })
 	answer := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
-		"email": "viewer@example.test", "displayName": "Viewer",
+		"organizationName": "Operations",
+		"email":            "viewer@example.test", "displayName": "Viewer",
 		"password": "correct horse battery staple",
 	}, asBootstrap)
 	if answer.status != http.StatusUnauthorized {
@@ -509,7 +447,7 @@ func TestLocalSignInBoundsParallelPasswordChecks(t *testing.T) {
 			defer waiting.Done()
 			<-start
 			answer := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
-				map[string]any{"organization": identityOrg, "email": "unknown@example.test", "password": "invalid password value"})
+				map[string]any{"email": "unknown@example.test", "password": "invalid password value"})
 			statuses <- answer.status
 		}(index)
 	}
@@ -555,7 +493,7 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 		VALUES ($1,$2,'editor')`, identityOrg, oidcUser); err != nil {
 		t.Fatalf("seed OIDC membership: %v", err)
 	}
-	startURL := "http://" + plane.operator + "/api/v1/auth/oidc/start?organization=" + identityOrg
+	startURL := "http://" + plane.operator + "/api/v1/auth/oidc/start"
 	started := plane.call(t, http.MethodGet, startURL, nil)
 	if started.status != http.StatusFound {
 		t.Fatalf("OIDC start = %d: %s", started.status, started.body)
@@ -569,7 +507,7 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 		t.Fatalf("OIDC callback = %d: %s", completed.status, completed.body)
 	}
 	who := readSession(t, plane, sessionCookie(t, completed))
-	if len(who.Organizations) != 1 || who.Organizations[0].Role != "editor" {
+	if who.Organization.Role != "editor" {
 		t.Fatalf("OIDC session = %+v", who)
 	}
 	var flows int
@@ -583,84 +521,5 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 	refused := plane.call(t, http.MethodGet, atIssuer.location, nil)
 	if refused.status != http.StatusForbidden {
 		t.Fatalf("unprovisioned subject = %d: %s", refused.status, refused.body)
-	}
-}
-
-func TestOrganizationAdminCannotReplaceAMultiOrganizationUsersPassword(t *testing.T) {
-	plane := startIdentityPlane(t)
-	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
-		"initial administrator password")
-	localUsersURL := "http://" + plane.operator + "/api/v1/local-users"
-
-	closed := plane.call(t, http.MethodPost, localUsersURL, map[string]any{
-		"email": "grace@example.test", "displayName": "Grace Hopper",
-		"role": "editor", "password": "first member password",
-	}, inOrganization(identityOrg))
-	if closed.status != http.StatusUnauthorized {
-		t.Fatalf("public registration = %d: %s", closed.status, closed.body)
-	}
-
-	created := plane.call(t, http.MethodPost, localUsersURL, map[string]any{
-		"email": "grace@example.test", "displayName": "Grace Hopper",
-		"role": "editor", "password": "first member password",
-	}, asSession(admin), inOrganization(identityOrg))
-	if created.status != http.StatusCreated {
-		t.Fatalf("create local member = %d: %s", created.status, created.body)
-	}
-	var member struct {
-		UserID string `json:"userId"`
-	}
-	if err := json.Unmarshal([]byte(created.body), &member); err != nil || member.UserID == "" {
-		t.Fatalf("created member = %s (%v)", created.body, err)
-	}
-	grace := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
-		map[string]any{"organization": identityOrg, "email": "grace@example.test", "password": "first member password"})
-	graceCookie := sessionCookie(t, grace)
-	organization := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/organizations", map[string]any{
-			"displayName": "Neighbour",
-		}, asSession(graceCookie))
-	if organization.status != http.StatusCreated {
-		t.Fatalf("creating another Organization = %d: %s", organization.status, organization.body)
-	}
-	var neighborOrganization struct {
-		ID string `json:"id"`
-	}
-	decodeAnswer(t, organization, &neighborOrganization)
-	who := readSession(t, plane, graceCookie)
-	if len(who.Organizations) != 2 {
-		t.Fatalf("User memberships = %+v, want both Organizations", who.Organizations)
-	}
-	neighbor := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
-		map[string]any{"organization": neighborOrganization.ID, "email": "grace@example.test", "password": "first member password"})
-	neighborCookie := sessionCookie(t, neighbor)
-
-	reset := plane.call(t, http.MethodPut,
-		localUsersURL+"/"+member.UserID+"/password",
-		map[string]any{"password": "replacement member password"},
-		asSession(admin), inOrganization(identityOrg))
-	if reset.status != http.StatusNotFound {
-		t.Fatalf("removed password reset route = %d: %s", reset.status, reset.body)
-	}
-
-	retained := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
-		nil, asSession(graceCookie))
-	if retained.status != http.StatusOK {
-		t.Fatalf("session after refused reset = %d: %s", retained.status, retained.body)
-	}
-	neighborRetained := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session",
-		nil, asSession(neighborCookie))
-	if neighborRetained.status != http.StatusOK {
-		t.Fatalf("neighbor session after refused reset = %d: %s", neighborRetained.status, neighborRetained.body)
-	}
-	oldPassword := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
-		map[string]any{"organization": identityOrg, "email": "grace@example.test", "password": "first member password"})
-	if oldPassword.status != http.StatusOK {
-		t.Fatalf("old password = %d: %s", oldPassword.status, oldPassword.body)
-	}
-	newPassword := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
-		map[string]any{"organization": neighborOrganization.ID, "email": "grace@example.test", "password": "replacement member password"})
-	if newPassword.status != http.StatusForbidden {
-		t.Fatalf("neighbor sign-in with replacement password = %d: %s", newPassword.status, newPassword.body)
 	}
 }

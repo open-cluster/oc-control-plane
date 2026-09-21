@@ -4,10 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
@@ -27,52 +23,4 @@ func (d *Database) OrganizationExists(
 		return false, fmt.Errorf("resolve organization: %w", err)
 	}
 	return exists, nil
-}
-
-// CreateOrganization records a new Organization and its creator's Admin membership atomically.
-func (d *Database) CreateOrganization(
-	ctx context.Context, principal authz.Principal, displayName string,
-) (authz.Membership, error) {
-	userID, err := uuid.Parse(principal.ID())
-	if err != nil || principal.Kind() != authz.KindUser {
-		return authz.Membership{}, ErrUserUnknown
-	}
-	transaction, err := d.pool.Begin(ctx)
-	if err != nil {
-		return authz.Membership{}, fmt.Errorf("beginning organization creation: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-
-	var organizationID uuid.UUID
-	if err = transaction.QueryRow(ctx,
-		`INSERT INTO organization (display_name, created_by) VALUES ($1, $2) RETURNING org_id`,
-		displayName, principal.ID()).Scan(&organizationID); err != nil {
-		return authz.Membership{}, fmt.Errorf("creating organization: %w", err)
-	}
-	organization, err := tenancy.NewOrganization(organizationID.String())
-	if err != nil {
-		return authz.Membership{}, fmt.Errorf("reading created organization: %w", err)
-	}
-	if _, err = transaction.Exec(ctx, `
-		INSERT INTO organization_membership
-			(org_id, user_id, role)
-		VALUES ($1, $2, $3)`, organization.String(), userID, string(authz.Admin)); err != nil {
-		return authz.Membership{}, fmt.Errorf("granting organization creator: %w", err)
-	}
-	if err = writeEvent(ctx, transaction, audit.Event{
-		Organization:  organization.String(),
-		Actor:         principal.Actor(),
-		Action:        audit.ActionMembershipGranted,
-		Target:        audit.Target{Kind: audit.TargetUser, ID: userID.String()},
-		Outcome:       audit.OutcomeAllowed,
-		SourceAddress: principal.SourceAddress(),
-		RequestID:     principal.RequestID(),
-		Detail:        audit.Detail{"role": string(authz.Admin)},
-	}); err != nil {
-		return authz.Membership{}, err
-	}
-	if err = transaction.Commit(ctx); err != nil {
-		return authz.Membership{}, fmt.Errorf("committing organization creation: %w", err)
-	}
-	return authz.Membership{Organization: organization, Role: authz.Admin}, nil
 }

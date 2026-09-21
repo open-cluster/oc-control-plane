@@ -20,7 +20,7 @@ func TestSessionRevocationRollsBackWhenDeploymentAuditFails(t *testing.T) {
 	}
 	issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	digest := make([]byte, 32)
-	user, err := database.BootstrapLocalUser(ctx, "admin@example.test", "Admin", "encoded password with sufficient length", issued, digest)
+	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, digest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,8 @@ func TestSessionLookupOnlyWritesWhenLastSeenIsDue(t *testing.T) {
 	}
 	issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	digest := make([]byte, 32)
-	if _, err := database.BootstrapLocalUser(ctx, "admin@example.test", "Admin", "encoded password with sufficient length", issued, digest); err != nil {
+	_, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, digest)
+	if err != nil {
 		t.Fatal(err)
 	}
 	connection, err := pgx.Connect(ctx, dsn)

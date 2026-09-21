@@ -67,8 +67,8 @@ func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 	return authz.Principal{}, authz.ErrNoCredential
 }
 
-// fromSession resolves a browser session into the person holding it, with the memberships they
-// hold RIGHT NOW rather than the ones they held when they signed in. That is what makes an
+// fromSession resolves a browser session into the person holding it, with the Membership they
+// hold right now rather than the Role they held when they signed in. That is what makes an
 // administrator's revocation take effect on the colleague's next request.
 func (h Handlers) fromSession(
 	request *http.Request, token session.Token,

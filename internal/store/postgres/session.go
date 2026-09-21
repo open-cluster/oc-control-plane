@@ -40,15 +40,15 @@ type SignedIn struct {
 func (p *Database) IssueSession(
 	ctx context.Context, organization tenancy.Organization,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
-) error {
+) (session.Session, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return err
+		return session.Session{}, err
 	}
 
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return session.Session{}, fmt.Errorf("begin: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -57,62 +57,62 @@ func (p *Database) IssueSession(
 		}
 	}()
 
-	if err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, detail); err != nil {
-		return err
+	if issued, err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, detail); err != nil {
+		return session.Session{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return session.Session{}, fmt.Errorf("commit: %w", err)
 	}
 	committed = true
-	return nil
+	return issued, nil
 }
 
 // IssueLocalSession holds the verifier lock through issuance so password replacement revokes concurrent sign-ins.
 func (p *Database) IssueLocalSession(
 	ctx context.Context, organization tenancy.Organization,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail, previous string,
-) error {
+) (session.Session, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return err
+		return session.Session{}, err
 	}
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin local sign-in: %w", err)
+		return session.Session{}, fmt.Errorf("begin local sign-in: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 	var current string
 	err = transaction.QueryRow(ctx, `SELECT c.password_hash FROM local_password c JOIN app_user u USING (user_id)
 		WHERE c.user_id = $1 AND u.issuer = $2 AND u.disabled_at IS NULL FOR SHARE OF c`, issued.UserID, LocalIssuer).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && current != previous) {
-		return ErrLocalCredentialUnknown
+		return session.Session{}, ErrLocalCredentialUnknown
 	}
 	if err != nil {
-		return fmt.Errorf("checking local sign-in: %w", err)
+		return session.Session{}, fmt.Errorf("checking local sign-in: %w", err)
 	}
-	if err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, detail); err != nil {
-		return err
+	if issued, err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, detail); err != nil {
+		return session.Session{}, err
 	}
 	if err = transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit local sign-in: %w", err)
+		return session.Session{}, fmt.Errorf("commit local sign-in: %w", err)
 	}
-	return nil
+	return issued, nil
 }
 
 func issueSessionIn(
 	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
-) error {
-	if _, err := transaction.Exec(ctx, `
-		INSERT INTO session (session_id, credential_digest, user_id, org_id,
-		                              issued_at, expires_at, last_seen_at,
-		                              client_user_agent, remote_addr)
-		VALUES ($1, $2, $3, $4, $5, $6, $5, $7, $8)`,
-		issued.ID, digest, issued.UserID, organization.String(), issued.IssuedAt,
+) (session.Session, error) {
+	if err := transaction.QueryRow(ctx, `
+		INSERT INTO session (credential_digest, user_id, issued_at, expires_at, last_seen_at,
+		                     client_user_agent, remote_addr)
+		VALUES ($1, $2, $3, $4, $3, $5, $6)
+		RETURNING session_id`,
+		digest, issued.UserID, issued.IssuedAt,
 		issued.ExpiresAt,
 		nullableText(truncateTo(issued.ClientUserAgent, session.MaxClientUserAgentLength)),
-		nullableText(truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength))); err != nil {
-		return fmt.Errorf("issuing a session: %w", err)
+		nullableText(truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength))).Scan(&issued.ID); err != nil {
+		return session.Session{}, fmt.Errorf("issuing a session: %w", err)
 	}
 	if err := writeEvent(ctx, transaction, audit.Event{
 		Organization:  organization.String(),
@@ -123,15 +123,14 @@ func issueSessionIn(
 		SourceAddress: issued.RemoteAddr,
 		Detail:        detail,
 	}); err != nil {
-		return err
+		return session.Session{}, err
 	}
-	return nil
+	return issued, nil
 }
 
 // SessionByToken resolves the cookie a request presented.
 //
-// A session cookie names no tenant. The row that is found is itself the authority for the
-// organization.
+// A session cookie names a User. Their current Membership supplies Organization and Role.
 //
 // The refusal says WHY — unknown, expired, revoked — because story 5 asks that a session which
 // has run out returns the operator to sign-in with an explanation rather than a screen of
@@ -144,10 +143,9 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 
 func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, error) {
 	var (
-		found          SignedIn
-		organizationID *uuid.UUID
-		revoked        *time.Time
-		disabled       *time.Time
+		found    SignedIn
+		revoked  *time.Time
+		disabled *time.Time
 	)
 	err := on.QueryRow(ctx, `
 		WITH touched AS (
@@ -156,14 +154,14 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 			  AND revoked_at IS NULL AND expires_at > now()
 			RETURNING last_seen_at
 		)
-		SELECT s.session_id, s.user_id, s.org_id, s.issued_at, s.expires_at,
+		SELECT s.session_id, s.user_id, s.issued_at, s.expires_at,
 		       COALESCE((SELECT last_seen_at FROM touched), s.last_seen_at),
 		       s.revoked_at, COALESCE(s.client_user_agent, ''), COALESCE(s.remote_addr, ''),
 		       u.email, u.issuer, u.display_name, u.disabled_at
 		FROM session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
 		digest, lastSeenResolution).Scan(&found.Session.ID, &found.Session.UserID,
-		&organizationID, &found.Session.IssuedAt, &found.Session.ExpiresAt,
+		&found.Session.IssuedAt, &found.Session.ExpiresAt,
 		&found.Session.LastSeenAt, &revoked, &found.Session.ClientUserAgent,
 		&found.Session.RemoteAddr,
 		&found.User.Email, &found.User.Issuer, &found.User.DisplayName, &disabled)
@@ -172,9 +170,6 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	}
 	if err != nil {
 		return SignedIn{}, fmt.Errorf("reading a session: %w", err)
-	}
-	if organizationID != nil {
-		found.Session.Organization = organizationID.String()
 	}
 	if revoked != nil {
 		found.Session.RevokedAt = *revoked
@@ -197,6 +192,9 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	memberships, err := membershipsOf(ctx, on, found.Session.UserID)
 	if err != nil {
 		return SignedIn{}, err
+	}
+	if len(memberships) != 1 {
+		return SignedIn{}, session.ErrUnknown
 	}
 	found.Memberships = memberships
 	return found, nil

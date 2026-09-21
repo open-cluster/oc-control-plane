@@ -13,7 +13,7 @@ import (
 func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 	plane := startIdentityPlane(t)
 	created := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap",
-		map[string]any{"email": "admin@example.test", "password": "administrator password"}, asBootstrap)
+		map[string]any{"organizationName": "Operations", "email": "admin@example.test", "password": "administrator password"}, asBootstrap)
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap: %d: %s", created.status, created.body)
 	}
@@ -41,8 +41,8 @@ func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 			(SELECT count(*) FROM organization)`).Scan(&sessions, &organizations); err != nil {
 			t.Fatal(err)
 		}
-		if organizations != 0 {
-			t.Fatal("fixture unexpectedly has an Organization")
+		if organizations != 1 {
+			t.Fatalf("bootstrap Organizations = %d, want one", organizations)
 		}
 		if sessions == 0 {
 			break

@@ -12,11 +12,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// session answers who is signed in and which Organizations they may read.
-//
-// It requires a credential and no permission. Requiring one would mean an Auditor could not
-// discover what they may do, and a person who has signed in with no membership yet could not
-// be told that they have none.
+// session answers who is signed in and describes their current Organization and Role.
 func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	principal, ok := h.caller(writer, request)
 	if !ok {
@@ -24,20 +20,8 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	info := principal.SessionInfo()
-	var active *membershipView
-	if organization, selected := authz.ActiveOrganizationFrom(request.Context()); selected {
-		for _, membership := range principal.Memberships() {
-			if membership.Organization.String() == organization.String() {
-				active = &membershipView{
-					Organization: organization.String(),
-					DisplayName:  membership.DisplayName, Role: string(membership.Role),
-				}
-				break
-			}
-		}
-	}
 	writeJSON(writer, http.StatusOK,
-		sessionViewOf(principal, info.Email, info.ExpiresAt, info.AuthenticationMethod, active))
+		sessionViewOf(principal, info.Email, info.ExpiresAt, info.AuthenticationMethod))
 }
 
 func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {

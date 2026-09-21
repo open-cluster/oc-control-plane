@@ -16,7 +16,6 @@ import (
 )
 
 type DeploymentSignInFlow struct {
-	Organization string
 	CodeVerifier string
 	Nonce        string
 	ReturnTo     string
@@ -25,19 +24,14 @@ type DeploymentSignInFlow struct {
 
 var ErrFlowUnknown = errors.New("sign-in flow unknown")
 
-func (p *Database) StartDeploymentSignIn(ctx context.Context, organization tenancy.Organization, flow DeploymentSignInFlow, state string) error {
+func (p *Database) StartDeploymentSignIn(ctx context.Context, flow DeploymentSignInFlow, state string) error {
 	digest := sha256.Sum256([]byte(state))
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	if _, err = pool.Exec(ctx, `DELETE FROM oidc_sign_in_flow
-		WHERE org_id=$1 AND expires_at<=now()`, organization.String()); err != nil {
+	if _, err := p.pool.Exec(ctx, `DELETE FROM oidc_sign_in_flow WHERE expires_at<=now()`); err != nil {
 		return fmt.Errorf("expiring deployment sign-ins: %w", err)
 	}
-	_, err = pool.Exec(ctx, `INSERT INTO oidc_sign_in_flow
-		(org_id, state_digest, code_verifier, nonce, return_to, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6)`, organization.String(), digest[:], nullableText(flow.CodeVerifier), nullableText(flow.Nonce), flow.ReturnTo, flow.ExpiresAt)
+	_, err := p.pool.Exec(ctx, `INSERT INTO oidc_sign_in_flow
+		(state_digest, code_verifier, nonce, return_to, expires_at)
+		VALUES ($1,$2,$3,$4,$5)`, digest[:], nullableText(flow.CodeVerifier), nullableText(flow.Nonce), flow.ReturnTo, flow.ExpiresAt)
 	if err != nil {
 		return fmt.Errorf("starting deployment sign-in: %w", err)
 	}
@@ -50,7 +44,7 @@ func (p *Database) RedeemDeploymentSignIn(ctx context.Context, state string) (De
 	var verifier, nonce *string
 	err := p.pool.QueryRow(ctx, `DELETE FROM oidc_sign_in_flow
 		WHERE state_digest=$1 AND expires_at>now()
-		RETURNING org_id,code_verifier,nonce,return_to,expires_at`, digest[:]).Scan(&flow.Organization, &verifier, &nonce, &flow.ReturnTo, &flow.ExpiresAt)
+		RETURNING code_verifier,nonce,return_to,expires_at`, digest[:]).Scan(&verifier, &nonce, &flow.ReturnTo, &flow.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return flow, ErrFlowUnknown
 	}
@@ -66,11 +60,11 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 		func(ctx context.Context, tx pgx.Tx) (Member, audit.Target, audit.Detail, error) {
 			var userID uuid.UUID
 			err := tx.QueryRow(ctx, `INSERT INTO app_user
-				(user_id,issuer,subject,email,display_name)
-				VALUES ($1,$2,$3,$4,$5)
+				(issuer,subject,email,display_name)
+				VALUES ($1,$2,$3,$4)
 				ON CONFLICT (issuer,subject) DO UPDATE SET email=EXCLUDED.email,
 					display_name=EXCLUDED.display_name
-				RETURNING user_id`, uuid.New(), identity.Issuer, identity.Subject, identity.Email, identity.DisplayName).Scan(&userID)
+				RETURNING user_id`, identity.Issuer, identity.Subject, identity.Email, identity.DisplayName).Scan(&userID)
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("creating an OIDC member: %w", err)
 			}
@@ -87,20 +81,15 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 		})
 }
 
-func (p *Database) OIDCIdentity(ctx context.Context, organization tenancy.Organization, identity Identity) (User, []authz.Membership, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return User{}, nil, err
-	}
+func (p *Database) OIDCIdentity(ctx context.Context, identity Identity) (User, []authz.Membership, error) {
 	var user User
 	var disabled *time.Time
-	err = pool.QueryRow(ctx, `UPDATE app_user person SET email=$1,display_name=$2
+	err := p.pool.QueryRow(ctx, `UPDATE app_user person SET email=$1,display_name=$2
 		WHERE issuer=$3 AND subject=$4
 		  AND EXISTS (SELECT 1 FROM organization_membership membership
-		              WHERE membership.user_id=person.user_id AND membership.org_id=$5)
+		              WHERE membership.user_id=person.user_id)
 		RETURNING user_id,issuer,subject,email,display_name,disabled_at,created_at`,
-		identity.Email, identity.DisplayName, identity.Issuer, identity.Subject,
-		organization.String()).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email,
+		identity.Email, identity.DisplayName, identity.Issuer, identity.Subject).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email,
 		&user.DisplayName, &disabled, &user.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, nil, ErrLocalCredentialUnknown
@@ -111,6 +100,9 @@ func (p *Database) OIDCIdentity(ctx context.Context, organization tenancy.Organi
 	if disabled != nil {
 		return User{}, nil, ErrUserDisabled
 	}
-	memberships, err := membershipsOf(ctx, pool, user.ID)
+	memberships, err := membershipsOf(ctx, p.pool, user.ID)
+	if err == nil && len(memberships) != 1 {
+		return User{}, nil, ErrLocalCredentialUnknown
+	}
 	return user, memberships, err
 }

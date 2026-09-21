@@ -26,7 +26,6 @@ type Token string
 type Session struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID
-	Organization    string
 	IssuedAt        time.Time
 	ExpiresAt       time.Time
 	LastSeenAt      time.Time
@@ -78,18 +77,14 @@ func NewToken() (Token, []byte, error) {
 
 // Issue creates the stored session facts and the one-time credential presented to the client.
 // The lifetime is deployment policy that configuration has already validated.
-func Issue(userID uuid.UUID, organization string, lifetime time.Duration) (Token, []byte, Session, error) {
+func Issue(userID uuid.UUID, lifetime time.Duration) (Token, []byte, Session, error) {
 	token, digest, err := NewToken()
 	if err != nil {
 		return "", nil, Session{}, err
 	}
 	now := time.Now().UTC()
 	return token, digest, Session{
-		ID:           uuid.New(),
-		UserID:       userID,
-		Organization: organization,
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(lifetime),
+		UserID: userID, IssuedAt: now, ExpiresAt: now.Add(lifetime),
 	}, nil
 }
 

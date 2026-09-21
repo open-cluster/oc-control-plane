@@ -145,12 +145,6 @@ paths:
       summary: Start OIDC sign in
       tags:
         - Authentication
-      parameters:
-        - name: organization
-          in: query
-          required: true
-          schema:
-            $ref: '#/components/schemas/OrganizationID'
   /api/v1/auth/oidc/callback:
     get:
       security: []
@@ -177,11 +171,9 @@ paths:
       security:
         - SessionCookie: []
       x-opencluster-access: authenticated
-      x-opencluster-organization-selector: optional
+      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: not-applicable
-      parameters:
-        - $ref: '#/components/parameters/OptionalOrganization'
       responses:
         '200':
           $ref: '#/components/responses/Session'
@@ -212,62 +204,6 @@ paths:
       description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
       tags:
         - Sessions
-  /api/v1/organizations:
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      responses:
-        '200':
-          description: Organizations available to the caller.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OrganizationList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-      operationId: listOrganizations
-      summary: List organizations
-      tags:
-        - Organizations
-      parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-    post:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: authenticated
-      x-opencluster-organization-selector: forbidden
-      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
-      x-opencluster-idempotency: not-supported
-      responses:
-        '201':
-          description: Organization and initial Admin membership created atomically.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Organization'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-      operationId: createOrganization
-      summary: Create organization
-      tags:
-        - Organizations
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateOrganizationRequest'
-        required: true
   /api/v1/permissions:
     get:
       security:
@@ -1550,14 +1486,6 @@ components:
       schema:
         $ref: '#/components/schemas/OrganizationID'
       example: 7d722f19-1978-4dc1-a176-e9be92b7e154
-    OptionalOrganization:
-      name: X-OpenCluster-Organization
-      in: header
-      required: false
-      description: Optionally selects an Organization for Organization-specific session facts.
-      schema:
-        $ref: '#/components/schemas/OrganizationID'
-      example: 7d722f19-1978-4dc1-a176-e9be92b7e154
     Cursor:
       name: cursor
       in: query
@@ -1851,7 +1779,7 @@ components:
     NoContent:
       description: The operation completed and has no response body.
     BootstrapCreated:
-      description: Initial local User and membership-free session created atomically.
+      description: Initial Organization, Admin User, password, Membership, and session created atomically.
       headers:
         Set-Cookie:
           schema:
@@ -2204,9 +2132,15 @@ components:
       type: object
       additionalProperties: false
       required:
+        - organizationName
         - email
         - password
       properties:
+        organizationName:
+          type: string
+          minLength: 1
+          maxLength: 256
+          example: Platform Team
         email:
           type: string
           format: email
@@ -2228,12 +2162,9 @@ components:
       type: object
       additionalProperties: false
       required:
-        - organization
         - email
         - password
       properties:
-        organization:
-          $ref: '#/components/schemas/OrganizationID'
         email:
           type: string
           format: email
@@ -2285,34 +2216,6 @@ components:
           items:
             type: string
           uniqueItems: true
-    Organization:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - displayName
-        - membership
-      properties:
-        id:
-          $ref: '#/components/schemas/OrganizationID'
-        displayName:
-          type: string
-          minLength: 1
-          maxLength: 256
-        membership:
-          $ref: '#/components/schemas/OrganizationMembership'
-    OrganizationMembership:
-      type: object
-      additionalProperties: false
-      required:
-        - role
-      properties:
-        role:
-          type: string
-          enum:
-            - admin
-            - editor
-            - viewer
     Membership:
       type: object
       additionalProperties: false
@@ -2333,52 +2236,20 @@ components:
             - admin
             - editor
             - viewer
-    OrganizationList:
-      type: object
-      additionalProperties: false
-      required:
-        - organizations
-        - next
-      properties:
-        organizations:
-          type: array
-          items:
-            $ref: '#/components/schemas/Organization'
-        next:
-          oneOf:
-            - type: string
-              maxLength: 512
-            - type: 'null'
-    CreateOrganizationRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - displayName
-      properties:
-        displayName:
-          type: string
-          minLength: 1
-          maxLength: 256
     Session:
       type: object
       additionalProperties: false
       required:
         - principal
-        - organizations
+        - organization
         - authenticationMethod
         - csrf
         - expiresAt
       properties:
         principal:
           $ref: '#/components/schemas/Principal'
-        organizations:
-          type: array
-          items:
-            $ref: '#/components/schemas/Membership'
-        activeOrganization:
-          oneOf:
-            - $ref: '#/components/schemas/Membership'
-            - type: 'null'
+        organization:
+          $ref: '#/components/schemas/Membership'
         authenticationMethod:
           type: string
           enum:
@@ -5154,18 +5025,6 @@ x-opencluster-operation-templates:
     x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
     x-opencluster-idempotency: not-supported
-    responses:
-      default:
-        $ref: '#/components/responses/ErrorResponse'
-  optional-organization-read:
-    security:
-      - SessionCookie: []
-    x-opencluster-access: authenticated
-    x-opencluster-organization-selector: optional
-    x-opencluster-cookie-csrf: not-required
-    x-opencluster-idempotency: not-applicable
-    parameters:
-      - $ref: '#/components/parameters/OptionalOrganization'
     responses:
       default:
         $ref: '#/components/responses/ErrorResponse'

@@ -378,7 +378,8 @@ func (c *controlPlane) bootstrapAdmin(
 ) {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{
-		"email": "admin@example.test", "displayName": "Test Administrator",
+		"organizationName": "Operations",
+		"email":            "admin@example.test", "displayName": "Test Administrator",
 		"password": "temporary integration test administrator password",
 	})
 	if err != nil {
@@ -430,14 +431,36 @@ func seedTestOrganization(t *testing.T, dsn, organization, email string) {
 		Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
-		VALUES ($1,'Operations',$2)`, organization, userID.String()); err != nil {
+	var current string
+	err = transaction.QueryRow(ctx, `SELECT org_id FROM organization_membership WHERE user_id=$1`, userID).Scan(&current)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
 	}
-	if _, err = transaction.Exec(ctx, `INSERT INTO organization_membership
-		(org_id,user_id,role)
-		VALUES ($1,$2,'admin')`, organization, userID); err != nil {
-		t.Fatal(err)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
+			VALUES ($1,'Operations',$2)`, organization, userID.String()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = transaction.Exec(ctx, `INSERT INTO organization_membership
+			(org_id,user_id,role) VALUES ($1,$2,'admin')`, organization, userID); err != nil {
+			t.Fatal(err)
+		}
+	case current == organization:
+		if _, err = transaction.Exec(ctx, `UPDATE organization SET display_name='Operations' WHERE org_id=$1`, organization); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
+			VALUES ($1,'Operations',$2)`, organization, userID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = transaction.Exec(ctx, `UPDATE organization_membership SET org_id=$1 WHERE user_id=$2`, organization, userID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = transaction.Exec(ctx, `DELETE FROM organization WHERE org_id=$1`, current); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err = transaction.Commit(ctx); err != nil {
 		t.Fatal(err)

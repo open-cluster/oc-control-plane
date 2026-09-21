@@ -26,16 +26,16 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			}
 			issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 			previous := "previous encoded password verifier"
-			user, err := database.BootstrapLocalUser(ctx, "admin@example.test", "Admin", previous, issued, make([]byte, 32))
+			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32))
 			if err != nil {
 				t.Fatal(err)
 			}
 			principal, _ := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
-			membership, err := database.CreateOrganization(ctx, principal, "Operations")
+			identity, err := database.LocalIdentityByEmail(ctx, "admin@example.test")
 			if err != nil {
 				t.Fatal(err)
 			}
-			organization := membership.Organization
+			organization := identity.Memberships[0].Organization
 			connection, err := pgx.Connect(ctx, dsn)
 			if err != nil {
 				t.Fatal(err)
@@ -53,7 +53,8 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			signedIn := make(chan error, 1)
 			recovered := make(chan error, 1)
 			issue := func() {
-				signedIn <- database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), audit.Detail{}, previous)
+				_, err := database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), audit.Detail{}, previous)
+				signedIn <- err
 			}
 			recoverUser := func() {
 				recovered <- database.RecoverLocalPassword(ctx, user.ID, "replacement encoded password verifier")

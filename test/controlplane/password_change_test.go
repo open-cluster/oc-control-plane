@@ -21,22 +21,10 @@ func TestLocalUserChangesPasswordAndRevokesAllSessions(t *testing.T) {
 	first := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", oldPassword)
 	login := func(password string) answer {
 		return plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
-			"organization": identityOrg, "email": "admin@example.test", "password": password,
+			"email": "admin@example.test", "password": password,
 		})
 	}
-	other := plane.call(t, http.MethodPost, base+"/organizations", map[string]any{
-		"displayName": "Second",
-	}, asSession(first))
-	if other.status != http.StatusCreated {
-		t.Fatalf("second Organization = %d: %s", other.status, other.body)
-	}
-	var otherOrganization struct {
-		ID string `json:"id"`
-	}
-	decodeAnswer(t, other, &otherOrganization)
-	otherLogin := plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
-		"organization": otherOrganization.ID, "email": "admin@example.test", "password": oldPassword,
-	})
+	otherLogin := login(oldPassword)
 	second := sessionCookie(t, otherLogin)
 	for _, invalid := range []struct {
 		body   map[string]any
@@ -122,13 +110,13 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 		t.Fatalf("recovery retained old session: %d", stale.status)
 	}
 	login := restarted.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
-		"organization": identityOrg, "email": "admin@example.test", "password": recoveredPassword,
+		"email": "admin@example.test", "password": recoveredPassword,
 	})
 	if login.status != http.StatusOK {
 		t.Fatalf("sign-in after recovery = %d: %s", login.status, login.body)
 	}
 	bootstrap := restarted.call(t, http.MethodPost, base+"/auth/local/bootstrap", map[string]any{
-		"email": "another@example.test", "password": recoveredPassword,
+		"organizationName": "Operations", "email": "another@example.test", "password": recoveredPassword,
 	}, asBootstrap)
 	if bootstrap.status != http.StatusUnauthorized {
 		t.Fatalf("retired bootstrap = %d: %s", bootstrap.status, bootstrap.body)

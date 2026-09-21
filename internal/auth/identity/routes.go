@@ -21,17 +21,11 @@ func (h Handlers) Routes() authz.Table {
 			http.HandlerFunc(h.startDeploymentOIDCSignIn)),
 		authz.Public(http.MethodGet, Base+"/auth/oidc/callback",
 			http.HandlerFunc(h.completeDeploymentOIDCSignIn)),
-		// The caller describing themselves. Authenticated rather than privileged: requiring a
-		// permission would mean an Auditor could not sign out, and a person with no membership
-		// yet could not be told that they have none.
-		authz.OptionalOrganizationAuthenticated(http.MethodGet, Base+"/session",
+		// Every authenticated member may inspect their own session.
+		authz.Authenticated(http.MethodGet, Base+"/session",
 			http.HandlerFunc(h.session)),
 		authz.SessionLogout(http.MethodDelete, Base+"/session",
 			http.HandlerFunc(h.signOut)),
-		authz.Authenticated(http.MethodGet, Base+"/organizations",
-			http.HandlerFunc(h.organizations)),
-		authz.Authenticated(http.MethodPost, Base+"/organizations",
-			http.HandlerFunc(h.createOrganization)),
 		authz.OrganizationAuthenticated(http.MethodGet, Base+"/permissions",
 			http.HandlerFunc(h.permissions)),
 
