@@ -140,7 +140,7 @@ func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Mem
 func (p *Database) ListMembers(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization, page Page,
 ) (MemberList, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return MemberList{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)

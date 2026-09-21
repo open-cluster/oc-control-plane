@@ -90,8 +90,11 @@ func (h Handlers) fromSession(
 		}
 	}
 
+	if len(signedIn.Memberships) != 1 {
+		return authz.Principal{}, authz.ErrCredentialRejected
+	}
 	principal, err := authz.NewPrincipal(authz.KindUser, signedIn.User.ID.String(),
-		displayNameOf(signedIn.User), signedIn.Memberships)
+		displayNameOf(signedIn.User), signedIn.Memberships[0])
 	if err != nil {
 		return authz.Principal{}, authz.ErrCredentialRejected
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/health"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
@@ -150,7 +151,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	router, err := api.Handlers{
+	protected, err := api.Handlers{
 		Database:                process.database,
 		Logger:                  process.logger,
 		Identity:                identities,
@@ -167,7 +168,15 @@ func apiRouter(process assembled) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("assembling the API surface: %w", err)
 	}
-	return router, nil
+	authentication := identities.Authentication([]string{cfg.PublicURL})
+	mux := http.NewServeMux()
+	mux.Handle("POST "+identity.Base+"/auth/local/bootstrap", authentication.LocalBootstrap)
+	mux.Handle("POST "+identity.Base+"/auth/local/sign-in", authentication.LocalSignIn)
+	mux.Handle("GET "+identity.Base+"/auth/oidc/start", authentication.OIDCStart)
+	mux.Handle("GET "+identity.Base+"/auth/oidc/callback", authentication.OIDCCallback)
+	mux.Handle("DELETE "+identity.Base+"/session", authentication.SignOut)
+	mux.Handle("/api/", protected)
+	return correlation.Middleware(mux), nil
 }
 
 // authHandlers assembles authentication and identity handlers.

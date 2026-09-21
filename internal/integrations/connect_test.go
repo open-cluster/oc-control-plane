@@ -31,7 +31,7 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 		t.Fatalf("building an organization: %v", err)
 	}
 	principal, err := authz.NewPrincipal(authz.KindUser, "user-1", "Ada",
-		[]authz.Membership{{Organization: org, Role: authz.Admin}})
+		authz.Membership{Organization: org, Role: authz.Admin})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)
 	}
@@ -69,18 +69,13 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 
 	request := httptest.NewRequest(http.MethodPost,
 		"/api/v1/integration-types/stub/connect", nil)
-	request.Header.Set(authz.OrganizationHeader, "11111111-1111-4111-8111-111111111111")
 	request.Header.Set("Origin", "https://console.example.com")
-	router, err := authz.Router(authz.Table{
-		authz.Privileged(http.MethodPost,
-			"/api/v1/integration-types/{type}/connect",
-			authz.IntegrationCreate, http.HandlerFunc(handlers.startConnect)),
+	router, err := authz.Router([]authz.Route{
+		{Method: http.MethodPost, Pattern: "/api/v1/integration-types/{type}/connect",
+			Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(handlers.startConnect)},
 	}, authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
 			return connectingPrincipal(t, "11111111-1111-4111-8111-111111111111"), nil
-		},
-		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
-			return true, nil
 		},
 		Origins: []string{"https://console.example.com"},
 		Logger:  slog.New(slog.DiscardHandler),

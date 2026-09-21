@@ -121,7 +121,6 @@ func openEventStream(t *testing.T, plane *integrationPlane, turn, query string, 
 		t.Fatal(err)
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
-	selectOrganizationFromURL(request)
 	for _, supplied := range headers {
 		for name, values := range supplied {
 			request.Header[name] = values

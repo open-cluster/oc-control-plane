@@ -30,7 +30,6 @@ x-opencluster-operation-templates:
   public-read: &public-read
     security: []
     x-opencluster-access: public
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-applicable
     responses: &public-responses
@@ -38,7 +37,6 @@ x-opencluster-operation-templates:
   public-write: &public-write
     security: []
     x-opencluster-access: public
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-supported
     responses: *public-responses
@@ -46,7 +44,6 @@ x-opencluster-operation-templates:
     security: &authenticated-security
       - SessionCookie: []
     x-opencluster-access: authenticated
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-applicable
     responses: &authenticated-responses
@@ -54,36 +51,20 @@ x-opencluster-operation-templates:
   authenticated-write: &authenticated-write
     security: *authenticated-security
     x-opencluster-access: authenticated
-    x-opencluster-organization-selector: forbidden
     x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
     x-opencluster-idempotency: not-supported
-    responses: *authenticated-responses
-  organization-read: &organization-read
-    security: *authenticated-security
-    x-opencluster-access: authenticated
-    x-opencluster-organization-selector: required
-    x-opencluster-cookie-csrf: not-required
-    x-opencluster-idempotency: not-applicable
-    parameters:
-      - $ref: "#/components/parameters/Organization"
     responses: *authenticated-responses
   privileged-read: &privileged-read
     security: *authenticated-security
     x-opencluster-access: privileged
-    x-opencluster-organization-selector: required
     x-opencluster-cookie-csrf: not-required
     x-opencluster-idempotency: not-applicable
-    parameters:
-      - $ref: "#/components/parameters/Organization"
     responses: *authenticated-responses
   privileged-write: &privileged-write
     security: *authenticated-security
     x-opencluster-access: privileged
-    x-opencluster-organization-selector: required
     x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
     x-opencluster-idempotency: not-supported
-    parameters:
-      - $ref: "#/components/parameters/Organization"
     responses: *authenticated-responses
 
 paths:
@@ -192,12 +173,11 @@ paths:
         "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/permissions:
     get:
-      <<: *organization-read
+      <<: *authenticated-read
       operationId: listEffectivePermissions
       summary: List effective permissions
       tags: [Organizations]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -210,7 +190,6 @@ paths:
       summary: List members
       tags: [Members]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -310,7 +289,6 @@ paths:
       summary: List audit events
       tags: [Audit]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -323,7 +301,6 @@ paths:
       summary: List integration types
       tags: [Integration Types]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -361,7 +338,6 @@ paths:
       summary: List integrations
       tags: [Integrations]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/IntegrationSearch" }
@@ -473,7 +449,6 @@ paths:
       summary: List relays
       tags: [Relays]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/RelaySearch" }
@@ -512,7 +487,6 @@ paths:
       summary: List relay integrations
       tags: [Relays]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -526,7 +500,6 @@ paths:
       summary: List relay failures
       tags: [Relays]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -549,7 +522,6 @@ paths:
       summary: List incidents
       tags: [Incidents]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/IncidentSearch" }
@@ -578,7 +550,6 @@ paths:
       summary: List incident alert events
       tags: [Incidents]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -606,7 +577,6 @@ paths:
       summary: List investigations
       tags: [Investigations]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/InvestigationIncidentFilter" }
@@ -654,7 +624,6 @@ paths:
   /api/v1/investigations/{investigation}/events:
     parameters:
       - { $ref: "#/components/parameters/InvestigationID" }
-      - { $ref: "#/components/parameters/Organization" }
       - { $ref: "#/components/parameters/LastEventID" }
     get:
       <<: *privileged-read
@@ -681,7 +650,6 @@ paths:
       summary: List conversations
       tags: [Conversations]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/ConversationSearch" }
@@ -724,7 +692,6 @@ paths:
       description: Returns turns ordered by turn number then Investigation ID, ascending. Cursors are scoped to the Organization, Conversation and ordering. Only limit and cursor are accepted.
       tags: [Conversations]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/Cursor" }
       responses:
@@ -820,7 +787,6 @@ paths:
       security:
         - WebhookToken: []
       x-opencluster-access: webhook
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: provider-identity-and-lifecycle
       requestBody:
@@ -847,7 +813,6 @@ paths:
       security:
         - SlackSignature: []
       x-opencluster-access: webhook
-      x-opencluster-organization-selector: forbidden
       x-opencluster-cookie-csrf: not-required
       x-opencluster-idempotency: slack-event-identity
       requestBody:
@@ -870,7 +835,6 @@ paths:
       summary: List webhook deliveries
       tags: [Webhook Deliveries]
       parameters:
-        - { $ref: "#/components/parameters/Organization" }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/WebhookDeliveryStatus" }
@@ -920,13 +884,6 @@ components:
       name: X-Slack-Signature
       description: Slack request signature verified with the configured signing secret.
   parameters:
-    Organization:
-      name: X-OpenCluster-Organization
-      in: header
-      required: true
-      description: Selects the Organization whose data and membership are authorized.
-      schema: { $ref: "#/components/schemas/OrganizationID" }
-      example: 7d722f19-1978-4dc1-a176-e9be92b7e154
     Cursor:
       name: cursor
       in: query
@@ -1102,7 +1059,7 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Session" }
-    PermissionList: { description: Effective permissions in the selected Organization., content: { application/json: { schema: { $ref: "#/components/schemas/PermissionList" } } } }
+    PermissionList: { description: Effective permissions in the authenticated User's Organization., content: { application/json: { schema: { $ref: "#/components/schemas/PermissionList" } } } }
     MemberList: { description: Organization members., content: { application/json: { schema: { $ref: "#/components/schemas/MemberList" } } } }
     Member: { description: Organization member., content: { application/json: { schema: { $ref: "#/components/schemas/Member" } } } }
     SessionList: { description: Live Organization sessions., content: { application/json: { schema: { $ref: "#/components/schemas/LiveSessionList" } } } }
@@ -1149,11 +1106,11 @@ components:
     BadRequest: { description: Invalid request., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     Unauthorized: { description: Missing or rejected credential., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     Forbidden:
-      description: Membership, permission, Organization selection, or cookie origin was rejected.
+      description: Membership, permission, or cookie origin was rejected.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
-    NotFound: { description: Resource not found in the selected Organization., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    NotFound: { description: Resource not found in the authenticated User's Organization., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     Conflict: { description: The requested state conflicts with durable state., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     RateLimited:
       description: A bounded concurrency or request limit was reached.
@@ -1172,7 +1129,7 @@ components:
       additionalProperties: false
       required: [error]
       properties:
-        error: { type: string, minLength: 1, maxLength: 1024, example: "the selected Organization is not available to this caller" }
+        error: { type: string, minLength: 1, maxLength: 1024, example: "the requested resource is not available to this caller" }
         reason: { type: string, enum: [credential_rejected, session_expired, session_revoked] }
         requires: { type: string, minLength: 1, maxLength: 128 }
     LocalBootstrapRequest:

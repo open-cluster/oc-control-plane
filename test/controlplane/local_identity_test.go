@@ -136,7 +136,7 @@ func TestAdminCreatesLocalUserWithoutIdentityProviderChoice(t *testing.T) {
 		"http://"+plane.operator+"/api/v1/local-users", map[string]any{
 			"email": "member@example.test", "displayName": "Member",
 			"role": "viewer", "password": "member password long enough",
-		}, asSession(admin), inOrganization(identityOrg))
+		}, asSession(admin))
 	if created.status != http.StatusCreated {
 		t.Fatalf("creating local User = %d: %s", created.status, created.body)
 	}
@@ -164,7 +164,7 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 		"http://"+plane.operator+"/api/v1/local-users", map[string]any{
 			"email": "member@example.test", "role": "viewer",
 			"password": "member password long enough",
-		}, asSession(admin), inOrganization(identityOrg))
+		}, asSession(admin))
 	var member struct {
 		UserID string `json:"userId"`
 	}
@@ -176,7 +176,7 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	memberSession := sessionCookie(t, signedIn)
 	changed := plane.call(t, http.MethodPatch,
 		"http://"+plane.operator+"/api/v1/members/"+member.UserID,
-		map[string]any{"role": "editor"}, asSession(admin), inOrganization(identityOrg))
+		map[string]any{"role": "editor"}, asSession(admin))
 	if changed.status != http.StatusOK || !strings.Contains(changed.body, `"role":"editor"`) {
 		t.Fatalf("changing membership = %d: %s", changed.status, changed.body)
 	}
@@ -185,7 +185,7 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	}
 	removed := plane.call(t, http.MethodDelete,
 		"http://"+plane.operator+"/api/v1/members/"+member.UserID,
-		nil, asSession(admin), inOrganization(identityOrg))
+		nil, asSession(admin))
 	if removed.status != http.StatusNoContent {
 		t.Fatalf("removing membership = %d: %s", removed.status, removed.body)
 	}
@@ -228,7 +228,7 @@ func TestOrganizationKeepsAnAdmin(t *testing.T) {
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			answer := plane.call(t, change.method, memberURL, change.body,
-				asSession(admin), inOrganization(identityOrg))
+				asSession(admin))
 			if answer.status != http.StatusConflict {
 				t.Fatalf("last Admin change = %d: %s", answer.status, answer.body)
 			}
@@ -265,7 +265,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	}
 	bootstrapCookie := sessionCookie(t, created)
 	retiredBootstrap := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/members", nil, asBootstrap, inOrganization(identityOrg))
+		"http://"+plane.operator+"/api/v1/members", nil, asBootstrap)
 	if retiredBootstrap.status != http.StatusUnauthorized {
 		t.Fatalf("bootstrap token after first Admin = %d: %s", retiredBootstrap.status, retiredBootstrap.body)
 	}
@@ -330,13 +330,13 @@ func TestLocalUserCreationRejectsIdentityProviderChoice(t *testing.T) {
 		"role": "viewer", "password": "member password long enough", "identityKind": "oidc",
 	}
 	providerChoice := plane.call(t, http.MethodPost, localUsersURL, member,
-		asSession(admin), inOrganization(identityOrg))
+		asSession(admin))
 	if providerChoice.status != http.StatusBadRequest {
 		t.Fatalf("local User with identityKind = %d: %s", providerChoice.status, providerChoice.body)
 	}
 	delete(member, "identityKind")
 	local := plane.call(t, http.MethodPost, localUsersURL, member,
-		asSession(admin), inOrganization(identityOrg))
+		asSession(admin))
 	if local.status != http.StatusCreated {
 		t.Fatalf("local member = %d: %s", local.status, local.body)
 	}
@@ -348,7 +348,7 @@ func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
 	created := plane.call(t, http.MethodPost, base+"/local-users", map[string]any{
 		"email": "member@example.test", "role": "viewer", "password": "member password long enough",
-	}, asSession(admin), inOrganization(identityOrg))
+	}, asSession(admin))
 	if created.status != http.StatusCreated {
 		t.Fatalf("create member = %d: %s", created.status, created.body)
 	}
@@ -408,7 +408,7 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 		"initial administrator password")
 	who := plane.call(t, http.MethodGet,
 		"http://"+plane.operator+"/api/v1/session", nil,
-		asSession(admin), inOrganization(identityOrg))
+		asSession(admin))
 	if who.status != http.StatusOK {
 		t.Fatalf("session = %d: %s", who.status, who.body)
 	}

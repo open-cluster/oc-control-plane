@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	"gopkg.in/yaml.v3"
 )
@@ -124,6 +123,15 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 	}
 
 	served := make(map[string]bool)
+	for _, key := range []string{
+		"POST /api/v1/auth/local/bootstrap",
+		"POST /api/v1/auth/local/sign-in",
+		"GET /api/v1/auth/oidc/start",
+		"GET /api/v1/auth/oidc/callback",
+		"DELETE /api/v1/session",
+	} {
+		served[key] = true
+	}
 	composedIntake := webhooks.Handlers{
 		Slack: &webhooks.SlackAgent{SigningSecret: "architecture-test-secret"},
 	}.Router()
@@ -140,57 +148,38 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 		}
 	}
 	for _, route := range operatorRoutes(t) {
-		served[route.Key()] = true
-		operation, ok := operationFor(document, route.Method(), route.Pattern())
+		key := routeKey(route)
+		served[key] = true
+		operation, ok := operationFor(document, route.Method, route.Pattern)
 		if !ok {
-			t.Errorf("served route %s is missing from OpenAPI", route.Key())
+			t.Errorf("served route %s is missing from OpenAPI", key)
 			continue
 		}
-		wantAccess := route.Access().String()
+		wantAccess := "authenticated"
+		if route.Permission != "" {
+			wantAccess = "privileged"
+		}
 		if operation.Access != wantAccess {
-			t.Errorf("%s documents access %q, want %q", route.Key(), operation.Access, wantAccess)
+			t.Errorf("%s documents access %q, want %q", key, operation.Access, wantAccess)
 		}
-		wantSelector := "forbidden"
-		if route.OrganizationScoped() {
-			wantSelector = "required"
-		} else if route.OrganizationOptional() {
-			wantSelector = "optional"
-		}
-		if operation.OrganizationSelector != wantSelector {
-			t.Errorf("%s documents Organization selector %q, want %q",
-				route.Key(), operation.OrganizationSelector, wantSelector)
-		}
-		path := document.Paths[route.Pattern()]
+		path := document.Paths[route.Pattern]
 		hasRequiredSelector := hasParameter(path, operation, "#/components/parameters/Organization")
 		hasOptionalSelector := hasParameter(path, operation, "#/components/parameters/OptionalOrganization")
-		switch wantSelector {
-		case "required":
-			if !hasRequiredSelector || hasOptionalSelector {
-				t.Errorf("%s must reference only the required shared Organization selector", route.Key())
-			}
-		case "optional":
-			if hasRequiredSelector || !hasOptionalSelector {
-				t.Errorf("%s must reference only the optional shared Organization selector", route.Key())
-			}
-		case "forbidden":
-			if hasRequiredSelector || hasOptionalSelector {
-				t.Errorf("%s forbids the Organization selector but declares its parameter", route.Key())
-			}
+		if operation.OrganizationSelector != "" || hasRequiredSelector || hasOptionalSelector {
+			t.Errorf("%s exposes a caller-selected Organization", key)
 		}
 		wantCSRF := "not-required"
-		if route.Access() != authz.AccessPublic && unsafeMethod(route.Method()) {
+		if unsafeMethod(route.Method) {
 			wantCSRF = "required-for-unsafe-cookie-request"
 		}
 		if operation.CookieCSRF != wantCSRF {
-			t.Errorf("%s documents cookie CSRF %q, want %q", route.Key(), operation.CookieCSRF, wantCSRF)
+			t.Errorf("%s documents cookie CSRF %q, want %q", key, operation.CookieCSRF, wantCSRF)
 		}
 		switch {
 		case operation.Security == nil:
-			t.Errorf("%s must declare standard OpenAPI security explicitly", route.Key())
-		case route.Access() == authz.AccessPublic && route.Pattern() != "/api/v1/auth/local/bootstrap" && len(*operation.Security) != 0:
-			t.Errorf("public route %s must declare an empty security requirement", route.Key())
-		case route.Access() != authz.AccessPublic && len(*operation.Security) == 0:
-			t.Errorf("protected route %s must declare a security requirement", route.Key())
+			t.Errorf("%s must declare standard OpenAPI security explicitly", key)
+		case len(*operation.Security) == 0:
+			t.Errorf("protected route %s must declare a security requirement", key)
 		}
 	}
 	for key := range served {
@@ -203,7 +192,7 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 			t.Errorf("served intake route %s is missing from OpenAPI", key)
 			continue
 		}
-		if operation.Access != "webhook" || operation.OrganizationSelector != "forbidden" ||
+		if operation.Access != "webhook" || operation.OrganizationSelector != "" ||
 			operation.CookieCSRF != "not-required" {
 			t.Errorf("%s does not declare the webhook security boundary", key)
 		}

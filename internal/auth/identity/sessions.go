@@ -14,19 +14,15 @@ import (
 
 // session answers who is signed in and describes their current Organization and Role.
 func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 
 	info := principal.SessionInfo()
 	writeJSON(writer, http.StatusOK,
 		sessionViewOf(principal, info.Email, info.ExpiresAt, info.AuthenticationMethod))
 }
 
-func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := authz.PrincipalFrom(request.Context())
-	if !ok {
+func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request, principal authz.Principal) {
+	if principal.IsZero() {
 		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 		return
 	}
@@ -59,10 +55,7 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
@@ -83,10 +76,7 @@ func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request
 }
 
 func (h Handlers) revokeSession(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	sessionID, ok := identifier(writer, request, "session")
 	if !ok {
 		return

@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 var (
@@ -66,41 +65,26 @@ func (g Guard) refuseOrigin(
 }
 
 func (g Guard) recordRefusal(
-	request *http.Request, organization tenancy.Organization,
-	principal Principal, route Route, because string,
+	request *http.Request, principal Principal, route Route, because string,
 ) {
 	if g.Record == nil {
 		return
 	}
+	organization := principal.Organization()
 	event := audit.Event{
 		Organization:  organization.String(),
 		Actor:         principal.Actor(),
 		Action:        audit.ActionAuthorizationRefused,
-		Target:        audit.Target{Kind: audit.TargetRoute, ID: route.Key()},
+		Target:        audit.Target{Kind: audit.TargetRoute, ID: routeID(route)},
 		Outcome:       audit.OutcomeDenied,
 		SourceAddress: request.RemoteAddr,
 		RequestID:     principal.RequestID(),
 		Detail: audit.Detail{
 			"reason":   because,
-			"requires": string(route.permission),
+			"requires": string(route.Permission),
 		},
 	}
 	g.Record(request.Context(), organization, event)
-}
-
-func (g Guard) recordAttributableRefusal(
-	request *http.Request, organization tenancy.Organization,
-	principal Principal, route Route, because string,
-) {
-	if organization.IsEmpty() || !principal.MemberOf(organization) ||
-		g.ResolveOrganization == nil {
-		return
-	}
-	known, err := g.ResolveOrganization(request.Context(), organization)
-	if err != nil || !known {
-		return
-	}
-	g.recordRefusal(request, organization, principal, route, because)
 }
 
 func truncate(value string, limit int) string {

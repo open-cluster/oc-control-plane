@@ -1,59 +1,79 @@
 package identity
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 )
 
 // Base is where every route in this package hangs. Named once so a path correction is a
 // one-line change rather than a search.
 const Base = "/api/v1"
 
-func (h Handlers) Routes() authz.Table {
-	table := authz.Table{
-		authz.Authenticated(http.MethodPut, Base+"/auth/local/password", http.HandlerFunc(h.changeLocalPassword)),
-		authz.Public(http.MethodPost, Base+"/auth/local/bootstrap",
-			http.HandlerFunc(h.bootstrapLocalAdmin)),
-		authz.Public(http.MethodPost, Base+"/auth/local/sign-in",
-			http.HandlerFunc(h.localSignIn)),
-		authz.Public(http.MethodGet, Base+"/auth/oidc/start",
-			http.HandlerFunc(h.startDeploymentOIDCSignIn)),
-		authz.Public(http.MethodGet, Base+"/auth/oidc/callback",
-			http.HandlerFunc(h.completeDeploymentOIDCSignIn)),
+func (h Handlers) Routes() []authz.Route {
+	return []authz.Route{
+		{Method: http.MethodPut, Pattern: Base + "/auth/local/password", Handler: http.HandlerFunc(h.changeLocalPassword)},
 		// Every authenticated member may inspect their own session.
-		authz.Authenticated(http.MethodGet, Base+"/session",
-			http.HandlerFunc(h.session)),
-		authz.SessionLogout(http.MethodDelete, Base+"/session",
-			http.HandlerFunc(h.signOut)),
-		authz.OrganizationAuthenticated(http.MethodGet, Base+"/permissions",
-			http.HandlerFunc(h.permissions)),
+		{Method: http.MethodGet, Pattern: Base + "/session", Handler: http.HandlerFunc(h.session)},
+		{Method: http.MethodGet, Pattern: Base + "/permissions", Handler: http.HandlerFunc(h.permissions)},
 
 		// Who they are once inside.
-		authz.Privileged(http.MethodGet, Base+"/members",
-			authz.MemberRead, http.HandlerFunc(h.listMembers)),
-		authz.Privileged(http.MethodPost, Base+"/local-users",
-			authz.MemberManage, http.HandlerFunc(h.createMember)),
-		authz.Privileged(http.MethodPatch, Base+"/members/{user}",
-			authz.MemberManage, http.HandlerFunc(h.setMember)),
-		authz.Privileged(http.MethodDelete, Base+"/members/{user}",
-			authz.MemberManage, http.HandlerFunc(h.removeMember)),
+		{Method: http.MethodGet, Pattern: Base + "/members", Permission: authz.MemberRead, Handler: http.HandlerFunc(h.listMembers)},
+		{Method: http.MethodPost, Pattern: Base + "/local-users", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.createMember)},
+		{Method: http.MethodPatch, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.setMember)},
+		{Method: http.MethodDelete, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.removeMember)},
 
 		// Live sessions and their revocation.
-		authz.Authenticated(http.MethodGet, Base+"/sessions",
-			http.HandlerFunc(h.listSessions)),
-		authz.Authenticated(http.MethodDelete, Base+"/sessions/{session}",
-			http.HandlerFunc(h.revokeSession)),
+		{Method: http.MethodGet, Pattern: Base + "/sessions", Handler: http.HandlerFunc(h.listSessions)},
+		{Method: http.MethodDelete, Pattern: Base + "/sessions/{session}", Handler: http.HandlerFunc(h.revokeSession)},
 
 		// The tenant's own policy.
-		authz.Privileged(http.MethodGet, Base+"/policy",
-			authz.IdentityRead, http.HandlerFunc(h.readPolicy)),
-		authz.Privileged(http.MethodPut, Base+"/policy",
-			authz.IdentityConfigure, http.HandlerFunc(h.writePolicy)),
+		{Method: http.MethodGet, Pattern: Base + "/policy", Permission: authz.IdentityRead, Handler: http.HandlerFunc(h.readPolicy)},
+		{Method: http.MethodPut, Pattern: Base + "/policy", Permission: authz.IdentityConfigure, Handler: http.HandlerFunc(h.writePolicy)},
 
 		// The record.
-		authz.Privileged(http.MethodGet, Base+"/audit-events",
-			authz.AuditRead, http.HandlerFunc(h.auditEvents)),
+		{Method: http.MethodGet, Pattern: Base + "/audit-events", Permission: authz.AuditRead, Handler: http.HandlerFunc(h.auditEvents)},
 	}
-	return table
+}
+
+// Authentication is the public sign-in surface and authentication-owned sign-out handler.
+type Authentication struct {
+	LocalBootstrap http.Handler
+	LocalSignIn    http.Handler
+	OIDCStart      http.Handler
+	OIDCCallback   http.Handler
+	SignOut        http.Handler
+}
+
+// Authentication returns the public sign-in surface and authentication-owned sign-out handler.
+func (h Handlers) Authentication(origins []string) Authentication {
+	return Authentication{
+		LocalBootstrap: http.HandlerFunc(h.bootstrapLocalAdmin),
+		LocalSignIn:    http.HandlerFunc(h.localSignIn),
+		OIDCStart:      http.HandlerFunc(h.startDeploymentOIDCSignIn),
+		OIDCCallback:   http.HandlerFunc(h.completeDeploymentOIDCSignIn),
+		SignOut:        h.protectSignOut(origins),
+	}
+}
+
+func (h Handlers) protectSignOut(origins []string) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !authz.CookieOriginAllowed(request, origins) {
+			writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
+			return
+		}
+		session.Clear(writer)
+		principal, err := h.Resolve(request)
+		if errors.Is(err, authz.ErrNoCredential) || errors.Is(err, authz.ErrCredentialRejected) {
+			h.signOut(writer, request, authz.Principal{})
+			return
+		}
+		if err != nil || principal.IsZero() {
+			writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
+			return
+		}
+		h.signOut(writer, request, principal)
+	})
 }

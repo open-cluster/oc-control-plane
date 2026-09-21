@@ -25,7 +25,7 @@ func TestResolvedIncidentPostmortemDraftCanBeCorrectedRegeneratedAndReviewed(t *
 	if len(incidents.Items) != 1 || !incidents.Items[0].PostmortemEligible {
 		t.Fatalf("resolved incidents = %+v", incidents.Items)
 	}
-	base := "/api/v1/organizations/" + intakeOrganization + "/incidents/" +
+	base := "/api/v1/incidents/" +
 		incidents.Items[0].ID + "/postmortem"
 
 	status, body := plane.call(t, http.MethodPost, base, nil)

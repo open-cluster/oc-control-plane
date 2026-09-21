@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -26,10 +25,7 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	principal := sessionPrincipal(t, database, make([]byte, 32), user.ID)
 	signedIn, err := database.SessionByToken(ctx, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +66,7 @@ func TestPasswordMutationsRollBackWhenAuditFails(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			principal, _ := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
+			principal := sessionPrincipal(t, database, digest, user.ID)
 			connection, err := pgx.Connect(ctx, dsn)
 			if err != nil {
 				t.Fatal(err)
@@ -148,7 +144,7 @@ func TestRecoveryTargetsExistingLocalUserAndRevokesSessions(t *testing.T) {
 	if _, err = database.SessionByToken(ctx, digest); !errors.Is(err, session.ErrRevoked) {
 		t.Fatalf("recovery retained session: %v", err)
 	}
-	principal, _ := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", nil)
+	principal := sessionPrincipal(t, database, digest, user.ID)
 	if got, err := database.LocalPasswordHash(ctx, principal); err != nil || got != "replacement encoded password verifier" {
 		t.Fatalf("recovered verifier = %q: %v", got, err)
 	}

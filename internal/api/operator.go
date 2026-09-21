@@ -14,7 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
-	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -54,11 +53,10 @@ type Handlers struct {
 // Router returns the API surface, or the reason it cannot be built.
 func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
-		Resolve:             h.Identity.Resolve,
-		ResolveOrganization: h.Database.OrganizationExists,
-		Record:              h.recordRefusal,
-		Origins:             h.Origins,
-		Logger:              h.Logger,
+		Resolve: h.Identity.Resolve,
+		Record:  h.recordRefusal,
+		Origins: h.Origins,
+		Logger:  h.Logger,
 	}
 
 	router, err := authz.Router(h.Routes(), guard)
@@ -66,32 +64,26 @@ func (h Handlers) Router() (http.Handler, error) {
 		return nil, err
 	}
 
-	return correlation.Middleware(router), nil
+	return router, nil
 }
 
 // Routes is the whole application API.
-func (h Handlers) Routes() authz.Table {
+func (h Handlers) Routes() []authz.Route {
 	const relays = "/api/v1/relays"
 
-	routes := authz.Table{
-		authz.Privileged(http.MethodGet, relays, authz.RelayRead,
-			http.HandlerFunc(h.listRelays)),
-		// The summary comes BEFORE the fleet in the table for the same reason it comes before it
+	routes := []authz.Route{
+		{Method: http.MethodGet, Pattern: relays, Permission: authz.RelayRead, Handler: http.HandlerFunc(h.listRelays)},
+		// The summary comes before the relay list for the same reason it comes before it
 		// on a page: a hundred relays is a hundred rows, and a hundred rows is not an assessment.
-		authz.Privileged(http.MethodGet, relays+"/summary", authz.RelayRead,
-			http.HandlerFunc(h.relaySummary)),
-		authz.Privileged(http.MethodGet, relays+"/{registration}/integrations", authz.RelayRead,
-			http.HandlerFunc(h.relayIntegrations)),
-		authz.Privileged(http.MethodGet, relays+"/{registration}/failures", authz.RelayRead,
-			http.HandlerFunc(h.relayFailures)),
+		{Method: http.MethodGet, Pattern: relays + "/summary", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relaySummary)},
+		{Method: http.MethodGet, Pattern: relays + "/{registration}/integrations", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relayIntegrations)},
+		{Method: http.MethodGet, Pattern: relays + "/{registration}/failures", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relayFailures)},
 		// Withdrawing the mark clears an active credential-theft finding, so it is a permission
 		// of its own rather than part of reading the roster — and only the Admin holds it.
-		authz.Privileged(http.MethodPost, relays+"/{registration}/clear-conflict",
-			authz.RelayConflictClear, http.HandlerFunc(h.clearConflict)),
-		// Minting a credential that enrols a new Relay is not part of reading the fleet, so it
+		{Method: http.MethodPost, Pattern: relays + "/{registration}/clear-conflict", Permission: authz.RelayConflictClear, Handler: http.HandlerFunc(h.clearConflict)},
+		// Minting a credential that enrols a new Relay is not part of reading relays, so it
 		// is not covered by the permission that reads it.
-		authz.Privileged(http.MethodPost, relays+"/bootstrap-tokens",
-			authz.RelayBootstrapIssue, http.HandlerFunc(h.issueBootstrapToken)),
+		{Method: http.MethodPost, Pattern: relays + "/bootstrap-tokens", Permission: authz.RelayBootstrapIssue, Handler: http.HandlerFunc(h.issueBootstrapToken)},
 	}
 
 	routes = append(routes, h.Identity.Routes()...)
@@ -170,10 +162,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 
 // clearConflict withdraws the mark on a contested relay identity.
 func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, registration, ok := h.relay(writer, request)
 	if !ok {
 		return
@@ -208,52 +197,26 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 
 // caller resolves the principal the guard put on this request. Its absence is a route mounted
 // outside the permission table, which is a programming error rather than a runtime condition.
-func (h Handlers) caller(
-	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no principal; the route is mounted outside the permission table",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, false
-	}
-	return principal, true
+func (h Handlers) caller(request *http.Request) authz.Principal {
+	return authz.MustPrincipal(request.Context())
 }
 
 // callerName is who acted, for the log lines.
 func (h Handlers) callerName(request *http.Request) string {
-	principal, ok := authz.Of(request)
-	if !ok {
-		return request.RemoteAddr
-	}
+	principal := authz.MustPrincipal(request.Context())
 	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
 }
 
 // organization returns the tenant verified by the authorization middleware.
-func (h Handlers) organization(
-	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, bool) {
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no verified active organization",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
+func (h Handlers) organization(request *http.Request) tenancy.Organization {
+	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 // relay resolves the tenant and the relay named in the path, for the routes that address one.
 func (h Handlers) relay(
 	writer http.ResponseWriter, request *http.Request,
 ) (tenancy.Organization, uuid.UUID, bool) {
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return tenancy.Organization{}, uuid.UUID{}, false
-	}
+	organization := h.organization(request)
 	registration, err := uuid.Parse(request.PathValue("registration"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "registration is not an identity"})

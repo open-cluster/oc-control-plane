@@ -88,7 +88,6 @@ func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 		t.Fatal(err)
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
-	selectOrganizationFromURL(request)
 	response, err := transport.RoundTrip(request)
 	if err != nil {
 		t.Fatal(err)

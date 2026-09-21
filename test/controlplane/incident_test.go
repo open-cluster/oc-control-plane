@@ -106,7 +106,6 @@ func (p *incidentPlane) call(
 		t.Fatalf("building the request: %v", err)
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
-	selectOrganizationFromURL(request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", "http://"+p.operator)
 	}
@@ -171,7 +170,7 @@ type incidentAlertEventsBody struct {
 func (p *incidentPlane) incidents(t *testing.T, query string) incidentListBody {
 	t.Helper()
 
-	path := "/api/v1/organizations/" + intakeOrganization + "/incidents" + query
+	path := "/api/v1/incidents" + query
 	status, body := p.call(t, http.MethodGet, path, nil)
 	if status != http.StatusOK {
 		t.Fatalf("listing incidents answered %d: %s", status, body)
@@ -186,7 +185,7 @@ func (p *incidentPlane) incidents(t *testing.T, query string) incidentListBody {
 func (p *incidentPlane) incident(t *testing.T, id string) incidentBody {
 	t.Helper()
 
-	path := "/api/v1/organizations/" + intakeOrganization + "/incidents/" + id
+	path := "/api/v1/incidents/" + id
 	status, body := p.call(t, http.MethodGet, path, nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading incident %s answered %d: %s", id, status, body)
@@ -417,7 +416,7 @@ func TestIncidents_TheAlertEventsGroupedIntoAnIncidentAreReadable(t *testing.T) 
 	plane.deliver(t, grouped(key, "fp-second", "KubePodNotReady", began.Add(time.Minute)))
 
 	id := plane.incidents(t, "").Items[0].ID
-	path := "/api/v1/organizations/" + intakeOrganization + "/incidents/" + id + "/alert-events"
+	path := "/api/v1/incidents/" + id + "/alert-events"
 	status, body := plane.call(t, http.MethodGet, path, nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading an incident's alertEvents answered %d: %s", status, body)
@@ -451,8 +450,7 @@ func TestIncidents_AMergeRecordsTheCorrectionAndRewritesNothing(t *testing.T) {
 	absorbed, surviving := list.Items[0], list.Items[1]
 
 	const reason = "both are the checkout rollout; the deployment degraded because its pods crash"
-	path := "/api/v1/organizations/" + intakeOrganization +
-		"/incidents/" + absorbed.ID + "/merge"
+	path := "/api/v1/incidents/" + absorbed.ID + "/merge"
 	status, body := plane.call(t, http.MethodPost, path,
 		map[string]string{"into": surviving.ID, "reason": reason})
 	if status != http.StatusOK {
@@ -494,7 +492,7 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 	list := plane.incidents(t, "")
 	first, second := list.Items[0], list.Items[1]
 
-	base := "/api/v1/organizations/" + intakeOrganization + "/incidents/"
+	base := "/api/v1/incidents/"
 
 	// Into itself.
 	status, _ := plane.call(t, http.MethodPost, base+first.ID+"/merge",
@@ -543,7 +541,7 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 func TestIncidents_TheListingRefusesAFilterItCannotServe(t *testing.T) {
 	plane := startIncidents(t)
 
-	path := "/api/v1/organizations/" + intakeOrganization + "/incidents"
+	path := "/api/v1/incidents"
 	if status, _ := plane.call(t, http.MethodGet, path+"?status=resolvd", nil); status != http.StatusBadRequest {
 		t.Errorf("an unserveable status filter answered %d, want 400", status)
 	}
@@ -552,21 +550,6 @@ func TestIncidents_TheListingRefusesAFilterItCannotServe(t *testing.T) {
 	}
 	if status, _ := plane.call(t, http.MethodGet, path+"?sort=whenever", nil); status != http.StatusBadRequest {
 		t.Errorf("an unoffered sort answered %d, want 400", status)
-	}
-}
-
-// An incident belongs to the tenant whose Integration delivered it and to no other. A caller naming
-// another organization is answered exactly as one naming an organization that does not exist.
-func TestIncidents_AreReachableOnlyByTheTenantWhoseIntegrationDeliveredThem(t *testing.T) {
-	plane := startIncidents(t)
-	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
-	plane.deliver(t, grouped(`{}:{alertname="A"}`, "fp-a", "A", began))
-
-	id := plane.incidents(t, "").Items[0].ID
-	status, _ := plane.call(t, http.MethodGet,
-		"/api/v1/organizations/"+neighbourOrg+"/incidents/"+id, nil)
-	if status != http.StatusNotFound {
-		t.Errorf("reading another tenant's incident answered %d, want 404", status)
 	}
 }
 

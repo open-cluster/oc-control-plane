@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
@@ -289,7 +288,7 @@ func (p *identityPlane) waitForOperatorSurface(t *testing.T) {
 }
 
 func (p *identityPlane) base(organization string) string {
-	return "http://" + p.operator + "/api/v1/organizations/" + organization
+	return "http://" + p.operator + "/api/v1"
 }
 
 // answer is one exchange with the operator surface, as a caller observes it.
@@ -329,7 +328,6 @@ func (p *identityPlane) call(
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	selectOrganizationFromURL(request)
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
@@ -371,12 +369,6 @@ func asBootstrap(request *http.Request) {
 func asSession(token string) func(*http.Request) {
 	return func(request *http.Request) {
 		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: token})
-	}
-}
-
-func inOrganization(name string) func(*http.Request) {
-	return func(request *http.Request) {
-		request.Header.Set(authz.OrganizationHeader, name)
 	}
 }
 

@@ -11,9 +11,6 @@ func TestPostmortemRoutesMatchThePublicContract(t *testing.T) {
 	t.Parallel()
 
 	routes := (Handlers{}).Routes()
-	if err := routes.Validate(); err != nil {
-		t.Fatal(err)
-	}
 	base := "/api/v1/incidents/{incident}/postmortem"
 	want := map[string]authz.Permission{
 		http.MethodGet + " " + base:                  authz.PostmortemRead,
@@ -26,8 +23,9 @@ func TestPostmortemRoutesMatchThePublicContract(t *testing.T) {
 		t.Fatalf("routes = %d, want %d", len(routes), len(want))
 	}
 	for _, route := range routes {
-		if permission, ok := want[route.Key()]; !ok || route.Permission() != permission {
-			t.Errorf("route %q permission %q", route.Key(), route.Permission())
+		key := route.Method + " " + route.Pattern
+		if permission, ok := want[key]; !ok || route.Permission != permission {
+			t.Errorf("route %q permission %q", key, route.Permission)
 		}
 	}
 }

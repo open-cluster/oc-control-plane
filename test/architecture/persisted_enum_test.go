@@ -195,8 +195,8 @@ var enumColumns = map[string]map[string][]int{
 	"lease.go":        {"status": jobStatusValues},
 	"result.go":       {"status": jobStatusValues},
 	"cancellation.go": {"status": jobStatusValues},
-	// The fleet counts leased jobs to report what the relays are holding.
-	"fleet.go":       {"status": jobStatusValues},
+	// Relay counts include leased jobs to report what the relays are holding.
+	"relays.go":      {"status": jobStatusValues},
 	"webhook_job.go": {"status": webhookJobStatusValues},
 	"webhook_delivery.go": {
 		"status": webhookJobStatusValues,

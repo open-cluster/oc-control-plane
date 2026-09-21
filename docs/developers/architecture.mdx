@@ -12,7 +12,7 @@ The Relay performs closed Kubernetes reads from the customer boundary. Provider 
 
 See the repository `ARCHITECTURE.md` for implementation details.
 
-Product requests authenticate a User, select one Organization, and cross one declared
+Product requests authenticate a User, resolve their current Organization, and cross one declared
 route table into a domain handler. Only the PostgreSQL adapter touches deployment data,
 and every Organization-owned query predicates on its identifier. Webhook intake
 has separate authentication and contracts even though it shares the HTTP server;

@@ -44,10 +44,10 @@ func TestDirectInvestigationCreationRejectsQuestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, "operator", "Operator", []authz.Membership{{
+	principal, err := authz.NewPrincipal(authz.KindUser, "operator", "Operator", authz.Membership{
 		Organization: organization,
 		Role:         authz.Editor,
-	}})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +58,6 @@ func TestDirectInvestigationCreationRejectsQuestions(t *testing.T) {
 		Logger: logger,
 	}.Routes(), authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) { return principal, nil },
-		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
-			return true, nil
-		},
 		Origins: []string{"https://console.example.com"},
 		Logger:  logger,
 	})
@@ -72,7 +69,6 @@ func TestDirectInvestigationCreationRejectsQuestions(t *testing.T) {
 		bytes.NewBufferString(`{"question":"why is checkout slow?"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://console.example.com")
-	request.Header.Set(authz.OrganizationHeader, organization.String())
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 
@@ -90,10 +86,10 @@ func TestCanonicalInvestigationDetailContainsOnlyTheInvestigationAndToolRuns(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, "operator", "Operator", []authz.Membership{{
+	principal, err := authz.NewPrincipal(authz.KindUser, "operator", "Operator", authz.Membership{
 		Organization: organization,
 		Role:         authz.Viewer,
-	}})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +106,6 @@ func TestCanonicalInvestigationDetailContainsOnlyTheInvestigationAndToolRuns(t *
 		Logger: logger,
 	}.Routes(), authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) { return principal, nil },
-		ResolveOrganization: func(context.Context, tenancy.Organization) (bool, error) {
-			return true, nil
-		},
 		Origins: []string{"https://console.example.com"},
 		Logger:  logger,
 	})
@@ -121,7 +114,6 @@ func TestCanonicalInvestigationDetailContainsOnlyTheInvestigationAndToolRuns(t *
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/investigations/"+id.String(), nil)
-	request.Header.Set(authz.OrganizationHeader, organization.String())
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -151,15 +143,15 @@ func TestInvestigationCancellationIsAnExplicitAuthorizedOperatorRoute(t *testing
 
 	const pattern = "/api/v1/investigations/{investigation}/cancel"
 	for _, route := range (Handlers{}).Routes() {
-		if route.Method() != http.MethodPost || route.Pattern() != pattern {
+		if route.Method != http.MethodPost || route.Pattern != pattern {
 			continue
 		}
-		if route.Permission() != authz.Permission("investigation.cancel") {
-			t.Fatalf("cancellation permission = %q, want investigation.cancel", route.Permission())
+		if route.Permission != authz.Permission("investigation.cancel") {
+			t.Fatalf("cancellation permission = %q, want investigation.cancel", route.Permission)
 		}
-		if !authz.Grants(authz.Admin, route.Permission()) ||
-			!authz.Grants(authz.Editor, route.Permission()) ||
-			authz.Grants(authz.Viewer, route.Permission()) {
+		if !authz.Grants(authz.Admin, route.Permission) ||
+			!authz.Grants(authz.Editor, route.Permission) ||
+			authz.Grants(authz.Viewer, route.Permission) {
 			t.Fatal("cancellation must be granted to administrators and editors, never viewers")
 		}
 		return
@@ -182,14 +174,14 @@ func TestInvestigationRoutesAreTheCanonicalFive(t *testing.T) {
 		t.Fatalf("investigation routes = %d, want %d", len(routes), len(want))
 	}
 	for _, route := range routes {
-		key := route.Method() + " " + route.Pattern()
+		key := route.Method + " " + route.Pattern
 		permission, ok := want[key]
 		if !ok {
 			t.Errorf("unexpected investigation route %s", key)
 			continue
 		}
-		if route.Permission() != permission {
-			t.Errorf("%s permission = %q, want %q", key, route.Permission(), permission)
+		if route.Permission != permission {
+			t.Errorf("%s permission = %q, want %q", key, route.Permission, permission)
 		}
 	}
 }

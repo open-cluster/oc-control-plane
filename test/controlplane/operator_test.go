@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
@@ -59,7 +58,7 @@ func TestOperatorSurface(t *testing.T) {
 	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	base := "http://" + operatorAddress + "/api/v1/organizations/" + organization
+	base := "http://" + operatorAddress + "/api/v1"
 
 	var refusals []string
 	t.Run("nothing is served without the token", func(t *testing.T) {
@@ -214,14 +213,6 @@ func TestOperatorSurface(t *testing.T) {
 		}
 	})
 
-	t.Run("an organization this deployment does not serve is not found", func(t *testing.T) {
-		status, _ := operatorRequest(t, http.MethodGet,
-			"http://"+operatorAddress+"/api/v1/organizations/"+neighbourOrg+"/relays", token)
-		if status != http.StatusNotFound {
-			t.Errorf("an unserved organization returned %d, want 404", status)
-		}
-	})
-
 	t.Run("the token reaches no log line", func(t *testing.T) {
 		if strings.Contains(plane.logs.String(), token) {
 			t.Error("the bootstrap token appears in the logs")
@@ -229,58 +220,45 @@ func TestOperatorSurface(t *testing.T) {
 	})
 }
 
-func TestActiveOrganizationSelectorAtTheComposedHTTPSurface(t *testing.T) {
+func TestRequestCannotSelectAnotherOrganization(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 	})
-	const path = "/api/v1/relays"
-
-	for _, testCase := range []struct {
-		name   string
-		values []string
-	}{
-		{name: "missing"},
-		{name: "repeated", values: []string{"local", "local"}},
-		{name: "malformed", values: []string{"local organization"}},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			request, err := http.NewRequest(http.MethodGet, plane.baseURL+path, nil)
-			if err != nil {
-				t.Fatalf("build request: %v", err)
-			}
-			request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
-			for _, value := range testCase.values {
-				request.Header.Add(authz.OrganizationHeader, value)
-			}
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				t.Fatalf("call request: %v", err)
-			}
-			defer func() { _ = response.Body.Close() }()
-			if response.StatusCode != http.StatusBadRequest {
-				t.Errorf("%s selector answered %d, want 400", testCase.name, response.StatusCode)
-			}
-		})
+	call := func(t *testing.T, method, path, body string, mutate func(*http.Request)) int {
+		t.Helper()
+		request, err := http.NewRequest(method, plane.baseURL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
+		if mutate != nil {
+			mutate(request)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("call request: %v", err)
+		}
+		defer func() { _ = response.Body.Close() }()
+		return response.StatusCode
 	}
 
-	body := strings.NewReader(`{"organization":"other"}`)
-	request, err := http.NewRequest(http.MethodPost,
-		plane.baseURL+"/api/v1/local-users", body)
-	if err != nil {
-		t.Fatalf("build body-conflict request: %v", err)
+	if status := call(t, http.MethodGet, "/api/v1/relays", "", func(request *http.Request) {
+		request.Header.Set("X-OpenCluster-Organization", neighbourOrg)
+	}); status != http.StatusOK {
+		t.Errorf("retired header changed the resolved Organization: status %d", status)
 	}
-	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: plane.sessionCookie})
-	request.Header.Set(authz.OrganizationHeader, "local")
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Origin", plane.baseURL)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("call body-conflict request: %v", err)
+	if status := call(t, http.MethodGet, "/api/v1/relays?organization="+neighbourOrg, "", nil); status != http.StatusBadRequest {
+		t.Errorf("Organization query was accepted: status %d", status)
 	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusBadRequest {
-		t.Errorf("body-supplied Organization answered %d, want 400", response.StatusCode)
+	if status := call(t, http.MethodGet, "/api/v1/organizations/"+neighbourOrg+"/relays", "", nil); status != http.StatusNotFound {
+		t.Errorf("Organization path was accepted: status %d", status)
+	}
+	if status := call(t, http.MethodPost, "/api/v1/local-users", `{"organization":"`+neighbourOrg+`"}`, func(request *http.Request) {
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", plane.baseURL)
+	}); status != http.StatusBadRequest {
+		t.Errorf("Organization body was accepted: status %d", status)
 	}
 }
 
@@ -373,7 +351,6 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 	if token != "" {
 		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: token})
 	}
-	selectOrganizationFromURL(request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set("Origin", request.URL.Scheme+"://"+request.URL.Host)
 	}

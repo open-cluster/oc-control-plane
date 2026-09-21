@@ -3,7 +3,6 @@ package authz
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -24,12 +23,12 @@ const (
 	KindSystem Kind = Kind(audit.ActorSystem)
 )
 
-// Principal is who is making a request, and which Organizations they hold a role in.
+// Principal is the complete identity and tenant boundary for one authenticated request.
 type Principal struct {
 	kind          Kind
 	id            string
 	displayName   string
-	memberships   map[string]Membership
+	membership    Membership
 	credentialID  string
 	sourceAddress string
 	requestID     string
@@ -58,13 +57,17 @@ type Membership struct {
 }
 
 func NewPrincipal(
-	kind Kind, id, displayName string, memberships []Membership,
+	kind Kind, id, displayName string, membership Membership,
 ) (Principal, error) {
 	switch kind {
 	case KindUser:
 		if strings.TrimSpace(id) == "" {
 			return Principal{}, fmt.Errorf("%w: a %s must have an identifier",
 				ErrInvalidPrincipal, audit.ActorKind(kind))
+		}
+		if membership.Organization.IsEmpty() || !KnownRole(membership.Role) {
+			return Principal{}, fmt.Errorf("%w: a user must have one Organization and Role",
+				ErrInvalidPrincipal)
 		}
 	case KindSystem:
 	default:
@@ -76,18 +79,11 @@ func NewPrincipal(
 			"%d bytes", ErrInvalidPrincipal, maxIdentifierLength)
 	}
 
-	held := make(map[string]Membership, len(memberships))
-	for _, membership := range memberships {
-		if membership.Organization.IsEmpty() || !KnownRole(membership.Role) {
-			continue
-		}
-		held[membership.Organization.String()] = membership
-	}
 	return Principal{
 		kind:        kind,
 		id:          strings.TrimSpace(id),
 		displayName: strings.TrimSpace(displayName),
-		memberships: held,
+		membership:  membership,
 	}, nil
 }
 
@@ -125,39 +121,17 @@ func (p Principal) SourceAddress() string { return p.sourceAddress }
 // RequestID ties this principal's events to the log lines for the same request.
 func (p Principal) RequestID() string { return p.requestID }
 
-// RoleIn reports the role this principal holds in an organization.
-func (p Principal) RoleIn(organization tenancy.Organization) (Role, bool) {
-	membership, member := p.memberships[organization.String()]
-	return membership.Role, member
-}
+// Organization is the sole tenant resolved during authentication.
+func (p Principal) Organization() tenancy.Organization { return p.membership.Organization }
 
-// MemberOf reports whether this principal holds any role in an organization.
-func (p Principal) MemberOf(organization tenancy.Organization) bool {
-	_, member := p.memberships[organization.String()]
-	return member
-}
+// OrganizationDisplayName is the current Organization's human-facing name.
+func (p Principal) OrganizationDisplayName() string { return p.membership.DisplayName }
 
-// CanDo reports whether this principal may perform something in an organization.
-func (p Principal) CanDo(organization tenancy.Organization, permission Permission) bool {
-	role, member := p.RoleIn(organization)
-	return member && role.Grants(permission)
-}
+// Role is the current Role resolved during authentication.
+func (p Principal) Role() Role { return p.membership.Role }
 
-// Memberships reports every organization this principal holds a role in, sorted by identifier
-// so that the session response is stable across requests.
-func (p Principal) Memberships() []Membership {
-	names := make([]string, 0, len(p.memberships))
-	for name := range p.memberships {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-
-	listed := make([]Membership, 0, len(names))
-	for _, name := range names {
-		listed = append(listed, p.memberships[name])
-	}
-	return listed
-}
+// Can reports whether the current Role grants a Permission.
+func (p Principal) Can(permission Permission) bool { return p.membership.Role.Grants(permission) }
 
 // Actor is how this principal appears in the record. The display name is copied here rather
 // than joined at read time, so renaming or deleting a user never rewrites what the record says

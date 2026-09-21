@@ -75,9 +75,24 @@ func memberOf(
 	t.Helper()
 
 	principal, err := authz.NewPrincipal(authz.KindUser, "user-under-test", "Test Operator",
-		[]authz.Membership{{Organization: organization, Role: role}})
+		authz.Membership{Organization: organization, Role: role})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)
+	}
+	return principal
+}
+
+func sessionPrincipal(
+	t *testing.T, database *storage.Database, digest []byte, user uuid.UUID,
+) authz.Principal {
+	t.Helper()
+	signedIn, err := database.SessionByToken(context.Background(), digest)
+	if err != nil {
+		t.Fatalf("resolving session principal: %v", err)
+	}
+	principal, err := authz.NewPrincipal(authz.KindUser, user.String(), "Admin", signedIn.Memberships[0])
+	if err != nil {
+		t.Fatalf("building session principal: %v", err)
 	}
 	return principal
 }

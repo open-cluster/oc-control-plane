@@ -60,7 +60,7 @@ func (p *Database) ListRelays(
 	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
 	query RelayQuery,
 ) (RelayRoster, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return RelayRoster{}, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)

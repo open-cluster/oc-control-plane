@@ -26,14 +26,8 @@ var relayListSpec = listing.Spec{
 }
 
 func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	query, ok := h.query(writer, request, relayListSpec)
 	if !ok {
 		return
@@ -89,18 +83,12 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 // the counts cannot disagree with each other the way separate reads at separate moments would —
 // a summary saying eleven connected out of ten is worse than no summary.
 func (h Handlers) relaySummary(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	summary, err := h.Database.FleetSummary(ctx, principal, organization, relay.LivenessAllowance)
+	summary, err := h.Database.CountRelays(ctx, principal, organization, relay.LivenessAllowance)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -119,10 +107,7 @@ func (h Handlers) relaySummary(writer http.ResponseWriter, request *http.Request
 // relayIntegrations lists what a Relay serves, so an operator knows what disabling it
 // costs before they disable it.
 func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, registration, ok := h.relay(writer, request)
 	if !ok {
 		return
@@ -162,10 +147,7 @@ func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Re
 }
 
 func (h Handlers) relayFailures(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, registration, ok := h.relay(writer, request)
 	if !ok {
 		return
@@ -219,14 +201,8 @@ var relayIntegrationsSpec = listing.Spec{
 // operator who loses it issues another rather than recovering this one. The expiry is stated in
 // the response, because a credential with no visible lifetime is one somebody puts in a wiki.
 func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
+	organization := h.organization(request)
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 

@@ -31,18 +31,14 @@ type Handlers struct {
 // Reading a grouping and CHANGING one are separate permissions. Reading is what everybody looking
 // at the tenant does; regrouping decides what an incident is about, and so what an investigation
 // opened for it would be scoped to.
-func (h Handlers) Routes() authz.Table {
+func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/incidents"
 
-	return authz.Table{
-		authz.Privileged(http.MethodGet, base, authz.IncidentRead,
-			http.HandlerFunc(h.list)),
-		authz.Privileged(http.MethodGet, base+"/{incident}", authz.IncidentRead,
-			http.HandlerFunc(h.incident)),
-		authz.Privileged(http.MethodGet, base+"/{incident}/alert-events", authz.IncidentRead,
-			http.HandlerFunc(h.alertEvents)),
-		authz.Privileged(http.MethodPost, base+"/{incident}/merge", authz.IncidentMerge,
-			http.HandlerFunc(h.merge)),
+	return []authz.Route{
+		{Method: http.MethodGet, Pattern: base, Permission: authz.IncidentRead, Handler: http.HandlerFunc(h.list)},
+		{Method: http.MethodGet, Pattern: base + "/{incident}", Permission: authz.IncidentRead, Handler: http.HandlerFunc(h.incident)},
+		{Method: http.MethodGet, Pattern: base + "/{incident}/alert-events", Permission: authz.IncidentRead, Handler: http.HandlerFunc(h.alertEvents)},
+		{Method: http.MethodPost, Pattern: base + "/{incident}/merge", Permission: authz.IncidentMerge, Handler: http.HandlerFunc(h.merge)},
 	}
 }
 
@@ -54,10 +50,7 @@ var incidentsSpec = listing.Spec{
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return
-	}
+	organization := h.organization(request)
 	parsedQuery, ok := h.query(writer, request, incidentsSpec)
 	if !ok {
 		return
@@ -133,10 +126,7 @@ func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request)
 // direction is the one an operator is in: they are looking at a duplicate and saying where it
 // belongs, rather than looking at the survivor and listing what to absorb into it.
 func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := h.caller(writer, request)
-	if !ok {
-		return
-	}
+	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
@@ -228,27 +218,14 @@ func (h Handlers) query(
 	return parsed, true
 }
 
-func (h Handlers) organization(
-	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, bool) {
-	organization, ok := authz.ActiveOrganizationFrom(request.Context())
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no verified active organization",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return tenancy.Organization{}, false
-	}
-	return organization, true
+func (h Handlers) organization(request *http.Request) tenancy.Organization {
+	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
 ) (tenancy.Organization, uuid.UUID, bool) {
-	organization, ok := h.organization(writer, request)
-	if !ok {
-		return tenancy.Organization{}, uuid.UUID{}, false
-	}
+	organization := h.organization(request)
 	id, err := uuid.Parse(request.PathValue("incident"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "incident is not an identity"})
@@ -257,28 +234,14 @@ func (h Handlers) addressed(
 	return organization, id, true
 }
 
-// caller resolves the principal the guard put on this request. A handler behind the guard always
-// has one; its absence is a route mounted outside the permission table, which is a programming
-// error answered with a 500 and a log line rather than a panic.
-func (h Handlers) caller(
-	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, bool) {
-	principal, ok := authz.Of(request)
-	if !ok {
-		h.Logger.ErrorContext(request.Context(),
-			"a handler ran with no principal; the route is mounted outside the permission table",
-			slog.String("path", request.URL.Path))
-		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
-		return authz.Principal{}, false
-	}
-	return principal, true
+// caller returns the Principal guaranteed by the protected router. Its absence is a programming
+// error and MustPrincipal panics.
+func (h Handlers) caller(request *http.Request) authz.Principal {
+	return authz.MustPrincipal(request.Context())
 }
 
 func (h Handlers) callerName(request *http.Request) string {
-	principal, ok := authz.Of(request)
-	if !ok {
-		return request.RemoteAddr
-	}
+	principal := authz.MustPrincipal(request.Context())
 	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
 }
 

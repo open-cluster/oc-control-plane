@@ -146,7 +146,7 @@ func (p *Database) ClearSessionConflict(
 	organization tenancy.Organization,
 	registrationID uuid.UUID,
 ) (ConflictWithdrawal, error) {
-	if !principal.MemberOf(organization) {
+	if principal.Organization() != organization {
 		return 0, ErrNotAMember
 	}
 	pool, err := p.Pool(organization)
