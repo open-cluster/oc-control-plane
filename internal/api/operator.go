@@ -73,16 +73,10 @@ func (h Handlers) Routes() []authz.Route {
 
 	routes := []authz.Route{
 		{Method: http.MethodGet, Pattern: relays, Permission: authz.RelayRead, Handler: http.HandlerFunc(h.listRelays)},
-		// The summary comes before the relay list for the same reason it comes before it
-		// on a page: a hundred relays is a hundred rows, and a hundred rows is not an assessment.
 		{Method: http.MethodGet, Pattern: relays + "/summary", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relaySummary)},
 		{Method: http.MethodGet, Pattern: relays + "/{registration}/integrations", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relayIntegrations)},
 		{Method: http.MethodGet, Pattern: relays + "/{registration}/failures", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relayFailures)},
-		// Withdrawing the mark clears an active credential-theft finding, so it is a permission
-		// of its own rather than part of reading the roster — and only the Admin holds it.
 		{Method: http.MethodPost, Pattern: relays + "/{registration}/clear-conflict", Permission: authz.RelayConflictClear, Handler: http.HandlerFunc(h.clearConflict)},
-		// Minting a credential that enrols a new Relay is not part of reading relays, so it
-		// is not covered by the permission that reads it.
 		{Method: http.MethodPost, Pattern: relays + "/bootstrap-tokens", Permission: authz.RelayBootstrapIssue, Handler: http.HandlerFunc(h.issueBootstrapToken)},
 	}
 

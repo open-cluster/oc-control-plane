@@ -12,36 +12,18 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// PER-CALL REASONING TELEMETRY, AND WHY IT IS NOT A TABLE.
-//
-// Everything a debugging engineer wants per model call — provider, the model that
-// answered, request identifier, stop reason, latency, and token decomposition — lands in the existing
-// observability stack: one span and one structured log line per Provider.Complete,
-// plus low-cardinality instruments. The one per-investigation product fact, stopped_by,
-// is a column; nothing else is.
-//
-// NO ORGANIZATION LABEL ON ANY INSTRUMENT — tenant identity belongs on spans, and the
-// reasoning boundary does not even carry one. Metric attributes are the configured
-// provider and model, this build's own bounded strings, never anything a response said.
-
 // meterName identifies this surface's instruments and spans: the package path, so a
 // metric found in a dashboard leads back to the code that emits it.
 const meterName = "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 
-// Telemetry emits the per-call signal. A nil *Telemetry disables observation without
-// disabling reasoning.
 type Telemetry struct {
-	logger *slog.Logger
-	tracer trace.Tracer
-
+	logger  *slog.Logger
+	tracer  trace.Tracer
 	calls   metric.Int64Counter
 	tokens  metric.Int64Counter
 	latency metric.Float64Histogram
 }
 
-// NewTelemetry builds the instruments. A failure to construct one is logged and leaves
-// it nil — every emit tolerates that, because telemetry that refuses to start would
-// take investigations with it.
 func NewTelemetry(logger *slog.Logger) *Telemetry {
 	meter := otel.Meter(meterName)
 	built := &Telemetry{
@@ -68,8 +50,7 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 	return built
 }
 
-// complete runs one provider call inside its span and emits the call's telemetry. It is
-// the one wrapper around Provider.Complete, so no call can happen unobserved.
+// complete runs one provider call inside its span and emits the call's telemetry.
 func (t *Telemetry) complete(
 	ctx context.Context, provider Completer, config ModelConfig, prompt Prompt,
 ) (Completion, error) {

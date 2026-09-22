@@ -10,7 +10,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
-// maxIdentifierLength bounds a principal's identifier and display name.
 const maxIdentifierLength = 256
 
 var ErrInvalidPrincipal = errors.New("invalid principal")
@@ -23,7 +22,6 @@ const (
 	KindSystem Kind = Kind(audit.ActorSystem)
 )
 
-// Principal is the complete identity and tenant boundary for one authenticated request.
 type Principal struct {
 	kind          Kind
 	id            string
@@ -35,7 +33,6 @@ type Principal struct {
 	sessionInfo   SessionInfo
 }
 
-// SessionInfo contains identity metadata verified during request authentication.
 type SessionInfo struct {
 	Email                string
 	AuthenticationMethod string
@@ -56,9 +53,7 @@ type Membership struct {
 	Role         Role
 }
 
-func NewPrincipal(
-	kind Kind, id, displayName string, membership Membership,
-) (Principal, error) {
+func NewPrincipal(kind Kind, id, displayName string, membership Membership) (Principal, error) {
 	switch kind {
 	case KindUser:
 		if strings.TrimSpace(id) == "" {

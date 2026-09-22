@@ -103,7 +103,9 @@ func (h Handlers) fromSession(
 		method = "local"
 	}
 	return principal.WithCredential(signedIn.Session.ID.String()).WithSessionInfo(authz.SessionInfo{
-		Email: signedIn.User.Email, AuthenticationMethod: method, ExpiresAt: signedIn.Session.ExpiresAt,
+		Email:                signedIn.User.Email,
+		AuthenticationMethod: method,
+		ExpiresAt:            signedIn.Session.ExpiresAt,
 	}), nil
 }
 
