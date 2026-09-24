@@ -122,11 +122,12 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()), AuditRetentionDays: body.AuditRetentionDays, AuditRetentionEnforced: true})
+	writeJSON(w, http.StatusOK, policyView{
+		SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()),
+		AuditRetentionDays:     body.AuditRetentionDays,
+		AuditRetentionEnforced: true})
 }
 
-// Audit access is read-only and events are returned newest first so investigations start
-// from the most recent change.
 func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {
 	query, ok := listQuery(writer, request, listing.Spec{
 		DefaultSort: listing.Sort{Field: "occurredAt", Descending: true},
