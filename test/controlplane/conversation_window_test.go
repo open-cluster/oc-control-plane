@@ -17,7 +17,7 @@ func TestConversationAcceptsExplicitQuestionWindow(t *testing.T) {
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{}})
-	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	for _, invalid := range []map[string]any{
 		{"windowFrom": "2026-08-01T08:00:00Z"},
 		{"windowUntil": "2026-08-01T10:00:00Z"},

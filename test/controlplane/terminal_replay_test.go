@@ -19,7 +19,7 @@ func TestCompletedInvestigationReplaysOneCanonicalEnding(t *testing.T) {
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{}})
-	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "terminal replay", "what happened?")
 	final := plane.awaitInvestigation(t, turn)
 	var result struct {

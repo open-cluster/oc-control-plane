@@ -60,7 +60,7 @@ func TestEventStreamThroughSupportedProxy(t *testing.T) {
 	t.Parallel()
 	plane, _ := agentPlane(t, &blockingAgentMain{})
 	proxied := *plane
-	proxied.operator = startEventProxy(t, plane.operator)
+	proxied.api = startEventProxy(t, plane.api)
 	assertLiveEventStream(t, plane, &proxied)
 	_, turn := plane.openConversation(t, "proxy shutdown", "investigate checkout")
 	response := openEventStream(t, &proxied, turn, "")

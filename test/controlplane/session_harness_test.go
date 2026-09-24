@@ -409,7 +409,7 @@ func namedOrganization(t *testing.T, organization string) uuid.UUID {
 }
 
 // ownerOf is the principal a harness acts as when it arranges state through the store rather
-// than through the surface. Every operator-facing store function takes one, because the tenancy
+// than through the surface. Every application-facing store function takes one, because the tenancy
 // boundary is checked in storage as well as in the authorization middleware.
 func ownerOf(t *testing.T, organization uuid.UUID) authz.Principal {
 	t.Helper()

@@ -2,8 +2,10 @@ package identity
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -122,4 +124,63 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, policyView{SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()), AuditRetentionDays: body.AuditRetentionDays, AuditRetentionEnforced: true})
+}
+func (h Handlers) permissions(writer http.ResponseWriter, request *http.Request) {
+	query, ok := listQuery(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "name"},
+	})
+	if !ok {
+		return
+	}
+	principal := h.caller(request)
+	organization := principal.Organization()
+	role := principal.Role()
+	permissions := make([]string, 0, len(authz.Permissions()))
+	for _, permission := range authz.Permissions() {
+		if role.Grants(permission) {
+			permissions = append(permissions, string(permission))
+		}
+	}
+	slices.Sort(permissions)
+	permissions, next, err := listing.SlicePage(permissions, query)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"organizationId": organization.String(),
+		"role":           string(role),
+		"permissions":    permissions,
+		"next":           listing.CursorPtr(next),
+	})
+}
+
+// Audit access is read-only and events are returned newest first so investigations start
+// from the most recent change.
+func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {
+	query, ok := listQuery(writer, request, listing.Spec{
+		DefaultSort: listing.Sort{Field: "occurredAt", Descending: true},
+	})
+	if !ok {
+		return
+	}
+	principal := h.caller(request)
+	organization := h.organization(request)
+	ctx, cancel := contextWithTimeout(request, readTimeout)
+	defer cancel()
+
+	list, err := h.Database.AuditEvents(ctx, principal, organization, audit.Page{
+		Limit: query.Limit,
+		After: query.Cursor,
+	})
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+
+	views := make([]auditEventView, 0, len(list.Events))
+	for _, event := range list.Events {
+		views = append(views, auditEventViewOf(event))
+	}
+	writeJSON(writer, http.StatusOK, auditListView{Events: views, Next: list.Next})
 }

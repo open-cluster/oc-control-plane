@@ -32,7 +32,7 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: failedEventModel{}})
-	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "failure schema", "investigate checkout")
 	plane.awaitInvestigation(t, turn)
 	status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+"/events", nil)

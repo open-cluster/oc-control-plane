@@ -30,20 +30,20 @@ import (
 // serve the roster to a caller presenting nothing, and the first case would fail; one that
 // always failed would refuse the right token, and the reads would fail. Neither can be true of
 // a suite that is green.
-func TestOperatorSurface(t *testing.T) {
+func TestApplicationAPI(t *testing.T) {
 	const organization = surfaceOrg
 
 	// Long enough that the configuration accepts it, which is itself the point: a token short
 	// enough to guess is the same as no token on a cross-tenant surface.
 	const bootstrapToken = surfaceToken
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
 	var databaseDSN string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(bootstrapToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		// The credential names the one tenant it reaches. That binding is the whole difference
@@ -58,11 +58,11 @@ func TestOperatorSurface(t *testing.T) {
 	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	base := "http://" + operatorAddress + "/api/v1"
+	base := "http://" + apiAddress + "/api/v1"
 
 	var refusals []string
 	t.Run("nothing is served without the token", func(t *testing.T) {
-		status, body := operatorRequest(t, http.MethodGet, base+"/relays", "")
+		status, body := apiRequest(t, http.MethodGet, base+"/relays", "")
 		if status != http.StatusUnauthorized {
 			t.Fatalf("an unauthenticated read returned %d, want 401 — this surface reads "+
 				"across every tenant the instance serves", status)
@@ -71,7 +71,7 @@ func TestOperatorSurface(t *testing.T) {
 	})
 
 	t.Run("nor with the wrong one", func(t *testing.T) {
-		status, body := operatorRequest(t, http.MethodGet, base+"/relays",
+		status, body := apiRequest(t, http.MethodGet, base+"/relays",
 			"a-token-that-was-never-issued-and-is-long-enough")
 		if status != http.StatusUnauthorized {
 			t.Fatalf("a wrong token returned %d, want 401", status)
@@ -149,7 +149,7 @@ func TestOperatorSurface(t *testing.T) {
 	})
 
 	t.Run("a resume point that came from nowhere is refused", func(t *testing.T) {
-		status, _ := operatorRequest(t, http.MethodGet, base+"/relays?cursor=not-a-cursor", token)
+		status, _ := apiRequest(t, http.MethodGet, base+"/relays?cursor=not-a-cursor", token)
 		if status != http.StatusBadRequest {
 			t.Errorf("an invented cursor returned %d, want 400 — starting over silently would "+
 				"show the first page again and read as the last", status)
@@ -180,7 +180,7 @@ func TestOperatorSurface(t *testing.T) {
 	})
 
 	t.Run("an operator can withdraw the mark", func(t *testing.T) {
-		status, _ := operatorRequest(t, http.MethodPost,
+		status, _ := apiRequest(t, http.MethodPost,
 			base+"/relays/"+relay.registration.String()+"/clear-conflict", token)
 		if status != http.StatusNoContent {
 			t.Fatalf("clearing returned %d, want 204", status)
@@ -197,7 +197,7 @@ func TestOperatorSurface(t *testing.T) {
 	})
 
 	t.Run("withdrawing what is not marked changes nothing and says nothing", func(t *testing.T) {
-		status, _ := operatorRequest(t, http.MethodPost,
+		status, _ := apiRequest(t, http.MethodPost,
 			base+"/relays/"+relay.registration.String()+"/clear-conflict", token)
 		if status != http.StatusNoContent {
 			t.Fatalf("withdrawing an unmarked relay returned %d, want 204 — the state asked "+
@@ -206,7 +206,7 @@ func TestOperatorSurface(t *testing.T) {
 	})
 
 	t.Run("a relay that does not exist is not found", func(t *testing.T) {
-		status, _ := operatorRequest(t, http.MethodPost,
+		status, _ := apiRequest(t, http.MethodPost,
 			base+"/relays/1ef7e1cf-0000-4000-8000-000000000000/clear-conflict", token)
 		if status != http.StatusNotFound {
 			t.Errorf("clearing an unknown relay returned %d, want 404", status)
@@ -337,8 +337,7 @@ func secretFile(t *testing.T, name, contents string) string {
 	return path
 }
 
-// operatorRequest makes one call and returns its status and body.
-func operatorRequest(t *testing.T, method, url, token string) (int, string) {
+func apiRequest(t *testing.T, method, url, token string) (int, string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -368,7 +367,7 @@ func operatorRequest(t *testing.T, method, url, token string) (int, string) {
 	return response.StatusCode, string(body)
 }
 
-// These mirror what the operator surface sends. They are spelled out rather than decoded into
+// These mirror what the application API sends. They are spelled out rather than decoded into
 // a map so that a renamed field breaks here, where the contract is asserted, instead of in
 // whatever reads this months later and quietly stops seeing a finding.
 // The roster answers in the shared table envelope: `items`, `next`, `total`,
@@ -405,7 +404,7 @@ type conflictResponse struct {
 func readRoster(t *testing.T, url, token string) rosterResponse {
 	t.Helper()
 
-	status, body := operatorRequest(t, http.MethodGet, url, token)
+	status, body := apiRequest(t, http.MethodGet, url, token)
 	if status != http.StatusOK {
 		t.Fatalf("reading the roster returned %d: %s", status, body)
 	}

@@ -9,7 +9,7 @@ import (
 
 // Some persisted vocabularies are TEXT rather than integers: a finding's kind and
 // confidence live inside a JSONB document, and the ceiling that stopped an investigation
-// is a column an operator view and its clients key on. The integer gate beside this one
+// is a column the application API and its clients key on. The integer gate beside this one
 // cannot see them, and the compiler cannot either — renaming a constant's VALUE changes
 // what every stored row means while every call site keeps compiling.
 //
@@ -18,7 +18,7 @@ import (
 // persisted vocabulary is a decision, and this file is where it becomes visible.
 
 // TestPersistedFindingVocabularyIsFrozen holds the words stored inside investigation
-// findings. They travel to clients and are compared as strings by the operator surface.
+// findings. They travel to clients and are compared as strings by the application API.
 func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
 	t.Parallel()
 

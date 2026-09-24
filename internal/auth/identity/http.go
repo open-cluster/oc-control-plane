@@ -13,7 +13,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	authsession "github.com/open-cluster/oc-control-plane/internal/auth/session"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -40,8 +40,6 @@ func listQuery(writer http.ResponseWriter, request *http.Request, spec listing.S
 	return query, true
 }
 
-// decode reads a JSON body, answering the caller itself on a refusal so a handler either has a
-// body or has already returned.
 func decode(writer http.ResponseWriter, request *http.Request, into any) bool {
 	decoder := json.NewDecoder(io.LimitReader(request.Body, maxRequestBody))
 	// Unknown fields are refused rather than ignored. A caller who misspelled a field name
@@ -55,15 +53,12 @@ func decode(writer http.ResponseWriter, request *http.Request, into any) bool {
 	return true
 }
 
-// contextWithTimeout bounds one call. It is separate from the handler bodies so the bound is
-// visible in one place rather than repeated with a different number each time.
 func contextWithTimeout(
 	request *http.Request, budget time.Duration,
 ) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(request.Context(), budget)
 }
 
-// caller resolves the principal the guard put on this request.
 func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
@@ -103,7 +98,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusConflict, errorView{Error: "local account already exists"})
 	case errors.Is(err, storage.ErrMembershipUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "membership not found"})
-	case errors.Is(err, authsession.ErrUnknown):
+	case errors.Is(err, session.ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "session not found"})
 	case errors.Is(err, storage.ErrLastAdmin):
 		writeJSON(writer, http.StatusConflict, errorView{
@@ -129,4 +124,66 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
+}
+
+const Base = "/api/v1"
+
+func (h Handlers) Routes() []authz.Route {
+	return []authz.Route{
+		{Method: http.MethodPut, Pattern: Base + "/auth/local/password", Handler: http.HandlerFunc(h.changeLocalPassword)},
+
+		{Method: http.MethodGet, Pattern: Base + "/session", Handler: http.HandlerFunc(h.session)},
+		{Method: http.MethodGet, Pattern: Base + "/permissions", Handler: http.HandlerFunc(h.permissions)},
+
+		{Method: http.MethodGet, Pattern: Base + "/members", Permission: authz.MemberRead, Handler: http.HandlerFunc(h.listMembers)},
+		{Method: http.MethodPost, Pattern: Base + "/local-users", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.createMember)},
+		{Method: http.MethodPatch, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.setMember)},
+		{Method: http.MethodDelete, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.removeMember)},
+
+		{Method: http.MethodGet, Pattern: Base + "/sessions", Handler: http.HandlerFunc(h.listSessions)},
+		{Method: http.MethodDelete, Pattern: Base + "/sessions/{session}", Handler: http.HandlerFunc(h.revokeSession)},
+
+		{Method: http.MethodGet, Pattern: Base + "/policy", Permission: authz.IdentityRead, Handler: http.HandlerFunc(h.readPolicy)},
+		{Method: http.MethodPut, Pattern: Base + "/policy", Permission: authz.IdentityConfigure, Handler: http.HandlerFunc(h.writePolicy)},
+
+		{Method: http.MethodGet, Pattern: Base + "/audit-events", Permission: authz.AuditRead, Handler: http.HandlerFunc(h.auditEvents)},
+	}
+}
+
+type Authentication struct {
+	LocalBootstrap http.Handler
+	LocalSignIn    http.Handler
+	OIDCStart      http.Handler
+	OIDCCallback   http.Handler
+	SignOut        http.Handler
+}
+
+func (h Handlers) Authentication(origin string) Authentication {
+	return Authentication{
+		LocalBootstrap: http.HandlerFunc(h.bootstrapLocalAdmin),
+		LocalSignIn:    http.HandlerFunc(h.localSignIn),
+		OIDCStart:      http.HandlerFunc(h.startDeploymentOIDCSignIn),
+		OIDCCallback:   http.HandlerFunc(h.completeDeploymentOIDCSignIn),
+		SignOut:        h.protectSignOut(origin),
+	}
+}
+
+func (h Handlers) protectSignOut(origin string) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !authz.CookieOriginAllowed(request, origin) {
+			writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
+			return
+		}
+		session.Clear(writer)
+		principal, err := h.Resolve(request)
+		if errors.Is(err, authz.ErrNoCredential) || errors.Is(err, authz.ErrCredentialRejected) {
+			h.signOut(writer, request, authz.Principal{})
+			return
+		}
+		if err != nil || principal.IsZero() {
+			writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
+			return
+		}
+		h.signOut(writer, request, principal)
+	})
 }

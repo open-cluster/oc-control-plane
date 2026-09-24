@@ -4,13 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 )
+
+// Route declares one protected application endpoint.
+type Route struct {
+	Method     string
+	Pattern    string
+	Permission Permission
+	Handler    http.Handler
+}
+
+func routeID(route Route) string { return route.Method + " " + route.Pattern }
 
 // Guard holds the dependencies needed to protect the application API.
 type Guard struct {
@@ -75,4 +87,72 @@ func (g Guard) protect(route Route) http.Handler {
 		ctx := WithPrincipal(request.Context(), principal)
 		route.Handler.ServeHTTP(writer, request.WithContext(ctx))
 	})
+}
+
+// An unexported context key prevents callers outside this package from installing a Principal.
+type principalKey struct{}
+
+// WithPrincipal returns a context carrying the Principal resolved at an authentication boundary.
+func WithPrincipal(ctx context.Context, principal Principal) context.Context {
+	return context.WithValue(ctx, principalKey{}, principal)
+}
+
+// MustPrincipal returns the authenticated Principal installed by the protected router.
+func MustPrincipal(ctx context.Context) Principal {
+	principal, ok := ctx.Value(principalKey{}).(Principal)
+	if !ok || principal.IsZero() {
+		panic("authz: protected handler has no Principal")
+	}
+	return principal
+}
+
+func (g Guard) originIsAllowed(request *http.Request) bool {
+	switch request.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	return g.cookieOriginIsAllowed(request)
+}
+
+func (g Guard) cookieOriginIsAllowed(request *http.Request) bool {
+	return CookieOriginAllowed(request, g.Origin)
+}
+
+// CookieOriginAllowed checks an unsafe cookie request against the configured browser origin.
+func CookieOriginAllowed(request *http.Request, allowed string) bool {
+	origin := strings.TrimSpace(request.Header.Get("Origin"))
+	if origin == "" {
+		return false
+	}
+	return sameOrigin(origin, allowed)
+}
+
+func sameOrigin(presented, allowed string) bool {
+	first, err := url.Parse(presented)
+	if err != nil || !isOrigin(first) {
+		return false
+	}
+	second, err := url.Parse(strings.TrimSpace(allowed))
+	if err != nil || !isOrigin(second) {
+		return false
+	}
+	return strings.EqualFold(first.Scheme, second.Scheme) &&
+		strings.EqualFold(first.Hostname(), second.Hostname()) &&
+		portOf(first) == portOf(second)
+}
+
+func isOrigin(parsed *url.URL) bool {
+	return parsed.User == nil && parsed.Opaque == "" && parsed.Host != "" &&
+		(strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")) &&
+		(parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func portOf(parsed *url.URL) string {
+	if port := parsed.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }

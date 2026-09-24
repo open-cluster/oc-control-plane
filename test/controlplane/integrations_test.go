@@ -36,15 +36,15 @@ const (
 	alertmanagerAt = "2026-01-02T15:04:05Z"
 )
 
-// integrationPlane is a control plane with the operator surface and intake both listening,
+// integrationPlane is a control plane with the application API and intake both listening,
 // plus an enrolled relay for a kubernetes Integration to bind to.
 type integrationPlane struct {
 	*controlPlane
-	operator string
-	intake   string
-	relayAt  string
-	relay    relayCredentials
-	dsn      string
+	api     string
+	intake  string
+	relayAt string
+	relay   relayCredentials
+	dsn     string
 }
 
 func startIntegrationPlane(t *testing.T) *integrationPlane {
@@ -55,12 +55,12 @@ func startIntegrationPlane(t *testing.T) *integrationPlane {
 func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integrationPlane {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
-	intakeAddress := operatorAddress
+	intakeAddress := apiAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		cfg.HTTPListenAddress = intakeAddress
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
@@ -78,7 +78,7 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 	connection := dialRelay(t, relayAddress)
 	return &integrationPlane{
 		controlPlane: plane,
-		operator:     operatorAddress,
+		api:          apiAddress,
 		intake:       intakeAddress,
 		relayAt:      relayAddress,
 		relay:        registerRelay(t, connection, dsn, surfaceOrg),
@@ -87,10 +87,10 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 }
 
 func (p *integrationPlane) base(organization string) string {
-	return "http://" + p.operator + "/api/v1"
+	return "http://" + p.api + "/api/v1"
 }
 
-// call sends an authenticated operator request with an optional JSON body.
+// call sends an authenticated application API request with an optional JSON body.
 func (p *integrationPlane) call(
 	t *testing.T, method, url string, body any, headers ...http.Header,
 ) (int, string) {
@@ -113,7 +113,7 @@ func (p *integrationPlane) call(
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
-		request.Header.Set("Origin", "http://"+p.operator)
+		request.Header.Set("Origin", "http://"+p.api)
 	}
 	if reader != nil {
 		request.Header.Set("Content-Type", "application/json")

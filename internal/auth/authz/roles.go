@@ -1,8 +1,82 @@
 package authz
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
-import "strings"
+type Permission string
+
+const (
+	IntegrationRead         Permission = "integration.read"
+	IntegrationCreate       Permission = "integration.create"
+	IntegrationUpdate       Permission = "integration.update"
+	IntegrationDelete       Permission = "integration.delete"
+	IntegrationVerify       Permission = "integration.verify"
+	IntegrationSecretRotate Permission = "integration.webhook-secret.rotate"
+
+	RelayRead           Permission = "relay.read"
+	RelayConflictClear  Permission = "relay.conflict.clear"
+	RelayBootstrapIssue Permission = "relay.bootstrap-token.issue"
+
+	IncidentRead    Permission = "incident.read"
+	IncidentMerge   Permission = "incident.merge"
+	PostmortemRead  Permission = "postmortem.read"
+	PostmortemWrite Permission = "postmortem.write"
+
+	InvestigationRead     Permission = "investigation.read"
+	InvestigationOpen     Permission = "investigation.open"
+	InvestigationCancel   Permission = "investigation.cancel"
+	WebhookDeliveryReplay Permission = "webhook-delivery.replay"
+
+	ConversationRead  Permission = "conversation.read"
+	ConversationWrite Permission = "conversation.write"
+
+	IdentityRead      Permission = "identity.read"
+	IdentityConfigure Permission = "identity.configure"
+	MemberRead        Permission = "member.read"
+	MemberManage      Permission = "member.manage"
+
+	AuditRead Permission = "audit.read"
+)
+
+// allPermissions is every permission this build declares, in a stable order.
+var allPermissions = []Permission{
+	IntegrationRead,
+	IntegrationCreate,
+	IntegrationUpdate,
+	IntegrationDelete,
+	IntegrationVerify,
+	IntegrationSecretRotate,
+	RelayRead,
+	RelayConflictClear,
+	RelayBootstrapIssue,
+	IncidentRead,
+	IncidentMerge,
+	PostmortemRead,
+	PostmortemWrite,
+	InvestigationRead,
+	InvestigationOpen,
+	InvestigationCancel,
+	WebhookDeliveryReplay,
+	ConversationRead,
+	ConversationWrite,
+	IdentityRead,
+	IdentityConfigure,
+	MemberRead,
+	MemberManage,
+	AuditRead,
+}
+
+func Permissions() []Permission {
+	return append([]Permission(nil), allPermissions...)
+}
+
+// Declared reports whether a permission is one this build knows. A route requiring anything
+// else is a build failure rather than a route nobody can reach.
+func Declared(permission Permission) bool {
+	return slices.Contains(allPermissions, permission)
+}
 
 type Role string
 
@@ -37,14 +111,9 @@ var reads = map[Permission]bool{
 	AuditRead:         true,
 }
 
-// ReadOnly reports whether holding a permission can change anything. It is what the viewer
-// test asserts against, so a mutating permission added to the read-only role fails the
-// build.
 func ReadOnly(permission Permission) bool { return reads[permission] }
 
-// estateReads is what a role that may look at the tenant's operational record holds: the
-// integrations, the fleet, the incidents, the investigations, and what happened. Identity
-// and automation reads are deliberately not here — who may sign in is the Admin's to see.
+// Identity reads are deliberately excluded: who may sign in is the Admin's to see.
 var estateReads = []Permission{
 	IntegrationRead,
 	RelayRead,
@@ -55,8 +124,7 @@ var estateReads = []Permission{
 	AuditRead,
 }
 
-// granted is the table. It is the specification of each role, and it is the thing to read
-// when answering "what can an Editor do" — not the handlers.
+// granted is the compact specification of what each Role can do.
 var granted = map[Role]map[Permission]bool{
 	Admin: setOf(allPermissions...),
 
@@ -73,12 +141,9 @@ var granted = map[Role]map[Permission]bool{
 	Viewer: setOf(estateReads...),
 }
 
-// Grants reports whether this role holds a permission. An unrecognised role grants
-// nothing, which is what makes a corrupted column or an unmapped identity-provider group
-// safe.
+// Grants reports whether a Role holds a Permission. Unknown Roles grant nothing.
 func Grants(role Role, permission Permission) bool { return granted[role][permission] }
 
-// Grants reports whether this role holds a permission.
 func (r Role) Grants(permission Permission) bool { return Grants(r, permission) }
 
 func PermissionsOf(role Role) []Permission {

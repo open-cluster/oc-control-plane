@@ -160,13 +160,13 @@ func TestWebhookDeliveryReplayIsRefusedToEditorsAndViewers(t *testing.T) {
 		email := role + "@example.test"
 		password := "a sufficiently long " + role + " password"
 		member := plane.call(t, http.MethodPost,
-			"http://"+plane.operator+"/api/v1/local-users", map[string]any{
+			"http://"+plane.api+"/api/v1/local-users", map[string]any{
 				"email": email, "displayName": role, "role": role, "password": password,
 			}, asSession(admin))
 		if member.status != http.StatusCreated {
 			t.Fatalf("creating %s = %d: %s", role, member.status, member.body)
 		}
-		signedIn := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
+		signedIn := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/sign-in",
 			map[string]any{"email": email, "password": password})
 		if signedIn.status != http.StatusOK {
 			t.Fatalf("signing in %s = %d: %s", role, signedIn.status, signedIn.body)

@@ -65,7 +65,7 @@ func listeningAddress(t *testing.T, plane *controlPlane, message string) string 
 }
 
 // configureIntegration records an Alertmanager Integration, storing only the digest of its
-// webhook secret. It writes the row directly rather than going through the operator API:
+// webhook secret. It writes the row directly rather than going through the application API:
 // what these tests are about is the delivery path, and a second surface between them and it
 // would mean a failure here could be either one.
 func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.UUID {

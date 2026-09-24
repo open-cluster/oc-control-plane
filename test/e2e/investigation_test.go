@@ -59,7 +59,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 func (h *harness) assertInvestigation(t *testing.T) {
 	t.Helper()
 	base := "http://" + h.plane.httpAddress + "/api/v1"
-	status, body := h.operatorRequest(t, http.MethodPost,
+	status, body := h.apiRequest(t, http.MethodPost,
 		base+"/integrations/"+h.integration.String()+"/verify", nil)
 	if status != http.StatusOK {
 		t.Fatalf("verifying the real Relay integration = %d: %s", status, body)
@@ -76,7 +76,7 @@ func (h *harness) assertInvestigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating the investigation incident: %v", err)
 	}
-	status, body = h.operatorRequest(t, http.MethodPost, base+"/investigations",
+	status, body = h.apiRequest(t, http.MethodPost, base+"/investigations",
 		map[string]string{"incidentId": incident.String()})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening the investigation = %d: %s", status, body)
@@ -116,13 +116,13 @@ func (h *harness) assertInvestigation(t *testing.T) {
 		})
 }
 
-func (h *harness) operatorRequest(t *testing.T, method, url string, payload any) (int, []byte) {
+func (h *harness) apiRequest(t *testing.T, method, url string, payload any) (int, []byte) {
 	t.Helper()
 	var reader io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			t.Fatalf("encoding operator request: %v", err)
+			t.Fatalf("encoding API request: %v", err)
 		}
 		reader = bytes.NewReader(encoded)
 	}
@@ -130,7 +130,7 @@ func (h *harness) operatorRequest(t *testing.T, method, url string, payload any)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
-		t.Fatalf("creating operator request: %v", err)
+		t.Fatalf("creating API request: %v", err)
 	}
 	request.AddCookie(h.plane.session)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
@@ -139,12 +139,12 @@ func (h *harness) operatorRequest(t *testing.T, method, url string, payload any)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		t.Fatalf("sending operator request: %v", err)
+		t.Fatalf("sending API request: %v", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		t.Fatalf("reading operator response: %v", err)
+		t.Fatalf("reading API response: %v", err)
 	}
 	return response.StatusCode, body
 }

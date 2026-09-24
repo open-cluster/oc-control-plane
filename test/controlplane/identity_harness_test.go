@@ -225,24 +225,24 @@ func writeIssuerJSON(writer http.ResponseWriter, body any) {
 	_ = json.NewEncoder(writer).Encode(body)
 }
 
-// identityPlane is a control plane with the operator surface, a bootstrap credential bound to
+// identityPlane is a control plane with the application API, a bootstrap credential bound to
 // one organization, and a console origin the CSRF check will accept.
 type identityPlane struct {
 	*controlPlane
-	operator string
-	dsn      string
+	api string
+	dsn string
 }
 
 func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identityPlane {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(identityToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		cfg.PublicURL = "http://" + operatorAddress
+		cfg.PublicURL = "http://" + apiAddress
 		// A key, so a provider's client secret can be held at all. Without one, configuring a
 		// provider is refused rather than stored in the clear — which is itself asserted below.
 		cfg.SealingKey = make([]byte, 32)
@@ -257,41 +257,41 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 			apply(cfg)
 		}
 	})
-	identity := &identityPlane{controlPlane: plane, operator: operatorAddress, dsn: dsn}
-	identity.waitForOperatorSurface(t)
+	identity := &identityPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
+	identity.waitForAPISurface(t)
 	return identity
 }
 
-// waitForOperatorSurface blocks until the operator listener answers.
+// waitForAPISurface blocks until the application API listener answers.
 //
-// startControlPlane returns as soon as the HEALTH listener is up, and the operator surface is a
+// startControlPlane returns as soon as the health listener is up, and the application API is a
 // separate listener that binds afterwards. Without this the first request in a test races that
 // bind and fails as a refused connection — which reads as a product defect and is a harness
 // one. It also turns a genuine failure to assemble the surface into the reason for it rather
 // than a dial error, because the logs are printed.
-func (p *identityPlane) waitForOperatorSurface(t *testing.T) {
+func (p *identityPlane) waitForAPISurface(t *testing.T) {
 	t.Helper()
 
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		connection, err := net.DialTimeout("tcp", p.operator, time.Second)
+		connection, err := net.DialTimeout("tcp", p.api, time.Second)
 		if err == nil {
 			_ = connection.Close()
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the operator surface never listened on %s\nlogs:\n%s",
-				p.operator, p.logs.String())
+			t.Fatalf("the application API never listened on %s\nlogs:\n%s",
+				p.api, p.logs.String())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
 
 func (p *identityPlane) base(organization string) string {
-	return "http://" + p.operator + "/api/v1"
+	return "http://" + p.api + "/api/v1"
 }
 
-// answer is one exchange with the operator surface, as a caller observes it.
+// answer is one exchange with the application API, as a caller observes it.
 type answer struct {
 	status  int
 	body    string
@@ -331,7 +331,7 @@ func (p *identityPlane) call(
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
-		request.Header.Set("Origin", "http://"+p.operator)
+		request.Header.Set("Origin", "http://"+p.api)
 	}
 	for _, apply := range credential {
 		apply(request)

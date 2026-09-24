@@ -30,7 +30,7 @@ type sessionBody struct {
 
 func readSession(t *testing.T, plane *identityPlane, cookie string) sessionBody {
 	t.Helper()
-	answer := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil, asSession(cookie))
+	answer := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
 	if answer.status != http.StatusOK {
 		t.Fatalf("session = %d: %s", answer.status, answer.body)
 	}
@@ -44,7 +44,7 @@ func bootstrapIdentityAdmin(
 ) string {
 	t.Helper()
 	bootstrapped := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations", "email": email,
 			"displayName": displayName, "password": password,
 		}, asBootstrap)
@@ -60,7 +60,7 @@ func TestLocalBootstrapCreatesOrganizationAndAdmin(t *testing.T) {
 	plane := startIdentityPlane(t)
 
 	created := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Platform Team",
 			"email":            "ada@example.test",
 			"displayName":      "Ada Lovelace",
@@ -82,7 +82,7 @@ func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
 	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.SessionLifetime = lifetime })
 	before := time.Now().UTC()
 	created := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
@@ -124,7 +124,7 @@ func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
 func TestAdminCreatesLocalUserWithoutIdentityProviderChoice(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
@@ -133,7 +133,7 @@ func TestAdminCreatesLocalUserWithoutIdentityProviderChoice(t *testing.T) {
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 
 	created := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/local-users", map[string]any{
+		"http://"+plane.api+"/api/v1/local-users", map[string]any{
 			"email": "member@example.test", "displayName": "Member",
 			"role": "viewer", "password": "member password long enough",
 		}, asSession(admin))
@@ -153,7 +153,7 @@ func TestAdminCreatesLocalUserWithoutIdentityProviderChoice(t *testing.T) {
 func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
@@ -161,7 +161,7 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	admin := sessionCookie(t, bootstrapped)
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 	created := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/local-users", map[string]any{
+		"http://"+plane.api+"/api/v1/local-users", map[string]any{
 			"email": "member@example.test", "role": "viewer",
 			"password": "member password long enough",
 		}, asSession(admin))
@@ -170,12 +170,12 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 	}
 	decodeAnswer(t, created, &member)
 	signedIn := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/sign-in", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/sign-in", map[string]any{
 			"email": "member@example.test", "password": "member password long enough",
 		})
 	memberSession := sessionCookie(t, signedIn)
 	changed := plane.call(t, http.MethodPatch,
-		"http://"+plane.operator+"/api/v1/members/"+member.UserID,
+		"http://"+plane.api+"/api/v1/members/"+member.UserID,
 		map[string]any{"role": "editor"}, asSession(admin))
 	if changed.status != http.StatusOK || !strings.Contains(changed.body, `"role":"editor"`) {
 		t.Fatalf("changing membership = %d: %s", changed.status, changed.body)
@@ -184,18 +184,18 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 		t.Fatalf("session retained stale Role: %+v", who.Organization)
 	}
 	removed := plane.call(t, http.MethodDelete,
-		"http://"+plane.operator+"/api/v1/members/"+member.UserID,
+		"http://"+plane.api+"/api/v1/members/"+member.UserID,
 		nil, asSession(admin))
 	if removed.status != http.StatusNoContent {
 		t.Fatalf("removing membership = %d: %s", removed.status, removed.body)
 	}
-	denied := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil,
+	denied := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil,
 		asSession(memberSession))
 	if denied.status != http.StatusUnauthorized {
 		t.Fatalf("removed membership still authenticated = %d: %s", denied.status, denied.body)
 	}
 	refused := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/sign-in",
+		"http://"+plane.api+"/api/v1/auth/local/sign-in",
 		map[string]any{"email": "member@example.test", "password": "member password long enough"})
 	if refused.status != http.StatusForbidden {
 		t.Fatalf("membership-free User signed in = %d: %s", refused.status, refused.body)
@@ -216,7 +216,7 @@ func TestOrganizationKeepsAnAdmin(t *testing.T) {
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
 	adminID := readSession(t, plane, admin).Principal.ID
-	memberURL := "http://" + plane.operator + "/api/v1/members/" + adminID
+	memberURL := "http://" + plane.api + "/api/v1/members/" + adminID
 
 	for _, change := range []struct {
 		name   string
@@ -239,7 +239,7 @@ func TestOrganizationKeepsAnAdmin(t *testing.T) {
 func TestSessionListsOrganizationMetadataAndRole(t *testing.T) {
 	plane := startIdentityPlane(t)
 	bootstrapped := plane.call(t, http.MethodPost,
-		"http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "password": "initial administrator password",
 		}, asBootstrap)
@@ -254,7 +254,7 @@ func TestSessionListsOrganizationMetadataAndRole(t *testing.T) {
 
 func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	plane := startIdentityPlane(t)
-	created := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+	created := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations",
 		"email":            "ada@example.test",
 		"displayName":      "Ada Lovelace",
@@ -265,7 +265,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	}
 	bootstrapCookie := sessionCookie(t, created)
 	retiredBootstrap := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/members", nil, asBootstrap)
+		"http://"+plane.api+"/api/v1/members", nil, asBootstrap)
 	if retiredBootstrap.status != http.StatusUnauthorized {
 		t.Fatalf("bootstrap token after first Admin = %d: %s", retiredBootstrap.status, retiredBootstrap.body)
 	}
@@ -276,7 +276,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	}
 	seedTestOrganization(t, plane.dsn, identityOrg, "ada@example.test")
 
-	again := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+	again := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations",
 		"email":            "grace@example.test",
 		"displayName":      "Grace Hopper",
@@ -286,7 +286,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 		t.Fatalf("second bootstrap = %d: %s", again.status, again.body)
 	}
 
-	signedIn := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
+	signedIn := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/sign-in",
 		map[string]any{
 			"email": "ADA@example.test", "password": "correct horse battery staple",
 		})
@@ -295,7 +295,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	}
 	readSession(t, plane, sessionCookie(t, signedIn))
 
-	refused := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
+	refused := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/sign-in",
 		map[string]any{
 			"email": "ada@example.test", "password": "wrong password",
 		})
@@ -308,7 +308,7 @@ func TestAuthenticatedOrganizationManagementIsNotExposed(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
-	organizationsURL := "http://" + plane.operator + "/api/v1/organizations"
+	organizationsURL := "http://" + plane.api + "/api/v1/organizations"
 	for _, answer := range []answer{
 		plane.call(t, http.MethodGet, organizationsURL, nil, asSession(admin)),
 		plane.call(t, http.MethodPost, organizationsURL,
@@ -324,7 +324,7 @@ func TestLocalUserCreationRejectsIdentityProviderChoice(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
-	localUsersURL := "http://" + plane.operator + "/api/v1/local-users"
+	localUsersURL := "http://" + plane.api + "/api/v1/local-users"
 	member := map[string]any{
 		"email": "member@example.test", "displayName": "Member",
 		"role": "viewer", "password": "member password long enough", "identityKind": "oidc",
@@ -344,7 +344,7 @@ func TestLocalUserCreationRejectsIdentityProviderChoice(t *testing.T) {
 
 func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
 	plane := startIdentityPlane(t)
-	base := "http://" + plane.operator + "/api/v1"
+	base := "http://" + plane.api + "/api/v1"
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
 	created := plane.call(t, http.MethodPost, base+"/local-users", map[string]any{
 		"email": "member@example.test", "role": "viewer", "password": "member password long enough",
@@ -407,7 +407,7 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
 	who := plane.call(t, http.MethodGet,
-		"http://"+plane.operator+"/api/v1/session", nil,
+		"http://"+plane.api+"/api/v1/session", nil,
 		asSession(admin))
 	if who.status != http.StatusOK {
 		t.Fatalf("session = %d: %s", who.status, who.body)
@@ -428,7 +428,7 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 
 func TestLocalBootstrapRefusesWhenCredentialIsRetired(t *testing.T) {
 	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.BootstrapTokenDigest = nil })
-	answer := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap", map[string]any{
+	answer := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations",
 		"email":            "viewer@example.test", "displayName": "Viewer",
 		"password": "correct horse battery staple",
@@ -449,7 +449,7 @@ func TestLocalSignInBoundsParallelPasswordChecks(t *testing.T) {
 		go func(index int) {
 			defer waiting.Done()
 			<-start
-			answer := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/sign-in",
+			answer := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/sign-in",
 				map[string]any{"email": "unknown@example.test", "password": "invalid password value"})
 			statuses <- answer.status
 		}(index)
@@ -496,7 +496,7 @@ func TestDeploymentOIDCUsesSubjectAndDatabaseMembership(t *testing.T) {
 		VALUES ($1,$2,'editor')`, identityOrg, oidcUser); err != nil {
 		t.Fatalf("seed OIDC membership: %v", err)
 	}
-	startURL := "http://" + plane.operator + "/api/v1/auth/oidc/start"
+	startURL := "http://" + plane.api + "/api/v1/auth/oidc/start"
 	started := plane.call(t, http.MethodGet, startURL, nil)
 	if started.status != http.StatusFound {
 		t.Fatalf("OIDC start = %d: %s", started.status, started.body)

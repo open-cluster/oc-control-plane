@@ -199,7 +199,7 @@ func dialRelay(t *testing.T, address string) *grpc.ClientConn {
 // reservation below releases the port before anyone binds it: a second call can be handed
 // the port the first one just let go, and the two surfaces of one control plane then race
 // for it. That is not hypothetical — on 2026-08-22 a full-suite run failed with the
-// operator surface holding 62970 and alert intake refused the same number.
+// application API holding 62970 and alert intake refused the same number.
 var handedOut = struct {
 	sync.Mutex
 	taken map[string]bool

@@ -26,7 +26,7 @@ func (b *blockingAgentMain) Run(
 	return ctx.Err()
 }
 
-func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedOperatorSurface(t *testing.T) {
+func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedApplicationAPI(t *testing.T) {
 	t.Parallel()
 
 	model := &blockingAgentMain{started: make(chan uuid.UUID, 1)}

@@ -310,7 +310,7 @@ func startControlPlaneRunning(
 		DatabaseDSN:       gatedDSN,
 		SessionLifetime:   12 * time.Hour,
 		// A default sealing key, because the catalog serves a credential-bearing type and
-		// an operator surface without a key refuses to start. A test proving that refusal
+		// an application API without a key refuses to start. A test proving that refusal
 		// clears this deliberately.
 		SealingKey: bytes.Repeat([]byte{7}, 32),
 	}

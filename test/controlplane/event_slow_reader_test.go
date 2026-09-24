@@ -33,7 +33,7 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 				cfg.BootstrapTokenDigest = digest[:]
 				dsn = cfg.DatabaseDSN
 			}, app.Options{Agent: &blockingAgentMain{}})
-			plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+			plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 			_, turn := plane.openConversation(t, "large replay", "investigate checkout")
 			seedEventBacklog(t, dsn, turn)
 			status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
@@ -41,7 +41,7 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 				t.Fatalf("cancel = %d: %s", status, body)
 			}
 			if proxy {
-				plane.operator = startEventProxy(t, address)
+				plane.api = startEventProxy(t, address)
 			}
 			assertSlowEventReader(t, plane, turn)
 		})
@@ -68,7 +68,7 @@ func seedEventBacklog(t *testing.T, dsn, turn string) {
 
 func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 	t.Helper()
-	connection, err := net.DialTCP("tcp", nil, mustTCPAddress(t, plane.operator))
+	connection, err := net.DialTCP("tcp", nil, mustTCPAddress(t, plane.api))
 	if err != nil {
 		t.Fatal(err)
 	}

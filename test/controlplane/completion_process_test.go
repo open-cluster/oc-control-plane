@@ -87,7 +87,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 		value.BootstrapTokenDigest = digest[:]
 		cfg = *value
 	}, app.Options{})
-	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	plane.shutdown()
 	if plane.exitErr != nil {
 		t.Fatal(plane.exitErr)
@@ -112,7 +112,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	var kill func()
-	plane.operator, kill = startCompletionProcess(t, cfg)
+	plane.api, kill = startCompletionProcess(t, cfg)
 	_, interrupted := plane.openConversation(t, "interrupted completion", "investigate checkout")
 	paused := false
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
@@ -147,7 +147,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 		WHERE investigation_id = $1 AND org_id = $2`, interrupted, surfaceOrg); err != nil {
 		t.Fatal(err)
 	}
-	plane.operator, kill = startCompletionProcess(t, cfg)
+	plane.api, kill = startCompletionProcess(t, cfg)
 	response := openEventStream(t, plane, interrupted, "")
 	_, err = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
@@ -158,7 +158,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	_, completed := plane.openConversation(t, "committed completion", "investigate checkout")
 	before := plane.awaitInvestigation(t, completed)
 	kill()
-	plane.operator, _ = startCompletionProcess(t, cfg)
+	plane.api, _ = startCompletionProcess(t, cfg)
 	code, after := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+completed, nil)
 	if code != http.StatusOK || before != after {
 		t.Fatalf("restart changed the committed outcome: status=%d, before=%s, after=%s", code, before, after)

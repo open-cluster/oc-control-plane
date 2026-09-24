@@ -26,18 +26,18 @@ import (
 func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *integrationPlane {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = "the-slack-signing-secret"
-		cfg.PublicURL = "http://" + operatorAddress
+		cfg.PublicURL = "http://" + apiAddress
 		cfg.PublicURL = console
 	}, app.Options{SlackAPIURL: vendor.URL})
-	return &integrationPlane{controlPlane: plane, operator: operatorAddress}
+	return &integrationPlane{controlPlane: plane, api: apiAddress}
 }
 
 // pressConnectSlack presses the button and returns where the browser would be sent.
@@ -51,7 +51,7 @@ func (p *integrationPlane) pressConnectSlack(t *testing.T, organization string) 
 func (p *integrationPlane) returnFromSlack(t *testing.T, parameters url.Values) (int, string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet,
-		"http://"+p.operator+"/api/v1/integrations/connect/callback?"+
+		"http://"+p.api+"/api/v1/integrations/connect/callback?"+
 			parameters.Encode(), nil)
 	if err != nil {
 		t.Fatalf("building callback request: %v", err)

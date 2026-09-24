@@ -10,7 +10,7 @@ import (
 
 func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 	plane := startIntegrationPlane(t)
-	root := "http://" + plane.operator + "/api/v1"
+	root := "http://" + plane.api + "/api/v1"
 	base := plane.base(surfaceOrg)
 	registration := plane.relay.registration.String()
 	incidentID := plane.openIncident(t, "Listing contract", "listing-contract")
