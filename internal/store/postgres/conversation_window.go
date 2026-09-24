@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 )
 
@@ -15,7 +14,7 @@ import (
 func acceptedWindow(
 	ctx context.Context,
 	tx pgx.Tx,
-	org tenancy.Organization,
+	org uuid.UUID,
 	id uuid.UUID,
 	requested *conversation.Window,
 	lead time.Duration,
@@ -30,7 +29,7 @@ func acceptedWindow(
 	var from, until *time.Time
 	err := tx.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
 		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1
-		ORDER BY sequence LIMIT 1`, org.String(), id).Scan(&from, &until)
+		ORDER BY sequence LIMIT 1`, org, id).Scan(&from, &until)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return conversation.Window{}, err
 	}
@@ -44,7 +43,7 @@ func acceptedWindow(
 		return *requested, nil
 	}
 	var incident *uuid.UUID
-	if err = tx.QueryRow(ctx, `SELECT incident_id FROM conversation WHERE org_id = $1 AND conversation_id = $2`, org.String(), id).Scan(&incident); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT incident_id FROM conversation WHERE org_id = $1 AND conversation_id = $2`, org, id).Scan(&incident); err != nil {
 		return conversation.Window{}, err
 	}
 	f, u, err := turnWindow(ctx, tx, org, incident, lead)

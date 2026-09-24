@@ -14,7 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	authsession "github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -69,7 +68,7 @@ func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
 
-func (h Handlers) organization(request *http.Request) tenancy.Organization {
+func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 

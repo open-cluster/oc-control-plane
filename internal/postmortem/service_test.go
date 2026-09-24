@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type serviceStore struct {
@@ -19,11 +18,11 @@ type serviceStore struct {
 	replaced   Postmortem
 }
 
-func (s *serviceStore) GenerationInput(context.Context, tenancy.Organization,
+func (s *serviceStore) GenerationInput(context.Context, uuid.UUID,
 	uuid.UUID) (GenerationInput, error) {
 	return s.input, s.contextErr
 }
-func (s *serviceStore) Postmortem(context.Context, tenancy.Organization,
+func (s *serviceStore) Postmortem(context.Context, uuid.UUID,
 	uuid.UUID) (Postmortem, error) {
 	if s.current.IncidentID == uuid.Nil {
 		return Postmortem{}, ErrUnknown
@@ -31,20 +30,20 @@ func (s *serviceStore) Postmortem(context.Context, tenancy.Organization,
 	return s.current, nil
 }
 func (s *serviceStore) CreateDraft(_ context.Context, _ authz.Principal,
-	_ tenancy.Organization, draft Postmortem) (Postmortem, error) {
+	_ uuid.UUID, draft Postmortem) (Postmortem, error) {
 	s.created = draft
 	return draft, nil
 }
 func (s *serviceStore) ReplaceDraft(_ context.Context, _ authz.Principal,
-	_ tenancy.Organization, draft Postmortem) (Postmortem, error) {
+	_ uuid.UUID, draft Postmortem) (Postmortem, error) {
 	s.replaced = draft
 	return draft, nil
 }
-func (s *serviceStore) Correct(context.Context, authz.Principal, tenancy.Organization,
+func (s *serviceStore) Correct(context.Context, authz.Principal, uuid.UUID,
 	uuid.UUID, Corrections) (Postmortem, error) {
 	return Postmortem{}, nil
 }
-func (s *serviceStore) Review(context.Context, authz.Principal, tenancy.Organization,
+func (s *serviceStore) Review(context.Context, authz.Principal, uuid.UUID,
 	uuid.UUID) (Postmortem, error) {
 	return Postmortem{}, nil
 }
@@ -52,7 +51,7 @@ func (s *serviceStore) Review(context.Context, authz.Principal, tenancy.Organiza
 func TestServiceGeneratesOnlyForResolvedIncidentsAndRevisionsRegeneration(t *testing.T) {
 	t.Parallel()
 
-	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	incidentID := uuid.New()
 	store := &serviceStore{contextErr: ErrNotEligible}
 	service := Service{Store: store}

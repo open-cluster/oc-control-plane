@@ -50,7 +50,7 @@ func TestProviderConversationRequiresAnIntactOriginBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM slack_conversation WHERE org_id = $1 AND conversation_id = $2`,
-		org.String(), chat.Conversation); err != nil {
+		org, chat.Conversation); err != nil {
 		t.Fatal(err)
 	}
 	if origin, err := database.ConversationOrigin(ctx, org, chat.Conversation); err == nil {

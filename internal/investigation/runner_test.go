@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type runnerStore struct {
@@ -22,27 +20,27 @@ type runnerStore struct {
 }
 
 func (s *runnerStore) ClaimInvestigation(_ context.Context, _ Claim) (
-	tenancy.Organization, Investigation, bool, error,
+	uuid.UUID, Investigation, bool, error,
 ) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.queue) == 0 {
-		return tenancy.Organization{}, Investigation{}, false, nil
+		return uuid.UUID{}, Investigation{}, false, nil
 	}
 	opened := s.queue[0]
 	s.queue = s.queue[1:]
-	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	return organization, opened, true, nil
 }
 
-func (*runnerStore) Heartbeat(context.Context, tenancy.Organization, uuid.UUID, Claim) (bool, error) {
+func (*runnerStore) Heartbeat(context.Context, uuid.UUID, uuid.UUID, Claim) (bool, error) {
 	return true, nil
 }
 
 func (*runnerStore) RecoverStale(context.Context, string, int) (int, error) { return 0, nil }
 
 func (s *runnerStore) Investigation(
-	context.Context, tenancy.Organization, uuid.UUID,
+	context.Context, uuid.UUID, uuid.UUID,
 ) (Investigation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,7 +52,7 @@ func (s *runnerStore) Investigation(
 }
 
 func (s *runnerStore) DrainConversation(
-	_ context.Context, _ tenancy.Organization, id uuid.UUID, _ time.Duration, _ int,
+	_ context.Context, _ uuid.UUID, id uuid.UUID, _ time.Duration, _ int,
 ) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -105,7 +103,7 @@ type blockingAgent struct {
 }
 
 func (a *blockingAgent) Run(
-	ctx context.Context, _ tenancy.Organization, _ Investigation,
+	ctx context.Context, _ uuid.UUID, _ Investigation,
 ) error {
 	a.mu.Lock()
 	a.active++
@@ -163,11 +161,11 @@ func TestRunnerDefaultsToEightConcurrentWorkersAndWaitsForShutdown(t *testing.T)
 
 type concludingAgent struct{}
 
-func (concludingAgent) Run(context.Context, tenancy.Organization, Investigation) error { return nil }
+func (concludingAgent) Run(context.Context, uuid.UUID, Investigation) error { return nil }
 
 type unterminatedAgent struct{}
 
-func (unterminatedAgent) Run(context.Context, tenancy.Organization, Investigation) error {
+func (unterminatedAgent) Run(context.Context, uuid.UUID, Investigation) error {
 	return context.DeadlineExceeded
 }
 
@@ -178,7 +176,7 @@ func TestRunnerDrainsAConversationAfterTheAgentFinishes(t *testing.T) {
 		Store: store, Agent: concludingAgent{}, Worker: "test",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	runner.runClaimed(context.Background(), organization,
 		Investigation{ID: uuid.New(), ConversationID: conversationID})
 	store.mu.Lock()
@@ -194,7 +192,7 @@ func TestRunnerDoesNotDrainAfterATerminalWriteFailure(t *testing.T) {
 		Store: store, Agent: unterminatedAgent{}, Worker: "test",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	runner.runClaimed(context.Background(), organization,
 		Investigation{ID: uuid.New(), ConversationID: uuid.New()})
 	store.mu.Lock()
@@ -211,7 +209,7 @@ func TestRunnerStopsActiveAgentAfterRemoteCancellation(t *testing.T) {
 		Store: store, Agent: agent, Worker: "test",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	organization, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	done := make(chan struct{})
 	go func() {
 		runner.runClaimed(context.Background(), organization, Investigation{ID: uuid.New()})

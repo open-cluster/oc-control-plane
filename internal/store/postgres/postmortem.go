@@ -12,7 +12,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
@@ -24,7 +23,7 @@ const postmortemColumns = `incident_id, status, revision, document, created_at,
 	updated_at, reviewed_at, reviewed_by`
 
 func (p *Database) GenerationInput(
-	ctx context.Context, organization tenancy.Organization, incidentID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
 ) (postmortem.GenerationInput, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -36,7 +35,7 @@ func (p *Database) GenerationInput(
 	err = pool.QueryRow(ctx, `
 		SELECT title, status, first_seen_at, resolved_at
 		  FROM incident
-		 WHERE incident_id = $1 AND org_id = $2`, incidentID, organization.String()).Scan(
+		 WHERE incident_id = $1 AND org_id = $2`, incidentID, organization).Scan(
 		&input.Title, &status, &input.FirstSeenAt, &resolvedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return postmortem.GenerationInput{}, postmortem.ErrUnknown
@@ -53,7 +52,7 @@ func (p *Database) GenerationInput(
 		SELECT title, summary, started_at
 		  FROM alert_event
 		 WHERE incident_id = $1 AND org_id = $2
-		 ORDER BY started_at, alert_event_id`, incidentID, organization.String())
+		 ORDER BY started_at, alert_event_id`, incidentID, organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem alert events: %w", err)
 	}
@@ -75,7 +74,7 @@ func (p *Database) GenerationInput(
 		SELECT investigation_id, conclusion
 		  FROM investigation
 		 WHERE incident_id = $1 AND org_id = $2 AND status = $3
-		 ORDER BY created_at, investigation_id`, incidentID, organization.String(),
+		 ORDER BY created_at, investigation_id`, incidentID, organization,
 		int16(investigation.StatusConcluded))
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem conclusions: %w", err)
@@ -108,7 +107,7 @@ func (p *Database) GenerationInput(
 		  JOIN investigation i
 		    ON i.org_id = r.org_id AND i.investigation_id = r.investigation_id
 		 WHERE i.incident_id = $1 AND r.org_id = $2
-		 ORDER BY i.created_at, r.ordinal`, incidentID, organization.String())
+		 ORDER BY i.created_at, r.ordinal`, incidentID, organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem tool runs: %w", err)
 	}
@@ -135,7 +134,7 @@ func (p *Database) GenerationInput(
 		  JOIN investigation i
 		    ON i.org_id = e.org_id AND i.investigation_id = e.investigation_id
 		 WHERE i.incident_id = $1 AND e.org_id = $2
-		 ORDER BY i.created_at, e.sequence`, incidentID, organization.String())
+		 ORDER BY i.created_at, e.sequence`, incidentID, organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem events: %w", err)
 	}
@@ -170,7 +169,7 @@ func (p *Database) GenerationInput(
 		    ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
 		 WHERE c.incident_id = $1 AND m.org_id = $2
 		 ORDER BY m.created_at, m.conversation_id, m.sequence`,
-		incidentID, organization.String())
+		incidentID, organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem messages: %w", err)
 	}
@@ -191,7 +190,7 @@ func (p *Database) GenerationInput(
 }
 
 func (p *Database) Postmortem(
-	ctx context.Context, organization tenancy.Organization, incidentID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
 ) (postmortem.Postmortem, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -199,11 +198,11 @@ func (p *Database) Postmortem(
 	}
 	return scanPostmortem(pool.QueryRow(ctx, `SELECT `+postmortemColumns+`
 		FROM postmortem WHERE incident_id = $1 AND org_id = $2`,
-		incidentID, organization.String()))
+		incidentID, organization))
 }
 
 func (p *Database) CreateDraft(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	draft postmortem.Postmortem,
 ) (postmortem.Postmortem, error) {
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemCreated,
@@ -216,7 +215,7 @@ func (p *Database) CreateDraft(
 				INSERT INTO postmortem (incident_id, org_id, status, revision, document, updated_at)
 				VALUES ($1, $2, $3, $4, $5, now())
 				RETURNING `+postmortemColumns,
-				draft.IncidentID, organization.String(), postmortem.StatusDraft, 1, document)
+				draft.IncidentID, organization, postmortem.StatusDraft, 1, document)
 			created, err := scanPostmortem(row)
 			if isUniqueViolation(err, "postmortem_pkey") {
 				return postmortem.Postmortem{}, postmortem.ErrAlreadyExists
@@ -226,7 +225,7 @@ func (p *Database) CreateDraft(
 }
 
 func (p *Database) ReplaceDraft(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	draft postmortem.Postmortem,
 ) (postmortem.Postmortem, error) {
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemRegenerated,
@@ -241,20 +240,20 @@ func (p *Database) ReplaceDraft(
 				       reviewed_at = NULL, reviewed_by = ''
 				 WHERE incident_id = $1 AND org_id = $2
 				RETURNING `+postmortemColumns,
-				draft.IncidentID, organization.String(), postmortem.StatusDraft,
+				draft.IncidentID, organization, postmortem.StatusDraft,
 				draft.Revision, document))
 		})
 }
 
 func (p *Database) Correct(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	incidentID uuid.UUID, corrections postmortem.Corrections,
 ) (postmortem.Postmortem, error) {
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemCorrected,
 		func(ctx context.Context, tx pgx.Tx) (postmortem.Postmortem, error) {
 			current, err := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
 				FROM postmortem WHERE incident_id = $1 AND org_id = $2 FOR UPDATE`,
-				incidentID, organization.String()))
+				incidentID, organization))
 			if err != nil {
 				return postmortem.Postmortem{}, err
 			}
@@ -270,12 +269,12 @@ func (p *Database) Correct(
 			return scanPostmortem(tx.QueryRow(ctx, `
 				UPDATE postmortem SET revision = $3, document = $4, updated_at = now()
 				 WHERE incident_id = $1 AND org_id = $2 RETURNING `+postmortemColumns,
-				incidentID, organization.String(), current.Revision, document))
+				incidentID, organization, current.Revision, document))
 		})
 }
 
 func (p *Database) Review(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	incidentID uuid.UUID,
 ) (postmortem.Postmortem, error) {
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemReviewed,
@@ -285,12 +284,12 @@ func (p *Database) Review(
 				   SET status = $3, reviewed_at = now(), reviewed_by = $4, updated_at = now()
 				 WHERE incident_id = $1 AND org_id = $2 AND status = $5
 				RETURNING `+postmortemColumns,
-				incidentID, organization.String(), postmortem.StatusReviewed,
+				incidentID, organization, postmortem.StatusReviewed,
 				principal.UserID().String(), postmortem.StatusDraft))
 			if errors.Is(err, postmortem.ErrUnknown) {
 				current, readErr := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
 					FROM postmortem WHERE incident_id = $1 AND org_id = $2`,
-					incidentID, organization.String()))
+					incidentID, organization))
 				if readErr == nil && current.Status == postmortem.StatusReviewed {
 					return postmortem.Postmortem{}, postmortem.ErrAlreadyReviewed
 				}
@@ -300,7 +299,7 @@ func (p *Database) Review(
 }
 
 func (p *Database) writePostmortem(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	action audit.Action,
 	write func(context.Context, pgx.Tx) (postmortem.Postmortem, error),
 ) (postmortem.Postmortem, error) {

@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -27,7 +25,7 @@ func slackInstallation(workspace string) *integrations.Installation {
 }
 
 func connectSlack(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	name string, installed *integrations.Installation,
 ) (integrations.Integration, error) {
 	t.Helper()
@@ -93,7 +91,7 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 		t.Errorf("resolved integration %s, want %s", found.ID, created.ID)
 	}
 	if found.OrgID != organization.String() {
-		t.Errorf("resolved organization %q, want %q", found.OrgID, organization.String())
+		t.Errorf("resolved organization %q, want %q", found.OrgID, organization)
 	}
 	// The bot's own identity comes back with it. It is what stops the agent answering its
 	// own message, so a resolution that did not carry it would be one the endpoint cannot
@@ -159,7 +157,7 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 	var count int
 	if err := pool.QueryRow(context.Background(),
 		`SELECT count(*) FROM integration WHERE org_id = $1 AND provider = $2`,
-		organization.String(), "slack").Scan(&count); err != nil {
+		organization, "slack").Scan(&count); err != nil {
 		t.Fatalf("counting integrations: %v", err)
 	}
 	if count != 1 {

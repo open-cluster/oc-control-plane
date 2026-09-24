@@ -13,7 +13,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
@@ -41,7 +40,7 @@ const integrationColumns = `integration_id, provider, name, configuration,
 // another tenant's Relay is refused by the database rather than by a check that has to be
 // remembered at every call site.
 func (p *Database) CreateIntegration(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	wanted integrations.NewIntegration,
 ) (integrations.Integration, error) {
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationCreated,
@@ -78,7 +77,7 @@ func (p *Database) CreateIntegration(
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
 				        CASE WHEN $10 THEN now() END, $11)
 				RETURNING `+integrationColumns,
-				identityOrNew(wanted.ID), organization.String(), wanted.Provider, wanted.Name,
+				identityOrNew(wanted.ID), organization, wanted.Provider, wanted.Name,
 				configuration, nullableUUID(wanted.RelayID), wanted.WebhookSecretDigest,
 				wanted.CredentialSealed, status, verified, grants)
 
@@ -125,7 +124,7 @@ func (p *Database) CreateIntegration(
 func (p *Database) IntegrationByID(
 	ctx context.Context, id uuid.UUID,
 ) (integrations.Integration, error) {
-	var organization string
+	var organization uuid.UUID
 	row := p.pool.QueryRow(ctx, `
 			SELECT org_id, `+integrationColumns+`
 			  FROM integration
@@ -137,13 +136,13 @@ func (p *Database) IntegrationByID(
 	if err != nil {
 		return integrations.Integration{}, fmt.Errorf("resolving an integration: %w", err)
 	}
-	found.OrgID = organization
+	found.OrgID = organization.String()
 	return found, nil
 }
 
 // Integration reads one, scoped to the tenant.
 func (p *Database) Integration(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (integrations.Integration, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -154,7 +153,7 @@ func (p *Database) Integration(
 		SELECT `+integrationColumns+`
 		  FROM integration
 		 WHERE integration_id = $1 AND org_id = $2`,
-		id, organization.String())
+		id, organization)
 	found, err := scanIntegration(row, organization.String())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return integrations.Integration{}, integrations.ErrUnknown
@@ -166,7 +165,7 @@ func (p *Database) Integration(
 }
 
 func (p *Database) QueryIntegrations(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	query integrations.Query,
 ) (integrations.List, error) {
 	if principal.Organization() != organization {
@@ -192,7 +191,7 @@ func (p *Database) QueryIntegrations(
 		return integrations.List{}, integrations.ErrBadCursor
 	}
 
-	arguments := []any{organization.String()}
+	arguments := []any{organization}
 	where := []string{"org_id = $1"}
 	add := func(clause string, value any) {
 		arguments = append(arguments, value)
@@ -267,7 +266,7 @@ func (p *Database) QueryIntegrations(
 // the catalog's "3 configured" column. Counted by the database rather than by walking a
 // bounded page, so the number cannot be silently short.
 func (p *Database) CountIntegrationsByProvider(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 ) ([]integrations.ProviderCount, error) {
 	if principal.Organization() != organization {
 		return nil, ErrNotAMember
@@ -281,7 +280,7 @@ func (p *Database) CountIntegrationsByProvider(
 		SELECT provider, count(*)
 		  FROM integration
 		 WHERE org_id = $1
-		 GROUP BY provider`, organization.String())
+		 GROUP BY provider`, organization)
 	if err != nil {
 		return nil, fmt.Errorf("counting integrations: %w", err)
 	}
@@ -307,7 +306,7 @@ func (p *Database) CountIntegrationsByProvider(
 
 // ReviseIntegration changes what a PATCH may change.
 func (p *Database) ReviseIntegration(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, revision integrations.Revision,
 ) (integrations.Integration, error) {
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationRevised,
@@ -329,7 +328,7 @@ func (p *Database) ReviseIntegration(
 				       configuration = coalesce($4, configuration)
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization.String(), revision.Name, configuration)
+				id, organization, revision.Name, configuration)
 
 			revised, err := scanIntegration(row, organization.String())
 			switch {
@@ -351,7 +350,7 @@ func (p *Database) ReviseIntegration(
 // SetIntegrationDisabled turns an Integration off or back on without deleting it, so an
 // operator can stop using a source without losing the record of what it produced.
 func (p *Database) SetIntegrationDisabled(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, disabled bool,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationEnabled,
@@ -360,7 +359,7 @@ func (p *Database) SetIntegrationDisabled(
 			err := transaction.QueryRow(ctx, `
 				SELECT disabled FROM integration
 				 WHERE integration_id = $1 AND org_id = $2
-				 FOR UPDATE`, id, organization.String()).Scan(&wasDisabled)
+				 FOR UPDATE`, id, organization).Scan(&wasDisabled)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, integrations.ErrUnknown
 			}
@@ -371,7 +370,7 @@ func (p *Database) SetIntegrationDisabled(
 			if _, err := transaction.Exec(ctx, `
 				UPDATE integration SET disabled = $3
 				 WHERE integration_id = $1 AND org_id = $2`,
-				id, organization.String(), disabled); err != nil {
+				id, organization, disabled); err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("changing an integration's disabled state: %w", err)
 			}
@@ -388,7 +387,7 @@ func (p *Database) SetIntegrationDisabled(
 // the check and the delete serialises on the row rather than racing it. Historical deliveries
 // are dependents too; deletion must not erase accepted external evidence.
 func (p *Database) DeleteIntegration(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationDeleted,
@@ -405,7 +404,7 @@ func (p *Database) DeleteIntegration(
 				         WHERE org_id = $2 AND integration_id = $1),
 				       (SELECT count(*) FROM investigation_tool_run
 				           WHERE org_id = $2 AND integration_id = $1)`,
-				id, organization.String()).Scan(
+				id, organization).Scan(
 				&alertEvents, &deliveries, &jobs, &changeEvents, &investigations)
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil,
@@ -423,23 +422,23 @@ func (p *Database) DeleteIntegration(
 				DELETE FROM slack_reply r USING slack_conversation s
 				WHERE r.org_id = $2 AND s.org_id = r.org_id
 				  AND s.conversation_id = r.conversation_id AND s.integration_id = $1`,
-				id, organization.String()); err != nil {
+				id, organization); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration replies: %w", err)
 			}
 			if _, err := transaction.Exec(ctx, `
 				DELETE FROM slack_conversation WHERE org_id = $2 AND integration_id = $1`,
-				id, organization.String()); err != nil {
+				id, organization); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration conversations: %w", err)
 			}
 			if _, err := transaction.Exec(ctx, `
 				DELETE FROM integration_installation WHERE org_id = $2 AND integration_id = $1`,
-				id, organization.String()); err != nil {
+				id, organization); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration installation: %w", err)
 			}
 			tag, err := transaction.Exec(ctx, `
 				DELETE FROM integration
 				 WHERE integration_id = $1 AND org_id = $2`,
-				id, organization.String())
+				id, organization)
 			if err != nil {
 				// A dependent created between the count and the delete surfaces as a
 				// foreign-key refusal, which is the race answered by the database.
@@ -463,7 +462,7 @@ func (p *Database) DeleteIntegration(
 // source. One digest is live at a time; a rotation is a brief outage the operator
 // schedules.
 func (p *Database) RotateIntegrationWebhookSecret(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, digest []byte,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationSecretRotated,
@@ -476,7 +475,7 @@ func (p *Database) RotateIntegrationWebhookSecret(
 				 WHERE integration_id = $1
 				   AND org_id = $2
 				   AND webhook_secret_digest IS NOT NULL`,
-				id, organization.String(), digest)
+				id, organization, digest)
 			if err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("rotating a webhook secret: %w", err)
@@ -499,7 +498,7 @@ func (p *Database) RotateIntegrationWebhookSecret(
 // Guarded on the Integration already holding one: a credential can be replaced, never
 // acquired, because a type that takes one requires it at creation.
 func (p *Database) ReplaceIntegrationCredential(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, revision integrations.Revision, sealed []byte,
 	verification integrations.Verification, installed *integrations.Installation,
 ) (integrations.Integration, error) {
@@ -528,7 +527,7 @@ func (p *Database) ReplaceIntegrationCredential(
 				   AND org_id = $2
 				   AND credential_sealed IS NOT NULL
 				RETURNING `+integrationColumns,
-				id, organization.String(), revision.Name, configuration, sealed,
+				id, organization, revision.Name, configuration, sealed,
 				verification.Status.String(), grants)
 
 			replaced, err := scanIntegration(row, organization.String())
@@ -560,7 +559,7 @@ func (p *Database) ReplaceIntegrationCredential(
 
 // RecordIntegrationVerification writes what a verify run established onto the record.
 func (p *Database) RecordIntegrationVerification(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, verification integrations.Verification,
 ) (integrations.Integration, error) {
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationVerified,
@@ -575,7 +574,7 @@ func (p *Database) RecordIntegrationVerification(
 				       verification_grants = $4
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization.String(), verification.Status.String(), grants)
+				id, organization, verification.Status.String(), grants)
 
 			verified, err := scanIntegration(row, organization.String())
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -596,7 +595,7 @@ func (p *Database) RecordIntegrationVerification(
 // as an error: the verify run's job is to report, and "the relay this names is gone" is a
 // report.
 func (p *Database) IntegrationRelayStatus(
-	ctx context.Context, organization tenancy.Organization, relayID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, relayID uuid.UUID,
 ) (integrations.RelayStatus, error) {
 	if relayID == uuid.Nil {
 		return integrations.RelayStatus{}, nil
@@ -616,7 +615,7 @@ func (p *Database) IntegrationRelayStatus(
 		SELECT capabilities, last_seen_at, session_ended_at, revoked_at
 		  FROM relay_registration
 		 WHERE org_id = $1 AND registration_id = $2`,
-		organization.String(), relayID).
+		organization, relayID).
 		Scan(&capabilities, &lastSeen, &sessionEnded, &revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return integrations.RelayStatus{}, nil
@@ -666,7 +665,7 @@ func decodeCapabilityNames(raw []byte) ([]string, error) {
 // LastAcceptedDelivery reports when an integration last accepted a webhook delivery, zero
 // when it never has.
 func (p *Database) LastAcceptedDelivery(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (time.Time, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -679,7 +678,7 @@ func (p *Database) LastAcceptedDelivery(
 		  FROM webhook_delivery
 		 WHERE integration_id = $1 AND org_id = $2
 		 ORDER BY received_at DESC
-		 LIMIT 1`, id, organization.String()).Scan(&last)
+		 LIMIT 1`, id, organization).Scan(&last)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, nil
 	}
@@ -721,7 +720,7 @@ func scanIntegration(row scanned, organization string) (integrations.Integration
 }
 
 func scanIntegrationWithOrganization(
-	row scanned, organization *string,
+	row scanned, organization *uuid.UUID,
 ) (integrations.Integration, error) {
 	var (
 		found    integrations.Integration
@@ -801,7 +800,7 @@ func nullableUUID(id uuid.UUID) *uuid.UUID {
 // recorded BEFORE the credential is used — a use that cannot be recorded does not
 // happen, for the same reason audited operations roll back with their record.
 func (p *Database) RecordCredentialUnseal(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, purpose string,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, purpose string,
 ) error {
 	return p.RecordEvent(ctx, organization, audit.Event{
 		Organization: organization.String(),

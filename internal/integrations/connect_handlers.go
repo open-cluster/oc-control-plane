@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // CallbackPath is where a provider returns the browser. It is ONE path for every provider,
@@ -174,8 +173,11 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		h.refuseConnect(writer, request, flow.ReturnTo, "another principal started it")
 		return
 	}
-	organization, err := tenancy.NewOrganization(flow.Organization)
-	if err != nil {
+	organization, err := uuid.Parse(strings.TrimSpace(flow.Organization))
+	if err != nil || organization == uuid.Nil {
+		if err == nil {
+			err = errors.New("invalid organization identifier")
+		}
 		h.fail(writer, request, err)
 		return
 	}
@@ -211,7 +213,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 // verified in the transaction that creates it.
 func (h Handlers) record(
 	ctx context.Context, writer http.ResponseWriter, request *http.Request,
-	principal authz.Principal, organization tenancy.Organization, definition Definition,
+	principal authz.Principal, organization uuid.UUID, definition Definition,
 	returnTo string, bound ConnectBinding,
 ) {
 	var existing Integration
@@ -299,7 +301,7 @@ func (h Handlers) record(
 // rather than duplicated.
 func (h Handlers) reconnect(
 	ctx context.Context, writer http.ResponseWriter, request *http.Request,
-	principal authz.Principal, organization tenancy.Organization, definition Definition,
+	principal authz.Principal, organization uuid.UUID, definition Definition,
 	returnTo string, existing Integration, bound ConnectBinding,
 ) {
 	if bound.Credential == "" {

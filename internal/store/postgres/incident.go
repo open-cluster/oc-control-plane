@@ -12,7 +12,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 )
 
@@ -37,7 +36,7 @@ import (
 // distinction is the grouping outcome an operator watches: a source whose every alert opens its own
 // incident is one whose group_by is not doing what its author thinks.
 func groupAlertEvent(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delivery Delivery, alertEvent AlertEvent, alertEventID uuid.UUID,
 ) (uuid.UUID, bool, error) {
 	key, basis := alertEvent.GroupingKey, incident.BasisSourceGrouping
@@ -52,7 +51,7 @@ func groupAlertEvent(
 	}
 	if _, err = transaction.Exec(ctx,
 		`UPDATE alert_event SET incident_id = $1 WHERE alert_event_id = $2 AND org_id = $3`,
-		incidentID, alertEventID, organization.String()); err != nil {
+		incidentID, alertEventID, organization); err != nil {
 		return uuid.Nil, false, fmt.Errorf("grouping a alert_event: %w", err)
 	}
 	return incidentID, opened, refreshIncident(ctx, transaction, organization, incidentID)
@@ -75,7 +74,7 @@ func groupAlertEvent(
 // same statement answers "did this open an incident" without a second query a concurrent delivery
 // could get a different answer from.
 func openIncident(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delivery Delivery, alertEvent AlertEvent, key string, basis incident.Basis,
 ) (uuid.UUID, bool, error) {
 	// The times come from the SOURCE's clock. An incident's window is what an investigation opened
@@ -97,7 +96,7 @@ func openIncident(
 		ON CONFLICT (integration_id, grouping_key) WHERE status = 1
 		DO UPDATE SET updated_at = now()
 		RETURNING incident_id, xmax = 0`,
-		uuid.New(), organization.String(), delivery.Integration,
+		uuid.New(), organization, delivery.Integration,
 		key, int16(basis), alertEvent.Title, started).Scan(&incidentID, &opened)
 	if err != nil {
 		return uuid.UUID{}, false, fmt.Errorf("opening an incident incident: %w", err)
@@ -114,7 +113,7 @@ func openIncident(
 // rows.
 func refreshIncident(
 	ctx context.Context, transaction pgx.Tx,
-	organization tenancy.Organization, incidentID uuid.UUID,
+	organization uuid.UUID, incidentID uuid.UUID,
 ) error {
 	// An incident is resolved when NO AlertEvent in it is still firing. The resolution time is the last
 	// one to stop, because that is when the failure ended rather than when the first part of it
@@ -135,7 +134,7 @@ func refreshIncident(
 		         FROM alert_event WHERE incident_id = $1 AND org_id = $2
 		       ) AS counted
 		 WHERE incident.incident_id = $1 AND incident.org_id = $2 AND counted.total > 0`,
-		incidentID, organization.String()); err != nil {
+		incidentID, organization); err != nil {
 		return fmt.Errorf("recomputing an incident incident: %w", err)
 	}
 	return nil
@@ -166,7 +165,7 @@ const incidentAlertEventCount = `(SELECT count(*)::integer FROM alert_event a
 
 // QueryIncidents reports a page of a tenant's incidents.
 func (p *Database) QueryIncidents(
-	ctx context.Context, organization tenancy.Organization, query incident.Query,
+	ctx context.Context, organization uuid.UUID, query incident.Query,
 ) (incident.Page, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -183,7 +182,7 @@ func (p *Database) QueryIncidents(
 		return incident.Page{}, incident.ErrBadCursor
 	}
 
-	arguments := []any{organization.String()}
+	arguments := []any{organization}
 	where := []string{"org_id = $1"}
 	add := func(clause string, value any) {
 		arguments = append(arguments, value)
@@ -266,7 +265,7 @@ var incidentOrderings = map[string]struct {
 
 // Incident reads one, scoped to the tenant.
 func (p *Database) Incident(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (incident.Incident, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -276,7 +275,7 @@ func (p *Database) Incident(
 	rows, err := pool.Query(ctx, `
 		SELECT `+incidentColumns+`
 		  FROM incident e
-		 WHERE incident_id = $1 AND org_id = $2`, id, organization.String())
+		 WHERE incident_id = $1 AND org_id = $2`, id, organization)
 	if err != nil {
 		return incident.Incident{}, fmt.Errorf("reading an incident incident: %w", err)
 	}
@@ -297,7 +296,7 @@ func (p *Database) Incident(
 // fired next. Every other listing on this surface is newest first, and the difference is the point
 // rather than an inconsistency.
 func (p *Database) IncidentAlertEvents(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	id uuid.UUID, page incident.AlertEventPage,
 ) (incident.AlertEventList, error) {
 	pool, err := p.Pool(organization)
@@ -323,7 +322,7 @@ func (p *Database) IncidentAlertEvents(
 		   AND ($3::timestamptz IS NULL OR (started_at, alert_event_id) > ($3::timestamptz, $4::uuid))
 		 ORDER BY started_at, alert_event_id
 		 LIMIT $5`,
-		id, organization.String(), after, afterID, limit+1)
+		id, organization, after, afterID, limit+1)
 	if err != nil {
 		return incident.AlertEventList{}, fmt.Errorf("reading an incident's alertEvents: %w", err)
 	}
@@ -371,7 +370,7 @@ func (p *Database) IncidentAlertEvents(
 // freeing the key would mean the next delivery opened a third incident and the operator's decision
 // quietly stopped applying.
 func (p *Database) MergeIncidents(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	merge incident.Merge,
 ) (incident.Incident, error) {
 	if err := merge.Validate(); err != nil {
@@ -398,7 +397,7 @@ func (p *Database) MergeIncidents(
 				   SET superseded_by = $1, superseded_at = now(), supersede_reason = $2,
 				       updated_at = now()
 				 WHERE incident_id = $3 AND org_id = $4`,
-				surviving.ID, merge.Reason, absorbed.ID, organization.String()); err != nil {
+				surviving.ID, merge.Reason, absorbed.ID, organization); err != nil {
 				return incident.Incident{}, audit.Target{}, nil,
 					fmt.Errorf("merging incident incidents: %w", err)
 			}
@@ -440,13 +439,13 @@ func mergeable(absorbed, surviving incident.Incident) error {
 // lockIncident reads one incident for update, so two operators merging at once cannot both decide
 // the other is still unmerged.
 func lockIncident(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, id uuid.UUID,
 ) (incident.Incident, error) {
 	rows, err := transaction.Query(ctx, `
 		SELECT `+incidentColumns+`
 		  FROM incident e
 		 WHERE incident_id = $1 AND org_id = $2
-		   FOR UPDATE`, id, organization.String())
+		   FOR UPDATE`, id, organization)
 	if err != nil {
 		return incident.Incident{}, fmt.Errorf("reading an incident incident: %w", err)
 	}
@@ -462,12 +461,12 @@ func lockIncident(
 }
 
 func readIncident(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, id uuid.UUID,
 ) (incident.Incident, error) {
 	rows, err := transaction.Query(ctx, `
 		SELECT `+incidentColumns+`
 		  FROM incident e
-		 WHERE incident_id = $1 AND org_id = $2`, id, organization.String())
+		 WHERE incident_id = $1 AND org_id = $2`, id, organization)
 	if err != nil {
 		return incident.Incident{}, fmt.Errorf("reading an incident incident: %w", err)
 	}
@@ -479,7 +478,7 @@ func readIncident(
 	return scanIncident(rows, organization)
 }
 
-func scanIncident(rows pgx.Rows, organization tenancy.Organization) (incident.Incident, error) {
+func scanIncident(rows pgx.Rows, organization uuid.UUID) (incident.Incident, error) {
 	var (
 		found        incident.Incident
 		basis        int16

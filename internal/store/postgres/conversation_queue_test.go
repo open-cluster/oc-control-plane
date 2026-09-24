@@ -237,7 +237,7 @@ func TestQueuedMessageAdmissionIsAtomicAcrossConversations(t *testing.T) {
 	}
 	var queued int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM conversation_message
-		WHERE org_id = $1 AND investigation_id IS NULL AND role = 1`, org.String()).Scan(&queued); err != nil {
+		WHERE org_id = $1 AND investigation_id IS NULL AND role = 1`, org).Scan(&queued); err != nil {
 		t.Fatal(err)
 	}
 	if queued != 100 {
@@ -256,7 +256,7 @@ func TestLegacyMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO conversation_message
 		(conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text, window_from, window_until)
 		SELECT $1, $2, n, 1, 1, 'actor-' || n, 'Operator', 'question-' || n, now() - interval '24 hours', now()
-		FROM generate_series(1, 205) n`, chat.ID, org.String()); err != nil {
+		FROM generate_series(1, 205) n`, chat.ID, org); err != nil {
 		t.Fatal(err)
 	}
 	for batch, want := range []int{100, 100, 5} {
@@ -267,7 +267,7 @@ func TestLegacyMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 		var count, first, last int
 		if err := pool.QueryRow(ctx, `SELECT count(*), min(sequence), max(sequence)
 			FROM conversation_message WHERE org_id = $1 AND conversation_id = $2 AND investigation_id = $3`,
-			org.String(), chat.ID, turn.InvestigationID).Scan(&count, &first, &last); err != nil {
+			org, chat.ID, turn.InvestigationID).Scan(&count, &first, &last); err != nil {
 			t.Fatal(err)
 		}
 		if count != want || first != batch*100+1 || last != batch*100+want {
@@ -275,7 +275,7 @@ func TestLegacyMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 		}
 		var actor string
 		if err := pool.QueryRow(ctx, `SELECT created_by FROM investigation
-			WHERE org_id = $1 AND investigation_id = $2`, org.String(), turn.InvestigationID).Scan(&actor); err != nil {
+			WHERE org_id = $1 AND investigation_id = $2`, org, turn.InvestigationID).Scan(&actor); err != nil {
 			t.Fatal(err)
 		}
 		if actor != fmt.Sprintf("actor-%d", last) {

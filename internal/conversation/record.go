@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // Surface is where the person is talking from. Persisted as the integer in the column;
@@ -227,20 +226,20 @@ type TurnPage struct {
 }
 
 type Store interface {
-	OpenConversation(ctx context.Context, who authz.Principal, org tenancy.Organization,
+	OpenConversation(ctx context.Context, who authz.Principal, org uuid.UUID,
 		wanted NewConversation) (Conversation, error)
-	Conversation(ctx context.Context, org tenancy.Organization,
+	Conversation(ctx context.Context, org uuid.UUID,
 		id uuid.UUID) (Conversation, error)
 	QueryConversations(ctx context.Context, who authz.Principal,
-		org tenancy.Organization, page Page) (List, error)
-	ConversationDetail(ctx context.Context, org tenancy.Organization, id uuid.UUID,
+		org uuid.UUID, page Page) (List, error)
+	ConversationDetail(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		messages int) (Detail, error)
-	ConversationTurns(ctx context.Context, org tenancy.Organization, id uuid.UUID,
+	ConversationTurns(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		limit int, cursor string) (TurnPage, error)
 	AppendMessageAndOpenTurn(
 		ctx context.Context,
 		who authz.Principal,
-		org tenancy.Organization,
+		org uuid.UUID,
 		id uuid.UUID,
 		said NewMessage,
 		lead time.Duration,

@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // RelaySummary excludes credential material.
@@ -57,7 +56,7 @@ var relayOrderings = map[string]struct {
 }
 
 func (p *Database) ListRelays(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	query RelayQuery,
 ) (RelayRoster, error) {
 	if principal.Organization() != organization {
@@ -89,7 +88,7 @@ func (p *Database) ListRelays(
 		return RelayRoster{}, err
 	}
 
-	arguments := []any{organization.String(), query.LivenessWindow}
+	arguments := []any{organization, query.LivenessWindow}
 	where := []string{"registration.org_id = $1"}
 	add := func(clause string, value any) {
 		arguments = append(arguments, value)

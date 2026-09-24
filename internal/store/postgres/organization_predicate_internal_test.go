@@ -11,7 +11,6 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
@@ -155,12 +154,12 @@ func TestTenantOwnedHelpersPredicateOnOrganization(t *testing.T) {
 	})
 }
 
-func mustOrganization(t *testing.T, value string) tenancy.Organization {
+func mustOrganization(t *testing.T, value string) uuid.UUID {
 	t.Helper()
 	if _, err := uuid.Parse(value); err != nil {
 		value = uuid.NewSHA1(uuid.NameSpaceOID, []byte(value)).String()
 	}
-	organization, err := tenancy.NewOrganization(value)
+	organization, err := uuid.Parse(value)
 	if err != nil {
 		t.Fatalf("organization %q: %v", value, err)
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -188,7 +187,7 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) append(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, text string, window *Window,
 ) (Message, *turnView, bool, error) {
 	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
@@ -293,20 +292,20 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 }
 
 // caller resolves the principal and the organization.
-func (h Handlers) caller(request *http.Request) (authz.Principal, tenancy.Organization) {
+func (h Handlers) caller(request *http.Request) (authz.Principal, uuid.UUID) {
 	principal := authz.MustPrincipal(request.Context())
 	return principal, principal.Organization()
 }
 
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
-) (authz.Principal, tenancy.Organization, uuid.UUID, bool) {
+) (authz.Principal, uuid.UUID, uuid.UUID, bool) {
 	principal, organization := h.caller(request)
 	id, err := uuid.Parse(request.PathValue("conversation"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "conversation is not an identity"})
-		return authz.Principal{}, tenancy.Organization{}, uuid.UUID{}, false
+		return authz.Principal{}, uuid.UUID{}, uuid.UUID{}, false
 	}
 	return principal, organization, id, true
 }

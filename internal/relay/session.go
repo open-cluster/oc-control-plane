@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,7 +15,6 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -269,7 +269,7 @@ func (s *SessionService) close(session *sessionState) {
 }
 
 type relayIdentity struct {
-	organization   tenancy.Organization
+	organization   uuid.UUID
 	registrationID uuid.UUID
 }
 
@@ -283,8 +283,8 @@ func (s *SessionService) authenticate(ctx context.Context) (relayIdentity, error
 	if !ok {
 		return relayIdentity{}, refused
 	}
-	organization, err := tenancy.NewOrganization(firstValue(incoming, metadataOrganization))
-	if err != nil {
+	organization, err := uuid.Parse(strings.TrimSpace(firstValue(incoming, metadataOrganization)))
+	if err != nil || organization == uuid.Nil {
 		return relayIdentity{}, refused
 	}
 	registrationID, err := uuid.Parse(firstValue(incoming, metadataRegistration))

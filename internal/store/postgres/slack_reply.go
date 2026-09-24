@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 )
 
@@ -97,22 +96,13 @@ func (p *Database) ClaimSlackReplies(
 	defer rows.Close()
 	var claimed []slack.Reply
 	for rows.Next() {
-		var (
-			one          slack.Reply
-			organization string
-		)
-		if err := rows.Scan(&one.Investigation, &organization, &one.Integration,
+		var one slack.Reply
+		if err := rows.Scan(&one.Investigation, &one.Organization, &one.Integration,
 			&one.Conversation, &one.Stream.Channel, &one.Stream.Thread,
 			&one.Stream.TS, &one.Stream.Native,
 			&one.LastSequence, &one.Attempts, &one.ClaimToken, &one.LeaseExpiresAt); err != nil {
 			return nil, fmt.Errorf("scanning a slack reply: %w", err)
 		}
-		named, err := tenancy.NewOrganization(organization)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"a slack reply names an organization that is not a name: %w", err)
-		}
-		one.Organization = named
 		claimed = append(claimed, one)
 	}
 	if err = rows.Err(); err != nil {
@@ -123,7 +113,7 @@ func (p *Database) ClaimSlackReplies(
 
 // AdvanceSlackReply saves acknowledged progress under the current claim.
 func (p *Database) AdvanceSlackReply(
-	ctx context.Context, organization tenancy.Organization, investigation, owner uuid.UUID,
+	ctx context.Context, organization uuid.UUID, investigation, owner uuid.UUID,
 	made slack.Progress,
 ) error {
 	return p.withSlackReplyClaim(ctx, organization, investigation, owner, func(tx pgx.Tx) error {
@@ -136,7 +126,7 @@ func (p *Database) AdvanceSlackReply(
 		       note          = '',
 		       updated_at    = now()
 		 WHERE investigation_id = $1 AND org_id = $2`,
-			investigation, organization.String(), made.Stream.TS, made.Stream.Native,
+			investigation, organization, made.Stream.TS, made.Stream.Native,
 			made.Sequence); err != nil {
 			return fmt.Errorf("advancing a slack reply: %w", err)
 		}
@@ -156,7 +146,7 @@ func (p *Database) AdvanceSlackReply(
 // answering a question somebody asked, and attributing it to that person would say they wrote
 // what OpenCluster wrote.
 func (p *Database) RecordCollaborationWrite(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	integration uuid.UUID, where string,
 ) error {
 	return p.RecordEvent(ctx, organization, audit.Event{
@@ -174,14 +164,14 @@ func (p *Database) RecordCollaborationWrite(
 
 // CompleteSlackReply marks one delivered. Nothing claims it again.
 func (p *Database) CompleteSlackReply(
-	ctx context.Context, organization tenancy.Organization, investigation, owner uuid.UUID,
+	ctx context.Context, organization uuid.UUID, investigation, owner uuid.UUID,
 ) error {
 	return p.withSlackReplyClaim(ctx, organization, investigation, owner, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 		UPDATE slack_reply
 		   SET status = $3, leased_until = NULL, lease_owner = NULL, updated_at = now()
 		 WHERE investigation_id = $1 AND org_id = $2`,
-			investigation, organization.String(), SlackReplyDelivered); err != nil {
+			investigation, organization, SlackReplyDelivered); err != nil {
 			return fmt.Errorf("completing a slack reply: %w", err)
 		}
 		return nil
@@ -194,7 +184,7 @@ func (p *Database) CompleteSlackReply(
 // its own status and its own record. That separation is the point: a Slack outage must not be
 // able to make a completed investigation look failed.
 func (p *Database) RetrySlackReply(
-	ctx context.Context, organization tenancy.Organization, investigation, owner uuid.UUID,
+	ctx context.Context, organization uuid.UUID, investigation, owner uuid.UUID,
 	at time.Time, note string, giveUp bool,
 ) error {
 	return p.withSlackReplyClaim(ctx, organization, investigation, owner, func(tx pgx.Tx) error {
@@ -212,7 +202,7 @@ func (p *Database) RetrySlackReply(
 		       lease_owner     = NULL,
 		       updated_at      = now()
 		 WHERE investigation_id = $1 AND org_id = $2`,
-			investigation, organization.String(), status, at.UTC(), note); err != nil {
+			investigation, organization, status, at.UTC(), note); err != nil {
 			return fmt.Errorf("rescheduling a slack reply: %w", err)
 		}
 		return nil
@@ -222,7 +212,7 @@ func (p *Database) RetrySlackReply(
 // SlackReplyState reports what one reply looks like, for the tests and for support. It
 // answers false where the investigation owes no Slack answer.
 func (p *Database) SlackReplyState(
-	ctx context.Context, organization tenancy.Organization, investigation uuid.UUID,
+	ctx context.Context, organization uuid.UUID, investigation uuid.UUID,
 ) (status int, sequence int64, streamTS string, note string, found bool, err error) {
 	pool, poolErr := p.Pool(organization)
 	if poolErr != nil {
@@ -232,7 +222,7 @@ func (p *Database) SlackReplyState(
 		SELECT status, last_sequence, stream_ts, note
 		  FROM slack_reply
 		 WHERE investigation_id = $1 AND org_id = $2`,
-		investigation, organization.String()).Scan(&status, &sequence, &streamTS, &note)
+		investigation, organization).Scan(&status, &sequence, &streamTS, &note)
 	switch {
 	case errors.Is(scanErr, pgx.ErrNoRows):
 		return 0, 0, "", "", false, nil

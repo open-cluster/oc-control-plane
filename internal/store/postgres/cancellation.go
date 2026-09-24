@@ -7,8 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // JobCancellation is what asking a job to stop actually did. The three cases are genuinely
@@ -48,7 +46,7 @@ func (c JobCancellation) String() string {
 // its state and acting on it — which would otherwise cancel a job outright while a relay was
 // already running it, and leave that execution's result with nowhere to go.
 func (p *Database) RequestJobCancellation(
-	ctx context.Context, organization tenancy.Organization, jobID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, jobID uuid.UUID,
 ) (JobCancellation, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -66,7 +64,7 @@ func (p *Database) RequestJobCancellation(
 		   AND org_id = $2
 		   AND status IN (0, 1)
 		RETURNING status`,
-		jobID, organization.String()).Scan(&resulting)
+		jobID, organization).Scan(&resulting)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// Either terminal already or no such job. Both mean there is nothing here to stop.
@@ -83,7 +81,7 @@ func (p *Database) RequestJobCancellation(
 // PendingCancellations lists the executing jobs a session has been asked to stop. It is scoped
 // to the session holding the lease, so no relay is ever told to stop work it is not executing.
 func (p *Database) PendingCancellations(
-	ctx context.Context, organization tenancy.Organization, sessionID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, sessionID uuid.UUID,
 ) ([]JobFence, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -97,7 +95,7 @@ func (p *Database) PendingCancellations(
 		   AND lease_session       = $2
 		   AND status              = 1
 		   AND cancel_requested_at IS NOT NULL`,
-		organization.String(), sessionID)
+		organization, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("reading pending cancellations: %w", err)
 	}

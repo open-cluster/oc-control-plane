@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -148,13 +147,13 @@ func (h DeliveryHandlers) replay(writer http.ResponseWriter, request *http.Reque
 
 func addressedDelivery(
 	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, uuid.UUID, bool) {
+) (uuid.UUID, uuid.UUID, bool) {
 	organization := authz.MustPrincipal(request.Context()).Organization()
 	id, err := uuid.Parse(request.PathValue("delivery"))
 	if err != nil {
 		writeDeliveryJSON(writer, http.StatusBadRequest,
 			map[string]string{"error": "delivery is not an identity"})
-		return tenancy.Organization{}, uuid.Nil, false
+		return uuid.UUID{}, uuid.Nil, false
 	}
 	return organization, id, true
 }

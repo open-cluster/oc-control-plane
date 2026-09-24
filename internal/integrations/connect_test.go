@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 )
 
@@ -26,7 +25,7 @@ type storeUnderSeal struct{ Store }
 // connectingPrincipal is a member who may create integrations in the named organization.
 func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 	t.Helper()
-	org, err := tenancy.NewOrganization(organization)
+	org, err := uuid.Parse(organization)
 	if err != nil {
 		t.Fatalf("building an organization: %v", err)
 	}
@@ -162,7 +161,7 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 type recordingConnectStore struct{ Store }
 
 func (recordingConnectStore) StartConnectFlow(
-	context.Context, tenancy.Organization, ConnectFlow, string,
+	context.Context, uuid.UUID, ConnectFlow, string,
 ) error {
 	return nil
 }
@@ -196,7 +195,7 @@ func (s *capturingStore) IntegrationByInstallation(
 }
 
 func (s *capturingStore) CreateIntegration(
-	_ context.Context, _ authz.Principal, _ tenancy.Organization, wanted NewIntegration,
+	_ context.Context, _ authz.Principal, _ uuid.UUID, wanted NewIntegration,
 ) (Integration, error) {
 	s.created = wanted
 	return Integration{
@@ -288,7 +287,7 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 }
 
 func (s *capturingStore) ReplaceIntegrationCredential(
-	_ context.Context, _ authz.Principal, _ tenancy.Organization, id uuid.UUID,
+	_ context.Context, _ authz.Principal, _ uuid.UUID, id uuid.UUID,
 	_ Revision, sealed []byte, verification Verification,
 	installed *Installation,
 ) (Integration, error) {
@@ -298,7 +297,7 @@ func (s *capturingStore) ReplaceIntegrationCredential(
 }
 
 func (s *capturingStore) RecordIntegrationVerification(
-	_ context.Context, _ authz.Principal, _ tenancy.Organization, id uuid.UUID,
+	_ context.Context, _ authz.Principal, _ uuid.UUID, id uuid.UUID,
 	verification Verification,
 ) (Integration, error) {
 	s.reVerified = true

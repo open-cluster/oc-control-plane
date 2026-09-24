@@ -11,8 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // AlertEventStatus is where an alert has got to. There are two: it is happening, or it stopped.
@@ -107,7 +105,7 @@ type DeliveryOutcome struct {
 // again on the next retry. The unique provider identity and lifecycle key resolves two
 // concurrent retries — the database decides, rather than a read-then-write both could pass.
 func (p *Database) RecordDelivery(
-	ctx context.Context, organization tenancy.Organization, delivery Delivery,
+	ctx context.Context, organization uuid.UUID, delivery Delivery,
 ) (DeliveryOutcome, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -198,7 +196,7 @@ func compareAlertEvents(a, b AlertEvent) int {
 // digest detects a provider identity reused for different content.
 func claimDelivery(
 	ctx context.Context, transaction pgx.Tx,
-	organization tenancy.Organization, delivery Delivery,
+	organization uuid.UUID, delivery Delivery,
 ) (uuid.UUID, bool, error) {
 	deliveryID := uuid.New()
 	providerIdentity := delivery.ProviderIdentity
@@ -212,7 +210,7 @@ func claimDelivery(
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
 		DO NOTHING`,
-		deliveryID, organization.String(), delivery.Integration, delivery.ContentDigest,
+		deliveryID, organization, delivery.Integration, delivery.ContentDigest,
 		providerIdentity, delivery.LifecyclePhase, delivery.RequestID,
 		delivery.Truncated)
 	if err != nil {
@@ -226,7 +224,7 @@ func claimDelivery(
 		SELECT content_digest FROM webhook_delivery
 		 WHERE org_id = $1 AND integration_id = $2
 		   AND provider_identity = $3 AND lifecycle_phase = $4`,
-		organization.String(), delivery.Integration, providerIdentity,
+		organization, delivery.Integration, providerIdentity,
 		delivery.LifecyclePhase).Scan(&acceptedDigest); err != nil {
 		return uuid.Nil, false, fmt.Errorf("reading accepted delivery identity: %w", err)
 	}
@@ -249,7 +247,7 @@ func claimDelivery(
 // while the incident is still firing means a late firing cannot resurrect something already
 // resolved, and a repeated resolution is a no-op.
 func upsertAlertEvent(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delivery Delivery, alertEvent AlertEvent,
 ) (uuid.UUID, bool, error) {
 	labels, err := json.Marshal(alertEvent.Labels)
@@ -294,7 +292,7 @@ func upsertAlertEvent(
 		       updated_at    = now()
 		 WHERE alert_event.status = 1
 		RETURNING alert_event_id, xmax = 0`,
-		uuid.New(), organization.String(), delivery.Integration,
+		uuid.New(), organization, delivery.Integration,
 		alertEvent.SourceKey, int16(alertEvent.Status),
 		alertEvent.Title, alertEvent.Summary, labels, annotations, alertEvent.GeneratorURL,
 		alertEvent.StartedAt, resolvedAt).
@@ -316,12 +314,12 @@ func upsertAlertEvent(
 // every AlertEvent in it has now stopped firing.
 func regroupUpdatedAlertEvent(
 	ctx context.Context, transaction pgx.Tx,
-	organization tenancy.Organization, alertEventID uuid.UUID,
+	organization uuid.UUID, alertEventID uuid.UUID,
 ) error {
 	var incidentID *uuid.UUID
 	if err := transaction.QueryRow(ctx,
 		`SELECT incident_id FROM alert_event WHERE alert_event_id = $1 AND org_id = $2`,
-		alertEventID, organization.String()).Scan(&incidentID); err != nil {
+		alertEventID, organization).Scan(&incidentID); err != nil {
 		return fmt.Errorf("reading a alert_event's incident: %w", err)
 	}
 	if incidentID == nil {

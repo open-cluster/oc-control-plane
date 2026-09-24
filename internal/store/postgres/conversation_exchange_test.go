@@ -109,7 +109,7 @@ func TestRecentExchangePreservesMessageSequenceWhenTransactionTimesDisagree(t *t
 	}
 	_, err = pool.Exec(ctx, `UPDATE conversation_message
 		SET created_at = '2026-09-06T10:00:00Z'::timestamptz - sequence * interval '1 second'
-		WHERE org_id = $1 AND conversation_id = $2`, organization.String(), opened.ID)
+		WHERE org_id = $1 AND conversation_id = $2`, organization, opened.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

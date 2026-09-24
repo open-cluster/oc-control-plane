@@ -24,7 +24,7 @@ func TestRelayLastSeenSortPagesRelaysThatHaveNeverConnected(t *testing.T) {
 				 relay_version, capabilities, created_at)
 			VALUES (gen_random_uuid(), $1, sha256($2::bytea), $3, '1.0.0', '[]',
 			        now() + make_interval(secs => $4))`,
-			organization.String(), []byte(fmt.Sprintf("credential-%d", index)),
+			organization, []byte(fmt.Sprintf("credential-%d", index)),
 			fmt.Sprintf("relay-%d", index), float64(index))
 		if err != nil {
 			t.Fatal(err)

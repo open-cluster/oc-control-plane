@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type Corrections struct {
@@ -26,17 +25,17 @@ type Corrections struct {
 }
 
 type Store interface {
-	GenerationInput(ctx context.Context, org tenancy.Organization,
+	GenerationInput(ctx context.Context, org uuid.UUID,
 		incident uuid.UUID) (GenerationInput, error)
-	Postmortem(ctx context.Context, org tenancy.Organization,
+	Postmortem(ctx context.Context, org uuid.UUID,
 		incident uuid.UUID) (Postmortem, error)
-	CreateDraft(ctx context.Context, who authz.Principal, org tenancy.Organization,
+	CreateDraft(ctx context.Context, who authz.Principal, org uuid.UUID,
 		draft Postmortem) (Postmortem, error)
-	ReplaceDraft(ctx context.Context, who authz.Principal, org tenancy.Organization,
+	ReplaceDraft(ctx context.Context, who authz.Principal, org uuid.UUID,
 		draft Postmortem) (Postmortem, error)
-	Correct(ctx context.Context, who authz.Principal, org tenancy.Organization,
+	Correct(ctx context.Context, who authz.Principal, org uuid.UUID,
 		incident uuid.UUID, corrections Corrections) (Postmortem, error)
-	Review(ctx context.Context, who authz.Principal, org tenancy.Organization,
+	Review(ctx context.Context, who authz.Principal, org uuid.UUID,
 		incident uuid.UUID) (Postmortem, error)
 }
 
@@ -45,7 +44,7 @@ type Service struct{ Store Store }
 func (s Service) Generate(
 	ctx context.Context,
 	who authz.Principal,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	incident uuid.UUID,
 	human HumanInput,
 ) (Postmortem, error) {
@@ -61,7 +60,7 @@ func (s Service) Generate(
 func (s Service) Regenerate(
 	ctx context.Context,
 	who authz.Principal,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	incident uuid.UUID,
 	human HumanInput,
 ) (Postmortem, error) {
@@ -81,14 +80,14 @@ func (s Service) Regenerate(
 }
 
 func (s Service) Correct(
-	ctx context.Context, who authz.Principal, organization tenancy.Organization,
+	ctx context.Context, who authz.Principal, organization uuid.UUID,
 	incident uuid.UUID, corrections Corrections,
 ) (Postmortem, error) {
 	return s.Store.Correct(ctx, who, organization, incident, corrections)
 }
 
 func (s Service) Review(
-	ctx context.Context, who authz.Principal, organization tenancy.Organization,
+	ctx context.Context, who authz.Principal, organization uuid.UUID,
 	incident uuid.UUID,
 ) (Postmortem, error) {
 	return s.Store.Review(ctx, who, organization, incident)

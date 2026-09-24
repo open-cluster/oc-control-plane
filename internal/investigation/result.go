@@ -2,13 +2,12 @@ package investigation
 
 import (
 	"context"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/google/uuid"
 )
 
 // Agent owns one Investigation's reasoning, Tool execution, provenance, and terminal state.
 type Agent interface {
-	Run(context.Context, tenancy.Organization, Investigation) error
+	Run(context.Context, uuid.UUID, Investigation) error
 }
 
 const MaxHypothesisSnapshotItems = 8

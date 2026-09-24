@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -126,13 +125,13 @@ func (h Handlers) review(writer http.ResponseWriter, request *http.Request) {
 func (h Handlers) addressed(
 	writer http.ResponseWriter,
 	request *http.Request,
-) (tenancy.Organization, uuid.UUID, authz.Principal, bool) {
+) (uuid.UUID, uuid.UUID, authz.Principal, bool) {
 	principal := authz.MustPrincipal(request.Context())
 	organization := principal.Organization()
 	incidentID, err := uuid.Parse(request.PathValue("incident"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "incident is not an identity"})
-		return tenancy.Organization{}, uuid.Nil, authz.Principal{}, false
+		return uuid.UUID{}, uuid.Nil, authz.Principal{}, false
 	}
 	return organization, incidentID, principal, true
 }

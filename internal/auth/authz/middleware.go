@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // Guard holds the dependencies needed to protect the application API.
 type Guard struct {
 	Resolve func(*http.Request) (Principal, error)
-	Record  func(context.Context, tenancy.Organization, audit.Event)
+	Record  func(context.Context, uuid.UUID, audit.Event)
 	Origin  string
 	Logger  *slog.Logger
 }

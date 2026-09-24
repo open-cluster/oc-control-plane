@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
@@ -42,7 +40,7 @@ type Reply struct {
 	Investigation  uuid.UUID
 	ClaimToken     uuid.UUID
 	LeaseExpiresAt time.Time
-	Organization   tenancy.Organization
+	Organization   uuid.UUID
 	Integration    uuid.UUID
 	// Conversation is the thread's conversation. The reply is written into the thread and
 	// the conversation is what holds who said what in it.
@@ -74,23 +72,23 @@ type Replies interface {
 	ClaimSlackReplies(ctx context.Context, limit int, lease time.Duration) ([]Reply, error)
 	// AdvanceSlackReply records what one pass established: the visible message's identity
 	// once it exists, and how far the cursor has moved. It only ever moves forward.
-	AdvanceSlackReply(ctx context.Context, org tenancy.Organization, investigation, owner uuid.UUID,
+	AdvanceSlackReply(ctx context.Context, org uuid.UUID, investigation, owner uuid.UUID,
 		made Progress) error
 	// CompleteSlackReply marks one answered. Nothing claims it again.
-	CompleteSlackReply(ctx context.Context, org tenancy.Organization,
+	CompleteSlackReply(ctx context.Context, org uuid.UUID,
 		investigation, owner uuid.UUID) error
 	// RetrySlackReply schedules another attempt, or gives up when there is no attempt left
 	// worth making. The note is this build's own words.
-	RetrySlackReply(ctx context.Context, org tenancy.Organization, investigation, owner uuid.UUID,
+	RetrySlackReply(ctx context.Context, org uuid.UUID, investigation, owner uuid.UUID,
 		at time.Time, note string, giveUp bool) error
-	ReleaseSlackReply(ctx context.Context, org tenancy.Organization, investigation, owner uuid.UUID, at time.Time) error
+	ReleaseSlackReply(ctx context.Context, org uuid.UUID, investigation, owner uuid.UUID, at time.Time) error
 	// RecordCollaborationWrite puts one reply into a customer's workspace on the audit
 	// record. It is the only thing this product writes into a system it does not own, and
 	// "what did OpenCluster say in our Slack" has to be answerable.
-	RecordCollaborationWrite(ctx context.Context, org tenancy.Organization,
+	RecordCollaborationWrite(ctx context.Context, org uuid.UUID,
 		integration uuid.UUID, where string) error
 	// Integration reads the installation a reply answers through, for its credential.
-	Integration(ctx context.Context, org tenancy.Organization,
+	Integration(ctx context.Context, org uuid.UUID,
 		id uuid.UUID) (integrations.Integration, error)
 	// UnnamedSlackAuthors reports the Slack identities in one conversation still recorded
 	// under their raw identifier, and NameSlackAuthor records what one is called.
@@ -98,12 +96,12 @@ type Replies interface {
 	// They are here rather than on the endpoint that accepts a message because resolving a
 	// name costs a call to the vendor, and the acknowledgement path is the one place that
 	// must make none: Slack retries anything it is not answered inside three seconds.
-	UnnamedSlackAuthors(ctx context.Context, org tenancy.Organization,
+	UnnamedSlackAuthors(ctx context.Context, org uuid.UUID,
 		conversation uuid.UUID) ([]string, error)
-	NameSlackAuthor(ctx context.Context, org tenancy.Organization, conversation uuid.UUID,
+	NameSlackAuthor(ctx context.Context, org uuid.UUID, conversation uuid.UUID,
 		actor, display string) error
 	// Events reports an investigation's events after a sequence, in order, bounded.
-	Events(ctx context.Context, org tenancy.Organization, investigation uuid.UUID,
+	Events(ctx context.Context, org uuid.UUID, investigation uuid.UUID,
 		after int64, limit int) ([]investigation.Event, error)
 }
 

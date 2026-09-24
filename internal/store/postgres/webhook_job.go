@@ -8,8 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type WebhookJobKind int16
@@ -54,7 +52,7 @@ var ErrWebhookJobCapacity = errors.New("organization has reached its waiting inv
 
 type WebhookJob struct {
 	ID              uuid.UUID
-	Organization    tenancy.Organization
+	Organization    uuid.UUID
 	Kind            WebhookJobKind
 	Status          WebhookJobStatus
 	DeliveryID      uuid.UUID
@@ -74,7 +72,7 @@ type WebhookJob struct {
 // ApplyAlertWebhookJob opens the one Investigation identified by this Webhook Job and
 // advances the fenced lease in the same transaction. A retry observes the unique origin.
 func (d *Database) ApplyAlertWebhookJob(
-	ctx context.Context, organization tenancy.Organization, work WebhookJob,
+	ctx context.Context, organization uuid.UUID, work WebhookJob,
 	windowLead time.Duration, maxWaiting int,
 ) (uuid.UUID, error) {
 	work.Organization = organization
@@ -92,7 +90,7 @@ func (d *Database) ApplyAlertWebhookJob(
 		SELECT investigation_id
 		  FROM investigation
 		 WHERE org_id = $1 AND webhook_job_id = $2`,
-		work.Organization.String(), work.ID).Scan(&investigationID)
+		work.Organization, work.ID).Scan(&investigationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err = reserveWaitingInvestigation(ctx, tx, work.Organization, maxWaiting); err != nil {
 			return uuid.Nil, err
@@ -102,7 +100,7 @@ func (d *Database) ApplyAlertWebhookJob(
 		if err = tx.QueryRow(ctx, `
 			SELECT title, first_seen_at, last_seen_at
 			  FROM incident
-			 WHERE org_id = $1 AND incident_id = $2`, work.Organization.String(),
+			 WHERE org_id = $1 AND incident_id = $2`, work.Organization,
 			work.IncidentID).Scan(&title, &firstSeen, &lastSeen); err != nil {
 			return uuid.Nil, fmt.Errorf("reading delivery processing Incident: %w", err)
 		}
@@ -112,7 +110,7 @@ func (d *Database) ApplyAlertWebhookJob(
 				(investigation_id, org_id, incident_id, subject, window_from,
 				 window_until, created_by, webhook_job_id)
 			VALUES ($1, $2, $3, $4, $5, $6, 'webhook', $7)`, investigationID,
-			work.Organization.String(), work.IncidentID, title,
+			work.Organization, work.IncidentID, title,
 			firstSeen.Add(-windowLead), lastSeen, work.ID); err != nil {
 			return uuid.Nil, fmt.Errorf("opening alert investigation: %w", err)
 		}
@@ -132,7 +130,7 @@ func (d *Database) ApplyAlertWebhookJob(
 // and advances the fenced Webhook Job atomically. The Message assignment is the durable
 // idempotency boundary when a prior attempt already opened the turn.
 func (d *Database) ApplySlackWebhookJob(
-	ctx context.Context, organization tenancy.Organization, work WebhookJob,
+	ctx context.Context, organization uuid.UUID, work WebhookJob,
 	windowLead time.Duration, maxWaiting int,
 ) error {
 	work.Organization = organization
@@ -170,7 +168,7 @@ func (d *Database) ApplySlackWebhookJob(
 }
 
 func reserveWaitingInvestigation(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization, maximum int,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, maximum int,
 ) error {
 	if maximum <= 0 {
 		return nil
@@ -183,7 +181,7 @@ func reserveWaitingInvestigation(
 	if err := transaction.QueryRow(ctx, `
 		SELECT count(*) FROM investigation
 		 WHERE org_id = $1 AND status = 1 AND lease_worker = ''`,
-		organization.String()).Scan(&waiting); err != nil {
+		organization).Scan(&waiting); err != nil {
 		return fmt.Errorf("counting organization waiting investigations: %w", err)
 	}
 	if waiting >= maximum {
@@ -198,7 +196,7 @@ func completeWebhookJobTx(ctx context.Context, tx pgx.Tx, work WebhookJob) error
 		   SET status = 5, lease_owner = '', lease_expires_at = NULL, updated_at = now()
 		 WHERE org_id = $1 AND job_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
-		work.Organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch)
+		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch)
 	if err != nil {
 		return fmt.Errorf("completing webhook delivery effect: %w", err)
 	}
@@ -206,7 +204,7 @@ func completeWebhookJobTx(ctx context.Context, tx pgx.Tx, work WebhookJob) error
 }
 
 func enqueueWebhookJob(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	kind WebhookJobKind, deliveryID, integrationID, incidentID, conversationID uuid.UUID,
 	messageSequence int64,
 ) error {
@@ -222,7 +220,7 @@ func enqueueWebhookJob(
 			(job_id, org_id, kind, delivery_id, integration_id, incident_id,
 			 conversation_id, message_sequence, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0), now())
-		ON CONFLICT DO NOTHING`, uuid.New(), organization.String(), int16(kind), deliveryID,
+		ON CONFLICT DO NOTHING`, uuid.New(), organization, int16(kind), deliveryID,
 		integrationID, incident, conversation, messageSequence); err != nil {
 		return fmt.Errorf("enqueueing webhook job: %w", err)
 	}
@@ -238,7 +236,6 @@ func (d *Database) ClaimWebhookJob(
 		return WebhookJob{}, false, errors.New("webhook job owner and lease are required")
 	}
 	var work WebhookJob
-	var organization string
 	var incidentID, conversationID *uuid.UUID
 	err := d.pool.QueryRow(ctx, `
 			WITH selected AS (
@@ -263,7 +260,7 @@ func (d *Database) ClaimWebhookJob(
 			          work.integration_id, work.incident_id, work.conversation_id,
 			          coalesce(work.message_sequence, 0), work.attempts, work.lease_owner,
 			          work.lease_epoch, work.created_at, work.updated_at`,
-		owner, lease.String(), MaxWebhookJobAttempts).Scan(&work.ID, &organization, &work.Kind, &work.Status,
+		owner, lease.String(), MaxWebhookJobAttempts).Scan(&work.ID, &work.Organization, &work.Kind, &work.Status,
 		&work.DeliveryID, &work.IntegrationID, &incidentID, &conversationID,
 		&work.MessageSequence, &work.Attempts, &work.LeaseOwner, &work.LeaseEpoch,
 		&work.CreatedAt, &work.UpdatedAt)
@@ -272,10 +269,6 @@ func (d *Database) ClaimWebhookJob(
 	}
 	if err != nil {
 		return WebhookJob{}, false, fmt.Errorf("claiming webhook job: %w", err)
-	}
-	work.Organization, err = tenancy.NewOrganization(organization)
-	if err != nil {
-		return WebhookJob{}, false, fmt.Errorf("claimed webhook delivery has invalid Organization: %w", err)
 	}
 	if incidentID != nil {
 		work.IncidentID = *incidentID
@@ -287,7 +280,7 @@ func (d *Database) ClaimWebhookJob(
 }
 
 func (d *Database) HeartbeatWebhookJob(
-	ctx context.Context, organization tenancy.Organization, work WebhookJob, lease time.Duration,
+	ctx context.Context, organization uuid.UUID, work WebhookJob, lease time.Duration,
 ) error {
 	work.Organization = organization
 	pool, err := d.Pool(organization)
@@ -299,20 +292,20 @@ func (d *Database) HeartbeatWebhookJob(
 		   SET lease_expires_at = now() + $5::interval, updated_at = now()
 		 WHERE org_id = $1 AND job_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
-		work.Organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch, lease.String())
+		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch, lease.String())
 	if err != nil {
 		return fmt.Errorf("renewing webhook job lease: %w", err)
 	}
 	return requireWorkLease(tag.RowsAffected())
 }
 
-func (d *Database) CompleteWebhookJob(ctx context.Context, organization tenancy.Organization, work WebhookJob) error {
+func (d *Database) CompleteWebhookJob(ctx context.Context, organization uuid.UUID, work WebhookJob) error {
 	work.Organization = organization
 	return d.transitionWebhookJob(ctx, work, WebhookJobComplete, 0, "", "")
 }
 
 func (d *Database) FailWebhookJob(
-	ctx context.Context, organization tenancy.Organization, work WebhookJob, terminal bool, delay time.Duration,
+	ctx context.Context, organization uuid.UUID, work WebhookJob, terminal bool, delay time.Duration,
 	class, message string,
 ) error {
 	work.Organization = organization
@@ -327,7 +320,7 @@ func (d *Database) FailWebhookJob(
 // DeferWebhookJob preserves an accepted Message behind Organization backpressure without
 // consuming its failure budget or making a permanently delayed Message terminal.
 func (d *Database) DeferWebhookJob(
-	ctx context.Context, organization tenancy.Organization, work WebhookJob, delay time.Duration,
+	ctx context.Context, organization uuid.UUID, work WebhookJob, delay time.Duration,
 ) error {
 	pool, err := d.Pool(organization)
 	if err != nil {
@@ -343,7 +336,7 @@ func (d *Database) DeferWebhookJob(
 		       updated_at = now()
 		 WHERE org_id = $1 AND job_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
-		organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch, max(delay, 0).String())
+		organization, work.ID, work.LeaseOwner, work.LeaseEpoch, max(delay, 0).String())
 	if err != nil {
 		return fmt.Errorf("deferring webhook delivery behind Organization capacity: %w", err)
 	}
@@ -365,7 +358,7 @@ func (d *Database) transitionWebhookJob(
 		       failure_class = $7, failure_message = $8, updated_at = now()
 		 WHERE org_id = $1 AND job_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
-		work.Organization.String(), work.ID, work.LeaseOwner, work.LeaseEpoch,
+		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch,
 		int16(status), max(delay, 0).String(), class, message)
 	if err != nil {
 		return fmt.Errorf("transitioning webhook job: %w", err)

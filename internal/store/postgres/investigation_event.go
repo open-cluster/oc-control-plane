@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -24,7 +22,7 @@ const maxEventPage = 500
 //
 // The parent-row lock serializes progress with terminal transitions across replicas.
 func (p *Database) AppendEvent(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	event investigation.Event,
 ) error {
 	pool, err := p.Pool(organization)
@@ -52,7 +50,7 @@ func (p *Database) AppendEvent(
 		  FROM investigation
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 		 AND lease_token = $6 AND lease_expires_at > clock_timestamp()`,
-		id, organization.String(), event.At, int16(event.Type), payload, token)
+		id, organization, event.At, int16(event.Type), payload, token)
 	if err != nil {
 		return fmt.Errorf("appending an investigation event: %w", err)
 	}
@@ -69,7 +67,7 @@ func (p *Database) AppendEvent(
 // caller turns an empty answer for an investigation it could not read into not-found; this
 // read does not distinguish "no events yet" from "not yours", and does not need to.
 func (p *Database) Events(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	after int64, limit int,
 ) ([]investigation.Event, error) {
 	pool, err := p.Pool(organization)
@@ -85,7 +83,7 @@ func (p *Database) Events(
 		 WHERE org_id = $1 AND investigation_id = $2 AND sequence > $3
 		   AND type NOT IN (5, 8)
 		 ORDER BY sequence
-		 LIMIT $4`, organization.String(), id, after, limit)
+		 LIMIT $4`, organization, id, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading investigation events: %w", err)
 	}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -24,7 +23,7 @@ const conversationColumns = `conversation_id, incident_id, surface, subject, sta
 
 // OpenConversation records one and audits the act.
 func (p *Database) OpenConversation(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	wanted conversation.NewConversation,
 ) (conversation.Conversation, error) {
 	return audited(ctx, p, principal, organization, audit.ActionConversationOpened,
@@ -36,7 +35,7 @@ func (p *Database) OpenConversation(
 				                          subject, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6)
 				RETURNING `+conversationColumns,
-				uuid.New(), organization.String(), nullableUUID(wanted.IncidentID),
+				uuid.New(), organization, nullableUUID(wanted.IncidentID),
 				int16(wanted.Surface), wanted.Subject, wanted.CreatedBy)
 
 			opened, err := scanConversation(row, organization.String())
@@ -59,7 +58,7 @@ func (p *Database) OpenConversation(
 
 // Conversation reads one, scoped to the tenant.
 func (p *Database) Conversation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (conversation.Conversation, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -68,7 +67,7 @@ func (p *Database) Conversation(
 	row := pool.QueryRow(ctx, `
 		SELECT `+conversationColumns+`
 		  FROM conversation
-		 WHERE conversation_id = $1 AND org_id = $2`, id, organization.String())
+		 WHERE conversation_id = $1 AND org_id = $2`, id, organization)
 	found, err := scanConversation(row, organization.String())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return conversation.Conversation{}, conversation.ErrUnknown
@@ -80,7 +79,7 @@ func (p *Database) Conversation(
 }
 
 func (p *Database) QueryConversations(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	page conversation.Page,
 ) (conversation.List, error) {
 	if principal.Organization() != organization {
@@ -106,7 +105,7 @@ func (p *Database) QueryConversations(
 		return conversation.List{}, conversation.ErrBadCursor
 	}
 
-	arguments := []any{organization.String(), limit + 1}
+	arguments := []any{organization, limit + 1}
 	narrowing := ""
 	if cursorID != nil {
 		arguments = append(arguments, *cursorAt, *cursorID)
@@ -171,7 +170,7 @@ func (p *Database) QueryConversations(
 // read is bounded and returns the NEWEST, in order — a conversation of a thousand
 // messages is read from its end, and the whole transcript is not what a surface renders.
 func (p *Database) ConversationDetail(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, messages int,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, messages int,
 ) (conversation.Detail, error) {
 	found, err := p.Conversation(ctx, organization, id)
 	if err != nil {
@@ -197,7 +196,7 @@ func (p *Database) ConversationDetail(
 // conversationMessages reads the newest bounded window of a conversation's transcript, in
 // order.
 func conversationMessages(
-	ctx context.Context, queries querier, organization tenancy.Organization,
+	ctx context.Context, queries querier, organization uuid.UUID,
 	id uuid.UUID, limit int,
 ) ([]conversation.Message, error) {
 	if limit <= 0 {
@@ -212,7 +211,7 @@ func conversationMessages(
 		         WHERE org_id = $1 AND conversation_id = $2
 		         ORDER BY sequence DESC
 		         LIMIT $3) newest
-		 ORDER BY sequence`, organization.String(), id, limit)
+		 ORDER BY sequence`, organization, id, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading a conversation's messages: %w", err)
 	}
@@ -241,7 +240,7 @@ func conversationMessages(
 // turn is a separate decision, because whether one can be opened depends on whether
 // another is running.
 func (p *Database) AppendMessage(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, said conversation.NewMessage,
 ) (conversation.Message, error) {
 	return audited(ctx, p, principal, organization, audit.ActionConversationMessage,
@@ -265,7 +264,7 @@ type acceptedMessage struct {
 }
 
 func (p *Database) AppendMessageAndOpenTurn(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, said conversation.NewMessage, lead time.Duration, maxPending int,
 ) (conversation.Message, conversation.Turn, bool, error) {
 	accepted, err := audited(ctx, p, principal, organization, audit.ActionConversationMessage,
@@ -294,7 +293,7 @@ func (p *Database) AppendMessageAndOpenTurn(
 }
 
 func appendMessage(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID, said conversation.NewMessage, lead time.Duration,
 ) (conversation.Message, error) {
 	if said.Role == conversation.RolePerson {
@@ -322,7 +321,7 @@ func appendMessage(
 		       $3, $4, $5, $6, $7, $8, $9
 		RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
 		          investigation_id, created_at, window_from, window_until`,
-		id, organization.String(), int16(said.Role), int16(said.ActorKind),
+		id, organization, int16(said.Role), int16(said.ActorKind),
 		said.ActorID, said.ActorDisplay, said.Text, window.From, window.Until)
 	written, err := scanMessage(row)
 	if err != nil {
@@ -330,7 +329,7 @@ func appendMessage(
 	}
 	if _, err := transaction.Exec(ctx, `
 		UPDATE conversation SET last_activity_at = now()
-		 WHERE conversation_id = $1 AND org_id = $2`, id, organization.String()); err != nil {
+		 WHERE conversation_id = $1 AND org_id = $2`, id, organization); err != nil {
 		return conversation.Message{}, fmt.Errorf("stamping a conversation: %w", err)
 	}
 	return written, nil
@@ -339,7 +338,7 @@ func appendMessage(
 // WaitingTurns counts this organization's investigations that are running and unleased —
 // the queue, as the claimer sees it.
 func (p *Database) WaitingTurns(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 ) (int, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -350,7 +349,7 @@ func (p *Database) WaitingTurns(
 		SELECT count(*)
 		  FROM investigation
 		 WHERE org_id = $1 AND status = 1 AND lease_worker = ''`,
-		organization.String()).Scan(&waiting); err != nil {
+		organization).Scan(&waiting); err != nil {
 		return 0, fmt.Errorf("counting waiting turns: %w", err)
 	}
 	return waiting, nil
@@ -367,7 +366,7 @@ func (p *Database) WaitingTurns(
 // naming no incident gets a window of that length ending now, because a follow-up question
 // asked at three in the morning is about the last few hours and not about all of history.
 func (p *Database) OpenTurn(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	lead time.Duration,
 ) (conversation.Turn, bool, error) {
 	pool, err := p.Pool(organization)
@@ -404,7 +403,7 @@ func (p *Database) OpenTurn(
 // "start the next turn" would be two places for the single-writer invariant to be got
 // wrong.
 func (p *Database) DrainConversation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	lead time.Duration, maxPending int,
 ) (bool, error) {
 	pool, err := p.Pool(organization)
@@ -444,7 +443,7 @@ func (p *Database) DrainQueuedConversation(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	var organizationID string
+	var organization uuid.UUID
 	var conversationID uuid.UUID
 	err = transaction.QueryRow(ctx, `
 		SELECT conversation.org_id, conversation.conversation_id
@@ -464,16 +463,12 @@ func (p *Database) DrainQueuedConversation(
 		        WHERE waiting.org_id = conversation.org_id
 		          AND waiting.status = 1 AND waiting.lease_worker = '') < $1)
 		 ORDER BY message.created_at, conversation.conversation_id
-		 LIMIT 1`, maxPending).Scan(&organizationID, &conversationID)
+		 LIMIT 1`, maxPending).Scan(&organization, &conversationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("finding queued Conversation work: %w", err)
-	}
-	organization, err := tenancy.NewOrganization(organizationID)
-	if err != nil {
-		return false, fmt.Errorf("queued Conversation has invalid Organization: %w", err)
 	}
 	if err = reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
 		if errors.Is(err, ErrWebhookJobCapacity) {
@@ -496,7 +491,7 @@ func (p *Database) DrainQueuedConversation(
 // it. The drain at a terminal boundary runs exactly this, which is why it is a function
 // rather than a method.
 func openTurn(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID, lead time.Duration,
 ) (conversation.Turn, bool, error) {
 	// The lock serialises two openers of ONE conversation so that they take different
@@ -512,7 +507,7 @@ func openTurn(
 		SELECT state, incident_id, subject
 		  FROM conversation
 		 WHERE conversation_id = $1 AND org_id = $2
-		   FOR UPDATE`, id, organization.String()).Scan(
+		   FOR UPDATE`, id, organization).Scan(
 		&state, &incidentID, &subject); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.Turn{}, false, conversation.ErrUnknown
@@ -526,7 +521,7 @@ func openTurn(
 	if err := transaction.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM investigation
 		 WHERE org_id = $1 AND conversation_id = $2 AND status = 1)`,
-		organization.String(), id).Scan(&running); err != nil {
+		organization, id).Scan(&running); err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("checking active turn: %w", err)
 	}
 	if running {
@@ -546,7 +541,7 @@ func openTurn(
 	var from, until time.Time
 	if err = transaction.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
 		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1
-		ORDER BY sequence LIMIT 1`, organization.String(), id).Scan(&from, &until); err != nil {
+		ORDER BY sequence LIMIT 1`, organization, id).Scan(&from, &until); err != nil {
 		return conversation.Turn{}, false, err
 	}
 
@@ -566,7 +561,7 @@ func openTurn(
 		                    AND existing.conversation_id = $8), 0) + 1,
 		       $9
 		RETURNING turn, created_at`,
-		investigationID, organization.String(), incidentID, question, subject, from, until,
+		investigationID, organization, incidentID, question, subject, from, until,
 		id, opener).Scan(&ordinal, &createdAt)
 	if err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("opening a turn: %w", err)
@@ -577,7 +572,7 @@ func openTurn(
 		   SET investigation_id = $1
 		 WHERE org_id = $2 AND conversation_id = $3 AND investigation_id IS NULL
 		   AND role = 1 AND sequence <= $4`,
-		investigationID, organization.String(), id, lastSequence); err != nil {
+		investigationID, organization, id, lastSequence); err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("attaching queued messages: %w", err)
 	}
 
@@ -594,7 +589,7 @@ func openTurn(
 // answer: a person who typed three lines while the agent worked asked one thing in three
 // parts, and answering each separately would be three investigations of the same context.
 func queuedQuestion(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID,
 ) (string, int64, string, error) {
 	rows, err := transaction.Query(ctx, `
@@ -602,7 +597,7 @@ func queuedQuestion(
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL
 		   AND role = 1
-		 ORDER BY sequence LIMIT $3`, organization.String(), id, maxQueuedMessages)
+		 ORDER BY sequence LIMIT $3`, organization, id, maxQueuedMessages)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("reading queued messages: %w", err)
 	}
@@ -631,7 +626,7 @@ func queuedQuestion(
 // back before the incident began and forward to now while it is still open; one naming no
 // incident gets the lead ending now.
 func turnWindow(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	incidentID *uuid.UUID, lead time.Duration,
 ) (time.Time, time.Time, error) {
 	now := time.Now().UTC()
@@ -649,7 +644,7 @@ func turnWindow(
 		SELECT first_seen_at, last_seen_at, status
 		  FROM incident
 		 WHERE incident_id = $1 AND org_id = $2`,
-		*incidentID, organization.String()).Scan(
+		*incidentID, organization).Scan(
 		&firstSeen, &lastSeen, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return now.Add(-lead), now, nil
@@ -666,7 +661,7 @@ func turnWindow(
 // lockConversation takes the row lock and reports the conversation's state, or that this
 // organization does not have it.
 func lockConversation(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID,
 ) (conversation.State, error) {
 	var state int16
@@ -674,7 +669,7 @@ func lockConversation(
 		SELECT state
 		  FROM conversation
 		 WHERE conversation_id = $1 AND org_id = $2
-		   FOR UPDATE`, id, organization.String()).Scan(&state); err != nil {
+		   FOR UPDATE`, id, organization).Scan(&state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, conversation.ErrUnknown
 		}

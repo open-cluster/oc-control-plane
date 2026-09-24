@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io/fs"
 	"sort"
 	"strings"
@@ -12,8 +13,6 @@ import (
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 //go:embed migrations/*.sql
@@ -54,8 +53,8 @@ func OpenDatabase(ctx context.Context, dsn string) (*Database, error) {
 
 // Pool returns the deployment pool after rejecting an empty Organization. Store methods
 // still receive the Organization and include it in every tenant-owned query.
-func (d *Database) Pool(organization tenancy.Organization) (*pgxpool.Pool, error) {
-	if organization.IsEmpty() {
+func (d *Database) Pool(organization uuid.UUID) (*pgxpool.Pool, error) {
+	if organization == uuid.Nil {
 		return nil, fmt.Errorf("%w: the empty organization names no tenant", ErrUnknownOrganization)
 	}
 	return d.pool, nil

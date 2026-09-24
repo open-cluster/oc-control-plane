@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -25,7 +24,7 @@ func TestMissingAssignedInputDoesNotFallBackToQuestionPreview(t *testing.T) {
 				t.Fatal("external read before required input")
 				return integrations.ToolResult{}, nil
 			}))
-			org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+			org := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 			if err := runner.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(),
 				Subject: "question", Question: "truncated preview"}); err != nil {
 				t.Fatal(err)
@@ -50,7 +49,7 @@ func TestAllAssignedSequencesAreReportedWhenBatchCannotFit(t *testing.T) {
 		t.Fatal("oversized batch triggered an external read")
 		return integrations.ToolResult{}, nil
 	}))
-	org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	org := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(), Subject: "batch"}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +105,7 @@ func TestAssignedBatchBeyondHistoryTailSurvivesOptionalContextTrimming(t *testin
 		return integrations.ToolResult{}, nil
 	}))
 	runner.modelConfig.ContextWindowTokens = 40000
-	org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	org := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(), Subject: "batch"}); err != nil {
 		t.Fatal(err)
 	}

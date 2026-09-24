@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -19,7 +17,7 @@ import (
 // a change.
 
 func changeScope(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) (registration, integration uuid.UUID) {
 	t.Helper()
 	registration = enrolledRelay(t, database, organization)

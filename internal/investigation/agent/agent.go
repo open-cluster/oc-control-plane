@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
@@ -21,19 +19,19 @@ import (
 
 // Store is the durable state Agent.Run consumes.
 type Store interface {
-	InvestigationCandidates(context.Context, tenancy.Organization) ([]integrations.Integration, error)
-	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (investigation.Trigger, error)
-	ConversationBrief(context.Context, tenancy.Organization, uuid.UUID, int) (investigation.Brief, error)
-	ConversationHistory(context.Context, tenancy.Organization, uuid.UUID, int64) (investigation.HistoryPage, error)
-	ConversationOrigin(context.Context, tenancy.Organization, uuid.UUID) (*investigation.ConversationOrigin, error)
-	InvestigationMessages(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
-	WorkloadInventory(context.Context, tenancy.Organization, int) ([]string, error)
-	RecordToolRun(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, investigation.ToolRun) error
-	RecordCredentialUnseal(context.Context, tenancy.Organization, uuid.UUID, string) error
-	AppendEvent(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, investigation.Event) error
-	ConcludeInvestigation(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID,
+	InvestigationCandidates(context.Context, uuid.UUID) ([]integrations.Integration, error)
+	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (investigation.Trigger, error)
+	ConversationBrief(context.Context, uuid.UUID, uuid.UUID, int) (investigation.Brief, error)
+	ConversationHistory(context.Context, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error)
+	ConversationOrigin(context.Context, uuid.UUID, uuid.UUID) (*investigation.ConversationOrigin, error)
+	InvestigationMessages(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
+	WorkloadInventory(context.Context, uuid.UUID, int) ([]string, error)
+	RecordToolRun(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, investigation.ToolRun) error
+	RecordCredentialUnseal(context.Context, uuid.UUID, uuid.UUID, string) error
+	AppendEvent(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, investigation.Event) error
+	ConcludeInvestigation(context.Context, uuid.UUID, uuid.UUID, uuid.UUID,
 		investigation.Conclusion, string, investigation.Usage) error
-	FailInvestigation(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, string, investigation.Usage) error
+	FailInvestigation(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, investigation.Usage) error
 }
 
 // Agent runs investigations against one validated model configuration.
@@ -81,7 +79,7 @@ const UpdateHypothesesToolName = "update_hypotheses"
 // runState is the private data carried by Agent.Run. It has no behavior so the state
 // machine remains visible in Run.
 type runState struct {
-	organization tenancy.Organization
+	organization uuid.UUID
 	opened       investigation.Investigation
 	offered      []offeredSource
 	events       *investigation.EventStream
@@ -144,12 +142,12 @@ type modelMove struct {
 // Run performs one investigation through a durable terminal result.
 func (r *Agent) Run(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	opened investigation.Investigation,
 ) error {
 
 	events := investigation.NewEventStream(
-		func(ctx context.Context, org tenancy.Organization, id uuid.UUID, event investigation.Event) error {
+		func(ctx context.Context, org uuid.UUID, id uuid.UUID, event investigation.Event) error {
 			return r.Store.AppendEvent(ctx, org, id, opened.ClaimToken, event)
 		}, r.RuntimeTelemetry, organization, opened.ID)
 
@@ -880,7 +878,7 @@ func boundActions(actions []investigation.ActionProposal) []investigation.Action
 // orientation, never fails the investigation.
 func (r *Agent) orientation(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	opened investigation.Investigation,
 	offered []offeredSource,
 	brief *investigation.Brief,

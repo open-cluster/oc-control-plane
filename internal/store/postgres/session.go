@@ -12,7 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // lastSeenResolution is how stale a session's last-seen stamp may get before a read refreshes
@@ -38,7 +37,7 @@ type SignedIn struct {
 // through audited — there is no principal yet to check a membership for. The actor is
 // therefore passed explicitly, and it is the person the identity provider just asserted.
 func (p *Database) IssueSession(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
 ) (session.Session, error) {
 	pool, err := p.Pool(organization)
@@ -69,7 +68,7 @@ func (p *Database) IssueSession(
 
 // IssueLocalSession holds the verifier lock through issuance so password replacement revokes concurrent sign-ins.
 func (p *Database) IssueLocalSession(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail, previous string,
 ) (session.Session, error) {
 	pool, err := p.Pool(organization)
@@ -100,7 +99,7 @@ func (p *Database) IssueLocalSession(
 }
 
 func issueSessionIn(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	issued session.Session, digest []byte, actor audit.Actor, detail audit.Detail,
 ) (session.Session, error) {
 	if err := transaction.QueryRow(ctx, `
@@ -321,7 +320,7 @@ func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
 
 // OrganizationAuditRetention reports the Organization-owned audit retention schedule.
 func (p *Database) OrganizationAuditRetention(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 ) (int, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -331,7 +330,7 @@ func (p *Database) OrganizationAuditRetention(
 	err = pool.QueryRow(ctx, `
 		SELECT audit_retention_days
 		  FROM organization WHERE org_id = $1`,
-		organization.String()).Scan(&retention)
+		organization).Scan(&retention)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -343,7 +342,7 @@ func (p *Database) OrganizationAuditRetention(
 
 // SetOrganizationAuditRetention records a tenant's own audit retention policy.
 func (p *Database) SetOrganizationAuditRetention(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	retentionDays int,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionPolicyChanged,
@@ -352,7 +351,7 @@ func (p *Database) SetOrganizationAuditRetention(
 			err := transaction.QueryRow(ctx, `
 				SELECT audit_retention_days
 				  FROM organization WHERE org_id = $1 FOR UPDATE`,
-				organization.String()).Scan(&beforeRetention)
+				organization).Scan(&beforeRetention)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("reading the policy: %w", err)
 			}
@@ -360,7 +359,7 @@ func (p *Database) SetOrganizationAuditRetention(
 			if _, err := transaction.Exec(ctx, `
 				UPDATE organization SET audit_retention_days = $2
 				 WHERE org_id = $1`,
-				organization.String(), retentionDays); err != nil {
+				organization, retentionDays); err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("writing the policy: %w", err)
 			}
 			return struct{}{},

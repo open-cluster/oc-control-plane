@@ -12,7 +12,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -75,7 +74,7 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 	}
 
 	token, digest, issued, _, err := h.prepareSession(
-		request, tenancy.Organization{}, uuid.Nil)
+		request, uuid.UUID{}, uuid.Nil)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

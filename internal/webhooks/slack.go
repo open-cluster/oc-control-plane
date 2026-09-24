@@ -7,11 +7,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
@@ -72,7 +72,7 @@ type SlackAgent struct {
 	// integration already carries a per-integration switch an operator can use.
 	//
 	// Nil means no organization is inside the gate.
-	Enabled func(tenancy.Organization) bool
+	Enabled func(uuid.UUID) bool
 	// WindowLead is how far before an incident a turn's window reaches back, passed
 	// through to the turn exactly as the console path passes it.
 	WindowLead time.Duration
@@ -163,8 +163,11 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	organization, err := tenancy.NewOrganization(integration.OrgID)
-	if err != nil {
+	organization, err := uuid.Parse(strings.TrimSpace(integration.OrgID))
+	if err != nil || organization == uuid.Nil {
+		if err == nil {
+			err = errors.New("invalid organization identifier")
+		}
 		h.Logger.ErrorContext(ctx, "a slack installation names an organization that is not a name",
 			slog.String("integration_id", integration.ID.String()),
 			slog.String("error", err.Error()))
@@ -219,7 +222,7 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 
 // acceptSlackMessage persists the message and durable work in one transaction, then answers.
 func (h *surface) acceptSlackMessage(
-	ctx context.Context, writer http.ResponseWriter, organization tenancy.Organization,
+	ctx context.Context, writer http.ResponseWriter, organization uuid.UUID,
 	integration uuid.UUID, requestID string, body []byte, envelope slack.Envelope,
 ) {
 	digest := sha256.Sum256(body)

@@ -14,7 +14,6 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
@@ -209,7 +208,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		t.Fatal(err)
 	}
 	defer database.Close()
-	organization, err := tenancy.NewOrganization(surfaceOrg)
+	organization, err := uuid.Parse(surfaceOrg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +402,7 @@ func TestKubernetesEventAndLogToolsRunAcrossTheComposedRelayAndDatabase(t *testi
 		t.Fatal(err)
 	}
 	defer database.Close()
-	organization, err := tenancy.NewOrganization(surfaceOrg)
+	organization, err := uuid.Parse(surfaceOrg)
 	if err != nil {
 		t.Fatal(err)
 	}

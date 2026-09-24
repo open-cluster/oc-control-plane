@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -22,7 +21,7 @@ func TestFailedEventWritePreservesStreamStateForRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			token := claimToken(t, database, org, id)
-			stream := investigation.NewEventStream(func(ctx context.Context, org tenancy.Organization, id uuid.UUID, event investigation.Event) error {
+			stream := investigation.NewEventStream(func(ctx context.Context, org uuid.UUID, id uuid.UUID, event investigation.Event) error {
 				return database.AppendEvent(ctx, org, id, token, event)
 			}, nil, org, id)
 			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event ADD CONSTRAINT reject_stream_test CHECK (type NOT IN (2, 7))`); err != nil {

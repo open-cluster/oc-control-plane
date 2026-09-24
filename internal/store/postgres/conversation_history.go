@@ -6,11 +6,10 @@ import (
 	"slices"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-func (p *Database) ConversationHistory(ctx context.Context, org tenancy.Organization, id uuid.UUID, before int64) (investigation.HistoryPage, error) {
+func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uuid.UUID, before int64) (investigation.HistoryPage, error) {
 	page := investigation.HistoryPage{Exchange: []investigation.BriefMessage{}}
 	pool, err := p.Pool(org)
 	if err != nil {
@@ -18,7 +17,7 @@ func (p *Database) ConversationHistory(ctx context.Context, org tenancy.Organiza
 	}
 	rows, err := pool.Query(ctx, `SELECT sequence, role, actor_display, text, created_at, investigation_id
 		FROM conversation_message WHERE org_id=$1 AND conversation_id=$2 AND sequence<$3
-		ORDER BY sequence DESC LIMIT $4`, org.String(), id, before, investigation.BriefRecentMessages+1)
+		ORDER BY sequence DESC LIMIT $4`, org, id, before, investigation.BriefRecentMessages+1)
 	if err != nil {
 		return page, fmt.Errorf("reading older Messages: %w", err)
 	}
@@ -85,7 +84,7 @@ func (p *Database) ConversationHistory(ctx context.Context, org tenancy.Organiza
 	return page, nil
 }
 
-func historyAnswers(ctx context.Context, pool querier, org tenancy.Organization, id uuid.UUID, ids []uuid.UUID, through int64) ([]investigation.BriefMessage, error) {
+func historyAnswers(ctx context.Context, pool querier, org uuid.UUID, id uuid.UUID, ids []uuid.UUID, through int64) ([]investigation.BriefMessage, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -96,7 +95,7 @@ func historyAnswers(ctx context.Context, pool querier, org tenancy.Organization,
 		AND turn.investigation_id=ANY($3) AND turn.status=2
 		AND NOT EXISTS (SELECT 1 FROM conversation_message message WHERE message.org_id=$1
 			AND message.conversation_id=$2 AND message.investigation_id=turn.investigation_id AND message.sequence>$4)
-		ORDER BY turn.concluded_at, turn.turn`, org.String(), id, ids, through)
+		ORDER BY turn.concluded_at, turn.turn`, org, id, ids, through)
 	if err != nil {
 		return nil, fmt.Errorf("reading older answers: %w", err)
 	}

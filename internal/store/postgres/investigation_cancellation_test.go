@@ -121,7 +121,7 @@ func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *te
 		if err := pool.QueryRow(context.Background(), `
 			SELECT status, cancel_requested_at IS NOT NULL
 			  FROM relay_job WHERE org_id = $1 AND job_id = $2`,
-			organization.String(), scenario.id).Scan(&status, &requested); err != nil {
+			organization, scenario.id).Scan(&status, &requested); err != nil {
 			t.Fatalf("reading %s Relay work: %v", scenario.name, err)
 		}
 		if status != scenario.want || !requested {
@@ -232,7 +232,7 @@ func TestInvestigationCancellationCannotRacePastAConcurrentRelayJob(t *testing.T
 	var status storage.JobStatus
 	if err = pool.QueryRow(context.Background(),
 		`SELECT status FROM relay_job WHERE org_id = $1 AND job_id = $2`,
-		organization.String(), job.ID).Scan(&status); err != nil {
+		organization, job.ID).Scan(&status); err != nil {
 		t.Fatalf("reading synchronized Relay work: %v", err)
 	}
 	if status != storage.JobCancelled {

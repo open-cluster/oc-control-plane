@@ -12,7 +12,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -31,7 +30,7 @@ const investigationColumns = `investigation_id, incident_id, question,
 // the audit record; everything the runner writes afterwards is the investigation's own
 // provenance, which is a record of its own.
 func (p *Database) CreateInvestigation(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	wanted investigation.NewInvestigation, maxPending int,
 ) (investigation.Investigation, error) {
 	return audited(ctx, p, principal, organization, audit.ActionInvestigationOpened,
@@ -50,7 +49,7 @@ func (p *Database) CreateInvestigation(
 				                           created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				RETURNING `+investigationColumns,
-				uuid.New(), organization.String(), nullableUUID(wanted.IncidentID),
+				uuid.New(), organization, nullableUUID(wanted.IncidentID),
 				wanted.Question, wanted.Subject,
 				wanted.WindowFrom, wanted.WindowUntil, wanted.CreatedBy)
 
@@ -71,7 +70,7 @@ func (p *Database) CreateInvestigation(
 
 // Investigation reads one, scoped to the tenant.
 func (p *Database) Investigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -80,7 +79,7 @@ func (p *Database) Investigation(
 	row := pool.QueryRow(ctx, `
 		SELECT `+investigationColumns+`
 		  FROM investigation
-		 WHERE investigation_id = $1 AND org_id = $2`, id, organization.String())
+		 WHERE investigation_id = $1 AND org_id = $2`, id, organization)
 	found, err := scanInvestigation(row, organization.String())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return investigation.Investigation{}, investigation.ErrUnknown
@@ -100,7 +99,7 @@ func (p *Database) Investigation(
 
 // InvestigationToolRuns reads the durable Tool Runs beside one Investigation.
 func (p *Database) InvestigationToolRuns(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) ([]investigation.ToolRun, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -113,7 +112,7 @@ func (p *Database) InvestigationToolRuns(
 		       started_at, finished_at
 		  FROM investigation_tool_run
 		 WHERE investigation_id = $1 AND org_id = $2
-		 ORDER BY ordinal`, id, organization.String())
+		 ORDER BY ordinal`, id, organization)
 	if err != nil {
 		return nil, fmt.Errorf("reading an investigation's runs: %w", err)
 	}
@@ -157,7 +156,7 @@ func (p *Database) InvestigationToolRuns(
 
 // QueryInvestigations reports a page, newest first.
 func (p *Database) QueryInvestigations(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	query investigation.Query,
 ) (investigation.List, error) {
 	page := query.Page
@@ -174,7 +173,7 @@ func (p *Database) QueryInvestigations(
 		return investigation.List{}, investigation.ErrBadCursor
 	}
 
-	arguments := []any{organization.String(), limit + 1}
+	arguments := []any{organization, limit + 1}
 	cursor := ""
 	if cursorID != nil {
 		arguments = append(arguments, *cursorAt, *cursorID)
@@ -222,7 +221,7 @@ func (p *Database) QueryInvestigations(
 
 // RecordToolRun writes one execution as it finished.
 func (p *Database) RecordToolRun(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	run investigation.ToolRun,
 ) error {
 	pool, err := p.Pool(organization)
@@ -255,7 +254,7 @@ func (p *Database) RecordToolRun(
 		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 		FROM investigation WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 		AND lease_token = $18 AND lease_expires_at > clock_timestamp()`,
-		id, organization.String(), nullableUUID(run.IntegrationID), run.Ordinal,
+		id, organization, nullableUUID(run.IntegrationID), run.Ordinal,
 		run.Tool, run.Purpose, run.HypothesisID, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
 		run.StartedAt, run.FinishedAt, token)
@@ -272,7 +271,7 @@ func (p *Database) RecordToolRun(
 // names the ceiling that forced the concluding turn, empty when the model concluded
 // freely.
 func (p *Database) ConcludeInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage,
 ) error {
 	encoded, err := json.Marshal(conclusion)
@@ -286,7 +285,7 @@ func (p *Database) ConcludeInvestigation(
 
 // FailInvestigation ends one with the reason it could not conclude.
 func (p *Database) FailInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	reason string, usage investigation.Usage,
 ) error {
 	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusFailed),
@@ -295,7 +294,7 @@ func (p *Database) FailInvestigation(
 
 // CancelInvestigation ends active work and records the operator action atomically.
 func (p *Database) CancelInvestigation(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
 	payload, err := json.Marshal(investigation.CancelledPayload())
 	if err != nil {
@@ -316,13 +315,13 @@ func (p *Database) CancelInvestigation(
 				       lease_expires_at = NULL
 				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 				RETURNING `+investigationColumns,
-				id, organization.String(), int16(investigation.StatusCancelled), principal.UserID().String())
+				id, organization, int16(investigation.StatusCancelled), principal.UserID().String())
 			ended, err := scanInvestigation(row, organization.String())
 			if errors.Is(err, pgx.ErrNoRows) {
 				var exists bool
 				if checkErr := transaction.QueryRow(ctx,
 					`SELECT EXISTS (SELECT 1 FROM investigation WHERE investigation_id = $1 AND org_id = $2)`,
-					id, organization.String()).Scan(&exists); checkErr != nil {
+					id, organization).Scan(&exists); checkErr != nil {
 					return investigation.Investigation{}, audit.Target{}, nil, checkErr
 				}
 				if exists {
@@ -340,7 +339,7 @@ func (p *Database) CancelInvestigation(
 				       terminal_at = CASE WHEN status = 0 THEN now() ELSE terminal_at END,
 				       cancel_requested_at = coalesce(cancel_requested_at, now())
 				 WHERE org_id = $1 AND investigation_id = $2 AND status IN (0, 1)`,
-				organization.String(), id); err != nil {
+				organization, id); err != nil {
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("cancelling investigation-owned Relay work: %w", err)
 			}
@@ -351,7 +350,7 @@ func (p *Database) CancelInvestigation(
 				       $4
 				  FROM investigation_event
 				 WHERE investigation_id = $1 AND org_id = $2`,
-				id, organization.String(), int16(investigation.EventCancelled), payload); err != nil {
+				id, organization, int16(investigation.EventCancelled), payload); err != nil {
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("recording an investigation cancellation event: %w", err)
 			}
@@ -363,7 +362,7 @@ func (p *Database) CancelInvestigation(
 // endInvestigation is the one write both endings share. Guarded on the row still
 // running, so an investigation cannot be ended twice.
 func (p *Database) endInvestigation(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
 	usage investigation.Usage, payload investigation.EventPayload,
 ) error {
@@ -400,7 +399,7 @@ func (p *Database) endInvestigation(
 		       lease_expires_at    = NULL
 		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 		   AND lease_token = $9 AND lease_expires_at > clock_timestamp()`,
-		id, organization.String(), status, conclusion, stoppedBy,
+		id, organization, status, conclusion, stoppedBy,
 		reason, usage.InputTokens, usage.OutputTokens, token)
 	if err != nil {
 		return fmt.Errorf("ending an investigation: %w", err)
@@ -413,7 +412,7 @@ func (p *Database) endInvestigation(
 		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
 		  FROM investigation_event
 		 WHERE investigation_id = $1 AND org_id = $2`,
-		id, organization.String(), int16(payload.EventType()), encodedPayload); err != nil {
+		id, organization, int16(payload.EventType()), encodedPayload); err != nil {
 		return fmt.Errorf("recording terminal event: %w", err)
 	}
 	return transaction.Commit(ctx)
@@ -436,7 +435,7 @@ const triggerColumns = `e.incident_id, e.integration_id, e.title, e.status,
 
 // TriggerIncident reads what an incident contributes to the investigation it starts.
 func (p *Database) TriggerIncident(
-	ctx context.Context, organization tenancy.Organization, incident uuid.UUID,
+	ctx context.Context, organization uuid.UUID, incident uuid.UUID,
 ) (investigation.Trigger, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -444,7 +443,7 @@ func (p *Database) TriggerIncident(
 	}
 	row := pool.QueryRow(ctx, `
 		SELECT `+triggerColumns+`
-		 WHERE e.incident_id = $1 AND e.org_id = $2`, incident, organization.String())
+		 WHERE e.incident_id = $1 AND e.org_id = $2`, incident, organization)
 	trigger, err := scanTrigger(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return investigation.Trigger{}, investigation.ErrIncidentUnknown
@@ -457,7 +456,7 @@ func (p *Database) TriggerIncident(
 
 // InvestigationCandidates reports the enabled integrations an investigation may be offered.
 func (p *Database) InvestigationCandidates(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 ) ([]integrations.Integration, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -467,7 +466,7 @@ func (p *Database) InvestigationCandidates(
 		SELECT `+integrationColumns+`
 		  FROM integration
 		 WHERE org_id = $1 AND NOT disabled
-		 ORDER BY name`, organization.String())
+		 ORDER BY name`, organization)
 	if err != nil {
 		return nil, fmt.Errorf("listing investigation candidates: %w", err)
 	}

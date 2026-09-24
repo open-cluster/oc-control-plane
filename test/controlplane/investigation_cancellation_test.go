@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -18,7 +16,7 @@ type blockingAgentMain struct {
 }
 
 func (b *blockingAgentMain) Run(
-	ctx context.Context, _ tenancy.Organization, running investigation.Investigation,
+	ctx context.Context, _ uuid.UUID, running investigation.Investigation,
 ) error {
 	select {
 	case b.started <- running.ID:

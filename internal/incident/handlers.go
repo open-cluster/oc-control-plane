@@ -12,7 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -218,18 +217,18 @@ func (h Handlers) query(
 	return parsed, true
 }
 
-func (h Handlers) organization(request *http.Request) tenancy.Organization {
+func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, uuid.UUID, bool) {
+) (uuid.UUID, uuid.UUID, bool) {
 	organization := h.organization(request)
 	id, err := uuid.Parse(request.PathValue("incident"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "incident is not an identity"})
-		return tenancy.Organization{}, uuid.UUID{}, false
+		return uuid.UUID{}, uuid.UUID{}, false
 	}
 	return organization, id, true
 }

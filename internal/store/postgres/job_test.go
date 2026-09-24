@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -467,7 +466,7 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 func adopt(
 	t *testing.T,
 	database *storage.Database,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	adoption storage.LeaseAdoption,
 	want int,
 ) {
@@ -483,23 +482,20 @@ func adopt(
 	}
 }
 
-func migratedDatabase(t *testing.T) (*storage.Database, tenancy.Organization) {
+func migratedDatabase(t *testing.T) (*storage.Database, uuid.UUID) {
 	t.Helper()
 
 	database := openDatabaseForTest(t, postgresDSN(t))
 	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
-	organization, err := tenancy.NewOrganization(testOrganization)
-	if err != nil {
-		t.Fatalf("naming the organization: %v", err)
-	}
+	organization := uuid.MustParse(testOrganization)
 	ensureTestOrganization(t, database, organization)
 	return database, organization
 }
 
 func ensureTestOrganization(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) {
 	t.Helper()
 	pool, err := database.Pool(organization)
@@ -507,14 +503,14 @@ func ensureTestOrganization(
 		t.Fatalf("opening organization pool: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(), `INSERT INTO organization(org_id, display_name, created_by)
-VALUES ($1, 'Test Organization', 'test') ON CONFLICT (org_id) DO NOTHING`, organization.String()); err != nil {
+VALUES ($1, 'Test Organization', 'test') ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
 		t.Fatalf("creating test organization: %v", err)
 	}
 }
 
 func enqueue(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, registration uuid.UUID,
+	organization uuid.UUID, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 	return enqueueThrough(t, database, organization, registration,
@@ -524,7 +520,7 @@ func enqueue(
 // enqueueThrough records work against a named Integration, for the tests that care which one.
 func enqueueThrough(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, registration, integration uuid.UUID,
+	organization uuid.UUID, registration, integration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
@@ -549,7 +545,7 @@ func enqueueThrough(
 // Integration names the installation that serves it. That is the boundary being enforced
 // rather than a friction to work around, so these tests enrol rather than inventing a UUID.
 func enrolledRelay(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
@@ -576,7 +572,7 @@ func enrolledRelay(
 // what a job reaches; the relay is where the job runs.
 func kubernetesIntegration(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, registration uuid.UUID,
+	organization uuid.UUID, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
@@ -603,7 +599,7 @@ func randomDigest(t *testing.T) []byte {
 
 func claim(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, registration, session uuid.UUID,
+	organization uuid.UUID, registration, session uuid.UUID,
 ) []storage.RelayJob {
 	t.Helper()
 
@@ -626,7 +622,7 @@ func claim(
 // for: a suite that depends on winning a timing race is a suite that gets disabled.
 func expireLease(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, job uuid.UUID,
+	organization uuid.UUID, job uuid.UUID,
 ) {
 	t.Helper()
 

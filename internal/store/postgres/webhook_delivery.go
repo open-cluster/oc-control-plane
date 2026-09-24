@@ -11,7 +11,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type WebhookDeliveryState string
@@ -45,7 +44,7 @@ type WebhookDeliveryPage struct {
 }
 
 func (d *Database) WebhookDeliveries(
-	ctx context.Context, organization tenancy.Organization, state WebhookDeliveryState, page Page,
+	ctx context.Context, organization uuid.UUID, state WebhookDeliveryState, page Page,
 ) (WebhookDeliveryPage, error) {
 	after, afterID, err := decodeCursor(page.After, "-receivedAt")
 	if err != nil {
@@ -64,7 +63,7 @@ func (d *Database) WebhookDeliveries(
 		 WHERE ($2 = '' OR state = $2)
 		   AND ($3::timestamptz IS NULL OR (received_at, delivery_id) < ($3, $4))
 		 ORDER BY received_at DESC, delivery_id DESC LIMIT $5`,
-		organization.String(), string(state), after, afterID, limit+1)
+		organization, string(state), after, afterID, limit+1)
 	if err != nil {
 		return WebhookDeliveryPage{}, fmt.Errorf("listing webhook deliveries: %w", err)
 	}
@@ -90,7 +89,7 @@ func (d *Database) WebhookDeliveries(
 }
 
 func (d *Database) WebhookDeliveryByID(
-	ctx context.Context, organization tenancy.Organization, deliveryID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, deliveryID uuid.UUID,
 ) (WebhookDelivery, error) {
 	pool, err := d.Pool(organization)
 	if err != nil {
@@ -101,7 +100,7 @@ func (d *Database) WebhookDeliveryByID(
 		SELECT delivery_id, integration_id, provider_identity, lifecycle_phase, request_id,
 		       state, attempts, failure_class, received_at,
 		       last_attempt_at, next_eligible_at
-		  FROM projected WHERE delivery_id = $2`, organization.String(), deliveryID), &delivery)
+		  FROM projected WHERE delivery_id = $2`, organization, deliveryID), &delivery)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WebhookDelivery{}, ErrWebhookDeliveryUnknown
 	}
@@ -149,7 +148,7 @@ func scanWebhookDelivery(row rowScanner, delivery *WebhookDelivery) error {
 }
 
 func (d *Database) ReplayWebhookDelivery(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	deliveryID uuid.UUID,
 ) error {
 	_, err := audited(ctx, d, principal, organization, audit.ActionWebhookDeliveryReplayed,
@@ -160,7 +159,7 @@ func (d *Database) ReplayWebhookDelivery(
 				       failure_class = '', failure_message = '', updated_at = now()
 				 WHERE org_id = $1 AND delivery_id = $2 AND status = 4
 				 RETURNING integration_id, failure_class, attempts`,
-				organization.String(), deliveryID)
+				organization, deliveryID)
 			if updateErr != nil {
 				return struct{}{}, audit.Target{}, nil, updateErr
 			}

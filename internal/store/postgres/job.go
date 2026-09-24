@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
@@ -96,7 +94,7 @@ func (r JobRefusal) String() string {
 // inside the insert also means an Integration disabled between a check and a write cannot
 // leave work queued against it.
 func (p *Database) EnqueueJob(
-	ctx context.Context, organization tenancy.Organization, job RelayJob) (JobRefusal, error) {
+	ctx context.Context, organization uuid.UUID, job RelayJob) (JobRefusal, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return 0, err
@@ -120,7 +118,7 @@ func (p *Database) EnqueueJob(
 		          AND investigation.investigation_id = $8
 		          AND investigation.status = $9
 		          FOR NO KEY UPDATE))`,
-		job.ID, organization.String(), job.IntegrationID, job.RegistrationID,
+		job.ID, organization, job.IntegrationID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments,
 		nullableUUID(job.InvestigationID), int16(1))
 	if err != nil {
@@ -136,7 +134,7 @@ func (p *Database) EnqueueJob(
 // durable verification still grants that exact Relay Capability. The guarded insert closes
 // the gap between offering a Tool and dispatching it.
 func (p *Database) EnqueueVerifiedJob(
-	ctx context.Context, organization tenancy.Organization, job RelayJob) error {
+	ctx context.Context, organization uuid.UUID, job RelayJob) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return err
@@ -160,7 +158,7 @@ func (p *Database) EnqueueVerifiedJob(
 		          AND investigation.investigation_id = $8
 		          AND investigation.status = $9
 		          FOR NO KEY UPDATE))`,
-		job.ID, organization.String(), job.IntegrationID, job.RegistrationID,
+		job.ID, organization, job.IntegrationID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments,
 		nullableUUID(job.InvestigationID), int16(1))
 	if err != nil {
@@ -179,7 +177,7 @@ func (p *Database) EnqueueVerifiedJob(
 // cannot do is be wrong about the refusal itself, because the row was already not written.
 // The explanation is for whoever planned the job, not a decision anything acts on.
 func (p *Database) explainRefusedJob(
-	ctx context.Context, organization tenancy.Organization, job RelayJob) (JobRefusal, error) {
+	ctx context.Context, organization uuid.UUID, job RelayJob) (JobRefusal, error) {
 	integration, err := p.Integration(ctx, organization, job.IntegrationID)
 	switch {
 	case errors.Is(err, integrations.ErrUnknown):

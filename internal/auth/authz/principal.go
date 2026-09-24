@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const maxIdentifierLength = 256
@@ -41,7 +40,7 @@ func (p Principal) WithSessionPresentation(
 
 // Membership is one organization and the role held in it.
 type Membership struct {
-	Organization tenancy.Organization
+	Organization uuid.UUID
 	DisplayName  string
 	Role         Role
 }
@@ -52,7 +51,7 @@ func NewPrincipal(
 	if userID == uuid.Nil || sessionID == uuid.Nil {
 		return Principal{}, fmt.Errorf("%w: a user and session must have identifiers", ErrInvalidPrincipal)
 	}
-	if membership.Organization.IsEmpty() || !KnownRole(membership.Role) {
+	if membership.Organization == uuid.Nil || !KnownRole(membership.Role) {
 		return Principal{}, fmt.Errorf("%w: a user must have one Organization and Role",
 			ErrInvalidPrincipal)
 	}
@@ -104,7 +103,7 @@ func (p Principal) SourceAddress() string { return p.sourceAddress }
 func (p Principal) RequestID() string { return p.requestID }
 
 // Organization is the sole tenant resolved during authentication.
-func (p Principal) Organization() tenancy.Organization { return p.membership.Organization }
+func (p Principal) Organization() uuid.UUID { return p.membership.Organization }
 
 // OrganizationName is the current Organization's human-facing name.
 func (p Principal) OrganizationName() string { return p.membership.DisplayName }
