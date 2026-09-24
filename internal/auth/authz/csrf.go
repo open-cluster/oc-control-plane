@@ -7,10 +7,7 @@ import (
 )
 
 // originIsAllowed applies CSRF protection to cookie-authenticated unsafe requests.
-func (g Guard) originIsAllowed(principal Principal, request *http.Request) bool {
-	if principal.Kind() != KindUser {
-		return true
-	}
+func (g Guard) originIsAllowed(request *http.Request) bool {
 	switch request.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
@@ -19,21 +16,16 @@ func (g Guard) originIsAllowed(principal Principal, request *http.Request) bool 
 }
 
 func (g Guard) cookieOriginIsAllowed(request *http.Request) bool {
-	return CookieOriginAllowed(request, g.Origins)
+	return CookieOriginAllowed(request, g.Origin)
 }
 
-// CookieOriginAllowed checks an unsafe cookie request against configured browser origins.
-func CookieOriginAllowed(request *http.Request, origins []string) bool {
+// CookieOriginAllowed checks an unsafe cookie request against the configured browser origin.
+func CookieOriginAllowed(request *http.Request, allowed string) bool {
 	origin := strings.TrimSpace(request.Header.Get("Origin"))
 	if origin == "" {
 		return false
 	}
-	for _, allowed := range origins {
-		if sameOrigin(origin, allowed) {
-			return true
-		}
-	}
-	return false
+	return sameOrigin(origin, allowed)
 }
 
 func sameOrigin(presented, allowed string) bool {

@@ -33,7 +33,6 @@ type csrfView struct {
 
 type principalView struct {
 	ID          string `json:"id"`
-	Kind        string `json:"kind"`
 	DisplayName string `json:"displayName"`
 	Email       string `json:"email,omitempty"`
 	// Roles and Scopes retain the frontend's list shape even though a User has one Membership.
@@ -47,9 +46,7 @@ type membershipView struct {
 	Role         string `json:"role"`
 }
 
-func sessionViewOf(
-	principal authz.Principal, email string, expires time.Time, method string,
-) sessionView {
+func sessionViewOf(principal authz.Principal) sessionView {
 	role := principal.Role()
 	scopes := make([]string, 0, len(authz.Permissions()))
 	for _, permission := range authz.Permissions() {
@@ -60,21 +57,20 @@ func sessionViewOf(
 
 	return sessionView{
 		Principal: principalView{
-			ID:          principal.ID(),
-			Kind:        audit.ActorKind(principal.Kind()).String(),
+			ID:          principal.UserID().String(),
 			DisplayName: principal.DisplayName(),
-			Email:       email,
+			Email:       principal.Email(),
 			Roles:       []string{string(role)},
 			Scopes:      scopes,
 		},
 		Organization: membershipView{
 			Organization: principal.Organization().String(),
-			DisplayName:  principal.OrganizationDisplayName(),
+			DisplayName:  principal.OrganizationName(),
 			Role:         string(role),
 		},
-		AuthenticationMethod: method,
+		AuthenticationMethod: principal.AuthenticationMethod(),
 		CSRF:                 csrfView{Mode: "origin", RequiredForUnsafeMethods: true},
-		ExpiresAt:            expires,
+		ExpiresAt:            principal.ExpiresAt(),
 	}
 }
 

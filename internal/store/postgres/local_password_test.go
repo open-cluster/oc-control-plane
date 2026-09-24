@@ -30,7 +30,7 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	organization := signedIn.Memberships[0].Organization
+	organization := signedIn.Membership.Organization
 	if err := database.ChangeLocalPassword(ctx, principal, previous, "replacement encoded password verifier"); err != nil {
 		t.Fatal(err)
 	}

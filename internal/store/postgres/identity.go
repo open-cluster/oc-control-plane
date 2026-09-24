@@ -76,15 +76,15 @@ func orEmptyText(value *string) string {
 	return *value
 }
 
-// MembershipsOf reads the current memberships for one user.
-func (p *Database) MembershipsOf(
+// MembershipOf reads the current Membership for one User.
+func (p *Database) MembershipOf(
 	ctx context.Context, organization tenancy.Organization, user uuid.UUID,
-) ([]authz.Membership, error) {
+) (authz.Membership, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
-		return nil, err
+		return authz.Membership{}, err
 	}
-	return membershipsOf(ctx, pool, user)
+	return membershipOf(ctx, pool, user)
 }
 
 // querier is a pool or a transaction. Reads that run both standalone and inside a mutation's
@@ -94,46 +94,33 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
 }
 
-// membershipsOf resolves what a person may reach RIGHT NOW. Row presence grants the stored
+// membershipOf resolves what a person may reach RIGHT NOW. Row presence grants the stored
 // Role, so a removal takes effect on the person's next request rather than their next sign-in.
-func membershipsOf(ctx context.Context, on querier, user uuid.UUID) ([]authz.Membership, error) {
-	rows, err := on.Query(ctx, `
+func membershipOf(ctx context.Context, on querier, user uuid.UUID) (authz.Membership, error) {
+	var organizationID, displayName, role string
+	err := on.QueryRow(ctx, `
 		SELECT membership.org_id, organization.display_name,
 		       membership.role
 		  FROM organization_membership membership
 		  JOIN organization ON organization.org_id = membership.org_id
-		 WHERE membership.user_id = $1
-		 ORDER BY membership.org_id`, user)
+		 WHERE membership.user_id = $1`, user).Scan(&organizationID, &displayName, &role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return authz.Membership{}, ErrMembershipUnknown
+	}
 	if err != nil {
-		return nil, fmt.Errorf("reading memberships: %w", err)
+		return authz.Membership{}, fmt.Errorf("reading a membership: %w", err)
 	}
-	defer rows.Close()
-
-	memberships := make([]authz.Membership, 0, 4)
-	for rows.Next() {
-		var name, displayName, role string
-		if err := rows.Scan(&name, &displayName, &role); err != nil {
-			return nil, fmt.Errorf("scanning a membership: %w", err)
-		}
-		organization, err := tenancy.NewOrganization(name)
-		if err != nil {
-			continue
-		}
-		parsed, known := authz.ParseRole(role)
-		if !known {
-			// A role this build no longer has is DROPPED rather than failing the sign-in. A
-			// rename must not be an outage, and a dropped membership answers 404 — the safe
-			// direction to fail.
-			continue
-		}
-		memberships = append(memberships, authz.Membership{
-			Organization: organization, DisplayName: displayName, Role: parsed,
-		})
+	organization, err := tenancy.NewOrganization(organizationID)
+	if err != nil {
+		return authz.Membership{}, ErrMembershipUnknown
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading memberships: %w", err)
+	parsed, known := authz.ParseRole(role)
+	if !known {
+		return authz.Membership{}, ErrMembershipUnknown
 	}
-	return memberships, nil
+	return authz.Membership{
+		Organization: organization, DisplayName: displayName, Role: parsed,
+	}, nil
 }
 
 // ListMembers reports who may reach an organization and as what.

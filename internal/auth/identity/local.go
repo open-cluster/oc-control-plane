@@ -75,7 +75,7 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 	}
 
 	token, digest, issued, _, err := h.prepareSession(
-		request, tenancy.Organization{}, uuid.Nil, 0)
+		request, tenancy.Organization{}, uuid.Nil)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -145,8 +145,8 @@ func (h Handlers) localSignIn(writer http.ResponseWriter, request *http.Request)
 		}
 		found.PasswordHash = replacement
 	}
-	organization := found.Memberships[0].Organization
-	if err := h.issueSession(writer, request, organization, found.User, found.Memberships,
+	organization := found.Membership.Organization
+	if err := h.issueSession(writer, request, organization, found.User,
 		found.PasswordHash); err != nil {
 		if errors.Is(err, storage.ErrLocalCredentialUnknown) {
 			writeJSON(writer, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})

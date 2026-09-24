@@ -16,7 +16,7 @@ import (
 type Guard struct {
 	Resolve func(*http.Request) (Principal, error)
 	Record  func(context.Context, tenancy.Organization, audit.Event)
-	Origins []string
+	Origin  string
 	Logger  *slog.Logger
 }
 
@@ -60,7 +60,7 @@ func (g Guard) protect(route Route) http.Handler {
 			g.refuseUnauthenticated(writer, request, err)
 			return
 		}
-		if !g.originIsAllowed(principal, request) {
+		if !g.originIsAllowed(request) {
 			g.recordRefusal(request, principal, route, "origin not allowed")
 			g.refuseOrigin(writer, request, principal)
 			return

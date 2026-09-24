@@ -63,7 +63,7 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})
 		return
 	}
-	user, memberships, err := h.Database.OIDCIdentity(ctx, storage.Identity{
+	user, membership, err := h.Database.OIDCIdentity(ctx, storage.Identity{
 		Issuer:        asserted.Issuer,
 		Subject:       asserted.Subject,
 		Email:         asserted.Email,
@@ -77,8 +77,8 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		h.fail(w, r, err)
 		return
 	}
-	organization := memberships[0].Organization
-	if err = h.issueSession(w, r, organization, user, memberships, ""); err != nil {
+	organization := membership.Organization
+	if err = h.issueSession(w, r, organization, user, ""); err != nil {
 		h.fail(w, r, err)
 		return
 	}

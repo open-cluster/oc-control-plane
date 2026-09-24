@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
@@ -27,11 +26,9 @@ func (h Handlers) issueSession(
 	request *http.Request,
 	organization tenancy.Organization,
 	user storage.User,
-	memberships []authz.Membership,
 	localPasswordHash string,
 ) error {
-	token, digest, issued, detail, err := h.prepareSession(
-		request, organization, user.ID, len(memberships))
+	token, digest, issued, detail, err := h.prepareSession(request, organization, user.ID)
 	if err != nil {
 		return err
 	}
@@ -54,7 +51,6 @@ func (h Handlers) prepareSession(
 	request *http.Request,
 	organization tenancy.Organization,
 	userID uuid.UUID,
-	membershipCount int,
 ) (session.Token, []byte, session.Session, audit.Detail, error) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
@@ -71,7 +67,7 @@ func (h Handlers) prepareSession(
 	issued.ClientUserAgent = request.UserAgent()
 	issued.RemoteAddr = request.RemoteAddr
 	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
-		"memberships": membershipCount, "requestId": correlation.From(request.Context())}
+		"requestId": correlation.From(request.Context())}
 	return token, digest, issued, detail, nil
 }
 

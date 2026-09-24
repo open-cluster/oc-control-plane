@@ -74,7 +74,7 @@ func memberOf(
 ) authz.Principal {
 	t.Helper()
 
-	principal, err := authz.NewPrincipal(authz.KindUser, "user-under-test", "Test Operator",
+	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Test Operator",
 		authz.Membership{Organization: organization, Role: role})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)
@@ -90,7 +90,7 @@ func sessionPrincipal(
 	if err != nil {
 		t.Fatalf("resolving session principal: %v", err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, user.String(), "Admin", signedIn.Memberships[0])
+	principal, err := authz.NewPrincipal(user, signedIn.Session.ID, "Admin", signedIn.Membership)
 	if err != nil {
 		t.Fatalf("building session principal: %v", err)
 	}

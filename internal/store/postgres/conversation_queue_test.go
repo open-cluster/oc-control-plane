@@ -56,7 +56,7 @@ func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
 	appendPerson := func(text string) (conversation.Turn, bool, error) {
 		_, turn, started, err := database.AppendMessageAndOpenTurn(ctx, principal, org, chat.ID,
 			conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
-				ActorID: principal.ID(), Text: text}, turnWindowLead, 100)
+				ActorID: principal.UserID().String(), Text: text}, turnWindowLead, 100)
 		return turn, started, err
 	}
 	first, started, err := appendPerson("initial question")

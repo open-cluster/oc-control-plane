@@ -229,7 +229,7 @@ func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.
 	// usefully be: what an investigation needs later is who issued one and when.
 	h.Logger.WarnContext(ctx, "operator issued a relay bootstrap token",
 		slog.String("organization", organization.String()),
-		slog.String("actor", principal.ID()),
+		slog.String("actor", principal.UserID().String()),
 		slog.Time("expires_at", expiresAt),
 		slog.String("caller", h.callerName(request)))
 

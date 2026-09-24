@@ -4,8 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
@@ -16,9 +14,7 @@ import (
 func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 
-	info := principal.SessionInfo()
-	writeJSON(writer, http.StatusOK,
-		sessionViewOf(principal, info.Email, info.ExpiresAt, info.AuthenticationMethod))
+	writeJSON(writer, http.StatusOK, sessionViewOf(principal))
 }
 
 func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request, principal authz.Principal) {
@@ -26,22 +22,10 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request, pri
 		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 		return
 	}
-	if principal.Kind() != authz.KindUser {
-		// A service account has no session to end. Its credential is revoked through the token
-		// surface, which is where the revocation is durable.
-		writeJSON(writer, http.StatusOK, signOutView{SignedOut: false})
-		return
-	}
-	id, err := uuid.Parse(principal.CredentialID())
-	if err != nil {
-		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
-		return
-	}
-
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Database.RevokeCurrentSession(ctx, principal, id); err != nil && !errors.Is(err, session.ErrUnknown) {
+	if err := h.Database.RevokeCurrentSession(ctx, principal, principal.SessionID()); err != nil && !errors.Is(err, session.ErrUnknown) {
 		h.fail(writer, request, err)
 		return
 	}
@@ -87,7 +71,7 @@ func (h Handlers) revokeSession(writer http.ResponseWriter, request *http.Reques
 		h.fail(writer, request, err)
 		return
 	}
-	if principal.CredentialID() == sessionID.String() {
+	if principal.SessionID() == sessionID {
 		session.Clear(writer)
 	}
 	writer.WriteHeader(http.StatusNoContent)

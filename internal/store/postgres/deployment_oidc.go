@@ -81,7 +81,7 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 		})
 }
 
-func (p *Database) OIDCIdentity(ctx context.Context, identity Identity) (User, []authz.Membership, error) {
+func (p *Database) OIDCIdentity(ctx context.Context, identity Identity) (User, authz.Membership, error) {
 	var user User
 	var disabled *time.Time
 	err := p.pool.QueryRow(ctx, `UPDATE app_user person SET email=$1,display_name=$2
@@ -92,17 +92,17 @@ func (p *Database) OIDCIdentity(ctx context.Context, identity Identity) (User, [
 		identity.Email, identity.DisplayName, identity.Issuer, identity.Subject).Scan(&user.ID, &user.Issuer, &user.Subject, &user.Email,
 		&user.DisplayName, &disabled, &user.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, nil, ErrLocalCredentialUnknown
+		return User{}, authz.Membership{}, ErrLocalCredentialUnknown
 	}
 	if err != nil {
-		return User{}, nil, fmt.Errorf("resolving a deployment OIDC identity: %w", err)
+		return User{}, authz.Membership{}, fmt.Errorf("resolving a deployment OIDC identity: %w", err)
 	}
 	if disabled != nil {
-		return User{}, nil, ErrUserDisabled
+		return User{}, authz.Membership{}, ErrUserDisabled
 	}
-	memberships, err := membershipsOf(ctx, p.pool, user.ID)
-	if err == nil && len(memberships) != 1 {
-		return User{}, nil, ErrLocalCredentialUnknown
+	membership, err := membershipOf(ctx, p.pool, user.ID)
+	if errors.Is(err, ErrMembershipUnknown) {
+		return User{}, authz.Membership{}, ErrLocalCredentialUnknown
 	}
-	return user, memberships, err
+	return user, membership, err
 }

@@ -30,7 +30,7 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 	if err != nil {
 		t.Fatalf("building an organization: %v", err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, "user-1", "Ada",
+	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada",
 		authz.Membership{Organization: org, Role: authz.Admin})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)
@@ -77,8 +77,8 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 		Resolve: func(*http.Request) (authz.Principal, error) {
 			return connectingPrincipal(t, "11111111-1111-4111-8111-111111111111"), nil
 		},
-		Origins: []string{"https://console.example.com"},
-		Logger:  slog.New(slog.DiscardHandler),
+		Origin: "https://console.example.com",
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatalf("building the authorization router: %v", err)
@@ -248,7 +248,7 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 	}
 
 	store := &capturingStore{flow: ConnectFlow{
-		Organization: "11111111-1111-4111-8111-111111111111", Provider: "stub", Principal: principal.ID(),
+		Organization: "11111111-1111-4111-8111-111111111111", Provider: "stub", Principal: principal.UserID().String(),
 	}}
 	recorder := completeConnectAgainst(t, Handlers{
 		Store:     store,
@@ -332,7 +332,7 @@ func TestReconnectingReplacesTheCredentialRatherThanReverifyingTheOldOne(t *test
 	}
 
 	store := &capturingStore{existing: true, flow: ConnectFlow{
-		Organization: "11111111-1111-4111-8111-111111111111", Provider: "stub", Principal: principal.ID(),
+		Organization: "11111111-1111-4111-8111-111111111111", Provider: "stub", Principal: principal.UserID().String(),
 	}}
 	recorder := completeConnectAgainst(t, Handlers{
 		Store:     store,

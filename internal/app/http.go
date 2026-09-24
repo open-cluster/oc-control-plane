@@ -155,7 +155,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 		Database:                process.database,
 		Logger:                  process.logger,
 		Identity:                identities,
-		Origins:                 []string{cfg.PublicURL},
+		Origin:                  cfg.PublicURL,
 		Catalog:                 process.catalog,
 		WebhookTypes:            webhookTypes(webhookAdapters()),
 		Sealer:                  process.sealer,
@@ -168,7 +168,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("assembling the API surface: %w", err)
 	}
-	authentication := identities.Authentication([]string{cfg.PublicURL})
+	authentication := identities.Authentication(cfg.PublicURL)
 	mux := http.NewServeMux()
 	mux.Handle("POST "+identity.Base+"/auth/local/bootstrap", authentication.LocalBootstrap)
 	mux.Handle("POST "+identity.Base+"/auth/local/sign-in", authentication.LocalSignIn)

@@ -316,7 +316,7 @@ func (p *Database) CancelInvestigation(
 				       lease_expires_at = NULL
 				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 				RETURNING `+investigationColumns,
-				id, organization.String(), int16(investigation.StatusCancelled), principal.ID())
+				id, organization.String(), int16(investigation.StatusCancelled), principal.UserID().String())
 			ended, err := scanInvestigation(row, organization.String())
 			if errors.Is(err, pgx.ErrNoRows) {
 				var exists bool

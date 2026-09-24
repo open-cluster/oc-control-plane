@@ -48,19 +48,19 @@ type Authentication struct {
 }
 
 // Authentication returns the public sign-in surface and authentication-owned sign-out handler.
-func (h Handlers) Authentication(origins []string) Authentication {
+func (h Handlers) Authentication(origin string) Authentication {
 	return Authentication{
 		LocalBootstrap: http.HandlerFunc(h.bootstrapLocalAdmin),
 		LocalSignIn:    http.HandlerFunc(h.localSignIn),
 		OIDCStart:      http.HandlerFunc(h.startDeploymentOIDCSignIn),
 		OIDCCallback:   http.HandlerFunc(h.completeDeploymentOIDCSignIn),
-		SignOut:        h.protectSignOut(origins),
+		SignOut:        h.protectSignOut(origin),
 	}
 }
 
-func (h Handlers) protectSignOut(origins []string) http.Handler {
+func (h Handlers) protectSignOut(origin string) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !authz.CookieOriginAllowed(request, origins) {
+		if !authz.CookieOriginAllowed(request, origin) {
 			writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
 			return
 		}

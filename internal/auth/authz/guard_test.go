@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
@@ -22,7 +24,7 @@ func principal(t *testing.T, role authz.Role) authz.Principal {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := authz.NewPrincipal(authz.KindUser, "user-1", "Ada", authz.Membership{
+	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada", authz.Membership{
 		Organization: organization, DisplayName: "Operations", Role: role,
 	})
 	if err != nil {
@@ -50,8 +52,8 @@ func router(t *testing.T, resolved authz.Principal, permission authz.Permission,
 			}
 			return resolved, nil
 		},
-		Origins: []string{"https://console.example.com"},
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Origin: "https://console.example.com",
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if recorded != nil {
 		guard.Record = func(_ context.Context, _ tenancy.Organization, event audit.Event) {
@@ -116,6 +118,31 @@ func TestUnsafeCookieRequestRequiresAllowedOrigin(t *testing.T) {
 		if answer := request(router(t, principal(t, authz.Admin), "", nil), origin); answer.Code != http.StatusForbidden {
 			t.Errorf("origin %q status = %d, want 403", origin, answer.Code)
 		}
+	}
+}
+
+func TestSafeCookieRequestDoesNotRequireOrigin(t *testing.T) {
+	t.Parallel()
+	handler, err := authz.Router([]authz.Route{{
+		Method: http.MethodGet, Pattern: "/api/v1/action",
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusNoContent)
+		}),
+	}}, authz.Guard{
+		Resolve: func(*http.Request) (authz.Principal, error) {
+			return principal(t, authz.Admin), nil
+		},
+		Origin: "https://console.example.com",
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	wanted := httptest.NewRequest(http.MethodGet, "/api/v1/action", nil)
+	handler.ServeHTTP(recorder, wanted)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", recorder.Code)
 	}
 }
 

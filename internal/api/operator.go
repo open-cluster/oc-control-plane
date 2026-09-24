@@ -35,10 +35,10 @@ type Handlers struct {
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
 	Sealer                  seal.Sealer
-	// Origins are the browser origins a cookie-authenticated unsafe request may come from.
+	// Origin is the browser origin a cookie-authenticated unsafe request may come from.
 	// Empty means no browser may make one, which is the correct posture for a deployment that
 	// has not said where its console is served from.
-	Origins []string
+	Origin string
 	// MaxWaitingTurns bounds one organization's unclaimed turns, so overload is a plain
 	// refusal rather than a queue that grows without bound.
 	MaxWaitingTurns int
@@ -55,7 +55,7 @@ func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
 		Resolve: h.Identity.Resolve,
 		Record:  h.recordRefusal,
-		Origins: h.Origins,
+		Origin:  h.Origin,
 		Logger:  h.Logger,
 	}
 
@@ -183,7 +183,7 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 	h.Logger.WarnContext(ctx, "session conflict cleared by an operator",
 		slog.String("organization", organization.String()),
 		slog.String("registration_id", registration.String()),
-		slog.String("actor", principal.ID()),
+		slog.String("actor", principal.UserID().String()),
 		slog.String("caller", h.callerName(request)))
 
 	writer.WriteHeader(http.StatusNoContent)

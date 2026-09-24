@@ -100,7 +100,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		Subject:     subjectOf(trigger),
 		WindowFrom:  window.from,
 		WindowUntil: window.until,
-		CreatedBy:   principal.ID(),
+		CreatedBy:   principal.UserID().String(),
 	}, h.MaxPending)
 	if err != nil {
 		h.fail(writer, request, err)

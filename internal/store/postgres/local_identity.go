@@ -27,7 +27,7 @@ const LocalIssuer = "opencluster:local"
 
 type LocalIdentity struct {
 	User         User
-	Memberships  []authz.Membership
+	Membership   authz.Membership
 	PasswordHash string
 }
 
@@ -134,12 +134,12 @@ func (p *Database) LocalIdentityByEmail(
 		found.User.DisabledAt = *disabled
 		return LocalIdentity{}, ErrUserDisabled
 	}
-	found.Memberships, err = membershipsOf(ctx, p.pool, found.User.ID)
+	found.Membership, err = membershipOf(ctx, p.pool, found.User.ID)
+	if errors.Is(err, ErrMembershipUnknown) {
+		return LocalIdentity{}, ErrLocalCredentialUnknown
+	}
 	if err != nil {
 		return LocalIdentity{}, err
-	}
-	if len(found.Memberships) != 1 {
-		return LocalIdentity{}, ErrLocalCredentialUnknown
 	}
 	return found, nil
 }

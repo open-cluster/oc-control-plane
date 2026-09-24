@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
@@ -15,36 +17,27 @@ const maxIdentifierLength = 256
 var ErrInvalidPrincipal = errors.New("invalid principal")
 var ErrNotAMember = errors.New("principal holds no membership in this organization")
 
-type Kind int16
-
-const (
-	KindUser   Kind = Kind(audit.ActorUser)
-	KindSystem Kind = Kind(audit.ActorSystem)
-)
-
 type Principal struct {
-	kind          Kind
-	id            string
-	displayName   string
-	membership    Membership
-	credentialID  string
-	sourceAddress string
-	requestID     string
-	sessionInfo   SessionInfo
+	userID               uuid.UUID
+	sessionID            uuid.UUID
+	displayName          string
+	membership           Membership
+	sourceAddress        string
+	requestID            string
+	email                string
+	authenticationMethod string
+	expiresAt            time.Time
 }
 
-type SessionInfo struct {
-	Email                string
-	AuthenticationMethod string
-	ExpiresAt            time.Time
-}
-
-func (p Principal) WithSessionInfo(info SessionInfo) Principal {
-	p.sessionInfo = info
+// WithSessionPresentation records the metadata resolved with the browser session.
+func (p Principal) WithSessionPresentation(
+	email, authenticationMethod string, expiresAt time.Time,
+) Principal {
+	p.email = email
+	p.authenticationMethod = authenticationMethod
+	p.expiresAt = expiresAt
 	return p
 }
-
-func (p Principal) SessionInfo() SessionInfo { return p.sessionInfo }
 
 // Membership is one organization and the role held in it.
 type Membership struct {
@@ -53,39 +46,27 @@ type Membership struct {
 	Role         Role
 }
 
-func NewPrincipal(kind Kind, id, displayName string, membership Membership) (Principal, error) {
-	switch kind {
-	case KindUser:
-		if strings.TrimSpace(id) == "" {
-			return Principal{}, fmt.Errorf("%w: a %s must have an identifier",
-				ErrInvalidPrincipal, audit.ActorKind(kind))
-		}
-		if membership.Organization.IsEmpty() || !KnownRole(membership.Role) {
-			return Principal{}, fmt.Errorf("%w: a user must have one Organization and Role",
-				ErrInvalidPrincipal)
-		}
-	case KindSystem:
-	default:
-		return Principal{}, fmt.Errorf("%w: %d is not a kind of principal",
-			ErrInvalidPrincipal, kind)
+func NewPrincipal(
+	userID, sessionID uuid.UUID, displayName string, membership Membership,
+) (Principal, error) {
+	if userID == uuid.Nil || sessionID == uuid.Nil {
+		return Principal{}, fmt.Errorf("%w: a user and session must have identifiers", ErrInvalidPrincipal)
 	}
-	if len(id) > maxIdentifierLength || len(displayName) > maxIdentifierLength {
-		return Principal{}, fmt.Errorf("%w: the identifier and display name must be at most "+
-			"%d bytes", ErrInvalidPrincipal, maxIdentifierLength)
+	if membership.Organization.IsEmpty() || !KnownRole(membership.Role) {
+		return Principal{}, fmt.Errorf("%w: a user must have one Organization and Role",
+			ErrInvalidPrincipal)
+	}
+	if len(displayName) > maxIdentifierLength {
+		return Principal{}, fmt.Errorf("%w: the display name must be at most %d bytes",
+			ErrInvalidPrincipal, maxIdentifierLength)
 	}
 
 	return Principal{
-		kind:        kind,
-		id:          strings.TrimSpace(id),
+		userID:      userID,
+		sessionID:   sessionID,
 		displayName: strings.TrimSpace(displayName),
 		membership:  membership,
 	}, nil
-}
-
-// WithCredential records which session or token this request presented.
-func (p Principal) WithCredential(id string) Principal {
-	p.credentialID = id
-	return p
 }
 
 // WithRequest records where the request came from and what it is called in the logs, so every
@@ -96,19 +77,25 @@ func (p Principal) WithRequest(sourceAddress, requestID string) Principal {
 }
 
 // IsZero reports the principal nobody resolved. It reaches nothing.
-func (p Principal) IsZero() bool { return p.kind == 0 }
+func (p Principal) IsZero() bool { return p.userID == uuid.Nil }
 
-// Kind reports what sort of party this is.
-func (p Principal) Kind() Kind { return p.kind }
+// UserID is the authenticated User.
+func (p Principal) UserID() uuid.UUID { return p.userID }
 
-// ID is the user or service account identifier.
-func (p Principal) ID() string { return p.id }
+// SessionID is the browser session presented by this request.
+func (p Principal) SessionID() uuid.UUID { return p.sessionID }
+
+// Email is the authenticated User's presentation address.
+func (p Principal) Email() string { return p.email }
+
+// AuthenticationMethod names how the browser session was established.
+func (p Principal) AuthenticationMethod() string { return p.authenticationMethod }
+
+// ExpiresAt is when the browser session stops authenticating requests.
+func (p Principal) ExpiresAt() time.Time { return p.expiresAt }
 
 // DisplayName is what the record will call this actor.
 func (p Principal) DisplayName() string { return p.displayName }
-
-// CredentialID names the session or API token this request presented.
-func (p Principal) CredentialID() string { return p.credentialID }
 
 // SourceAddress is where the request came from.
 func (p Principal) SourceAddress() string { return p.sourceAddress }
@@ -119,8 +106,8 @@ func (p Principal) RequestID() string { return p.requestID }
 // Organization is the sole tenant resolved during authentication.
 func (p Principal) Organization() tenancy.Organization { return p.membership.Organization }
 
-// OrganizationDisplayName is the current Organization's human-facing name.
-func (p Principal) OrganizationDisplayName() string { return p.membership.DisplayName }
+// OrganizationName is the current Organization's human-facing name.
+func (p Principal) OrganizationName() string { return p.membership.DisplayName }
 
 // Role is the current Role resolved during authentication.
 func (p Principal) Role() Role { return p.membership.Role }
@@ -133,8 +120,8 @@ func (p Principal) Can(permission Permission) bool { return p.membership.Role.Gr
 // about what they did.
 func (p Principal) Actor() audit.Actor {
 	return audit.Actor{
-		Kind:        audit.ActorKind(p.kind),
-		ID:          p.id,
+		Kind:        audit.ActorUser,
+		ID:          p.userID.String(),
 		DisplayName: p.displayName,
 	}
 }

@@ -34,8 +34,8 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			organization := identity.Memberships[0].Organization
-			principal, err := authz.NewPrincipal(authz.KindUser, user.ID.String(), "Admin", identity.Memberships[0])
+			organization := identity.Membership.Organization
+			principal, err := authz.NewPrincipal(user.ID, issued.ID, "Admin", identity.Membership)
 			if err != nil {
 				t.Fatal(err)
 			}

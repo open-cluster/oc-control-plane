@@ -421,6 +421,9 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 			t.Errorf("session omits %s: %s", fact, who.body)
 		}
 	}
+	if strings.Contains(who.body, `"kind":`) {
+		t.Errorf("session advertises an unshipped principal kind: %s", who.body)
+	}
 }
 
 func TestLocalBootstrapRefusesWhenCredentialIsRetired(t *testing.T) {

@@ -22,12 +22,12 @@ const lastSeenResolution = time.Minute
 
 // SignedIn is everything one cookie resolves to: the session, who holds it, and what they may
 // reach. The three come back together because they are read in one round trip and because a
-// caller that could get the session without the memberships would be a caller who could
+// caller that could get the session without the Membership would be a caller who could
 // authenticate somebody and then authorize them from a stale copy.
 type SignedIn struct {
-	Session     session.Session
-	User        User
-	Memberships []authz.Membership
+	Session    session.Session
+	User       User
+	Membership authz.Membership
 }
 
 // IssueSession records a signed-in operator, and the event saying so, in ONE transaction.
@@ -189,20 +189,20 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		return found, session.ErrRevoked
 	}
 
-	memberships, err := membershipsOf(ctx, on, found.Session.UserID)
+	membership, err := membershipOf(ctx, on, found.Session.UserID)
+	if errors.Is(err, ErrMembershipUnknown) {
+		return SignedIn{}, session.ErrUnknown
+	}
 	if err != nil {
 		return SignedIn{}, err
 	}
-	if len(memberships) != 1 {
-		return SignedIn{}, session.ErrUnknown
-	}
-	found.Memberships = memberships
+	found.Membership = membership
 	return found, nil
 }
 
 // RevokeCurrentSession revokes the caller's current session and audits it in deployment scope.
 func (p *Database) RevokeCurrentSession(ctx context.Context, principal authz.Principal, id uuid.UUID) error {
-	if principal.CredentialID() != id.String() {
+	if principal.SessionID() != id {
 		return session.ErrUnknown
 	}
 	return p.endOwnedSession(ctx, principal, id, audit.ActionSignedOut)
@@ -214,8 +214,8 @@ func (p *Database) RevokeSession(ctx context.Context, principal authz.Principal,
 }
 
 func (p *Database) endOwnedSession(ctx context.Context, principal authz.Principal, id uuid.UUID, action audit.Action) error {
-	userID, err := uuid.Parse(principal.ID())
-	if err != nil || principal.Kind() != authz.KindUser {
+	userID := principal.UserID()
+	if userID == uuid.Nil {
 		return session.ErrUnknown
 	}
 	transaction, err := p.pool.Begin(ctx)
@@ -253,8 +253,8 @@ type SessionList struct {
 func (p *Database) ListSessions(
 	ctx context.Context, principal authz.Principal, page Page,
 ) (SessionList, error) {
-	userID, err := uuid.Parse(principal.ID())
-	if err != nil || principal.Kind() != authz.KindUser {
+	userID := principal.UserID()
+	if userID == uuid.Nil {
 		return SessionList{}, session.ErrUnknown
 	}
 	after, afterID, err := decodeCursor(page.After, "-lastSeenAt")
