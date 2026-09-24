@@ -324,6 +324,18 @@ func TestOpenAPIAdvertisesOnlyShippedProductAuthentication(t *testing.T) {
 	if strings.Contains(string(contents), "BearerToken") {
 		t.Fatal("canonical OpenAPI advertises a general bearer token that v0.1 does not ship")
 	}
+	var document openAPIDocument
+	if err = yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatalf("parse the canonical OpenAPI document: %v", err)
+	}
+	principal := document.Components.Schemas["Principal"]
+	if _, present := principal.Properties["kind"]; present || slices.Contains(principal.Required, "kind") {
+		t.Error("Principal advertises an authentication kind although v0.1 authenticates only Users")
+	}
+	method := document.Components.Schemas["Session"].Properties["authenticationMethod"]
+	if !slices.Equal(method.Enum, []string{"local", "oidc"}) {
+		t.Errorf("authentication methods = %v, want local and oidc", method.Enum)
+	}
 }
 
 func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {

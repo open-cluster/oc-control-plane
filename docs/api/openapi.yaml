@@ -2034,18 +2034,12 @@ components:
       additionalProperties: false
       required:
         - id
-        - kind
         - displayName
         - roles
         - scopes
       properties:
         id:
           $ref: '#/components/schemas/UUID'
-        kind:
-          type: string
-          enum:
-            - user
-            - automation
         displayName:
           type: string
           minLength: 1
@@ -2107,7 +2101,6 @@ components:
           enum:
             - local
             - oidc
-            - automation
         csrf:
           type: object
           additionalProperties: false

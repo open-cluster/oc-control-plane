@@ -59,7 +59,7 @@ func (g Guard) refuseOrigin(
 ) {
 	g.Logger.WarnContext(request.Context(), "operator request refused: origin",
 		slog.String("path", truncate(request.URL.Path, maxLoggedPath)),
-		slog.String("actor", principal.ID()),
+		slog.String("actor", principal.UserID().String()),
 		slog.String("caller", request.RemoteAddr))
 	writeJSON(writer, http.StatusForbidden, errorView{Error: "origin not allowed"})
 }

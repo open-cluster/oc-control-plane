@@ -78,8 +78,9 @@ func DraftFrom(input GenerationInput) Postmortem {
 		}
 		for _, finding := range conclusion.Findings {
 			cited := CitedStatement{InvestigationID: result.InvestigationID.String(),
-				FindingID: finding.ID, Statement: finding.Statement,
-				RunRefs: append([]int(nil), finding.Sources...)}
+				FindingID: finding.ID,
+				Statement: finding.Statement,
+				RunRefs:   append([]int(nil), finding.Sources...)}
 			switch finding.Kind {
 			case investigation.FindingCause:
 				draft.RootCauses = append(draft.RootCauses, cited)
@@ -89,7 +90,9 @@ func DraftFrom(input GenerationInput) Postmortem {
 		}
 		for _, action := range conclusion.Actions {
 			draft.ActionItems = append(draft.ActionItems, ActionItem{
-				Title: action.Title, Owner: NeedsHumanInput, Deadline: NeedsHumanInput,
+				Title:           action.Title,
+				Owner:           NeedsHumanInput,
+				Deadline:        NeedsHumanInput,
 				Verification:    action.Verification,
 				InvestigationID: result.InvestigationID.String(),
 				RunRefs:         append([]int(nil), action.RunRefs...),

@@ -90,11 +90,8 @@ func (h Handlers) fromSession(
 		}
 	}
 
-	if len(signedIn.Memberships) != 1 {
-		return authz.Principal{}, authz.ErrCredentialRejected
-	}
-	principal, err := authz.NewPrincipal(authz.KindUser, signedIn.User.ID.String(),
-		displayNameOf(signedIn.User), signedIn.Memberships[0])
+	principal, err := authz.NewPrincipal(signedIn.User.ID, signedIn.Session.ID,
+		displayNameOf(signedIn.User), signedIn.Membership)
 	if err != nil {
 		return authz.Principal{}, authz.ErrCredentialRejected
 	}
@@ -102,9 +99,8 @@ func (h Handlers) fromSession(
 	if signedIn.User.Issuer == storage.LocalIssuer {
 		method = "local"
 	}
-	return principal.WithCredential(signedIn.Session.ID.String()).WithSessionInfo(authz.SessionInfo{
-		Email: signedIn.User.Email, AuthenticationMethod: method, ExpiresAt: signedIn.Session.ExpiresAt,
-	}), nil
+	return principal.WithSessionPresentation(
+		signedIn.User.Email, method, signedIn.Session.ExpiresAt), nil
 }
 
 // bearerToken pulls the credential out of an Authorization header.

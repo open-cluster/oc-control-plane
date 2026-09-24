@@ -1151,10 +1151,9 @@ components:
     Principal:
       type: object
       additionalProperties: false
-      required: [id, kind, displayName, roles, scopes]
+      required: [id, displayName, roles, scopes]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
-        kind: { type: string, enum: [user, automation] }
         displayName: { type: string, minLength: 1, maxLength: 256 }
         email: { type: string, format: email, maxLength: 254 }
         roles: { type: array, items: { type: string, enum: [admin, editor, viewer] }, uniqueItems: true }
@@ -1174,7 +1173,7 @@ components:
       properties:
         principal: { $ref: "#/components/schemas/Principal" }
         organization: { $ref: "#/components/schemas/Membership" }
-        authenticationMethod: { type: string, enum: [local, oidc, automation] }
+        authenticationMethod: { type: string, enum: [local, oidc] }
         csrf:
           type: object
           additionalProperties: false

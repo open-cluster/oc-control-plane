@@ -13,12 +13,12 @@ import (
 
 // LocalPasswordHash reads only the authenticated User's local verifier.
 func (p *Database) LocalPasswordHash(ctx context.Context, principal authz.Principal) (string, error) {
-	user, err := uuid.Parse(principal.ID())
-	if err != nil || principal.Kind() != authz.KindUser {
+	user := principal.UserID()
+	if user == uuid.Nil {
 		return "", ErrLocalCredentialUnknown
 	}
 	var encoded string
-	err = p.pool.QueryRow(ctx, `SELECT password_hash FROM local_password c JOIN app_user u USING (user_id)
+	err := p.pool.QueryRow(ctx, `SELECT password_hash FROM local_password c JOIN app_user u USING (user_id)
 		WHERE u.user_id = $1 AND u.issuer = $2 AND u.disabled_at IS NULL`, user, LocalIssuer).Scan(&encoded)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrLocalCredentialUnknown
@@ -31,8 +31,8 @@ func (p *Database) LocalPasswordHash(ctx context.Context, principal authz.Princi
 
 // ChangeLocalPassword atomically replaces a reauthenticated User's verifier and ends all sessions.
 func (p *Database) ChangeLocalPassword(ctx context.Context, principal authz.Principal, previous, replacement string) error {
-	user, err := uuid.Parse(principal.ID())
-	if err != nil || principal.Kind() != authz.KindUser {
+	user := principal.UserID()
+	if user == uuid.Nil {
 		return ErrLocalCredentialUnknown
 	}
 	return p.replaceLocalPassword(ctx, user, &previous, replacement, audit.Event{

@@ -24,7 +24,6 @@ func TestSessionRevocationRollsBackWhenDeploymentAuditFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := sessionPrincipal(t, database, digest, user.ID)
-	principal = principal.WithCredential(issued.ID.String())
 	connection, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)

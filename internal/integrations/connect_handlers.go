@@ -131,7 +131,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	flow := ConnectFlow{
 		Organization: organization.String(),
 		Provider:     definition.Key,
-		Principal:    principal.ID(),
+		Principal:    principal.UserID().String(),
 		ReturnTo:     returnTo,
 		ExpiresAt:    time.Now().Add(connectFlowLifetime),
 	}
@@ -170,7 +170,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		h.refuseConnect(writer, request, "", "the state did not resolve to a live flow")
 		return
 	}
-	if flow.Principal != principal.ID() {
+	if flow.Principal != principal.UserID().String() {
 		h.refuseConnect(writer, request, flow.ReturnTo, "another principal started it")
 		return
 	}

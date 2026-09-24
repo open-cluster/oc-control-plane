@@ -109,7 +109,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		IncidentID: incidentID,
 		Surface:    SurfaceWeb,
 		Subject:    subject,
-		CreatedBy:  principal.ID(),
+		CreatedBy:  principal.UserID().String(),
 	})
 	if err != nil {
 		h.fail(writer, request, err)
@@ -198,7 +198,7 @@ func (h Handlers) append(
 		// display name come from an identity provider, which has its own idea of how long
 		// a name may be; a message refused because somebody's name is long would be a
 		// message lost for a reason nobody could act on.
-		ActorID:      boundedRunes(principal.ID(), MaxActorIDLength),
+		ActorID:      boundedRunes(principal.UserID().String(), MaxActorIDLength),
 		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
 		Window:       window,

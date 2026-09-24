@@ -286,7 +286,7 @@ func (p *Database) Review(
 				 WHERE incident_id = $1 AND org_id = $2 AND status = $5
 				RETURNING `+postmortemColumns,
 				incidentID, organization.String(), postmortem.StatusReviewed,
-				principal.ID(), postmortem.StatusDraft))
+				principal.UserID().String(), postmortem.StatusDraft))
 			if errors.Is(err, postmortem.ErrUnknown) {
 				current, readErr := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
 					FROM postmortem WHERE incident_id = $1 AND org_id = $2`,

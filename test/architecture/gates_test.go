@@ -201,7 +201,7 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		// for the organization. Nothing the caller sent
 		// contributes to the tenant the answer belongs to, which is why they are safe and why
 		// they have to exist.
-		"SessionByToken":        "resolves a global User and current memberships from an opaque session digest",
+		"SessionByToken":        "resolves a global User and current Membership from an opaque session digest",
 		"LocalPasswordHash":     "reads only the authenticated User's local verifier",
 		"ChangeLocalPassword":   "changes only the authenticated User's reauthenticated global credential",
 		"RecoverLocalPassword":  "deployment operator recovery of an existing local User; no tenant authority applies",
