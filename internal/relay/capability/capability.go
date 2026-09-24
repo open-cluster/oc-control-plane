@@ -85,7 +85,7 @@ func Known(id string, version uint32) bool {
 	return ok
 }
 
-// Registered lists what this build can dispatch, in a stable order, so an operator surface can
+// Registered lists what this build can dispatch, in a stable order, so the application API can
 // say what exists rather than leaving a planner to guess a string.
 func Registered() []Descriptor {
 	descriptors := make([]Descriptor, 0, len(validators))

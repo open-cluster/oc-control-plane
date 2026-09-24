@@ -143,13 +143,13 @@ func (f *vendorFake) probes() int {
 func startSlackPlane(t *testing.T, vendor *vendorFake) *integrationPlane {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 	}, app.Options{SlackAPIURL: vendor.URL})
-	return &integrationPlane{controlPlane: plane, operator: operatorAddress}
+	return &integrationPlane{controlPlane: plane, api: apiAddress}
 }
 
 func (p *integrationPlane) createSlack(t *testing.T, name, token string) (int, string) {
@@ -425,7 +425,7 @@ func TestSlackAnotherTenantSeesNothing(t *testing.T) {
 }
 
 // A deployment whose catalog holds a credential-bearing type and whose configuration
-// names no sealing key must refuse to serve the operator surface: the alternative is a
+// names no sealing key must refuse to serve the application API: the alternative is a
 // setup flow that accepts a token it can only store in the clear or drop.
 func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 	if testing.Short() {

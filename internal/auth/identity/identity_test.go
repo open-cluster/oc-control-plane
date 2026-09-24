@@ -2,6 +2,7 @@ package identity
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,18 @@ func TestAnIssuerMustBeHTTPSOrLoopback(t *testing.T) {
 		accepted := usableIssuer(testCase.issuer) == nil
 		if accepted != testCase.accepted {
 			t.Errorf("%q accepted=%v, want %v", testCase.issuer, accepted, testCase.accepted)
+		}
+	}
+}
+func TestOSSIdentityRoutesExcludeNativeEnterpriseProtocols(t *testing.T) {
+	for _, route := range (Handlers{}).Routes() {
+		key := route.Method + " " + route.Pattern
+		for _, retired := range []string{
+			"/scim/", "/sign-in/saml/", "/identity-providers", "/directory-groups",
+		} {
+			if strings.Contains(key, retired) {
+				t.Errorf("active OSS identity route %q contains retired surface %q", key, retired)
+			}
 		}
 	}
 }

@@ -10,7 +10,7 @@ import (
 
 func TestLogoutRevokesSessionWithoutMembershipAndClearsCookie(t *testing.T) {
 	plane := startIdentityPlane(t)
-	base := "http://" + plane.operator + "/api/v1"
+	base := "http://" + plane.api + "/api/v1"
 	created := plane.call(t, http.MethodPost, base+"/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations",
 		"email":            "admin@example.test", "displayName": "Admin",
@@ -58,7 +58,7 @@ func TestLogoutReportsDatabaseFailureAndClearsCookie(t *testing.T) {
 	cookie := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
 	plane.database.closeGate()
 	defer plane.database.openGate()
-	response := plane.call(t, http.MethodDelete, "http://"+plane.operator+"/api/v1/session", nil, asSession(cookie))
+	response := plane.call(t, http.MethodDelete, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
 	if response.status != http.StatusServiceUnavailable {
 		t.Fatalf("logout during outage = %d: %s", response.status, response.body)
 	}
@@ -66,7 +66,7 @@ func TestLogoutReportsDatabaseFailureAndClearsCookie(t *testing.T) {
 	plane.database.openGate()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		response := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil, asSession(cookie))
+		response := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
 		if response.status == http.StatusOK {
 			break
 		}

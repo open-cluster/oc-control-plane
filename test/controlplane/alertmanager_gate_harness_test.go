@@ -42,7 +42,7 @@ const (
 )
 
 // alertmanagerGate is the composed product with a real Alertmanager in front of it: the
-// operator surface, intake, a real database, a scripted model boundary so this gate never
+// application API, intake, a real database, a scripted model boundary so this gate never
 // pays a provider, and a recorder in the delivery path.
 type alertmanagerGate struct {
 	*integrationPlane
@@ -56,12 +56,12 @@ type alertmanagerGate struct {
 func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
-	intakeAddress := operatorAddress
+	apiAddress := freeAddress(t)
+	intakeAddress := apiAddress
 	var dsn string
 	prompts := make(chan modelagent.Prompt, 1)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		cfg.HTTPListenAddress = intakeAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
@@ -72,7 +72,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 
 	surface := &integrationPlane{
-		controlPlane: plane, operator: operatorAddress, intake: intakeAddress, dsn: dsn,
+		controlPlane: plane, api: apiAddress, intake: intakeAddress, dsn: dsn,
 	}
 	created := surface.createAlertmanager(t, "Prometheus Alertmanager")
 	recorder := startIntakeRecorder(t, intakeAddress)
@@ -441,7 +441,7 @@ func (g *alertmanagerGate) replay(t *testing.T, secret string, body []byte) int 
 	return status
 }
 
-// incident reads one incident through the operator API an operator would read it through.
+// incident reads one Incident through the application API an operator uses.
 func (g *alertmanagerGate) incident(t *testing.T, id string) incidentBody {
 	t.Helper()
 

@@ -23,7 +23,7 @@ import (
 //
 // The seam is the composition root, for the same reason intake's is: what is under test is what an
 // operator could observe. Alerts are delivered as real signed requests to the real intake listener,
-// and the incidents they produce are read back through the real operator API. Nothing here asserts
+// and the incidents they produce are read back through the real application API. Nothing here asserts
 // how grouping is implemented, because a second Integration will change that.
 //
 // The one thing every test below turns on: the grouping identity is the SOURCE's. Two alerts land
@@ -31,11 +31,11 @@ import (
 // platform decided their labels looked similar.
 
 // incidentPlane is a control plane with both surfaces bound: intake to deliver alerts to, and the
-// operator API to read the incidents they became.
+// application API to read the Incidents they became.
 type incidentPlane struct {
 	*controlPlane
 	intake      string
-	operator    string
+	api         string
 	integration uuid.UUID
 	dsn         string
 }
@@ -43,11 +43,11 @@ type incidentPlane struct {
 func startIncidents(t *testing.T) *incidentPlane {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = "127.0.0.1:0"
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		dsn = cfg.DatabaseDSN
@@ -56,7 +56,7 @@ func startIncidents(t *testing.T) *incidentPlane {
 	address := listeningAddress(t, plane, "listening for alert intake")
 	integration := configureIntegration(t, dsn, intakeOrganization, intakeSecret)
 	return &incidentPlane{
-		controlPlane: plane, intake: address, operator: operatorAddress,
+		controlPlane: plane, intake: address, api: apiAddress,
 		integration: integration, dsn: dsn,
 	}
 }
@@ -100,14 +100,14 @@ func (p *incidentPlane) call(
 		}
 		reader = bytes.NewReader(encoded)
 	}
-	url := "http://" + p.operator + path
+	url := "http://" + p.api + path
 	request, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
 		t.Fatalf("building the request: %v", err)
 	}
 	request.AddCookie(&http.Cookie{Name: session.CookieName, Value: p.sessionCookie})
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
-		request.Header.Set("Origin", "http://"+p.operator)
+		request.Header.Set("Origin", "http://"+p.api)
 	}
 	if reader != nil {
 		request.Header.Set("Content-Type", "application/json")

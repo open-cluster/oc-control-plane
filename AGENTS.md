@@ -14,6 +14,8 @@ repository; this service speaks its protocol and never touches a customer cluste
 `CONTEXT.md` is the glossary. Use its words exactly; the banned synonyms it lists fail review. The retired architecture
 (Placements, Connections, Environments, evidence chains) must not reappear under any spelling.
 
+Use `operator` only for a human actor. Use `API`, the resource name, or the transport for software surfaces.
+
 ## Build, test, verify
 
 ```
@@ -36,7 +38,7 @@ listeners; nothing mocks the database.
   vendors appear only in adapter subpackages.
 - No Kubernetes library in this module; cluster access belongs to the Relay.
 - Persisted enum values are frozen; extending one starts in `test/architecture`.
-- Every operator route is declared `(method, pattern, permission)` in a `Routes()` table; a mux registration anywhere
+- Every application API route is declared `(method, pattern, permission)` in a `Routes()` table; a mux registration anywhere
   else fails the gates.
 - Secrets: accept direct environment values or optional _FILE inputs, reject conflicts, and redact errors; inbound
   secrets are digests; presentable credentials are sealed via `internal/seal`; audit details drop credential-shaped keys

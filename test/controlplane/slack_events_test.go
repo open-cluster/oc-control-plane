@@ -45,21 +45,21 @@ type slackEventPlane struct {
 func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 	t.Helper()
 
-	operatorAddress := freeAddress(t)
-	intakeAddress := operatorAddress
+	apiAddress := freeAddress(t)
+	intakeAddress := apiAddress
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = slackSigningSecret
-		cfg.PublicURL = "http://" + operatorAddress
+		cfg.PublicURL = "http://" + apiAddress
 		dsn = cfg.DatabaseDSN
 	}, app.Options{SlackAPIURL: vendor.URL})
 	return &slackEventPlane{
-		integrationPlane: &integrationPlane{controlPlane: plane, operator: operatorAddress},
+		integrationPlane: &integrationPlane{controlPlane: plane, api: apiAddress},
 		intake:           intakeAddress,
 		dsn:              dsn,
 	}

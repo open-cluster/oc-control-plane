@@ -83,7 +83,7 @@ func TestOpenAPIRetiresDedicatedRelayConflictHistory(t *testing.T) {
 	}
 }
 
-func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
+func TestOpenAPIDescribesExactlyTheApplicationAPIRoutes(t *testing.T) {
 	t.Parallel()
 
 	contents, err := os.ReadFile("../../api/openapi.yaml")
@@ -147,7 +147,7 @@ func TestOpenAPIDescribesExactlyTheOperatorRoutes(t *testing.T) {
 				route.Method+" "+route.Pattern, response.Code)
 		}
 	}
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		key := routeKey(route)
 		served[key] = true
 		operation, ok := operationFor(document, route.Method, route.Pattern)

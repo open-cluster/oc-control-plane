@@ -3,14 +3,105 @@ package identity
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// session answers who is signed in and describes their current Organization and Role.
+const noWayIn = "no way in is configured here"
+
+func nowPlus(d time.Duration) time.Time {
+	return time.Now().Add(d)
+}
+
+func (h Handlers) issueSession(
+	writer http.ResponseWriter,
+	request *http.Request,
+	organization uuid.UUID,
+	user storage.User,
+	localPasswordHash string,
+) error {
+	token, digest, issued, detail, err := h.prepareSession(request, organization, user.ID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := contextWithTimeout(request, readTimeout)
+	defer cancel()
+	actor := audit.Actor{Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}
+	if localPasswordHash != "" {
+		_, err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor, detail, localPasswordHash)
+	} else {
+		_, err = h.Database.IssueSession(ctx, organization, issued, digest, actor, detail)
+	}
+	if err != nil {
+		return err
+	}
+	session.Set(writer, token, issued.ExpiresAt)
+	return nil
+}
+
+func (h Handlers) prepareSession(
+	request *http.Request,
+	organization uuid.UUID,
+	userID uuid.UUID,
+) (session.Token, []byte, session.Session, audit.Detail, error) {
+	ctx, cancel := contextWithTimeout(request, readTimeout)
+	defer cancel()
+	if organization != uuid.Nil {
+		_, err := h.Database.OrganizationAuditRetention(ctx, organization)
+		if err != nil {
+			return "", nil, session.Session{}, nil, err
+		}
+	}
+	token, digest, issued, err := session.Issue(userID, h.SessionLifetime)
+	if err != nil {
+		return "", nil, session.Session{}, nil, err
+	}
+	issued.ClientUserAgent = request.UserAgent()
+	issued.RemoteAddr = request.RemoteAddr
+	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
+		"requestId": correlation.From(request.Context())}
+	return token, digest, issued, detail, nil
+}
+
+func (h Handlers) redirectURI() string {
+
+	return strings.TrimSuffix(h.PublicURL, "/") + Base + "/auth/oidc/callback"
+}
+
+func (h Handlers) returnTarget(writer http.ResponseWriter, asked string) (string, bool) {
+	if asked == "" {
+		return "/", true
+	}
+	if !strings.HasPrefix(asked, "/") || strings.HasPrefix(asked, "//") ||
+		strings.Contains(asked, "\\") || len(asked) > 512 {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "returnTo must be a path on this site"})
+		return "", false
+	}
+	parsed, err := url.Parse(asked)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "returnTo must be a path on this site"})
+		return "", false
+	}
+	return asked, true
+}
+
+func (h Handlers) consoleTarget(returnTo string) string {
+	if returnTo == "" {
+		returnTo = "/"
+	}
+	return strings.TrimSuffix(h.PublicURL, "/") + returnTo
+}
+
 func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 

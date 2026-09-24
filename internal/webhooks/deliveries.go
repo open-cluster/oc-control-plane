@@ -160,7 +160,7 @@ func addressedDelivery(
 
 func (h DeliveryHandlers) fail(writer http.ResponseWriter, err error) {
 	if h.Logger != nil {
-		h.Logger.Error("webhook delivery operator request failed", slog.String("error", err.Error()))
+		h.Logger.Error("Webhook Delivery API request failed", slog.String("error", err.Error()))
 	}
 	writeDeliveryJSON(writer, http.StatusInternalServerError, map[string]string{"error": "request failed"})
 }

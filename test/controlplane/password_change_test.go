@@ -15,7 +15,7 @@ import (
 
 func TestLocalUserChangesPasswordAndRevokesAllSessions(t *testing.T) {
 	plane := startIdentityPlane(t)
-	base := "http://" + plane.operator + "/api/v1"
+	base := "http://" + plane.api + "/api/v1"
 	oldPassword := "initial administrator password"
 	newPassword := "replacement administrator password"
 	first := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", oldPassword)
@@ -64,7 +64,7 @@ func TestLocalUserChangesPasswordAndRevokesAllSessions(t *testing.T) {
 func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	plane := startIdentityPlane(t)
 	cookie := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
-	response := plane.call(t, http.MethodGet, "http://"+plane.operator+"/api/v1/session", nil, asSession(cookie))
+	response := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
 	var who struct {
 		Principal struct {
 			ID string `json:"id"`
@@ -104,7 +104,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 		cfg.DatabaseDSN = plane.dsn
 		cfg.BootstrapTokenDigest = nil
 	})
-	base := "http://" + restarted.operator + "/api/v1"
+	base := "http://" + restarted.api + "/api/v1"
 	stale := restarted.call(t, http.MethodGet, base+"/session", nil, asSession(cookie))
 	if stale.status != http.StatusUnauthorized {
 		t.Fatalf("recovery retained old session: %d", stale.status)

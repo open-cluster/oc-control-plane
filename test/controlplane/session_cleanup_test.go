@@ -12,7 +12,7 @@ import (
 
 func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 	plane := startIdentityPlane(t)
-	created := plane.call(t, http.MethodPost, "http://"+plane.operator+"/api/v1/auth/local/bootstrap",
+	created := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap",
 		map[string]any{"organizationName": "Operations", "email": "admin@example.test", "password": "administrator password"}, asBootstrap)
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap: %d: %s", created.status, created.body)
@@ -52,7 +52,7 @@ func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	response := restarted.call(t, http.MethodGet, "http://"+restarted.operator+"/api/v1/session", nil, asSession(cookie))
+	response := restarted.call(t, http.MethodGet, "http://"+restarted.api+"/api/v1/session", nil, asSession(cookie))
 	if response.status != http.StatusUnauthorized {
 		t.Fatalf("expired session returned %d", response.status)
 	}

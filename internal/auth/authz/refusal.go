@@ -46,7 +46,7 @@ func (g Guard) refuseUnauthenticated(
 	if !errors.Is(because, ErrNoCredential) {
 		reason = reasonOf(because)
 	}
-	g.Logger.WarnContext(request.Context(), "operator request refused",
+	g.Logger.WarnContext(request.Context(), "API request refused",
 		slog.String("path", truncate(request.URL.Path, maxLoggedPath)),
 		slog.String("reason", string(reason)),
 		slog.String("caller", request.RemoteAddr))
@@ -57,7 +57,7 @@ func (g Guard) refuseUnauthenticated(
 func (g Guard) refuseOrigin(
 	writer http.ResponseWriter, request *http.Request, principal Principal,
 ) {
-	g.Logger.WarnContext(request.Context(), "operator request refused: origin",
+	g.Logger.WarnContext(request.Context(), "API request refused: origin",
 		slog.String("path", truncate(request.URL.Path, maxLoggedPath)),
 		slog.String("actor", principal.UserID().String()),
 		slog.String("caller", request.RemoteAddr))

@@ -56,10 +56,10 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	}))
 	t.Cleanup(provider.Close)
 
-	operatorAddress := freeAddress(t)
+	apiAddress := freeAddress(t)
 	var dsn string
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = operatorAddress
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider = "zai"
@@ -67,8 +67,8 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 		cfg.ModelAPIKey = "test-provider-key"
 		dsn = cfg.DatabaseDSN
 	}, app.Options{ModelBaseURL: provider.URL})
-	plane := &integrationPlane{controlPlane: running, operator: operatorAddress,
-		intake: operatorAddress, dsn: dsn}
+	plane := &integrationPlane{controlPlane: running, api: apiAddress,
+		intake: apiAddress, dsn: dsn}
 
 	conversation, turn := plane.openConversation(t, "reasoning confidentiality",
 		"What can be established from the currently connected sources?")

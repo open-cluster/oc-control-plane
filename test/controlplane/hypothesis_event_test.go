@@ -88,7 +88,7 @@ func assertModelEventSchema(t *testing.T, model *hypothesisEventModel, want []st
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
-	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("create Slack = %d: %s", status, body)
 	}

@@ -29,12 +29,12 @@ import (
 
 // The surface the gates below read. It is assembled with nil dependencies deliberately: what is
 // under test is the SHAPE of the table, and no handler runs.
-func operatorRoutes(t *testing.T) []authz.Route {
+func apiRoutes(t *testing.T) []authz.Route {
 	t.Helper()
 
 	table := api.Handlers{Logger: slog.Default()}.Routes()
 	if len(table) == 0 {
-		t.Fatal("the operator surface declares no routes; every gate here would pass vacuously")
+		t.Fatal("the application API declares no routes; every gate here would pass vacuously")
 	}
 	return table
 }
@@ -43,14 +43,14 @@ func routeKey(route authz.Route) string { return route.Method + " " + route.Patt
 
 // Every route must be authorizable. Running the startup constructor here means a mistake fails
 // the build rather than the first deployment.
-func TestTheOperatorRouteTableIsAuthorizable(t *testing.T) {
+func TestTheApplicationAPIRouteTableIsAuthorizable(t *testing.T) {
 	t.Parallel()
 
-	_, err := authz.Router(operatorRoutes(t), authz.Guard{
+	_, err := authz.Router(apiRoutes(t), authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) { return authz.Principal{}, authz.ErrNoCredential },
 	})
 	if err != nil {
-		t.Fatalf("the operator route table cannot be authorized correctly: %v", err)
+		t.Fatalf("the application API route table cannot be authorized correctly: %v", err)
 	}
 }
 
@@ -68,7 +68,7 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 	decidedInAHandler := map[authz.Permission]string{}
 
 	required := make(map[authz.Permission]bool)
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		if route.Permission == "" {
 			continue
 		}
@@ -117,7 +117,7 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	}
 
 	found := make(map[string]bool)
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		if route.Permission != "" {
 			continue
 		}
@@ -141,7 +141,7 @@ func TestNoRouteIsRegisteredTwice(t *testing.T) {
 	t.Parallel()
 
 	seen := make(map[string]bool)
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		if seen[routeKey(route)] {
 			t.Errorf("%s is registered twice", routeKey(route))
 		}
@@ -152,7 +152,7 @@ func TestNoRouteIsRegisteredTwice(t *testing.T) {
 func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 	t.Parallel()
 
-	routes := operatorRoutes(t)
+	routes := apiRoutes(t)
 	found := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		found[routeKey(route)] = true
@@ -233,7 +233,7 @@ func TestIntegrationStateHasExplicitCanonicalOperations(t *testing.T) {
 	t.Parallel()
 
 	found := make(map[string]bool)
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		found[routeKey(route)] = true
 	}
 	for _, key := range []string{
@@ -254,7 +254,7 @@ func TestIntegrationStateHasExplicitCanonicalOperations(t *testing.T) {
 //
 // It would be one ordinary-looking line in an ordinary-looking file, and it would serve a
 // tenant's data to anybody. The gate reads the source of every package that contributes to the
-// operator surface and refuses a mux registration anywhere in it.
+// application API and refuses a mux registration anywhere in it.
 func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 	t.Parallel()
 
@@ -264,7 +264,7 @@ func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 	// which is the shape of mistake the gate exists to catch in the first place.
 	//
 	// Two packages legitimately build a mux of their own, and each is here with the reason it
-	// is not the operator surface. Adding a third is a decision somebody has to write down.
+	// is not the application API. Adding a third is a decision somebody has to write down.
 	permitted := map[string]string{
 		// The one legitimate registration in the product: authz.Router is the function that
 		// turns the validated table INTO the mux. Every other package must reach the mux
@@ -307,7 +307,7 @@ func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 				// http.ServeMux is the only thing in these packages with those methods. A call
 				// to either means a route that never passed through the table, and therefore a
 				// route served with no authorization decision at all.
-				t.Errorf("%s calls %s directly; every route on the operator surface must be "+
+				t.Errorf("%s calls %s directly; every route on the application API must be "+
 					"declared in the package's Routes() table, or it is served with no "+
 					"authorization decision", name, selector.Sel.Name)
 				return true
@@ -413,7 +413,7 @@ func TestEveryPatternRegistersOnAServeMux(t *testing.T) {
 	t.Parallel()
 
 	mux := http.NewServeMux()
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		func() {
 			defer func() {
 				if recovered := recover(); recovered != nil {
@@ -425,7 +425,7 @@ func TestEveryPatternRegistersOnAServeMux(t *testing.T) {
 	}
 }
 
-// Every operator route lives under the product's versioned API prefix.
+// Every application API route lives under the product's versioned API prefix.
 func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -434,10 +434,10 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	}
 
 	counted := make(map[string]int, len(prefixes))
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		matched := ""
 		for prefix := range prefixes {
-			// A prefix's own root counts as under it. /api/v1 is the operator
+			// A prefix's own root counts as under it. /api/v1 is the application API
 			// surface's index — the document saying what this deployment serves — and a
 			// gate that refused an API's base path would be refusing the one route whose
 			// whole job is to describe the prefix it sits at.
@@ -472,7 +472,7 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 	t.Parallel()
 
 	served := make(map[string]bool)
-	for _, route := range operatorRoutes(t) {
+	for _, route := range apiRoutes(t) {
 		served[routeKey(route)] = true
 	}
 

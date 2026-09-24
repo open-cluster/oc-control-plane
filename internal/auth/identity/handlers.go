@@ -9,7 +9,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -103,7 +102,6 @@ func (h Handlers) fromSession(
 		signedIn.User.Email, method, signedIn.Session.ExpiresAt), nil
 }
 
-// bearerToken pulls the credential out of an Authorization header.
 func bearerToken(header string) (string, bool) {
 	const prefix = "Bearer "
 	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {

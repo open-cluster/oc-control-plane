@@ -146,7 +146,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "the change was refused because it could not be recorded"})
 	default:
-		h.Logger.ErrorContext(request.Context(), "operator request failed",
+		h.Logger.ErrorContext(request.Context(), "API request failed",
 			slog.String("path", request.URL.Path),
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})

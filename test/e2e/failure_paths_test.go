@@ -157,7 +157,7 @@ func (h *harness) assertInFlightGuarantees(t *testing.T) {
 			t.Fatalf("attaching the executing Relay read changed %d jobs", attached.RowsAffected())
 		}
 		base := "http://" + h.plane.httpAddress + "/api/v1"
-		status, body := h.operatorRequest(t, http.MethodPost,
+		status, body := h.apiRequest(t, http.MethodPost,
 			base+"/investigations/"+id.String()+"/cancel", nil)
 		if status != http.StatusOK {
 			t.Fatalf("cancelling a live Relay investigation = %d: %s", status, body)

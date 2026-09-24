@@ -19,7 +19,7 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{}})
-	plane := &integrationPlane{controlPlane: running, operator: address, intake: address}
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	id, first := plane.openConversation(t, "paginated conversation", "first question")
 	plane.awaitInvestigation(t, first)
 	path := plane.base(surfaceOrg) + "/conversations/" + id

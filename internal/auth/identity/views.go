@@ -9,15 +9,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The shapes this surface answers with.
-//
-// They are spelled out rather than serialised from the storage types on purpose. A column
+// Response shapes are spelled out rather than serialised from storage types. A column
 // added to a table must not silently become a field in a response — several of these tables
 // hold a digest, and one holds a sealed client secret.
-
-// sessionView answers "who is signed in and what may they see". It is the producer for the
-// Principal contract the frontend already declares; the contract does not change here, the
-// control plane implements it.
 type sessionView struct {
 	Principal            principalView  `json:"principal"`
 	Organization         membershipView `json:"organization"`
@@ -74,8 +68,6 @@ func sessionViewOf(principal authz.Principal) sessionView {
 	}
 }
 
-// signOutView is what sign-out answers. It is a true statement now: the row is gone before
-// this is written.
 type signOutView struct {
 	SignedOut bool `json:"signedOut"`
 }
