@@ -11,7 +11,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // SessionConflict is what the control plane has seen of two parties competing for one relay
@@ -35,7 +34,7 @@ type SessionConflict struct {
 // erased by the next quiet hour.
 func (p *Database) RecordSessionConflict(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	registrationID uuid.UUID,
 	distinctHosts int,
 ) error {
@@ -58,7 +57,7 @@ func (p *Database) RecordSessionConflict(
 		       session_conflict_hosts = GREATEST(session_conflict_hosts, $3)
 		 WHERE registration_id = $1
 		   AND org_id    = $2`,
-		registrationID, organization.String(), distinctHosts)
+		registrationID, organization, distinctHosts)
 	if err != nil {
 		return fmt.Errorf("recording a session conflict: %w", err)
 	}
@@ -89,7 +88,7 @@ func (p *Database) RecordSessionConflict(
 
 // SessionConflict reports what has been seen of a contested relay identity.
 func (p *Database) SessionConflict(
-	ctx context.Context, organization tenancy.Organization, registrationID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, registrationID uuid.UUID,
 ) (SessionConflict, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -104,7 +103,7 @@ func (p *Database) SessionConflict(
 		SELECT session_conflict_at, session_conflict_hosts
 		  FROM relay_registration
 		 WHERE registration_id = $1 AND org_id = $2`,
-		registrationID, organization.String()).Scan(&detectedAt, &hosts)
+		registrationID, organization).Scan(&detectedAt, &hosts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionConflict{}, nil
 	}
@@ -143,7 +142,7 @@ const (
 func (p *Database) ClearSessionConflict(
 	ctx context.Context,
 	principal authz.Principal,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	registrationID uuid.UUID,
 ) (ConflictWithdrawal, error) {
 	if principal.Organization() != organization {
@@ -168,7 +167,7 @@ func (p *Database) ClearSessionConflict(
 		 WHERE registration_id     = $1
 		   AND org_id        = $2
 		   AND session_conflict_at IS NOT NULL`,
-		registrationID, organization.String())
+		registrationID, organization)
 	if err != nil {
 		return 0, fmt.Errorf("withdrawing a session conflict: %w", err)
 	}
@@ -203,7 +202,7 @@ func (p *Database) ClearSessionConflict(
 // explainUnwithdrawn reads why the guarded update matched nothing: a relay that is not here at
 // all, or one that was carrying no finding to begin with.
 func (p *Database) explainUnwithdrawn(
-	ctx context.Context, organization tenancy.Organization, registrationID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, registrationID uuid.UUID,
 ) (ConflictWithdrawal, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -213,7 +212,7 @@ func (p *Database) explainUnwithdrawn(
 	err = pool.QueryRow(ctx, `
 		SELECT true FROM relay_registration
 		 WHERE registration_id = $1 AND org_id = $2`,
-		registrationID, organization.String()).Scan(&exists)
+		registrationID, organization).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WithdrawalRelayUnknown, nil
 	}

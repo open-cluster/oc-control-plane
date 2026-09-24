@@ -8,8 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // ErrEnrolmentRefused reports that a bootstrap token did not entitle its presenter to an
@@ -74,7 +72,7 @@ type RelayEnrolment struct {
 // truth for something the row already decides.
 func (p *Database) EnrolRelay(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	enrolment RelayEnrolment,
 ) (uuid.UUID, EnrolmentRefusal, error) {
 	pool, err := p.Pool(organization)
@@ -123,7 +121,7 @@ func (p *Database) EnrolRelay(
 func spendBootstrapToken(
 	ctx context.Context,
 	transaction pgx.Tx,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	tokenDigest []byte,
 ) (bool, error) {
 	tag, err := transaction.Exec(ctx, `
@@ -134,7 +132,7 @@ func spendBootstrapToken(
 		   AND consumed_at IS NULL
 		   AND revoked_at IS NULL
 		   AND expires_at > now()`,
-		tokenDigest, organization.String())
+		tokenDigest, organization)
 	if err != nil {
 		return false, fmt.Errorf("consuming bootstrap token: %w", err)
 	}
@@ -144,9 +142,9 @@ func spendBootstrapToken(
 // explainUnspendableToken reports why the guarded update matched nothing. Its result reaches
 // the audit trail and never the caller of Register.
 func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
-	organization tenancy.Organization, tokenDigest []byte) (EnrolmentRefusal, error) {
+	organization uuid.UUID, tokenDigest []byte) (EnrolmentRefusal, error) {
 	var (
-		tokenOrganization string
+		tokenOrganization uuid.UUID
 		consumed          bool
 		revoked           bool
 		expired           bool
@@ -164,7 +162,7 @@ func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
 		return RefusalTokenUnknown, nil
 	case err != nil:
 		return RefusalNone, fmt.Errorf("auditing refused enrolment: %w", err)
-	case tokenOrganization != organization.String():
+	case tokenOrganization != organization:
 		return RefusalOrganizationMismatch, nil
 	case revoked:
 		return RefusalTokenRevoked, nil
@@ -183,7 +181,7 @@ func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
 // needs as one value rather than as a widening parameter list.
 type relayRegistration struct {
 	id           uuid.UUID
-	organization tenancy.Organization
+	organization uuid.UUID
 	enrolment    RelayEnrolment
 }
 
@@ -198,7 +196,7 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 			(registration_id, org_id, credential_digest,
 			 cluster_fingerprint, relay_version, protocol_version, capabilities)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		registration.id, registration.organization.String(), enrolment.CredentialDigest,
+		registration.id, registration.organization, enrolment.CredentialDigest,
 		enrolment.ClusterFingerprint, enrolment.RelayVersion, protocolVersion,
 		enrolment.Capabilities)
 	if err != nil {
@@ -212,7 +210,7 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 // the operator once and keeps no copy either.
 func (p *Database) IssueBootstrapToken(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	tokenDigest []byte,
 	expiresAt time.Time,
 ) error {
@@ -223,7 +221,7 @@ func (p *Database) IssueBootstrapToken(
 	_, err = pool.Exec(ctx, `
 		INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
 		VALUES ($1, $2, $3)`,
-		tokenDigest, organization.String(), expiresAt)
+		tokenDigest, organization, expiresAt)
 	if err != nil {
 		return fmt.Errorf("issuing bootstrap token: %w", err)
 	}
@@ -235,7 +233,7 @@ func (p *Database) IssueBootstrapToken(
 // indistinguishable from a wrong credential.
 func (p *Database) VerifyRelayCredential(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	registrationID uuid.UUID,
 	credentialDigest []byte,
 ) (bool, error) {
@@ -250,7 +248,7 @@ func (p *Database) VerifyRelayCredential(
 		 WHERE registration_id = $1
 		   AND org_id    = $2
 		   AND revoked_at IS NULL`,
-		registrationID, organization.String(), credentialDigest).Scan(&matches)
+		registrationID, organization, credentialDigest).Scan(&matches)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

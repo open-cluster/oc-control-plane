@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // JobClaim is what a session asks for when it takes work.
@@ -29,7 +27,7 @@ type JobClaim struct {
 // from the execution that lost its lease is refused rather than recorded.
 func (p *Database) ClaimJobs(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	claim JobClaim,
 ) ([]RelayJob, error) {
 	pool, err := p.Pool(organization)
@@ -65,7 +63,7 @@ func (p *Database) ClaimJobs(
 		        FOR UPDATE SKIP LOCKED)
 		RETURNING job_id, integration_id, registration_id, capability_id, capability_version,
 		          arguments, lease_session, lease_epoch`,
-		organization.String(), claim.RegistrationID, claim.SessionID,
+		organization, claim.RegistrationID, claim.SessionID,
 		claim.LeaseFor.String(), claim.Capacity)
 	if err != nil {
 		return nil, fmt.Errorf("claiming jobs: %w", err)
@@ -113,7 +111,7 @@ type LeaseAdoption struct {
 // The generation is deliberately not raised. Raising it would invalidate the very result the
 // relay is holding, which is the thing this exists to preserve.
 func (p *Database) AdoptInFlightLeases(
-	ctx context.Context, organization tenancy.Organization, adoption LeaseAdoption,
+	ctx context.Context, organization uuid.UUID, adoption LeaseAdoption,
 ) ([]uuid.UUID, error) {
 	if len(adoption.InFlight) == 0 {
 		return nil, nil
@@ -141,7 +139,7 @@ func (p *Database) AdoptInFlightLeases(
 		   AND relay_job.registration_id = $2
 		   AND relay_job.status          = 1
 		RETURNING relay_job.job_id`,
-		organization.String(), adoption.RegistrationID, adoption.SessionID,
+		organization, adoption.RegistrationID, adoption.SessionID,
 		adoption.LeaseFor.String(), jobs, epochs)
 	if err != nil {
 		return nil, fmt.Errorf("adopting in-flight leases: %w", err)
@@ -172,7 +170,7 @@ func (p *Database) AdoptInFlightLeases(
 // may record — but it does mean that execution's result is refused and the work is done twice.
 func (p *Database) ReleaseStrandedLeases(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	registrationID, holder uuid.UUID,
 ) (int64, error) {
 	pool, err := p.Pool(organization)
@@ -194,7 +192,7 @@ func (p *Database) ReleaseStrandedLeases(
 		   AND registration_id  = $2
 		   AND status           = 1
 		   AND lease_session IS DISTINCT FROM $3`,
-		organization.String(), registrationID, holder)
+		organization, registrationID, holder)
 	if err != nil {
 		return 0, fmt.Errorf("releasing stranded leases: %w", err)
 	}
@@ -206,7 +204,7 @@ func (p *Database) ReleaseStrandedLeases(
 // outcome is already recorded, and re-running them would be the duplicate execution the
 // fence exists to prevent.
 func (p *Database) SweepExpiredLeases(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 ) (int64, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -220,7 +218,7 @@ func (p *Database) SweepExpiredLeases(
 		 WHERE org_id     = $1
 		   AND status           = 1
 		   AND lease_expires_at <= now()`,
-		organization.String())
+		organization)
 	if err != nil {
 		return 0, fmt.Errorf("sweeping expired leases: %w", err)
 	}

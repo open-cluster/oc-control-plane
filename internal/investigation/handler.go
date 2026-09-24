@@ -14,7 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -38,15 +37,15 @@ type Handlers struct {
 
 // HTTPStore is the durable state used by the Investigation API surface.
 type HTTPStore interface {
-	CreateInvestigation(context.Context, authz.Principal, tenancy.Organization,
+	CreateInvestigation(context.Context, authz.Principal, uuid.UUID,
 		NewInvestigation, int) (Investigation, error)
-	Investigation(context.Context, tenancy.Organization, uuid.UUID) (Investigation, error)
-	InvestigationToolRuns(context.Context, tenancy.Organization, uuid.UUID) ([]ToolRun, error)
-	QueryInvestigations(context.Context, authz.Principal, tenancy.Organization, Query) (List, error)
-	CancelInvestigation(context.Context, authz.Principal, tenancy.Organization,
+	Investigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
+	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRun, error)
+	QueryInvestigations(context.Context, authz.Principal, uuid.UUID, Query) (List, error)
+	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
-	TriggerIncident(context.Context, tenancy.Organization, uuid.UUID) (Trigger, error)
-	Events(context.Context, tenancy.Organization, uuid.UUID, int64, int) ([]Event, error)
+	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (Trigger, error)
+	Events(context.Context, uuid.UUID, uuid.UUID, int64, int) ([]Event, error)
 }
 
 // Routes is this domain surface's contribution to the application API's index.
@@ -116,7 +115,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 
 // resolveTrigger turns the required identifier into the Incident the Investigation is about.
 func (h Handlers) resolveTrigger(
-	ctx context.Context, organization tenancy.Organization, asked openRequest,
+	ctx context.Context, organization uuid.UUID, asked openRequest,
 ) (Trigger, string, error) {
 	incidentID := strings.TrimSpace(asked.IncidentID)
 	if incidentID == "" {
@@ -261,19 +260,19 @@ func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
 
-func (h Handlers) organization(request *http.Request) tenancy.Organization {
+func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, uuid.UUID, bool) {
+) (uuid.UUID, uuid.UUID, bool) {
 	organization := h.organization(request)
 	id, err := uuid.Parse(request.PathValue("investigation"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "investigation is not an identity"})
-		return tenancy.Organization{}, uuid.UUID{}, false
+		return uuid.UUID{}, uuid.UUID{}, false
 	}
 	return organization, id, true
 }

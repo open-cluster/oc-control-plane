@@ -12,7 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/identity"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -121,7 +120,7 @@ func (h Handlers) Routes() []authz.Route {
 
 // recordRefusal writes an authorization denial to the tenant's record.
 func (h Handlers) recordRefusal(
-	ctx context.Context, organization tenancy.Organization, event audit.Event,
+	ctx context.Context, organization uuid.UUID, event audit.Event,
 ) {
 	if err := h.Database.RecordEvent(ctx, organization, event); err != nil {
 		h.Logger.ErrorContext(ctx, "an authorization refusal could not be recorded",
@@ -202,19 +201,19 @@ func (h Handlers) callerName(request *http.Request) string {
 }
 
 // organization returns the tenant verified by the authorization middleware.
-func (h Handlers) organization(request *http.Request) tenancy.Organization {
+func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 
 // relay resolves the tenant and the relay named in the path, for the routes that address one.
 func (h Handlers) relay(
 	writer http.ResponseWriter, request *http.Request,
-) (tenancy.Organization, uuid.UUID, bool) {
+) (uuid.UUID, uuid.UUID, bool) {
 	organization := h.organization(request)
 	registration, err := uuid.Parse(request.PathValue("registration"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "registration is not an identity"})
-		return tenancy.Organization{}, uuid.UUID{}, false
+		return uuid.UUID{}, uuid.UUID{}, false
 	}
 	return organization, registration, true
 }

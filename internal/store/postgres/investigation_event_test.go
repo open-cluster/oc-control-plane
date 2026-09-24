@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -19,7 +17,7 @@ import (
 // aTurn opens a conversation, asks something, and returns the investigation the turn
 // created — an event stream needs an investigation to hang off.
 func aTurn(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
@@ -35,7 +33,7 @@ func aTurn(
 
 // appendEvents writes a scripted run's worth of events.
 func appendEvents(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	id uuid.UUID, types ...investigation.EventType,
 ) {
 	t.Helper()
@@ -117,7 +115,7 @@ func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
 		INSERT INTO investigation_event
 			(org_id, investigation_id, sequence, type, payload, at)
 		VALUES ($1, $2, 1, 32000, '{"future":"preserved"}', now())`,
-		organization.String(), id); err != nil {
+		organization, id); err != nil {
 		t.Fatalf("seeding future history: %v", err)
 	}
 	if err = database.AppendEvent(ctx, organization, id, claimToken(t, database, organization, id), investigation.Event{
@@ -152,7 +150,7 @@ func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
 			INSERT INTO investigation_event
 				(org_id, investigation_id, sequence, type, payload, at)
 			VALUES ($1, $2, $3, $4, '{}', now())`,
-			organization.String(), id, sequence+1, eventType); err != nil {
+			organization, id, sequence+1, eventType); err != nil {
 			t.Fatalf("seeding event %d: %v", sequence+1, err)
 		}
 	}

@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
@@ -158,12 +157,12 @@ func (d *repliesInMemory) ClaimSlackReplies(
 	return []Reply{reply}, nil
 }
 
-func (d *repliesInMemory) ReleaseSlackReply(context.Context, tenancy.Organization, uuid.UUID, uuid.UUID, time.Time) error {
+func (d *repliesInMemory) ReleaseSlackReply(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error {
 	return nil
 }
 
 func (d *repliesInMemory) AdvanceSlackReply(
-	_ context.Context, _ tenancy.Organization, _, _ uuid.UUID, made Progress,
+	_ context.Context, _ uuid.UUID, _, _ uuid.UUID, made Progress,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -181,7 +180,7 @@ func (d *repliesInMemory) AdvanceSlackReply(
 // somebody's workspace. It is the only write this product makes into a system it does not own,
 // so the test asserts it happens rather than trusting that it does.
 func (d *repliesInMemory) RecordCollaborationWrite(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, where string,
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, where string,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -190,7 +189,7 @@ func (d *repliesInMemory) RecordCollaborationWrite(
 }
 
 func (d *repliesInMemory) CompleteSlackReply(
-	context.Context, tenancy.Organization, uuid.UUID, uuid.UUID,
+	context.Context, uuid.UUID, uuid.UUID, uuid.UUID,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -199,7 +198,7 @@ func (d *repliesInMemory) CompleteSlackReply(
 }
 
 func (d *repliesInMemory) RetrySlackReply(
-	_ context.Context, _ tenancy.Organization, _, _ uuid.UUID,
+	_ context.Context, _ uuid.UUID, _, _ uuid.UUID,
 	_ time.Time, note string, giveUp bool,
 ) error {
 	d.mu.Lock()
@@ -211,7 +210,7 @@ func (d *repliesInMemory) RetrySlackReply(
 }
 
 func (d *repliesInMemory) Integration(
-	context.Context, tenancy.Organization, uuid.UUID,
+	context.Context, uuid.UUID, uuid.UUID,
 ) (integrations.Integration, error) {
 	return integrations.Integration{
 		ID: d.reply.Integration, CredentialSealed: d.sealed,
@@ -219,7 +218,7 @@ func (d *repliesInMemory) Integration(
 }
 
 func (d *repliesInMemory) Events(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, after int64, limit int,
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, after int64, limit int,
 ) ([]investigation.Event, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -242,10 +241,7 @@ func answering(t *testing.T, fake *slackCallLog, events []investigation.Event) (
 ) {
 	t.Helper()
 
-	organization, err := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
-	if err != nil {
-		t.Fatalf("naming the organization: %v", err)
-	}
+	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
 	if err != nil {
 		t.Fatalf("building a sealer: %v", err)
@@ -511,7 +507,7 @@ func testLogger(t *testing.T) *slog.Logger {
 // The author names the worker resolved. A shared thread whose participants all read as U0…
 // has attribution that technically survives and practically does not.
 func (d *repliesInMemory) UnnamedSlackAuthors(
-	context.Context, tenancy.Organization, uuid.UUID,
+	context.Context, uuid.UUID, uuid.UUID,
 ) ([]string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -519,7 +515,7 @@ func (d *repliesInMemory) UnnamedSlackAuthors(
 }
 
 func (d *repliesInMemory) NameSlackAuthor(
-	_ context.Context, _ tenancy.Organization, _ uuid.UUID, actor, display string,
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, actor, display string,
 ) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

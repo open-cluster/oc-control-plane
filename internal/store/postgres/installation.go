@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
@@ -38,7 +37,7 @@ const installationInsert = `
 // recordInstallation writes the routing record for a newly created Integration, inside the
 // transaction that created it.
 func recordInstallation(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	integration uuid.UUID, provider integrations.Provider, installed integrations.Installation,
 ) error {
 	if !installed.Key.Complete() {
@@ -58,7 +57,7 @@ func recordInstallation(
 // new agent identity, and a credential replaced without its routing refreshed is a live
 // credential with stale routing — an agent that answers as somebody it no longer is.
 func recordInstallationIn(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	integration uuid.UUID, provider integrations.Provider, installed integrations.Installation,
 ) error {
 	if !installed.Key.Complete() {
@@ -75,11 +74,11 @@ func recordInstallationIn(
 }
 
 func installationValues(
-	organization tenancy.Organization, integration uuid.UUID,
+	organization uuid.UUID, integration uuid.UUID,
 	provider integrations.Provider, installed integrations.Installation,
 ) []any {
 	return []any{
-		organization.String(), integration, provider,
+		organization, integration, provider,
 		[]string(installed.Key), nullableText(installed.ProviderActorID),
 	}
 }
@@ -112,7 +111,7 @@ func (p *Database) IntegrationByInstallation(
 	}
 
 	var (
-		organization    string
+		organization    uuid.UUID
 		installed       integrations.Installation
 		integrationID   uuid.UUID
 		providerActor   *string
@@ -137,12 +136,7 @@ func (p *Database) IntegrationByInstallation(
 	}
 	installed.Key = integrations.InstallationKey(installationKey)
 
-	organizationName, err := tenancy.NewOrganization(organization)
-	if err != nil {
-		return integrations.Integration{}, integrations.Installation{},
-			fmt.Errorf("an installation names an organization that is not a name: %w", err)
-	}
-	integration, err := p.Integration(ctx, organizationName, integrationID)
+	integration, err := p.Integration(ctx, organization, integrationID)
 	if err != nil {
 		return integrations.Integration{}, integrations.Installation{}, err
 	}
@@ -153,7 +147,7 @@ func (p *Database) IntegrationByInstallation(
 // it has none. A pasted credential names no installation, which is exactly what tells an
 // integration that can be spoken to from one that can only be read.
 func (p *Database) InstallationOf(
-	ctx context.Context, organization tenancy.Organization, integration uuid.UUID,
+	ctx context.Context, organization uuid.UUID, integration uuid.UUID,
 ) (integrations.Installation, bool, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -166,7 +160,7 @@ func (p *Database) InstallationOf(
 		SELECT installation_key, provider_actor_id
 		  FROM integration_installation
 		 WHERE integration_id = $1 AND org_id = $2`,
-		integration, organization.String()).Scan(&installationKey, &providerActor)
+		integration, organization).Scan(&installationKey, &providerActor)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return integrations.Installation{}, false, nil

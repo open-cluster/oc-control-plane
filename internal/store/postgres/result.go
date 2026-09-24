@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type StoredJobOutcome struct {
@@ -20,7 +18,7 @@ type StoredJobOutcome struct {
 }
 
 func (p *Database) JobOutcome(
-	ctx context.Context, organization tenancy.Organization, jobID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, jobID uuid.UUID,
 ) (StoredJobOutcome, bool, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -30,7 +28,7 @@ func (p *Database) JobOutcome(
 	err = pool.QueryRow(ctx, `
 		SELECT status, result, coalesce(terminal_at, 'epoch'::timestamptz)
 		  FROM relay_job WHERE org_id = $1 AND job_id = $2`,
-		organization.String(), jobID).Scan(&outcome.Status, &outcome.Result, &outcome.TerminalAt)
+		organization, jobID).Scan(&outcome.Status, &outcome.Result, &outcome.TerminalAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StoredJobOutcome{}, false, nil
 	}
@@ -99,7 +97,7 @@ type JobOutcome struct {
 // relay stop resending a result that was never durably stored.
 func (p *Database) RecordResult(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	fence JobFence,
 	outcome JobOutcome,
 ) (ResultRefusal, error) {
@@ -120,7 +118,7 @@ func (p *Database) RecordResult(
 		   AND status        = 1
 		   AND lease_session = $3
 		   AND lease_epoch   = $6`,
-		fence.JobID, organization.String(), fence.LeaseSession,
+		fence.JobID, organization, fence.LeaseSession,
 		int16(outcome.Status), outcome.Result, fence.LeaseEpoch)
 	if err != nil {
 		return 0, fmt.Errorf("recording job result: %w", err)
@@ -137,7 +135,7 @@ func (p *Database) RecordResult(
 // either discards a result or repeats one.
 func (p *Database) explainRefusedResult(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	fence JobFence,
 ) (ResultRefusal, error) {
 	pool, err := p.Pool(organization)
@@ -151,7 +149,7 @@ func (p *Database) explainRefusedResult(
 	)
 	err = pool.QueryRow(ctx, `
 		SELECT status, lease_epoch FROM relay_job WHERE job_id = $1 AND org_id = $2`,
-		fence.JobID, organization.String()).Scan(&status, &epoch)
+		fence.JobID, organization).Scan(&status, &epoch)
 	switch {
 	case err != nil && errors.Is(err, pgx.ErrNoRows):
 		return ResultJobUnknown, ErrResultRefused

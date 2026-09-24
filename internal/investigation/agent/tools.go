@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
@@ -179,7 +177,7 @@ func (r *Agent) execute(
 // persistFailure writes one terminal failure inside a detached window so cancellation
 // cannot erase the reason the run stopped.
 func (r *Agent) persistFailure(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, token uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	reason string, usage investigation.Usage,
 ) error {
 	writeCtx, done := terminalWriteWindow(ctx)

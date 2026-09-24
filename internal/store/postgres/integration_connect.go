@@ -5,16 +5,15 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
 // StartConnectFlow removes expired state opportunistically before storing a new digest.
 func (p *Database) StartConnectFlow(
-	ctx context.Context, organization tenancy.Organization, flow integrations.ConnectFlow,
+	ctx context.Context, organization uuid.UUID, flow integrations.ConnectFlow,
 	state string,
 ) error {
 	pool, err := p.Pool(organization)
@@ -32,7 +31,7 @@ func (p *Database) StartConnectFlow(
 		INSERT INTO integration_connect_flow (org_id, provider, principal,
 		                                      state_digest, return_to, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
-		organization.String(), flow.Provider, flow.Principal, digest[:],
+		organization, flow.Provider, flow.Principal, digest[:],
 		flow.ReturnTo, flow.ExpiresAt); err != nil {
 		return fmt.Errorf("starting a connect flow: %w", err)
 	}

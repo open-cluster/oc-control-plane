@@ -10,15 +10,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
 // OpenInventoryScopes upserts one synchronization scope per Kubernetes Integration
 // served by this registration and reports them, so the session can send one policy each.
 func (p *Database) OpenInventoryScopes(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, requestedInterval time.Duration,
 ) ([]changes.Scope, error) {
 	pool, err := p.Pool(organization)
@@ -53,7 +51,7 @@ func (p *Database) OpenInventoryScopes(
 			                    <> EXCLUDED.requested_interval_seconds THEN 1 ELSE 0 END,
 			    updated_at = now()
 		RETURNING integration_id, policy_revision, requested_interval_seconds`,
-		organization.String(), registrationID, seconds)
+		organization, registrationID, seconds)
 	if err != nil {
 		return nil, fmt.Errorf("opening inventory scopes: %w", err)
 	}
@@ -88,7 +86,7 @@ func (p *Database) OpenInventoryScopes(
 // A redelivery collapses row by row against the dedup key, so recording is idempotent
 // without any notion of a delta having been seen before.
 func (p *Database) RecordInventoryDelta(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, delta changes.Delta,
 ) (changes.Recorded, error) {
 	pool, err := p.Pool(organization)
@@ -110,7 +108,7 @@ func (p *Database) RecordInventoryDelta(
 		   AND org_id = $2
 		   AND relay_id = $3
 		   AND NOT disabled`,
-		delta.IntegrationID, organization.String(), registrationID).Scan(&served)
+		delta.IntegrationID, organization, registrationID).Scan(&served)
 	if err == pgx.ErrNoRows {
 		return changes.Recorded{Refused: true}, nil
 	}
@@ -137,7 +135,7 @@ func (p *Database) RecordInventoryDelta(
 				 object_name, object_uid, observed_revision, change_kind, observed_at, fields)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			ON CONFLICT (integration_id, object_uid, observed_revision) DO NOTHING`,
-			organization.String(), delta.IntegrationID, change.Namespace,
+			organization, delta.IntegrationID, change.Namespace,
 			int16(change.Kind), change.Name, change.UID, change.ObservedRevision, kind,
 			delta.ObservedAt, fields)
 		if execErr != nil {
@@ -159,7 +157,7 @@ func (p *Database) RecordInventoryDelta(
 }
 
 func advanceChangeScope(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delta changes.Delta, inserted int,
 ) error {
 	var err error
@@ -188,14 +186,14 @@ func advanceChangeScope(
 			       updated_at = now()
 			 WHERE integration_id = $1 AND org_id = $5`,
 			delta.IntegrationID, delta.ObservedAt, inserted, delta.PolicyRevision,
-			organization.String())
+			organization)
 	} else {
 		_, err = transaction.Exec(ctx, `
 			UPDATE change_scope
 			   SET last_confirmed_at = GREATEST(coalesce(last_confirmed_at, $2), $2),
 			       updated_at = now()
 			 WHERE integration_id = $1 AND org_id = $3`,
-			delta.IntegrationID, delta.ObservedAt, organization.String())
+			delta.IntegrationID, delta.ObservedAt, organization)
 	}
 	if err != nil {
 		return fmt.Errorf("advancing the scope's coverage: %w", err)
@@ -207,7 +205,7 @@ func advanceChangeScope(
 // is the tenancy and serving check: a stamp naming an Integration this registration
 // does not serve updates nothing.
 func (p *Database) RecordInventoryFreshness(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, stamps []changes.Freshness,
 ) error {
 	if len(stamps) == 0 {
@@ -234,7 +232,7 @@ func (p *Database) RecordInventoryFreshness(
 			       SELECT integration_id FROM integration
 			        WHERE org_id = $5 AND relay_id = $6)`,
 			stamp.IntegrationID, confirmed, stamp.Faulted, stamp.Truncated,
-			organization.String(), registrationID); err != nil {
+			organization, registrationID); err != nil {
 			return fmt.Errorf("recording inventory freshness: %w", err)
 		}
 	}
@@ -247,7 +245,7 @@ func (p *Database) RecordInventoryFreshness(
 // answer so an empty list is readable as "nothing changed" only where that is actually
 // knowable.
 func (p *Database) RecentChanges(
-	ctx context.Context, organization tenancy.Organization,
+	ctx context.Context, organization uuid.UUID,
 	integrationID uuid.UUID, namespace string, from, to time.Time, limit int,
 ) (changes.WindowChanges, error) {
 	pool, err := p.Pool(organization)
@@ -264,7 +262,7 @@ func (p *Database) RecentChanges(
 		       covered_since, baseline_at, last_confirmed_at, faulted, truncated
 		  FROM change_scope
 		 WHERE integration_id = $1 AND org_id = $2`,
-		integrationID, organization.String()).Scan(
+		integrationID, organization).Scan(
 		&answer.Scope.IntegrationID, &answer.Scope.PolicyRevision,
 		&scanSeconds{&answer.Scope.RequestedInterval}, &answer.Scope.CoveredSince,
 		&answer.Scope.BaselineAt, &answer.Scope.LastConfirmedAt,
@@ -289,7 +287,7 @@ func (p *Database) RecentChanges(
 		   AND observed_at < $5
 		 ORDER BY observed_at, change_event_id
 		 LIMIT $6`,
-		integrationID, organization.String(), namespace, from, to, limit+1)
+		integrationID, organization, namespace, from, to, limit+1)
 	if err != nil {
 		return changes.WindowChanges{}, fmt.Errorf("reading the change window: %w", err)
 	}
@@ -384,7 +382,7 @@ func (s *scanSeconds) Scan(value any) error {
 // orientation. A navigation index, never evidence: deletions drop out, and only the
 // watched workload kinds appear. Empty when no Relay has synchronized anything.
 func (p *Database) WorkloadInventory(
-	ctx context.Context, organization tenancy.Organization, limit int,
+	ctx context.Context, organization uuid.UUID, limit int,
 ) ([]string, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -405,7 +403,7 @@ func (p *Database) WorkloadInventory(
 		 WHERE change_kind <> $5
 		 ORDER BY namespace, object_name, latest.integration_id
 		 LIMIT $6`,
-		organization.String(), int16(changes.KindDeployment),
+		organization, int16(changes.KindDeployment),
 		int16(changes.KindStatefulSet), int16(changes.KindDaemonSet),
 		int16(changes.ChangeDeleted), limit)
 	if err != nil {

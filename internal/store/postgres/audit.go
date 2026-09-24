@@ -11,7 +11,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // The two refusals this file produces, named here for the call sites in this package and owned
@@ -35,7 +34,7 @@ var (
 // should reach for it: a state change records itself through audited, in the transaction that
 // made it.
 func (p *Database) RecordEvent(
-	ctx context.Context, organization tenancy.Organization, event audit.Event,
+	ctx context.Context, organization uuid.UUID, event audit.Event,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -107,7 +106,7 @@ func audited[T any](
 	ctx context.Context,
 	p *Database,
 	principal authz.Principal,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	action audit.Action,
 	mutate func(context.Context, pgx.Tx) (T, audit.Target, audit.Detail, error),
 ) (T, error) {
@@ -126,7 +125,7 @@ func auditedWithAction[T any](
 	ctx context.Context,
 	p *Database,
 	principal authz.Principal,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	mutate func(context.Context, pgx.Tx) (T, audit.Action, audit.Target, audit.Detail, error),
 ) (T, error) {
 	var zero T
@@ -177,7 +176,7 @@ func auditedWithAction[T any](
 // It takes the principal for the same reason every operator-facing read does: the middleware
 // has already decided, and this is the layer that cannot be reached around.
 func (p *Database) AuditEvents(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	page audit.Page,
 ) (audit.List, error) {
 	if principal.Organization() != organization {
@@ -202,7 +201,7 @@ func (p *Database) AuditEvents(
 		        OR (occurred_at, event_id) < ($2::TIMESTAMPTZ, $3::UUID))
 		 ORDER BY occurred_at DESC, event_id DESC
 		 LIMIT $4`,
-		organization.String(), before, beforeID, limit+1)
+		organization, before, beforeID, limit+1)
 	if err != nil {
 		return audit.List{}, fmt.Errorf("reading the audit trail: %w", err)
 	}
@@ -280,16 +279,10 @@ func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, e
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
+		var organization uuid.UUID
 		var days int
-		if err = rows.Scan(&id, &days); err != nil {
+		if err = rows.Scan(&organization, &days); err != nil {
 			return nil, fmt.Errorf("reading a retention schedule: %w", err)
-		}
-		organization, parseErr := tenancy.NewOrganization(id)
-		if parseErr != nil {
-			// Unreachable while every write validates the organization first, and not a
-			// fallback: a policy row whose tenant cannot be named is not one to delete by.
-			continue
 		}
 		declared = append(declared, audit.Retention{Organization: organization, Days: days})
 	}
@@ -310,7 +303,7 @@ func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, e
 // cannot take a lock proportional to a backlog. The order is oldest first, so a backlog worked
 // through over several sweeps always removes what aged out longest ago.
 func (p *Database) PruneEventsBefore(
-	ctx context.Context, organization tenancy.Organization, before time.Time, limit int,
+	ctx context.Context, organization uuid.UUID, before time.Time, limit int,
 ) (int64, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -340,7 +333,7 @@ func (p *Database) PruneEventsBefore(
 		        ORDER BY occurred_at, event_id
 		        LIMIT $3
 		       )`,
-		organization.String(), before, limit)
+		organization, before, limit)
 	if err != nil {
 		return 0, fmt.Errorf("pruning audit events: %w", err)
 	}

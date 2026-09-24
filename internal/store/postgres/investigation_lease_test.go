@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -30,7 +28,7 @@ func aClaim(worker string) investigation.Claim {
 // that stopped heartbeating because it stopped existing. Expiry is induced rather than
 // waited for: a suite that depends on winning a timing race is a suite that gets disabled.
 func expireInvestigationLease(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	id uuid.UUID,
 ) {
 	t.Helper()

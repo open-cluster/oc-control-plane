@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -21,7 +20,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-func slackDelivery(t *testing.T, handler http.Handler) (*storage.Database, tenancy.Organization, uuid.UUID, slack.Worker) {
+func slackDelivery(t *testing.T, handler http.Handler) (*storage.Database, uuid.UUID, uuid.UUID, slack.Worker) {
 	t.Helper()
 	database, org := migratedDatabase(t)
 	id, integration := aSlackTurn(t, database, org, "T1", "C1", "1700000000.1")
@@ -42,7 +41,7 @@ func slackDelivery(t *testing.T, handler http.Handler) (*storage.Database, tenan
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(context.Background(), `UPDATE integration SET credential_sealed = $3
-		WHERE org_id = $1 AND integration_id = $2`, org.String(), integration, sealed); err != nil {
+		WHERE org_id = $1 AND integration_id = $2`, org, integration, sealed); err != nil {
 		t.Fatal(err)
 	}
 	vendor := httptest.NewServer(handler)
@@ -148,7 +147,7 @@ func TestSlackNonterminalPassesReleaseRecoveryLease(t *testing.T) {
 					var released bool
 					if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_reply
 						WHERE org_id = $1 AND investigation_id = $2 AND status = 1
-						AND lease_owner IS NULL AND leased_until IS NULL AND next_attempt_at > now())`, org.String(), id).Scan(&released); err != nil {
+						AND lease_owner IS NULL AND leased_until IS NULL AND next_attempt_at > now())`, org, id).Scan(&released); err != nil {
 						t.Fatal(err)
 					}
 					if released {

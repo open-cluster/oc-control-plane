@@ -15,7 +15,6 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -352,7 +351,7 @@ func workloadArguments(workload string) []byte {
 func enqueueJob(
 	t *testing.T,
 	database *storage.Database,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	registration uuid.UUID,
 	arguments []byte,
 ) uuid.UUID {
@@ -380,7 +379,7 @@ func enqueueJob(
 // names one: the Integration is what the job reaches, and the relay is where it runs.
 func kubernetesIntegration(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, registration uuid.UUID,
+	organization uuid.UUID, registration uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
@@ -399,10 +398,10 @@ func kubernetesIntegration(
 	return created.ID
 }
 
-func namedOrganization(t *testing.T, organization string) tenancy.Organization {
+func namedOrganization(t *testing.T, organization string) uuid.UUID {
 	t.Helper()
 
-	named, err := tenancy.NewOrganization(organization)
+	named, err := uuid.Parse(organization)
 	if err != nil {
 		t.Fatalf("naming the organization: %v", err)
 	}
@@ -412,7 +411,7 @@ func namedOrganization(t *testing.T, organization string) tenancy.Organization {
 // ownerOf is the principal a harness acts as when it arranges state through the store rather
 // than through the surface. Every operator-facing store function takes one, because the tenancy
 // boundary is checked in storage as well as in the authorization middleware.
-func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
+func ownerOf(t *testing.T, organization uuid.UUID) authz.Principal {
 	t.Helper()
 
 	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Test Harness",

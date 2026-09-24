@@ -10,7 +10,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // The relays as a whole, and the durable presence that lets their state be answered.
@@ -45,7 +44,7 @@ type RelayCounts struct {
 // separate reads at separate moments would — a summary saying eleven connected out of ten is
 // worse than no summary.
 func (p *Database) CountRelays(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	liveness time.Duration,
 ) (RelayCounts, error) {
 	if principal.Organization() != organization {
@@ -68,7 +67,7 @@ func (p *Database) CountRelays(
 		         WHERE org_id = $1 AND status = 1)
 		  FROM relay_registration registration
 		 WHERE registration.org_id = $1`,
-		organization.String(), liveness).
+		organization, liveness).
 		Scan(&summary.Total, &summary.Connected, &summary.Disconnected, &summary.Revoked,
 			&summary.Degraded, &summary.ActiveRequests)
 	if err != nil {
@@ -89,7 +88,7 @@ func (p *Database) CountRelays(
 // Only the digest is stored, so this is the one moment the token exists here. The caller shows
 // it once and keeps no copy either.
 func (p *Database) IssueOperatorBootstrapToken(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	tokenDigest []byte, expiresAt time.Time,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionRelayBootstrapIssued,
@@ -97,7 +96,7 @@ func (p *Database) IssueOperatorBootstrapToken(
 			if _, err := transaction.Exec(ctx, `
 				INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
 				VALUES ($1, $2, $3)`,
-				tokenDigest, organization.String(), expiresAt); err != nil {
+				tokenDigest, organization, expiresAt); err != nil {
 				return struct{}{}, audit.Target{}, nil,
 					fmt.Errorf("issuing a bootstrap token: %w", err)
 			}
@@ -127,7 +126,7 @@ func (p *Database) IssueOperatorBootstrapToken(
 // because the registry is per process and a summary built from one process's view would report
 // only a fraction of the deployment's relays.
 func (p *Database) RelaySessionOpened(
-	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
+	ctx context.Context, organization uuid.UUID, registration, session uuid.UUID,
 	peer string,
 ) error {
 	pool, err := p.Pool(organization)
@@ -142,7 +141,7 @@ func (p *Database) RelaySessionOpened(
 		       last_seen_at       = now(),
 		       session_peer       = $4
 		 WHERE org_id = $1 AND registration_id = $2`,
-		organization.String(), registration, session, boundedPeer(peer)); err != nil {
+		organization, registration, session, boundedPeer(peer)); err != nil {
 		return fmt.Errorf("recording a relay session: %w", err)
 	}
 	return nil
@@ -154,7 +153,7 @@ func (p *Database) RelaySessionOpened(
 // refresh the presence of the registration its successor now holds, or a dying session would
 // keep a relay looking connected through whichever process was slowest to notice.
 func (p *Database) RelaySessionHeard(
-	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
+	ctx context.Context, organization uuid.UUID, registration, session uuid.UUID,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -164,7 +163,7 @@ func (p *Database) RelaySessionHeard(
 		UPDATE relay_registration
 		   SET last_seen_at = now()
 		 WHERE org_id = $1 AND registration_id = $2 AND session_id = $3`,
-		organization.String(), registration, session); err != nil {
+		organization, registration, session); err != nil {
 		return fmt.Errorf("recording that a relay was heard: %w", err)
 	}
 	return nil
@@ -177,7 +176,7 @@ func (p *Database) RelaySessionHeard(
 // liveness window is what bounds how long that looks connected — which is the same allowance
 // the in-memory watch uses, so the durable answer and the live one agree.
 func (p *Database) RelaySessionClosed(
-	ctx context.Context, organization tenancy.Organization, registration, session uuid.UUID,
+	ctx context.Context, organization uuid.UUID, registration, session uuid.UUID,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -188,7 +187,7 @@ func (p *Database) RelaySessionClosed(
 		   SET session_ended_at = now()
 		 WHERE org_id = $1 AND registration_id = $2 AND session_id = $3
 		   AND session_ended_at IS NULL`,
-		organization.String(), registration, session); err != nil {
+		organization, registration, session); err != nil {
 		return fmt.Errorf("recording the end of a relay session: %w", err)
 	}
 	return nil
@@ -231,7 +230,7 @@ type RelayFailureList struct {
 // RelayFailures reads what a Relay has recently failed to complete, so an intermittent one can be
 // diagnosed from the record rather than from whoever happened to be watching.
 func (p *Database) RelayFailures(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	registration uuid.UUID, page Page,
 ) (RelayFailureList, error) {
 	if principal.Organization() != organization {
@@ -255,7 +254,7 @@ func (p *Database) RelayFailures(
 		        OR (terminal_at, job_id) < ($4::timestamptz, $5::uuid))
 		 ORDER BY terminal_at DESC, job_id DESC
 		 LIMIT $3`,
-		organization.String(), registration, limit+1, after, afterID)
+		organization, registration, limit+1, after, afterID)
 	if err != nil {
 		return RelayFailureList{}, fmt.Errorf("reading a relay's failures: %w", err)
 	}

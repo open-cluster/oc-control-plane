@@ -13,17 +13,13 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const organizationID = "11111111-1111-4111-8111-111111111111"
 
 func principal(t *testing.T, role authz.Role) authz.Principal {
 	t.Helper()
-	organization, err := tenancy.NewOrganization(organizationID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	organization := uuid.MustParse(organizationID)
 	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada", authz.Membership{
 		Organization: organization, DisplayName: "Operations", Role: role,
 	})
@@ -56,7 +52,7 @@ func router(t *testing.T, resolved authz.Principal, permission authz.Permission,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if recorded != nil {
-		guard.Record = func(_ context.Context, _ tenancy.Organization, event audit.Event) {
+		guard.Record = func(_ context.Context, _ uuid.UUID, event audit.Event) {
 			*recorded = append(*recorded, event)
 		}
 	}

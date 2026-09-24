@@ -15,7 +15,6 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -25,9 +24,9 @@ type RelayExecutor struct{ Database *storage.Database }
 
 func (e RelayExecutor) Execute(ctx context.Context, request integrations.ToolRequest, id string,
 	arguments *relayv1.CapabilityArguments) (integrations.ToolResult, error) {
-	organization, err := tenancy.NewOrganization(request.Integration.OrgID)
-	if err != nil {
-		return integrations.ToolResult{}, err
+	organization, err := uuid.Parse(strings.TrimSpace(request.Integration.OrgID))
+	if err != nil || organization == uuid.Nil {
+		return integrations.ToolResult{}, errors.New("invalid organization identifier")
 	}
 	if request.Integration.RelayID == uuid.Nil {
 		return integrations.ToolResult{}, errors.New("the Integration has no Relay binding")
@@ -73,7 +72,7 @@ func (e RelayExecutor) Execute(ctx context.Context, request integrations.ToolReq
 	}
 }
 
-func (e RelayExecutor) cancelJob(ctx context.Context, organization tenancy.Organization, id uuid.UUID) {
+func (e RelayExecutor) cancelJob(ctx context.Context, organization uuid.UUID, id uuid.UUID) {
 	cancellation, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	_, _ = e.Database.RequestJobCancellation(cancellation, organization, id)

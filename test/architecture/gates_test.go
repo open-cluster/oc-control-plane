@@ -133,24 +133,6 @@ func TestHealthDoesNotImportStorage(t *testing.T) {
 	}
 }
 
-// internal/auth/tenancy is vocabulary. It performs no I/O, so it must not depend on anything in
-// this module — that is what lets every other package use it without an import cycle.
-func TestTenancyDependsOnNothingInternal(t *testing.T) {
-	t.Parallel()
-
-	for _, loaded := range loadPackages(t) {
-		if internalPackagePath(loaded.PkgPath) != "internal/auth/tenancy" {
-			continue
-		}
-		for imported := range loaded.Imports {
-			if strings.HasPrefix(imported, modulePath+"/internal/") {
-				t.Errorf("internal/auth/tenancy must not import %s; it is vocabulary, not machinery",
-					imported)
-			}
-		}
-	}
-}
-
 // Every exported function in internal/store/postgres that reaches a tenant's data must take the
 // organization explicitly. An ambient organization is how one tenant is served another
 // tenant's rows, and the property is invisible in review.
@@ -266,7 +248,7 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			}
 			if !takesOrganization(function) {
 				t.Errorf("storage.%s is exported and tenant-scoped but takes no "+
-					"tenancy.Organization; add the parameter or record it as "+
+					"explicitly named Organization UUID; add the parameter or record it as "+
 					"database-wide with a reason", function.Name.Name)
 			}
 		}
@@ -317,8 +299,13 @@ func takesOrganization(function *ast.FuncDecl) bool {
 		return false
 	}
 	for _, parameter := range function.Type.Params.List {
-		if strings.Contains(typeExpression(parameter.Type), "tenancy.Organization") {
-			return true
+		if typeExpression(parameter.Type) != "uuid.UUID" {
+			continue
+		}
+		for _, name := range parameter.Names {
+			if name.Name == "organization" || name.Name == "org" {
+				return true
+			}
 		}
 	}
 	return false

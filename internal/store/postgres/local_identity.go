@@ -13,7 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 var (
@@ -63,20 +62,15 @@ func (p *Database) BootstrapLocalUser(
 		&user.DisplayName, &user.CreatedAt); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("creating the first local user: %w", err)
 	}
-	var organization tenancy.Organization
-	var organizationID string
+	var organization uuid.UUID
 	if err = transaction.QueryRow(ctx, `
 		INSERT INTO organization (display_name, created_by)
-		VALUES ($1, $2) RETURNING org_id`, organizationName, user.ID.String()).Scan(&organizationID); err != nil {
+		VALUES ($1, $2) RETURNING org_id`, organizationName, user.ID.String()).Scan(&organization); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("creating the first organization: %w", err)
-	}
-	organization, err = tenancy.NewOrganization(organizationID)
-	if err != nil {
-		return User{}, session.Session{}, fmt.Errorf("reading the first organization: %w", err)
 	}
 	if _, err = transaction.Exec(ctx, `
 		INSERT INTO organization_membership (org_id, user_id, role)
-		VALUES ($1, $2, $3)`, organization.String(), user.ID, string(authz.Admin)); err != nil {
+		VALUES ($1, $2, $3)`, organization, user.ID, string(authz.Admin)); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("granting the first membership: %w", err)
 	}
 	if _, err = transaction.Exec(ctx,
@@ -160,7 +154,7 @@ func (p *Database) RehashLocalPassword(
 }
 
 func (p *Database) CreateLocalMember(
-	ctx context.Context, principal authz.Principal, organization tenancy.Organization,
+	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	email, displayName, passwordHash string, role authz.Role,
 ) (Member, error) {
 	return audited(ctx, p, principal, organization, audit.ActionUserProvisioned,
@@ -187,7 +181,7 @@ func (p *Database) CreateLocalMember(
 					(org_id, user_id, role)
 				VALUES ($1, $2, $3)
 				RETURNING user_id, role, created_at`,
-				organization.String(), userID, string(role)).Scan(&member.UserID, &member.Role,
+				organization, userID, string(role)).Scan(&member.UserID, &member.Role,
 				&member.CreatedAt); err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("granting a local membership: %w", err)
 			}

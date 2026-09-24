@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -29,7 +27,7 @@ const turnWindowLead = time.Hour
 // database would prove nothing — the pools could not reach each other's rows anyway.
 func twoOrganizationsInOneDatabase(
 	t *testing.T,
-) (*storage.Database, tenancy.Organization, tenancy.Organization) {
+) (*storage.Database, uuid.UUID, uuid.UUID) {
 	t.Helper()
 
 	database := openDatabaseForTest(t, postgresDSN(t))
@@ -50,7 +48,7 @@ func conclusionSaying(answer string) investigation.Conclusion {
 
 // openConversation records one for a test, with no incident.
 func openConversation(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	subject string,
 ) conversation.Conversation {
 	t.Helper()
@@ -68,7 +66,7 @@ func openConversation(
 
 // say appends one person message.
 func say(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	id uuid.UUID, text string,
 ) conversation.Message {
 	t.Helper()
@@ -580,7 +578,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(context.Background(), `DELETE FROM investigation_tool_run WHERE org_id = $1 AND investigation_id = $2`, organization.String(), adaTurn.InvestigationID); err != nil {
+	if _, err = pool.Exec(context.Background(), `DELETE FROM investigation_tool_run WHERE org_id = $1 AND investigation_id = $2`, organization, adaTurn.InvestigationID); err != nil {
 		t.Fatal(err)
 	}
 	retained, err := database.Investigation(context.Background(), organization, adaTurn.InvestigationID)
@@ -598,7 +596,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 
 // openConversationAbout records one tied to an incident incident.
 func openConversationAbout(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	subject string, incident uuid.UUID,
 ) conversation.Conversation {
 	t.Helper()

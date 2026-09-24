@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
+	"github.com/google/uuid"
+
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
 )
 
@@ -29,7 +30,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	if _, err = pool.Exec(context.Background(), `
 		UPDATE incident
 		   SET status = 2, resolved_at = now(), updated_at = now()
-		 WHERE incident_id = $1 AND org_id = $2`, incident, organization.String()); err != nil {
+		 WHERE incident_id = $1 AND org_id = $2`, incident, organization); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +69,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		t.Fatalf("reviewed = %+v err=%v", reviewed, err)
 	}
 
-	other, _ := tenancy.NewOrganization("22222222-2222-4222-8222-222222222222")
+	other := uuid.MustParse("22222222-2222-4222-8222-222222222222")
 	if _, err := database.Postmortem(context.Background(), other, incident); !errors.Is(err, postmortem.ErrUnknown) {
 		t.Fatalf("other tenant read error = %v", err)
 	}

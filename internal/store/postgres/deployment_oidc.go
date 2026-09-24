@@ -12,7 +12,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type DeploymentSignInFlow struct {
@@ -55,7 +54,7 @@ func (p *Database) RedeemDeploymentSignIn(ctx context.Context, state string) (De
 	return flow, nil
 }
 
-func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Principal, organization tenancy.Organization, identity Identity, role authz.Role) (Member, error) {
+func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Principal, organization uuid.UUID, identity Identity, role authz.Role) (Member, error) {
 	return audited(ctx, p, principal, organization, audit.ActionUserProvisioned,
 		func(ctx context.Context, tx pgx.Tx) (Member, audit.Target, audit.Detail, error) {
 			var userID uuid.UUID
@@ -72,7 +71,7 @@ func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Princip
 			err = tx.QueryRow(ctx, `INSERT INTO organization_membership
 				(org_id,user_id,role)
 				VALUES ($1,$2,$3) RETURNING user_id,role,created_at`,
-				organization.String(), userID, string(role)).Scan(&member.UserID, &member.Role, &member.CreatedAt)
+				organization, userID, string(role)).Scan(&member.UserID, &member.Role, &member.CreatedAt)
 			if err != nil {
 				return Member{}, audit.Target{}, nil, fmt.Errorf("granting an OIDC membership: %w", err)
 			}

@@ -9,7 +9,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
@@ -105,7 +104,7 @@ func newSlackAgent(cfg config.Config) *webhooks.SlackAgent {
 	isSlackConfigured(cfg)
 	return &webhooks.SlackAgent{
 		SigningSecret:   cfg.SlackSigningSecret,
-		Enabled:         func(tenancy.Organization) bool { return true },
+		Enabled:         func(uuid.UUID) bool { return true },
 		WindowLead:      defaultInvestigationWindowLead,
 		MaxWaitingTurns: cfg.MaxPendingInvestigations,
 	}

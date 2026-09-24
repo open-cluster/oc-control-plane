@@ -44,7 +44,7 @@ func TestSlackAttemptTimeoutPreservesRetryBudget(t *testing.T) {
 				var attempts, status int
 				var settled bool
 				if err = pool.QueryRow(ctx, `SELECT attempts, status, lease_owner IS NULL AND leased_until IS NULL AND next_attempt_at > now()
-					FROM slack_reply WHERE org_id = $1 AND investigation_id = $2`, org.String(), id).Scan(&attempts, &status, &settled); err == nil && attempts == previous+1 {
+					FROM slack_reply WHERE org_id = $1 AND investigation_id = $2`, org, id).Scan(&attempts, &status, &settled); err == nil && attempts == previous+1 {
 					want := storage.SlackReplyPending
 					if previous == 7 {
 						want = storage.SlackReplyFailed

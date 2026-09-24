@@ -12,14 +12,12 @@ import (
 	"google.golang.org/grpc/status"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // sessionState is one established session: the identity every message is validated against,
 // the write queue and logger scoped to it, and the switch that ends it.
 type sessionState struct {
-	organization   tenancy.Organization
+	organization   uuid.UUID
 	registrationID uuid.UUID
 	id             uuid.UUID
 	outbound       chan *relayv1.ControlToRelay

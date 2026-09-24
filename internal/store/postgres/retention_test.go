@@ -7,8 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 // Applying the retention schedule a tenant declared, through the one path the database permits.
@@ -24,7 +22,7 @@ import (
 // alongside a change it is describing, and what is under test here has no change to describe. The
 // INSERT is not what the trigger guards, so this reaches the same rows by the same door.
 func recordAuditEvent(
-	t *testing.T, dsn string, organization tenancy.Organization, occurredAt time.Time,
+	t *testing.T, dsn string, organization uuid.UUID, occurredAt time.Time,
 ) uuid.UUID {
 	t.Helper()
 
@@ -41,13 +39,13 @@ func recordAuditEvent(
 			(event_id, org_id, actor_kind, actor_display_name, action, target_kind,
 			 target_id, outcome, occurred_at)
 		VALUES ($1, $2, 3, 'the retention test', 'integration.revised', 'integration', $3, 1, $4)`,
-		id, organization.String(), id.String(), occurredAt); err != nil {
+		id, organization, id.String(), occurredAt); err != nil {
 		t.Fatalf("writing an audit event: %v", err)
 	}
 	return id
 }
 
-func declareRetention(t *testing.T, dsn string, organization tenancy.Organization, days int) {
+func declareRetention(t *testing.T, dsn string, organization uuid.UUID, days int) {
 	t.Helper()
 
 	connection, err := pgx.Connect(context.Background(), dsn)
@@ -60,22 +58,22 @@ func declareRetention(t *testing.T, dsn string, organization tenancy.Organizatio
 		INSERT INTO organization (org_id, display_name, created_by, audit_retention_days)
 		VALUES ($1::uuid, $1::text, 'retention-test', $2)
 		ON CONFLICT (org_id) DO UPDATE SET audit_retention_days = EXCLUDED.audit_retention_days`,
-		organization.String(), days); err != nil {
+		organization, days); err != nil {
 		t.Fatalf("declaring a retention schedule: %v", err)
 	}
 }
 
-func ensureOrganization(t *testing.T, connection *pgx.Conn, organization tenancy.Organization) {
+func ensureOrganization(t *testing.T, connection *pgx.Conn, organization uuid.UUID) {
 	t.Helper()
 	if _, err := connection.Exec(context.Background(), `
 		INSERT INTO organization (org_id, display_name, created_by)
 		VALUES ($1::uuid, $1::text, 'retention-test')
-		ON CONFLICT (org_id) DO NOTHING`, organization.String()); err != nil {
+		ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
 		t.Fatalf("creating organization: %v", err)
 	}
 }
 
-func countAuditEvents(t *testing.T, dsn string, organization tenancy.Organization) int {
+func countAuditEvents(t *testing.T, dsn string, organization uuid.UUID) int {
 	t.Helper()
 
 	connection, err := pgx.Connect(context.Background(), dsn)
@@ -87,7 +85,7 @@ func countAuditEvents(t *testing.T, dsn string, organization tenancy.Organizatio
 	var count int
 	if err = connection.QueryRow(context.Background(),
 		`SELECT count(*) FROM audit_event WHERE org_id = $1`,
-		organization.String()).Scan(&count); err != nil {
+		organization).Scan(&count); err != nil {
 		t.Fatalf("counting audit events: %v", err)
 	}
 	return count
@@ -208,7 +206,7 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	undeclared := func(when string) {
 		t.Helper()
 		if _, execErr := pool.Exec(context.Background(),
-			`DELETE FROM audit_event WHERE org_id = $1`, org.String()); execErr == nil {
+			`DELETE FROM audit_event WHERE org_id = $1`, org); execErr == nil {
 			t.Fatalf("an undeclared DELETE succeeded %s; the record is not append-only", when)
 		}
 	}

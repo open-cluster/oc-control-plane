@@ -10,7 +10,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -24,7 +23,7 @@ func nowPlus(d time.Duration) time.Time {
 func (h Handlers) issueSession(
 	writer http.ResponseWriter,
 	request *http.Request,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	user storage.User,
 	localPasswordHash string,
 ) error {
@@ -49,12 +48,12 @@ func (h Handlers) issueSession(
 
 func (h Handlers) prepareSession(
 	request *http.Request,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	userID uuid.UUID,
 ) (session.Token, []byte, session.Session, audit.Detail, error) {
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
-	if !organization.IsEmpty() {
+	if organization != uuid.Nil {
 		_, err := h.Database.OrganizationAuditRetention(ctx, organization)
 		if err != nil {
 			return "", nil, session.Session{}, nil, err

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
@@ -26,7 +24,7 @@ import (
 // aSlackTurn connects a workspace, binds a thread to a conversation and opens a turn on it,
 // returning the investigation that now owes an answer.
 func aSlackTurn(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	workspace, channel, thread string,
 ) (uuid.UUID, uuid.UUID) {
 	t.Helper()
@@ -124,7 +122,7 @@ func TestSlackReplyCannotBeRetargetedBetweenAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE slack_conversation SET channel_id='C-OTHER'
-WHERE org_id=$1 AND conversation_id=$2`, organization.String(), reply.Conversation); err == nil {
+WHERE org_id=$1 AND conversation_id=$2`, organization, reply.Conversation); err == nil {
 		t.Fatal("pending reply destination was retargeted")
 	}
 	if err := database.RetrySlackReply(ctx, organization, investigation, reply.ClaimToken,

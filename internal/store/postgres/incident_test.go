@@ -8,8 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -24,7 +22,7 @@ import (
 // created it. Intake is not involved here deliberately: delivering an alert to produce one
 // would make every assertion below depend on the adapter as well.
 func recordIncident(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 	integration uuid.UUID, key string,
 ) uuid.UUID {
 	t.Helper()
@@ -40,7 +38,7 @@ func recordIncident(
 			(incident_id, org_id, integration_id, grouping_key,
 			 grouping_basis, title, status, first_seen_at, last_seen_at, updated_at)
 		VALUES ($1, $2, $3, $4, 1, 'a failure', 1, $5, $5, now())`,
-		id, organization.String(), integration, key, now); err != nil {
+		id, organization, integration, key, now); err != nil {
 		t.Fatalf("recording an incident incident: %v", err)
 	}
 	return id
@@ -90,7 +88,7 @@ func TestAMerge_LeavesBothRecordsIntact(t *testing.T) {
 
 func recordedIncidentMerge(
 	t *testing.T, database *storage.Database,
-	organization tenancy.Organization, incident uuid.UUID,
+	organization uuid.UUID, incident uuid.UUID,
 ) bool {
 	t.Helper()
 
@@ -102,7 +100,7 @@ func recordedIncidentMerge(
 	if err = pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM audit_event
 		 WHERE org_id = $1 AND action = 'incident.merged' AND target_id = $2`,
-		organization.String(), incident.String()).Scan(&count); err != nil &&
+		organization, incident.String()).Scan(&count); err != nil &&
 		!errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("reading the audit trail: %v", err)
 	}
@@ -111,7 +109,7 @@ func recordedIncidentMerge(
 
 // alertmanagerIntegration is an Alertmanager Integration deliveries arrive through.
 func alertmanagerIntegration(
-	t *testing.T, database *storage.Database, organization tenancy.Organization,
+	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) uuid.UUID {
 	t.Helper()
 
@@ -227,7 +225,7 @@ func TestIncidentAlertEventCountIsDerivedFromAlertEvents(t *testing.T) {
 				(alert_event_id, org_id, integration_id, source_key, status, title, summary,
 				 started_at, incident_id, updated_at)
 			VALUES ($1, $2, $3, $4, 1, 'Alert', 'Summary', $5, $6, now())`,
-			uuid.New(), organization.String(), integration, source, time.Now().UTC(), incidentID); err != nil {
+			uuid.New(), organization, integration, source, time.Now().UTC(), incidentID); err != nil {
 			t.Fatal(err)
 		}
 	}

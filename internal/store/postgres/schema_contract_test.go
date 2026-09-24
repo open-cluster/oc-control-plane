@@ -31,7 +31,7 @@ func TestOrganizationAuditRetentionUsesOrganizationValue(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id,display_name,created_by)
-VALUES ($1,'Organization A','test')`, org.String()); err != nil {
+VALUES ($1,'Organization A','test')`, org); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.SetOrganizationAuditRetention(ctx, ownerOf(t, org), org, 30); err != nil {

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -53,7 +52,7 @@ func TestModelMayReadOnlyEarlierConversationHistory(t *testing.T) {
 				t.Fatal("history caused an external read")
 				return integrations.ToolResult{}, nil
 			}))
-			org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+			org := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 			if err := runner.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(), Subject: "history"}); err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +77,7 @@ func conclusionWithEvidence(t *testing.T, owner uuid.UUID) json.RawMessage {
 
 func TestHistoryAuthorityDoesNotShrinkAfterAnEarlierJump(t *testing.T) {
 	t.Parallel()
-	org, _ := tenancy.NewOrganization("11111111-1111-4111-8111-111111111111")
+	org := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	store := &records{history: investigation.HistoryPage{NextBefore: 2}}
 	runner := &Agent{Store: store}
 	state := &runState{organization: org, opened: investigation.Investigation{ConversationID: uuid.New()},

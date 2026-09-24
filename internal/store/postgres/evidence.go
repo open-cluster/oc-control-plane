@@ -4,11 +4,10 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-func evidenceMissing(ctx context.Context, pool querier, org tenancy.Organization, refs []investigation.EvidenceRef) (bool, error) {
+func evidenceMissing(ctx context.Context, pool querier, org uuid.UUID, refs []investigation.EvidenceRef) (bool, error) {
 	if len(refs) == 0 {
 		return false, nil
 	}
@@ -23,7 +22,7 @@ func evidenceMissing(ctx context.Context, pool querier, org tenancy.Organization
 		SELECT 1 FROM unnest($2::uuid[], $3::bigint[]) AS reference(investigation_id, ordinal)
 		WHERE NOT EXISTS (SELECT 1 FROM investigation_tool_run run
 			WHERE run.org_id = $1 AND run.investigation_id = reference.investigation_id
-			AND run.ordinal = reference.ordinal))`, org.String(), ids, ordinals).Scan(&missing)
+			AND run.ordinal = reference.ordinal))`, org, ids, ordinals).Scan(&missing)
 	return missing, err
 }
 

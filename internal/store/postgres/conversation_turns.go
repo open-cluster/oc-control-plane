@@ -7,13 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 )
 
 func (p *Database) ConversationTurns(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, limit int, cursor string,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, limit int, cursor string,
 ) (conversation.TurnPage, error) {
 	if _, err := p.Conversation(ctx, organization, id); err != nil {
 		return conversation.TurnPage{}, err
@@ -26,7 +24,7 @@ func (p *Database) ConversationTurns(
 }
 
 func readConversationTurns(
-	ctx context.Context, queries querier, organization tenancy.Organization, id uuid.UUID, limit int, cursor string,
+	ctx context.Context, queries querier, organization uuid.UUID, id uuid.UUID, limit int, cursor string,
 ) (conversation.TurnPage, error) {
 	scope := "conversation-turns/" + organization.String() + "/" + id.String() + "/turn,investigationId"
 	value, afterID, err := decodeSortCursor(cursor, scope)
@@ -48,7 +46,7 @@ func readConversationTurns(
 		 WHERE org_id = $1 AND conversation_id = $2
 		   AND ($3::integer = 0 OR (turn, investigation_id) > ($3, $4::uuid))
 		 ORDER BY turn, investigation_id
-		 LIMIT $5`, organization.String(), id, after, afterID, limit+1)
+		 LIMIT $5`, organization, id, after, afterID, limit+1)
 	if err != nil {
 		return conversation.TurnPage{}, fmt.Errorf("reading conversation turns: %w", err)
 	}

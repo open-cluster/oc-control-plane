@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -52,25 +51,25 @@ func openDatabaseForTest(t *testing.T, dsn string) *storage.Database {
 	return opened
 }
 
-func organization(t *testing.T, id string) tenancy.Organization {
+func organization(t *testing.T, id string) uuid.UUID {
 	t.Helper()
 	if _, err := uuid.Parse(id); err != nil {
 		id = uuid.NewSHA1(uuid.NameSpaceOID, []byte(id)).String()
 	}
-	value, err := tenancy.NewOrganization(id)
+	value, err := uuid.Parse(id)
 	if err != nil {
 		t.Fatalf("NewOrganization(%q): %v", id, err)
 	}
 	return value
 }
 
-func ownerOf(t *testing.T, organization tenancy.Organization) authz.Principal {
+func ownerOf(t *testing.T, organization uuid.UUID) authz.Principal {
 	t.Helper()
 	return memberOf(t, organization, authz.Admin)
 }
 
 func memberOf(
-	t *testing.T, organization tenancy.Organization, role authz.Role,
+	t *testing.T, organization uuid.UUID, role authz.Role,
 ) authz.Principal {
 	t.Helper()
 

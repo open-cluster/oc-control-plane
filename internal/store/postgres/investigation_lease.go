@@ -10,14 +10,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // ClaimInvestigation leases the oldest waiting investigation.
 func (p *Database) ClaimInvestigation(
 	ctx context.Context, claim investigation.Claim,
-) (tenancy.Organization, investigation.Investigation, bool, error) {
+) (uuid.UUID, investigation.Investigation, bool, error) {
 	row := p.pool.QueryRow(ctx, `
 			UPDATE investigation
 			   SET lease_worker       = $1,
@@ -34,27 +33,22 @@ func (p *Database) ClaimInvestigation(
 			RETURNING org_id, lease_token, `+investigationColumns,
 		claim.Worker, claim.LeaseFor.String())
 
-	var organization string
+	var organization uuid.UUID
 	claimed, err := scanClaimedInvestigation(row, &organization)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return tenancy.Organization{}, investigation.Investigation{}, false, nil
+		return uuid.UUID{}, investigation.Investigation{}, false, nil
 	}
 	if err != nil {
-		return tenancy.Organization{}, investigation.Investigation{}, false,
+		return uuid.UUID{}, investigation.Investigation{}, false,
 			fmt.Errorf("claiming an investigation: %w", err)
 	}
-	named, err := tenancy.NewOrganization(organization)
-	if err != nil {
-		return tenancy.Organization{}, investigation.Investigation{}, false,
-			fmt.Errorf("a claimed investigation names an unusable organization: %w", err)
-	}
-	claimed.OrgID = organization
-	return named, claimed, true, nil
+	claimed.OrgID = organization.String()
+	return organization, claimed, true, nil
 }
 
 // Heartbeat renews only an unexpired lease held by this worker.
 func (p *Database) Heartbeat(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	claim investigation.Claim,
 ) (bool, error) {
 	pool, err := p.Pool(organization)
@@ -81,7 +75,7 @@ func (p *Database) Heartbeat(
 		   AND lease_worker     = $3
 		   AND lease_token      = $5
 		   AND lease_expires_at > clock_timestamp()`,
-		id, organization.String(), claim.Worker, claim.LeaseFor.String(), claim.Token)
+		id, organization, claim.Worker, claim.LeaseFor.String(), claim.Token)
 	if err != nil {
 		return false, fmt.Errorf("renewing an investigation lease: %w", err)
 	}
@@ -157,7 +151,7 @@ func recoverStaleIn(
 
 	type stranded struct {
 		id           uuid.UUID
-		organization string
+		organization uuid.UUID
 	}
 	var swept []stranded
 	for rows.Next() {
@@ -203,7 +197,7 @@ func recoverStaleIn(
 
 // scanClaimedInvestigation includes the Organization and claim token returned by leasing.
 func scanClaimedInvestigation(
-	row scanned, organization *string,
+	row scanned, organization *uuid.UUID,
 ) (investigation.Investigation, error) {
 	var token uuid.UUID
 	found, err := scanInvestigation(prefixedRow{row: row, first: organization, token: &token}, "")
@@ -214,7 +208,7 @@ func scanClaimedInvestigation(
 // prefixedRow preserves the shared Investigation mapping after the claim metadata.
 type prefixedRow struct {
 	row   scanned
-	first *string
+	first *uuid.UUID
 	token *uuid.UUID
 }
 

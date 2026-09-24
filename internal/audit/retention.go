@@ -2,10 +2,9 @@ package audit
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"log/slog"
 	"time"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -15,7 +14,7 @@ const (
 
 // Retention is one tenant's declared schedule.
 type Retention struct {
-	Organization tenancy.Organization
+	Organization uuid.UUID
 	// Days is how long the tenant says it keeps the record. It is always positive here: zero
 	// declares no schedule, which means the product's default of keeping everything.
 	Days int
@@ -31,7 +30,7 @@ type Retentions interface {
 	// database this deployment serves.
 	DeclaredRetentions(ctx context.Context) ([]Retention, error)
 	// PruneEventsBefore removes at most limit events older than the horizon, reporting how many went.
-	PruneEventsBefore(ctx context.Context, organization tenancy.Organization,
+	PruneEventsBefore(ctx context.Context, organization uuid.UUID,
 		before time.Time, limit int) (int64, error)
 }
 

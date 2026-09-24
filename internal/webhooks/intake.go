@@ -28,11 +28,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -220,8 +220,11 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 
 	// The tenant is now known, and it was DISCOVERED rather than claimed: it comes from the
 	// row whose secret just matched. Nothing the caller sent contributed to it.
-	organization, err := tenancy.NewOrganization(integration.OrgID)
-	if err != nil {
+	organization, err := uuid.Parse(strings.TrimSpace(integration.OrgID))
+	if err != nil || organization == uuid.Nil {
+		if err == nil {
+			err = errors.New("invalid organization identifier")
+		}
 		h.Logger.ErrorContext(ctx, "an integration names an organization that is not a name",
 			slog.String("integration_id", integration.ID.String()),
 			slog.String("error", err.Error()))
@@ -254,7 +257,7 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 // record commits the delivery and answers the source.
 func (h *surface) record(
 	ctx context.Context, writer http.ResponseWriter,
-	organization tenancy.Organization, delivery storage.Delivery,
+	organization uuid.UUID, delivery storage.Delivery,
 ) {
 	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery)
 	if errors.Is(err, storage.ErrDeliveryIdentityConflict) {

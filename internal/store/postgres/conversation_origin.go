@@ -7,13 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 // ConversationOrigin reads the provider resource that constrains this Conversation.
-func (p *Database) ConversationOrigin(ctx context.Context, organization tenancy.Organization, id uuid.UUID) (*investigation.ConversationOrigin, error) {
+func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUID, id uuid.UUID) (*investigation.ConversationOrigin, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return nil, err
@@ -26,7 +25,7 @@ func (p *Database) ConversationOrigin(ctx context.Context, organization tenancy.
 		FROM conversation c
 		LEFT JOIN slack_conversation s ON s.org_id = c.org_id AND s.conversation_id = c.conversation_id
 		LEFT JOIN integration i ON i.org_id = c.org_id AND i.integration_id = s.integration_id
-		WHERE c.org_id = $1 AND c.conversation_id = $2`, organization.String(), id).
+		WHERE c.org_id = $1 AND c.conversation_id = $2`, organization, id).
 		Scan(&surface, &integration, &channel, &thread)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conversation.ErrUnknown

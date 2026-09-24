@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 type EventType int16
@@ -92,8 +91,8 @@ func bounded(text string, limit int) string {
 }
 
 type stream struct {
-	appendEvent   func(context.Context, tenancy.Organization, uuid.UUID, Event) error
-	organization  tenancy.Organization
+	appendEvent   func(context.Context, uuid.UUID, uuid.UUID, Event) error
+	organization  uuid.UUID
 	investigation uuid.UUID
 	telemetry     *Telemetry
 	// startedAt is when this stream began, which is when the run did.
@@ -113,10 +112,10 @@ type EventStream = stream
 
 func NewEventStream(appendEvent func(
 	context.Context,
-	tenancy.Organization,
+	uuid.UUID,
 	uuid.UUID, Event) error,
 	telemetry *Telemetry,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	investigation uuid.UUID,
 ) *EventStream {
 	return newStream(appendEvent, telemetry, organization, investigation)
@@ -124,11 +123,11 @@ func NewEventStream(appendEvent func(
 
 func newStream(appendEvent func(
 	context.Context,
-	tenancy.Organization,
+	uuid.UUID,
 	uuid.UUID,
 	Event) error,
 	telemetry *Telemetry,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	investigation uuid.UUID,
 ) *stream {
 	return &stream{
@@ -340,7 +339,7 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 // ends, the connection goes, or the lifetime is up.
 func (h Handlers) follow(
 	request *http.Request, writer http.ResponseWriter, controller *http.ResponseController,
-	organization tenancy.Organization, found Investigation, after int64,
+	organization uuid.UUID, found Investigation, after int64,
 ) {
 	ctx := request.Context()
 	deadline := time.Now().Add(eventStreamLifetime)
@@ -443,7 +442,7 @@ type eventEnvelope struct {
 }
 
 func envelopeOf(
-	organization tenancy.Organization, found Investigation, event Event,
+	organization uuid.UUID, found Investigation, event Event,
 ) eventEnvelope {
 	envelope := eventEnvelope{
 		SchemaVersion:   EventSchemaVersion,

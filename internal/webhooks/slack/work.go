@@ -3,15 +3,14 @@ package slack
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"log/slog"
 	"time"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type JobStore interface {
-	ApplySlackWebhookJob(context.Context, tenancy.Organization, storage.WebhookJob, time.Duration, int) error
+	ApplySlackWebhookJob(context.Context, uuid.UUID, storage.WebhookJob, time.Duration, int) error
 }
 
 type ReferenceResolver interface {

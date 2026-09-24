@@ -11,15 +11,16 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -167,18 +168,18 @@ func (s *RegistrationService) audit(ctx context.Context, organization, reason st
 }
 
 // callerIdentity reads the claimed organization and the bootstrap token from call metadata.
-func callerIdentity(ctx context.Context) (tenancy.Organization, string, error) {
+func callerIdentity(ctx context.Context) (uuid.UUID, string, error) {
 	incoming, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return tenancy.Organization{}, "", errors.New("no call metadata")
+		return uuid.UUID{}, "", errors.New("no call metadata")
 	}
 	token := firstValue(incoming, metadataBootstrapToken)
 	if token == "" {
-		return tenancy.Organization{}, "", errors.New("no bootstrap token")
+		return uuid.UUID{}, "", errors.New("no bootstrap token")
 	}
-	organization, err := tenancy.NewOrganization(firstValue(incoming, metadataOrganization))
-	if err != nil {
-		return tenancy.Organization{}, "", err
+	organization, err := uuid.Parse(strings.TrimSpace(firstValue(incoming, metadataOrganization)))
+	if err != nil || organization == uuid.Nil {
+		return uuid.UUID{}, "", errors.New("invalid organization identifier")
 	}
 	return organization, token, nil
 }

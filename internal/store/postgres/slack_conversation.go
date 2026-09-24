@@ -7,8 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 )
 
@@ -74,7 +72,7 @@ type SlackMessageOutcome struct {
 // RecordSlackMessage claims the delivery, resolves the thread to its Conversation, and
 // appends the message — all or nothing.
 func (p *Database) RecordSlackMessage(
-	ctx context.Context, organization tenancy.Organization, said SlackMessage,
+	ctx context.Context, organization uuid.UUID, said SlackMessage,
 ) (SlackMessageOutcome, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -97,7 +95,7 @@ func (p *Database) RecordSlackMessage(
 		VALUES ($1, $2, $3, $4, encode($4, 'hex'), '', $5)
 		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
 		DO NOTHING`,
-		deliveryID, organization.String(), said.Integration, said.ContentDigest, said.RequestID)
+		deliveryID, organization, said.Integration, said.ContentDigest, said.RequestID)
 	if err != nil {
 		return SlackMessageOutcome{}, fmt.Errorf("recording a slack delivery: %w", err)
 	}
@@ -135,7 +133,7 @@ func (p *Database) RecordSlackMessage(
 // rather than a guess that reads like knowledge.
 func bindThread(
 	ctx context.Context, transaction pgx.Tx,
-	organization tenancy.Organization, said SlackMessage,
+	organization uuid.UUID, said SlackMessage,
 ) (uuid.UUID, bool, error) {
 	var existing uuid.UUID
 	err := transaction.QueryRow(ctx, `
@@ -143,7 +141,7 @@ func bindThread(
 		  FROM slack_conversation
 		 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3
 		   AND org_id = $4`,
-		said.Integration, said.Channel, said.Thread, organization.String()).Scan(&existing)
+		said.Integration, said.Channel, said.Thread, organization).Scan(&existing)
 	switch {
 	case err == nil:
 		return existing, false, nil
@@ -155,7 +153,7 @@ func bindThread(
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO conversation (conversation_id, org_id, surface, subject, created_by)
 		VALUES ($1, $2, $3, $4, $5)`,
-		opened, organization.String(), int16(conversation.SurfaceSlack),
+		opened, organization, int16(conversation.SurfaceSlack),
 		said.Subject, said.ActorID); err != nil {
 		return uuid.Nil, false, fmt.Errorf("opening a slack conversation: %w", err)
 	}
@@ -164,7 +162,7 @@ func bindThread(
 			(conversation_id, org_id, integration_id, channel_id, thread_ts)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (integration_id, channel_id, thread_ts) DO NOTHING`,
-		opened, organization.String(), said.Integration, said.Channel, said.Thread)
+		opened, organization, said.Integration, said.Channel, said.Thread)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("binding a slack thread: %w", err)
 	}
@@ -177,7 +175,7 @@ func bindThread(
 			  FROM slack_conversation
 			 WHERE integration_id = $1 AND channel_id = $2 AND thread_ts = $3
 			   AND org_id = $4`,
-			said.Integration, said.Channel, said.Thread, organization.String()).Scan(&existing); err != nil {
+			said.Integration, said.Channel, said.Thread, organization).Scan(&existing); err != nil {
 			return uuid.Nil, false, fmt.Errorf("resolving a raced slack thread: %w", err)
 		}
 		return existing, false, nil
@@ -192,7 +190,7 @@ func bindThread(
 // were one would be inventing a principal — while dropping the identity would lose attribution
 // in exactly the case it matters, a thread several people are working in.
 func appendSlackMessage(
-	ctx context.Context, transaction pgx.Tx, organization tenancy.Organization,
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	conversationID uuid.UUID, said SlackMessage,
 ) (int64, error) {
 	if _, err := lockConversation(ctx, transaction, organization, conversationID); err != nil {
@@ -213,7 +211,7 @@ func appendSlackMessage(
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
 		       $3, $4, $5, $6, $7, $8, $9, $10, $11
 		RETURNING sequence`,
-		conversationID, organization.String(),
+		conversationID, organization,
 		int16(conversation.RolePerson), int16(conversation.ActorExternal),
 		said.ActorID, said.ActorDisplay, said.Text, said.Channel, said.MessageID, window.From, window.Until).Scan(&sequence); err != nil {
 		return 0, fmt.Errorf("appending a slack message: %w", err)
@@ -222,7 +220,7 @@ func appendSlackMessage(
 		UPDATE conversation
 		   SET last_activity_at = now()
 		 WHERE conversation_id = $1 AND org_id = $2`,
-		conversationID, organization.String()); err != nil {
+		conversationID, organization); err != nil {
 		return 0, fmt.Errorf("stamping a slack conversation: %w", err)
 	}
 	return sequence, nil
@@ -231,7 +229,7 @@ func appendSlackMessage(
 // SlackMessageProviderReference reports the safe provider identifiers retained for one
 // accepted message. It never returns the message body or a credential.
 func (p *Database) SlackMessageProviderReference(
-	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID, sequence int64,
+	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID, sequence int64,
 ) (channel, message, reference string, err error) {
 	pool, poolErr := p.Pool(organization)
 	if poolErr != nil {
@@ -241,7 +239,7 @@ func (p *Database) SlackMessageProviderReference(
 		SELECT provider_channel_id, provider_message_id, source_reference
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2 AND sequence = $3`,
-		organization.String(), conversationID, sequence).Scan(&channel, &message, &reference)
+		organization, conversationID, sequence).Scan(&channel, &message, &reference)
 	if err != nil {
 		return "", "", "", fmt.Errorf("reading slack message provider reference: %w", err)
 	}
@@ -251,7 +249,7 @@ func (p *Database) SlackMessageProviderReference(
 // SetSlackMessageSourceReference records a scope-free navigation URL derived after the
 // acknowledgement path has completed.
 func (p *Database) SetSlackMessageSourceReference(
-	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 	sequence int64, reference string, work WebhookJob,
 ) error {
 	pool, err := p.Pool(organization)
@@ -265,7 +263,7 @@ func (p *Database) SetSlackMessageSourceReference(
 		 WHERE message.org_id = $1 AND message.conversation_id = $2 AND message.sequence = $3
 		   AND work.org_id = $1 AND work.job_id = $5 AND work.status = 2
 		   AND work.lease_owner = $6 AND work.lease_epoch = $7 AND work.lease_expires_at > now()`,
-		organization.String(), conversationID, sequence, reference,
+		organization, conversationID, sequence, reference,
 		work.ID, work.LeaseOwner, work.LeaseEpoch)
 	if err != nil {
 		return fmt.Errorf("recording slack message source reference: %w", err)
@@ -280,7 +278,7 @@ func (p *Database) SetSlackMessageSourceReference(
 // answer in the thread the question was asked in. It answers false for a conversation that
 // did not come from Slack.
 func (p *Database) SlackThreadOf(
-	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 ) (channel string, thread string, integration uuid.UUID, found bool, err error) {
 	pool, poolErr := p.Pool(organization)
 	if poolErr != nil {
@@ -290,7 +288,7 @@ func (p *Database) SlackThreadOf(
 		SELECT channel_id, thread_ts, integration_id
 		  FROM slack_conversation
 		 WHERE conversation_id = $1 AND org_id = $2`,
-		conversationID, organization.String()).Scan(&channel, &thread, &integration)
+		conversationID, organization).Scan(&channel, &thread, &integration)
 	switch {
 	case errors.Is(scanErr, pgx.ErrNoRows):
 		return "", "", uuid.Nil, false, nil
@@ -311,7 +309,7 @@ func (p *Database) SlackThreadOf(
 // that answers — which already holds the credential and is under no deadline anybody sees —
 // resolves it afterwards.
 func (p *Database) UnnamedSlackAuthors(
-	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 ) ([]string, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -322,7 +320,7 @@ func (p *Database) UnnamedSlackAuthors(
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2
 		   AND actor_kind = $3 AND actor_id <> '' AND actor_display = actor_id`,
-		organization.String(), conversationID, int16(conversation.ActorExternal))
+		organization, conversationID, int16(conversation.ActorExternal))
 	if err != nil {
 		return nil, fmt.Errorf("reading unnamed slack authors: %w", err)
 	}
@@ -349,7 +347,7 @@ func (p *Database) UnnamedSlackAuthors(
 // display name changing or a name that cannot be resolved at all, and the identifier is the
 // half that does.
 func (p *Database) NameSlackAuthor(
-	ctx context.Context, organization tenancy.Organization, conversationID uuid.UUID,
+	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 	actor, display string,
 ) error {
 	if display == "" || display == actor {
@@ -364,7 +362,7 @@ func (p *Database) NameSlackAuthor(
 		   SET actor_display = $4
 		 WHERE org_id = $1 AND conversation_id = $2
 		   AND actor_kind = $5 AND actor_id = $3`,
-		organization.String(), conversationID, actor,
+		organization, conversationID, actor,
 		conversation.Bounded(display, conversation.MaxActorDisplayLength),
 		int16(conversation.ActorExternal)); err != nil {
 		return fmt.Errorf("naming a slack author: %w", err)

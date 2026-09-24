@@ -81,7 +81,7 @@ func TestSlackAcceptanceBeforeIdentityPersistenceIsAtLeastOnce(t *testing.T) {
 			if err != nil || !found || sequence != 0 || message != "" {
 				t.Fatalf("interrupted identity was persisted: %d %q %v %v", sequence, message, found, err)
 			}
-			if _, err = pool.Exec(ctx, `UPDATE slack_reply SET leased_until = now() - interval '1 second' WHERE org_id = $1 AND investigation_id = $2`, org.String(), id); err != nil {
+			if _, err = pool.Exec(ctx, `UPDATE slack_reply SET leased_until = now() - interval '1 second' WHERE org_id = $1 AND investigation_id = $2`, org, id); err != nil {
 				t.Fatal(err)
 			}
 			runSlackWorker(t, worker)

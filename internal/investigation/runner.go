@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 )
 
 const (
@@ -18,11 +16,11 @@ const (
 )
 
 type RunnerStore interface {
-	ClaimInvestigation(context.Context, Claim) (tenancy.Organization, Investigation, bool, error)
-	Heartbeat(context.Context, tenancy.Organization, uuid.UUID, Claim) (bool, error)
+	ClaimInvestigation(context.Context, Claim) (uuid.UUID, Investigation, bool, error)
+	Heartbeat(context.Context, uuid.UUID, uuid.UUID, Claim) (bool, error)
 	RecoverStale(context.Context, string, int) (int, error)
-	Investigation(context.Context, tenancy.Organization, uuid.UUID) (Investigation, error)
-	DrainConversation(context.Context, tenancy.Organization, uuid.UUID, time.Duration, int) (bool, error)
+	Investigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
+	DrainConversation(context.Context, uuid.UUID, uuid.UUID, time.Duration, int) (bool, error)
 	DrainQueuedConversation(context.Context, time.Duration, int) (bool, error)
 }
 
@@ -93,7 +91,7 @@ func (r *Runner) workerLoop(ctx context.Context) {
 }
 
 func (r *Runner) runClaimed(
-	ctx context.Context, organization tenancy.Organization, opened Investigation,
+	ctx context.Context, organization uuid.UUID, opened Investigation,
 ) {
 	r.Telemetry.claimed(opened.CreatedAt)
 	runCtx, stop := context.WithTimeout(ctx, investigationTimeout)
@@ -126,7 +124,7 @@ func (r *Runner) runClaimed(
 
 func (r *Runner) watch(
 	ctx context.Context, stop context.CancelFunc, done <-chan struct{},
-	organization tenancy.Organization, id uuid.UUID, claim Claim,
+	organization uuid.UUID, id uuid.UUID, claim Claim,
 ) {
 	renew := time.NewTicker(heartbeatInterval)
 	cancelled := time.NewTicker(time.Second)
@@ -181,7 +179,7 @@ func (r *Runner) drainLoop(ctx context.Context) {
 }
 
 func (r *Runner) drain(
-	ctx context.Context, organization tenancy.Organization, finished Investigation,
+	ctx context.Context, organization uuid.UUID, finished Investigation,
 ) {
 	if finished.ConversationID == uuid.Nil {
 		return

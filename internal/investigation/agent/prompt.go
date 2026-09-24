@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
@@ -488,7 +486,7 @@ func concludeInstruction(reason string) string {
 // Optional history failure limits continuity without changing verified tool authority.
 func (r *Agent) conversationBrief(
 	ctx context.Context,
-	organization tenancy.Organization,
+	organization uuid.UUID,
 	opened investigation.Investigation,
 	_ *investigation.EventStream,
 ) *investigation.Brief {

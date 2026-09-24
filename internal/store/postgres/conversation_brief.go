@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/auth/tenancy"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -22,7 +20,7 @@ import (
 
 // ConversationBrief reads what a conversation contributes to its next turn.
 func (p *Database) ConversationBrief(
-	ctx context.Context, organization tenancy.Organization, id uuid.UUID, tail int,
+	ctx context.Context, organization uuid.UUID, id uuid.UUID, tail int,
 ) (investigation.Brief, error) {
 	if tail <= 0 || tail > investigation.BriefRecentMessages {
 		tail = investigation.BriefRecentMessages
@@ -77,7 +75,7 @@ func (p *Database) ConversationBrief(
 	return brief, nil
 }
 
-func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.Organization,
+func readRecentAnswers(ctx context.Context, pool querier, organization uuid.UUID,
 	id uuid.UUID, limit int,
 ) ([]investigation.BriefMessage, error) {
 	rows, err := pool.Query(ctx, `
@@ -85,7 +83,7 @@ func readRecentAnswers(ctx context.Context, pool querier, organization tenancy.O
 		  FROM investigation
 		 WHERE org_id = $1 AND conversation_id = $2 AND status = 2
 		 ORDER BY turn DESC
-		 LIMIT $3`, organization.String(), id, limit)
+		 LIMIT $3`, organization, id, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading recent answers: %w", err)
 	}
@@ -125,7 +123,7 @@ const conversationRolePerson = 1
 // one established nothing at all — carrying its findings would be carrying findings that do
 // not exist.
 func readPriorTurns(
-	ctx context.Context, pool querier, organization tenancy.Organization, id uuid.UUID,
+	ctx context.Context, pool querier, organization uuid.UUID, id uuid.UUID,
 	brief *investigation.Brief,
 ) error {
 	// This conversation's own concluded turns, and — when it is about an incident — the
@@ -149,7 +147,7 @@ func readPriorTurns(
 		                                    WHERE org_id          = $1
 		                                      AND conversation_id = $2)))
 		 ORDER BY turn.conversation_id = $2 DESC, turn.turn DESC, turn.created_at DESC
-		 LIMIT $3`, organization.String(), id, investigation.BriefMaxFindings)
+		 LIMIT $3`, organization, id, investigation.BriefMaxFindings)
 	if err != nil {
 		return fmt.Errorf("reading a conversation's prior findings: %w", err)
 	}
