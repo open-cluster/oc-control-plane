@@ -9,9 +9,7 @@ const (
 	// Sessions and identity.
 	ActionSignInCompleted   Action = "session.sign-in.completed"
 	ActionSignedOut         Action = "session.signed-out"
-	ActionSessionRevoked    Action = "session.revoked"
 	ActionUserProvisioned   Action = "user.provisioned"
-	ActionMembershipGranted Action = "membership.granted"
 	ActionMembershipChanged Action = "membership.changed"
 	ActionMembershipRevoked Action = "membership.revoked"
 	ActionPolicyChanged     Action = "organization.policy.changed"

@@ -90,8 +90,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	switch {
 	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
-	case errors.Is(err, storage.ErrUserUnknown):
-		writeJSON(writer, http.StatusNotFound, errorView{Error: "user not found"})
 	case errors.Is(err, storage.ErrLocalCredentialUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "local account not found"})
 	case errors.Is(err, storage.ErrLocalAccountExists):

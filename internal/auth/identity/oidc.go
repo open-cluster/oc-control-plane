@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -152,29 +151,12 @@ func randomToken() (string, error) {
 var ErrTokenRefused = errors.New("the identity token was refused")
 
 type claims struct {
-	Issuer        string  `json:"iss"`
-	Subject       string  `json:"sub"`
-	Nonce         string  `json:"nonce"`
-	Email         string  `json:"email"`
-	EmailVerified anyBool `json:"email_verified"`
-	Name          string  `json:"name"`
-	PreferredName string  `json:"preferred_username"`
-}
-
-type anyBool bool
-
-func (b *anyBool) UnmarshalJSON(data []byte) error {
-	var value bool
-	if err := json.Unmarshal(data, &value); err == nil {
-		*b = anyBool(value)
-		return nil
-	}
-	var text string
-	if err := json.Unmarshal(data, &text); err != nil {
-		return err
-	}
-	*b = anyBool(strings.EqualFold(text, "true"))
-	return nil
+	Issuer        string `json:"iss"`
+	Subject       string `json:"sub"`
+	Nonce         string `json:"nonce"`
+	Email         string `json:"email"`
+	Name          string `json:"name"`
+	PreferredName string `json:"preferred_username"`
 }
 
 func (c claims) displayName() string {
@@ -244,11 +226,8 @@ func (h Handlers) completeDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Re
 		return
 	}
 	user, membership, err := h.Database.OIDCIdentity(ctx, storage.Identity{
-		Issuer:        asserted.Issuer,
-		Subject:       asserted.Subject,
-		Email:         asserted.Email,
-		EmailVerified: bool(asserted.EmailVerified),
-		DisplayName:   asserted.displayName()})
+		Issuer: asserted.Issuer, Subject: asserted.Subject,
+		Email: asserted.Email, DisplayName: asserted.displayName()})
 	if err != nil {
 		if errors.Is(err, storage.ErrLocalCredentialUnknown) || errors.Is(err, storage.ErrUserDisabled) {
 			writeJSON(w, http.StatusForbidden, errorView{Error: "this sign-in cannot be completed"})

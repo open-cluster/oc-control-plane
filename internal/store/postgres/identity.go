@@ -15,8 +15,6 @@ import (
 
 // Refusals the identity tables can produce.
 var (
-	// ErrUserUnknown reports a user this database does not have.
-	ErrUserUnknown = errors.New("user unknown")
 	// ErrUserDisabled reports a user who exists and may sign in to nothing.
 	ErrUserDisabled = errors.New("user disabled")
 	// ErrMembershipUnknown reports a membership this organization does not have.
@@ -43,11 +41,10 @@ func (u User) Disabled() bool { return !u.DisabledAt.IsZero() }
 
 // Identity is what an identity provider asserted about a person at sign-in.
 type Identity struct {
-	Issuer        string
-	Subject       string
-	Email         string
-	EmailVerified bool
-	DisplayName   string
+	Issuer      string
+	Subject     string
+	Email       string
+	DisplayName string
 }
 
 // Member is one person's membership in one organization, with enough of the person to render a
@@ -73,17 +70,6 @@ func orEmptyText(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-// MembershipOf reads the current Membership for one User.
-func (p *Database) MembershipOf(
-	ctx context.Context, organization uuid.UUID, user uuid.UUID,
-) (authz.Membership, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return authz.Membership{}, err
-	}
-	return membershipOf(ctx, pool, user)
 }
 
 // querier is a pool or a transaction. Reads that run both standalone and inside a mutation's
@@ -177,67 +163,6 @@ func (p *Database) ListMembers(
 		return MemberList{}, fmt.Errorf("reading members: %w", err)
 	}
 	return MemberList{Members: members, Next: next}, nil
-}
-
-// SetMembership grants or changes a person's role in an organization.
-//
-// It refuses the change that would leave the Organization with no Admin. That check and the
-// write share one transaction, so two administrators demoting the last two Admins at once cannot
-// both pass it.
-func (p *Database) SetMembership(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	user uuid.UUID, role authz.Role,
-) (Member, error) {
-	return auditedWithAction(ctx, p, principal, organization,
-		func(ctx context.Context, transaction pgx.Tx) (
-			Member, audit.Action, audit.Target, audit.Detail, error,
-		) {
-			var held string
-			err := transaction.QueryRow(ctx, `
-				SELECT role FROM organization_membership
-				 WHERE org_id = $1 AND user_id = $2 FOR UPDATE`,
-				organization, user).Scan(&held)
-			previous := held
-			if errors.Is(err, pgx.ErrNoRows) {
-				previous = ""
-			}
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return Member{}, "", audit.Target{}, nil,
-					fmt.Errorf("reading a membership: %w", err)
-			}
-			if previous == string(authz.Admin) && role != authz.Admin {
-				if err := refuseIfLastAdmin(ctx, transaction, organization, user); err != nil {
-					return Member{}, "", audit.Target{}, nil, err
-				}
-			}
-
-			var member Member
-			if err := transaction.QueryRow(ctx, `
-				INSERT INTO organization_membership (org_id, user_id, role)
-				VALUES ($1, $2, $3)
-				ON CONFLICT (org_id, user_id) DO UPDATE
-				    SET role = EXCLUDED.role
-				RETURNING user_id, role, created_at`,
-				organization, user, string(role)).Scan(&member.UserID,
-				&member.Role, &member.CreatedAt); err != nil {
-				if isForeignKeyViolation(err) {
-					return Member{}, "", audit.Target{}, nil, ErrUserUnknown
-				}
-				return Member{}, "", audit.Target{}, nil,
-					fmt.Errorf("writing a membership: %w", err)
-			}
-
-			action := audit.ActionMembershipChanged
-			detail := audit.Detail{"beforeRole": previous, "afterRole": string(role)}
-			if previous == "" {
-				action = audit.ActionMembershipGranted
-				detail = audit.Detail{"role": string(role)}
-			}
-			return member, action,
-				audit.Target{Kind: audit.TargetUser, ID: user.String()},
-				detail,
-				nil
-		})
 }
 
 // UpdateMembership changes the supported Role in one audited transaction.

@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
@@ -52,32 +49,6 @@ func (p *Database) RedeemDeploymentSignIn(ctx context.Context, state string) (De
 	}
 	flow.CodeVerifier, flow.Nonce = orEmptyText(verifier), orEmptyText(nonce)
 	return flow, nil
-}
-
-func (p *Database) CreateOIDCMember(ctx context.Context, principal authz.Principal, organization uuid.UUID, identity Identity, role authz.Role) (Member, error) {
-	return audited(ctx, p, principal, organization, audit.ActionUserProvisioned,
-		func(ctx context.Context, tx pgx.Tx) (Member, audit.Target, audit.Detail, error) {
-			var userID uuid.UUID
-			err := tx.QueryRow(ctx, `INSERT INTO app_user
-				(issuer,subject,email,display_name)
-				VALUES ($1,$2,$3,$4)
-				ON CONFLICT (issuer,subject) DO UPDATE SET email=EXCLUDED.email,
-					display_name=EXCLUDED.display_name
-				RETURNING user_id`, identity.Issuer, identity.Subject, identity.Email, identity.DisplayName).Scan(&userID)
-			if err != nil {
-				return Member{}, audit.Target{}, nil, fmt.Errorf("creating an OIDC member: %w", err)
-			}
-			var member Member
-			err = tx.QueryRow(ctx, `INSERT INTO organization_membership
-				(org_id,user_id,role)
-				VALUES ($1,$2,$3) RETURNING user_id,role,created_at`,
-				organization, userID, string(role)).Scan(&member.UserID, &member.Role, &member.CreatedAt)
-			if err != nil {
-				return Member{}, audit.Target{}, nil, fmt.Errorf("granting an OIDC membership: %w", err)
-			}
-			member.Email, member.DisplayName = identity.Email, identity.DisplayName
-			return member, audit.Target{Kind: audit.TargetUser, ID: userID.String()}, audit.Detail{"role": string(role)}, nil
-		})
 }
 
 func (p *Database) OIDCIdentity(ctx context.Context, identity Identity) (User, authz.Membership, error) {
