@@ -19,34 +19,22 @@ const (
 	flowLifetime  = 10 * time.Minute
 )
 
-// scopes are what every authorization request asks for. Nothing beyond identity: this product
-// reads a person's name and address to attribute their actions, and asking for more would be
-// asking a customer's security team to approve access it does not use.
 var scopes = []string{"openid", "email", "profile"}
 
-// Bootstrap authorizes one-time deployment initialization.
 type Bootstrap struct{ Digest []byte }
 
 func (b Bootstrap) Configured() bool { return len(b.Digest) > 0 }
 
-// Handlers is this capability's dependencies.
 type Handlers struct {
-	Database *storage.Database
-	Logger   *slog.Logger
-	// OIDC speaks to the provider the deployment configured. It holds the caches, so it is one
-	// value for the process rather than one per request.
+	Database         *storage.Database
+	Logger           *slog.Logger
 	OIDC             *OIDC
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
-	// PublicURL is where this surface is reachable from a browser. It is what the redirect URI
-	// registered with the identity provider is built from, and it is configuration rather than
-	// a value read from the Host header — a caller-controlled host in a redirect URI is how an
-	// authorization code is delivered somewhere else.
-	PublicURL string
-	Bootstrap Bootstrap
-	// SessionLifetime is deployment-owned. Organization policy may describe retention, but it
-	// cannot silently lengthen browser credentials for one tenant.
+	// PublicURL is where this surface is reachable from a browser.
+	PublicURL       string
+	Bootstrap       Bootstrap
 	SessionLifetime time.Duration
 }
 

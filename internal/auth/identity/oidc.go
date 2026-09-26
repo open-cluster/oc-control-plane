@@ -30,12 +30,21 @@ var ErrProviderUnreachable = errors.New("the identity provider could not be reac
 type OIDC struct{ Client *http.Client }
 
 func NewOIDC() *OIDC {
-	return &OIDC{Client: &http.Client{Timeout: exchangeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &OIDC{Client: &http.Client{
+		Timeout:       exchangeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
-type AuthorizationRequest struct{ URL, State, CodeVerifier, Nonce string }
+type AuthorizationRequest struct {
+	URL,
+	State,
+	CodeVerifier,
+	Nonce string
+}
 
-func (o *OIDC) Authorize(ctx context.Context, issuer, clientID, redirectURI string, scopes []string) (AuthorizationRequest, error) {
+func (o *OIDC) Authorize(ctx context.Context,
+	issuer, clientID, redirectURI string,
+	scopes []string) (AuthorizationRequest, error) {
 	provider, err := o.provider(ctx, issuer)
 	if err != nil {
 		return AuthorizationRequest{}, err
@@ -49,18 +58,35 @@ func (o *OIDC) Authorize(ctx context.Context, issuer, clientID, redirectURI stri
 		return AuthorizationRequest{}, err
 	}
 	verifier := oauth2.GenerateVerifier()
-	configuration := oauth2.Config{ClientID: clientID, Endpoint: provider.Endpoint(), RedirectURL: redirectURI, Scopes: scopes}
-	return AuthorizationRequest{URL: configuration.AuthCodeURL(state, coreoidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), State: state, CodeVerifier: verifier, Nonce: nonce}, nil
+	configuration := oauth2.Config{
+		ClientID:    clientID,
+		Endpoint:    provider.Endpoint(),
+		RedirectURL: redirectURI,
+		Scopes:      scopes,
+	}
+	return AuthorizationRequest{
+		URL: configuration.AuthCodeURL(state, coreoidc.Nonce(nonce),
+			oauth2.S256ChallengeOption(verifier)),
+		State:        state,
+		CodeVerifier: verifier,
+		Nonce:        nonce}, nil
 }
 
-func (o *OIDC) Exchange(ctx context.Context, issuer, clientID, clientSecret, redirectURI, code, verifier, nonce string) (claims, error) {
+func (o *OIDC) Exchange(ctx context.Context,
+	issuer, clientID, clientSecret, redirectURI, code, verifier, nonce string) (claims, error) {
 	provider, err := o.provider(ctx, issuer)
 	if err != nil {
 		return claims{}, err
 	}
 	exchangeCtx, cancel := context.WithTimeout(o.clientContext(ctx), exchangeTimeout)
 	defer cancel()
-	configuration := oauth2.Config{ClientID: clientID, ClientSecret: clientSecret, Endpoint: provider.Endpoint(), RedirectURL: redirectURI, Scopes: scopes}
+	configuration := oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Endpoint:     provider.Endpoint(),
+		RedirectURL:  redirectURI,
+		Scopes:       scopes,
+	}
 	token, err := configuration.Exchange(exchangeCtx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return claims{}, fmt.Errorf("%w: the provider refused the authorization code", ErrTokenRefused)

@@ -14,30 +14,24 @@ const (
 	IntegrationDelete       Permission = "integration.delete"
 	IntegrationVerify       Permission = "integration.verify"
 	IntegrationSecretRotate Permission = "integration.webhook-secret.rotate"
-
-	RelayRead           Permission = "relay.read"
-	RelayConflictClear  Permission = "relay.conflict.clear"
-	RelayBootstrapIssue Permission = "relay.bootstrap-token.issue"
-
-	IncidentRead    Permission = "incident.read"
-	IncidentMerge   Permission = "incident.merge"
-	PostmortemRead  Permission = "postmortem.read"
-	PostmortemWrite Permission = "postmortem.write"
-
-	InvestigationRead     Permission = "investigation.read"
-	InvestigationOpen     Permission = "investigation.open"
-	InvestigationCancel   Permission = "investigation.cancel"
-	WebhookDeliveryReplay Permission = "webhook-delivery.replay"
-
-	ConversationRead  Permission = "conversation.read"
-	ConversationWrite Permission = "conversation.write"
-
-	IdentityRead      Permission = "identity.read"
-	IdentityConfigure Permission = "identity.configure"
-	MemberRead        Permission = "member.read"
-	MemberManage      Permission = "member.manage"
-
-	AuditRead Permission = "audit.read"
+	RelayRead               Permission = "relay.read"
+	RelayConflictClear      Permission = "relay.conflict.clear"
+	RelayBootstrapIssue     Permission = "relay.bootstrap-token.issue"
+	IncidentRead            Permission = "incident.read"
+	IncidentMerge           Permission = "incident.merge"
+	PostmortemRead          Permission = "postmortem.read"
+	PostmortemWrite         Permission = "postmortem.write"
+	InvestigationRead       Permission = "investigation.read"
+	InvestigationOpen       Permission = "investigation.open"
+	InvestigationCancel     Permission = "investigation.cancel"
+	WebhookDeliveryReplay   Permission = "webhook-delivery.replay"
+	ConversationRead        Permission = "conversation.read"
+	ConversationWrite       Permission = "conversation.write"
+	IdentityRead            Permission = "identity.read"
+	IdentityConfigure       Permission = "identity.configure"
+	MemberRead              Permission = "member.read"
+	MemberManage            Permission = "member.manage"
+	AuditRead               Permission = "audit.read"
 )
 
 // allPermissions is every permission this build declares, in a stable order.

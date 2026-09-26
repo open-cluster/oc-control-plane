@@ -41,15 +41,10 @@ type Handlers struct {
 	// MaxWaitingTurns bounds one organization's unclaimed turns, so overload is a plain
 	// refusal rather than a queue that grows without bound.
 	MaxWaitingTurns int
-	// PublicURL is where this surface is reachable from a browser and where a browser is sent
-	// afterward. It is configuration because
-	// a provider's redirect URI must be absolute and must not be assembled from a
-	// caller-controlled Host header. Empty PublicURL means no provider installation flow
-	// can be started, and starting one says so.
+	// PublicURL is where this surface is reachable from a browser and where a browser is sent afterward.
 	PublicURL string
 }
 
-// Router returns the API surface, or the reason it cannot be built.
 func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
 		Resolve: h.Identity.Resolve,
