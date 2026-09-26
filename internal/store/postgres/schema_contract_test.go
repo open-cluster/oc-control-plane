@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -80,7 +81,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 9 FROM schema_migration`,
+		`SELECT count(*) = 10 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -120,8 +121,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 			ARRAY['user_id','password_hash','changed_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='local_password'`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
-			ARRAY['session_id','credential_digest','user_id','issued_at','expires_at',
-			      'last_seen_at','revoked_at','client_user_agent','remote_addr']
+			ARRAY['session_id','credential_digest','user_id','expires_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='session'`,
 		`SELECT column_default = 'gen_random_uuid()' FROM information_schema.columns
 			WHERE table_schema='public' AND table_name='app_user' AND column_name='user_id'`,
@@ -206,7 +206,7 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 		INSERT INTO session VALUES
 			('20000000-0000-0000-0000-000000000001',decode(repeat('01',32),'hex'),
 			 '10000000-0000-0000-0000-000000000001',NULL,'2026-01-01T00:00:00Z',
-			 '2026-02-01T00:00:00Z','2026-01-02T00:00:00Z',NULL,'192.0.2.10:443');`)
+			 now() + interval '1 day','2026-01-02T00:00:00Z',NULL,'192.0.2.10:443');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,13 +216,13 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
+		"0010_minimal_browser_sessions",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
-	var email, displayName, passwordHash, remoteAddr string
+	var email, displayName, passwordHash, sessionID, digest string
 	var changedAt, createdAt time.Time
-	var clientUserAgent *string
 	if err = connection.QueryRow(ctx, `SELECT email,display_name,created_at FROM app_user`).
 		Scan(&email, &displayName, &createdAt); err != nil {
 		t.Fatal(err)
@@ -231,17 +231,125 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 		Scan(&passwordHash, &changedAt); err != nil {
 		t.Fatal(err)
 	}
-	if err = connection.QueryRow(ctx, `SELECT client_user_agent,remote_addr FROM session`).
-		Scan(&clientUserAgent, &remoteAddr); err != nil {
+	if err = connection.QueryRow(ctx, `SELECT session_id::text,encode(credential_digest,'hex') FROM session`).
+		Scan(&sessionID, &digest); err != nil {
 		t.Fatal(err)
 	}
 	if email != "user@example.test" || displayName != "User" ||
 		!createdAt.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) ||
 		passwordHash != strings.Repeat("x", 32) ||
 		!changedAt.Equal(time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)) ||
-		clientUserAgent != nil || remoteAddr != "192.0.2.10:443" {
-		t.Fatalf("identity rows not preserved: email=%q name=%q created=%s password=%q changed=%s agent=%v remote=%q",
-			email, displayName, createdAt, passwordHash, changedAt, clientUserAgent, remoteAddr)
+		sessionID != "20000000-0000-0000-0000-000000000001" || digest != strings.Repeat("01", 32) {
+		t.Fatalf("identity rows not preserved: email=%q name=%q created=%s password=%q changed=%s session=%s/%s",
+			email, displayName, createdAt, passwordHash, changedAt, sessionID, digest)
+	}
+}
+
+func TestMinimalSessionMigrationPreservesOnlyLiveCredentials(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+
+	_, err = connection.Exec(ctx, `
+		CREATE TABLE schema_migration (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES
+			('0001_schema'), ('0002_simplify_integrations'), ('0003_simplify_deliveries_and_sessions'),
+			('0004_simplify_membership_lifecycle'), ('0005_remove_membership_identity'),
+			('0006_simplify_identity_rows'), ('0007_readable_integration_provider'),
+			('0008_contract_provider_installation'), ('0009_single_organization_identity');
+		CREATE TABLE app_user (
+			user_id uuid PRIMARY KEY, issuer text NOT NULL, subject text NOT NULL,
+			email text NOT NULL, display_name text NOT NULL, disabled_at timestamptz
+		);
+		CREATE TABLE organization (org_id uuid PRIMARY KEY, display_name text NOT NULL);
+		CREATE TABLE organization_membership (
+			org_id uuid NOT NULL REFERENCES organization(org_id),
+			user_id uuid NOT NULL REFERENCES app_user(user_id), role text NOT NULL,
+			PRIMARY KEY (org_id, user_id)
+		);
+		INSERT INTO app_user VALUES
+			('20000000-0000-0000-0000-000000000001', 'issuer', 'subject', 'user@example.test', 'User', NULL);
+		INSERT INTO organization VALUES ('30000000-0000-0000-0000-000000000001', 'Operations');
+		INSERT INTO organization_membership VALUES
+			('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'admin');
+		CREATE TABLE session (
+			session_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+			credential_digest bytea NOT NULL UNIQUE,
+			user_id uuid NOT NULL REFERENCES app_user(user_id),
+			issued_at timestamptz NOT NULL DEFAULT now(),
+			expires_at timestamptz NOT NULL,
+			last_seen_at timestamptz NOT NULL DEFAULT now(),
+			revoked_at timestamptz,
+			client_user_agent text,
+			remote_addr text,
+			CONSTRAINT session_credential_digest_check CHECK (length(credential_digest) = 32),
+			CONSTRAINT session_expires_after_it_was_issued CHECK (expires_at > issued_at)
+		);
+		CREATE INDEX session_expiry_idx ON session (expires_at);
+		CREATE INDEX session_user_idx ON session (user_id, issued_at DESC);
+		INSERT INTO session (session_id, credential_digest, user_id, issued_at, expires_at, revoked_at)
+		VALUES
+			('10000000-0000-0000-0000-000000000001', decode(repeat('11', 32), 'hex'),
+			 '20000000-0000-0000-0000-000000000001', now() - interval '1 hour', '2099-01-01T00:00:00Z', NULL),
+			('10000000-0000-0000-0000-000000000002', decode(repeat('22', 32), 'hex'),
+			 '20000000-0000-0000-0000-000000000001', now() - interval '1 hour', now() + interval '1 hour', now()),
+			('10000000-0000-0000-0000-000000000003', decode(repeat('33', 32), 'hex'),
+			 '20000000-0000-0000-0000-000000000001', now() - interval '2 hours', now() - interval '1 hour', NULL);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{"0010_minimal_browser_sessions"}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+
+	var sessionID, digest, userID string
+	var expiresAt time.Time
+	if err = connection.QueryRow(ctx, `SELECT session_id::text, encode(credential_digest, 'hex'), user_id::text, expires_at FROM session`).
+		Scan(&sessionID, &digest, &userID, &expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "10000000-0000-0000-0000-000000000001" || digest != strings.Repeat("11", 32) ||
+		userID != "20000000-0000-0000-0000-000000000001" ||
+		!expiresAt.Equal(time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("preserved session = %s/%s/%s/%s", sessionID, digest, userID, expiresAt)
+	}
+	signedIn, err := database.SessionByToken(ctx, bytes.Repeat([]byte{0x11}, 32))
+	if err != nil || signedIn.Session.ID.String() != sessionID || signedIn.User.ID.String() != userID ||
+		!signedIn.Session.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("migrated credential did not resolve: %+v, error = %v", signedIn, err)
+	}
+	var contracted bool
+	if err = connection.QueryRow(ctx, `SELECT
+		array_agg(column_name::text ORDER BY ordinal_position) = ARRAY['session_id','credential_digest','user_id','expires_at']
+		FROM information_schema.columns WHERE table_schema='public' AND table_name='session'`).Scan(&contracted); err != nil || !contracted {
+		t.Fatalf("session schema contracted = %t, error = %v", contracted, err)
+	}
+	var userIndex string
+	if err = connection.QueryRow(ctx, `SELECT indexdef FROM pg_indexes
+		WHERE schemaname='public' AND tablename='session' AND indexname='session_user_idx'`).Scan(&userIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(userIndex, "USING btree (user_id)") {
+		t.Fatalf("session User index = %q", userIndex)
+	}
+	var integrity bool
+	if err = connection.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='session'
+			AND indexname='session_expiry_idx' AND indexdef LIKE '%USING btree (expires_at)')
+		AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='session'::regclass
+			AND contype='u' AND pg_get_constraintdef(oid)='UNIQUE (credential_digest)')
+		AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='session'::regclass
+			AND contype='f' AND pg_get_constraintdef(oid)='FOREIGN KEY (user_id) REFERENCES app_user(user_id)')
+		AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='session'::regclass
+			AND contype='c' AND conname='session_credential_digest_check')`).Scan(&integrity); err != nil || !integrity {
+		t.Fatalf("session integrity contract = %t, error = %v", integrity, err)
 	}
 }
 
@@ -269,8 +377,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 9 {
-		t.Fatalf("concurrent startup applied %d migrations, want nine", applied)
+	if applied != 10 {
+		t.Fatalf("concurrent startup applied %d migrations, want ten", applied)
 	}
 }
 
@@ -327,7 +435,7 @@ func TestReadableProviderMigrationMapsEveryCurrentProvider(t *testing.T) {
 	applied, err := database.Migrate(ctx)
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
-		"0009_single_organization_identity",
+		"0009_single_organization_identity", "0010_minimal_browser_sessions",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -452,6 +560,7 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
+		"0010_minimal_browser_sessions",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -562,7 +671,10 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 				REFERENCES webhook_delivery(org_id, delivery_id)
 		);
 		CREATE TABLE session (
-			session_id uuid PRIMARY KEY, revoked_by text NOT NULL DEFAULT '',
+			session_id uuid PRIMARY KEY, credential_digest bytea NOT NULL UNIQUE, user_id uuid NOT NULL,
+			issued_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+			last_seen_at timestamptz NOT NULL, revoked_at timestamptz,
+			revoked_by text NOT NULL DEFAULT '',
 			user_agent text NOT NULL DEFAULT '', address text NOT NULL DEFAULT ''
 		);
 		INSERT INTO webhook_delivery
@@ -579,8 +691,11 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		INSERT INTO webhook_job(job_id, org_id, delivery_id)
 		VALUES ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001',
 			'30000000-0000-0000-0000-000000000001');
-		INSERT INTO session(session_id, revoked_by, user_agent, address)
-		VALUES ('50000000-0000-0000-0000-000000000001', 'actor', 'browser', '127.0.0.1:8080');`)
+		INSERT INTO session(session_id, credential_digest, user_id, issued_at, expires_at, last_seen_at,
+			revoked_by, user_agent, address)
+		VALUES ('50000000-0000-0000-0000-000000000001', decode(repeat('55',32),'hex'),
+			'60000000-0000-0000-0000-000000000001', now(), now() + interval '1 day', now(),
+			'actor', 'browser', '127.0.0.1:8080');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,7 +706,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		"0003_simplify_deliveries_and_sessions", "0004_simplify_membership_lifecycle",
 		"0005_remove_membership_identity", "0006_simplify_identity_rows",
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
-		"0009_single_organization_identity",
+		"0009_single_organization_identity", "0010_minimal_browser_sessions",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -619,17 +734,14 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 			AND column_name IN ('outcome','reason','body_digest','alert_event_count'))
 		AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='webhook_delivery'
 			AND column_name='content_digest' AND is_nullable='NO')
-		AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session'
-			AND column_name IN ('revoked_by','user_agent','address'))
-		AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session'
-			AND column_name IN ('client_user_agent','remote_addr') GROUP BY table_name HAVING count(*)=2)`).Scan(&contracted); err != nil || !contracted {
+		AND (SELECT array_agg(column_name::text ORDER BY ordinal_position)
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='session')
+			= ARRAY['session_id','credential_digest','user_id','expires_at']`).Scan(&contracted); err != nil || !contracted {
 		t.Fatalf("cleanup schema contract = %t, error = %v", contracted, err)
 	}
-	var clientUserAgent *string
-	var remoteAddr string
-	if err = connection.QueryRow(ctx, `SELECT client_user_agent,remote_addr FROM session`).
-		Scan(&clientUserAgent, &remoteAddr); err != nil || clientUserAgent != nil || remoteAddr != "127.0.0.1:8080" {
-		t.Fatalf("session metadata = %v/%q, error = %v", clientUserAgent, remoteAddr, err)
+	var preservedSession string
+	if err = connection.QueryRow(ctx, `SELECT session_id::text FROM session`).Scan(&preservedSession); err != nil || preservedSession != "50000000-0000-0000-0000-000000000001" {
+		t.Fatalf("preserved session = %q, error = %v", preservedSession, err)
 	}
 	if _, err = connection.Exec(ctx, `UPDATE webhook_delivery SET content_digest = decode('01','hex')`); err == nil {
 		t.Fatal("migrated schema accepted a content digest that is not SHA-256 sized")
@@ -688,6 +800,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
+		"0010_minimal_browser_sessions",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

@@ -26,8 +26,7 @@ func TestSessionHousekeepingRunsWithoutAnOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(context.Background()) }()
-	if _, err := connection.Exec(ctx, `UPDATE session
-		SET issued_at = now() - interval '2 hours', expires_at = now() - interval '1 hour'`); err != nil {
+	if _, err := connection.Exec(ctx, `UPDATE session SET expires_at = now() - interval '1 hour'`); err != nil {
 		t.Fatal(err)
 	}
 	restarted := startIdentityPlane(t, func(cfg *config.Config) {

@@ -300,47 +300,6 @@ paths:
       summary: Remove member
       tags:
         - Members
-  /api/v1/sessions:
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: authenticated
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      responses:
-        '200':
-          $ref: '#/components/responses/SessionList'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: listSessions
-      summary: List the authenticated User's live sessions
-      tags:
-        - Sessions
-      parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
-  /api/v1/sessions/{session}:
-    parameters:
-      - $ref: '#/components/parameters/SessionID'
-    delete:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: authenticated
-      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
-      x-opencluster-idempotency: not-supported
-      responses:
-        '204':
-          description: The named session was revoked.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-      operationId: revokeSession
-      summary: Revoke the authenticated User's session
-      tags:
-        - Sessions
   /api/v1/policy:
     get:
       security:
@@ -1561,12 +1520,6 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/UUID'
-    SessionID:
-      name: session
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/UUID'
     IntegrationID:
       name: integration
       in: path
@@ -1684,12 +1637,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Member'
-    SessionList:
-      description: Live Organization sessions.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/LiveSessionList'
     Policy:
       description: Organization identity policy.
       content:
@@ -2216,48 +2163,6 @@ components:
         next:
           type: string
           maxLength: 512
-    LiveSession:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - userId
-        - issuedAt
-        - expiresAt
-        - lastSeenAt
-      properties:
-        id:
-          $ref: '#/components/schemas/UUID'
-        userId:
-          $ref: '#/components/schemas/UUID'
-        issuedAt:
-          $ref: '#/components/schemas/Timestamp'
-        expiresAt:
-          $ref: '#/components/schemas/Timestamp'
-        lastSeenAt:
-          $ref: '#/components/schemas/Timestamp'
-        clientUserAgent:
-          type: string
-          maxLength: 512
-        remoteAddr:
-          type: string
-          maxLength: 128
-    LiveSessionList:
-      type: object
-      additionalProperties: false
-      required:
-        - sessions
-        - next
-      properties:
-        sessions:
-          type: array
-          items:
-            $ref: '#/components/schemas/LiveSession'
-        next:
-          oneOf:
-            - type: string
-              maxLength: 512
-            - type: 'null'
     AuditEvent:
       type: object
       additionalProperties: false

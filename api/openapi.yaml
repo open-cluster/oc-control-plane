@@ -235,31 +235,6 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /api/v1/sessions:
-    get:
-      <<: *authenticated-read
-      operationId: listSessions
-      summary: List the authenticated User's live sessions
-      tags: [Sessions]
-      parameters:
-        - { $ref: "#/components/parameters/Cursor" }
-        - { $ref: "#/components/parameters/Limit" }
-      responses:
-        "200": { $ref: "#/components/responses/SessionList" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/sessions/{session}:
-    parameters:
-      - { $ref: "#/components/parameters/SessionID" }
-    delete:
-      <<: *authenticated-write
-      operationId: revokeSession
-      summary: Revoke the authenticated User's session
-      tags: [Sessions]
-      responses:
-        "204": { description: The named session was revoked. }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/policy:
     get:
       <<: *privileged-read
@@ -1012,7 +987,6 @@ components:
       required: true
       schema: { type: string, minLength: 32, maxLength: 4096 }
     UserID: { name: user, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
-    SessionID: { name: session, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationID: { name: integration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IntegrationType: { name: type, in: path, required: true, schema: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" } }
     RelayRegistrationID: { name: registration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
@@ -1062,7 +1036,6 @@ components:
     PermissionList: { description: Effective permissions in the authenticated User's Organization., content: { application/json: { schema: { $ref: "#/components/schemas/PermissionList" } } } }
     MemberList: { description: Organization members., content: { application/json: { schema: { $ref: "#/components/schemas/MemberList" } } } }
     Member: { description: Organization member., content: { application/json: { schema: { $ref: "#/components/schemas/Member" } } } }
-    SessionList: { description: Live Organization sessions., content: { application/json: { schema: { $ref: "#/components/schemas/LiveSessionList" } } } }
     Policy: { description: Organization identity policy., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
     AuditEventList: { description: Organization audit events., content: { application/json: { schema: { $ref: "#/components/schemas/AuditEventList" } } } }
     IntegrationTypeList: { description: Integration Types served by this build., content: { application/json: { schema: { $ref: "#/components/schemas/IntegrationTypeList" } } } }
@@ -1224,25 +1197,6 @@ components:
       properties:
         members: { type: array, items: { $ref: "#/components/schemas/Member" } }
         next: { type: string, maxLength: 512 }
-    LiveSession:
-      type: object
-      additionalProperties: false
-      required: [id, userId, issuedAt, expiresAt, lastSeenAt]
-      properties:
-        id: { $ref: "#/components/schemas/UUID" }
-        userId: { $ref: "#/components/schemas/UUID" }
-        issuedAt: { $ref: "#/components/schemas/Timestamp" }
-        expiresAt: { $ref: "#/components/schemas/Timestamp" }
-        lastSeenAt: { $ref: "#/components/schemas/Timestamp" }
-        clientUserAgent: { type: string, maxLength: 512 }
-        remoteAddr: { type: string, maxLength: 128 }
-    LiveSessionList:
-      type: object
-      additionalProperties: false
-      required: [sessions, next]
-      properties:
-        sessions: { type: array, items: { $ref: "#/components/schemas/LiveSession" } }
-        next: { oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
     AuditEvent:
       type: object
       additionalProperties: false

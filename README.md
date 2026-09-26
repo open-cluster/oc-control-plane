@@ -135,10 +135,10 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 
 - Customer data and Tool execution are Organization-scoped; authentication and User-owned sessions are deployment-wide.
 - Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
-- Background cleanup removes unusable sessions in bounded passes, including before any Organization exists.
+- Background cleanup removes expired sessions in bounded passes, including before any Organization exists.
 - Webhooks have bounded pre-authentication admission and separate authenticated Integration quotas; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
 - Authenticated API requests resolve the User's sole current Organization and Role before handlers run.
-- A User has at most one current Organization Membership; Organization Admins cannot replace an existing User's password or revoke their global sessions.
+- A User has at most one current Organization Membership; Organization Admins cannot replace an existing User's password or manage their global sessions.
 - Local Users change their own password after reauthentication. Deployment operators can recover an existing local User through stdin; see [credential recovery](docs/security/overview.mdx).
 - Connected content and prior history remain untrusted data. Current assigned Messages express requests within the verified tool scope.
 - The application supplies every security-eligible Tool; the model chooses relevance and sequence. Each call is validated and records an operator-visible purpose.

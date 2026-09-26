@@ -90,7 +90,7 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
 	_, _, err = h.Database.BootstrapLocalUser(
-		ctx, organizationName, email, displayName, encoded, issued, digest)
+		ctx, organizationName, email, displayName, encoded, issued, digest, request.RemoteAddr)
 	if errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		writeJSON(writer, http.StatusConflict,
 			errorView{Error: "a local administrator already exists"})

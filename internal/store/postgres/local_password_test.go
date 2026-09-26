@@ -19,9 +19,9 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	previous := "previous encoded password verifier"
-	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32))
+	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	issued.ID, issued.UserID = uuid.New(), user.ID
 	digest := make([]byte, 32)
 	digest[0] = 1
-	_, err = database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), audit.Detail{}, previous)
+	_, err = database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), "", audit.Detail{}, previous)
 	if !errors.Is(err, storage.ErrLocalCredentialUnknown) {
 		t.Fatalf("issuing with replaced verifier = %v", err)
 	}
@@ -59,10 +59,10 @@ func TestPasswordMutationsRollBackWhenAuditFails(t *testing.T) {
 			if _, err := database.Migrate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
+			issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 			digest := make([]byte, 32)
 			previous := "previous encoded password verifier"
-			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, digest)
+			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, digest, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,15 +120,15 @@ func TestRecoveryDoesNotConvertOIDCUsers(t *testing.T) {
 	}
 }
 
-func TestRecoveryTargetsExistingLocalUserAndRevokesSessions(t *testing.T) {
+func TestRecoveryTargetsExistingLocalUserAndDeletesSessions(t *testing.T) {
 	ctx := context.Background()
 	database := openDatabaseForTest(t, postgresDSN(t))
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	digest := make([]byte, 32)
-	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "previous encoded password verifier", issued, digest)
+	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "previous encoded password verifier", issued, digest, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestRecoveryTargetsExistingLocalUserAndRevokesSessions(t *testing.T) {
 	if err = database.RecoverLocalPassword(ctx, user.ID, "replacement encoded password verifier"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.SessionByToken(ctx, digest); !errors.Is(err, session.ErrRevoked) {
+	if _, err = database.SessionByToken(ctx, digest); !errors.Is(err, session.ErrUnknown) {
 		t.Fatalf("recovery retained session: %v", err)
 	}
 	if got, err := database.LocalPasswordHash(ctx, principal); err != nil || got != "replacement encoded password verifier" {

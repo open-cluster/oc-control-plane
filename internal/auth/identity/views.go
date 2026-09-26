@@ -5,7 +5,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -94,33 +93,6 @@ func memberViewOf(member storage.Member) memberView {
 		Role:        string(member.Role),
 		Disabled:    member.Disabled,
 		CreatedAt:   member.CreatedAt,
-	}
-}
-
-type liveSessionView struct {
-	ID              string    `json:"id"`
-	UserID          string    `json:"userId"`
-	IssuedAt        time.Time `json:"issuedAt"`
-	ExpiresAt       time.Time `json:"expiresAt"`
-	LastSeenAt      time.Time `json:"lastSeenAt"`
-	ClientUserAgent string    `json:"clientUserAgent,omitempty"`
-	RemoteAddr      string    `json:"remoteAddr,omitempty"`
-}
-
-type liveSessionListView struct {
-	Sessions []liveSessionView `json:"sessions"`
-	Next     *string           `json:"next"`
-}
-
-func liveSessionViewOf(live session.Session) liveSessionView {
-	return liveSessionView{
-		ID:              live.ID.String(),
-		UserID:          live.UserID.String(),
-		IssuedAt:        live.IssuedAt,
-		ExpiresAt:       live.ExpiresAt,
-		LastSeenAt:      live.LastSeenAt,
-		ClientUserAgent: live.ClientUserAgent,
-		RemoteAddr:      live.RemoteAddr,
 	}
 }
 

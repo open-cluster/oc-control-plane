@@ -103,11 +103,9 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	t.Parallel()
 
 	permitted := map[string]string{
-		"PUT /api/v1/auth/local/password":   "reauthenticates the User to change only their own local credential",
-		"GET /api/v1/sessions":              "lists only the authenticated User sessions",
-		"DELETE /api/v1/sessions/{session}": "revokes only the authenticated User sessions",
-		"GET /api/v1/session":               "its subject is the caller themselves",
-		"GET /api/v1/permissions":           "reading one's own effective Permissions requires no Permission",
+		"PUT /api/v1/auth/local/password": "reauthenticates the User to change only their own local credential",
+		"GET /api/v1/session":             "its subject is the caller themselves",
+		"GET /api/v1/permissions":         "reading one's own effective Permissions requires no Permission",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
 			"redirect URI, so the path can name no organization and there is no tenant in " +
 			"it to check a membership against. The tenant comes from the single-use flow " +
@@ -164,7 +162,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 	expected := []string{
 		"DELETE /api/v1/integrations/{integration}",
 		"DELETE /api/v1/members/{user}",
-		"DELETE /api/v1/sessions/{session}",
 		"GET /api/v1/audit-events",
 		"GET /api/v1/conversations",
 		"GET /api/v1/conversations/{conversation}",
@@ -188,7 +185,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/relays/{registration}/failures",
 		"GET /api/v1/relays/{registration}/integrations",
 		"GET /api/v1/session",
-		"GET /api/v1/sessions",
 		"GET /api/v1/webhook-deliveries",
 		"GET /api/v1/webhook-deliveries/{delivery}",
 		"PATCH /api/v1/incidents/{incident}/postmortem",

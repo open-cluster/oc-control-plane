@@ -24,9 +24,9 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			if _, err := database.Migrate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
+			issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 			previous := "previous encoded password verifier"
-			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32))
+			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,7 +56,7 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			signedIn := make(chan error, 1)
 			recovered := make(chan error, 1)
 			issue := func() {
-				_, err := database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), audit.Detail{}, previous)
+				_, err := database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), "", audit.Detail{}, previous)
 				signedIn <- err
 			}
 			recoverUser := func() {
@@ -84,7 +84,7 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 				t.Fatalf("overlapping sign-in = %v", err)
 			}
 			_, err = database.SessionByToken(ctx, digest)
-			if !errors.Is(err, session.ErrRevoked) && !errors.Is(err, session.ErrUnknown) {
+			if !errors.Is(err, session.ErrUnknown) {
 				t.Fatalf("old verifier left a live session: %v", err)
 			}
 		})
