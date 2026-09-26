@@ -23,12 +23,11 @@ func TestLocalBootstrapRollsBackUserWhenTheSessionCannotBeIssued(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	issued := session.Session{
-		ID:       uuid.New(),
-		IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+		ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour),
 	}
 
 	_, _, err := database.BootstrapLocalUser(ctx,
-		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, nil)
+		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, nil, "")
 	if err == nil {
 		t.Fatal("bootstrap with an invalid session digest succeeded")
 	}
@@ -47,7 +46,7 @@ func TestLocalBootstrapRollsBackUserWhenTheSessionCannotBeIssued(t *testing.T) {
 	issued.ID = uuid.New()
 	user, stored, err := database.BootstrapLocalUser(ctx,
 		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued,
-		make([]byte, 32))
+		make([]byte, 32), "")
 	if err != nil {
 		t.Fatalf("bootstrap after rolled-back session issuance: %v", err)
 	}
@@ -65,8 +64,8 @@ func TestMembershipIsUniqueByUserAndRemovalKeepsTheUser(t *testing.T) {
 	}
 	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin",
 		"encoded password with sufficient length", session.Session{
-			IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
-		}, make([]byte, 32))
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		}, make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +99,8 @@ func TestAUserWithLocalCredentialsCannotBeDeletedByCascade(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
-	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, make([]byte, 32))
+	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +116,7 @@ func TestAUserWithLocalCredentialsCannotBeDeletedByCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	issued.ID = uuid.New()
-	_, _, err = database.BootstrapLocalUser(ctx, "Another", "another@example.test", "Another", "encoded password with sufficient length", issued, make([]byte, 32))
+	_, _, err = database.BootstrapLocalUser(ctx, "Another", "another@example.test", "Another", "encoded password with sufficient length", issued, make([]byte, 32), "")
 	if !errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		t.Fatalf("bootstrap reopened for a disabled User: %v", err)
 	}
@@ -137,11 +136,11 @@ func TestConcurrentLocalBootstrapCreatesOneUser(t *testing.T) {
 		go func() {
 			<-start
 			issued := session.Session{
-				ID: uuid.New(), IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+				ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour),
 			}
 			_, _, err := database.BootstrapLocalUser(ctx,
 				"Operations", fmt.Sprintf("admin-%d@example.test", index), "Admin",
-				"encoded password with sufficient length", issued, make([]byte, 32))
+				"encoded password with sufficient length", issued, make([]byte, 32), "")
 			results <- err
 		}()
 	}

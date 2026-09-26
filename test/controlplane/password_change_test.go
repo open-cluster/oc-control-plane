@@ -13,7 +13,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-func TestLocalUserChangesPasswordAndRevokesAllSessions(t *testing.T) {
+func TestLocalUserChangesPasswordAndDeletesAllSessions(t *testing.T) {
 	plane := startIdentityPlane(t)
 	base := "http://" + plane.api + "/api/v1"
 	oldPassword := "initial administrator password"
@@ -66,12 +66,12 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	cookie := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
 	response := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
 	var who struct {
-		Principal struct {
+		User struct {
 			ID string `json:"id"`
-		} `json:"principal"`
+		} `json:"user"`
 	}
 	decodeAnswer(t, response, &who)
-	if who.Principal.ID == "" {
+	if who.User.ID == "" {
 		t.Fatalf("missing User ID: %s", response.body)
 	}
 	plane.shutdown()
@@ -85,7 +85,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, "go", "run", "../../cmd/controlplane", "recover-local-password", "--user", who.Principal.ID)
+	command := exec.CommandContext(ctx, "go", "run", "../../cmd/controlplane", "recover-local-password", "--user", who.User.ID)
 	command.Env = append(os.Environ(),
 		config.EnvDatabaseDSN+"=", config.EnvBootstrapTokenFile+"=",
 		config.EnvDatabaseDSNFile+"="+writeSecret("dsn", plane.dsn),

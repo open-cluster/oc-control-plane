@@ -33,7 +33,7 @@ type LocalIdentity struct {
 // BootstrapLocalUser creates the first Organization, Admin User, password, and session atomically.
 func (p *Database) BootstrapLocalUser(
 	ctx context.Context, organizationName, email, displayName, passwordHash string, issued session.Session,
-	digest []byte,
+	digest []byte, sourceAddress string,
 ) (User, session.Session, error) {
 	transaction, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -80,18 +80,15 @@ func (p *Database) BootstrapLocalUser(
 	}
 	issued.UserID = user.ID
 	if err = transaction.QueryRow(ctx, `
-		INSERT INTO session (credential_digest, user_id, issued_at, expires_at, last_seen_at,
-		                     client_user_agent, remote_addr)
-		VALUES ($1, $2, $3, $4, $3, $5, $6) RETURNING session_id`,
-		digest, issued.UserID, issued.IssuedAt, issued.ExpiresAt,
-		nullableText(truncateTo(issued.ClientUserAgent, session.MaxClientUserAgentLength)),
-		nullableText(truncateTo(issued.RemoteAddr, session.MaxRemoteAddrLength))).Scan(&issued.ID); err != nil {
+		INSERT INTO session (credential_digest, user_id, expires_at)
+		VALUES ($1, $2, $3) RETURNING session_id`,
+		digest, issued.UserID, issued.ExpiresAt).Scan(&issued.ID); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("issuing the bootstrap session: %w", err)
 	}
 	if err = writeEvent(ctx, transaction, audit.Event{
 		Actor: audit.System("deployment bootstrap"), Action: audit.ActionLocalBootstrapCompleted,
 		Target: audit.Target{Kind: audit.TargetUser, ID: user.ID.String()}, Outcome: audit.OutcomeAllowed,
-		SourceAddress: issued.RemoteAddr,
+		SourceAddress: sourceAddress,
 	}); err != nil {
 		return User{}, session.Session{}, err
 	}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
@@ -38,9 +37,11 @@ func (h Handlers) issueSession(
 	defer cancel()
 	actor := audit.Actor{Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}
 	if localPasswordHash != "" {
-		_, err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor, detail, localPasswordHash)
+		_, err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor,
+			request.RemoteAddr, detail, localPasswordHash)
 	} else {
-		_, err = h.Database.IssueSession(ctx, organization, issued, digest, actor, detail)
+		_, err = h.Database.IssueSession(ctx, organization, issued, digest, actor,
+			request.RemoteAddr, detail)
 	}
 	if err != nil {
 		return err
@@ -66,8 +67,6 @@ func (h Handlers) prepareSession(
 	if err != nil {
 		return "", nil, session.Session{}, nil, err
 	}
-	issued.ClientUserAgent = request.UserAgent()
-	issued.RemoteAddr = request.RemoteAddr
 	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
 		"requestId": correlation.From(request.Context())}
 	return token, digest, issued, detail, nil
@@ -116,54 +115,9 @@ func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request, pri
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	if err := h.Database.RevokeCurrentSession(ctx, principal, principal.SessionID()); err != nil && !errors.Is(err, session.ErrUnknown) {
+	if err := h.Database.DeleteCurrentSession(ctx, principal); err != nil && !errors.Is(err, session.ErrUnknown) {
 		h.fail(writer, request, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
-}
-
-func (h Handlers) listSessions(writer http.ResponseWriter, request *http.Request) {
-	query, ok := listQuery(writer, request, listing.Spec{
-		DefaultSort: listing.Sort{Field: "lastSeenAt", Descending: true},
-	})
-	if !ok {
-		return
-	}
-	principal := h.caller(request)
-	ctx, cancel := contextWithTimeout(request, readTimeout)
-	defer cancel()
-
-	live, err := h.Database.ListSessions(ctx, principal, storage.Page{
-		Limit: query.Limit, After: query.Cursor,
-	})
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	views := make([]liveSessionView, 0, len(live.Sessions))
-	for _, found := range live.Sessions {
-		views = append(views, liveSessionViewOf(found))
-	}
-	writeJSON(writer, http.StatusOK, liveSessionListView{
-		Sessions: views, Next: listing.CursorPtr(live.Next),
-	})
-}
-
-func (h Handlers) revokeSession(writer http.ResponseWriter, request *http.Request) {
-	principal := h.caller(request)
-	sessionID, ok := identifier(writer, request, "session")
-	if !ok {
-		return
-	}
-	ctx, cancel := contextWithTimeout(request, readTimeout)
-	defer cancel()
-	if err := h.Database.RevokeSession(ctx, principal, sessionID); err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	if principal.SessionID() == sessionID {
-		session.Clear(writer)
-	}
-	writer.WriteHeader(http.StatusNoContent)
 }

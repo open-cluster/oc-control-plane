@@ -20,7 +20,6 @@ type Reason string
 const (
 	ReasonRejected       Reason = "credential_rejected"
 	ReasonSessionExpired Reason = "session_expired"
-	ReasonSessionRevoked Reason = "session_revoked"
 )
 
 // Refusal is an ErrCredentialRejected with a safe client-facing reason.

@@ -18,47 +18,14 @@ const tokenBytes = 32
 var (
 	ErrUnknown = errors.New("session unknown")
 	ErrExpired = errors.New("session expired")
-	ErrRevoked = errors.New("session revoked")
 )
 
 type Token string
 
 type Session struct {
-	ID              uuid.UUID
-	UserID          uuid.UUID
-	IssuedAt        time.Time
-	ExpiresAt       time.Time
-	LastSeenAt      time.Time
-	RevokedAt       time.Time
-	ClientUserAgent string
-	RemoteAddr      string
-}
-
-const (
-	MaxClientUserAgentLength = 512
-	MaxRemoteAddrLength      = 128
-)
-
-// Revoked reports whether an administrator ended this session.
-func (s Session) Revoked() bool { return !s.RevokedAt.IsZero() }
-
-// Live reports whether this session may authenticate a request at the given moment.
-func (s Session) Live(now time.Time) bool {
-	return !s.Revoked() && now.Before(s.ExpiresAt)
-}
-
-// Refusal reports why a session may not authenticate, or nil when it may. Revocation is
-// checked before expiry so that an administrator who ended a session is told they did, rather
-// than being told it timed out on its own.
-func (s Session) Refusal(now time.Time) error {
-	switch {
-	case s.Revoked():
-		return ErrRevoked
-	case !now.Before(s.ExpiresAt):
-		return ErrExpired
-	default:
-		return nil
-	}
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	ExpiresAt time.Time
 }
 
 // NewToken mints an opaque credential and the digest that will be stored for it.
@@ -84,7 +51,7 @@ func Issue(userID uuid.UUID, lifetime time.Duration) (Token, []byte, Session, er
 	}
 	now := time.Now().UTC()
 	return token, digest, Session{
-		UserID: userID, IssuedAt: now, ExpiresAt: now.Add(lifetime),
+		UserID: userID, ExpiresAt: now.Add(lifetime),
 	}, nil
 }
 

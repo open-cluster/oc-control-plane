@@ -243,7 +243,6 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 	expected := map[string][]string{
 		"listEffectivePermissions": paged,
 		"listMembers":              paged,
-		"listSessions":             paged,
 		"listAuditEvents":          paged,
 		"listIntegrationTypes":     paged,
 		"listIntegrations":         append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),

@@ -1,14 +1,17 @@
 package controlplane
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 )
 
-func TestLogoutRevokesSessionWithoutMembershipAndClearsCookie(t *testing.T) {
+func TestLogoutDeletesTheCurrentSessionAndClearsCookie(t *testing.T) {
 	plane := startIdentityPlane(t)
 	base := "http://" + plane.api + "/api/v1"
 	created := plane.call(t, http.MethodPost, base+"/auth/local/bootstrap", map[string]any{
@@ -40,6 +43,23 @@ func TestLogoutRevokesSessionWithoutMembershipAndClearsCookie(t *testing.T) {
 		func(request *http.Request) { request.Header.Set("Origin", "https://attacker.example") })
 	if untrusted.status != http.StatusForbidden {
 		t.Fatalf("cross-origin logout = %d: %s", untrusted.status, untrusted.body)
+	}
+}
+
+func TestExpiredSessionKeepsSafeReason(t *testing.T) {
+	plane := startIdentityPlane(t)
+	cookie := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
+	connection, err := pgx.Connect(context.Background(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	if _, err = connection.Exec(context.Background(), `UPDATE session SET expires_at=now()-interval '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	response := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
+	if response.status != http.StatusUnauthorized || !strings.Contains(response.body, `"reason":"session_expired"`) {
+		t.Fatalf("expired session = %d: %s", response.status, response.body)
 	}
 }
 

@@ -140,9 +140,6 @@ func (h Handlers) Routes() []authz.Route {
 		{Method: http.MethodPatch, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.setMember)},
 		{Method: http.MethodDelete, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.removeMember)},
 
-		{Method: http.MethodGet, Pattern: Base + "/sessions", Handler: http.HandlerFunc(h.listSessions)},
-		{Method: http.MethodDelete, Pattern: Base + "/sessions/{session}", Handler: http.HandlerFunc(h.revokeSession)},
-
 		{Method: http.MethodGet, Pattern: Base + "/policy", Permission: authz.IdentityRead, Handler: http.HandlerFunc(h.readPolicy)},
 		{Method: http.MethodPut, Pattern: Base + "/policy", Permission: authz.IdentityConfigure, Handler: http.HandlerFunc(h.writePolicy)},
 

@@ -38,43 +38,6 @@ func TestTheStoredValueIsNotTheCredential(t *testing.T) {
 	}
 }
 
-// Story 5: a session that has expired must be told apart from one an administrator ended, so
-// the interface can say which happened rather than showing a screen of error states.
-func TestASessionSaysWhyItMayNotAuthenticate(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
-
-	for _, testCase := range []struct {
-		name    string
-		session session.Session
-		want    error
-	}{
-		{"live", session.Session{ExpiresAt: now.Add(time.Hour)}, nil},
-		{"expired", session.Session{ExpiresAt: now.Add(-time.Second)}, session.ErrExpired},
-		{"revoked", session.Session{
-			ExpiresAt: now.Add(time.Hour), RevokedAt: now.Add(-time.Minute),
-		}, session.ErrRevoked},
-		// Revocation wins. An administrator who ended a session must be told they did rather
-		// than that it timed out on its own — the two lead to different next actions.
-		{"revoked and expired", session.Session{
-			ExpiresAt: now.Add(-time.Hour), RevokedAt: now.Add(-time.Hour),
-		}, session.ErrRevoked},
-		// The boundary itself: a session expires AT its expiry, not after it.
-		{"exactly at expiry", session.Session{ExpiresAt: now}, session.ErrExpired},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			if got := testCase.session.Refusal(now); got != testCase.want {
-				t.Errorf("refusal = %v, want %v", got, testCase.want)
-			}
-			if live := testCase.session.Live(now); live != (testCase.want == nil) {
-				t.Errorf("Live = %v while the refusal is %v", live, testCase.want)
-			}
-		})
-	}
-}
-
 // The cookie's attributes are the transport half of the design, and every one of them is
 // load-bearing: HttpOnly against script, Secure against a plaintext hop, Lax against a
 // cross-site post, Path=/ so one cookie serves the surface. The __Host- prefix makes the
