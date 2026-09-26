@@ -45,7 +45,7 @@ export ORGANIZATION_ID="$(
   curl --fail-with-body --silent \
     --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
     "$OPENCLUSTER_URL/api/v1/session" |
-  jq --raw-output '.organization.organizationId'
+  jq --raw-output '.organization.id'
 )"
 
 test -n "$ORGANIZATION_ID" && test "$ORGANIZATION_ID" != "null"

@@ -12,58 +12,34 @@ import (
 // added to a table must not silently become a field in a response — several of these tables
 // hold a digest, and one holds a sealed client secret.
 type sessionView struct {
-	Principal            principalView  `json:"principal"`
-	Organization         membershipView `json:"organization"`
-	AuthenticationMethod string         `json:"authenticationMethod"`
-	CSRF                 csrfView       `json:"csrf"`
-	ExpiresAt            time.Time      `json:"expiresAt"`
+	User         userView         `json:"user"`
+	Organization organizationView `json:"organization"`
 }
 
-type csrfView struct {
-	Mode                     string `json:"mode"`
-	RequiredForUnsafeMethods bool   `json:"requiredForUnsafeMethods"`
-}
-
-type principalView struct {
+type userView struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
-	Email       string `json:"email,omitempty"`
-	// Roles and Scopes retain the frontend's list shape even though a User has one Membership.
-	Roles  []string `json:"roles"`
-	Scopes []string `json:"scopes"`
+	Email       string `json:"email"`
 }
 
-type membershipView struct {
-	Organization string `json:"organizationId"`
-	DisplayName  string `json:"displayName"`
-	Role         string `json:"role"`
+type organizationView struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role"`
 }
 
 func sessionViewOf(principal authz.Principal) sessionView {
-	role := principal.Role()
-	scopes := make([]string, 0, len(authz.Permissions()))
-	for _, permission := range authz.Permissions() {
-		if role.Grants(permission) {
-			scopes = append(scopes, string(permission))
-		}
-	}
-
 	return sessionView{
-		Principal: principalView{
+		User: userView{
 			ID:          principal.UserID().String(),
 			DisplayName: principal.DisplayName(),
 			Email:       principal.Email(),
-			Roles:       []string{string(role)},
-			Scopes:      scopes,
 		},
-		Organization: membershipView{
-			Organization: principal.Organization().String(),
-			DisplayName:  principal.OrganizationName(),
-			Role:         string(role),
+		Organization: organizationView{
+			ID:          principal.Organization().String(),
+			DisplayName: principal.OrganizationName(),
+			Role:        string(principal.Role()),
 		},
-		AuthenticationMethod: principal.AuthenticationMethod(),
-		CSRF:                 csrfView{Mode: "origin", RequiredForUnsafeMethods: true},
-		ExpiresAt:            principal.ExpiresAt(),
 	}
 }
 

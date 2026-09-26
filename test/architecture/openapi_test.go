@@ -241,20 +241,19 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 
 	paged := []string{"Cursor", "Limit"}
 	expected := map[string][]string{
-		"listEffectivePermissions": paged,
-		"listMembers":              paged,
-		"listAuditEvents":          paged,
-		"listIntegrationTypes":     paged,
-		"listIntegrations":         append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),
-		"listRelays":               append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
-		"listRelayIntegrations":    paged,
-		"listRelayFailures":        paged,
-		"listIncidents":            append(slices.Clone(paged), "IncidentSearch", "IncidentSort", "IncidentIntegrationFilter", "IncidentStatusFilter"),
-		"listIncidentAlertEvents":  paged,
-		"listInvestigations":       append(slices.Clone(paged), "InvestigationIncidentFilter"),
-		"listConversations":        append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
-		"listConversationTurns":    paged,
-		"listWebhookDeliveries":    append(slices.Clone(paged), "WebhookDeliveryStatus"),
+		"listMembers":             paged,
+		"listAuditEvents":         paged,
+		"listIntegrationTypes":    paged,
+		"listIntegrations":        append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),
+		"listRelays":              append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
+		"listRelayIntegrations":   paged,
+		"listRelayFailures":       paged,
+		"listIncidents":           append(slices.Clone(paged), "IncidentSearch", "IncidentSort", "IncidentIntegrationFilter", "IncidentStatusFilter"),
+		"listIncidentAlertEvents": paged,
+		"listInvestigations":      append(slices.Clone(paged), "InvestigationIncidentFilter"),
+		"listConversations":       append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
+		"listConversationTurns":   paged,
+		"listWebhookDeliveries":   append(slices.Clone(paged), "WebhookDeliveryStatus"),
 	}
 
 	for pathName, path := range document.Paths {
@@ -269,7 +268,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 				name := strings.TrimPrefix(parameter.Ref, "#/components/parameters/")
 				switch name {
 				case "", "Organization", "OptionalOrganization", "UserID",
-					"SessionID", "IntegrationID", "IntegrationType", "RelayRegistrationID",
+					"IntegrationID", "IntegrationType", "RelayRegistrationID",
 					"IncidentID", "InvestigationID", "ConversationID", "WebhookDeliveryID":
 					continue
 				}
@@ -313,7 +312,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 	}
 }
 
-func TestOpenAPIAdvertisesOnlyShippedProductAuthentication(t *testing.T) {
+func TestOpenAPISessionDescribesIdentity(t *testing.T) {
 	t.Parallel()
 
 	contents, err := os.ReadFile("../../api/openapi.yaml")
@@ -327,13 +326,43 @@ func TestOpenAPIAdvertisesOnlyShippedProductAuthentication(t *testing.T) {
 	if err = yaml.Unmarshal(contents, &document); err != nil {
 		t.Fatalf("parse the canonical OpenAPI document: %v", err)
 	}
-	principal := document.Components.Schemas["Principal"]
-	if _, present := principal.Properties["kind"]; present || slices.Contains(principal.Required, "kind") {
-		t.Error("Principal advertises an authentication kind although v0.1 authenticates only Users")
+	hasFields := func(schema openAPISchema, fields ...string) bool {
+		if len(schema.Required) != len(fields) || len(schema.Properties) != len(fields) {
+			return false
+		}
+		for _, field := range fields {
+			if !slices.Contains(schema.Required, field) {
+				return false
+			}
+		}
+		return true
 	}
-	method := document.Components.Schemas["Session"].Properties["authenticationMethod"]
-	if !slices.Equal(method.Enum, []string{"local", "oidc"}) {
-		t.Errorf("authentication methods = %v, want local and oidc", method.Enum)
+	session := document.Components.Schemas["Session"]
+	if !hasFields(session, "user", "organization") {
+		t.Errorf("Session fields = %v, want only user and organization", session.Required)
+	}
+	if session.Properties["user"].Ref != "#/components/schemas/SessionUser" ||
+		session.Properties["organization"].Ref != "#/components/schemas/SessionOrganization" {
+		t.Errorf("Session identity references = %+v", session.Properties)
+	}
+	user := document.Components.Schemas["SessionUser"]
+	if !hasFields(user, "id", "displayName", "email") {
+		t.Errorf("SessionUser fields = %v", user.Required)
+	}
+	organization := document.Components.Schemas["SessionOrganization"]
+	if !hasFields(organization, "id", "displayName", "role") {
+		t.Errorf("SessionOrganization fields = %v", organization.Required)
+	}
+	if email := user.Properties["email"]; len(email.OneOf) != 2 || email.OneOf[1].Const != "" {
+		t.Errorf("SessionUser email does not allow an empty value: %+v", email)
+	}
+	for _, retired := range []string{"Principal", "Membership", "PermissionList", "LiveSession", "LiveSessionList"} {
+		if _, present := document.Components.Schemas[retired]; present {
+			t.Errorf("retired schema %s remains documented", retired)
+		}
+	}
+	if _, present := document.Components.Parameters["SessionID"]; present {
+		t.Error("retired SessionID parameter remains documented")
 	}
 }
 

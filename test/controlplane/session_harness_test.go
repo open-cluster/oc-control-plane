@@ -414,7 +414,7 @@ func namedOrganization(t *testing.T, organization string) uuid.UUID {
 func ownerOf(t *testing.T, organization uuid.UUID) authz.Principal {
 	t.Helper()
 
-	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Test Harness",
+	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Test Harness", "",
 		authz.Membership{Organization: organization, Role: authz.Admin})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)

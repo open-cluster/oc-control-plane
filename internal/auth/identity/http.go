@@ -131,7 +131,6 @@ func (h Handlers) Routes() []authz.Route {
 		{Method: http.MethodPut, Pattern: Base + "/auth/local/password", Handler: http.HandlerFunc(h.changeLocalPassword)},
 
 		{Method: http.MethodGet, Pattern: Base + "/session", Handler: http.HandlerFunc(h.session)},
-		{Method: http.MethodGet, Pattern: Base + "/permissions", Handler: http.HandlerFunc(h.permissions)},
 
 		{Method: http.MethodGet, Pattern: Base + "/members", Permission: authz.MemberRead, Handler: http.HandlerFunc(h.listMembers)},
 		{Method: http.MethodPost, Pattern: Base + "/local-users", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.createMember)},

@@ -68,7 +68,7 @@ func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 
 // fromSession resolves a browser session into the person holding it, with the Membership they
 // hold right now rather than the Role they held when they signed in. That is what makes an
-// administrator's revocation take effect on the colleague's next request.
+// administrator's Membership removal take effect on the colleague's next request.
 func (h Handlers) fromSession(
 	request *http.Request, token session.Token,
 ) (authz.Principal, error) {
@@ -88,16 +88,11 @@ func (h Handlers) fromSession(
 	}
 
 	principal, err := authz.NewPrincipal(signedIn.User.ID, signedIn.Session.ID,
-		displayNameOf(signedIn.User), signedIn.Membership)
+		displayNameOf(signedIn.User), signedIn.User.Email, signedIn.Membership)
 	if err != nil {
 		return authz.Principal{}, authz.ErrCredentialRejected
 	}
-	method := "oidc"
-	if signedIn.User.Issuer == storage.LocalIssuer {
-		method = "local"
-	}
-	return principal.WithSessionPresentation(
-		signedIn.User.Email, method, signedIn.Session.ExpiresAt), nil
+	return principal, nil
 }
 
 func bearerToken(header string) (string, bool) {

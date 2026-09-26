@@ -92,7 +92,7 @@ paths:
       <<: *authenticated-write
       operationId: changeLocalPassword
       summary: Change the authenticated User's local password
-      description: Reauthenticate with the current password. Successful change revokes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
+      description: Reauthenticate with the current password. Successful change deletes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
       tags: [Authentication]
       requestBody:
         required: true
@@ -106,7 +106,7 @@ paths:
                 currentPassword: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
                 newPassword: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
       responses:
-        "204": { description: Password changed and all User sessions revoked. }
+        "204": { description: Password changed and all User sessions deleted. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -165,24 +165,12 @@ paths:
       <<: *authenticated-write
       operationId: signOut
       summary: Sign out
-      description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
+      description: Delete the current User's session and clear its cookie. Absent or expired cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming sign-out succeeded.
       tags: [Sessions]
       responses:
         "200": { $ref: "#/components/responses/SignOut" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
-  /api/v1/permissions:
-    get:
-      <<: *authenticated-read
-      operationId: listEffectivePermissions
-      summary: List effective permissions
-      tags: [Organizations]
-      parameters:
-        - { $ref: "#/components/parameters/Cursor" }
-        - { $ref: "#/components/parameters/Limit" }
-      responses:
-        "200": { $ref: "#/components/responses/PermissionList" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/members:
     get:
       <<: *privileged-read
@@ -1022,7 +1010,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/SignInResult" }
     SignOut:
-      description: The browser cookie was cleared; signedOut states whether a server-side session was ended.
+      description: The idempotent sign-out operation completed and the browser cookie was cleared.
       headers:
         Set-Cookie: { schema: { type: string } }
       content:
@@ -1033,7 +1021,6 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Session" }
-    PermissionList: { description: Effective permissions in the authenticated User's Organization., content: { application/json: { schema: { $ref: "#/components/schemas/PermissionList" } } } }
     MemberList: { description: Organization members., content: { application/json: { schema: { $ref: "#/components/schemas/MemberList" } } } }
     Member: { description: Organization member., content: { application/json: { schema: { $ref: "#/components/schemas/Member" } } } }
     Policy: { description: Organization identity policy., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
@@ -1103,7 +1090,7 @@ components:
       required: [error]
       properties:
         error: { type: string, minLength: 1, maxLength: 1024, example: "the requested resource is not available to this caller" }
-        reason: { type: string, enum: [credential_rejected, session_expired, session_revoked] }
+        reason: { type: string, enum: [credential_rejected, session_expired] }
         requires: { type: string, minLength: 1, maxLength: 128 }
     LocalBootstrapRequest:
       type: object
@@ -1121,40 +1108,29 @@ components:
       properties:
         email: { type: string, format: email, maxLength: 254, example: operator@example.invalid }
         password: { type: string, format: password, minLength: 12, maxLength: 1024, writeOnly: true, example: correct-horse-placeholder }
-    Principal:
+    SessionUser:
       type: object
       additionalProperties: false
-      required: [id, displayName, roles, scopes]
+      required: [id, displayName, email]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
         displayName: { type: string, minLength: 1, maxLength: 256 }
-        email: { type: string, format: email, maxLength: 254 }
-        roles: { type: array, items: { type: string, enum: [admin, editor, viewer] }, uniqueItems: true }
-        scopes: { type: array, items: { type: string }, uniqueItems: true }
-    Membership:
+        email: { oneOf: [{ type: string, format: email, maxLength: 254 }, { const: "" }] }
+    SessionOrganization:
       type: object
       additionalProperties: false
-      required: [organizationId, displayName, role]
+      required: [id, displayName, role]
       properties:
-        organizationId: { $ref: "#/components/schemas/OrganizationID" }
+        id: { $ref: "#/components/schemas/OrganizationID" }
         displayName: { type: string, minLength: 1, maxLength: 256 }
         role: { type: string, enum: [admin, editor, viewer] }
     Session:
       type: object
       additionalProperties: false
-      required: [principal, organization, authenticationMethod, csrf, expiresAt]
+      required: [user, organization]
       properties:
-        principal: { $ref: "#/components/schemas/Principal" }
-        organization: { $ref: "#/components/schemas/Membership" }
-        authenticationMethod: { type: string, enum: [local, oidc] }
-        csrf:
-          type: object
-          additionalProperties: false
-          required: [mode, requiredForUnsafeMethods]
-          properties:
-            mode: { type: string, const: origin }
-            requiredForUnsafeMethods: { type: boolean, const: true }
-        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+        user: { $ref: "#/components/schemas/SessionUser" }
+        organization: { $ref: "#/components/schemas/SessionOrganization" }
     SignOut:
       type: object
       additionalProperties: false
@@ -1170,15 +1146,6 @@ components:
       additionalProperties: false
       required: [signedIn]
       properties: { signedIn: { type: boolean, const: true } }
-    PermissionList:
-      type: object
-      additionalProperties: false
-      required: [organizationId, role, permissions, next]
-      properties:
-        organizationId: { $ref: "#/components/schemas/OrganizationID" }
-        role: { type: string, enum: [admin, editor, viewer] }
-        permissions: { type: array, items: { type: string, minLength: 1, maxLength: 128 }, uniqueItems: true }
-        next: { oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
     Member:
       type: object
       additionalProperties: false

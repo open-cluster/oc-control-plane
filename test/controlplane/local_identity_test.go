@@ -16,15 +16,15 @@ import (
 )
 
 type sessionBody struct {
-	Principal struct {
+	User struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"displayName"`
-	} `json:"principal"`
+		Email       string `json:"email"`
+	} `json:"user"`
 	Organization struct {
-		ID           string `json:"id"`
-		Organization string `json:"organizationId"`
-		DisplayName  string `json:"displayName"`
-		Role         string `json:"role"`
+		ID          string `json:"id"`
+		DisplayName string `json:"displayName"`
+		Role        string `json:"role"`
 	} `json:"organization"`
 }
 
@@ -71,7 +71,7 @@ func TestLocalBootstrapCreatesOrganizationAndAdmin(t *testing.T) {
 	}
 
 	who := readSession(t, plane, sessionCookie(t, created))
-	if who.Principal.DisplayName != "Ada Lovelace" ||
+	if who.User.DisplayName != "Ada Lovelace" ||
 		who.Organization.DisplayName != "Platform Team" || who.Organization.Role != "admin" {
 		t.Fatalf("bootstrap session = %+v", who)
 	}
@@ -215,7 +215,7 @@ func TestOrganizationKeepsAnAdmin(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
-	adminID := readSession(t, plane, admin).Principal.ID
+	adminID := readSession(t, plane, admin).User.ID
 	memberURL := "http://" + plane.api + "/api/v1/members/" + adminID
 
 	for _, change := range []struct {
@@ -247,7 +247,7 @@ func TestSessionListsOrganizationMetadataAndRole(t *testing.T) {
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 
 	who := readSession(t, plane, admin)
-	if who.Organization.Organization != identityOrg || who.Organization.DisplayName != "Operations" {
+	if who.Organization.ID != identityOrg || who.Organization.DisplayName != "Operations" {
 		t.Fatalf("session Organization = %+v", who.Organization)
 	}
 }
@@ -271,7 +271,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 	}
 
 	who := readSession(t, plane, bootstrapCookie)
-	if who.Principal.DisplayName != "Ada Lovelace" || who.Organization.Role != "admin" {
+	if who.User.DisplayName != "Ada Lovelace" || who.Organization.Role != "admin" {
 		t.Fatalf("bootstrap session = %+v", who)
 	}
 	seedTestOrganization(t, plane.dsn, identityOrg, "ada@example.test")
@@ -342,67 +342,23 @@ func TestLocalUserCreationRejectsIdentityProviderChoice(t *testing.T) {
 	}
 }
 
-func TestUsersManageOnlyTheirOwnGlobalSessions(t *testing.T) {
+func TestRemovedSessionAndPermissionRoutesAreNotExposed(t *testing.T) {
 	plane := startIdentityPlane(t)
 	base := "http://" + plane.api + "/api/v1"
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
-	created := plane.call(t, http.MethodPost, base+"/local-users", map[string]any{
-		"email": "member@example.test", "role": "viewer", "password": "member password long enough",
-	}, asSession(admin))
-	if created.status != http.StatusCreated {
-		t.Fatalf("create member = %d: %s", created.status, created.body)
-	}
-	login := plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
-		"email": "member@example.test", "password": "member password long enough",
-	})
-	member := sessionCookie(t, login)
-	type listedSession struct {
-		ID              string          `json:"id"`
-		ClientUserAgent string          `json:"clientUserAgent"`
-		RemoteAddr      string          `json:"remoteAddr"`
-		UserAgent       json.RawMessage `json:"userAgent"`
-		Address         json.RawMessage `json:"address"`
-	}
-	list := func(cookie string) []listedSession {
-		response := plane.call(t, http.MethodGet, base+"/sessions", nil, asSession(cookie))
-		if response.status != http.StatusOK {
-			t.Fatalf("list = %d: %s", response.status, response.body)
+	for _, request := range []struct{ method, path string }{
+		{http.MethodGet, "/sessions"},
+		{http.MethodDelete, "/sessions/" + uuid.NewString()},
+		{http.MethodGet, "/permissions"},
+	} {
+		response := plane.call(t, request.method, base+request.path, nil, asSession(admin))
+		if response.status != http.StatusNotFound {
+			t.Fatalf("%s %s = %d: %s", request.method, request.path, response.status, response.body)
 		}
-		var body struct {
-			Sessions []listedSession `json:"sessions"`
-		}
-		decodeInto(t, response.body, &body)
-		return body.Sessions
 	}
-	owned := list(member)
-	if len(owned) != 1 {
-		t.Fatalf("member sessions = %+v", owned)
-	}
-	if owned[0].ClientUserAgent == "" || owned[0].RemoteAddr == "" ||
-		owned[0].UserAgent != nil || owned[0].Address != nil {
-		t.Fatalf("member session client metadata = %+v", owned[0])
-	}
-	admins := list(admin)
-	if len(admins) != 1 || admins[0].ID == owned[0].ID {
-		t.Fatalf("admin sessions = %+v", admins)
-	}
-	refused := plane.call(t, http.MethodDelete, base+"/sessions/"+owned[0].ID, nil, asSession(admin))
-	if refused.status != http.StatusNotFound {
-		t.Fatalf("admin revoking another User = %d: %s", refused.status, refused.body)
-	}
-	readSession(t, plane, member)
-	revoked := plane.call(t, http.MethodDelete, base+"/sessions/"+owned[0].ID, nil, asSession(member))
-	if revoked.status != http.StatusNoContent {
-		t.Fatalf("own revocation = %d: %s", revoked.status, revoked.body)
-	}
-	assertSessionCookieCleared(t, revoked)
-	who := plane.call(t, http.MethodGet, base+"/session", nil, asSession(member))
-	if who.status != http.StatusUnauthorized {
-		t.Fatalf("revoked session = %d: %s", who.status, who.body)
-	}
-	readSession(t, plane, admin)
 }
-func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
+
+func TestSessionDescribesIdentity(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
@@ -412,17 +368,32 @@ func TestSessionDescribesTheVerifiedSelectionAndBrowserSecurity(t *testing.T) {
 	if who.status != http.StatusOK {
 		t.Fatalf("session = %d: %s", who.status, who.body)
 	}
-	for _, fact := range []string{
-		`"organization":{"organizationId":"` + identityOrg + `","displayName":"Operations","role":"admin"`,
-		`"authenticationMethod":"local"`,
-		`"csrf":{"mode":"origin","requiredForUnsafeMethods":true}`,
+	var body map[string]json.RawMessage
+	decodeInto(t, who.body, &body)
+	if len(body) != 2 || body["user"] == nil || body["organization"] == nil {
+		t.Fatalf("session shape = %s", who.body)
+	}
+	for name, required := range map[string][]string{
+		"user":         {"id", "displayName", "email"},
+		"organization": {"id", "displayName", "role"},
 	} {
-		if !strings.Contains(who.body, fact) {
-			t.Errorf("session omits %s: %s", fact, who.body)
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(body[name], &fields); err != nil {
+			t.Fatal(err)
+		}
+		if len(fields) != len(required) {
+			t.Fatalf("session %s fields = %v", name, fields)
+		}
+		for _, field := range required {
+			if fields[field] == nil {
+				t.Fatalf("session %s omits %s", name, field)
+			}
 		}
 	}
-	if strings.Contains(who.body, `"kind":`) {
-		t.Errorf("session advertises an unshipped principal kind: %s", who.body)
+	identity := readSession(t, plane, admin)
+	if identity.User.Email != "admin@example.test" || identity.User.DisplayName != "Admin" ||
+		identity.Organization.ID != identityOrg || identity.Organization.Role != "admin" {
+		t.Fatalf("session identity = %+v", identity)
 	}
 }
 
