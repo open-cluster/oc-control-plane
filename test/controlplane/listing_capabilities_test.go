@@ -2,28 +2,11 @@ package controlplane
 
 import (
 	"net/http"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-func TestEffectivePermissionsUseTheirDeclaredOrder(t *testing.T) {
-	plane := startIntegrationPlane(t)
-	status, body := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/permissions?limit=200", nil)
-	if status != http.StatusOK {
-		t.Fatalf("listing permissions = %d: %s", status, body)
-	}
-	var page struct {
-		Permissions []string `json:"permissions"`
-	}
-	decodeInto(t, body, &page)
-	if !slices.IsSorted(page.Permissions) {
-		t.Errorf("permissions are not ordered by name: %v", page.Permissions)
-	}
-}
 
 func TestIntegrationListingAppliesDocumentedCapabilities(t *testing.T) {
 	plane := startIntegrationPlane(t)

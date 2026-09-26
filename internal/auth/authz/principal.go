@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -17,24 +16,13 @@ var ErrInvalidPrincipal = errors.New("invalid principal")
 var ErrNotAMember = errors.New("principal holds no membership in this organization")
 
 type Principal struct {
-	userID               uuid.UUID
-	sessionID            uuid.UUID
-	displayName          string
-	membership           Membership
-	sourceAddress        string
-	requestID            string
-	email                string
-	authenticationMethod string
-	expiresAt            time.Time
-}
-
-func (p Principal) WithSessionPresentation(
-	email, authenticationMethod string, expiresAt time.Time,
-) Principal {
-	p.email = email
-	p.authenticationMethod = authenticationMethod
-	p.expiresAt = expiresAt
-	return p
+	userID        uuid.UUID
+	sessionID     uuid.UUID
+	displayName   string
+	membership    Membership
+	sourceAddress string
+	requestID     string
+	email         string
 }
 
 // Membership is one organization and the role held in it.
@@ -45,7 +33,7 @@ type Membership struct {
 }
 
 func NewPrincipal(
-	userID, sessionID uuid.UUID, displayName string, membership Membership,
+	userID, sessionID uuid.UUID, displayName, email string, membership Membership,
 ) (Principal, error) {
 	if userID == uuid.Nil || sessionID == uuid.Nil {
 		return Principal{}, fmt.Errorf("%w: a user and session must have identifiers", ErrInvalidPrincipal)
@@ -63,6 +51,7 @@ func NewPrincipal(
 		userID:      userID,
 		sessionID:   sessionID,
 		displayName: strings.TrimSpace(displayName),
+		email:       strings.TrimSpace(email),
 		membership:  membership,
 	}, nil
 }
@@ -82,11 +71,6 @@ func (p Principal) UserID() uuid.UUID { return p.userID }
 func (p Principal) SessionID() uuid.UUID { return p.sessionID }
 
 func (p Principal) Email() string { return p.email }
-
-func (p Principal) AuthenticationMethod() string { return p.authenticationMethod }
-
-// ExpiresAt is when the browser session stops authenticating requests.
-func (p Principal) ExpiresAt() time.Time { return p.expiresAt }
 
 func (p Principal) DisplayName() string { return p.displayName }
 

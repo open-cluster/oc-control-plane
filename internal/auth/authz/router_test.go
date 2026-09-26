@@ -20,7 +20,7 @@ const organizationID = "11111111-1111-4111-8111-111111111111"
 func principal(t *testing.T, role authz.Role) authz.Principal {
 	t.Helper()
 	organization := uuid.MustParse(organizationID)
-	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada", authz.Membership{
+	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada", "ada@example.test", authz.Membership{
 		Organization: organization, DisplayName: "Operations", Role: role,
 	})
 	if err != nil {

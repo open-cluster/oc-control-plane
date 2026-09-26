@@ -29,7 +29,7 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 	if err != nil {
 		t.Fatalf("building an organization: %v", err)
 	}
-	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada",
+	principal, err := authz.NewPrincipal(uuid.New(), uuid.New(), "Ada", "ada@example.test",
 		authz.Membership{Organization: org, Role: authz.Admin})
 	if err != nil {
 		t.Fatalf("building a principal: %v", err)

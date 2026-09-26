@@ -62,7 +62,7 @@ paths:
       x-opencluster-idempotency: not-supported
       responses:
         '204':
-          description: Password changed and all User sessions revoked.
+          description: Password changed and all User sessions deleted.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -75,7 +75,7 @@ paths:
           $ref: '#/components/responses/Unavailable'
       operationId: changeLocalPassword
       summary: Change the authenticated User's local password
-      description: Reauthenticate with the current password. Successful change revokes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
+      description: Reauthenticate with the current password. Successful change deletes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
       tags:
         - Authentication
       requestBody:
@@ -194,28 +194,9 @@ paths:
           $ref: '#/components/responses/Unavailable'
       operationId: signOut
       summary: Sign out
-      description: Revoke the current User's session and clear its cookie. Absent, expired or revoked cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming durable revocation.
+      description: Delete the current User's session and clear its cookie. Absent or expired cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming sign-out succeeded.
       tags:
         - Sessions
-  /api/v1/permissions:
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: authenticated
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      responses:
-        '200':
-          $ref: '#/components/responses/PermissionList'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: listEffectivePermissions
-      summary: List effective permissions
-      tags:
-        - Organizations
-      parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
   /api/v1/members:
     get:
       security:
@@ -1604,7 +1585,7 @@ components:
           schema:
             $ref: '#/components/schemas/SignInResult'
     SignOut:
-      description: The browser cookie was cleared; signedOut states whether a server-side session was ended.
+      description: The idempotent sign-out operation completed and the browser cookie was cleared.
       headers:
         Set-Cookie:
           schema:
@@ -1619,12 +1600,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Session'
-    PermissionList:
-      description: Effective permissions in the authenticated User's Organization.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PermissionList'
     MemberList:
       description: Organization members.
       content:
@@ -1922,7 +1897,6 @@ components:
           enum:
             - credential_rejected
             - session_expired
-            - session_revoked
         requires:
           type: string
           minLength: 1
@@ -1976,14 +1950,13 @@ components:
           maxLength: 1024
           writeOnly: true
           example: correct-horse-placeholder
-    Principal:
+    SessionUser:
       type: object
       additionalProperties: false
       required:
         - id
         - displayName
-        - roles
-        - scopes
+        - email
       properties:
         id:
           $ref: '#/components/schemas/UUID'
@@ -1992,32 +1965,20 @@ components:
           minLength: 1
           maxLength: 256
         email:
-          type: string
-          format: email
-          maxLength: 254
-        roles:
-          type: array
-          items:
-            type: string
-            enum:
-              - admin
-              - editor
-              - viewer
-          uniqueItems: true
-        scopes:
-          type: array
-          items:
-            type: string
-          uniqueItems: true
-    Membership:
+          oneOf:
+            - type: string
+              format: email
+              maxLength: 254
+            - const: ''
+    SessionOrganization:
       type: object
       additionalProperties: false
       required:
-        - organizationId
+        - id
         - displayName
         - role
       properties:
-        organizationId:
+        id:
           $ref: '#/components/schemas/OrganizationID'
         displayName:
           type: string
@@ -2033,36 +1994,13 @@ components:
       type: object
       additionalProperties: false
       required:
-        - principal
+        - user
         - organization
-        - authenticationMethod
-        - csrf
-        - expiresAt
       properties:
-        principal:
-          $ref: '#/components/schemas/Principal'
+        user:
+          $ref: '#/components/schemas/SessionUser'
         organization:
-          $ref: '#/components/schemas/Membership'
-        authenticationMethod:
-          type: string
-          enum:
-            - local
-            - oidc
-        csrf:
-          type: object
-          additionalProperties: false
-          required:
-            - mode
-            - requiredForUnsafeMethods
-          properties:
-            mode:
-              type: string
-              const: origin
-            requiredForUnsafeMethods:
-              type: boolean
-              const: true
-        expiresAt:
-          $ref: '#/components/schemas/Timestamp'
+          $ref: '#/components/schemas/SessionOrganization'
     SignOut:
       type: object
       additionalProperties: false
@@ -2089,35 +2027,6 @@ components:
         signedIn:
           type: boolean
           const: true
-    PermissionList:
-      type: object
-      additionalProperties: false
-      required:
-        - organizationId
-        - role
-        - permissions
-        - next
-      properties:
-        organizationId:
-          $ref: '#/components/schemas/OrganizationID'
-        role:
-          type: string
-          enum:
-            - admin
-            - editor
-            - viewer
-        permissions:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
-          uniqueItems: true
-        next:
-          oneOf:
-            - type: string
-              maxLength: 512
-            - type: 'null'
     Member:
       type: object
       additionalProperties: false

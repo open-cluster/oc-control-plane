@@ -68,10 +68,6 @@ var allPermissions = []Permission{
 	AuditRead,
 }
 
-func Permissions() []Permission {
-	return append([]Permission(nil), allPermissions...)
-}
-
 // Declared reports whether a permission is one this build knows. A route requiring anything
 // else is a build failure rather than a route nobody can reach.
 func Declared(permission Permission) bool {
@@ -88,8 +84,6 @@ const (
 
 var roles = []Role{Admin, Editor, Viewer}
 
-func Roles() []Role { return append([]Role(nil), roles...) }
-
 func KnownRole(role Role) bool {
 	return slices.Contains(roles, role)
 }
@@ -98,20 +92,6 @@ func ParseRole(value string) (Role, bool) {
 	role := Role(strings.TrimSpace(value))
 	return role, KnownRole(role)
 }
-
-var reads = map[Permission]bool{
-	IntegrationRead:   true,
-	RelayRead:         true,
-	IncidentRead:      true,
-	PostmortemRead:    true,
-	InvestigationRead: true,
-	ConversationRead:  true,
-	IdentityRead:      true,
-	MemberRead:        true,
-	AuditRead:         true,
-}
-
-func ReadOnly(permission Permission) bool { return reads[permission] }
 
 // Identity reads are deliberately excluded: who may sign in is the Admin's to see.
 var estateReads = []Permission{
@@ -142,20 +122,7 @@ var granted = map[Role]map[Permission]bool{
 }
 
 // Grants reports whether a Role holds a Permission. Unknown Roles grant nothing.
-func Grants(role Role, permission Permission) bool { return granted[role][permission] }
-
-func (r Role) Grants(permission Permission) bool { return Grants(r, permission) }
-
-func PermissionsOf(role Role) []Permission {
-	held := granted[role]
-	listed := make([]Permission, 0, len(held))
-	for _, permission := range allPermissions {
-		if held[permission] {
-			listed = append(listed, permission)
-		}
-	}
-	return listed
-}
+func (r Role) Grants(permission Permission) bool { return granted[r][permission] }
 
 func setOf(permissions ...Permission) map[Permission]bool {
 	set := make(map[Permission]bool, len(permissions))

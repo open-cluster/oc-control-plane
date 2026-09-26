@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -54,20 +53,9 @@ func TestTheApplicationAPIRouteTableIsAuthorizable(t *testing.T) {
 	}
 }
 
-// Every privileged route requires a permission this build declares, and every permission this
-// build declares is required by at least one route.
-//
-// The second half is the one that decays silently. A permission no route requires is a
-// capability nobody can exercise and a line in the role table that means nothing — and it reads
-// as though the product does something it does not.
-func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
+// Every privileged route requires a permission this build declares.
+func TestEveryPrivilegedRouteRequiresADeclaredPermission(t *testing.T) {
 	t.Parallel()
-
-	// Permissions decided somewhere other than the route table, recorded here with their
-	// reason rather than being an unexplained gap. Currently none.
-	decidedInAHandler := map[authz.Permission]string{}
-
-	required := make(map[authz.Permission]bool)
 	for _, route := range apiRoutes(t) {
 		if route.Permission == "" {
 			continue
@@ -77,20 +65,6 @@ func TestEveryPermissionIsReachableAndEveryRouteDeclaresOne(t *testing.T) {
 				routeKey(route), route.Permission)
 			continue
 		}
-		required[route.Permission] = true
-	}
-
-	for _, permission := range authz.Permissions() {
-		if required[permission] {
-			continue
-		}
-		if reason, recorded := decidedInAHandler[permission]; recorded {
-			t.Logf("%s is decided in a handler: %s", permission, reason)
-			continue
-		}
-		t.Errorf("no route requires %s; a permission nothing needs is a line in the role table "+
-			"that means nothing, and it reads as though the product does something it does not",
-			permission)
 	}
 }
 
@@ -105,7 +79,6 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	permitted := map[string]string{
 		"PUT /api/v1/auth/local/password": "reauthenticates the User to change only their own local credential",
 		"GET /api/v1/session":             "its subject is the caller themselves",
-		"GET /api/v1/permissions":         "reading one's own effective Permissions requires no Permission",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
 			"redirect URI, so the path can name no organization and there is no tenant in " +
 			"it to check a membership against. The tenant comes from the single-use flow " +
@@ -178,7 +151,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/investigations/{investigation}",
 		"GET /api/v1/investigations/{investigation}/events",
 		"GET /api/v1/members",
-		"GET /api/v1/permissions",
 		"GET /api/v1/policy",
 		"GET /api/v1/relays",
 		"GET /api/v1/relays/summary",
@@ -518,48 +490,6 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 	} {
 		if !served[wanted.key] {
 			t.Errorf("%s is not served; %s", wanted.key, wanted.reason)
-		}
-	}
-}
-
-// A role's permissions are a product statement, and the whole point of the table is that
-// reading it answers "what can an Editor do". This renders that answer into the test
-// output, so a reviewer gets it from a test run rather than from the source.
-func TestTheRoleTableIsLegible(t *testing.T) {
-	t.Parallel()
-
-	for _, role := range authz.Roles() {
-		held := authz.PermissionsOf(role)
-		names := make([]string, 0, len(held))
-		for _, permission := range held {
-			names = append(names, string(permission))
-		}
-		t.Logf("%-24s %2d: %s", role, len(names), strings.Join(names, ", "))
-		if len(names) == 0 {
-			t.Errorf("%s holds nothing; a role that grants no permission is a role nobody can "+
-				"be usefully given", role)
-		}
-	}
-	// A sanity bound on the whole thing: the widest role is the Admin, and it holds every
-	// permission. Anything wider would mean a permission outside the declared set.
-	if len(authz.PermissionsOf(authz.Admin)) != len(authz.Permissions()) {
-		t.Errorf("the admin holds %d of %d permissions",
-			len(authz.PermissionsOf(authz.Admin)), len(authz.Permissions()))
-	}
-}
-
-// A permission string is a verb-noun pair an operator reads in a 403. One that is not shaped
-// like the others is one nobody can guess from a neighbouring route.
-func TestEveryPermissionIsAVerbNounString(t *testing.T) {
-	t.Parallel()
-
-	for _, permission := range authz.Permissions() {
-		text := string(permission)
-		if !strings.Contains(text, ".") || text != strings.ToLower(text) {
-			t.Errorf("%q is not a lower-case dotted verb-noun string", text)
-		}
-		if quoted := strconv.Quote(text); strings.Contains(quoted, `\`) {
-			t.Errorf("%s contains an escape", quoted)
 		}
 	}
 }

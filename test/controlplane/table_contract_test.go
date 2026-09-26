@@ -19,9 +19,7 @@ func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 		rows     string
 	}{
 		"organizations":         {root + "/organizations", "organizations"},
-		"permissions":           {base + "/permissions", "permissions"},
 		"members":               {base + "/members", "members"},
-		"sessions":              {root + "/sessions", "sessions"},
 		"audit events":          {base + "/audit-events", "events"},
 		"integration types":     {base + "/integration-types", "types"},
 		"integrations":          {base + "/integrations", "items"},
