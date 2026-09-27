@@ -28,9 +28,24 @@ var deliverySpec = listing.Spec{
 func (h DeliveryHandlers) Routes() []authz.Route {
 	const base = "/api/v1/webhook-deliveries"
 	return []authz.Route{
-		{Method: http.MethodGet, Pattern: base, Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.list)},
-		{Method: http.MethodGet, Pattern: base + "/{delivery}", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.get)},
-		{Method: http.MethodPost, Pattern: base + "/{delivery}/replay", Permission: authz.WebhookDeliveryReplay, Handler: http.HandlerFunc(h.replay)},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base,
+			Permission: authz.InvestigationRead,
+			Handler:    http.HandlerFunc(h.list),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/{delivery}",
+			Permission: authz.InvestigationRead,
+			Handler:    http.HandlerFunc(h.get),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/{delivery}/replay",
+			Permission: authz.WebhookDeliveryReplay,
+			Handler:    http.HandlerFunc(h.replay),
+		},
 	}
 }
 
@@ -50,11 +65,15 @@ type deliveryView struct {
 
 func viewOfDelivery(delivery storage.WebhookDelivery) deliveryView {
 	view := deliveryView{
-		ID: delivery.ID.String(), IntegrationID: delivery.IntegrationID.String(),
-		ProviderIdentity: delivery.ProviderIdentity, LifecyclePhase: delivery.LifecyclePhase,
-		RequestID: delivery.RequestID, Status: string(delivery.State), Attempts: delivery.Attempts,
-		FailureCategory: delivery.FailureClass,
-		ReceivedAt:      delivery.ReceivedAt.UTC().Format(time.RFC3339),
+		ID:               delivery.ID.String(),
+		IntegrationID:    delivery.IntegrationID.String(),
+		ProviderIdentity: delivery.ProviderIdentity,
+		LifecyclePhase:   delivery.LifecyclePhase,
+		RequestID:        delivery.RequestID,
+		Status:           string(delivery.State),
+		Attempts:         delivery.Attempts,
+		FailureCategory:  delivery.FailureClass,
+		ReceivedAt:       delivery.ReceivedAt.UTC().Format(time.RFC3339),
 	}
 	if delivery.LastAttemptAt != nil {
 		formatted := delivery.LastAttemptAt.UTC().Format(time.RFC3339)
@@ -83,7 +102,10 @@ func (h DeliveryHandlers) list(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
 	page, err := h.Database.WebhookDeliveries(ctx, organization, state,
-		storage.Page{Limit: query.Limit, After: query.Cursor})
+		storage.Page{
+			Limit: query.Limit,
+			After: query.Cursor,
+		})
 	if err != nil {
 		if errors.Is(err, storage.ErrBadCursor) {
 			writeDeliveryJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
