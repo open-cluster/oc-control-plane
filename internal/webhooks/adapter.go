@@ -13,22 +13,11 @@ import (
 // payload shape exists inside its provider package and nowhere else: nothing downstream of
 // Normalise can tell which system delivered a AlertEvent, and that boundary is what makes the
 // second inbound provider a bounded piece of work rather than a change to the model.
-//
-// The interface is declared here, in the package that consumes it. Providers satisfy it
-// structurally — they never import this package — and the composition root supplies the
-// map, so it is the only place that knows every provider.
-//
-// An error means the payload is not what this adapter accepts, and no retry will change
-// that. A failure a retry COULD fix is not an adapter's to report — it has no dependencies
-// to fail — so intake maps every error from here to a permanent refusal.
 type Adapter interface {
 	Authenticate(http.Header, integrations.Integration) bool
 	// Normalise returns the provider identity, canonical content digest, and Alert Events.
+	// Errors are permanent payload refusals; adapters must not report transient failures here.
 	Normalise(body []byte) (storage.NormalizedDelivery, error)
 }
 
-// Adapters is the routing table the composition root supplies, keyed by the Integration
-// Type the payload belongs to. An Integration naming a type absent from this map is a
-// deployment configured by a newer version, which intake treats as its own fault rather
-// than the caller's.
 type Adapters map[integrations.Provider]Adapter

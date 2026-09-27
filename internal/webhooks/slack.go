@@ -18,35 +18,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// SLACK EVENTS LIVE ON THE WEBHOOK SURFACE, NOT ON THE APPLICATION API.
-//
-// The webhook surface is already what a customer's own infrastructure reaches inbound. It
-// bounds bodies as they are read, already rate-limits per source, already refuses without
-// saying which half of a guess was right, and already owns the Delivery record this reuses
-// for deduplication. The application API is the opposite of all of that: it reads across a
-// tenant's records for an authenticated person and belongs on an interface a deployment can
-// keep private.
-//
-// ONE FIXED PATH. A Slack app registration holds a single request URL, so there is no
-// identifier in this path and there could not be: the workspace is read from the signed body
-// and resolved through the installation record, which is what makes the tenant DISCOVERED
-// rather than claimed.
-//
-// THE ORDER IS THE POINT, AND EVERY STEP IS A REFUSAL:
-//
-//	read the unmodified raw body, under the existing bound
-//	verify the signature over the versioned base string, in constant time
-//	reject a timestamp outside the replay window
-//	answer the URL verification challenge, creating nothing
-//	resolve the installation to an integration and therefore an organization
-//	discard what is not a person speaking to us — our own messages first
-//	deduplicate, persist, acknowledge
-//
-// The handler never waits on a model, a repository read, a cluster read or an investigation.
-// It persists and returns. The turn is claimed asynchronously by the same worker that runs
-// every other turn, which is what keeps acknowledgement well inside Slack's timeout however
-// long the investigation behind it takes.
-
 // SlackEventsPath is where a workspace delivers. It is a constant because it goes into a
 // Slack app registration, which a customer or an operator configures once and then does not
 // touch — a path that moved would be an app registration to edit in somebody else's system.
