@@ -135,16 +135,23 @@ func TestOpenAPIDescribesExactlyTheApplicationAPIRoutes(t *testing.T) {
 	composedIntake := webhooks.Handlers{
 		Slack: &webhooks.SlackAgent{SigningSecret: "architecture-test-secret"},
 	}.Router()
-	for _, route := range webhooks.InboundRoutes() {
-		served[route.Method+" "+route.Pattern] = true
-		path := strings.Replace(route.Pattern, "{integration}",
+	intakeRoutes := []struct {
+		method  string
+		pattern string
+	}{
+		{method: http.MethodPost, pattern: webhooks.AlertEventsPath},
+		{method: http.MethodPost, pattern: webhooks.SlackEventsPath},
+	}
+	for _, route := range intakeRoutes {
+		served[route.method+" "+route.pattern] = true
+		path := strings.Replace(route.pattern, "{integration}",
 			"00000000-0000-0000-0000-000000000001", 1)
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		composedIntake.ServeHTTP(response, request)
 		if response.Code != http.StatusMethodNotAllowed {
 			t.Errorf("composed intake does not register %s: GET probe returned %d",
-				route.Method+" "+route.Pattern, response.Code)
+				route.method+" "+route.pattern, response.Code)
 		}
 	}
 	for _, route := range apiRoutes(t) {

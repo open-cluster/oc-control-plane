@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -147,15 +148,17 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		digest := make([]byte, 32)
 		digest[0] = body
 		return storage.Delivery{
-			Integration:   integration,
-			ContentDigest: digest,
-			AlertEvents: []storage.AlertEvent{{
-				SourceKey:   fingerprint,
-				GroupingKey: key,
-				Status:      storage.AlertEventFiring,
-				Title:       "KubePodCrashLooping",
-				StartedAt:   began,
-			}},
+			Integration: integration,
+			AlertDelivery: alertevent.AlertDelivery{
+				ContentDigest: digest,
+				AlertEvents: []alertevent.AlertEvent{{
+					SourceKey:   fingerprint,
+					GroupingKey: key,
+					Status:      alertevent.AlertEventFiring,
+					Title:       "KubePodCrashLooping",
+					StartedAt:   began,
+				}},
+			},
 		}
 	}
 

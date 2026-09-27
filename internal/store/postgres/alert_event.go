@@ -11,75 +11,23 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 )
-
-// AlertEventStatus is where an alert has got to. There are two: it is happening, or it stopped.
-// Anything richer belongs to the incident an investigation attaches to, not to the alert.
-type AlertEventStatus int16
-
-const (
-	AlertEventFiring AlertEventStatus = iota + 1
-	AlertEventResolved
-)
-
-// AlertEvent is one incident of a normalised alert: this occurrence of it, not the alert in the
-// abstract. The distinction is the model's, not a detail — the same alert fires many times.
-type AlertEvent struct {
-	// SourceKey identifies the ALERT as its source names it, and is stable across incidents.
-	SourceKey string
-	// GroupingKey is the SOURCE's own notion of what belongs together, and is empty when it
-	// supplied none. It is what an Incident is keyed on, and it is deliberately never
-	// something this platform inferred from the labels below. Empty produces one incident per
-	// alert, which is what "the source grouped nothing" honestly means.
-	GroupingKey string
-	Status      AlertEventStatus
-	Title       string
-	Summary     string
-	Labels      map[string]string
-	// Annotations are the source's own operational pointers — runbook_url,
-	// dashboard links — preserved because they are the operator's knowledge already
-	// attached to the alert, and untrusted text for their whole life.
-	Annotations map[string]string
-	// GeneratorURL is where the source says the alert came from, preserved so the
-	// alert's own pointer is not thrown away at intake.
-	GeneratorURL string
-	// StartedAt is when the source says this incident began, and together with SourceKey it
-	// is what makes one incident distinguishable from the next.
-	StartedAt time.Time
-	// ResolvedAt is when the source says it ended, and is zero while it is still firing.
-	ResolvedAt time.Time
-}
 
 // Delivery is one accepted webhook body and everything in it. The parts travel together
 // because they are one fact: this body, through this Integration, carried these alertEvents.
 type Delivery struct {
 	// Integration is the installation the body arrived through, and the only authority for
 	// the tenant everything in it belongs to.
-	Integration      uuid.UUID
-	ProviderIdentity string
-	LifecyclePhase   string
-	RequestID        string
-	ContentDigest    []byte
-	// Truncated is how many alerts the source says it left out. Non-zero means this record
-	// of the moment is incomplete because the sender chose not to send the rest.
-	Truncated   int
-	AlertEvents []AlertEvent
+	Integration uuid.UUID
+	RequestID   string
+	alertevent.AlertDelivery
 }
 
 // ErrDeliveryIdentityConflict means a provider reused one lifecycle identity for
 // different normalized content. Retrying cannot make that payload safe to accept.
 var ErrDeliveryIdentityConflict = errors.New("delivery identity conflicts with accepted content")
-
-// NormalizedDelivery is the provider-owned meaning of one authenticated webhook body.
-// Identity and digest are computed after validation so semantically identical encodings
-// remain one delivery.
-type NormalizedDelivery struct {
-	ProviderIdentity string
-	LifecyclePhase   string
-	ContentDigest    []byte
-	Truncated        int
-	AlertEvents      []AlertEvent
-}
 
 // DeliveryOutcome is what happened to one delivery.
 type DeliveryOutcome struct {
@@ -145,7 +93,7 @@ func (p *Database) RecordDelivery(
 			continue
 		}
 		if inserted {
-			if alertEvent.Status == AlertEventResolved {
+			if alertEvent.Status == alertevent.AlertEventResolved {
 				// A resolution with no matching firing remains visible as a source fact, but
 				// cannot create the incident it claims already existed.
 				continue
@@ -159,7 +107,7 @@ func (p *Database) RecordDelivery(
 			}
 			if opened {
 				grouping.IncidentsOpened++
-				if alertEvent.Status == AlertEventFiring {
+				if alertEvent.Status == alertevent.AlertEventFiring {
 					if err := enqueueWebhookJob(ctx, transaction, organization, WebhookJobAlert,
 						deliveryID, delivery.Integration, incidentID, uuid.Nil, 0); err != nil {
 						return DeliveryOutcome{}, err
@@ -184,7 +132,7 @@ func (p *Database) RecordDelivery(
 }
 
 // compareAlertEvents orders two alertEvents by the identity they are written under.
-func compareAlertEvents(a, b AlertEvent) int {
+func compareAlertEvents(a, b alertevent.AlertEvent) int {
 	if byKey := strings.Compare(a.SourceKey, b.SourceKey); byKey != 0 {
 		return byKey
 	}
@@ -248,7 +196,7 @@ func claimDelivery(
 // resolved, and a repeated resolution is a no-op.
 func upsertAlertEvent(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
-	delivery Delivery, alertEvent AlertEvent,
+	delivery Delivery, alertEvent alertevent.AlertEvent,
 ) (uuid.UUID, bool, error) {
 	labels, err := json.Marshal(alertEvent.Labels)
 	if err != nil {
@@ -264,7 +212,7 @@ func upsertAlertEvent(
 	}
 
 	var resolvedAt *time.Time
-	if alertEvent.Status == AlertEventResolved {
+	if alertEvent.Status == alertevent.AlertEventResolved {
 		resolved := alertEvent.ResolvedAt
 		resolvedAt = &resolved
 	}

@@ -370,6 +370,30 @@ func TestIntegrationsCoreImportsNoProvider(t *testing.T) {
 	}
 }
 
+func TestAlertAdaptersDoNotImportPersistence(t *testing.T) {
+	t.Parallel()
+
+	providers := map[string]bool{
+		"internal/integrations/alertmanager":   false,
+		"internal/integrations/genericwebhook": false,
+	}
+	for _, loaded := range loadPackages(t) {
+		provider := internalPackagePath(loaded.PkgPath)
+		if _, inspected := providers[provider]; !inspected {
+			continue
+		}
+		providers[provider] = true
+		if _, importsPersistence := loaded.Imports[modulePath+"/internal/store/postgres"]; importsPersistence {
+			t.Errorf("%s must not import persistence; alert adapters return domain values", provider)
+		}
+	}
+	for provider, found := range providers {
+		if !found {
+			t.Errorf("%s was not found; the gate would pass vacuously", provider)
+		}
+	}
+}
+
 // The composition root is the ONLY place that knows every provider. A second package
 // assembling two of them would be a second catalog — the central-hub shape this tree was
 // built to avoid — and it would not look like much in review: two imports in a file that
