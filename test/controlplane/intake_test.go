@@ -422,8 +422,8 @@ func TestIntake_OrganizationClaimsCannotRedirectIntegrationOwnership(t *testing.
 	}
 }
 
-// The sentence: a correctly authenticated delivery becomes a durable, normalised AlertEvent.
-func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
+// The sentence: a correctly authenticated delivery becomes a durable, normalized AlertEvent.
+func TestIntake_AcceptsASignedDeliveryAndNormalizesIt(t *testing.T) {
 	plane := startIntake(t)
 	// The alert started well before this delivery on purpose: it is what lets the clock
 	// assertion below distinguish the receiver's own clock from the source's, without
@@ -456,10 +456,10 @@ func TestIntake_AcceptsASignedDeliveryAndNormalisesIt(t *testing.T) {
 		t.Errorf("summary = %q", alertEvent.Summary)
 	}
 	if alertEvent.Labels["severity"] != "critical" || alertEvent.Labels["namespace"] != "payments" {
-		t.Errorf("labels did not survive normalisation: %v", alertEvent.Labels)
+		t.Errorf("labels did not survive normalization: %v", alertEvent.Labels)
 	}
 	if alertEvent.Annotations["runbook_url"] != "https://runbooks.acme.example/node-not-ready" {
-		t.Errorf("annotations did not survive normalisation: %v; the operator's own "+
+		t.Errorf("annotations did not survive normalization: %v; the operator's own "+
 			"runbook pointer must not be thrown away at intake", alertEvent.Annotations)
 	}
 	if alertEvent.GeneratorURL != "https://prometheus.acme.example/graph?g0.expr=up" {
@@ -510,6 +510,15 @@ func TestIntake_RefusesADeliveryWithoutTheSourcesSecret(t *testing.T) {
 
 	if recorded := plane.alertEvents(t); len(recorded) != 0 {
 		t.Errorf("an unauthenticated delivery produced %d alertEvents", len(recorded))
+	}
+}
+
+func TestIntake_AuthenticatesBeforeReadingThePayload(t *testing.T) {
+	plane := startIntake(t)
+	body := strings.Repeat("x", 2<<20)
+
+	if status := plane.deliver(t, "not-the-configured-secret-but-long", body); status != http.StatusUnauthorized {
+		t.Errorf("oversized unauthenticated delivery = %d, want 401", status)
 	}
 }
 

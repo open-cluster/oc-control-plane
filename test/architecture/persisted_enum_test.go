@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
@@ -55,8 +56,8 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"WebhookJobComplete", int(storage.WebhookJobComplete), 5},
 		{"MaxWebhookJobAttempts", storage.MaxWebhookJobAttempts, 12},
 
-		{"AlertEventFiring", int(storage.AlertEventFiring), 1},
-		{"AlertEventResolved", int(storage.AlertEventResolved), 2},
+		{"AlertEventFiring", int(alertevent.AlertEventFiring), 1},
+		{"AlertEventResolved", int(alertevent.AlertEventResolved), 2},
 
 		// An incident's vocabulary is the capability's rather than persistence's, because
 		// the capability owns what it defines. What is frozen is the same thing either
@@ -162,8 +163,10 @@ var (
 		int(storage.WebhookJobRetry), int(storage.WebhookJobTerminal),
 		int(storage.WebhookJobComplete),
 	}
-	alertEventStatusValues = []int{int(storage.AlertEventFiring), int(storage.AlertEventResolved)}
-	incidentStatusValues   = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
+	alertEventStatusValues = []int{
+		int(alertevent.AlertEventFiring), int(alertevent.AlertEventResolved),
+	}
+	incidentStatusValues = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
 	// A Slack delivery's own lifecycle, which is NOT an investigation's: it is pending,
 	// delivering, delivered or failed, and a delivery that failed says nothing about the
 	// investigation behind it.

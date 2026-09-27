@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
@@ -37,7 +38,7 @@ import (
 // incident is one whose group_by is not doing what its author thinks.
 func groupAlertEvent(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
-	delivery Delivery, alertEvent AlertEvent, alertEventID uuid.UUID,
+	delivery Delivery, alertEvent alertevent.AlertEvent, alertEventID uuid.UUID,
 ) (uuid.UUID, bool, error) {
 	key, basis := alertEvent.GroupingKey, incident.BasisSourceGrouping
 	if key == "" {
@@ -75,7 +76,7 @@ func groupAlertEvent(
 // could get a different answer from.
 func openIncident(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
-	delivery Delivery, alertEvent AlertEvent, key string, basis incident.Basis,
+	delivery Delivery, alertEvent alertevent.AlertEvent, key string, basis incident.Basis,
 ) (uuid.UUID, bool, error) {
 	// The times come from the SOURCE's clock. An incident's window is what an investigation opened
 	// for it would be scoped to, so a delivery delay must not widen it.
@@ -341,7 +342,7 @@ func (p *Database) IncidentAlertEvents(
 		if err = json.Unmarshal(labels, &alertEvent.Labels); err != nil {
 			return incident.AlertEventList{}, fmt.Errorf("decoding alert_event labels: %w", err)
 		}
-		alertEvent.Firing = AlertEventStatus(status) == AlertEventFiring
+		alertEvent.Firing = alertevent.AlertEventStatus(status) == alertevent.AlertEventFiring
 		if resolvedAt != nil {
 			alertEvent.ResolvedAt = *resolvedAt
 		}
