@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func TestAdapterAuthenticatesTheStaticSenderCredential(t *testing.T) {
@@ -29,7 +29,7 @@ func TestAdapterAuthenticatesTheStaticSenderCredential(t *testing.T) {
 	}
 }
 
-func TestAdapterNormaliseCanonicalFiring(t *testing.T) {
+func TestAdapterNormalizeCanonicalFiring(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{
@@ -44,9 +44,9 @@ func TestAdapterNormaliseCanonicalFiring(t *testing.T) {
 		"sourceUrl":"https://monitor.example/alerts/42"
 	}`)
 
-	got, err := (Adapter{}).Normalise(body)
+	got, err := (Adapter{}).Normalize(body)
 	if err != nil {
-		t.Fatalf("Normalise() error = %v", err)
+		t.Fatalf("Normalize() error = %v", err)
 	}
 	if got.ProviderIdentity != "evt-42" || got.LifecyclePhase != "firing" {
 		t.Errorf("identity = (%q, %q), want (evt-42, firing)",
@@ -61,9 +61,9 @@ func TestAdapterNormaliseCanonicalFiring(t *testing.T) {
 	event := got.AlertEvents[0]
 	wantStarted := time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)
 	if event.SourceKey != "evt-42" || event.GroupingKey != "database/latency" ||
-		event.Status != storage.AlertEventFiring || event.Title != "Database latency" ||
+		event.Status != alertevent.AlertEventFiring || event.Title != "Database latency" ||
 		!event.StartedAt.Equal(wantStarted) {
-		t.Errorf("normalised event = %+v", event)
+		t.Errorf("normalized event = %+v", event)
 	}
 	if event.Labels["severity"] != "critical" || event.Labels["region"] != "eu-central-1" {
 		t.Errorf("labels = %#v", event.Labels)
@@ -93,8 +93,8 @@ func TestAdapterRejectsStructurallyInvalidJSON(t *testing.T) {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := (Adapter{}).Normalise([]byte(body)); err == nil {
-				t.Fatal("Normalise() error = nil, want permanent schema rejection")
+			if _, err := (Adapter{}).Normalize([]byte(body)); err == nil {
+				t.Fatal("Normalize() error = nil, want permanent schema rejection")
 			}
 		})
 	}
@@ -123,8 +123,8 @@ func TestAdapterEnforcesCanonicalSchema(t *testing.T) {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := (Adapter{}).Normalise([]byte(body)); err == nil {
-				t.Fatal("Normalise() error = nil, want schema rejection")
+			if _, err := (Adapter{}).Normalize([]byte(body)); err == nil {
+				t.Fatal("Normalize() error = nil, want schema rejection")
 			}
 		})
 	}

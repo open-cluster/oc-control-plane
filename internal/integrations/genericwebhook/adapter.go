@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 type payload struct {
@@ -38,28 +38,28 @@ func (Adapter) Authenticate(headers http.Header, integration integrations.Integr
 	return integrations.AuthenticateWebhookToken(headers, integration)
 }
 
-func (Adapter) Normalise(body []byte) (storage.NormalizedDelivery, error) {
+func (Adapter) Normalize(body []byte) (alertevent.AlertDelivery, error) {
 	if !utf8.Valid(body) {
-		return storage.NormalizedDelivery{}, fmt.Errorf("payload is not valid UTF-8")
+		return alertevent.AlertDelivery{}, fmt.Errorf("payload is not valid UTF-8")
 	}
 	if err := rejectDuplicateKeys(body); err != nil {
-		return storage.NormalizedDelivery{}, err
+		return alertevent.AlertDelivery{}, err
 	}
 	if err := rejectNullFields(body, "resolvedAt", "sourceUrl"); err != nil {
-		return storage.NormalizedDelivery{}, err
+		return alertevent.AlertDelivery{}, err
 	}
 	var decoded payload
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
-		return storage.NormalizedDelivery{}, fmt.Errorf("payload is not generic webhook json: %w", err)
+		return alertevent.AlertDelivery{}, fmt.Errorf("payload is not generic webhook json: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return storage.NormalizedDelivery{}, fmt.Errorf("payload contains a trailing JSON value")
+		return alertevent.AlertDelivery{}, fmt.Errorf("payload contains a trailing JSON value")
 	}
 	decoded.Title = strings.TrimSpace(decoded.Title)
 	if err := validate(decoded); err != nil {
-		return storage.NormalizedDelivery{}, err
+		return alertevent.AlertDelivery{}, err
 	}
 	decoded.StartedAt = decoded.StartedAt.UTC()
 	if decoded.ResolvedAt != nil {
@@ -72,10 +72,10 @@ func (Adapter) Normalise(body []byte) (storage.NormalizedDelivery, error) {
 	}
 	labels["severity"] = decoded.Severity
 
-	event := storage.AlertEvent{
+	event := alertevent.AlertEvent{
 		SourceKey:    decoded.EventID,
 		GroupingKey:  decoded.DeduplicationKey,
-		Status:       storage.AlertEventFiring,
+		Status:       alertevent.AlertEventFiring,
 		Title:        decoded.Title,
 		Labels:       labels,
 		Annotations:  decoded.Annotations,
@@ -83,21 +83,21 @@ func (Adapter) Normalise(body []byte) (storage.NormalizedDelivery, error) {
 		StartedAt:    decoded.StartedAt,
 	}
 	if decoded.Status == "resolved" {
-		event.Status = storage.AlertEventResolved
+		event.Status = alertevent.AlertEventResolved
 		if decoded.ResolvedAt != nil {
 			event.ResolvedAt = *decoded.ResolvedAt
 		}
 	}
 	canonical, err := json.Marshal(decoded)
 	if err != nil {
-		return storage.NormalizedDelivery{}, fmt.Errorf("encoding canonical generic webhook: %w", err)
+		return alertevent.AlertDelivery{}, fmt.Errorf("encoding canonical generic webhook: %w", err)
 	}
 	digest := sha256.Sum256(canonical)
-	return storage.NormalizedDelivery{
+	return alertevent.AlertDelivery{
 		ProviderIdentity: decoded.EventID,
 		LifecyclePhase:   decoded.Status,
 		ContentDigest:    digest[:],
-		AlertEvents:      []storage.AlertEvent{event},
+		AlertEvents:      []alertevent.AlertEvent{event},
 	}, nil
 }
 

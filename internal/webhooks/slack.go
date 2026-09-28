@@ -55,8 +55,8 @@ type SlackAgent struct {
 // Serves reports whether this deployment receives Slack events at all.
 func (s *SlackAgent) Serves() bool { return s != nil && s.SigningSecret != "" }
 
-// slackEvents receives one events request.
-func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request) {
+// handleSlackEvents receives one events request.
+func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 	requestID := uuid.NewString()
@@ -192,7 +192,7 @@ func (h *surface) slackEvents(writer http.ResponseWriter, request *http.Request)
 }
 
 // acceptSlackMessage persists the message and durable work in one transaction, then answers.
-func (h *surface) acceptSlackMessage(
+func (h *receiver) acceptSlackMessage(
 	ctx context.Context, writer http.ResponseWriter, organization uuid.UUID,
 	integration uuid.UUID, requestID string, body []byte, envelope slack.Envelope,
 ) {

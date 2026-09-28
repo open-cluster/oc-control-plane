@@ -28,41 +28,6 @@ const TokenHeader = integrations.WebhookTokenHeader
 
 const AlertEventsPath = "/webhooks/v1/integrations/{integration}/alert-events"
 
-type InboundRoute struct {
-	Method  string
-	Pattern string
-}
-
-type inboundEndpoint uint8
-
-const (
-	alertEventsEndpoint inboundEndpoint = iota + 1
-	slackEventsEndpoint
-)
-
-type inboundRoute struct {
-	InboundRoute
-	endpoint inboundEndpoint
-}
-
-// InboundRoutes is the canonical provider-authenticated HTTP inventory. The same table
-// drives mux registration, so contract parity cannot diverge from the composed surface.
-func InboundRoutes() []InboundRoute {
-	routes := inboundRouteTable()
-	result := make([]InboundRoute, 0, len(routes))
-	for _, route := range routes {
-		result = append(result, route.InboundRoute)
-	}
-	return result
-}
-
-func inboundRouteTable() []inboundRoute {
-	return []inboundRoute{
-		{InboundRoute: InboundRoute{Method: http.MethodPost, Pattern: AlertEventsPath}, endpoint: alertEventsEndpoint},
-		{InboundRoute: InboundRoute{Method: http.MethodPost, Pattern: SlackEventsPath}, endpoint: slackEventsEndpoint},
-	}
-}
-
 // maxBodyBytes bounds a delivery. It is enforced as the body is read rather than after, so an
 // oversized payload is refused without ever being held whole — intake is reachable by anything
 // that can guess an Integration identifier, and a size bound applied after buffering is not a
@@ -88,16 +53,24 @@ type Handlers struct {
 	Slack *SlackAgent
 }
 
-// surface is one running intake listener: its dependencies plus the state that belongs to a
-// listener rather than to a configuration. The rate limiter is per surface because it holds
+// receiver is one running intake listener: its dependencies plus the state that belongs to a
+// listener rather than to a configuration. The rate limiter is per receiver because it holds
 // live counters, and a Handlers value that carried them could be copied into two limiters
 // enforcing half a limit each.
-type surface struct {
+type receiver struct {
 	Handlers
 	deliveries *limiter
-	// counters are this listener's own instruments. They are per surface for the same reason the
+	// counters are this listener's own instruments. They are per receiver for the same reason the
 	// limiter is: an instrument rebuilt per request is a new time series per request.
 	counters instruments
+}
+
+func newReceiver(handlers Handlers) *receiver {
+	return &receiver{
+		Handlers:   handlers,
+		deliveries: newLimiter(time.Now),
+		counters:   newInstruments(handlers.Logger),
+	}
 }
 
 // Router returns the intake surface.
@@ -105,66 +78,42 @@ type surface struct {
 // The route names the Integration and nothing else. There is no organization in it, and
 // adding one would be adding a tenant identifier the caller chooses.
 func (h Handlers) Router() http.Handler {
-	running := &surface{
-		Handlers:   h,
-		deliveries: newLimiter(time.Now),
-		counters:   newInstruments(h.Logger),
-	}
+	receiver := newReceiver(h)
 
 	mux := http.NewServeMux()
-	for _, route := range inboundRouteTable() {
-		var handler http.HandlerFunc
-		switch route.endpoint {
-		case alertEventsEndpoint:
-			handler = running.deliver
-		case slackEventsEndpoint:
-			if !h.Slack.Serves() {
-				continue
-			}
-			handler = running.slackEvents
-		}
-		mux.Handle(route.Method+" "+route.Pattern, handler)
+	mux.HandleFunc("POST "+AlertEventsPath, receiver.handleAlertEvents)
+	if h.Slack != nil && h.Slack.Serves() {
+		mux.HandleFunc("POST "+SlackEventsPath, receiver.handleSlackEvents)
 	}
+	return receiver.limit(mux)
+}
+
+func (h *receiver) limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !running.deliveries.allowRequest() {
-			running.counters.countDelivery(request.Context(), dispositionRateLimited)
+		if !h.deliveries.allowRequest() {
+			h.counters.countDelivery(request.Context(), dispositionRateLimited)
 			writer.Header().Set("X-Request-ID", uuid.NewString())
 			writer.Header().Set("Retry-After", "1")
 			writeStatus(writer, http.StatusTooManyRequests, "slow down")
 			return
 		}
-		mux.ServeHTTP(writer, request)
+		next.ServeHTTP(writer, request)
 	})
 }
 
-// deliver accepts one webhook delivery.
+// handleAlertEvents accepts one webhook delivery.
 //
 // Integration quota is spent only after authentication, before payload normalization.
-func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
+func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 	requestID := uuid.NewString()
 	writer.Header().Set("X-Request-ID", requestID)
 
-	integrationID, ok := h.addressed(writer, request)
+	integrationID, ok := h.integrationID(writer, request)
 	if !ok {
 		return
 	}
-	body, err := readBody(writer, request)
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			h.refuse(ctx, request, "oversized")
-			h.counters.countDelivery(ctx, dispositionOversized)
-			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
-			return
-		}
-		h.refuse(ctx, request, "incomplete")
-		h.counters.countDelivery(ctx, dispositionIncomplete)
-		writeStatus(writer, http.StatusBadRequest, "payload not received")
-		return
-	}
-
 	integration, adapter, err := h.authenticate(ctx, integrationID, request)
 	if err != nil {
 		// A failure to READ the Integration is not a failure to authenticate, and answering
@@ -213,7 +162,22 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	normalized, err := adapter.Normalise(body)
+	body, err := readBody(writer, request)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			h.refuse(ctx, request, "oversized")
+			h.counters.countDelivery(ctx, dispositionOversized)
+			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
+			return
+		}
+		h.refuse(ctx, request, "incomplete")
+		h.counters.countDelivery(ctx, dispositionIncomplete)
+		writeStatus(writer, http.StatusBadRequest, "payload not received")
+		return
+	}
+
+	normalized, err := adapter.Normalize(body)
 	if err != nil {
 		// The payload is not what this type's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
@@ -223,19 +187,15 @@ func (h *surface) deliver(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	h.record(ctx, writer, organization, storage.Delivery{
-		Integration:      integration.ID,
-		ProviderIdentity: normalized.ProviderIdentity,
-		LifecyclePhase:   normalized.LifecyclePhase,
-		RequestID:        requestID,
-		ContentDigest:    normalized.ContentDigest,
-		Truncated:        normalized.Truncated,
-		AlertEvents:      normalized.AlertEvents,
+	h.recordAlertDelivery(ctx, writer, organization, storage.Delivery{
+		Integration:   integration.ID,
+		RequestID:     requestID,
+		AlertDelivery: normalized,
 	})
 }
 
-// record commits the delivery and answers the source.
-func (h *surface) record(
+// recordAlertDelivery commits the delivery and answers the source.
+func (h *receiver) recordAlertDelivery(
 	ctx context.Context, writer http.ResponseWriter,
 	organization uuid.UUID, delivery storage.Delivery,
 ) {
@@ -310,7 +270,7 @@ var errNotAuthenticated = errors.New("not authenticated")
 // that is found is the authority for the organization. The comparison is constant-time and
 // happens whether or not a secret is held, so the answer says nothing about which
 // identifiers exist.
-func (h *surface) authenticate(
+func (h *receiver) authenticate(
 	ctx context.Context, integrationID uuid.UUID, request *http.Request,
 ) (integrations.Integration, Adapter, error) {
 	integration, err := h.Database.IntegrationByID(ctx, integrationID)
@@ -346,12 +306,12 @@ func callerOf(request *http.Request) string {
 	return request.RemoteAddr
 }
 
-// addressed resolves the Integration named in the path.
+// integrationID resolves the Integration named in the path.
 //
 // A path that does not parse is answered exactly as a wrong secret is: same status, same body.
 // Anything else lets a caller separate "this is not the shape of an identifier" from "this is
 // not an integration", and probing the first is how you learn to probe the second.
-func (h *surface) addressed(
+func (h *receiver) integrationID(
 	writer http.ResponseWriter, request *http.Request,
 ) (uuid.UUID, bool) {
 	integrationID, err := uuid.Parse(request.PathValue("integration"))
@@ -375,13 +335,12 @@ func readBody(writer http.ResponseWriter, request *http.Request) ([]byte, error)
 // for the opposite reason — without it a campaign of credential guesses leaves nothing to
 // investigate.
 //
-// No organization is named, because at this point none is known: a refused delivery never
-// authenticated, so there is no tenant to attribute it to. Recording the identifier it aimed at
-// is what makes a campaign against one Integration visible.
+// Recording the addressed Integration rather than an Organization keeps refusals attributable
+// before and after authentication without accepting a caller-supplied tenant claim.
 //
 // Nothing the caller sent in a header is recorded. A refused delivery's headers are the one
 // place guaranteed to hold a guess at the credential.
-func (h *surface) refuse(ctx context.Context, request *http.Request, reason string) {
+func (h *receiver) refuse(ctx context.Context, request *http.Request, reason string) {
 	h.Logger.WarnContext(ctx, "delivery refused",
 		slog.String("integration_id", request.PathValue("integration")),
 		slog.String("caller", callerOf(request)),
