@@ -1,20 +1,5 @@
 // Package webhooks accepts alerts from the systems a customer already runs.
 //
-// The product does not detect. Building an alerting engine would rebuild what every customer
-// already has and would contradict the position that this is an investigation platform rather
-// than a monitoring one. What customers do not have is anything that starts investigating
-// before a human arrives, and reaching that means accepting their alerts rather than replacing
-// them.
-//
-// A delivery names its Integration and NOTHING else. The organization is read from the
-// authenticated Integration row, because a path is chosen by the caller and a caller who
-// could name a tenant could try every tenant.
-//
-// Accepting alerts is not a thin adapter. Each Integration Type has its own payload, its
-// own idea of authentication, its own retry behaviour and its own notion of what counts as
-// the same alert firing twice. Every one of those differences is confined to the type's
-// provider package; past normalization nothing can tell which system delivered a AlertEvent.
-//
 // Intake owns its authenticated, bounded route tree. The application mounts that tree on the
 // shared HTTP listener; a reverse proxy may apply path-specific exposure without bypassing
 // provider authentication or body limits.
@@ -37,13 +22,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// TokenHeader carries the Integration's webhook secret.
-//
-// It is a header rather than a signature because the first inbound type cannot sign:
-// Alertmanager attaches static headers to a webhook and nothing more. The consequence is
-// written down rather than left implicit — this authenticates the sender and attests nothing
-// about the body — and verification is per-adapter precisely so a type that can sign gets a
-// signature instead.
+// TokenHeader authenticates the sender but does not attest the body. Adapters that support
+// signatures verify them directly.
 const TokenHeader = integrations.WebhookTokenHeader
 
 const AlertEventsPath = "/webhooks/v1/integrations/{integration}/alert-events"
