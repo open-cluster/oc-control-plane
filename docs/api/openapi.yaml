@@ -1164,10 +1164,8 @@ paths:
           $ref: '#/components/responses/WebhookUnauthorized'
         '413':
           $ref: '#/components/responses/WebhookOversized'
-        '429':
-          $ref: '#/components/responses/RateLimited'
         '503':
-          $ref: '#/components/responses/WebhookUnavailable'
+          $ref: '#/components/responses/AlertWebhookUnavailable'
   /webhooks/v1/slack/events:
     post:
       operationId: receiveSlackEvent
@@ -1806,6 +1804,17 @@ components:
             $ref: '#/components/schemas/WebhookStatus'
     WebhookOversized:
       description: Body exceeds 1 MiB.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/WebhookStatus'
+    AlertWebhookUnavailable:
+      description: Admission capacity is temporarily exhausted or the delivery could not be durably recorded; retry.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
       content:
         application/json:
           schema:

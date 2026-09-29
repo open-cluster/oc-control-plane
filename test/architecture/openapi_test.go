@@ -67,6 +67,35 @@ type openAPIReference struct {
 	Ref string `yaml:"$ref"`
 }
 
+func TestOpenAPISeparatesAlertAndSlackBackpressureContracts(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read the canonical OpenAPI document: %v", err)
+	}
+	var document openAPIDocument
+	if err = yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatalf("parse the canonical OpenAPI document: %v", err)
+	}
+
+	alert := document.Paths[webhooks.AlertEventsPath].Post.Responses
+	if _, present := alert["429"]; present {
+		t.Error("Alert Event admission still documents non-retryable 429")
+	}
+	if got := alert["503"].Ref; got != "#/components/responses/AlertWebhookUnavailable" {
+		t.Errorf("Alert Event 503 response = %q, want alert-specific backpressure contract", got)
+	}
+
+	slack := document.Paths[webhooks.SlackEventsPath].Post.Responses
+	if got := slack["429"].Ref; got != "#/components/responses/RateLimited" {
+		t.Errorf("Slack 429 response = %q, want unchanged rate-limit contract", got)
+	}
+	if got := slack["503"].Ref; got != "#/components/responses/WebhookUnavailable" {
+		t.Errorf("Slack 503 response = %q, want unchanged unavailable contract", got)
+	}
+}
+
 func TestOpenAPIRetiresDedicatedRelayConflictHistory(t *testing.T) {
 	t.Parallel()
 
