@@ -9,7 +9,29 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestBatchAdmissionRequiresRoomForTheWholeBatch(t *testing.T) {
+	database, organization, _ := twoOrganizationsInOneDatabase(t)
+	ctx := context.Background()
+	if _, err := database.CreateInvestigation(ctx, ownerOf(t, organization), organization,
+		investigation.NewInvestigation{Subject: "service", WindowFrom: time.Now(), WindowUntil: time.Now()}, 2); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := storage.ReserveWaitingInvestigationsForTest(ctx, tx, organization, 2, 2); !errors.Is(err, storage.ErrWebhookJobCapacity) {
+		t.Fatalf("batch of two with one slot remaining: %v, want capacity error", err)
+	}
+}
 
 func TestCreateInvestigationEnforcesBacklogAtomically(t *testing.T) {
 	database, organization, _ := twoOrganizationsInOneDatabase(t)
