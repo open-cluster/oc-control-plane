@@ -81,20 +81,26 @@ func (h Handlers) Router() http.Handler {
 	receiver := newReceiver(h)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+AlertEventsPath, receiver.handleAlertEvents)
+	mux.HandleFunc(alertEventsRoute, receiver.handleAlertEvents)
 	if h.Slack != nil && h.Slack.Serves() {
 		mux.HandleFunc("POST "+SlackEventsPath, receiver.handleSlackEvents)
 	}
 	return receiver.limit(mux)
 }
 
-func (h *receiver) limit(next http.Handler) http.Handler {
+const alertEventsRoute = "POST " + AlertEventsPath
+
+func (h *receiver) limit(next *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if !h.deliveries.allowRequest() {
 			h.counters.countDelivery(request.Context(), dispositionRateLimited)
 			writer.Header().Set("X-Request-ID", uuid.NewString())
 			writer.Header().Set("Retry-After", "1")
-			writeStatus(writer, http.StatusTooManyRequests, "slow down")
+			status := http.StatusTooManyRequests
+			if _, pattern := next.Handler(request); pattern == alertEventsRoute {
+				status = http.StatusServiceUnavailable
+			}
+			writeStatus(writer, status, "slow down")
 			return
 		}
 		next.ServeHTTP(writer, request)
@@ -143,7 +149,7 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 		h.refuse(ctx, request, "rate limited")
 		h.counters.countDelivery(ctx, dispositionRateLimited)
 		writer.Header().Set("Retry-After", "1")
-		writeStatus(writer, http.StatusTooManyRequests, "slow down")
+		writeStatus(writer, http.StatusServiceUnavailable, "slow down")
 		return
 	}
 

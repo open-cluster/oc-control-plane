@@ -104,8 +104,9 @@ provider adapter. Generic Webhook and Alertmanager use the one-time
 `X-OpenCluster-Token`; Slack uses its signed provider request.
 
 `202 Accepted` means a delivery is durable, and an exact retry of an accepted lifecycle
-phase returns `200 OK`. Correct `400`, `401`, and `413` responses before retrying. Retry
-`429` after `Retry-After` and retry `503` with bounded backoff.
+phase returns `200 OK`. Correct `400`, `401`, and `413` responses before retrying. Alert
+webhooks use `503` for temporary admission pressure so Alertmanager retries them; retry with
+bounded backoff and honor `Retry-After` when present. Slack admission pressure remains `429`.
 
 Use [Generic Webhook](/integrations/alerting/generic_webhook) or
 [Prometheus Alertmanager](/integrations/alerting/alertmanager) for sender setup. Admins

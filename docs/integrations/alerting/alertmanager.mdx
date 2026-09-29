@@ -80,8 +80,7 @@ OpenCluster cannot query silences, inhibitions, or other active alerts.
 | `400` | The payload is invalid and should not be retried unchanged. |
 | `401` | The secret is wrong, was rotated, or the integration is disabled. |
 | `413` | The body is larger than 1 MiB. |
-| `429` | The integration exceeded its delivery rate; retry after `Retry-After`. |
-| `503` | OpenCluster could not record the delivery; retry. |
+| `503` | Admission capacity is temporarily exhausted or OpenCluster could not record the delivery; retry and honor `Retry-After` when present. |
 
 Deliveries can contain at most 2,048 alerts. Only `firing` and `resolved` statuses are
 accepted. If Alertmanager marks a delivery as truncated, OpenCluster records that the
@@ -100,7 +99,7 @@ explain the alert.
 - **`401`:** replace the configured secret with the current value. Rotated secrets stop
   working immediately.
 - **`400`:** confirm middleware has not changed Alertmanager's version 4 webhook body.
-- **`429`:** honor `Retry-After`, reduce delivery frequency, or group alerts more aggressively.
+- **`503`:** honor `Retry-After` when present, reduce delivery frequency, or group alerts more aggressively.
   See the [shared and per-Integration limits](/self-hosting/configuration#webhook-admission-limits).
 
 ## Rotate or disconnect

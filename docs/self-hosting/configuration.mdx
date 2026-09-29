@@ -179,9 +179,11 @@ verification, and one bounded Investigation.
 Each control-plane process allows a shared burst of 600 webhook requests and restores
 10 requests per second before authentication. This protects both alert and Slack intake;
 changing an Integration identifier or forwarding header does not create fresh capacity.
-During overload, legitimate senders may also receive `429` and must honor `Retry-After`.
+During overload, alert webhooks receive `503` and Slack receives `429`; both include
+`Retry-After`.
 
 After authentication, each Integration has a separate burst of 60 deliveries and restores
 one delivery per second. Incorrect credentials do not spend that quota. A process tracks
-at most 4,096 active Integrations; additional Integrations receive `429` until an entry
-has been idle for ten minutes. Limits are per process and multiply across replicas.
+at most 4,096 active Integrations. An Alert Integration over either limit receives `503`;
+a Slack Integration receives `429`. Capacity returns after an entry has been idle for ten
+minutes. Limits are per process and multiply across replicas.

@@ -41,6 +41,27 @@ const (
 	alertmanagerGateImage = "prom/alertmanager:v0.34.0"
 )
 
+func TestAlertmanagerGate_PinnedNotifierRetryContract(t *testing.T) {
+	// v0.34.0 constructs the webhook Retrier without additional retry codes and retries
+	// only 5xx responses. Re-check both sources before changing the supported image:
+	// https://github.com/prometheus/alertmanager/blob/v0.34.0/notify/webhook/webhook.go#L46-L53
+	// https://github.com/prometheus/alertmanager/blob/v0.34.0/notify/util.go#L214-L244
+	if alertmanagerGateImage != "prom/alertmanager:v0.34.0" {
+		t.Fatalf("the supported Alertmanager changed to %s; re-check its webhook retry contract",
+			alertmanagerGateImage)
+	}
+	if alertmanagerWebhookRetries(http.StatusTooManyRequests) {
+		t.Fatal("the pinned Alertmanager contract must treat 429 as non-retryable")
+	}
+	if !alertmanagerWebhookRetries(http.StatusServiceUnavailable) {
+		t.Fatal("the pinned Alertmanager contract must treat 503 as retryable")
+	}
+}
+
+func alertmanagerWebhookRetries(status int) bool {
+	return status/100 == 5
+}
+
 // alertmanagerGate is the composed product with a real Alertmanager in front of it: the
 // application API, intake, a real database, a scripted model boundary so this gate never
 // pays a provider, and a recorder in the delivery path.
@@ -93,7 +114,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 }
 
 // forwarded is one delivery as it passed through the recorder: the body and token
-// Alertmanager sent, and the answer intake gave.
+// Alertmanager sent, and the answer the recorder returned to it.
 type forwarded struct {
 	Body    []byte
 	Token   string
@@ -117,20 +138,21 @@ type deliveredPayload struct {
 	} `json:"alerts"`
 }
 
-// intakeRecorder stands between Alertmanager and intake, forwarding every request verbatim
-// and returning intake's own answer.
+// intakeRecorder stands between Alertmanager and intake, normally forwarding each request
+// verbatim and returning intake's own answer.
 //
-// It exists for two reasons, both needing Alertmanager's own body rather than one this test
+// It exists for three reasons, all needing Alertmanager's own body rather than one this test
 // wrote. A delivery is stored as a digest and never as a body, so the only place to capture
-// what Alertmanager actually sent is in flight. And it can be told to answer one delivery
-// with a server error AFTER intake has already accepted it, which is the only honest way to
-// provoke Alertmanager's own retry of an identical body.
+// what Alertmanager actually sent is in flight. It can answer before forwarding to model
+// admission backpressure, or answer with a server error AFTER intake has accepted a delivery
+// to provoke Alertmanager's own retry of an identical body.
 type intakeRecorder struct {
 	server *httptest.Server
 
-	mu         sync.Mutex
-	deliveries []forwarded
-	failNext   bool
+	mu               sync.Mutex
+	deliveries       []forwarded
+	backpressureNext bool
+	failNext         bool
 }
 
 func startIntakeRecorder(t *testing.T, intakeAddress string) *intakeRecorder {
@@ -142,6 +164,15 @@ func startIntakeRecorder(t *testing.T, intakeAddress string) *intakeRecorder {
 			body, err := io.ReadAll(request.Body)
 			if err != nil {
 				http.Error(writer, "unreadable body", http.StatusBadRequest)
+				return
+			}
+			if recorder.takeBackpressure() {
+				recorder.record(forwarded{
+					Body: body, Token: request.Header.Get(intake.TokenHeader),
+					Status: http.StatusServiceUnavailable,
+				})
+				writer.Header().Set("Retry-After", "1")
+				writer.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 
@@ -175,6 +206,21 @@ func startIntakeRecorder(t *testing.T, intakeAddress string) *intakeRecorder {
 		}))
 	t.Cleanup(recorder.server.Close)
 	return recorder
+}
+
+// backpressureNextDelivery refuses the next delivery before it reaches intake.
+func (r *intakeRecorder) backpressureNextDelivery() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.backpressureNext = true
+}
+
+func (r *intakeRecorder) takeBackpressure() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	backpressure := r.backpressureNext
+	r.backpressureNext = false
+	return backpressure
 }
 
 func (r *intakeRecorder) record(delivery forwarded) {

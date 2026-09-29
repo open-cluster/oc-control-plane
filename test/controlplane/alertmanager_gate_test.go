@@ -199,6 +199,37 @@ func TestAlertmanagerGate_ARetriedDeliveryCreatesNoSecondIncident(t *testing.T) 
 	}
 }
 
+// Alertmanager must retry temporary admission backpressure rather than losing the alert.
+// The first attempt never reaches intake; the later attempt must be accepted exactly once.
+func TestAlertmanagerGate_BackpressureIsRetriedAndLaterAccepted(t *testing.T) {
+	gate := startAlertmanagerGate(t)
+	const alertname = "GateBackpressureRetry"
+	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+
+	gate.recorder.backpressureNextDelivery()
+	gate.fire(t, firingAlert(alertname, began))
+	delivered := gate.recorder.await(t, alertname, "firing", 2)
+
+	if delivered[0].Status != http.StatusServiceUnavailable {
+		t.Fatalf("the deliberately shed delivery = %d, want 503", delivered[0].Status)
+	}
+	if delivered[1].Status != http.StatusAccepted {
+		t.Fatalf("alertmanager's retry after backpressure = %d, want 202", delivered[1].Status)
+	}
+	if !bytes.Equal(delivered[0].Body, delivered[1].Body) {
+		t.Fatal("alertmanager's retry after backpressure carried a different body")
+	}
+	if alertEvents := gate.alertEventsNamed(t, alertname); len(alertEvents) != 1 {
+		t.Errorf("one accepted alert produced %d alertEvents, want 1", len(alertEvents))
+	}
+	if list := gate.incidents(t); len(list.Items) != 1 {
+		t.Errorf("one accepted alert produced %d incidents, want 1: %+v", len(list.Items), list.Items)
+	}
+	if accepted := gate.countDeliveries(t); accepted != 1 {
+		t.Errorf("%d deliveries were persisted, want only the accepted retry", accepted)
+	}
+}
+
 // Refusals remain observable without becoming Webhook Deliveries. This is asserted against the
 // body a real Alertmanager produced rather than a hand-built approximation.
 func TestAlertmanagerGate_ARefusedDeliveryIsNotPersisted(t *testing.T) {
