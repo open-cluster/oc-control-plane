@@ -92,7 +92,7 @@ func (d *Database) ApplyAlertWebhookJob(
 		 WHERE org_id = $1 AND webhook_job_id = $2`,
 		work.Organization, work.ID).Scan(&investigationID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err = reserveWaitingInvestigation(ctx, tx, work.Organization, maxWaiting); err != nil {
+		if err = reserveWaitingInvestigations(ctx, tx, work.Organization, maxWaiting, 1); err != nil {
 			return uuid.Nil, err
 		}
 		var title string
@@ -143,7 +143,7 @@ func (d *Database) ApplySlackWebhookJob(
 		return fmt.Errorf("beginning Slack delivery processing: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err = reserveWaitingInvestigation(ctx, tx, work.Organization, maxWaiting); err != nil {
+	if err = reserveWaitingInvestigations(ctx, tx, work.Organization, maxWaiting, 1); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `SAVEPOINT webhook_turn`); err != nil {
@@ -167,8 +167,8 @@ func (d *Database) ApplySlackWebhookJob(
 	return nil
 }
 
-func reserveWaitingInvestigation(
-	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, maximum int,
+func reserveWaitingInvestigations(
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, maximum, requested int,
 ) error {
 	if maximum <= 0 {
 		return nil
@@ -184,7 +184,7 @@ func reserveWaitingInvestigation(
 		organization).Scan(&waiting); err != nil {
 		return fmt.Errorf("counting organization waiting investigations: %w", err)
 	}
-	if waiting >= maximum {
+	if requested > maximum-waiting {
 		return ErrWebhookJobCapacity
 	}
 	return nil

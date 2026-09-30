@@ -37,7 +37,7 @@ func (p *Database) CreateInvestigation(
 		func(ctx context.Context, transaction pgx.Tx) (
 			investigation.Investigation, audit.Target, audit.Detail, error,
 		) {
-			if err := reserveWaitingInvestigation(ctx, transaction, organization, maxPending); err != nil {
+			if err := reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
 				if errors.Is(err, ErrWebhookJobCapacity) {
 					return investigation.Investigation{}, audit.Target{}, nil, investigation.ErrQueueFull
 				}
