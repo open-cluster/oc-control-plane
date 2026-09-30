@@ -78,6 +78,15 @@ from measured Investigation concurrency and provider workloads before production
 v0.1 does not publish a qualified in-place upgrade path. Do not infer compatibility from
 image or chart tags; see [Feature availability](/feature-availability).
 
+For this v0.1 transition, stop **every old control-plane replica** before starting the
+new version, and back up PostgreSQL first. Do not use a rolling upgrade or run mixed
+versions against one database. Startup automatically repairs accepted legacy alerts
+into automatic Investigations before serving traffic; manual Investigations and Slack
+work are preserved. Disable any autoscaler that could restart old replicas, scale the
+old Deployment to zero, and wait for all old Pods to terminate before upgrading.
+If startup rejects ambiguous historical Investigations, keep old replicas stopped
+and resolve the data explicitly without deleting user-visible Investigations.
+
 ## Common failure and recovery
 
 If the rollout stalls, inspect

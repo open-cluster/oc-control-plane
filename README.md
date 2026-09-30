@@ -112,6 +112,10 @@ To enable the optional Relay transport, provide `OPENCLUSTER_RELAY_SPKI_PINS`, s
 set `relay.enabled=true` in the Helm release. The Relay initiates the connection; the control plane never dials into a
 customer cluster.
 
+Upgrading an older v0.1 deployment requires stopping every old control-plane replica
+before the new binary starts and automatically migrates accepted alert work. Do not
+run mixed versions; see the [Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
+
 ## Architecture
 
 The control plane owns Organizations, Integrations, Alert Events, Incidents, Conversations, Investigations, Tool Runs,

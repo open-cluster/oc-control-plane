@@ -69,63 +69,6 @@ type WebhookJob struct {
 	UpdatedAt       time.Time
 }
 
-// ApplyAlertWebhookJob opens the one Investigation identified by this Webhook Job and
-// advances the fenced lease in the same transaction. A retry observes the unique origin.
-func (d *Database) ApplyAlertWebhookJob(
-	ctx context.Context, organization uuid.UUID, work WebhookJob,
-	windowLead time.Duration, maxWaiting int,
-) (uuid.UUID, error) {
-	work.Organization = organization
-	pool, err := d.Pool(organization)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("beginning Alert Event delivery processing: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var investigationID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		SELECT investigation_id
-		  FROM investigation
-		 WHERE org_id = $1 AND webhook_job_id = $2`,
-		work.Organization, work.ID).Scan(&investigationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if err = reserveWaitingInvestigations(ctx, tx, work.Organization, maxWaiting, 1); err != nil {
-			return uuid.Nil, err
-		}
-		var title string
-		var firstSeen, lastSeen time.Time
-		if err = tx.QueryRow(ctx, `
-			SELECT title, first_seen_at, last_seen_at
-			  FROM incident
-			 WHERE org_id = $1 AND incident_id = $2`, work.Organization,
-			work.IncidentID).Scan(&title, &firstSeen, &lastSeen); err != nil {
-			return uuid.Nil, fmt.Errorf("reading delivery processing Incident: %w", err)
-		}
-		investigationID = uuid.New()
-		if _, err = tx.Exec(ctx, `
-			INSERT INTO investigation
-				(investigation_id, org_id, incident_id, subject, window_from,
-				 window_until, created_by, webhook_job_id)
-			VALUES ($1, $2, $3, $4, $5, $6, 'webhook', $7)`, investigationID,
-			work.Organization, work.IncidentID, title,
-			firstSeen.Add(-windowLead), lastSeen, work.ID); err != nil {
-			return uuid.Nil, fmt.Errorf("opening alert investigation: %w", err)
-		}
-	} else if err != nil {
-		return uuid.Nil, fmt.Errorf("reading alert webhook effect: %w", err)
-	}
-	if err = completeWebhookJobTx(ctx, tx, work); err != nil {
-		return uuid.Nil, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return uuid.Nil, fmt.Errorf("committing Alert Event delivery processing: %w", err)
-	}
-	return investigationID, nil
-}
-
 // ApplySlackWebhookJob opens the next Conversation turn through the existing queue seam
 // and advances the fenced Webhook Job atomically. The Message assignment is the durable
 // idempotency boundary when a prior attempt already opened the turn.

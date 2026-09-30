@@ -57,6 +57,20 @@ Adding `--volumes` deletes that local database. Back up PostgreSQL and retain cu
 the encryption key before moving or rebuilding a production deployment; without the
 same key, sealed integration credentials cannot be opened.
 
+## Upgrade from older v0.1 deployments
+
+Before starting this version, stop every old control-plane replica and back up
+PostgreSQL. Do not use a rolling upgrade or run old and new binaries against the same
+database. Startup automatically applies the compatibility migration before serving
+traffic; accepted legacy alerts receive their missing automatic Investigations while
+manual Investigations and Slack work are preserved.
+
+For Compose, run `docker compose -f deploy/compose/compose.yaml stop control-plane`
+before replacing the image. Stop any replicas outside this stack too. Restart only
+the new version, then verify readiness and retained alert history. If startup refuses
+ambiguous historical Investigations, keep old replicas stopped and resolve the data
+explicitly; do not delete Investigations to force startup.
+
 ## Failure states
 
 - If PostgreSQL stays unhealthy, verify that the password file and DSN agree and that
