@@ -11,7 +11,6 @@ import (
 // What the API surface says on the wire. It is kept apart from the handlers because it is
 // a contract: a field renamed here is a dashboard broken somewhere else, which is not true of
 // anything in the handlers themselves.
-
 type relayView struct {
 	RegistrationID string `json:"registrationId"`
 	// ClusterFingerprint is a DIGEST and is labelled one. It is what the relay claimed about the

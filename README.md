@@ -96,8 +96,9 @@ docker compose -f deploy/compose/compose.yaml up --build
 ```
 
 The PostgreSQL DSN must use host `postgres`, database `opencluster`, user `opencluster`, and the password stored in the
-password file. The bootstrap token must contain at least 32 characters. Open the configured HTTP address, create the
-first administrator, and connect Alertmanager.
+password file. The bootstrap token must contain at least 32 characters. Compose publishes the API at
+`http://localhost:8080`; it does not include a browser console. Use the quickstart's API requests to create the
+first administrator and connect an alert source.
 
 Send a test alert, then connect at least one evidence source:
 
@@ -114,8 +115,8 @@ customer cluster.
 ## Architecture
 
 The control plane owns Organizations, Integrations, Alert Events, Incidents, Conversations, Investigations, Tool Runs,
-conclusions, Postmortems, and audit events in PostgreSQL. The supported composition serves the frontend separately and
-proxies its same-origin `/api/v1` and `/webhooks/v1` traffic to the control plane. A separate gRPC listener accepts
+conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQL and the control plane, publishing
+`/api/v1`, `/webhooks/v1`, and process probes directly on localhost. A separate gRPC listener accepts
 outbound Relay sessions.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
@@ -137,6 +138,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
 - Background cleanup removes expired sessions in bounded passes, including before any Organization exists.
 - Webhooks have bounded pre-authentication admission and separate authenticated Integration quotas; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
+- Alert acceptance records Incident updates and automatic Investigations atomically; each newly opened Incident gets one, within the shared pending Investigation limit.
 - Authenticated API requests resolve the User's sole current Organization and Role before handlers run.
 - A User has at most one current Organization Membership; Organization Admins cannot replace an existing User's password or manage their global sessions.
 - Local Users change their own password after reauthentication. Deployment operators can recover an existing local User through stdin; see [credential recovery](docs/security/overview.mdx).

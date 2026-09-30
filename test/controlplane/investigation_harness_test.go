@@ -42,14 +42,16 @@ func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *ve
 	t.Helper()
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	apiAddress := freeAddress(t)
+	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
+		dsn = cfg.DatabaseDSN
 		cfg.HTTPListenAddress = apiAddress
 		cfg.InvestigationWorkers = 1
 		cfg.MaxPendingInvestigations = 1
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 	}, app.Options{Agent: agent, SlackAPIURL: vendor.URL})
-	return &integrationPlane{controlPlane: plane, api: apiAddress, intake: apiAddress}, vendor
+	return &integrationPlane{controlPlane: plane, api: apiAddress, intake: apiAddress, dsn: dsn}, vendor
 }
 
 func (p *integrationPlane) openIncident(t *testing.T, alertname, fingerprint string) string {

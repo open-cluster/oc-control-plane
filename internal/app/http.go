@@ -20,6 +20,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
+	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -209,6 +210,10 @@ func webhookRouter(process assembled) http.Handler {
 		Logger:   process.logger,
 		Adapters: webhookAdapters(),
 		Slack:    newSlackAgent(cfg),
+		AlertAdmission: storage.AlertAdmissionPolicy{
+			WindowLead:     defaultInvestigationWindowLead,
+			MaximumPending: cfg.MaxPendingInvestigations,
+		},
 	}.Router()
 }
 

@@ -5,8 +5,8 @@ description: "Deploy the control plane on Kubernetes with existing Secrets, prob
 
 <Warning>
   The chart at `deploy/helm/opencluster` is not a complete OpenCluster installation. It
-  deploys the control plane only. You must supply PostgreSQL, a frontend, same-origin
-  routing, ingress, and TLS termination.
+  deploys the control plane only. You must supply PostgreSQL, ingress, and TLS
+  termination. A separately deployed browser console is optional and needs same-origin routing.
 </Warning>
 
 ## Prerequisites
@@ -53,7 +53,7 @@ kubectl --namespace opencluster rollout status deployment/opencluster-opencluste
 ## Verify
 
 The rollout proves only that the control-plane component is ready. The installation is
-usable only after the external frontend and ingress route `/api/v1`, `/webhooks/v1`,
+usable only after ingress routes `/api/v1`, `/webhooks/v1`,
 `/healthz`, and `/readyz` to the HTTP Service on the configured public origin. Verify both
 probes through that route:
 
@@ -84,9 +84,9 @@ If the rollout stalls, inspect
 `kubectl --namespace opencluster describe deployment/opencluster-opencluster` and the
 control-plane Pod logs. Correct missing Secret keys, database reachability, or model
 provider configuration, then rerun the Helm command. A ready Pod does not compensate for
-missing frontend, ingress, or same-origin routing.
+missing ingress or TLS routing.
 
 ## Next step
 
-After the external frontend, ingress, and TLS routing are verified, create the first User
+After ingress and TLS routing are verified, use the API to create the first User
 and Organization and continue with the [Quickstart](/getting-started/quickstart).

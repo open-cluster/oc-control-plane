@@ -187,3 +187,14 @@ one delivery per second. Incorrect credentials do not spend that quota. A proces
 at most 4,096 active Integrations. An Alert Integration over either limit receives `503`;
 a Slack Integration receives `429`. Capacity returns after an entry has been idle for ten
 minutes. Limits are per process and multiply across replicas.
+
+`OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` separately bounds the durable pending
+Investigation queue; its default is `100`. Automatic alert Investigations, manual
+Investigations, and Conversation turns share this Organization-wide capacity across
+replicas. Claimed Investigations no longer consume pending capacity.
+
+An alert delivery that opens new Incidents must fit all their automatic Investigations.
+If the current backlog cannot fit them, the whole delivery is refused with `503` and
+`Retry-After`. A delivery needing more slots than the configured limit receives permanent
+`400`; send smaller batches or configure source grouping. Exact accepted duplicates and
+updates that open no Incident do not need queue capacity.

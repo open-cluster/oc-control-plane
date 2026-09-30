@@ -2,9 +2,10 @@ package audit
 
 import (
 	"context"
-	"github.com/google/uuid"
 	"log/slog"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -12,12 +13,9 @@ const (
 	maxBatchesPerSweep = 50
 )
 
-// Retention is one tenant's declared schedule.
 type Retention struct {
 	Organization uuid.UUID
-	// Days is how long the tenant says it keeps the record. It is always positive here: zero
-	// declares no schedule, which means the product's default of keeping everything.
-	Days int
+	Days         int
 }
 
 // Horizon is the instant before which this tenant's events have aged out.
@@ -26,8 +24,6 @@ func (r Retention) Horizon(now time.Time) time.Time {
 }
 
 type Retentions interface {
-	// DeclaredRetentions reports every tenant that has declared a schedule, across every
-	// database this deployment serves.
 	DeclaredRetentions(ctx context.Context) ([]Retention, error)
 	// PruneEventsBefore removes at most limit events older than the horizon, reporting how many went.
 	PruneEventsBefore(ctx context.Context, organization uuid.UUID,
@@ -65,6 +61,7 @@ func (p Pruner) Sweep(ctx context.Context) {
 	}
 
 	for _, retention := range declared {
+
 		removed, pruneErr := p.prune(ctx, retention)
 		if pruneErr != nil {
 			p.Logger.ErrorContext(ctx, "a tenant's audit retention schedule could not be applied",

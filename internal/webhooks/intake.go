@@ -40,8 +40,9 @@ const readTimeout = 15 * time.Second
 
 // Handlers is the intake surface's dependencies.
 type Handlers struct {
-	Database *storage.Database
-	Logger   *slog.Logger
+	Database       *storage.Database
+	Logger         *slog.Logger
+	AlertAdmission storage.AlertAdmissionPolicy
 	// Adapters routes a payload to its type's parser. Supplied by the composition root,
 	// which is the only place that knows every provider.
 	Adapters Adapters
@@ -205,7 +206,20 @@ func (h *receiver) recordAlertDelivery(
 	ctx context.Context, writer http.ResponseWriter,
 	organization uuid.UUID, delivery storage.Delivery,
 ) {
-	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery)
+	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery, h.AlertAdmission)
+	var full storage.AlertCapacityError
+	if errors.As(err, &full) {
+		h.counters.countDelivery(ctx, dispositionUnavailable)
+		writer.Header().Set("Retry-After", "1")
+		writeStatus(writer, http.StatusServiceUnavailable, "pending Investigation capacity exhausted")
+		return
+	}
+	var tooLarge storage.AlertBatchTooLargeError
+	if errors.As(err, &tooLarge) {
+		h.counters.countDelivery(ctx, dispositionOversized)
+		writeStatus(writer, http.StatusBadRequest, "alert batch exceeds pending Investigation limit")
+		return
+	}
 	if errors.Is(err, storage.ErrDeliveryIdentityConflict) {
 		h.counters.countDelivery(ctx, dispositionMalformed)
 		h.Logger.WarnContext(ctx, "delivery refused",

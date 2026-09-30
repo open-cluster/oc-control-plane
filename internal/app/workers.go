@@ -40,21 +40,27 @@ func startWebhookJob(ctx context.Context, group *errgroup.Group, process assembl
 		Jobs: process.database,
 		Handlers: webhooks.JobHandlers{
 			storage.WebhookJobAlert: alertwork.JobHandler{
-				Database: process.database, WindowLead: defaultInvestigationWindowLead,
+				Database:        process.database,
+				WindowLead:      defaultInvestigationWindowLead,
 				MaxWaitingTurns: process.config.MaxPendingInvestigations,
 			},
 			storage.WebhookJobSlack: slackwork.JobHandler{
 				Jobs: process.database,
 				References: slackwork.SlackReferenceResolver{
-					Store:  slackwork.ReferenceDatabase{Database: process.database},
-					Client: slackClient, Sealer: process.sealer,
+					Store: slackwork.ReferenceDatabase{
+						Database: process.database,
+					},
+					Client: slackClient,
+					Sealer: process.sealer,
 				},
 				WindowLead:      defaultInvestigationWindowLead,
 				MaxWaitingTurns: process.config.MaxPendingInvestigations,
 				Logger:          process.logger,
 			},
 		},
-		Owner: uuid.NewString(), Lease: time.Minute, RetryBase: time.Second,
+		Owner:       uuid.NewString(),
+		Lease:       time.Minute,
+		RetryBase:   time.Second,
 		MaxAttempts: 8, Logger: process.logger,
 		Counters: webhooks.NewJobInstruments(process.logger),
 	}

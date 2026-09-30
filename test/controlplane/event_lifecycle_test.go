@@ -56,7 +56,7 @@ func TestEventStreamSurvivesOrdinaryWriteTimeout(t *testing.T) {
 	assertLiveEventStream(t, plane, plane)
 }
 
-func TestEventStreamThroughSupportedProxy(t *testing.T) {
+func TestEventStreamThroughReverseProxy(t *testing.T) {
 	t.Parallel()
 	plane, _ := agentPlane(t, &blockingAgentMain{})
 	proxied := *plane

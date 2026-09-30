@@ -4,7 +4,8 @@ description: "Run the complete OSS deployment with PostgreSQL, mounted secret fi
 ---
 
 Docker Compose is the shortest complete self-hosted path. The checked-in stack runs the
-frontend, control plane, and PostgreSQL with same-origin routing on `127.0.0.1:8080`.
+control plane and PostgreSQL, publishing the API on `127.0.0.1:8080`. It does not include
+a browser console; visiting `/` returns `404`.
 
 ## Prerequisites
 
@@ -27,8 +28,8 @@ docker compose -f deploy/compose/compose.yaml up --build -d
 docker compose -f deploy/compose/compose.yaml ps
 ```
 
-PostgreSQL should become `healthy`; the control plane and frontend should remain
-running. Verify the process probes through the frontend:
+PostgreSQL should become `healthy`; the control plane should remain running.
+Verify the process probes directly:
 
 ```bash
 curl --fail http://localhost:8080/healthz
@@ -39,8 +40,8 @@ curl --fail http://localhost:8080/readyz
 deployment can serve traffic. These operational probes are intentionally not part of
 the generated product API reference.
 
-Open [http://localhost:8080](http://localhost:8080) and bootstrap the first Organization
-and its Admin User. Follow the [Quickstart](/getting-started/quickstart) to
+Use the API to bootstrap the first Organization and its Admin User.
+Follow the [Quickstart](/getting-started/quickstart) to
 connect an alert source and verify an Investigation.
 
 ## Persistence and shutdown
@@ -65,7 +66,7 @@ same key, sealed integration credentials cannot be opened.
   invalid key length, or provider configuration error.
 - If `/healthz` works but `/readyz` fails, inspect PostgreSQL connectivity and service
   logs before accepting traffic.
-- If the frontend is unreachable, confirm that port `8080` is free and the `frontend`
+- If the API is unreachable, confirm that port `8080` is free and the `control-plane`
   service is running.
 
 ## Next step

@@ -5,11 +5,6 @@
 !cmd/**
 !internal/
 !internal/**
-!web/
-!web/**
-!deploy/
-!deploy/compose/
-!deploy/compose/frontend-nginx.conf
 **/*_test.go
 **/.env*
 **/*.dsn

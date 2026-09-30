@@ -66,12 +66,6 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		// The bootstrap credential is bound to ONE organization. A request naming the
-		// neighbour below is refused by the authorization middleware before it reaches a
-		// query — the cross-tenant assertions assert that refusal.
-		// The neighbour shares this database deliberately. An organization with no
-		// database fails before any query runs, which would leave the cross-tenant
-		// assertions passing against an implementation with no scoping at all.
 		dsn = cfg.DatabaseDSN
 	}, options)
 
@@ -487,6 +481,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 	})
 
 	t.Run("another tenant's view holds nothing", func(t *testing.T) {
+		defer plane.switchOrganization(t, neighbourOrg)()
 		status, body := plane.call(t, http.MethodGet,
 			plane.base(neighbourOrg)+"/integrations/"+created.Integration.ID, nil)
 		if status != http.StatusNotFound {

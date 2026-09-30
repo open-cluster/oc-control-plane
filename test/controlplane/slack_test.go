@@ -144,12 +144,14 @@ func startSlackPlane(t *testing.T, vendor *vendorFake) *integrationPlane {
 	t.Helper()
 
 	apiAddress := freeAddress(t)
+	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
+		dsn = cfg.DatabaseDSN
 	}, app.Options{SlackAPIURL: vendor.URL})
-	return &integrationPlane{controlPlane: plane, api: apiAddress}
+	return &integrationPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
 }
 
 func (p *integrationPlane) createSlack(t *testing.T, name, token string) (int, string) {
@@ -415,6 +417,7 @@ func TestSlackAnotherTenantSeesNothing(t *testing.T) {
 	_, body := plane.createSlack(t, "Acme Slack", "xoxb-good-token-1234")
 	var created createdBody
 	decodeInto(t, body, &created)
+	defer plane.switchOrganization(t, neighbourOrg)()
 
 	status, answer := plane.call(t, http.MethodGet,
 		plane.base(neighbourOrg)+"/integrations/"+created.Integration.ID, nil)

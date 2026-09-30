@@ -66,12 +66,42 @@ func (h Handlers) Routes() []authz.Route {
 	const relays = "/api/v1/relays"
 
 	routes := []authz.Route{
-		{Method: http.MethodGet, Pattern: relays, Permission: authz.RelayRead, Handler: http.HandlerFunc(h.listRelays)},
-		{Method: http.MethodGet, Pattern: relays + "/summary", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relaySummary)},
-		{Method: http.MethodGet, Pattern: relays + "/{registration}/integrations", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relayIntegrations)},
-		{Method: http.MethodGet, Pattern: relays + "/{registration}/failures", Permission: authz.RelayRead, Handler: http.HandlerFunc(h.relayFailures)},
-		{Method: http.MethodPost, Pattern: relays + "/{registration}/clear-conflict", Permission: authz.RelayConflictClear, Handler: http.HandlerFunc(h.clearConflict)},
-		{Method: http.MethodPost, Pattern: relays + "/bootstrap-tokens", Permission: authz.RelayBootstrapIssue, Handler: http.HandlerFunc(h.issueBootstrapToken)},
+		{
+			Method:     http.MethodGet,
+			Pattern:    relays,
+			Permission: authz.RelayRead,
+			Handler:    http.HandlerFunc(h.listRelays),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    relays + "/summary",
+			Permission: authz.RelayRead,
+			Handler:    http.HandlerFunc(h.relaySummary),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    relays + "/{registration}/integrations",
+			Permission: authz.RelayRead,
+			Handler:    http.HandlerFunc(h.relayIntegrations),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    relays + "/{registration}/failures",
+			Permission: authz.RelayRead,
+			Handler:    http.HandlerFunc(h.relayFailures),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    relays + "/{registration}/clear-conflict",
+			Permission: authz.RelayConflictClear,
+			Handler:    http.HandlerFunc(h.clearConflict),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    relays + "/bootstrap-tokens",
+			Permission: authz.RelayBootstrapIssue,
+			Handler:    http.HandlerFunc(h.issueBootstrapToken),
+		},
 	}
 
 	routes = append(routes, h.Identity.Routes()...)

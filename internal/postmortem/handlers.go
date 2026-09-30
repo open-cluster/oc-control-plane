@@ -27,11 +27,36 @@ type Handlers struct {
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/incidents/{incident}/postmortem"
 	return []authz.Route{
-		{Method: http.MethodGet, Pattern: base, Permission: authz.PostmortemRead, Handler: http.HandlerFunc(h.get)},
-		{Method: http.MethodPost, Pattern: base, Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.generate)},
-		{Method: http.MethodPost, Pattern: base + "/regenerate", Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.regenerate)},
-		{Method: http.MethodPatch, Pattern: base, Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.correct)},
-		{Method: http.MethodPost, Pattern: base + "/review", Permission: authz.PostmortemWrite, Handler: http.HandlerFunc(h.review)},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base,
+			Permission: authz.PostmortemRead,
+			Handler:    http.HandlerFunc(h.get),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base,
+			Permission: authz.PostmortemWrite,
+			Handler:    http.HandlerFunc(h.generate),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/regenerate",
+			Permission: authz.PostmortemWrite,
+			Handler:    http.HandlerFunc(h.regenerate),
+		},
+		{
+			Method:     http.MethodPatch,
+			Pattern:    base,
+			Permission: authz.PostmortemWrite,
+			Handler:    http.HandlerFunc(h.correct),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/review",
+			Permission: authz.PostmortemWrite,
+			Handler:    http.HandlerFunc(h.review),
+		},
 	}
 }
 

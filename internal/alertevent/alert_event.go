@@ -1,10 +1,7 @@
-// Package alertevent owns the provider-neutral result of alert webhook normalization.
 package alertevent
 
 import "time"
 
-// AlertEventStatus is where an Alert Event has got to. Anything richer belongs to the
-// Incident an Investigation attaches to.
 type AlertEventStatus int16
 
 const (
@@ -12,7 +9,6 @@ const (
 	AlertEventResolved
 )
 
-// AlertEvent is one normalized alert occurrence received through a webhook.
 type AlertEvent struct {
 	// SourceKey identifies the alert as its source names it and is stable across Incidents.
 	SourceKey string
