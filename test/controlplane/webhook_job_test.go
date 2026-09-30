@@ -108,9 +108,18 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	if status, body = plane.call(t, http.MethodGet, base+"/"+deliveryID, nil); status != http.StatusOK {
 		t.Fatalf("reading terminal work = %d: %s", status, body)
 	}
+	ensureTestOrganization(t, plane.dsn, neighbourOrg)
+	if _, err := database.Exec(ctx, `UPDATE organization_membership SET org_id = $2 WHERE org_id = $1`,
+		surfaceOrg, neighbourOrg); err != nil {
+		t.Fatal(err)
+	}
 	if status, body = plane.call(t, http.MethodGet,
 		plane.base(neighbourOrg)+"/webhook-deliveries/"+deliveryID, nil); status != http.StatusNotFound {
 		t.Fatalf("reading another organization's work = %d: %s", status, body)
+	}
+	if _, err := database.Exec(ctx, `UPDATE organization_membership SET org_id = $2 WHERE org_id = $1`,
+		neighbourOrg, surfaceOrg); err != nil {
+		t.Fatal(err)
 	}
 	if status, body = plane.call(t, http.MethodPost, base+"/"+deliveryID+"/replay", nil); status != http.StatusNoContent {
 		t.Fatalf("replaying terminal work = %d: %s", status, body)
@@ -147,9 +156,9 @@ func recordLegacyTerminalAlertJob(t *testing.T, database *pgx.Conn, integration,
 	var deliveryID string
 	if err := database.QueryRow(ctx, `INSERT INTO webhook_job
 		(job_id, org_id, kind, delivery_id, integration_id, incident_id,
-		 status, attempts, failure_class, failure_message)
+		 status, attempts, failure_class, failure_message, updated_at)
 		SELECT $4, delivery.org_id, 1, delivery.delivery_id, delivery.integration_id,
-		       incident.incident_id, 4, $5, 'provider-work-failed', 'safe failure'
+		       incident.incident_id, 4, $5, 'provider-work-failed', 'safe failure', now()
 		FROM webhook_delivery AS delivery JOIN incident
 		  ON incident.org_id = delivery.org_id AND incident.integration_id = delivery.integration_id
 		WHERE delivery.org_id = $1 AND delivery.integration_id = $2
