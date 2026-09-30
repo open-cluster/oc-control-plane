@@ -11,6 +11,9 @@ import (
 func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	root := "http://" + plane.api + "/api/v1"
+	if status, body := plane.call(t, http.MethodGet, root+"/organizations", nil); status != http.StatusNotFound {
+		t.Fatalf("retired Organizations listing = %d, want 404: %s", status, body)
+	}
 	base := plane.base(surfaceOrg)
 	registration := plane.relay.registration.String()
 	incidentID := plane.openIncident(t, "Listing contract", "listing-contract")
@@ -18,7 +21,6 @@ func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 		endpoint string
 		rows     string
 	}{
-		"organizations":         {root + "/organizations", "organizations"},
 		"members":               {base + "/members", "members"},
 		"audit events":          {base + "/audit-events", "events"},
 		"integration types":     {base + "/integration-types", "types"},

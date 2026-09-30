@@ -65,6 +65,7 @@ func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedApplicationAPI(t 
 		t.Fatalf("cancelling a terminal investigation = %d, want 409: %s", status, body)
 	}
 	foreign := plane.base(neighbourOrg) + "/investigations/" + runningID + "/cancel"
+	defer plane.switchOrganization(t, neighbourOrg)()
 	if status, body = plane.call(t, http.MethodPost, foreign, nil); status != http.StatusNotFound {
 		t.Fatalf("cross-organization cancellation = %d, want 404: %s", status, body)
 	}

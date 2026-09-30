@@ -57,7 +57,10 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		if status != http.StatusOK || len(source.Runs) != 1 || source.Runs[0].Ordinal != 1 || source.Runs[0].Summary != ref.InvestigationID.String() {
 			t.Fatalf("citation resolved to the wrong run: %d %s", status, body)
 		}
-		if status, body = plane.call(t, http.MethodGet, plane.base(neighbourOrg)+"/investigations/"+ref.InvestigationID.String(), nil); status != http.StatusNotFound {
+		restore := plane.switchOrganization(t, neighbourOrg)
+		status, body = plane.call(t, http.MethodGet, plane.base(neighbourOrg)+"/investigations/"+ref.InvestigationID.String(), nil)
+		restore()
+		if status != http.StatusNotFound {
 			t.Fatalf("cross-Organization citation disclosed data: %d %s", status, body)
 		}
 	}

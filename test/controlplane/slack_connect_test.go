@@ -27,6 +27,7 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 	t.Helper()
 
 	apiAddress := freeAddress(t)
+	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
@@ -36,8 +37,9 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 		cfg.SlackSigningSecret = "the-slack-signing-secret"
 		cfg.PublicURL = "http://" + apiAddress
 		cfg.PublicURL = console
+		dsn = cfg.DatabaseDSN
 	}, app.Options{SlackAPIURL: vendor.URL})
-	return &integrationPlane{controlPlane: plane, api: apiAddress}
+	return &integrationPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
 }
 
 // pressConnectSlack presses the button and returns where the browser would be sent.
@@ -188,12 +190,14 @@ func TestTheSlackCallbackIgnoresAnOrganizationInItsQuery(t *testing.T) {
 	if len(listed[0].Configuration) != 0 || listed[0].Inbound == nil || !listed[0].Inbound.Available {
 		t.Errorf("callback changed editable configuration or lost routing state: %+v", listed[0])
 	}
-	// The bootstrap credential reaches one organization, so the neighbour is answered 404
-	// by the guard — which is also the proof that nothing was written there under a
-	// credential that could not have reached it.
+	defer plane.switchOrganization(t, neighbourOrg)()
 	status, body := plane.call(t, http.MethodGet, plane.base(neighbourOrg)+"/integrations", nil)
-	if status != http.StatusNotFound {
-		t.Errorf("the neighbour's listing = %d, want 404: %s", status, body)
+	var neighbor struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	decodeInto(t, body, &neighbor)
+	if status != http.StatusOK || len(neighbor.Items) != 0 {
+		t.Errorf("the neighbour's listing = %d, want empty list: %s", status, body)
 	}
 }
 

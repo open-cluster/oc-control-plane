@@ -9,10 +9,10 @@ build.
 
 ## Before you start
 
-You need Docker with Docker Compose, Git, a browser, port `8080`, and outbound HTTPS
+You need Docker with Docker Compose, Git, curl, port `8080`, and outbound HTTPS
 access to Anthropic or Z.AI. You also need an API key and model identifier for that
-provider. The checked-in Compose stack runs PostgreSQL, the control plane, and the
-frontend; it does not publish the optional Relay unless you enable its profile.
+provider. The checked-in Compose stack runs PostgreSQL and the control plane. It is
+API-only and does not publish the optional Relay unless you enable its profile.
 
 The v0.1 repository does not declare minimum Docker, Compose, Git, CPU, or memory
 versions. Before continuing, confirm `docker compose version` and `git --version` run.
@@ -20,7 +20,7 @@ Treat the absence of qualified minimums as a pre-release limitation, not permiss
 assume an old deployment tool is supported.
 
 OpenCluster v0.1 does not publish a qualified CPU or memory minimum. Docker must have
-enough capacity to build the Go image and run three services; increase its allocation if
+enough capacity to build the Go image and run two services; increase its allocation if
 the build or PostgreSQL is terminated for memory pressure. Measure real Investigation
 concurrency before sizing production.
 
@@ -71,7 +71,7 @@ From the repository root, export the required `OPENCLUSTER_*` values and run:
 docker compose -f deploy/compose/compose.yaml up --build
 ```
 
-Wait until PostgreSQL is healthy and the `control-plane` and `frontend` services remain
+Wait until PostgreSQL is healthy and the `control-plane` service remains
 running:
 
 ```bash
@@ -80,22 +80,39 @@ curl --fail http://localhost:8080/healthz
 curl --fail http://localhost:8080/readyz
 ```
 
-The service table should show `postgres` as `healthy` and the other two services as
-running. Both probe commands must exit successfully before you continue. Open
-[http://localhost:8080](http://localhost:8080). If a service exits, run
+The service table should show `postgres` as `healthy` and `control-plane` as running.
+Both probe commands must exit successfully before you continue. The root URL returns
+`404` because this deployment has no browser console. If a service exits, run
 `docker compose -f deploy/compose/compose.yaml logs <service>` and check the mounted file
 paths before retrying.
 
 ## 3. Create the first User and Organization
 
-Expand **Set up the first administrator**. Enter the bootstrap token, Organization display
-name, email, display name, and password. Bootstrap atomically creates the Organization,
-first User, **Admin** Membership, password, and browser session. It is deployment-wide and
-works only once.
+Bootstrap atomically creates the Organization, first User, **Admin** Membership,
+password, and session. It is deployment-wide and works only once. Replace the sample
+identity and password before running:
 
-Verify that the console shows your User, the Organization display name, and the **Admin**
-Role. Bootstrap is complete when a second attempt is refused. A failed request commits
-nothing; correct the input and retry with the bootstrap token.
+```bash
+umask 077
+printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' < "$OPENCLUSTER_BOOTSTRAP_TOKEN_FILE")" > .secrets/bootstrap-header
+curl --fail-with-body --request POST http://localhost:8080/api/v1/auth/local/bootstrap \
+  --header @.secrets/bootstrap-header \
+  --header 'Origin: http://localhost:8080' \
+  --header 'Content-Type: application/json' \
+  --cookie-jar .secrets/session-cookie \
+  --data '{"organizationName":"Platform Team","email":"admin@example.com","displayName":"On-call","password":"<STRONG_PASSWORD>"}'
+rm .secrets/bootstrap-header
+```
+
+The successful response returns `{"bootstrapped":true}` and saves your session cookie.
+Verify the User, Organization, and **Admin** Role with:
+
+```bash
+curl --fail --cookie .secrets/session-cookie http://localhost:8080/api/v1/session
+```
+
+Treat the cookie file as a credential. A failed request commits nothing; correct the
+input and retry with the bootstrap token.
 
 The bootstrap token is deployment-wide and accepted only for the first local User. Keep
 it out of command history and remove access to the file after bootstrap succeeds. An
@@ -104,9 +121,18 @@ request without the configured `Origin` is refused.
 
 ## 4. Connect a Generic Webhook
 
-In **Integrations**, create a **Generic Webhook** named `Quickstart alerts`. Copy the
-webhook URL and one-time secret immediately. Replace the placeholders below and send a
-firing event:
+Create a **Generic Webhook** named `Quickstart alerts` with your authenticated session:
+
+```bash
+curl --fail-with-body --request POST http://localhost:8080/api/v1/integrations \
+  --cookie .secrets/session-cookie \
+  --header 'Origin: http://localhost:8080' \
+  --header 'Content-Type: application/json' \
+  --data '{"type":"generic_webhook","name":"Quickstart alerts","configuration":{}}'
+```
+
+Save the returned `integration.id` and one-time `webhookSecret` immediately. Replace
+the placeholders below and send a firing event:
 
 ```bash
 curl --request POST "http://localhost:8080/webhooks/v1/integrations/<integration-id>/alert-events" \
@@ -131,8 +157,16 @@ fields and retry outcomes.
 
 ## 5. Verify the Incident and Investigation
 
-Open **Incidents** and select the Incident created for `Checkout latency is high`. Start
-an Investigation from that Incident.
+Read the Incident and its automatically opened Investigation:
+
+```bash
+curl --fail --cookie .secrets/session-cookie http://localhost:8080/api/v1/incidents
+curl --fail --cookie .secrets/session-cookie http://localhost:8080/api/v1/investigations
+```
+
+Match the Investigation's `incidentId` to the Incident created for
+`Checkout latency is high`. Read its details at `/api/v1/investigations/<investigation-id>`;
+do not create another Investigation merely to process this alert.
 
 Progress moves from `queued` to `investigating`. A completed run ends as `concluded` or
 `partial` and separates impact, Findings, hypotheses, Action Proposals, and limitations.

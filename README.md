@@ -96,8 +96,9 @@ docker compose -f deploy/compose/compose.yaml up --build
 ```
 
 The PostgreSQL DSN must use host `postgres`, database `opencluster`, user `opencluster`, and the password stored in the
-password file. The bootstrap token must contain at least 32 characters. Open the configured HTTP address, create the
-first administrator, and connect Alertmanager.
+password file. The bootstrap token must contain at least 32 characters. Compose publishes the API at
+`http://localhost:8080`; it does not include a browser console. Use the quickstart's API requests to create the
+first administrator and connect an alert source.
 
 Send a test alert, then connect at least one evidence source:
 
@@ -114,8 +115,8 @@ customer cluster.
 ## Architecture
 
 The control plane owns Organizations, Integrations, Alert Events, Incidents, Conversations, Investigations, Tool Runs,
-conclusions, Postmortems, and audit events in PostgreSQL. The supported composition serves the frontend separately and
-proxies its same-origin `/api/v1` and `/webhooks/v1` traffic to the control plane. A separate gRPC listener accepts
+conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQL and the control plane, publishing
+`/api/v1`, `/webhooks/v1`, and process probes directly on localhost. A separate gRPC listener accepts
 outbound Relay sessions.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each

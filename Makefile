@@ -73,8 +73,7 @@ deploy-verify:
 		--set-json 'relay.spkiPins=["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]' \
 		> /dev/null
 	docker build --file deploy/compose/Dockerfile --tag opencluster-control-plane:ci .
-	docker build --file deploy/compose/Frontend.Dockerfile --tag opencluster-frontend:ci .
-	sh scripts/verify-compose-routing.sh
+	OC_REQUIRE_CONTAINERS=1 go test -count=1 ./test/deployment
 
 check: openapi docs lint build test-short test-postgres secrets-current
 

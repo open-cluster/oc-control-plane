@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -13,7 +14,13 @@ import (
 )
 
 func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *testing.T) {
-	database, organization := migratedDatabase(t)
+	// The fence, four producers, and lock observer each need a connection.
+	database := openDatabaseForTest(t, postgresDSN(t)+"&pool_max_conns=6")
+	if _, err := database.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	organization := uuid.MustParse(testOrganization)
+	ensureTestOrganization(t, database, organization)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	principal := ownerOf(t, organization)
