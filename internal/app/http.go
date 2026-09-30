@@ -211,7 +211,8 @@ func webhookRouter(process assembled) http.Handler {
 		Adapters: webhookAdapters(),
 		Slack:    newSlackAgent(cfg),
 		AlertAdmission: storage.AlertAdmissionPolicy{
-			WindowLead: defaultInvestigationWindowLead, MaximumPending: cfg.MaxPendingInvestigations,
+			WindowLead:     defaultInvestigationWindowLead,
+			MaximumPending: cfg.MaxPendingInvestigations,
 		},
 	}.Router()
 }

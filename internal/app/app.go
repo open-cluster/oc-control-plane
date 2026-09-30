@@ -135,8 +135,6 @@ func Run(
 		return fmt.Errorf("assembling the integration catalog: %w", err)
 	}
 
-	// One sealer for the process: identity client secrets and integration credentials are
-	// sealed under the same deployment key.
 	var sealer seal.Sealer
 	if len(cfg.SealingKey) > 0 {
 		if sealer, err = configuredSealer(cfg); err != nil {

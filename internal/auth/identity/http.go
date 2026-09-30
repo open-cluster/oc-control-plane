@@ -82,31 +82,35 @@ func identifier(
 }
 
 // fail answers an error, naming the ones a caller can act on.
-//
-// ErrNotAMember answers 404 and never 403. It is the same answer the guard gives, and it must
-// stay the same answer: a 403 here would confirm the tenant exists to a caller the guard has
-// already decided must not learn that.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
+
 	case errors.Is(err, storage.ErrLocalCredentialUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "local account not found"})
+
 	case errors.Is(err, storage.ErrLocalAccountExists):
 		writeJSON(writer, http.StatusConflict, errorView{Error: "local account already exists"})
+
 	case errors.Is(err, storage.ErrMembershipUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "membership not found"})
+
 	case errors.Is(err, session.ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "session not found"})
+
 	case errors.Is(err, storage.ErrLastAdmin):
 		writeJSON(writer, http.StatusConflict, errorView{
 			Error: "an organization must keep at least one admin; appoint another first"})
+
 	case errors.Is(err, ErrProviderUnreachable):
 		writeJSON(writer, http.StatusBadGateway,
 			errorView{Error: "the identity provider could not be reached"})
+
 	case errors.Is(err, storage.ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "cursor is not a page position from a previous response"})
+
 	case errors.Is(err, storage.ErrAuditFailed):
 		// The operation was rolled back because it could not be recorded. Saying so is the
 		// point: an operator who was told "it worked" about a change with no audit row would
@@ -128,19 +132,57 @@ const Base = "/api/v1"
 
 func (h Handlers) Routes() []authz.Route {
 	return []authz.Route{
-		{Method: http.MethodPut, Pattern: Base + "/auth/local/password", Handler: http.HandlerFunc(h.changeLocalPassword)},
-
-		{Method: http.MethodGet, Pattern: Base + "/session", Handler: http.HandlerFunc(h.session)},
-
-		{Method: http.MethodGet, Pattern: Base + "/members", Permission: authz.MemberRead, Handler: http.HandlerFunc(h.listMembers)},
-		{Method: http.MethodPost, Pattern: Base + "/local-users", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.createMember)},
-		{Method: http.MethodPatch, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.setMember)},
-		{Method: http.MethodDelete, Pattern: Base + "/members/{user}", Permission: authz.MemberManage, Handler: http.HandlerFunc(h.removeMember)},
-
-		{Method: http.MethodGet, Pattern: Base + "/policy", Permission: authz.IdentityRead, Handler: http.HandlerFunc(h.readPolicy)},
-		{Method: http.MethodPut, Pattern: Base + "/policy", Permission: authz.IdentityConfigure, Handler: http.HandlerFunc(h.writePolicy)},
-
-		{Method: http.MethodGet, Pattern: Base + "/audit-events", Permission: authz.AuditRead, Handler: http.HandlerFunc(h.auditEvents)},
+		{
+			Method:  http.MethodPut,
+			Pattern: Base + "/auth/local/password",
+			Handler: http.HandlerFunc(h.changeLocalPassword),
+		},
+		{
+			Method:  http.MethodGet,
+			Pattern: Base + "/session",
+			Handler: http.HandlerFunc(h.session),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    Base + "/members",
+			Permission: authz.MemberRead,
+			Handler:    http.HandlerFunc(h.listMembers),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    Base + "/local-users",
+			Permission: authz.MemberManage,
+			Handler:    http.HandlerFunc(h.createMember),
+		},
+		{
+			Method:     http.MethodPatch,
+			Pattern:    Base + "/members/{user}",
+			Permission: authz.MemberManage,
+			Handler:    http.HandlerFunc(h.setMember),
+		},
+		{
+			Method:     http.MethodDelete,
+			Pattern:    Base + "/members/{user}",
+			Permission: authz.MemberManage,
+			Handler:    http.HandlerFunc(h.removeMember),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    Base + "/policy",
+			Permission: authz.IdentityRead,
+			Handler:    http.HandlerFunc(h.readPolicy)},
+		{
+			Method:     http.MethodPut,
+			Pattern:    Base + "/policy",
+			Permission: authz.IdentityConfigure,
+			Handler:    http.HandlerFunc(h.writePolicy),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    Base + "/audit-events",
+			Permission: authz.AuditRead,
+			Handler:    http.HandlerFunc(h.auditEvents),
+		},
 	}
 }
 

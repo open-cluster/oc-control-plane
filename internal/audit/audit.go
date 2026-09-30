@@ -1,5 +1,3 @@
-// Package audit holds the vocabulary of the record: who did what, to which tenant's what,
-// when, from where, and whether it was allowed.
 package audit
 
 import (
@@ -62,10 +60,6 @@ func (o Outcome) String() string {
 }
 
 // Actor is who acted, as the record will hold them forever.
-//
-// DisplayName is captured at the time of writing rather than joined at read time on purpose. A
-// user who is renamed, or deleted, must not silently rewrite what the record says about what
-// they did — an audit trail that changes when a row elsewhere changes is not a record.
 type Actor struct {
 	Kind ActorKind
 	// ID is the user or service account identifier, and is empty for ActorSystem.
@@ -106,9 +100,6 @@ type Target struct {
 	ID string
 }
 
-// Event is one entry in the record. It is append-only: nothing updates one, the database
-// refuses an UPDATE and a DELETE outright, and there is deliberately no function here that
-// would build a modification.
 type Event struct {
 	// Organization is empty only for actions permitting deployment scope.
 	Organization string
@@ -156,20 +147,16 @@ func truncate(value string, limit int) string {
 	return string(runes[:limit-markerLength]) + marker
 }
 
-// Page is a position in the record, so an auditor reading a long history pages through it
-// without losing or repeating an entry.
 type Page struct {
 	Limit int
 	After string
 }
 
-// List is a page of events, newest first.
 type List struct {
 	Events []Recorded
 	Next   string
 }
 
-// Recorded is an Event as it came back out, with the identity and time the database gave it.
 type Recorded struct {
 	Event
 	ID string

@@ -195,11 +195,6 @@ var relayIntegrationsSpec = listing.Spec{
 }
 
 // issueBootstrapToken mints a single-use enrolment token and shows it once.
-//
-// It is the one operation on this surface that hands a credential to a caller, and it follows the
-// same rule the trigger secret does: what is stored is a digest, no path reads it back, and an
-// operator who loses it issues another rather than recovering this one. The expiry is stated in
-// the response, because a credential with no visible lifetime is one somebody puts in a wiki.
 func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
