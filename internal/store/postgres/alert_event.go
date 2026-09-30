@@ -47,13 +47,10 @@ type DeliveryOutcome struct {
 
 // RecordDelivery accepts one delivery and everything in it, in one transaction.
 //
-// Both halves commit together or neither does. A delivery marked accepted whose alertEvents
-// were not written would be silently dropped and never retried, because the source would
-// be told it succeeded; alertEvents written without the delivery recorded would be applied
-// again on the next retry. The unique provider identity and lifecycle key resolves two
-// concurrent retries — the database decides, rather than a read-then-write both could pass.
+// Delivery facts, Incident changes, and automatic Investigations commit together.
+// The unique provider identity and lifecycle key makes concurrent retries idempotent.
 func (p *Database) RecordDelivery(
-	ctx context.Context, organization uuid.UUID, delivery Delivery,
+	ctx context.Context, organization uuid.UUID, delivery Delivery, policy AlertAdmissionPolicy,
 ) (DeliveryOutcome, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -66,7 +63,7 @@ func (p *Database) RecordDelivery(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	deliveryID, claimed, err := claimDelivery(ctx, transaction, organization, delivery)
+	_, claimed, err := claimDelivery(ctx, transaction, organization, delivery)
 	if err != nil {
 		return DeliveryOutcome{}, err
 	}
@@ -79,6 +76,7 @@ func (p *Database) RecordDelivery(
 	// would abort one of them as a deadlock — recoverable, since the source retries, but a
 	// self-inflicted failure that costs nothing to avoid.
 	var grouping DeliveryOutcome
+	var openedIncidents []uuid.UUID
 	ordered := slices.SortedFunc(slices.Values(delivery.AlertEvents), compareAlertEvents)
 	for _, alertEvent := range ordered {
 		alertEventID, inserted, upsertErr := upsertAlertEvent(
@@ -107,12 +105,7 @@ func (p *Database) RecordDelivery(
 			}
 			if opened {
 				grouping.IncidentsOpened++
-				if alertEvent.Status == alertevent.AlertEventFiring {
-					if err := enqueueWebhookJob(ctx, transaction, organization, WebhookJobAlert,
-						deliveryID, delivery.Integration, incidentID, uuid.Nil, 0); err != nil {
-						return DeliveryOutcome{}, err
-					}
-				}
+				openedIncidents = append(openedIncidents, incidentID)
 			} else {
 				grouping.IncidentsJoined++
 			}
@@ -123,6 +116,9 @@ func (p *Database) RecordDelivery(
 		if err = regroupUpdatedAlertEvent(ctx, transaction, organization, alertEventID); err != nil {
 			return DeliveryOutcome{}, err
 		}
+	}
+	if err := openAlertInvestigations(ctx, transaction, organization, openedIncidents, policy); err != nil {
+		return DeliveryOutcome{}, err
 	}
 	if err = transaction.Commit(ctx); err != nil {
 		return DeliveryOutcome{}, fmt.Errorf("committing delivery: %w", err)

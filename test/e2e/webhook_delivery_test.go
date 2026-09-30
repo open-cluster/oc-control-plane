@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,15 +23,6 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 		VALUES ($1, $2, 'generic_webhook', 'E2E Generic Webhook', $3)`,
 		integrationID, organization, digest[:]); err != nil {
 		t.Fatalf("creating generic webhook integration: %v", err)
-	}
-
-	blocker, err := h.truth.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = blocker.Rollback(ctx) }()
-	if _, err = blocker.Exec(ctx, `LOCK TABLE investigation IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatalf("blocking delivery processing: %v", err)
 	}
 
 	body := `{"eventId":"restart-42","status":"firing","title":"Restart proof",` +
@@ -56,36 +46,34 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 		t.Fatalf("delivery = %d: %s", response.StatusCode, responseBody)
 	}
 
-	var deliveryID uuid.UUID
+	var deliveryID, investigationID uuid.UUID
 	if err = h.truth.pool.QueryRow(ctx, `
 		SELECT delivery_id FROM webhook_delivery
-		 WHERE integration_id = $1 AND provider_identity = 'restart-42'
-		   AND lifecycle_phase = 'firing'`, integrationID).Scan(&deliveryID); err != nil {
+		 WHERE org_id = $1 AND integration_id = $2 AND provider_identity = 'restart-42'
+		   AND lifecycle_phase = 'firing'`, organization, integrationID).Scan(&deliveryID); err != nil {
 		t.Fatalf("202 returned before durable acceptance: %v", err)
+	}
+	if err := h.truth.pool.QueryRow(ctx, `SELECT investigation.investigation_id
+		FROM investigation JOIN incident USING (org_id, incident_id)
+		WHERE investigation.org_id = $1 AND incident.integration_id = $2
+		  AND investigation.automatic_incident`, organization, integrationID).Scan(&investigationID); err != nil {
+		t.Fatalf("202 returned before automatic Investigation creation: %v", err)
+	}
+	var jobs int
+	if err := h.truth.pool.QueryRow(ctx, `SELECT count(*) FROM webhook_job
+		WHERE org_id = $1 AND delivery_id = $2`, organization, deliveryID).Scan(&jobs); err != nil || jobs != 0 {
+		t.Fatalf("accepted alert retained webhook jobs=%d err=%v", jobs, err)
 	}
 
 	h.plane.program.kill()
-	if err = blocker.Rollback(ctx); err != nil {
-		t.Fatalf("releasing the processing fence: %v", err)
-	}
 	if err = h.plane.start(ctx, h.plane.spkiPin); err != nil {
 		t.Fatalf("restarting the control plane: %v", err)
 	}
 
-	h.await(t, "the accepted webhook delivery to converge after restart", 2*time.Minute,
-		func(ctx context.Context) (bool, error) {
-			var workComplete, investigations int
-			if err := h.truth.pool.QueryRow(ctx, `
-				SELECT count(*) FILTER (WHERE work.status = 5),
-				       count(DISTINCT investigation.investigation_id)
-				  FROM webhook_job AS work
-				  LEFT JOIN investigation
-				    ON investigation.org_id = work.org_id
-				   AND investigation.webhook_job_id = work.job_id
-				 WHERE work.org_id = $1 AND work.delivery_id = $2`, organization, deliveryID).
-				Scan(&workComplete, &investigations); err != nil {
-				return false, err
-			}
-			return workComplete == 1 && investigations == 1, nil
-		})
+	var retained bool
+	if err := h.truth.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM investigation
+		WHERE org_id = $1 AND investigation_id = $2 AND automatic_incident)`, organization, investigationID).
+		Scan(&retained); err != nil || !retained {
+		t.Fatalf("automatic Investigation lost after abrupt restart: retained=%t err=%v", retained, err)
+	}
 }

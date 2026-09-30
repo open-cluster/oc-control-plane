@@ -163,7 +163,7 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 			}
 			var session struct {
 				Organization struct {
-					ID string `json:"organizationId"`
+					ID string `json:"id"`
 				} `json:"organization"`
 			}
 			if requestErr = json.NewDecoder(sessionResponse.Body).Decode(&session); requestErr != nil {

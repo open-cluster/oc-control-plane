@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"net/http"
 	"net/url"
@@ -34,17 +35,8 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close(ctx) }()
-	var workID, deliveryID string
-	if err = database.QueryRow(ctx, `
-		UPDATE webhook_job
-		   SET status = 4, attempts = 8, lease_owner = '', lease_expires_at = NULL,
-		       failure_class = 'provider-work-failed',
-		       failure_message = 'the accepted webhook job could not be applied',
-		       updated_at = now()
-		 WHERE org_id = $1 AND integration_id = $2
-		 RETURNING job_id, delivery_id`, surfaceOrg, created.Integration.ID).Scan(&workID, &deliveryID); err != nil {
-		t.Fatalf("recording a terminal Webhook Job: %v", err)
-	}
+	deliveryID := recordLegacyTerminalAlertJob(t, database, created.Integration.ID,
+		"terminal-group", alertmanagerPayload("terminal-webhook", "terminal-group"), 8)
 
 	base := plane.base(surfaceOrg) + "/webhook-deliveries"
 	status, body := plane.call(t, http.MethodGet, base, nil)
@@ -82,17 +74,8 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		alertmanagerPayload("terminal-webhook-second", "terminal-group-second")); status != http.StatusAccepted {
 		t.Fatalf("accepting the second delivery = %d: %s", status, body)
 	}
-	var secondWorkID, secondDeliveryID string
-	if err = database.QueryRow(ctx, `
-		UPDATE webhook_job
-		   SET status = 4, attempts = 4, lease_owner = '', lease_expires_at = NULL,
-		       failure_class = 'provider-work-failed', failure_message = 'safe failure',
-		       updated_at = now()
-		 WHERE org_id = $1 AND integration_id = $2 AND job_id <> $3
-		 RETURNING job_id, delivery_id`, surfaceOrg, created.Integration.ID, workID).
-		Scan(&secondWorkID, &secondDeliveryID); err != nil {
-		t.Fatalf("recording the second terminal Webhook Job: %v", err)
-	}
+	secondDeliveryID := recordLegacyTerminalAlertJob(t, database, created.Integration.ID,
+		"terminal-group-second", alertmanagerPayload("terminal-webhook-second", "terminal-group-second"), 4)
 	status, body = plane.call(t, http.MethodGet, base+"?limit=1", nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading the first bounded terminal-work page = %d: %s", status, body)
@@ -149,6 +132,33 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	if status, body = plane.call(t, http.MethodPost, base+"/"+deliveryID+"/replay", nil); status != http.StatusConflict {
 		t.Fatalf("replaying nonterminal work = %d: %s", status, body)
 	}
+}
+
+func recordLegacyTerminalAlertJob(t *testing.T, database *pgx.Conn, integration, group string, body []byte, attempts int) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := database.Exec(ctx, `DELETE FROM investigation
+		WHERE org_id = $1 AND incident_id IN
+		(SELECT incident_id FROM incident WHERE org_id = $1 AND integration_id = $2 AND grouping_key = $3)`,
+		surfaceOrg, integration, group); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(body)
+	var deliveryID string
+	if err := database.QueryRow(ctx, `INSERT INTO webhook_job
+		(job_id, org_id, kind, delivery_id, integration_id, incident_id,
+		 status, attempts, failure_class, failure_message)
+		SELECT $4, delivery.org_id, 1, delivery.delivery_id, delivery.integration_id,
+		       incident.incident_id, 4, $5, 'provider-work-failed', 'safe failure'
+		FROM webhook_delivery AS delivery JOIN incident
+		  ON incident.org_id = delivery.org_id AND incident.integration_id = delivery.integration_id
+		WHERE delivery.org_id = $1 AND delivery.integration_id = $2
+		  AND delivery.content_digest = $3 AND incident.grouping_key = $6
+		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), attempts, group).
+		Scan(&deliveryID); err != nil {
+		t.Fatalf("recording legacy terminal alert job: %v", err)
+	}
+	return deliveryID
 }
 
 func TestWebhookDeliveryReplayIsRefusedToEditorsAndViewers(t *testing.T) {

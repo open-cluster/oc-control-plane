@@ -762,8 +762,8 @@ paths:
                 - { $ref: "#/components/schemas/AlertmanagerWebhookRequest" }
       responses:
         "200": { $ref: "#/components/responses/WebhookDuplicate" }
-        "202": { $ref: "#/components/responses/WebhookAccepted" }
-        "400": { $ref: "#/components/responses/WebhookRejected" }
+        "202": { $ref: "#/components/responses/AlertWebhookAccepted" }
+        "400": { $ref: "#/components/responses/AlertWebhookRejected" }
         "401": { $ref: "#/components/responses/WebhookUnauthorized" }
         "413": { $ref: "#/components/responses/WebhookOversized" }
         "503": { $ref: "#/components/responses/AlertWebhookUnavailable" }
@@ -1051,12 +1051,14 @@ components:
     WebhookDeliveryList: { description: Accepted webhook deliveries., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDeliveryList" } } } }
     WebhookDelivery: { description: One accepted webhook delivery., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDelivery" } } } }
     WebhookAccepted: { description: Delivery durably accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    AlertWebhookAccepted: { description: "Delivery facts, Incident updates, and automatic Investigations for newly opened Incidents committed together.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookDuplicate: { description: Delivery was already accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookRejected: { description: Permanent malformed delivery., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    AlertWebhookRejected: { description: "Permanent malformed or conflicting delivery, or a batch opening more Incidents than the configured pending Investigation limit. No delivery changes are recorded.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookUnauthorized: { description: Missing or invalid webhook credential., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookOversized: { description: Body exceeds 1 MiB., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     AlertWebhookUnavailable:
-      description: Admission capacity is temporarily exhausted or the delivery could not be durably recorded; retry.
+      description: Admission capacity or pending Investigation capacity is temporarily exhausted, or the delivery could not be durably recorded. No delivery changes are recorded; retry and honor Retry-After when present.
       headers:
         Retry-After: { schema: { type: integer, minimum: 1 } }
       content:

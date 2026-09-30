@@ -1157,9 +1157,9 @@ paths:
         '200':
           $ref: '#/components/responses/WebhookDuplicate'
         '202':
-          $ref: '#/components/responses/WebhookAccepted'
+          $ref: '#/components/responses/AlertWebhookAccepted'
         '400':
-          $ref: '#/components/responses/WebhookRejected'
+          $ref: '#/components/responses/AlertWebhookRejected'
         '401':
           $ref: '#/components/responses/WebhookUnauthorized'
         '413':
@@ -1784,6 +1784,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/WebhookStatus'
+    AlertWebhookAccepted:
+      description: Delivery facts, Incident updates, and automatic Investigations for newly opened Incidents committed together.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/WebhookStatus'
     WebhookDuplicate:
       description: Delivery was already accepted.
       content:
@@ -1792,6 +1798,12 @@ components:
             $ref: '#/components/schemas/WebhookStatus'
     WebhookRejected:
       description: Permanent malformed delivery.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/WebhookStatus'
+    AlertWebhookRejected:
+      description: Permanent malformed or conflicting delivery, or a batch opening more Incidents than the configured pending Investigation limit. No delivery changes are recorded.
       content:
         application/json:
           schema:
@@ -1809,7 +1821,7 @@ components:
           schema:
             $ref: '#/components/schemas/WebhookStatus'
     AlertWebhookUnavailable:
-      description: Admission capacity is temporarily exhausted or the delivery could not be durably recorded; retry.
+      description: Admission capacity or pending Investigation capacity is temporarily exhausted, or the delivery could not be durably recorded. No delivery changes are recorded; retry and honor Retry-After when present.
       headers:
         Retry-After:
           schema:

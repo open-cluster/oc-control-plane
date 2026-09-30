@@ -172,7 +172,7 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		go func() {
 			<-start
 			outcome, err := database.RecordDelivery(
-				context.Background(), organization, delivery(fingerprint, byte(index+1)))
+				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{})
 			answers <- answer{outcome, err}
 		}()
 	}
@@ -209,6 +209,12 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 	if page.Incidents[0].Basis != incident.BasisSourceGrouping {
 		t.Errorf("the incident reports basis %v, want the source's own grouping",
 			page.Incidents[0].Basis)
+	}
+	if _, _, found, err := database.ClaimInvestigation(context.Background(), aClaim("first")); err != nil || !found {
+		t.Fatalf("concurrent deliveries left no automatic Investigation: found=%t err=%v", found, err)
+	}
+	if _, _, found, err := database.ClaimInvestigation(context.Background(), aClaim("second")); err != nil || found {
+		t.Fatalf("concurrent deliveries left a second automatic Investigation: found=%t err=%v", found, err)
 	}
 }
 

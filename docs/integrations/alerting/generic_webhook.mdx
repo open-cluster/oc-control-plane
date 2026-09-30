@@ -67,6 +67,10 @@ Send one firing event and confirm the response is `202 Accepted`. Open the match
 Webhook Delivery, Alert Event, and Incident. An exact retry should return `200 OK` without
 creating another lifecycle phase.
 
+When a firing event opens a new Incident, acceptance also queues its automatic
+Investigation. Updates to the same Incident do not open another Investigation. Manual
+Investigations can still be opened separately.
+
 ## Evidence available
 
 The Alert Event supplies its title, severity, lifecycle timestamps, labels, annotations,
@@ -83,7 +87,7 @@ when an Investigation needs runtime, change, or conversation data.
 
 | Response | Meaning |
 | --- | --- |
-| `202` | This lifecycle phase was durably accepted. |
+| `202` | This lifecycle phase and Incident updates were recorded, with an automatic Investigation queued if a new Incident opened. |
 | `200` | The same phase and normalized content was already accepted. |
 | `400` | The schema is invalid or the identity conflicts with accepted content. |
 | `401` | The secret is wrong, was rotated, or the integration is disabled. |
@@ -96,7 +100,9 @@ when an Investigation needs runtime, change, or conversation data.
 - `401`: check the Integration ID and current secret; rotate it if the stored value is
   uncertain.
 - `503`: retry with bounded backoff, honor `Retry-After` when present, and preserve the
-  same lifecycle identity.
+  same lifecycle identity. Pending Investigation capacity refusals record no part of the
+  event and include `Retry-After`; accepted duplicates and Incident updates still succeed
+  at full capacity.
 
 ## Rotate, disable, or remove
 

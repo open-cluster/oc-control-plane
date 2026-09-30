@@ -75,9 +75,9 @@ OpenCluster cannot query silences, inhibitions, or other active alerts.
 
 | Response | Meaning |
 | --- | --- |
-| `202` | The delivery was accepted. |
+| `202` | The delivery and Incident updates were recorded, with an automatic Investigation queued for each newly opened Incident. |
 | `200` | The same body was already accepted; it was not applied twice. |
-| `400` | The payload is invalid and should not be retried unchanged. |
+| `400` | The payload is invalid or opens more Incidents than the pending Investigation limit; do not retry unchanged. |
 | `401` | The secret is wrong, was rotated, or the integration is disabled. |
 | `413` | The body is larger than 1 MiB. |
 | `503` | Admission capacity is temporarily exhausted or OpenCluster could not record the delivery; retry and honor `Retry-After` when present. |
@@ -85,6 +85,11 @@ OpenCluster cannot query silences, inhibitions, or other active alerts.
 Deliveries can contain at most 2,048 alerts. Only `firing` and `resolved` statuses are
 accepted. If Alertmanager marks a delivery as truncated, OpenCluster records that the
 incident context is incomplete.
+
+One automatic Investigation opens per new Incident. Deliveries that join or resolve an
+existing Incident do not open another. Accepted duplicates and Incident updates can
+succeed even when the pending Investigation queue is full. When a new delivery cannot
+fit, none of its changes are recorded and `503` includes `Retry-After`.
 
 ## Limitations
 
@@ -99,6 +104,8 @@ explain the alert.
 - **`401`:** replace the configured secret with the current value. Rotated secrets stop
   working immediately.
 - **`400`:** confirm middleware has not changed Alertmanager's version 4 webhook body.
+  If an ungrouped batch exceeds the pending Investigation limit, split it into smaller
+  deliveries or configure source grouping before retrying.
 - **`503`:** honor `Retry-After` when present, reduce delivery frequency, or group alerts more aggressively.
   See the [shared and per-Integration limits](/self-hosting/configuration#webhook-admission-limits).
 
