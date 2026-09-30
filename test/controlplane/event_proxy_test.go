@@ -16,7 +16,7 @@ import (
 
 func startEventProxy(t *testing.T, backend string) string {
 	t.Helper()
-	configuration, err := os.ReadFile("../../deploy/compose/frontend-nginx.conf")
+	configuration, err := os.ReadFile("testdata/event-proxy.conf")
 	if err != nil {
 		t.Fatal(err)
 	}

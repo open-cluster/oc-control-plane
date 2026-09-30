@@ -55,7 +55,7 @@ func (w Worker) ProcessOne(ctx context.Context) (bool, error) {
 	if err != nil || !found {
 		return found, err
 	}
-	w.Counters.ObserveDelay(ctx, job.UpdatedAt.Sub(job.CreatedAt)) //todo may be remove the metrics or make it a bit more smaller.
+	w.Counters.ObserveDelay(ctx, job.UpdatedAt.Sub(job.CreatedAt)) // TODO: simplify these metrics if needed.
 	if job.Attempts >= storage.MaxWebhookJobAttempts {
 		return true, w.fail(ctx, job, errors.New("the accepted webhook delivery exhausted its processing budget"))
 	}

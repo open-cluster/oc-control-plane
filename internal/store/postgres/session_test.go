@@ -111,7 +111,8 @@ func TestSessionLookupRejectsExpiredAndDisabledUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(ctx) }()
-	if _, err = connection.Exec(ctx, `UPDATE session SET expires_at=now() WHERE session_id=$1`, issued.ID); err != nil {
+	if _, err = connection.Exec(ctx, `UPDATE session SET expires_at=$2 WHERE session_id=$1`,
+		issued.ID, time.Now().UTC().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.SessionByToken(ctx, digest); !errors.Is(err, session.ErrExpired) {
