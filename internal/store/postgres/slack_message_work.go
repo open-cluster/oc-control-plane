@@ -10,14 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// WebhookJobKind retains the compatibility schema's discriminator until contraction.
-type WebhookJobKind int16
-
-const (
-	WebhookJobAlert WebhookJobKind = iota + 1
-	WebhookJobSlack
-)
-
 type SlackMessageWorkStatus int16
 
 // MaxSlackMessageAttempts is frozen by the persisted job-row CHECK constraint.
@@ -119,9 +111,9 @@ func enqueueSlackMessageWork(
 ) error {
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_job
-			(job_id, org_id, kind, delivery_id, integration_id,
+			(job_id, org_id, delivery_id, integration_id,
 			 conversation_id, message_sequence, updated_at)
-		VALUES ($1, $2, 2, $3, $4, $5, NULLIF($6, 0), now())
+		VALUES ($1, $2, $3, $4, $5, $6, now())
 		ON CONFLICT DO NOTHING`, uuid.New(), organization, deliveryID,
 		integrationID, conversationID, messageSequence); err != nil {
 		return fmt.Errorf("enqueueing slack message work: %w", err)

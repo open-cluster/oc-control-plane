@@ -81,7 +81,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 12 FROM schema_migration`,
+		`SELECT count(*) = 13 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -216,7 +216,7 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
-		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs",
+		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -305,7 +305,7 @@ func TestMinimalSessionMigrationPreservesOnlyLiveCredentials(t *testing.T) {
 
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
-	if err != nil || !reflect.DeepEqual(applied, []string{"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs"}) {
+	if err != nil || !reflect.DeepEqual(applied, []string{"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work"}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
@@ -436,7 +436,7 @@ func TestReadableProviderMigrationMapsEveryCurrentProvider(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
 		"0009_single_organization_identity", "0010_minimal_browser_sessions",
-		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs",
+		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -561,7 +561,7 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
-		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs",
+		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -708,7 +708,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		"0005_remove_membership_identity", "0006_simplify_identity_rows",
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
 		"0009_single_organization_identity", "0010_minimal_browser_sessions",
-		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs",
+		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -802,7 +802,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
-		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs",
+		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

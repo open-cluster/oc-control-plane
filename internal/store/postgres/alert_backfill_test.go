@@ -78,6 +78,9 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE webhook_job ALTER COLUMN kind SET DEFAULT 2`); err != nil {
+		t.Fatal(err)
+	}
 	slackOutcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: slack.ID, ContentDigest: randomDigest(t), Channel: "CBACKFILL", Thread: "1.0",
 		Subject: "Slack question", ActorID: "UBACKFILL", Text: "investigate",
@@ -86,13 +89,14 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 		t.Fatal(err)
 	}
 	var slackBefore string
-	if err := pool.QueryRow(ctx, `SELECT row_to_json(job)::text FROM webhook_job AS job
-		WHERE org_id = $1 AND kind = 2`, organization).Scan(&slackBefore); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(job) - 'kind' - 'incident_id')::text FROM webhook_job AS job
+		WHERE org_id = $1 AND conversation_id = $2`, organization, slackOutcome.Conversation).Scan(&slackBefore); err != nil {
 		t.Fatal(err)
 	}
 	factsBefore := facts()
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 1 || applied[0] != "0012_retire_alert_webhook_jobs" {
+	if err != nil || len(applied) != 2 || applied[0] != "0012_retire_alert_webhook_jobs" ||
+		applied[1] != "0013_contract_slack_message_work" {
 		t.Fatalf("alert backfill applied %v: %v", applied, err)
 	}
 	for index, incident := range incidents {
@@ -126,14 +130,14 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 		t.Fatalf("manual Investigation lost: %v", err)
 	}
 	var slackAfter string
-	if err := pool.QueryRow(ctx, `SELECT row_to_json(job)::text FROM webhook_job AS job
-		WHERE org_id = $1 AND kind = 2`, organization).Scan(&slackAfter); err != nil || slackAfter != slackBefore {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(job) - 'kind' - 'incident_id')::text FROM webhook_job AS job
+		WHERE org_id = $1 AND conversation_id = $2`, organization, slackOutcome.Conversation).Scan(&slackAfter); err != nil || slackAfter != slackBefore {
 		t.Fatalf("Slack work changed: %v", err)
 	}
-	var alerts int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM webhook_job WHERE org_id = $1 AND kind = 1`, organization).
-		Scan(&alerts); err != nil || alerts != 0 {
-		t.Fatalf("legacy alert jobs remain: %d: %v", alerts, err)
+	var remaining int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM webhook_job WHERE org_id = $1`, organization).
+		Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("expected only retained Slack work: %d: %v", remaining, err)
 	}
 	if applied, err := database.Migrate(ctx); err != nil || len(applied) != 0 {
 		t.Fatalf("repeated migration applied %v: %v", applied, err)

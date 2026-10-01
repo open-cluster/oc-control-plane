@@ -113,7 +113,7 @@ set `relay.enabled=true` in the Helm release. The Relay initiates the connection
 customer cluster.
 
 Upgrading an older v0.1 deployment requires stopping every old control-plane replica
-before the new binary starts and automatically migrates accepted alert work. Do not
+before the new binary starts, repairs accepted alert work, and contracts the Slack work schema. Do not
 run mixed versions; see the [Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
 
 ## Architecture

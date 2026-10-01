@@ -61,7 +61,7 @@ same key, sealed integration credentials cannot be opened.
 
 Before starting this version, stop every old control-plane replica and back up
 PostgreSQL. Do not use a rolling upgrade or run old and new binaries against the same
-database. Startup automatically applies the compatibility migration before serving
+database. Startup automatically applies the compatibility migrations before serving
 traffic; accepted legacy alerts receive their missing automatic Investigations while
 manual Investigations and Slack work are preserved.
 

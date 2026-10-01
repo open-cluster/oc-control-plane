@@ -47,8 +47,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"JobSucceeded", int(storage.JobSucceeded), 2},
 		{"JobFailed", int(storage.JobFailed), 3},
 		{"JobCancelled", int(storage.JobCancelled), 4},
-		{"WebhookJobAlert", int(storage.WebhookJobAlert), 1},
-		{"WebhookJobSlack", int(storage.WebhookJobSlack), 2},
 		{"SlackMessageReady", int(storage.SlackMessageReady), 1},
 		{"SlackMessageLeased", int(storage.SlackMessageLeased), 2},
 		{"SlackMessageRetry", int(storage.SlackMessageRetry), 3},
