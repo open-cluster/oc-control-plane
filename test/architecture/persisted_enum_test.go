@@ -158,7 +158,7 @@ var (
 		int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
 		int(storage.JobFailed), int(storage.JobCancelled),
 	}
-	webhookJobStatusValues = []int{
+	slackMessageStatusValues = []int{
 		int(storage.SlackMessageReady), int(storage.SlackMessageLeased),
 		int(storage.SlackMessageRetry), int(storage.SlackMessageTerminal),
 		int(storage.SlackMessageComplete),
@@ -199,10 +199,10 @@ var enumColumns = map[string]map[string][]int{
 	"result.go":       {"status": jobStatusValues},
 	"cancellation.go": {"status": jobStatusValues},
 	// Relay counts include leased jobs to report what the relays are holding.
-	"relays.go":      {"status": jobStatusValues},
-	"webhook_job.go": {"status": webhookJobStatusValues},
+	"relays.go":             {"status": jobStatusValues},
+	"slack_message_work.go": {"status": slackMessageStatusValues},
 	"webhook_delivery.go": {
-		"status": webhookJobStatusValues,
+		"status": slackMessageStatusValues,
 	},
 	// The delivery path: the upsert guard compares an Alert Event's status.
 	"alert_event.go": {"status": alertEventStatusValues},
@@ -213,7 +213,7 @@ var enumColumns = map[string]map[string][]int{
 	// An inbound Slack message claims its delivery through the same idempotence key every
 	// other delivery uses.
 	"slack_conversation.go": {
-		"status": webhookJobStatusValues,
+		"status": slackMessageStatusValues,
 	},
 	// The outbound half: claiming compares a delivery's own lifecycle state.
 	"slack_reply.go": {"status": slackReplyValues},
@@ -221,6 +221,7 @@ var enumColumns = map[string]map[string][]int{
 	// open-incident listing filters on an EPISODE's status; the two enums share the file.
 	"investigation.go": {"status": append(append(append([]int(nil), investigationStatusValues...),
 		incidentStatusValues...), jobStatusValues...)},
+	"investigation_capacity.go": {"status": investigationStatusValues},
 	// The brief carries only what CONCLUDED turns established: a running turn has
 	// established nothing yet, and a failed one established nothing at all.
 	"conversation_brief.go": {
