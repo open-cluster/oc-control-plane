@@ -138,7 +138,7 @@ func (h Handlers) Routes() []authz.Route {
 	routes = append(routes, webhooks.DeliveryHandlers{
 		Database: h.Database,
 		Logger:   h.Logger,
-		Counters: webhooks.NewJobInstruments(h.Logger),
+		Counters: webhooks.NewDeliveryInstruments(h.Logger),
 	}.Routes()...)
 	return routes
 }

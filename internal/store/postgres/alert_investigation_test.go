@@ -37,7 +37,7 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 		read.WindowUntil.UTC().Format(time.RFC3339) != "2026-09-29T10:00:00Z" {
 		t.Fatalf("Investigation used incomplete Incident window: %s to %s", read.WindowFrom, read.WindowUntil)
 	}
-	if _, found, err := database.ClaimWebhookJob(ctx, "unused-alert-worker", time.Minute); err != nil || found {
+	if _, found, err := database.ClaimSlackMessageWork(ctx, "unused-alert-worker", time.Minute); err != nil || found {
 		t.Fatalf("new alert delivery queued webhook work: found=%t err=%v", found, err)
 	}
 	page, err := database.WebhookDeliveries(ctx, organization, "", storage.Page{Limit: 10})

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// WebhookJobKind retains the compatibility schema's discriminator until contraction.
 type WebhookJobKind int16
 
 const (
@@ -17,28 +18,20 @@ const (
 	WebhookJobSlack
 )
 
-func (kind WebhookJobKind) String() string {
-	names := [...]string{"unknown", "alert", "slack"}
-	if kind <= 0 || int(kind) >= len(names) {
-		return names[0]
-	}
-	return names[kind]
-}
+type SlackMessageWorkStatus int16
 
-type WebhookJobStatus int16
-
-// MaxWebhookJobAttempts is frozen by the persisted job-row CHECK constraint.
-const MaxWebhookJobAttempts = 12
+// MaxSlackMessageAttempts is frozen by the persisted job-row CHECK constraint.
+const MaxSlackMessageAttempts = 12
 
 const (
-	WebhookJobReady WebhookJobStatus = iota + 1
-	WebhookJobLeased
-	WebhookJobRetry
-	WebhookJobTerminal
-	WebhookJobComplete
+	SlackMessageReady SlackMessageWorkStatus = iota + 1
+	SlackMessageLeased
+	SlackMessageRetry
+	SlackMessageTerminal
+	SlackMessageComplete
 )
 
-func (status WebhookJobStatus) String() string {
+func (status SlackMessageWorkStatus) String() string {
 	names := [...]string{"unknown", "ready", "leased", "retry", "terminal", "complete"}
 	if status <= 0 || int(status) >= len(names) {
 		return names[0]
@@ -46,18 +39,14 @@ func (status WebhookJobStatus) String() string {
 	return names[status]
 }
 
-var ErrWebhookJobLeaseLost = errors.New("webhook job lease is no longer held")
-var ErrWebhookJobUnknown = errors.New("webhook job not found")
-var ErrWebhookJobCapacity = errors.New("organization has reached its waiting investigation limit")
+var ErrSlackMessageLeaseLost = errors.New("slack message work lease is no longer held")
 
-type WebhookJob struct {
+type SlackMessageWork struct {
 	ID              uuid.UUID
 	Organization    uuid.UUID
-	Kind            WebhookJobKind
-	Status          WebhookJobStatus
+	Status          SlackMessageWorkStatus
 	DeliveryID      uuid.UUID
 	IntegrationID   uuid.UUID
-	IncidentID      uuid.UUID
 	ConversationID  uuid.UUID
 	MessageSequence int64
 	Attempts        int
@@ -69,11 +58,11 @@ type WebhookJob struct {
 	UpdatedAt       time.Time
 }
 
-// ApplySlackWebhookJob opens the next Conversation turn through the existing queue seam
-// and advances the fenced Webhook Job atomically. The Message assignment is the durable
+// ApplySlackMessageWork opens the next Conversation turn through the existing queue seam
+// and advances the fenced Slack Message work atomically. The Message assignment is the durable
 // idempotency boundary when a prior attempt already opened the turn.
-func (d *Database) ApplySlackWebhookJob(
-	ctx context.Context, organization uuid.UUID, work WebhookJob,
+func (d *Database) ApplySlackMessageWork(
+	ctx context.Context, organization uuid.UUID, work SlackMessageWork,
 	windowLead time.Duration, maxWaiting int,
 ) error {
 	work.Organization = organization
@@ -101,7 +90,7 @@ func (d *Database) ApplySlackWebhookJob(
 			return fmt.Errorf("preserving a queued slack message: %w", err)
 		}
 	}
-	if err = completeWebhookJobTx(ctx, tx, work); err != nil {
+	if err = completeSlackMessageWorkTx(ctx, tx, work); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -110,30 +99,7 @@ func (d *Database) ApplySlackWebhookJob(
 	return nil
 }
 
-func reserveWaitingInvestigations(
-	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, maximum, requested int,
-) error {
-	if maximum <= 0 {
-		return nil
-	}
-	if _, err := transaction.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		organization.String()); err != nil {
-		return fmt.Errorf("locking organization waiting-investigation capacity: %w", err)
-	}
-	var waiting int
-	if err := transaction.QueryRow(ctx, `
-		SELECT count(*) FROM investigation
-		 WHERE org_id = $1 AND status = 1 AND lease_worker = ''`,
-		organization).Scan(&waiting); err != nil {
-		return fmt.Errorf("counting organization waiting investigations: %w", err)
-	}
-	if requested > maximum-waiting {
-		return ErrWebhookJobCapacity
-	}
-	return nil
-}
-
-func completeWebhookJobTx(ctx context.Context, tx pgx.Tx, work WebhookJob) error {
+func completeSlackMessageWorkTx(ctx context.Context, tx pgx.Tx, work SlackMessageWork) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE webhook_job
 		   SET status = 5, lease_owner = '', lease_expires_at = NULL, updated_at = now()
@@ -143,43 +109,36 @@ func completeWebhookJobTx(ctx context.Context, tx pgx.Tx, work WebhookJob) error
 	if err != nil {
 		return fmt.Errorf("completing webhook delivery effect: %w", err)
 	}
-	return requireWorkLease(tag.RowsAffected())
+	return requireSlackMessageLease(tag.RowsAffected())
 }
 
-func enqueueWebhookJob(
+func enqueueSlackMessageWork(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
-	kind WebhookJobKind, deliveryID, integrationID, incidentID, conversationID uuid.UUID,
+	deliveryID, integrationID, conversationID uuid.UUID,
 	messageSequence int64,
 ) error {
-	var incident, conversation any
-	if incidentID != uuid.Nil {
-		incident = incidentID
-	}
-	if conversationID != uuid.Nil {
-		conversation = conversationID
-	}
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_job
-			(job_id, org_id, kind, delivery_id, integration_id, incident_id,
+			(job_id, org_id, kind, delivery_id, integration_id,
 			 conversation_id, message_sequence, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0), now())
-		ON CONFLICT DO NOTHING`, uuid.New(), organization, int16(kind), deliveryID,
-		integrationID, incident, conversation, messageSequence); err != nil {
-		return fmt.Errorf("enqueueing webhook job: %w", err)
+		VALUES ($1, $2, 2, $3, $4, $5, NULLIF($6, 0), now())
+		ON CONFLICT DO NOTHING`, uuid.New(), organization, deliveryID,
+		integrationID, conversationID, messageSequence); err != nil {
+		return fmt.Errorf("enqueueing slack message work: %w", err)
 	}
 	return nil
 }
 
-// ClaimWebhookJob discovers ready work across Organizations. The returned Organization is
+// ClaimSlackMessageWork discovers ready work across Organizations. The returned Organization is
 // authoritative for every later transition, which must also present the lease epoch.
-func (d *Database) ClaimWebhookJob(
+func (d *Database) ClaimSlackMessageWork(
 	ctx context.Context, owner string, lease time.Duration,
-) (WebhookJob, bool, error) {
+) (SlackMessageWork, bool, error) {
 	if owner == "" || lease <= 0 {
-		return WebhookJob{}, false, errors.New("webhook job owner and lease are required")
+		return SlackMessageWork{}, false, errors.New("slack message work owner and lease are required")
 	}
-	var work WebhookJob
-	var incidentID, conversationID *uuid.UUID
+	var work SlackMessageWork
+	var conversationID *uuid.UUID
 	err := d.pool.QueryRow(ctx, `
 			WITH selected AS (
 				SELECT org_id, job_id
@@ -199,22 +158,19 @@ func (d *Database) ClaimWebhookJob(
 			       updated_at = now()
 			  FROM selected
 			 WHERE work.org_id = selected.org_id AND work.job_id = selected.job_id
-			RETURNING work.job_id, work.org_id, work.kind, work.status, work.delivery_id,
-			          work.integration_id, work.incident_id, work.conversation_id,
+			RETURNING work.job_id, work.org_id, work.status, work.delivery_id,
+			          work.integration_id, work.conversation_id,
 			          coalesce(work.message_sequence, 0), work.attempts, work.lease_owner,
 			          work.lease_epoch, work.created_at, work.updated_at`,
-		owner, lease.String(), MaxWebhookJobAttempts).Scan(&work.ID, &work.Organization, &work.Kind, &work.Status,
-		&work.DeliveryID, &work.IntegrationID, &incidentID, &conversationID,
+		owner, lease.String(), MaxSlackMessageAttempts).Scan(&work.ID, &work.Organization, &work.Status,
+		&work.DeliveryID, &work.IntegrationID, &conversationID,
 		&work.MessageSequence, &work.Attempts, &work.LeaseOwner, &work.LeaseEpoch,
 		&work.CreatedAt, &work.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return WebhookJob{}, false, nil
+		return SlackMessageWork{}, false, nil
 	}
 	if err != nil {
-		return WebhookJob{}, false, fmt.Errorf("claiming webhook job: %w", err)
-	}
-	if incidentID != nil {
-		work.IncidentID = *incidentID
+		return SlackMessageWork{}, false, fmt.Errorf("claiming slack message work: %w", err)
 	}
 	if conversationID != nil {
 		work.ConversationID = *conversationID
@@ -222,8 +178,8 @@ func (d *Database) ClaimWebhookJob(
 	return work, true, nil
 }
 
-func (d *Database) HeartbeatWebhookJob(
-	ctx context.Context, organization uuid.UUID, work WebhookJob, lease time.Duration,
+func (d *Database) HeartbeatSlackMessageWork(
+	ctx context.Context, organization uuid.UUID, work SlackMessageWork, lease time.Duration,
 ) error {
 	work.Organization = organization
 	pool, err := d.Pool(organization)
@@ -237,33 +193,28 @@ func (d *Database) HeartbeatWebhookJob(
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch, lease.String())
 	if err != nil {
-		return fmt.Errorf("renewing webhook job lease: %w", err)
+		return fmt.Errorf("renewing slack message work lease: %w", err)
 	}
-	return requireWorkLease(tag.RowsAffected())
+	return requireSlackMessageLease(tag.RowsAffected())
 }
 
-func (d *Database) CompleteWebhookJob(ctx context.Context, organization uuid.UUID, work WebhookJob) error {
-	work.Organization = organization
-	return d.transitionWebhookJob(ctx, work, WebhookJobComplete, 0, "", "")
-}
-
-func (d *Database) FailWebhookJob(
-	ctx context.Context, organization uuid.UUID, work WebhookJob, terminal bool, delay time.Duration,
+func (d *Database) FailSlackMessageWork(
+	ctx context.Context, organization uuid.UUID, work SlackMessageWork, terminal bool, delay time.Duration,
 	class, message string,
 ) error {
 	work.Organization = organization
-	status := WebhookJobRetry
+	status := SlackMessageRetry
 	if terminal {
-		status = WebhookJobTerminal
+		status = SlackMessageTerminal
 	}
-	return d.transitionWebhookJob(ctx, work, status, delay,
+	return d.transitionSlackMessageWork(ctx, work, status, delay,
 		boundedText(class, 64), boundedText(message, 512))
 }
 
-// DeferWebhookJob preserves an accepted Message behind Organization backpressure without
+// DeferSlackMessageWork preserves an accepted Message behind Organization backpressure without
 // consuming its failure budget or making a permanently delayed Message terminal.
-func (d *Database) DeferWebhookJob(
-	ctx context.Context, organization uuid.UUID, work WebhookJob, delay time.Duration,
+func (d *Database) DeferSlackMessageWork(
+	ctx context.Context, organization uuid.UUID, work SlackMessageWork, delay time.Duration,
 ) error {
 	pool, err := d.Pool(organization)
 	if err != nil {
@@ -283,11 +234,11 @@ func (d *Database) DeferWebhookJob(
 	if err != nil {
 		return fmt.Errorf("deferring webhook delivery behind Organization capacity: %w", err)
 	}
-	return requireWorkLease(tag.RowsAffected())
+	return requireSlackMessageLease(tag.RowsAffected())
 }
 
-func (d *Database) transitionWebhookJob(
-	ctx context.Context, work WebhookJob, status WebhookJobStatus, delay time.Duration,
+func (d *Database) transitionSlackMessageWork(
+	ctx context.Context, work SlackMessageWork, status SlackMessageWorkStatus, delay time.Duration,
 	class, message string,
 ) error {
 	pool, err := d.Pool(work.Organization)
@@ -304,14 +255,14 @@ func (d *Database) transitionWebhookJob(
 		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch,
 		int16(status), max(delay, 0).String(), class, message)
 	if err != nil {
-		return fmt.Errorf("transitioning webhook job: %w", err)
+		return fmt.Errorf("transitioning slack message work: %w", err)
 	}
-	return requireWorkLease(tag.RowsAffected())
+	return requireSlackMessageLease(tag.RowsAffected())
 }
 
-func requireWorkLease(rows int64) error {
+func requireSlackMessageLease(rows int64) error {
 	if rows != 1 {
-		return ErrWebhookJobLeaseLost
+		return ErrSlackMessageLeaseLost
 	}
 	return nil
 }

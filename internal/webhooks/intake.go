@@ -266,7 +266,7 @@ func (h *receiver) recordAlertDelivery(
 	}
 
 	h.counters.countDelivery(ctx, dispositionAccepted)
-	h.counters.jobs.Count(ctx, "accepted")
+	h.counters.lifecycle.Count(ctx, "accepted")
 	h.counters.countAlertEvents(ctx, outcome.Recorded, outcome.IncidentsOpened, outcome.IncidentsJoined)
 	h.Logger.InfoContext(ctx, "delivery accepted",
 		slog.String("org_id", organization.String()),

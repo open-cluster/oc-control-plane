@@ -45,18 +45,17 @@ type instruments struct {
 	// answered inside three seconds, so a deployment drifting towards that ceiling is a
 	// retry storm it is asking for — and no counter of outcomes would show it coming.
 	slackLatency metric.Float64Histogram
-	jobs         JobInstruments
+	lifecycle    DeliveryInstruments
 }
 
-// JobInstruments records the bounded lifecycle of accepted asynchronous webhook jobs.
+// DeliveryInstruments records Webhook Delivery acceptance and replay.
 // Outcome is a closed value owned by this build; tenant and provider identifiers are never labels.
-type JobInstruments struct {
+type DeliveryInstruments struct {
 	outcomes metric.Int64Counter
-	delay    metric.Float64Histogram
 }
 
-// NewJobInstruments builds the lifecycle counter used by workers and operator replay.
-func NewJobInstruments(logger *slog.Logger) JobInstruments {
+// NewDeliveryInstruments builds the lifecycle counter used by intake and operator replay.
+func NewDeliveryInstruments(logger *slog.Logger) DeliveryInstruments {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -66,29 +65,17 @@ func NewJobInstruments(logger *slog.Logger) JobInstruments {
 	if err != nil {
 		logger.Warn("webhook delivery metric unavailable", slog.String("error", err.Error()))
 	}
-	delay, delayErr := otel.Meter(meterName).Float64Histogram("oc.webhooks.delivery_delay",
-		metric.WithDescription("Time between durable webhook acceptance and worker claim."),
-		metric.WithUnit("s"))
-	if delayErr != nil {
-		logger.Warn("webhook delivery delay metric unavailable", slog.String("error", delayErr.Error()))
-	}
-	return JobInstruments{outcomes: counter, delay: delay}
+	return DeliveryInstruments{outcomes: counter}
 }
 
-func (i JobInstruments) Count(ctx context.Context, outcome string) {
+func (i DeliveryInstruments) Count(ctx context.Context, outcome string) {
 	switch outcome {
-	case "accepted", "duplicate", "rejected", "delayed", "failed", "replayed":
+	case "accepted", "duplicate", "rejected", "replayed":
 	default:
 		return
 	}
 	if i.outcomes != nil {
 		i.outcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
-	}
-}
-
-func (i JobInstruments) ObserveDelay(ctx context.Context, elapsed time.Duration) {
-	if i.delay != nil {
-		i.delay.Record(ctx, max(elapsed, 0).Seconds())
 	}
 }
 
@@ -108,7 +95,7 @@ const (
 func newInstruments(logger *slog.Logger) instruments {
 	meter := otel.Meter(meterName)
 	var built instruments
-	built.jobs = NewJobInstruments(logger)
+	built.lifecycle = NewDeliveryInstruments(logger)
 
 	var err error
 	if built.deliveries, err = meter.Int64Counter("oc.intake.deliveries",
@@ -157,10 +144,10 @@ func (i instruments) observeSlackLatency(ctx context.Context, took time.Duration
 func (i instruments) countSlackEvent(ctx context.Context, disposition string) {
 	switch disposition {
 	case slackDuplicate:
-		i.jobs.Count(ctx, "duplicate")
+		i.lifecycle.Count(ctx, "duplicate")
 	case slackAccepted, slackChallenge, slackNotAddressed:
 	default:
-		i.jobs.Count(ctx, "rejected")
+		i.lifecycle.Count(ctx, "rejected")
 	}
 	if i.slackEvents == nil {
 		return
@@ -177,10 +164,10 @@ func (i instruments) countSlackEvent(ctx context.Context, disposition string) {
 func (i instruments) countDelivery(ctx context.Context, disposition string) {
 	switch disposition {
 	case dispositionDuplicate:
-		i.jobs.Count(ctx, "duplicate")
+		i.lifecycle.Count(ctx, "duplicate")
 	case dispositionAccepted:
 	default:
-		i.jobs.Count(ctx, "rejected")
+		i.lifecycle.Count(ctx, "rejected")
 	}
 	if i.deliveries == nil {
 		return

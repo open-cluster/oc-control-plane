@@ -49,12 +49,12 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"JobCancelled", int(storage.JobCancelled), 4},
 		{"WebhookJobAlert", int(storage.WebhookJobAlert), 1},
 		{"WebhookJobSlack", int(storage.WebhookJobSlack), 2},
-		{"WebhookJobReady", int(storage.WebhookJobReady), 1},
-		{"WebhookJobLeased", int(storage.WebhookJobLeased), 2},
-		{"WebhookJobRetry", int(storage.WebhookJobRetry), 3},
-		{"WebhookJobTerminal", int(storage.WebhookJobTerminal), 4},
-		{"WebhookJobComplete", int(storage.WebhookJobComplete), 5},
-		{"MaxWebhookJobAttempts", storage.MaxWebhookJobAttempts, 12},
+		{"SlackMessageReady", int(storage.SlackMessageReady), 1},
+		{"SlackMessageLeased", int(storage.SlackMessageLeased), 2},
+		{"SlackMessageRetry", int(storage.SlackMessageRetry), 3},
+		{"SlackMessageTerminal", int(storage.SlackMessageTerminal), 4},
+		{"SlackMessageComplete", int(storage.SlackMessageComplete), 5},
+		{"MaxSlackMessageAttempts", storage.MaxSlackMessageAttempts, 12},
 
 		{"AlertEventFiring", int(alertevent.AlertEventFiring), 1},
 		{"AlertEventResolved", int(alertevent.AlertEventResolved), 2},
@@ -159,9 +159,9 @@ var (
 		int(storage.JobFailed), int(storage.JobCancelled),
 	}
 	webhookJobStatusValues = []int{
-		int(storage.WebhookJobReady), int(storage.WebhookJobLeased),
-		int(storage.WebhookJobRetry), int(storage.WebhookJobTerminal),
-		int(storage.WebhookJobComplete),
+		int(storage.SlackMessageReady), int(storage.SlackMessageLeased),
+		int(storage.SlackMessageRetry), int(storage.SlackMessageTerminal),
+		int(storage.SlackMessageComplete),
 	}
 	alertEventStatusValues = []int{
 		int(alertevent.AlertEventFiring), int(alertevent.AlertEventResolved),

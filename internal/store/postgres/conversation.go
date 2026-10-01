@@ -272,7 +272,7 @@ func (p *Database) AppendMessageAndOpenTurn(
 			acceptedMessage, audit.Target, audit.Detail, error,
 		) {
 			if err := reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
-				if errors.Is(err, ErrWebhookJobCapacity) {
+				if errors.Is(err, ErrInvestigationCapacity) {
 					return acceptedMessage{}, audit.Target{}, nil, conversation.ErrQueueFull
 				}
 				return acceptedMessage{}, audit.Target{}, nil, err
@@ -416,7 +416,7 @@ func (p *Database) DrainConversation(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 	if err = reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
-		if errors.Is(err, ErrWebhookJobCapacity) {
+		if errors.Is(err, ErrInvestigationCapacity) {
 			return false, conversation.ErrQueueFull
 		}
 		return false, err
@@ -471,7 +471,7 @@ func (p *Database) DrainQueuedConversation(
 		return false, fmt.Errorf("finding queued Conversation work: %w", err)
 	}
 	if err = reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
-		if errors.Is(err, ErrWebhookJobCapacity) {
+		if errors.Is(err, ErrInvestigationCapacity) {
 			return false, nil
 		}
 		return false, err

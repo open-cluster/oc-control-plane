@@ -21,7 +21,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
+func TestFailedSlackDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	plane := startSlackPlane(t, newVendorFake(t, "xoxb-terminal-work"))
 	status, body := plane.createSlack(t, "Terminal webhook source", "xoxb-terminal-work")
 	if status != http.StatusCreated {
@@ -36,7 +36,7 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close(ctx) }()
-	deliveryID := recordTerminalSlackJob(t, database, created.Integration.ID,
+	deliveryID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
 		"terminal-group", []byte(`{"event_id":"terminal-slack-first"}`), 8)
 
 	base := plane.base(surfaceOrg) + "/webhook-deliveries"
@@ -71,7 +71,7 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	if status, body = plane.call(t, http.MethodGet, base+"?sort=receivedAt", nil); status != http.StatusBadRequest {
 		t.Fatalf("an unsupported ascending terminal-work order = %d: %s", status, body)
 	}
-	secondDeliveryID := recordTerminalSlackJob(t, database, created.Integration.ID,
+	secondDeliveryID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
 		"terminal-group-second", []byte(`{"event_id":"terminal-slack-second"}`), 4)
 	status, body = plane.call(t, http.MethodGet, base+"?limit=1", nil)
 	if status != http.StatusOK {
@@ -140,7 +140,7 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	}
 }
 
-func recordTerminalSlackJob(t *testing.T, database *pgx.Conn, integration, group string, body []byte, attempts int) string {
+func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integration, identity string, body []byte, attempts int) string {
 	t.Helper()
 	ctx := context.Background()
 	digest := sha256.Sum256(body)
@@ -163,9 +163,9 @@ func recordTerminalSlackJob(t *testing.T, database *pgx.Conn, integration, group
 		SELECT $5, delivery.org_id, 2, delivery.delivery_id, delivery.integration_id,
 		       message.conversation_id, message.sequence, 4, $7, 'provider-work-failed', 'safe failure', now()
 		FROM delivery JOIN message USING (org_id)
-		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), uuid.New(), uuid.New(), attempts, group).
+		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), uuid.New(), uuid.New(), attempts, identity).
 		Scan(&deliveryID); err != nil {
-		t.Fatalf("recording terminal Slack job: %v", err)
+		t.Fatalf("recording terminal Slack Message work: %v", err)
 	}
 	return deliveryID
 }

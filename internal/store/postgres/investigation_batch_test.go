@@ -127,7 +127,7 @@ func TestBatchAdmissionCapacityBoundaries(t *testing.T) {
 			}
 			defer func() { _ = tx.Rollback(ctx) }()
 			err = storage.ReserveWaitingInvestigationsForTest(ctx, tx, test.org, test.maximum, test.requested)
-			if test.full && !errors.Is(err, storage.ErrWebhookJobCapacity) || !test.full && err != nil {
+			if test.full && !errors.Is(err, storage.ErrInvestigationCapacity) || !test.full && err != nil {
 				t.Fatalf("capacity error = %v, want full=%t", err, test.full)
 			}
 		})

@@ -39,7 +39,7 @@ func openAlertInvestigations(
 		return AlertBatchTooLargeError{}
 	}
 	if err := reserveWaitingInvestigations(ctx, tx, organization, policy.MaximumPending, len(incidents)); err != nil {
-		if errors.Is(err, ErrWebhookJobCapacity) {
+		if errors.Is(err, ErrInvestigationCapacity) {
 			return AlertCapacityError{}
 		}
 		return err

@@ -17,7 +17,7 @@ import (
 type DeliveryHandlers struct {
 	Database *storage.Database
 	Logger   *slog.Logger
-	Counters JobInstruments
+	Counters DeliveryInstruments
 }
 
 var deliverySpec = listing.Spec{

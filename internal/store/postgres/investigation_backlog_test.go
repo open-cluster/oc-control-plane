@@ -28,7 +28,7 @@ func TestBatchAdmissionRequiresRoomForTheWholeBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := storage.ReserveWaitingInvestigationsForTest(ctx, tx, organization, 2, 2); !errors.Is(err, storage.ErrWebhookJobCapacity) {
+	if err := storage.ReserveWaitingInvestigationsForTest(ctx, tx, organization, 2, 2); !errors.Is(err, storage.ErrInvestigationCapacity) {
 		t.Fatalf("batch of two with one slot remaining: %v, want capacity error", err)
 	}
 }
