@@ -14,7 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
-	alertwork "github.com/open-cluster/oc-control-plane/internal/webhooks/alertmanager"
 	slackwork "github.com/open-cluster/oc-control-plane/internal/webhooks/slack"
 )
 
@@ -39,11 +38,6 @@ func startWebhookJob(ctx context.Context, group *errgroup.Group, process assembl
 	worker := webhooks.Worker{
 		Jobs: process.database,
 		Handlers: webhooks.JobHandlers{
-			storage.WebhookJobAlert: alertwork.JobHandler{
-				Database:        process.database,
-				WindowLead:      defaultInvestigationWindowLead,
-				MaxWaitingTurns: process.config.MaxPendingInvestigations,
-			},
 			storage.WebhookJobSlack: slackwork.JobHandler{
 				Jobs: process.database,
 				References: slackwork.SlackReferenceResolver{

@@ -105,7 +105,8 @@ func TestAutomaticIncidentMigrationPreservesExistingInvestigationsAndOldWriters(
 	insert()
 	insert()
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 1 || applied[0] != "0011_automatic_incident_investigation" {
+	if err != nil || len(applied) != 2 || applied[0] != "0011_automatic_incident_investigation" ||
+		applied[1] != "0012_retire_alert_webhook_jobs" {
 		t.Fatalf("upgrade applied %v: %v", applied, err)
 	}
 	insert()

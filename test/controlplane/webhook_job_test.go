@@ -22,12 +22,13 @@ import (
 )
 
 func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
-	plane := startIntegrationPlane(t)
-	created := plane.createAlertmanager(t, "Terminal webhook source")
-	if status, body := plane.deliver(t, created.Integration.ID, created.WebhookSecret,
-		alertmanagerPayload("terminal-webhook", "terminal-group")); status != http.StatusAccepted {
-		t.Fatalf("accepting the delivery = %d: %s", status, body)
+	plane := startSlackPlane(t, newVendorFake(t, "xoxb-terminal-work"))
+	status, body := plane.createSlack(t, "Terminal webhook source", "xoxb-terminal-work")
+	if status != http.StatusCreated {
+		t.Fatalf("creating Slack = %d: %s", status, body)
 	}
+	var created createdBody
+	decodeInto(t, body, &created)
 
 	ctx := context.Background()
 	database, err := pgx.Connect(ctx, plane.dsn)
@@ -35,11 +36,11 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close(ctx) }()
-	deliveryID := recordLegacyTerminalAlertJob(t, database, created.Integration.ID,
-		"terminal-group", alertmanagerPayload("terminal-webhook", "terminal-group"), 8)
+	deliveryID := recordTerminalSlackJob(t, database, created.Integration.ID,
+		"terminal-group", []byte(`{"event_id":"terminal-slack-first"}`), 8)
 
 	base := plane.base(surfaceOrg) + "/webhook-deliveries"
-	status, body := plane.call(t, http.MethodGet, base, nil)
+	status, body = plane.call(t, http.MethodGet, base, nil)
 	if status != http.StatusOK {
 		t.Fatalf("listing terminal work = %d: %s", status, body)
 	}
@@ -70,12 +71,8 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	if status, body = plane.call(t, http.MethodGet, base+"?sort=receivedAt", nil); status != http.StatusBadRequest {
 		t.Fatalf("an unsupported ascending terminal-work order = %d: %s", status, body)
 	}
-	if status, body = plane.deliver(t, created.Integration.ID, created.WebhookSecret,
-		alertmanagerPayload("terminal-webhook-second", "terminal-group-second")); status != http.StatusAccepted {
-		t.Fatalf("accepting the second delivery = %d: %s", status, body)
-	}
-	secondDeliveryID := recordLegacyTerminalAlertJob(t, database, created.Integration.ID,
-		"terminal-group-second", alertmanagerPayload("terminal-webhook-second", "terminal-group-second"), 4)
+	secondDeliveryID := recordTerminalSlackJob(t, database, created.Integration.ID,
+		"terminal-group-second", []byte(`{"event_id":"terminal-slack-second"}`), 4)
 	status, body = plane.call(t, http.MethodGet, base+"?limit=1", nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading the first bounded terminal-work page = %d: %s", status, body)
@@ -143,29 +140,32 @@ func TestFailedWebhookDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 	}
 }
 
-func recordLegacyTerminalAlertJob(t *testing.T, database *pgx.Conn, integration, group string, body []byte, attempts int) string {
+func recordTerminalSlackJob(t *testing.T, database *pgx.Conn, integration, group string, body []byte, attempts int) string {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := database.Exec(ctx, `DELETE FROM investigation
-		WHERE org_id = $1 AND incident_id IN
-		(SELECT incident_id FROM incident WHERE org_id = $1 AND integration_id = $2 AND grouping_key = $3)`,
-		surfaceOrg, integration, group); err != nil {
-		t.Fatal(err)
-	}
 	digest := sha256.Sum256(body)
 	var deliveryID string
-	if err := database.QueryRow(ctx, `INSERT INTO webhook_job
-		(job_id, org_id, kind, delivery_id, integration_id, incident_id,
-		 status, attempts, failure_class, failure_message, updated_at)
-		SELECT $4, delivery.org_id, 1, delivery.delivery_id, delivery.integration_id,
-		       incident.incident_id, 4, $5, 'provider-work-failed', 'safe failure', now()
-		FROM webhook_delivery AS delivery JOIN incident
-		  ON incident.org_id = delivery.org_id AND incident.integration_id = delivery.integration_id
-		WHERE delivery.org_id = $1 AND delivery.integration_id = $2
-		  AND delivery.content_digest = $3 AND incident.grouping_key = $6
-		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), attempts, group).
+	if err := database.QueryRow(ctx, `WITH delivery AS (
+		INSERT INTO webhook_delivery (delivery_id, org_id, integration_id, content_digest, provider_identity)
+		VALUES ($4, $1, $2, $3, $8) RETURNING delivery_id, org_id, integration_id
+	), chat AS (
+		INSERT INTO conversation (conversation_id, org_id, surface, subject)
+		SELECT $6, org_id, 2, 'Slack replay' FROM delivery RETURNING conversation_id, org_id
+	), message AS (
+		INSERT INTO conversation_message
+			(conversation_id, org_id, sequence, role, actor_kind, actor_id, text, window_from, window_until)
+		SELECT conversation_id, org_id, 1, 1, 2, 'UREPLAY', 'investigate', now()-interval '1 hour', now()
+		FROM chat RETURNING conversation_id, org_id, sequence
+	)
+		INSERT INTO webhook_job
+			(job_id, org_id, kind, delivery_id, integration_id, conversation_id, message_sequence,
+			 status, attempts, failure_class, failure_message, updated_at)
+		SELECT $5, delivery.org_id, 2, delivery.delivery_id, delivery.integration_id,
+		       message.conversation_id, message.sequence, 4, $7, 'provider-work-failed', 'safe failure', now()
+		FROM delivery JOIN message USING (org_id)
+		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), uuid.New(), uuid.New(), attempts, group).
 		Scan(&deliveryID); err != nil {
-		t.Fatalf("recording legacy terminal alert job: %v", err)
+		t.Fatalf("recording terminal Slack job: %v", err)
 	}
 	return deliveryID
 }
