@@ -158,9 +158,9 @@ func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integratio
 		FROM chat RETURNING conversation_id, org_id, sequence
 	)
 		INSERT INTO webhook_job
-			(job_id, org_id, kind, delivery_id, integration_id, conversation_id, message_sequence,
+			(job_id, org_id, delivery_id, integration_id, conversation_id, message_sequence,
 			 status, attempts, failure_class, failure_message, updated_at)
-		SELECT $5, delivery.org_id, 2, delivery.delivery_id, delivery.integration_id,
+		SELECT $5, delivery.org_id, delivery.delivery_id, delivery.integration_id,
 		       message.conversation_id, message.sequence, 4, $7, 'provider-work-failed', 'safe failure', now()
 		FROM delivery JOIN message USING (org_id)
 		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), uuid.New(), uuid.New(), attempts, identity).

@@ -377,8 +377,8 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 12 {
-		t.Fatalf("concurrent startup applied %d migrations, want twelve", applied)
+	if applied != 13 {
+		t.Fatalf("concurrent startup applied %d migrations, want thirteen", applied)
 	}
 }
 
