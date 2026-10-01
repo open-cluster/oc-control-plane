@@ -114,8 +114,8 @@ func (p *Database) RecordSlackMessage(
 	if err != nil {
 		return SlackMessageOutcome{}, err
 	}
-	if err := enqueueWebhookJob(ctx, transaction, organization, WebhookJobSlack,
-		deliveryID, said.Integration, uuid.Nil, conversationID, sequence); err != nil {
+	if err := enqueueSlackMessageWork(ctx, transaction, organization,
+		deliveryID, said.Integration, conversationID, sequence); err != nil {
 		return SlackMessageOutcome{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -250,7 +250,7 @@ func (p *Database) SlackMessageProviderReference(
 // acknowledgement path has completed.
 func (p *Database) SetSlackMessageSourceReference(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
-	sequence int64, reference string, work WebhookJob,
+	sequence int64, reference string, work SlackMessageWork,
 ) error {
 	pool, err := p.Pool(organization)
 	if err != nil {
@@ -269,7 +269,7 @@ func (p *Database) SetSlackMessageSourceReference(
 		return fmt.Errorf("recording slack message source reference: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
-		return ErrWebhookJobLeaseLost
+		return ErrSlackMessageLeaseLost
 	}
 	return nil
 }

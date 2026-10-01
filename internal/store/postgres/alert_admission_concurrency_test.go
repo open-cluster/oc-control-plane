@@ -35,7 +35,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	work, found, err := database.ClaimWebhookJob(ctx, "slack-worker", time.Minute)
+	work, found, err := database.ClaimSlackMessageWork(ctx, "slack-worker", time.Minute)
 	if err != nil || !found {
 		t.Fatalf("Slack job: found=%t err=%v", found, err)
 	}
@@ -73,7 +73,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 				ActorID: principal.UserID().String(), Text: "investigate"}, time.Hour, 3)
 		web <- err
 	}()
-	go func() { slackResult <- database.ApplySlackWebhookJob(ctx, organization, work, time.Hour, 3) }()
+	go func() { slackResult <- database.ApplySlackMessageWork(ctx, organization, work, time.Hour, 3) }()
 	awaitInvestigationAdmissionWaiters(t, ctx, pool, 3)
 	if err := fence.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	if err := <-web; !errors.Is(err, conversation.ErrQueueFull) {
 		t.Fatalf("Conversation producer: %v", err)
 	}
-	if err := <-slackResult; !errors.Is(err, storage.ErrWebhookJobCapacity) {
+	if err := <-slackResult; !errors.Is(err, storage.ErrInvestigationCapacity) {
 		t.Fatalf("Slack producer: %v", err)
 	}
 	for range 3 {
@@ -95,7 +95,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 			t.Fatalf("claiming alert batch: found=%t err=%v", found, err)
 		}
 	}
-	if err := database.ApplySlackWebhookJob(ctx, organization, work, time.Hour, 3); err != nil {
+	if err := database.ApplySlackMessageWork(ctx, organization, work, time.Hour, 3); err != nil {
 		t.Fatalf("Slack retry after alert batch was claimed: %v", err)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	slackwork "github.com/open-cluster/oc-control-plane/internal/webhooks/slack"
 )
@@ -26,43 +25,35 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 			return nil
 		})
 	}
-	startWebhookJob(ctx, group, process)
+	startSlackMessageWorker(ctx, group, process)
 	startAuditPruner(ctx, group, process)
 	startSessionPruner(ctx, group, process)
 	startChangesPruner(ctx, group, process)
 	startSlackReplyWorker(ctx, group, process)
 }
 
-func startWebhookJob(ctx context.Context, group *errgroup.Group, process assembled) {
+func startSlackMessageWorker(ctx context.Context, group *errgroup.Group, process assembled) {
 	slackClient := slack.NewClient(process.slackAPIURL)
-	worker := webhooks.Worker{
-		Jobs: process.database,
-		Handlers: webhooks.JobHandlers{
-			storage.WebhookJobSlack: slackwork.JobHandler{
-				Jobs: process.database,
-				References: slackwork.SlackReferenceResolver{
-					Store: slackwork.ReferenceDatabase{
-						Database: process.database,
-					},
-					Client: slackClient,
-					Sealer: process.sealer,
-				},
-				WindowLead:      defaultInvestigationWindowLead,
-				MaxWaitingTurns: process.config.MaxPendingInvestigations,
-				Logger:          process.logger,
-			},
+	worker := slackwork.MessageWorker{
+		Database: process.database,
+		References: &slackwork.SlackReferenceResolver{
+			Database: process.database,
+			Client:   slackClient,
+			Sealer:   process.sealer,
 		},
-		Owner:       uuid.NewString(),
-		Lease:       time.Minute,
-		RetryBase:   time.Second,
-		MaxAttempts: 8, Logger: process.logger,
-		Counters: webhooks.NewJobInstruments(process.logger),
+		WindowLead:      defaultInvestigationWindowLead,
+		MaxWaitingTurns: process.config.MaxPendingInvestigations,
+		Owner:           uuid.NewString(),
+		Lease:           time.Minute,
+		RetryBase:       time.Second,
+		MaxAttempts:     8, Logger: process.logger,
+		Counters: slackwork.NewMessageInstruments(process.logger),
 	}
 	group.Go(func() error {
 		worker.Run(ctx)
 		return nil
 	})
-	process.logger.Info("webhook delivery worker started")
+	process.logger.Info("slack message worker started")
 }
 
 // startAuditPruner runs the worker that applies each tenant's audit retention schedule.

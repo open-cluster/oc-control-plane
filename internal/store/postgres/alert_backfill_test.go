@@ -78,10 +78,11 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
+	slackOutcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: slack.ID, ContentDigest: randomDigest(t), Channel: "CBACKFILL", Thread: "1.0",
 		Subject: "Slack question", ActorID: "UBACKFILL", Text: "investigate",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	var slackBefore string
@@ -143,11 +144,11 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 	if _, claimed, found, err := database.ClaimInvestigation(ctx, aClaim("backfill-runner")); err != nil || !found || !claimed.CreatedAt.Equal(age) {
 		t.Fatalf("repaired work is not claimable with its original queue age: found=%t err=%v", found, err)
 	}
-	work, found, err := database.ClaimWebhookJob(ctx, "slack-worker", time.Minute)
-	if err != nil || !found || work.Kind != storage.WebhookJobSlack {
+	work, found, err := database.ClaimSlackMessageWork(ctx, "slack-worker", time.Minute)
+	if err != nil || !found || work.ConversationID != slackOutcome.Conversation || work.IntegrationID != slack.ID {
 		t.Fatalf("remaining Slack work is not claimable: found=%t err=%v", found, err)
 	}
-	if err := database.ApplySlackWebhookJob(ctx, organization, work, 2*time.Hour, 0); err != nil {
+	if err := database.ApplySlackMessageWork(ctx, organization, work, 2*time.Hour, 0); err != nil {
 		t.Fatalf("remaining Slack work no longer opens its turn: %v", err)
 	}
 }

@@ -72,7 +72,7 @@ func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *te
 	if _, err := database.Investigation(context.Background(), org, claimed.ID); err != nil {
 		t.Fatalf("reading Investigation after restart: %v", err)
 	}
-	if _, found, err := database.ClaimWebhookJob(context.Background(), "restart-worker", time.Minute); err != nil || found {
+	if _, found, err := database.ClaimSlackMessageWork(context.Background(), "restart-worker", time.Minute); err != nil || found {
 		t.Fatalf("alert still depended on webhook job: found=%t err=%v", found, err)
 	}
 }

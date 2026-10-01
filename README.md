@@ -123,6 +123,9 @@ conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQ
 `/api/v1`, `/webhooks/v1`, and process probes directly on localhost. A separate gRPC listener accepts
 outbound Relay sessions.
 
+Alert acceptance creates automatic Investigations atomically. Slack owns the asynchronous inbound Message worker,
+including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and administrator replay.
+
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
 Credential key identity lives in the authenticated sealed envelope. Upgrades refuse retained installation
