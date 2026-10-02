@@ -206,17 +206,18 @@ func (h *receiver) recordAlertDelivery(
 	ctx context.Context, writer http.ResponseWriter,
 	organization uuid.UUID, delivery storage.Delivery,
 ) {
+	started := time.Now()
 	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery, h.AlertAdmission)
 	var full storage.AlertCapacityError
 	if errors.As(err, &full) {
-		h.counters.countDelivery(ctx, dispositionUnavailable)
+		h.counters.countDelivery(ctx, dispositionCapacityRefused)
 		writer.Header().Set("Retry-After", "1")
 		writeStatus(writer, http.StatusServiceUnavailable, "pending Investigation capacity exhausted")
 		return
 	}
 	var tooLarge storage.AlertBatchTooLargeError
 	if errors.As(err, &tooLarge) {
-		h.counters.countDelivery(ctx, dispositionOversized)
+		h.counters.countDelivery(ctx, dispositionBatchTooLarge)
 		writeStatus(writer, http.StatusBadRequest, "alert batch exceeds pending Investigation limit")
 		return
 	}
@@ -266,6 +267,7 @@ func (h *receiver) recordAlertDelivery(
 	}
 
 	h.counters.countDelivery(ctx, dispositionAccepted)
+	h.counters.observeAlertAcceptance(ctx, time.Since(started))
 	h.counters.lifecycle.Count(ctx, "accepted")
 	h.counters.countAlertEvents(ctx, outcome.Recorded, outcome.IncidentsOpened, outcome.IncidentsJoined)
 	h.Logger.InfoContext(ctx, "delivery accepted",

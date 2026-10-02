@@ -41,6 +41,8 @@ type instruments struct {
 	// or an app registration that has been rotated; a rising duplicate count is Slack
 	// retrying, which means our answer is not reaching it.
 	slackEvents metric.Int64Counter
+	// alertAcceptance records the transaction latency of newly accepted alert deliveries.
+	alertAcceptance metric.Float64Histogram
 	// slackLatency is how long acknowledgement took. Slack retries anything it is not
 	// answered inside three seconds, so a deployment drifting towards that ceiling is a
 	// retry storm it is asking for — and no counter of outcomes would show it coming.
@@ -68,6 +70,7 @@ func NewDeliveryInstruments(logger *slog.Logger) DeliveryInstruments {
 	return DeliveryInstruments{outcomes: counter}
 }
 
+// Count records one supported Webhook Delivery lifecycle outcome.
 func (i DeliveryInstruments) Count(ctx context.Context, outcome string) {
 	switch outcome {
 	case "accepted", "duplicate", "rejected", "replayed":
@@ -121,6 +124,12 @@ func newInstruments(logger *slog.Logger) instruments {
 		metric.WithUnit("{event}")); err != nil {
 		logger.Warn("intake slack metric unavailable", slog.String("error", err.Error()))
 	}
+	if built.alertAcceptance, err = meter.Float64Histogram("oc.intake.alert_acceptance",
+		metric.WithDescription("Time to commit one newly accepted alert delivery."),
+		metric.WithUnit("s")); err != nil {
+		logger.Warn("intake alert acceptance metric unavailable",
+			slog.String("error", err.Error()))
+	}
 	if built.slackLatency, err = meter.Float64Histogram("oc.intake.slack_acknowledgement",
 		metric.WithDescription(
 			"How long acknowledging one Slack event took, against the vendor's own timeout."),
@@ -129,6 +138,12 @@ func newInstruments(logger *slog.Logger) instruments {
 			slog.String("error", err.Error()))
 	}
 	return built
+}
+
+func (i instruments) observeAlertAcceptance(ctx context.Context, took time.Duration) {
+	if i.alertAcceptance != nil {
+		i.alertAcceptance.Record(ctx, max(took, 0).Seconds())
+	}
 }
 
 // observeSlackLatency records how long acknowledgement took.
@@ -207,6 +222,8 @@ const (
 	dispositionIncomplete      = "incomplete"
 	dispositionMalformed       = "malformed"
 	dispositionRateLimited     = "rate_limited"
+	dispositionCapacityRefused = "capacity_refused"
+	dispositionBatchTooLarge   = "batch_too_large"
 	// dispositionUnavailable is OURS rather than the caller's: a database that could not be
 	// reached, an Integration this build cannot parse. It is counted
 	// separately because it is the one disposition that pages somebody here rather than somebody

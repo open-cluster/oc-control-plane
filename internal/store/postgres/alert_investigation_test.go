@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -98,30 +99,47 @@ func TestOversizedAlertBatchIsPermanentAndLeavesNoDeliveryFacts(t *testing.T) {
 	assertNoAlertDeliveryFacts(t, database, organization)
 }
 
-func TestLateAutomaticInvestigationFailureRollsBackTheCompleteDelivery(t *testing.T) {
-	database, organization := migratedDatabase(t)
-	ctx := context.Background()
-	pool, err := database.Pool(organization)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `ALTER TABLE investigation ADD CONSTRAINT test_late_alert_failure
-		CHECK (subject <> 'late failure')`); err != nil {
-		t.Fatal(err)
-	}
-	delivery := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
-		alertInvestigationEvent("a", "one", "Good subject", "2026-09-29T10:00:00Z"),
-		alertInvestigationEvent("b", "two", "late failure", "2026-09-29T10:00:00Z"))
-	if _, err := database.RecordDelivery(ctx, organization, delivery, storage.AlertAdmissionPolicy{}); err == nil {
-		t.Fatal("accepted delivery despite late Investigation constraint violation")
-	}
-	assertNoAlertDeliveryFacts(t, database, organization)
-	if _, err := pool.Exec(ctx, `ALTER TABLE investigation DROP CONSTRAINT test_late_alert_failure`); err != nil {
-		t.Fatal(err)
-	}
-	outcome, err := database.RecordDelivery(ctx, organization, delivery, storage.AlertAdmissionPolicy{})
-	if err != nil || outcome.Duplicate || outcome.IncidentsOpened != 2 {
-		t.Fatalf("retry after late failure: %+v, %v", outcome, err)
+func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *testing.T) {
+	for _, table := range []string{"webhook_delivery", "alert_event", "incident", "investigation"} {
+		t.Run(table, func(t *testing.T) {
+			database, organization := migratedDatabase(t)
+			ctx := context.Background()
+			pool, err := database.Pool(organization)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = pool.Exec(ctx, `CREATE FUNCTION reject_alert_acceptance_stage()
+				RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+				RAISE EXCEPTION 'injected alert acceptance failure'; END $$`); err != nil {
+				t.Fatal(err)
+			}
+			trigger := fmt.Sprintf(`CREATE TRIGGER reject_alert_acceptance_stage
+				BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION reject_alert_acceptance_stage()`, table)
+			if _, err = pool.Exec(ctx, trigger); err != nil {
+				t.Fatal(err)
+			}
+
+			delivery := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
+				alertInvestigationEvent("stage", "stage", "Stage failure", "2026-09-29T10:00:00Z"))
+			if _, err = database.RecordDelivery(ctx, organization, delivery,
+				storage.AlertAdmissionPolicy{}); err == nil {
+				t.Fatalf("accepted delivery despite injected %s failure", table)
+			}
+			assertNoAlertDeliveryFacts(t, database, organization)
+
+			if _, err = pool.Exec(ctx, fmt.Sprintf(
+				"DROP TRIGGER reject_alert_acceptance_stage ON %s", table)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = pool.Exec(ctx, "DROP FUNCTION reject_alert_acceptance_stage()"); err != nil {
+				t.Fatal(err)
+			}
+			outcome, err := database.RecordDelivery(ctx, organization, delivery,
+				storage.AlertAdmissionPolicy{})
+			if err != nil || outcome.Duplicate || outcome.IncidentsOpened != 1 {
+				t.Fatalf("retry after %s failure: %+v, %v", table, outcome, err)
+			}
+		})
 	}
 }
 

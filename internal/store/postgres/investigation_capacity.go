@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrInvestigationCapacity means an Organization cannot admit more pending Investigations.
 var ErrInvestigationCapacity = errors.New("organization has reached its waiting investigation limit")
 
 func reserveWaitingInvestigations(
