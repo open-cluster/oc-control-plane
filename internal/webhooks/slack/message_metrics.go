@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// MessageInstruments records the bounded Slack Message worker lifecycle.
 type MessageInstruments struct {
 	outcomes metric.Int64Counter
 	delay    metric.Float64Histogram
@@ -36,6 +37,7 @@ func NewMessageInstruments(logger *slog.Logger) MessageInstruments {
 	return MessageInstruments{outcomes: counter, delay: delay}
 }
 
+// Count records one supported Slack Message worker outcome.
 func (i MessageInstruments) Count(ctx context.Context, outcome string) {
 	if outcome != "delayed" && outcome != "failed" {
 		return
@@ -45,6 +47,7 @@ func (i MessageInstruments) Count(ctx context.Context, outcome string) {
 	}
 }
 
+// ObserveDelay records the time from Slack Message acceptance to worker claim.
 func (i MessageInstruments) ObserveDelay(ctx context.Context, elapsed time.Duration) {
 	if i.delay != nil {
 		i.delay.Record(ctx, max(elapsed, 0).Seconds())

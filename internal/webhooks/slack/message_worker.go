@@ -9,6 +9,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
+// MessageWorker claims and processes durable Slack Message work.
 type MessageWorker struct {
 	Database        *storage.Database
 	References      *SlackReferenceResolver
@@ -22,6 +23,7 @@ type MessageWorker struct {
 	Counters        MessageInstruments
 }
 
+// Run processes Slack Message work until the context ends.
 func (w MessageWorker) Run(ctx context.Context) {
 	for {
 		worked, err := w.ProcessOne(ctx)
@@ -39,6 +41,7 @@ func (w MessageWorker) Run(ctx context.Context) {
 	}
 }
 
+// ProcessOne processes at most one eligible Slack Message and reports whether work was found.
 func (w MessageWorker) ProcessOne(ctx context.Context) (bool, error) {
 	lease := w.Lease
 	if lease <= 0 {

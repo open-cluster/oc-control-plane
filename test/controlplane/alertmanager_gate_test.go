@@ -102,19 +102,23 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 		t.Errorf("the incident is %q while its alert fires, want open", incident.Status)
 	}
 
-	// An investigation must be openable against it, and must start from what the alert
-	// carried: an incident born from an alert that begins with nothing throws away what the
-	// operator's own alerting already knew.
-	status, body := gate.call(t, http.MethodPost, gate.base(surfaceOrg)+"/investigations",
-		map[string]any{"incidentId": incidentID})
-	if status != http.StatusAccepted {
-		t.Fatalf("opening an investigation on the incident = %d: %s", status, body)
+	// Acceptance already opened the Incident's initial Investigation. Use that durable handoff
+	// for the walkthrough rather than creating a second manual Investigation.
+	status, body := gate.call(t, http.MethodGet,
+		gate.base(surfaceOrg)+"/investigations?incidentId="+incidentID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("listing automatic investigations = %d: %s", status, body)
 	}
-	var opened struct {
-		ID string `json:"id"`
+	var investigations struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
 	}
-	decodeInto(t, body, &opened)
-	gate.awaitInvestigation(t, opened.ID)
+	decodeInto(t, body, &investigations)
+	if len(investigations.Items) != 1 {
+		t.Fatalf("automatic investigations = %d, want 1: %s", len(investigations.Items), body)
+	}
+	gate.awaitInvestigation(t, investigations.Items[0].ID)
 	var promptText strings.Builder
 	select {
 	case prompt := <-gate.prompts:

@@ -12,6 +12,10 @@ func MigrateBeforeAlertBackfillForTest(ctx context.Context, database *Database) 
 	return migrateBeforeForTest(ctx, database, "0012_retire_alert_webhook_jobs")
 }
 
+func MigrateBeforeSlackContractionForTest(ctx context.Context, database *Database) error {
+	return migrateBeforeForTest(ctx, database, "0013_contract_slack_message_work")
+}
+
 func migrateBeforeForTest(ctx context.Context, database *Database, version string) error {
 	migrations, err := loadMigrations()
 	if err != nil {

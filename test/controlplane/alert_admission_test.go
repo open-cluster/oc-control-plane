@@ -49,6 +49,46 @@ func TestOversizedAlertBatchReturnsPermanentBadRequest(t *testing.T) {
 	}
 }
 
+func TestAlertAdmissionEmitsDistinctOperationalSignals(t *testing.T) {
+	plane := startAlertAdmissionIntake(t, 1)
+	if status := plane.deliver(t, intakeSecret,
+		string(alertmanagerPayload("accepted", "accepted"))); status != http.StatusAccepted {
+		t.Fatalf("accepted delivery=%d", status)
+	}
+	if status := plane.deliver(t, intakeSecret,
+		string(alertmanagerPayload("capacity", "capacity"))); status != http.StatusServiceUnavailable {
+		t.Fatalf("capacity refusal=%d", status)
+	}
+	oversized := `{"alerts":[
+		{"status":"firing","fingerprint":"one","labels":{"alertname":"one"},"startsAt":"2026-09-29T10:00:00Z"},
+		{"status":"firing","fingerprint":"two","labels":{"alertname":"two"},"startsAt":"2026-09-29T10:00:00Z"}]}`
+	if status := plane.deliver(t, intakeSecret, oversized); status != http.StatusBadRequest {
+		t.Fatalf("permanent batch refusal=%d", status)
+	}
+
+	status, metrics := plane.get(t, "/metrics")
+	if status != http.StatusOK {
+		t.Fatalf("GET /metrics = %d: %s", status, metrics)
+	}
+	hasLine := func(prefix, suffix string) bool {
+		for line := range strings.Lines(metrics) {
+			if strings.HasPrefix(line, prefix) && strings.HasSuffix(strings.TrimSpace(line), suffix) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, signal := range []struct{ prefix, suffix string }{
+		{`oc_intake_deliveries_total{disposition="capacity_refused",`, `} 1`},
+		{`oc_intake_deliveries_total{disposition="batch_too_large",`, `} 1`},
+		{`oc_intake_alert_acceptance_seconds_count{`, `} 1`},
+	} {
+		if !hasLine(signal.prefix, signal.suffix) {
+			t.Errorf("metrics do not expose %q ... %q:\n%s", signal.prefix, signal.suffix, metrics)
+		}
+	}
+}
+
 func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *testing.T) {
 	plane := startAlertAdmissionIntake(t, 1)
 	if status := plane.deliver(t, intakeSecret, string(alertmanagerPayload("restart", "restart"))); status != http.StatusAccepted {

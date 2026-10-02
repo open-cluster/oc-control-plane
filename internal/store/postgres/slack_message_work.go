@@ -10,14 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// WebhookJobKind retains the compatibility schema's discriminator until contraction.
-type WebhookJobKind int16
-
-const (
-	WebhookJobAlert WebhookJobKind = iota + 1
-	WebhookJobSlack
-)
-
+// SlackMessageWorkStatus is the persisted lifecycle state of one accepted Slack Message.
 type SlackMessageWorkStatus int16
 
 // MaxSlackMessageAttempts is frozen by the persisted job-row CHECK constraint.
@@ -31,6 +24,7 @@ const (
 	SlackMessageComplete
 )
 
+// String returns the stable operator-facing name of a Slack Message work status.
 func (status SlackMessageWorkStatus) String() string {
 	names := [...]string{"unknown", "ready", "leased", "retry", "terminal", "complete"}
 	if status <= 0 || int(status) >= len(names) {
@@ -39,8 +33,10 @@ func (status SlackMessageWorkStatus) String() string {
 	return names[status]
 }
 
+// ErrSlackMessageLeaseLost means a transition no longer owns the fenced Slack Message lease.
 var ErrSlackMessageLeaseLost = errors.New("slack message work lease is no longer held")
 
+// SlackMessageWork is one durable, fenced Slack Message processing attempt.
 type SlackMessageWork struct {
 	ID              uuid.UUID
 	Organization    uuid.UUID
@@ -119,9 +115,9 @@ func enqueueSlackMessageWork(
 ) error {
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_job
-			(job_id, org_id, kind, delivery_id, integration_id,
+			(job_id, org_id, delivery_id, integration_id,
 			 conversation_id, message_sequence, updated_at)
-		VALUES ($1, $2, 2, $3, $4, $5, NULLIF($6, 0), now())
+		VALUES ($1, $2, $3, $4, $5, $6, now())
 		ON CONFLICT DO NOTHING`, uuid.New(), organization, deliveryID,
 		integrationID, conversationID, messageSequence); err != nil {
 		return fmt.Errorf("enqueueing slack message work: %w", err)
@@ -178,6 +174,7 @@ func (d *Database) ClaimSlackMessageWork(
 	return work, true, nil
 }
 
+// HeartbeatSlackMessageWork renews a currently fenced Slack Message lease.
 func (d *Database) HeartbeatSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, lease time.Duration,
 ) error {
@@ -198,6 +195,7 @@ func (d *Database) HeartbeatSlackMessageWork(
 	return requireSlackMessageLease(tag.RowsAffected())
 }
 
+// FailSlackMessageWork records a retryable or terminal Slack Message processing failure.
 func (d *Database) FailSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, terminal bool, delay time.Duration,
 	class, message string,
