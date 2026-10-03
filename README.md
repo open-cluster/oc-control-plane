@@ -124,7 +124,7 @@ conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQ
 outbound Relay sessions.
 
 Alert acceptance creates automatic Investigations atomically. Slack owns the asynchronous inbound Message worker,
-including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and administrator replay.
+including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and Admin recovery.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.

@@ -16,7 +16,7 @@ import (
 // SlackMessageWorkStatus is the persisted lifecycle state of one accepted Slack Message.
 type SlackMessageWorkStatus int16
 
-// MaxSlackMessageAttempts is frozen by the persisted job-row CHECK constraint.
+// MaxSlackMessageAttempts is frozen by the persisted work-row CHECK constraint.
 const MaxSlackMessageAttempts = 12
 
 const (
@@ -103,13 +103,13 @@ func (d *Database) ApplySlackMessageWork(
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("beginning Slack delivery processing: %w", err)
+		return fmt.Errorf("beginning Slack Message processing: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err = reserveWaitingInvestigations(ctx, tx, work.Organization, maxWaiting, 1); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `SAVEPOINT webhook_turn`); err != nil {
+	if _, err = tx.Exec(ctx, `SAVEPOINT slack_message_turn`); err != nil {
 		return fmt.Errorf("setting a slack turn savepoint: %w", err)
 	}
 	_, opened, err := openTurn(ctx, tx, work.Organization, work.ConversationID, windowLead)
@@ -117,7 +117,7 @@ func (d *Database) ApplySlackMessageWork(
 		return err
 	}
 	if !opened {
-		if _, err = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT webhook_turn`); err != nil {
+		if _, err = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT slack_message_turn`); err != nil {
 			return fmt.Errorf("preserving a queued slack message: %w", err)
 		}
 	}
@@ -125,7 +125,7 @@ func (d *Database) ApplySlackMessageWork(
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("committing Slack delivery processing: %w", err)
+		return fmt.Errorf("committing Slack Message processing: %w", err)
 	}
 	return nil
 }
@@ -138,7 +138,7 @@ func completeSlackMessageWorkTx(ctx context.Context, tx pgx.Tx, work SlackMessag
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch)
 	if err != nil {
-		return fmt.Errorf("completing webhook delivery effect: %w", err)
+		return fmt.Errorf("completing Slack Message work: %w", err)
 	}
 	return requireSlackMessageLease(tag.RowsAffected())
 }
@@ -265,7 +265,7 @@ func (d *Database) DeferSlackMessageWork(
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		organization, work.ID, work.LeaseOwner, work.LeaseEpoch, max(delay, 0).String())
 	if err != nil {
-		return fmt.Errorf("deferring webhook delivery behind Organization capacity: %w", err)
+		return fmt.Errorf("deferring Slack Message work behind Organization capacity: %w", err)
 	}
 	return requireSlackMessageLease(tag.RowsAffected())
 }

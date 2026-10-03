@@ -24,6 +24,8 @@ import (
 // touch — a path that moved would be an app registration to edit in somebody else's system.
 const SlackEventsPath = "/webhooks/v1/slack/events"
 
+const slackEventsRoute = "POST " + SlackEventsPath
+
 // SlackAgent is what this listener needs to serve Slack events, and is nil where a deployment
 // serves none.
 //
@@ -92,6 +94,7 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 		// needs to know a signature failed rather than a timestamp; a caller learning which
 		// is a caller learning which half of a guess was right.
 		h.Logger.WarnContext(ctx, "a slack events request was refused",
+			slog.String("request_id", requestID),
 			slog.String("caller", callerOf(request)),
 			slog.String("reason", err.Error()))
 		h.counters.countRequest(ctx, surfaceSlack, resultRejected)
@@ -130,6 +133,7 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 			return
 		}
 		h.Logger.ErrorContext(ctx, "could not resolve a slack installation",
+			slog.String("request_id", requestID),
 			slog.String("error", err.Error()))
 		h.counters.countRequest(ctx, surfaceSlack, resultError)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
@@ -142,6 +146,7 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 			err = errors.New("invalid organization identifier")
 		}
 		h.Logger.ErrorContext(ctx, "a slack installation names an organization that is not a name",
+			slog.String("request_id", requestID),
 			slog.String("integration_id", integration.ID.String()),
 			slog.String("error", err.Error()))
 		h.counters.countRequest(ctx, surfaceSlack, resultError)
@@ -149,11 +154,7 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 		return
 	}
 
-	// The same per-source limit every other inbound delivery is held to, applied once the
-	// SOURCE is known. It is after resolution rather than before because the work worth
-	// bounding is the writes, and because there is no source to attribute a request to
-	// until its signature has been checked against an installation this deployment knows.
-	// Everything from here is ACKNOWLEDGED whatever happens to it. Slack retries anything it
+	// Everything from here is acknowledged whatever happens to it. Slack retries anything it
 	// is not told succeeded, and retrying an event this build deliberately ignores would be
 	// a storm this deployment asked for.
 	switch {
@@ -204,6 +205,7 @@ func (h *receiver) acceptSlackMessage(
 	})
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "recording a slack message failed",
+			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", integration.String()),
 			slog.String("error", err.Error()))

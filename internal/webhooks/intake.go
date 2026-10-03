@@ -85,7 +85,7 @@ func (h Handlers) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(alertEventsRoute, receiver.handleAlertEvents)
 	if h.Slack != nil && h.Slack.Serves() {
-		mux.HandleFunc("POST "+SlackEventsPath, receiver.handleSlackEvents)
+		mux.HandleFunc(slackEventsRoute, receiver.handleSlackEvents)
 	}
 	return receiver.limit(mux)
 }
@@ -97,15 +97,24 @@ func (h *receiver) limit(next *http.ServeMux) http.Handler {
 		if !h.requests.allowRequest() {
 			writer.Header().Set("Retry-After", "1")
 			status := http.StatusTooManyRequests
-			surface := surfaceSlack
-			if _, pattern := next.Handler(request); pattern == alertEventsRoute {
+			surface := ""
+			_, pattern := next.Handler(request)
+			switch pattern {
+			case alertEventsRoute:
 				status = http.StatusServiceUnavailable
 				surface = surfaceAlert
+			case slackEventsRoute:
+				surface = surfaceSlack
 			}
-			h.counters.countRequest(request.Context(), surface, resultRateLimited)
-			h.Logger.WarnContext(request.Context(), "webhook request rate limited",
-				slog.String("request_id", correlation.From(request.Context())),
-				slog.String("surface", surface))
+			if surface != "" {
+				h.counters.countRequest(request.Context(), surface, resultRateLimited)
+				h.Logger.WarnContext(request.Context(), "webhook request rate limited",
+					slog.String("request_id", correlation.From(request.Context())),
+					slog.String("surface", surface))
+			} else {
+				h.Logger.WarnContext(request.Context(), "unmatched webhook request rate limited",
+					slog.String("request_id", correlation.From(request.Context())))
+			}
 			writeStatus(writer, status, "slow down")
 			return
 		}
@@ -114,8 +123,6 @@ func (h *receiver) limit(next *http.ServeMux) http.Handler {
 }
 
 // handleAlertEvents accepts one webhook delivery.
-//
-// Integration quota is spent only after authentication, before payload normalization.
 func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
@@ -135,6 +142,7 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 		// did not match is refused.
 		if !errors.Is(err, errNotAuthenticated) {
 			h.Logger.ErrorContext(ctx, "could not read the integration",
+				slog.String("request_id", requestID),
 				slog.String("caller", callerOf(request)),
 				slog.String("error", err.Error()))
 			h.counters.countRequest(ctx, surfaceAlert, resultError)
@@ -159,6 +167,7 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 			err = errors.New("invalid organization identifier")
 		}
 		h.Logger.ErrorContext(ctx, "an integration names an organization that is not a name",
+			slog.String("request_id", requestID),
 			slog.String("integration_id", integration.ID.String()),
 			slog.String("error", err.Error()))
 		h.counters.countRequest(ctx, surfaceAlert, resultError)
@@ -219,6 +228,7 @@ func (h *receiver) recordAlertDelivery(
 	if errors.Is(err, storage.ErrDeliveryIdentityConflict) {
 		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		h.Logger.WarnContext(ctx, "delivery refused",
+			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()),
 			slog.String("reason", "identity conflict"))
@@ -229,6 +239,7 @@ func (h *receiver) recordAlertDelivery(
 		// Nothing was written, and the source should try again — this is the one failure that
 		// is genuinely ours and genuinely transient.
 		h.Logger.ErrorContext(ctx, "recording a delivery failed",
+			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()),
 			slog.String("error", err.Error()))
@@ -244,6 +255,7 @@ func (h *receiver) recordAlertDelivery(
 		// answer must let it stop — and a body replayed by someone who captured it, which is
 		// applied to nothing for the same reason.
 		h.Logger.InfoContext(ctx, "delivery already accepted",
+			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()))
 		writeStatus(writer, http.StatusOK, "already accepted")
@@ -256,6 +268,7 @@ func (h *receiver) recordAlertDelivery(
 	// that must be visible rather than inferred from a count that looks fine.
 	if delivery.Truncated > 0 {
 		h.Logger.WarnContext(ctx, "the source truncated this delivery",
+			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()),
 			slog.Int("omitted", delivery.Truncated))
@@ -358,6 +371,7 @@ func readBody(writer http.ResponseWriter, request *http.Request) ([]byte, error)
 // place guaranteed to hold a guess at the credential.
 func (h *receiver) refuse(ctx context.Context, request *http.Request, reason string) {
 	h.Logger.WarnContext(ctx, "delivery refused",
+		slog.String("request_id", correlation.From(ctx)),
 		slog.String("integration_id", request.PathValue("integration")),
 		slog.String("caller", callerOf(request)),
 		slog.String("reason", reason))

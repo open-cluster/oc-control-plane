@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -77,6 +78,15 @@ func TestTheHonestStopsAreFrozen(t *testing.T) {
 		// reason instead of failing.
 		"context",
 	})
+}
+
+func TestSlackMessageRecoveryAuditActionIsFrozen(t *testing.T) {
+	t.Parallel()
+
+	if audit.ActionSlackMessageRecovered != "slack-message.recovered" {
+		t.Errorf("ActionSlackMessageRecovered = %q, want slack-message.recovered",
+			audit.ActionSlackMessageRecovered)
+	}
 }
 
 // assertVocabulary compares a persisted word list against the words as they are stored,

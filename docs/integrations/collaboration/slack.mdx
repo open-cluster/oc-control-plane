@@ -175,6 +175,15 @@ unaffected and stays readable in the console.
 - **Stored credential cannot be opened:** restore the deployment encryption key that
   sealed the credential, restart, and verify again.
 
+### Recover a failed reply
+
+If a reply remains failed after its bounded retries, an Admin can make that Slack Message
+eligible for processing again. Find its Conversation ID and message sequence in the
+Conversation, then send an authenticated `POST` request to
+`/api/v1/slack/conversations/<conversation-id>/messages/<sequence>/recover`. Recovery is
+accepted only for terminal failed work in the same Organization and is recorded in the
+audit log.
+
 ## Replace or disconnect
 
 Paste a new token to replace the credential after it passes live verification. Disable

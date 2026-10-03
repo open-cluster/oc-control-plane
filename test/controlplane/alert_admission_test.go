@@ -51,9 +51,12 @@ func TestOversizedAlertBatchReturnsPermanentBadRequest(t *testing.T) {
 
 func TestAlertAdmissionEmitsDistinctOperationalSignals(t *testing.T) {
 	plane := startAlertAdmissionIntake(t, 1)
-	if status := plane.deliver(t, intakeSecret,
-		string(alertmanagerPayload("accepted", "accepted"))); status != http.StatusAccepted {
+	acceptedBody := string(alertmanagerPayload("accepted", "accepted"))
+	if status := plane.deliver(t, intakeSecret, acceptedBody); status != http.StatusAccepted {
 		t.Fatalf("accepted delivery=%d", status)
+	}
+	if status := plane.deliver(t, intakeSecret, acceptedBody); status != http.StatusOK {
+		t.Fatalf("duplicate delivery=%d", status)
 	}
 	if status := plane.deliver(t, intakeSecret,
 		string(alertmanagerPayload("capacity", "capacity"))); status != http.StatusServiceUnavailable {
@@ -70,21 +73,73 @@ func TestAlertAdmissionEmitsDistinctOperationalSignals(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /metrics = %d: %s", status, metrics)
 	}
-	hasLine := func(prefix, suffix string) bool {
+	hasMetric := func(name, value string, labels ...string) bool {
 		for line := range strings.Lines(metrics) {
-			if strings.HasPrefix(line, prefix) && strings.HasSuffix(strings.TrimSpace(line), suffix) {
+			if !strings.HasPrefix(line, name) ||
+				!strings.HasSuffix(strings.TrimSpace(line), " "+value) {
+				continue
+			}
+			matched := true
+			for _, label := range labels {
+				matched = matched && strings.Contains(line, label)
+			}
+			if matched {
 				return true
 			}
 		}
 		return false
 	}
-	for _, signal := range []struct{ prefix, suffix string }{
-		{`oc_intake_deliveries_total{disposition="capacity_refused",`, `} 1`},
-		{`oc_intake_deliveries_total{disposition="batch_too_large",`, `} 1`},
-		{`oc_intake_alert_acceptance_seconds_count{`, `} 1`},
+	for _, signal := range []struct {
+		name   string
+		value  string
+		labels []string
+	}{
+		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="accepted"`}},
+		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="duplicate"`}},
+		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="rate_limited"`}},
+		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="rejected"`}},
+		{"oc_webhooks_alert_events_total", "1", nil},
 	} {
-		if !hasLine(signal.prefix, signal.suffix) {
-			t.Errorf("metrics do not expose %q ... %q:\n%s", signal.prefix, signal.suffix, metrics)
+		if !hasMetric(signal.name, signal.value, signal.labels...) {
+			t.Errorf("metrics do not expose %s=%s with %v:\n%s",
+				signal.name, signal.value, signal.labels, metrics)
+		}
+	}
+}
+
+func TestAlertAdmissionCorrelatesAcceptedAndRefusedRequests(t *testing.T) {
+	plane := startAlertAdmissionIntake(t, 2)
+	tests := []struct {
+		body   string
+		status int
+	}{
+		{string(alertmanagerPayload("correlated", "correlated")), http.StatusAccepted},
+		{"{", http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		status, headers, body := deliverAlertAdmission(t, plane, test.body)
+		if status != test.status {
+			t.Fatalf("delivery status=%d, want %d: %s", status, test.status, body)
+		}
+		requestID := headers.Get("X-Request-Id")
+		if len(requestID) != 32 {
+			t.Fatalf("delivery request ID=%q", requestID)
+		}
+		var matched bool
+		for _, entry := range plane.logs.logLines(t) {
+			if entry["msg"] != "request served" || entry["request_id"] != requestID {
+				continue
+			}
+			matched = true
+			if entry["status"] != float64(test.status) {
+				t.Errorf("request %s logged status=%v", requestID, entry["status"])
+			}
+			if traceID, ok := entry["trace_id"].(string); !ok || strings.Trim(traceID, "0") == "" {
+				t.Errorf("request %s logged trace_id=%v", requestID, entry["trace_id"])
+			}
+		}
+		if !matched {
+			t.Errorf("no request log matched response request ID %q", requestID)
 		}
 	}
 }

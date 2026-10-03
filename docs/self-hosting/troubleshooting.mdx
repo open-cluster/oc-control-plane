@@ -3,7 +3,7 @@ title: "Troubleshooting"
 description: "Diagnose readiness, webhook, Relay, provider, and Investigation failures without exposing secrets."
 ---
 
-Start with health and readiness, then inspect structured logs using the request or delivery identifier. Never paste cookies, bootstrap tokens, webhook secrets, model keys, or raw customer payloads into an issue.
+Start with health and readiness, then inspect structured logs using the request identifier. Never paste cookies, bootstrap tokens, webhook secrets, model keys, or raw customer payloads into an issue.
 
 For webhook failures, distinguish permanent `400` or `401` responses from retryable `429` and `503` responses. For Relay failures, verify outbound connectivity, certificate pins, protocol compatibility, and the closed capability list. For provider failures, check the mounted key file, model name, outbound HTTPS, quota, and timeout.
 

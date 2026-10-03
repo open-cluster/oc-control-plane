@@ -50,7 +50,12 @@ func (h RecoveryHandlers) recover(writer http.ResponseWriter, request *http.Requ
 		writeRecoveryJSON(writer, http.StatusConflict, "only terminal Slack Messages can be recovered")
 	case err != nil:
 		if h.Logger != nil {
-			h.Logger.ErrorContext(ctx, "Slack Message recovery failed", slog.String("error", err.Error()))
+			h.Logger.ErrorContext(ctx, "Slack Message recovery failed",
+				slog.String("request_id", principal.RequestID()),
+				slog.String("org_id", organization.String()),
+				slog.String("conversation_id", conversationID.String()),
+				slog.Int64("message_sequence", sequence),
+				slog.String("error", err.Error()))
 		}
 		writeRecoveryJSON(writer, http.StatusInternalServerError, "request failed")
 	default:

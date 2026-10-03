@@ -810,6 +810,36 @@ func TestControlPlane_UnmatchedWebhookRequestsAreCorrelated(t *testing.T) {
 	if len(requestID) != 32 || requestID == "attacker-supplied" {
 		t.Fatalf("unmatched webhook request ID = %q", requestID)
 	}
+	var correlated bool
+	for _, entry := range plane.logs.logLines(t) {
+		if entry["msg"] == "request served" && entry["request_id"] == requestID {
+			correlated = true
+			if entry["status"] != float64(http.StatusNotFound) {
+				t.Errorf("logged unmatched webhook status = %v", entry["status"])
+			}
+			if traceID, ok := entry["trace_id"].(string); !ok || strings.Trim(traceID, "0") == "" {
+				t.Errorf("unmatched webhook log has invalid trace_id %v", entry["trace_id"])
+			}
+		}
+	}
+	if !correlated {
+		t.Errorf("no webhook log carried request_id %q\nlogs:\n%s", requestID, plane.logs.String())
+	}
+
+	limited := false
+	for range 2_000 {
+		status, _ := plane.get(t, "/webhooks/unknown")
+		if status == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatal("webhook surface did not enforce its bounded burst")
+	}
+	if status, body := plane.get(t, "/healthz"); status != http.StatusOK {
+		t.Fatalf("webhook exhaustion affected health: %d %s", status, body)
+	}
 }
 
 // Metrics must be scrapeable, and must not carry a per-organization label: at the stated

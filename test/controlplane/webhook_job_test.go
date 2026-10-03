@@ -51,6 +51,32 @@ func TestTerminalSlackMessageCanBeRecoveredByConversationAndMessage(t *testing.T
 		neighbourOrg, surfaceOrg); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.Exec(ctx, `
+		CREATE FUNCTION refuse_slack_recovery_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.action = 'slack-message.recovered' THEN
+				RAISE EXCEPTION 'recovery audit refused';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER refuse_slack_recovery_audit
+		BEFORE INSERT ON audit_event FOR EACH ROW EXECUTE FUNCTION refuse_slack_recovery_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	if status, body = plane.call(t, http.MethodPost, base, nil); status != http.StatusInternalServerError {
+		t.Fatalf("recovery with refused audit = %d: %s", status, body)
+	}
+	var workStatus, attempts int
+	if err := database.QueryRow(ctx, `SELECT status, attempts FROM slack_message_work
+		WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = 1`,
+		surfaceOrg, conversationID).Scan(&workStatus, &attempts); err != nil || workStatus != 4 || attempts != 8 {
+		t.Fatalf("failed audit changed work status=%d attempts=%d error=%v", workStatus, attempts, err)
+	}
+	if _, err := database.Exec(ctx, `
+		DROP TRIGGER refuse_slack_recovery_audit ON audit_event;
+		DROP FUNCTION refuse_slack_recovery_audit()`); err != nil {
+		t.Fatal(err)
+	}
 	if status, body = plane.call(t, http.MethodPost, base, nil); status != http.StatusNoContent {
 		t.Fatalf("recovering terminal work = %d: %s", status, body)
 	}
@@ -65,7 +91,6 @@ func TestTerminalSlackMessageCanBeRecoveredByConversationAndMessage(t *testing.T
 		t.Fatalf("recovery audit omitted message context: integration=%q sequence=%d error=%v",
 			auditedIntegration, auditedSequence, err)
 	}
-	var workStatus, attempts int
 	if err := database.QueryRow(ctx, `SELECT status, attempts FROM slack_message_work
 		WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = 1`,
 		surfaceOrg, conversationID).Scan(&workStatus, &attempts); err != nil || workStatus != 1 || attempts != 0 {
@@ -277,7 +302,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	var requested bool
 	if err = pool.QueryRow(context.Background(), `
 		SELECT status, cancel_requested_at IS NOT NULL
-		  FROM relay_job WHERE org_id = $1 AND work_id = $2`,
+		  FROM relay_job WHERE org_id = $1 AND job_id = $2`,
 		organization.String(), cancellable.GetJobId()).Scan(&jobStatus, &requested); err != nil || jobStatus != int16(storage.JobLeased) || !requested {
 		t.Fatalf("cancellation lost its durable leased Job: status=%d requested=%t error=%v",
 			jobStatus, requested, err)
@@ -288,7 +313,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		t.Fatalf("the cancelled Relay outcome was not durably recorded: %v", acknowledged.GetDisposition())
 	}
 	if err = pool.QueryRow(context.Background(), `
-		SELECT status FROM relay_job WHERE org_id = $1 AND work_id = $2`,
+		SELECT status FROM relay_job WHERE org_id = $1 AND job_id = $2`,
 		organization.String(), cancellable.GetJobId()).Scan(&jobStatus); err != nil || jobStatus != int16(storage.JobCancelled) {
 		t.Fatalf("the cancelled Job did not retain its terminal outcome: status=%d error=%v", jobStatus, err)
 	}

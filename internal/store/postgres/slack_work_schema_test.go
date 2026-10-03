@@ -32,6 +32,11 @@ func TestFreshSlackWorkSchemaContainsOnlySlackState(t *testing.T) {
 		 WHERE table_schema = 'public' AND table_name = 'slack_message_work' AND column_name = 'work_id')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname LIKE 'webhook_job%')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM pg_class WHERE relname LIKE 'webhook_job%')`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+		 ARRAY['delivery_id','org_id','integration_id','content_digest','truncated',
+		       'received_at','provider_identity','lifecycle_phase']
+		 FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = 'webhook_delivery'`,
 	} {
 		var valid bool
 		if err := pool.QueryRow(context.Background(), assertion).Scan(&valid); err != nil || !valid {

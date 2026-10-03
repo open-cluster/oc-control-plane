@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-cluster/oc-control-plane/internal/api"
@@ -21,6 +22,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
+	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -131,7 +133,8 @@ func httpRoutes(process assembled) (http.Handler, error) {
 }
 
 func webhookSurface(process assembled) http.Handler {
-	return correlation.Middleware(webhookRouter(process))
+	logged := observability.HTTPRequestLogger(process.logger, webhookRouter(process))
+	return correlation.Middleware(otelhttp.NewHandler(logged, "webhooks"))
 }
 
 func logMigrationSummary(logger *slog.Logger, applied []string) {
