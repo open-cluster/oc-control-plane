@@ -68,8 +68,8 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"integration_connect_flow", "integration_installation", "investigation", "investigation_event",
 		"investigation_tool_run", "local_password", "oidc_sign_in_flow", "organization",
 		"organization_membership", "postmortem", "relay_bootstrap_token", "relay_job", "relay_registration",
-		"schema_migration", "session", "slack_conversation", "slack_reply",
-		"slack_message_work", "webhook_delivery",
+		"schema_migration", "session", "slack_conversation", "slack_message_work",
+		"slack_reply", "webhook_delivery",
 	}
 	var tables []string
 	if err := connection.QueryRow(ctx, `SELECT array_agg(tablename ORDER BY tablename)
@@ -81,7 +81,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 13 FROM schema_migration`,
+		`SELECT count(*) = 15 FROM schema_migration`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,

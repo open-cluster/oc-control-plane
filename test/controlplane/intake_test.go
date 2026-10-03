@@ -93,6 +93,12 @@ func (p *intakePlane) setIntegrationProvider(t *testing.T, provider string) {
 
 func (p *intakePlane) deliver(t *testing.T, secret, body string, headers ...http.Header) int {
 	t.Helper()
+	status, _ := p.deliverResponse(t, secret, body, headers...)
+	return status
+}
+
+func (p *intakePlane) deliverResponse(t *testing.T, secret, body string, headers ...http.Header) (int, http.Header) {
+	t.Helper()
 
 	url := fmt.Sprintf("http://%s/webhooks/v1/integrations/%s/alert-events", p.address, p.integration)
 	request, err := http.NewRequestWithContext(
@@ -116,7 +122,7 @@ func (p *intakePlane) deliver(t *testing.T, secret, body string, headers ...http
 		t.Fatalf("deliver: %v", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	return response.StatusCode
+	return response.StatusCode, response.Header
 }
 
 func (p *intakePlane) alertEvents(t *testing.T) []recordedAlertEvent {
@@ -362,21 +368,21 @@ func TestIntake_AuthenticatesBeforeNormalizing(t *testing.T) {
 	}
 }
 
-func TestIntake_ForgedRequestsDoNotSpendAuthenticatedQuota(t *testing.T) {
+func TestIntake_ForgedRequestsAreBoundedBeforeAuthentication(t *testing.T) {
 	plane := startIntake(t)
-	for request := 1; request <= 65; request++ {
-		if status := plane.deliver(t, "wrong-secret-long-enough", `{not-json`); status != http.StatusUnauthorized {
-			t.Fatalf("forged request %d = %d, want 401", request, status)
+	for request := 1; request <= 2_000; request++ {
+		status, headers := plane.deliverResponse(t, "wrong-secret-long-enough", `{not-json`)
+		if status == http.StatusServiceUnavailable {
+			if headers.Get("Retry-After") == "" {
+				t.Fatal("rate-limited forged request omitted Retry-After")
+			}
+			return
+		}
+		if status != http.StatusUnauthorized {
+			t.Fatalf("forged request %d = %d, want 401 or 503", request, status)
 		}
 	}
-	for request := 1; request <= 60; request++ {
-		if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusBadRequest {
-			t.Fatalf("request %d = %d before burst was consumed, want malformed", request, status)
-		}
-	}
-	if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusServiceUnavailable {
-		t.Fatalf("authenticated request after burst = %d, want 503", status)
-	}
+	t.Fatal("forged webhook requests were not bounded")
 }
 
 func TestIntake_OrganizationClaimsCannotRedirectIntegrationOwnership(t *testing.T) {

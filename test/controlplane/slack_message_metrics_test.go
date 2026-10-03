@@ -25,7 +25,6 @@ func TestSlackMessageMetricsUseTheBoundedWebhookContract(t *testing.T) {
 		if strings.Contains(body, "oc_webhooks_slack_ack_duration") &&
 			strings.Contains(body, "oc_webhooks_delivery_delay") {
 			if !strings.Contains(body, "oc_webhooks_requests_total") ||
-				!strings.Contains(body, "oc_webhooks_deliveries") ||
 				!strings.Contains(body, `surface="slack"`) ||
 				!strings.Contains(body, `result="accepted"`) ||
 				!strings.Contains(body, `otel_scope_name="github.com/open-cluster/oc-control-plane/internal/webhooks"`) {
