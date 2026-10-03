@@ -34,7 +34,6 @@ type TimelineEntry struct {
 
 type CitedStatement struct {
 	InvestigationID string `json:"investigationId,omitempty"`
-	FindingID       string `json:"findingId,omitempty"`
 	Statement       string `json:"statement"`
 	RunRefs         []int  `json:"runRefs"`
 }

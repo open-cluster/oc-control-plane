@@ -69,16 +69,13 @@ func DraftFrom(input GenerationInput) Postmortem {
 		if conclusion.Summary != "" {
 			draft.ExecutiveSummary = conclusion.Summary
 		}
-		if draft.Impact == NeedsHumanInput &&
-			(conclusion.Impact.Status == investigation.ImpactKnown ||
-				conclusion.Impact.Status == investigation.ImpactPartial) {
+		if draft.Impact == NeedsHumanInput && len(conclusion.Impact.RunRefs) > 0 {
 			draft.Impact = valueOr(conclusion.Impact.Summary, NeedsHumanInput)
 		}
 		for _, finding := range conclusion.Findings {
 			cited := CitedStatement{InvestigationID: result.InvestigationID.String(),
-				FindingID: finding.ID,
 				Statement: finding.Statement,
-				RunRefs:   append([]int(nil), finding.Sources...)}
+				RunRefs:   append([]int(nil), finding.RunRefs...)}
 			switch finding.Kind {
 			case investigation.FindingCause:
 				draft.RootCauses = append(draft.RootCauses, cited)
@@ -99,6 +96,12 @@ func DraftFrom(input GenerationInput) Postmortem {
 		for _, limitation := range conclusion.Limitations {
 			if limitation.Statement != "" {
 				draft.OpenQuestions = append(draft.OpenQuestions, limitation.Statement)
+			}
+		}
+		for _, hypothesis := range conclusion.Hypotheses {
+			if (hypothesis.Status == investigation.HypothesisExploring ||
+				hypothesis.Status == investigation.HypothesisUnresolved) && hypothesis.Statement != "" {
+				draft.OpenQuestions = append(draft.OpenQuestions, hypothesis.Statement)
 			}
 		}
 	}

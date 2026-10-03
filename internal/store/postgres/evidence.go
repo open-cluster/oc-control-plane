@@ -30,7 +30,7 @@ func resultEvidence(found investigation.Investigation) []investigation.EvidenceR
 	var refs []investigation.EvidenceRef
 	for _, finding := range found.Conclusion.Findings {
 		refs = append(refs, finding.EvidenceRefs...)
-		for _, ordinal := range finding.Sources {
+		for _, ordinal := range finding.RunRefs {
 			refs = append(refs, investigation.EvidenceRef{InvestigationID: found.ID, ToolRunOrdinal: ordinal})
 		}
 	}

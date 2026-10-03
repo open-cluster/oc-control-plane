@@ -73,8 +73,9 @@ copying raw source payloads or private model reasoning.
 ## Finding
 
 A factual statement established by an Investigation and supported by Tool Run references.
-Its kind is cause, trigger, contributing_factor, symptom, propagation, ruled_out,
-unresolved, or observation. Causal Findings state the mechanism that produced impact.
+New results use cause, contributing_factor, observation, or ruled_out. Retained historical
+results may also contain trigger, symptom, propagation, or unresolved. Causal Findings
+state the mechanism that produced impact.
 
 ## Tool Run
 
@@ -84,9 +85,8 @@ arguments, bounded window, outcome, truncation, summary, and source identifiers.
 
 ## Action Proposal
 
-A suggested mitigation, rollback, verification, permanent fix, or monitoring step. It
-states rationale, risk, reversibility, approval requirement, verification procedure, and
-supporting Tool Runs. OpenCluster does not execute it.
+A recommendation with a title, rationale, verification procedure, and supporting Tool Runs.
+OpenCluster does not execute it.
 
 ## Relay
 

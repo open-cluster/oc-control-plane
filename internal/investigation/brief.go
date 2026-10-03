@@ -29,7 +29,6 @@ type PriorFinding struct {
 	Turn            int
 	Statement       string
 	Kind            string
-	Confidence      string
 	Runs            []int
 	EvidenceRefs    []EvidenceRef
 	ObservedAt      time.Time
@@ -55,5 +54,6 @@ type Brief struct {
 	Turn            int
 	Recent          []BriefMessage
 	Findings        []PriorFinding
+	OpenHypotheses  []string
 	Limitations     []string
 }

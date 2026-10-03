@@ -11,14 +11,13 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-const SchemaVersion = "7"
+const SchemaVersion = "8"
 
 type properties map[string]any
 
 var (
 	stringField  = map[string]any{"type": "string"}
 	integerField = map[string]any{"type": "integer"}
-	booleanField = map[string]any{"type": "boolean"}
 )
 
 func enumField(values ...string) map[string]any {
@@ -80,18 +79,12 @@ func decodeConclusion(
 		Status  string `json:"status"`
 		Summary string `json:"summary"`
 		Impact  struct {
-			Status           string   `json:"status"`
-			CurrentState     string   `json:"current_state"`
-			AffectedServices []string `json:"affected_services"`
-			AffectedUsers    []string `json:"affected_users"`
-			Summary          string   `json:"summary"`
-			RunRefs          []int    `json:"run_refs"`
+			Summary string `json:"summary"`
+			RunRefs []int  `json:"run_refs"`
 		} `json:"impact"`
 		Findings []struct {
-			ID           string                      `json:"id"`
 			Statement    string                      `json:"statement"`
 			Kind         string                      `json:"kind"`
-			Confidence   string                      `json:"confidence"`
 			Mechanism    string                      `json:"mechanism"`
 			RunRefs      []int                       `json:"run_refs"`
 			EvidenceRefs []investigation.EvidenceRef `json:"evidence_refs"`
@@ -101,14 +94,10 @@ func decodeConclusion(
 			RunRefs                     []int `json:"run_refs"`
 		} `json:"hypotheses"`
 		Actions []struct {
-			Title            string `json:"title"`
-			Type             string `json:"type"`
-			Rationale        string `json:"rationale"`
-			Risk             string `json:"risk"`
-			Verification     string `json:"verification"`
-			Reversible       bool   `json:"reversible"`
-			RequiresApproval bool   `json:"requires_approval"`
-			RunRefs          []int  `json:"run_refs"`
+			Title        string `json:"title"`
+			Rationale    string `json:"rationale"`
+			Verification string `json:"verification"`
+			RunRefs      []int  `json:"run_refs"`
 		} `json:"actions"`
 		Limitations []struct {
 			Type, Statement string
@@ -127,44 +116,26 @@ func decodeConclusion(
 	if !oneOf(decoded.Status, investigation.ConclusionStatuses) {
 		return investigation.Conclusion{}, fmt.Errorf("invalid conclusion status %q", decoded.Status)
 	}
-	if !oneOf(decoded.Impact.Status, investigation.ImpactStatuses) {
-		return investigation.Conclusion{}, fmt.Errorf("invalid impact status %q", decoded.Impact.Status)
-	}
 	if err := validateRunRefs(decoded.Impact.RunRefs, runs, "impact"); err != nil {
 		return investigation.Conclusion{}, err
 	}
-	if decoded.Impact.Status != string(investigation.ImpactUnknown) &&
-		len(decoded.Impact.RunRefs) == 0 {
-		return investigation.Conclusion{}, fmt.Errorf("known or partial impact cites no run")
-	}
-	if decoded.Impact.Status == string(investigation.ImpactUnknown) &&
-		(len(decoded.Impact.AffectedServices) > 0 || len(decoded.Impact.AffectedUsers) > 0 ||
-			len(decoded.Impact.RunRefs) > 0 || decoded.Impact.CurrentState != "unknown" ||
-			!unknownImpactSummary(decoded.Impact.Summary)) {
-		return investigation.Conclusion{}, fmt.Errorf("unknown impact cannot claim state, affected entities, or evidence")
+	if strings.TrimSpace(decoded.Impact.Summary) == "" {
+		return investigation.Conclusion{}, fmt.Errorf("the impact summary is empty")
 	}
 	conclusion := investigation.Conclusion{
 		Status: investigation.ConclusionStatus(decoded.Status), Summary: decoded.Summary,
-		Impact: investigation.ImpactAssessment{
-			Status:       investigation.ImpactStatus(decoded.Impact.Status),
-			CurrentState: decoded.Impact.CurrentState, AffectedServices: decoded.Impact.AffectedServices,
-			AffectedUsers: decoded.Impact.AffectedUsers, Summary: decoded.Impact.Summary,
-			RunRefs: decoded.Impact.RunRefs,
+		Impact: investigation.Impact{
+			Summary: decoded.Impact.Summary, RunRefs: decoded.Impact.RunRefs,
 		},
 	}
 	for _, finding := range decoded.Findings {
-		if finding.ID == "" || finding.Statement == "" || len(finding.Statement) > maxStatementLength {
+		if finding.Statement == "" || len(finding.Statement) > maxStatementLength {
 			return investigation.Conclusion{}, fmt.Errorf(
-				"a finding's id or statement is empty, or its statement is past %d characters", maxStatementLength)
+				"a finding's statement is empty or past %d characters", maxStatementLength)
 		}
-		if !oneOf(finding.Kind, investigation.FindingKinds) {
+		if !oneOf(finding.Kind, investigation.GeneratedFindingKinds) {
 			return investigation.Conclusion{}, fmt.Errorf(
 				"a finding's kind %q is not in the declared vocabulary", finding.Kind)
-		}
-		if !oneOf(finding.Confidence, investigation.Confidences) {
-			return investigation.Conclusion{}, fmt.Errorf(
-				"a finding's confidence %q is not confirmed, likely or possible",
-				finding.Confidence)
 		}
 		if len(finding.RunRefs) == 0 && len(finding.EvidenceRefs) == 0 {
 			return investigation.Conclusion{}, fmt.Errorf("a finding cites no run at all")
@@ -183,11 +154,11 @@ func decodeConclusion(
 			seenEvidence[ref] = true
 		}
 		if causalFinding(finding.Kind) && strings.TrimSpace(finding.Mechanism) == "" {
-			return investigation.Conclusion{}, fmt.Errorf("causal finding %q has no mechanism", finding.ID)
+			return investigation.Conclusion{}, fmt.Errorf("causal finding has no mechanism")
 		}
 		conclusion.Findings = append(conclusion.Findings, investigation.Finding{
-			ID: finding.ID, Statement: finding.Statement, Kind: finding.Kind,
-			Confidence: finding.Confidence, Mechanism: finding.Mechanism, Sources: finding.RunRefs,
+			Statement: finding.Statement, Kind: investigation.FindingKind(finding.Kind),
+			Mechanism: finding.Mechanism, RunRefs: finding.RunRefs,
 			EvidenceRefs: finding.EvidenceRefs,
 		})
 	}
@@ -212,7 +183,8 @@ func decodeConclusion(
 	for _, action := range decoded.Actions {
 		if action.Title == "" || action.Rationale == "" || action.Verification == "" ||
 			len(action.Title) > investigation.MaxActionTextLength ||
-			!oneOf(action.Type, investigation.ActionTypes) || !oneOf(action.Risk, investigation.ActionRisks) {
+			len(action.Rationale) > investigation.MaxActionTextLength ||
+			len(action.Verification) > investigation.MaxActionTextLength {
 			return investigation.Conclusion{}, fmt.Errorf(
 				"an action is incomplete, invalid, or past %d characters", investigation.MaxActionTextLength)
 		}
@@ -222,14 +194,9 @@ func decodeConclusion(
 		if len(action.RunRefs) == 0 {
 			return investigation.Conclusion{}, fmt.Errorf("action %q cites no run", action.Title)
 		}
-		if stateChangingAction(action.Type) && !action.RequiresApproval {
-			return investigation.Conclusion{}, fmt.Errorf("state-changing action %q does not require approval", action.Title)
-		}
 		conclusion.Actions = append(conclusion.Actions, investigation.ActionProposal{
-			Title: action.Title, Type: investigation.ActionType(action.Type), Rationale: action.Rationale,
-			Risk: investigation.ActionRisk(action.Risk), Reversible: action.Reversible,
-			RequiresApproval: action.RequiresApproval, Verification: action.Verification,
-			RunRefs: action.RunRefs,
+			Title: action.Title, Rationale: action.Rationale,
+			Verification: action.Verification, RunRefs: action.RunRefs,
 		})
 	}
 	for _, limitation := range decoded.Limitations {
@@ -260,32 +227,24 @@ func validateRunRefs(refs []int, runs int, owner string) error {
 }
 
 func causalFinding(kind string) bool {
-	return kind == investigation.FindingCause || kind == investigation.FindingTrigger ||
-		kind == investigation.FindingContributingFactor || kind == investigation.FindingPropagation
-}
-
-func stateChangingAction(kind string) bool {
-	return kind == string(investigation.ActionMitigate) || kind == string(investigation.ActionRollback) ||
-		kind == string(investigation.ActionFix)
+	return kind == string(investigation.FindingCause) ||
+		kind == string(investigation.FindingContributingFactor)
 }
 
 func validateConclusionStatus(conclusion investigation.Conclusion) error {
-	confirmedCause := false
+	hasCause := false
 	for _, finding := range conclusion.Findings {
-		if finding.Kind == investigation.FindingCause && finding.Confidence == investigation.ConfidenceConfirmed {
-			confirmedCause = true
-		}
+		hasCause = hasCause || finding.Kind == investigation.FindingCause
 	}
 	switch conclusion.Status {
 	case investigation.VerifiedCause:
-		if !confirmedCause {
-			return fmt.Errorf("verified_cause requires a confirmed cited cause with a mechanism")
+		if !hasCause {
+			return fmt.Errorf("verified_cause requires a cited cause with a mechanism")
 		}
 	case investigation.SupportedExplanation:
 		explanation := false
 		for _, finding := range conclusion.Findings {
 			explanation = explanation || finding.Kind == investigation.FindingCause ||
-				finding.Kind == investigation.FindingTrigger ||
 				finding.Kind == investigation.FindingContributingFactor
 		}
 		if !explanation {
@@ -300,8 +259,8 @@ func validateConclusionStatus(conclusion investigation.Conclusion) error {
 			return fmt.Errorf("supported_explanation requires a plausible remaining alternative")
 		}
 	case investigation.Inconclusive:
-		if confirmedCause {
-			return fmt.Errorf("inconclusive cannot carry a confirmed cause")
+		if hasCause {
+			return fmt.Errorf("inconclusive cannot carry a cause")
 		}
 	case investigation.AnswerOnly:
 		for _, finding := range conclusion.Findings {
@@ -311,16 +270,6 @@ func validateConclusionStatus(conclusion investigation.Conclusion) error {
 		}
 	}
 	return nil
-}
-
-func unknownImpactSummary(summary string) bool {
-	switch strings.ToLower(strings.TrimSpace(summary)) {
-	case "impact is unknown.", "impact is not established.", "impact was not established.",
-		"impact was not assessed for this operator question.":
-		return true
-	default:
-		return false
-	}
 }
 
 func oneOf(value string, allowed []string) bool {

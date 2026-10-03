@@ -119,10 +119,12 @@ func TestTheBriefKeepsHistoryUntrustedAndCanonicalActionsVisible(t *testing.T) {
 		Recent: []investigation.BriefMessage{{
 			FromPerson: true, Actor: "on-call", Text: "traffic stayed flat",
 		}, {Answer: &investigation.Conclusion{Actions: []investigation.ActionProposal{{Title: "roll back the deploy"}}}}},
-		Limitations: []string{"database wait telemetry is unavailable"},
+		Limitations:    []string{"database wait telemetry is unavailable"},
+		OpenHypotheses: []string{"a traffic spike may also have contributed"},
 	})
 	for _, expected := range []string{
 		"KNOWN LIMITATIONS", "database wait telemetry is unavailable",
+		"OPEN HYPOTHESES", "a traffic spike may also have contributed",
 		"RECENT EXCHANGE", "DATA", "roll back the deploy",
 		"operator on-call: traffic stayed flat",
 	} {

@@ -167,11 +167,11 @@ func validConclusion(t *testing.T, refs []int) json.RawMessage {
 	t.Helper()
 	findings := []map[string]any{}
 	if len(refs) > 0 {
-		findings = append(findings, map[string]any{"id": "f1", "statement": "The deployed value is v2.", "kind": "observation", "confidence": "confirmed", "mechanism": "", "run_refs": refs})
+		findings = append(findings, map[string]any{"statement": "The deployed value is v2.", "kind": "observation", "mechanism": "", "run_refs": refs, "evidence_refs": []any{}})
 	}
 	document := map[string]any{
 		"status": "answer_only", "summary": "The deployed value is v2.",
-		"impact":     map[string]any{"status": "unknown", "current_state": "unknown", "affected_services": []string{}, "affected_users": []string{}, "summary": "impact is unknown.", "run_refs": []int{}},
+		"impact":     map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
 		"findings":   findings,
 		"hypotheses": []any{}, "actions": []any{}, "limitations": []any{},
 	}
@@ -555,41 +555,6 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if store.status != investigation.StatusFailed || model.calls != 2 {
-		t.Fatalf("status=%s calls=%d", store.status, model.calls)
-	}
-}
-
-func TestRunRejectsStateChangingActionWithoutApproval(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
-	unsafe, err := json.Marshal(map[string]any{
-		"status": "answer_only", "summary": "Fix it.",
-		"impact":   map[string]any{"status": "unknown", "current_state": "unknown", "affected_services": []string{}, "affected_users": []string{}, "summary": "unknown", "run_refs": []int{}},
-		"findings": []any{}, "hypotheses": []any{}, "limitations": []any{},
-		"actions": []map[string]any{{"title": "Apply fix", "type": "fix", "rationale": "restore service", "risk": "medium", "reversible": true, "requires_approval": false, "verification": "check health", "run_refs": []int{1}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
-		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{}}`),
-			}}}, nil
-		}
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: unsafe,
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t,
-		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-			return integrations.ToolResult{Summary: "value"}, nil
-		}))
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	if store.status != investigation.StatusFailed || model.calls != 3 {
 		t.Fatalf("status=%s calls=%d", store.status, model.calls)
 	}
 }

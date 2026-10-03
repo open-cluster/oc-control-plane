@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -447,11 +448,15 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		adaTurn.InvestigationID, claimToken(t, database, organization, adaTurn.InvestigationID), investigation.Conclusion{
 			Summary: "ADA-PRIVATE-ANSWER: the pool size changed",
 			Findings: []investigation.Finding{{
-				Statement:  "the deploy at 14:02 changed the pool size",
-				Kind:       investigation.FindingTrigger,
-				Confidence: investigation.ConfidenceConfirmed, Sources: []int{1},
+				Statement: "the deploy at 14:02 changed the pool size",
+				Kind:      investigation.FindingTrigger,
+				RunRefs:   []int{1},
 			}},
 			Actions: []investigation.ActionProposal{{Title: "roll back the 14:02 deploy"}},
+			Hypotheses: []investigation.HypothesisResult{{
+				ID: "traffic-spike", Statement: "a traffic spike may also have contributed",
+				Status: investigation.HypothesisExploring, Test: "compare request volume with baseline",
+			}},
 			Limitations: []investigation.Limitation{{
 				Type:      investigation.LimitationEssentialHumanInput,
 				Statement: "ADA-PRIVATE-LIMITATION: ask the payments on-call",
@@ -463,7 +468,9 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading Ada's own brief: %v", err)
 	}
-	if len(adaBrief.Limitations) != 1 || len(adaBrief.Recent) != 2 ||
+	if len(adaBrief.Limitations) != 1 ||
+		!slices.Contains(adaBrief.OpenHypotheses, "a traffic spike may also have contributed") ||
+		len(adaBrief.Recent) != 2 ||
 		adaBrief.Recent[1].Answer == nil || len(adaBrief.Recent[1].Answer.Actions) != 1 {
 		t.Fatalf("Ada's conclusion prose was not persisted into her own continuity: %+v",
 			adaBrief)
@@ -534,7 +541,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	for _, limitation := range retained.Conclusion.Limitations {
 		missing = missing || limitation.Type == investigation.LimitationMissingTelemetry
 	}
-	if !missing || len(retained.Conclusion.Findings[0].Sources) != 1 {
+	if !missing || len(retained.Conclusion.Findings[0].RunRefs) != 1 {
 		t.Fatalf("pruned evidence lost its citation or limitation: %+v", retained.Conclusion)
 	}
 }
@@ -607,7 +614,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 	findings := make([]investigation.Finding, 0, investigation.BriefMaxFindings+11)
 	for index := 0; index < investigation.BriefMaxFindings+11; index++ {
 		findings = append(findings, investigation.Finding{
-			Statement: fmt.Sprintf("finding-%03d", index), Sources: []int{index + 1},
+			Statement: fmt.Sprintf("finding-%03d", index), RunRefs: []int{index + 1},
 		})
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
@@ -635,7 +642,7 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 	if err = database.ConcludeInvestigation(context.Background(), organization,
 		next.InvestigationID, claimToken(t, database, organization, next.InvestigationID), investigation.Conclusion{
 			Summary: "later finding", Findings: []investigation.Finding{
-				{Statement: "newest-turn-finding", Sources: []int{1}},
+				{Statement: "newest-turn-finding", RunRefs: []int{1}},
 			},
 		}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the later turn: %v", err)

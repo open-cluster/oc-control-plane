@@ -20,7 +20,7 @@ func TestModelMayReadOnlyEarlierConversationHistory(t *testing.T) {
 				messages: []investigation.AssignedMessage{{Sequence: 20, Text: "recall the earlier correction"}},
 				history: investigation.HistoryPage{Exchange: []investigation.BriefMessage{
 					{Sequence: 2, Text: "correction: staging", FromPerson: true},
-					{InvestigationID: owner, Answer: &investigation.Conclusion{Findings: []investigation.Finding{{Statement: "staging was affected", Sources: []int{1}}}}},
+					{InvestigationID: owner, Answer: &investigation.Conclusion{Findings: []investigation.Finding{{Statement: "staging was affected", RunRefs: []int{1}}}}},
 				}},
 			}
 			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
@@ -67,9 +67,9 @@ func conclusionWithEvidence(t *testing.T, owner uuid.UUID) json.RawMessage {
 	t.Helper()
 	document := fmt.Sprintf(`{
 		"status":"answer_only", "summary":"Earlier observations remain available.",
-		"impact":{"status":"unknown","current_state":"unknown","summary":"Impact is unknown.","run_refs":[]},
-		"findings":[{"id":"prior","statement":"Staging was affected.","kind":"observation",
-		"confidence":"confirmed","mechanism":"","run_refs":[],
+		"impact":{"summary":"Impact is not established.","run_refs":[]},
+		"findings":[{"statement":"Staging was affected.","kind":"observation",
+		"mechanism":"","run_refs":[],
 		"evidence_refs":[{"investigationId":%q,"toolRunOrdinal":1}]}]
 	}`, owner)
 	return json.RawMessage(document)

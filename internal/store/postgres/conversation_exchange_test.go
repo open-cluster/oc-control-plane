@@ -21,7 +21,7 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
 		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{
 			Summary:  "production appears affected",
-			Findings: []investigation.Finding{{Statement: "production appears affected", Sources: []int{1}}},
+			Findings: []investigation.Finding{{Statement: "production appears affected", RunRefs: []int{1}}},
 		}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}

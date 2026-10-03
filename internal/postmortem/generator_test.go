@@ -1,6 +1,7 @@
 package postmortem
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -30,19 +31,20 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		Results: []InvestigationResult{{InvestigationID: uuid.New(), Conclusion: investigation.Conclusion{
 			Status:  investigation.VerifiedCause,
 			Summary: "A bad pool-size deployment exhausted database connections.",
-			Impact: investigation.ImpactAssessment{
-				Status: investigation.ImpactUnknown, CurrentState: "unknown",
-				Summary: "Impact is not established.",
-			},
+			Impact:  investigation.Impact{Summary: "Impact is not established."},
 			Findings: []investigation.Finding{{
 				Statement: "The pool-size deployment exhausted connections.",
-				Kind:      investigation.FindingCause, Confidence: investigation.ConfidenceConfirmed,
+				Kind:      investigation.FindingCause,
 				Mechanism: "The larger pools exceeded the database connection limit.",
-				Sources:   []int{3},
+				RunRefs:   []int{3},
 			}},
 			Actions: []investigation.ActionProposal{{
-				Title: "Restore a bounded pool size", Type: investigation.ActionFix,
+				Title:        "Restore a bounded pool size",
 				Verification: "Database utilization remains below the limit.", RunRefs: []int{3},
+			}},
+			Hypotheses: []investigation.HypothesisResult{{
+				ID: "traffic-spike", Statement: "A traffic spike may also have contributed.",
+				Status: investigation.HypothesisUnresolved, Test: "Compare request volume with baseline.",
 			}},
 		}}},
 	}
@@ -59,13 +61,32 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		draft.RootCauses[0].RunRefs[0] != 3 {
 		t.Errorf("root causes = %+v", draft.RootCauses)
 	}
+	encoded, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "findingId") {
+		t.Errorf("Postmortem still exposes a Finding identity: %s", encoded)
+	}
 	if len(draft.ActionItems) != 1 || draft.ActionItems[0].Owner != NeedsHumanInput ||
 		draft.ActionItems[0].Deadline != NeedsHumanInput {
 		t.Errorf("action items = %+v", draft.ActionItems)
 	}
 	if len(draft.Timeline) < 3 ||
-		!strings.Contains(strings.Join(draft.OpenQuestions, " "), "Verify testimony") {
+		!strings.Contains(strings.Join(draft.OpenQuestions, " "), "Verify testimony") ||
+		!strings.Contains(strings.Join(draft.OpenQuestions, " "), "traffic spike") {
 		t.Errorf("events/messages were not consumed safely: timeline=%+v questions=%+v",
 			draft.Timeline, draft.OpenQuestions)
+	}
+
+	input.Results[0].Conclusion.Impact = investigation.Impact{
+		Summary: "Checkout requests failed for 12 minutes.", RunRefs: []int{3},
+	}
+	if cited := DraftFrom(input); cited.Impact != "Checkout requests failed for 12 minutes." {
+		t.Errorf("cited impact = %q", cited.Impact)
+	}
+	input.Human.Impact = "Operators confirmed that premium checkout was affected."
+	if corrected := DraftFrom(input); corrected.Impact != input.Human.Impact {
+		t.Errorf("operator impact lost precedence: %q", corrected.Impact)
 	}
 }

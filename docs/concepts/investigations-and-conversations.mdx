@@ -69,9 +69,13 @@ prevent a defensible answer.
 ## Findings and citations
 
 A Finding is a factual statement supported by one or more numbered Tool Runs. Its kind
-describes its causal role or identifies it as an observation. Confidence is categorical,
-not an invented percentage. A causal Finding must explain the mechanism that produced
-impact.
+is `cause`, `contributing_factor`, `observation`, or `ruled_out`. A causal Finding must
+explain the mechanism that produced impact. Conclusion status expresses assessment
+certainty; Findings do not carry a second confidence classification.
+
+Retained historical results may also contain `trigger`, `symptom`, `propagation`, or
+`unresolved`. New Investigations represent those as observations, hypotheses, or
+limitations as appropriate.
 
 Hypotheses remain `exploring`, `supported`, `ruled_out`, or `unresolved`. Supported is
 weaker than verified. Limitations name missing access, telemetry, contradictions,
@@ -92,12 +96,12 @@ limitation; it does not substitute another run or claim fresh verification.
 ## Action Proposals
 
 An Action Proposal can describe mitigation, rollback, verification, a permanent fix, or
-monitoring. It states rationale, risk, reversibility, approval needs, verification, and
-supporting Tool Runs. OpenCluster never executes it.
+monitoring. It states a rationale, verification procedure, and supporting Tool Runs.
+OpenCluster never executes it.
 
 For example, a rollback proposal may cite a Kubernetes Event and a GitHub deployment,
-require human approval, and explain how to verify latency and error rate afterward. The
-citations support the proposal; they do not approve the change.
+and explain how to verify latency and error rate afterward. The citations support the
+proposal; they do not execute or approve the change.
 
 ## Postmortems
 

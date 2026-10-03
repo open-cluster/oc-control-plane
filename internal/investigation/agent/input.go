@@ -21,8 +21,7 @@ func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messa
 	const request = "The complete assigned Messages cannot fit within the input budget. Narrow or split the question and send a new Message; none of this batch was answered."
 	conclusion := investigation.Conclusion{
 		Status: investigation.Inconclusive, Summary: request,
-		Impact: investigation.ImpactAssessment{Status: investigation.ImpactUnknown, CurrentState: "unknown",
-			Summary: "Input was not processed.", AffectedServices: []string{}, AffectedUsers: []string{}, RunRefs: []int{}},
+		Impact:   investigation.Impact{Summary: "Input was not processed.", RunRefs: []int{}},
 		Findings: []investigation.Finding{}, Hypotheses: []investigation.HypothesisResult{}, Actions: []investigation.ActionProposal{},
 		Limitations: []investigation.Limitation{{Type: investigation.LimitationEssentialHumanInput,
 			Statement: request, RunRefs: []int{}, MessageSequences: sequences}},

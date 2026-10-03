@@ -22,18 +22,21 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 			t.Errorf("the conclude schema does not offer %q", field)
 		}
 	}
+	assertSchemaFields(t, properties["impact"], "run_refs", "summary")
+	findings := properties["findings"].(map[string]any)
+	assertSchemaFields(t, findings["items"], "evidence_refs", "kind", "mechanism", "run_refs", "statement")
+	actions := properties["actions"].(map[string]any)
+	assertSchemaFields(t, actions["items"], "rationale", "run_refs", "title", "verification")
 
 	document, err := json.Marshal(map[string]any{
 		"status":  "verified_cause",
 		"summary": "The deployment caused the checkout outage.",
 		"impact": map[string]any{
-			"status": "known", "current_state": "ongoing",
-			"affected_services": []string{"checkout-api"}, "affected_users": []string{},
 			"summary": "Checkout requests are failing.", "run_refs": []int{1},
 		},
 		"findings": []map[string]any{{
-			"id": "finding-1", "statement": "Deployment abc123 caused the outage.",
-			"kind": "cause", "confidence": "confirmed", "mechanism": "", "run_refs": []int{1},
+			"statement": "Deployment abc123 caused the outage.",
+			"kind":      "cause", "mechanism": "", "run_refs": []int{1}, "evidence_refs": []any{},
 		}},
 		"hypotheses":  []map[string]any{},
 		"actions":     []map[string]any{},
@@ -48,6 +51,26 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 	}
 
 	_ = investigation.VerifiedCause
+}
+
+func assertSchemaFields(t *testing.T, candidate any, want ...string) {
+	t.Helper()
+	schema, ok := candidate.(map[string]any)
+	if !ok {
+		t.Fatalf("schema = %#v", candidate)
+	}
+	fields, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v", schema["properties"])
+	}
+	if len(fields) != len(want) {
+		t.Fatalf("schema fields = %v, want %v", fields, want)
+	}
+	for _, name := range want {
+		if _, present := fields[name]; !present {
+			t.Errorf("schema omits %q", name)
+		}
+	}
 }
 
 func TestStructuredConclusionEvaluationFixtures(t *testing.T) {
@@ -75,38 +98,20 @@ func TestStructuredConclusionEvaluationFixtures(t *testing.T) {
 	}
 }
 
-func TestStructuredConclusionRequiresCitationsForImpactAndActions(t *testing.T) {
+func TestStructuredConclusionRequiresCitationsForActions(t *testing.T) {
 	t.Parallel()
 
 	document := map[string]any{
 		"status": "inconclusive", "summary": "The cause is not established.",
-		"impact": map[string]any{
-			"status": "partial", "current_state": "ongoing",
-			"affected_services": []string{"checkout-api"}, "affected_users": []string{},
-			"summary": "Checkout is degraded.", "run_refs": []int{},
-		},
+		"impact":   map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
 		"findings": []map[string]any{}, "hypotheses": []map[string]any{},
-		"actions": []map[string]any{}, "limitations": []map[string]any{},
+		"actions": []map[string]any{{
+			"title": "Monitor recovery", "rationale": "Confirm recovery.",
+			"verification": "Latency returns to baseline.", "run_refs": []int{},
+		}},
+		"limitations": []map[string]any{},
 	}
 	encoded, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := decodeConclusion(encoded, 1, nil); err == nil {
-		t.Fatal("partial impact without a Run reference was accepted")
-	}
-
-	document["impact"] = map[string]any{
-		"status": "unknown", "current_state": "unknown",
-		"affected_services": []string{}, "affected_users": []string{},
-		"summary": "Impact is unknown.", "run_refs": []int{},
-	}
-	document["actions"] = []map[string]any{{
-		"title": "Monitor recovery", "type": "monitor", "rationale": "Confirm recovery.",
-		"risk": "low", "reversible": true, "requires_approval": false,
-		"verification": "Latency returns to baseline.", "run_refs": []int{},
-	}}
-	encoded, err = json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
 	}

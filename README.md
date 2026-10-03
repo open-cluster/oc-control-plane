@@ -25,8 +25,7 @@ gathers bounded read-only evidence, keeps competing hypotheses visible, and prod
 separates impact, causal findings, proposed actions, and limitations.
 
 Every material claim links back to a numbered Tool Run. OpenCluster never executes a mitigation: an action proposal
-states its risk, reversibility, approval requirement, and verification procedure so an on-call engineer can decide
-safely.
+states its rationale and verification procedure so an on-call engineer can decide safely.
 
 Investigation events include the Integration display name when a Tool starts and retain
 the canonical answer, up to 4,096 Unicode characters, when the Investigation concludes.

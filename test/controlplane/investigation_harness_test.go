@@ -27,10 +27,7 @@ func (m concludingModel) Complete(_ context.Context, prompt modelagent.Prompt) (
 	}
 	document, _ := json.Marshal(map[string]any{
 		"status": "answer_only", "summary": "Investigation completed.",
-		"impact": map[string]any{
-			"status": "unknown", "current_state": "unknown", "affected_services": []string{},
-			"affected_users": []string{}, "summary": "Impact is unknown.", "run_refs": []int{},
-		},
+		"impact":   map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
 		"findings": []any{}, "hypotheses": []any{}, "actions": []any{}, "limitations": []any{},
 	})
 	return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
