@@ -109,11 +109,9 @@ webhooks use `503` for temporary admission pressure so Alertmanager retries them
 bounded backoff and honor `Retry-After` when present. Slack admission pressure remains `429`.
 
 Use [Generic Webhook](/integrations/alerting/generic_webhook) or
-[Prometheus Alertmanager](/integrations/alerting/alertmanager) for sender setup. Admins
-inspect processing through the generated Webhook Delivery operations. Alert deliveries finish
-their work during admission, so accepted alerts appear as `succeeded` with `attempts: 0` and
-cannot be replayed. Replay is available only for failed Slack Webhook Deliveries whose
-post-acknowledgement processing failed; other replay requests return `409 Conflict`.
+[Prometheus Alertmanager](/integrations/alerting/alertmanager) for sender setup. Alert
+deliveries finish during admission. Administrators can recover terminal Slack processing
+by Conversation and Message sequence through the Slack recovery operation.
 
 ## Investigation event streams
 

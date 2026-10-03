@@ -8,6 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
 // SlackMessageWorkStatus is the persisted lifecycle state of one accepted Slack Message.
@@ -36,6 +39,8 @@ func (status SlackMessageWorkStatus) String() string {
 // ErrSlackMessageLeaseLost means a transition no longer owns the fenced Slack Message lease.
 var ErrSlackMessageLeaseLost = errors.New("slack message work lease is no longer held")
 
+var ErrSlackMessageRecoveryUnavailable = errors.New("slack message work is not recoverable")
+
 // SlackMessageWork is one durable, fenced Slack Message processing attempt.
 type SlackMessageWork struct {
 	ID              uuid.UUID
@@ -52,6 +57,36 @@ type SlackMessageWork struct {
 	FailureMessage  string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+func (d *Database) RecoverSlackMessage(
+	ctx context.Context, principal authz.Principal, organization, conversationID uuid.UUID,
+	messageSequence int64,
+) error {
+	_, err := audited(ctx, d, principal, organization, audit.ActionSlackMessageRecovered,
+		func(ctx context.Context, tx pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
+			var integrationID uuid.UUID
+			err := tx.QueryRow(ctx, `
+				UPDATE slack_message_work
+				   SET status = 1, attempts = 0, available_at = now(),
+				       failure_class = '', failure_message = '', updated_at = now()
+				 WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = $3
+				   AND status = 4
+				 RETURNING integration_id`, organization, conversationID, messageSequence).
+				Scan(&integrationID)
+			if err != nil {
+				return struct{}{}, audit.Target{}, nil, err
+			}
+			return struct{}{}, audit.Target{Kind: audit.TargetConversation, ID: conversationID.String()},
+				audit.Detail{
+					"integrationId":   integrationID.String(),
+					"messageSequence": messageSequence,
+				}, nil
+		})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSlackMessageRecoveryUnavailable
+	}
+	return err
 }
 
 // ApplySlackMessageWork opens the next Conversation turn through the existing queue seam
@@ -97,9 +132,9 @@ func (d *Database) ApplySlackMessageWork(
 
 func completeSlackMessageWorkTx(ctx context.Context, tx pgx.Tx, work SlackMessageWork) error {
 	tag, err := tx.Exec(ctx, `
-		UPDATE webhook_job
+		UPDATE slack_message_work
 		   SET status = 5, lease_owner = '', lease_expires_at = NULL, updated_at = now()
-		 WHERE org_id = $1 AND job_id = $2 AND status = 2
+		 WHERE org_id = $1 AND work_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch)
 	if err != nil {
@@ -114,8 +149,8 @@ func enqueueSlackMessageWork(
 	messageSequence int64,
 ) error {
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO webhook_job
-			(job_id, org_id, delivery_id, integration_id,
+		INSERT INTO slack_message_work
+			(work_id, org_id, delivery_id, integration_id,
 			 conversation_id, message_sequence, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, now())
 		ON CONFLICT DO NOTHING`, uuid.New(), organization, deliveryID,
@@ -137,15 +172,15 @@ func (d *Database) ClaimSlackMessageWork(
 	var conversationID *uuid.UUID
 	err := d.pool.QueryRow(ctx, `
 			WITH selected AS (
-				SELECT org_id, job_id
-				  FROM webhook_job
+				SELECT org_id, work_id
+				  FROM slack_message_work
 				 WHERE (status IN (1, 3) AND available_at <= now())
 				    OR (status = 2 AND lease_expires_at <= now())
-				 ORDER BY available_at, created_at, job_id
+				 ORDER BY available_at, created_at, work_id
 				 FOR UPDATE SKIP LOCKED
 				 LIMIT 1
 			)
-			UPDATE webhook_job AS work
+			UPDATE slack_message_work AS work
 			   SET status = 2, lease_owner = $1, lease_epoch = work.lease_epoch + 1,
 			       lease_expires_at = now() + $2::interval,
 			       attempts = CASE WHEN work.attempts >= $3 THEN work.attempts
@@ -153,8 +188,8 @@ func (d *Database) ClaimSlackMessageWork(
 			       failure_class = '', failure_message = '',
 			       updated_at = now()
 			  FROM selected
-			 WHERE work.org_id = selected.org_id AND work.job_id = selected.job_id
-			RETURNING work.job_id, work.org_id, work.status, work.delivery_id,
+			 WHERE work.org_id = selected.org_id AND work.work_id = selected.work_id
+			RETURNING work.work_id, work.org_id, work.status, work.delivery_id,
 			          work.integration_id, work.conversation_id,
 			          coalesce(work.message_sequence, 0), work.attempts, work.lease_owner,
 			          work.lease_epoch, work.created_at, work.updated_at`,
@@ -184,9 +219,9 @@ func (d *Database) HeartbeatSlackMessageWork(
 		return err
 	}
 	tag, err := pool.Exec(ctx, `
-		UPDATE webhook_job
+		UPDATE slack_message_work
 		   SET lease_expires_at = now() + $5::interval, updated_at = now()
-		 WHERE org_id = $1 AND job_id = $2 AND status = 2
+		 WHERE org_id = $1 AND work_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch, lease.String())
 	if err != nil {
@@ -219,14 +254,14 @@ func (d *Database) DeferSlackMessageWork(
 		return err
 	}
 	tag, err := pool.Exec(ctx, `
-		UPDATE webhook_job
+		UPDATE slack_message_work
 		   SET status = 3, attempts = greatest(attempts - 1, 0),
 		       available_at = now() + $5::interval,
 		       lease_owner = '', lease_expires_at = NULL,
 		       failure_class = 'organization-at-capacity',
 		       failure_message = 'the Organization has reached its waiting Investigation limit',
 		       updated_at = now()
-		 WHERE org_id = $1 AND job_id = $2 AND status = 2
+		 WHERE org_id = $1 AND work_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		organization, work.ID, work.LeaseOwner, work.LeaseEpoch, max(delay, 0).String())
 	if err != nil {
@@ -244,11 +279,11 @@ func (d *Database) transitionSlackMessageWork(
 		return err
 	}
 	tag, err := pool.Exec(ctx, `
-		UPDATE webhook_job
+		UPDATE slack_message_work
 		   SET status = $5, available_at = now() + $6::interval,
 		       lease_owner = '', lease_expires_at = NULL,
 		       failure_class = $7, failure_message = $8, updated_at = now()
-		 WHERE org_id = $1 AND job_id = $2 AND status = 2
+		 WHERE org_id = $1 AND work_id = $2 AND status = 2
 		   AND lease_owner = $3 AND lease_epoch = $4 AND lease_expires_at > now()`,
 		work.Organization, work.ID, work.LeaseOwner, work.LeaseEpoch,
 		int16(status), max(delay, 0).String(), class, message)

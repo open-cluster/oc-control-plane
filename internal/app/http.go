@@ -121,13 +121,17 @@ func httpRoutes(process assembled) (http.Handler, error) {
 	mux.Handle("/readyz", healthRouter)
 	mux.Handle("/metrics", healthRouter)
 
-	mux.Handle("/webhooks/", webhookRouter(process))
+	mux.Handle("/webhooks/", webhookSurface(process))
 	apiRoutes, err := apiRouter(process)
 	if err != nil {
 		return nil, err
 	}
 	mux.Handle("/api/", apiRoutes)
 	return mux, nil
+}
+
+func webhookSurface(process assembled) http.Handler {
+	return correlation.Middleware(webhookRouter(process))
 }
 
 func logMigrationSummary(logger *slog.Logger, applied []string) {

@@ -27,12 +27,11 @@ func TestSlackMessageCapacityDeferralDoesNotConsumeRetries(t *testing.T) {
 		if worked, err := worker.ProcessOne(ctx); err != nil || !worked {
 			t.Fatalf("deferring accepted message: %v, %v", worked, err)
 		}
-		delivery, err := database.WebhookDeliveryByID(ctx, organization, fixture.delivery)
-		if err != nil || delivery.State != storage.WebhookDeliveryProcessing ||
-			delivery.Attempts != 0 || delivery.NextEligibleAt == nil {
-			t.Fatalf("capacity deferral consumed retry budget: %+v, %v", delivery, err)
+		work := readSlackMessageWork(t, fixture)
+		if work.Status != storage.SlackMessageRetry || work.Attempts != 0 {
+			t.Fatalf("capacity deferral consumed retry budget: %+v", work)
 		}
-		if _, err := pool.Exec(ctx, `UPDATE webhook_job SET available_at = now() - interval '1 second'
+		if _, err := pool.Exec(ctx, `UPDATE slack_message_work SET available_at = now() - interval '1 second'
 			WHERE org_id = $1 AND delivery_id = $2`, organization, fixture.delivery); err != nil {
 			t.Fatal(err)
 		}
@@ -43,8 +42,8 @@ func TestSlackMessageCapacityDeferralDoesNotConsumeRetries(t *testing.T) {
 	if worked, err := worker.ProcessOne(ctx); err != nil || !worked {
 		t.Fatalf("processing after capacity becomes available: %v, %v", worked, err)
 	}
-	delivery, err := database.WebhookDeliveryByID(ctx, organization, fixture.delivery)
-	if err != nil || delivery.State != storage.WebhookDeliverySucceeded || delivery.Attempts != 1 {
-		t.Fatalf("deferred message did not recover: %+v, %v", delivery, err)
+	work := readSlackMessageWork(t, fixture)
+	if work.Status != storage.SlackMessageComplete || work.Attempts != 1 {
+		t.Fatalf("deferred message did not recover: %+v", work)
 	}
 }

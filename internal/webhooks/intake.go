@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -60,7 +61,7 @@ type Handlers struct {
 // enforcing half a limit each.
 type receiver struct {
 	Handlers
-	deliveries *limiter
+	requests *limiter
 	// counters are this listener's own instruments. They are per receiver for the same reason the
 	// limiter is: an instrument rebuilt per request is a new time series per request.
 	counters instruments
@@ -68,9 +69,9 @@ type receiver struct {
 
 func newReceiver(handlers Handlers) *receiver {
 	return &receiver{
-		Handlers:   handlers,
-		deliveries: newLimiter(time.Now),
-		counters:   newInstruments(handlers.Logger),
+		Handlers: handlers,
+		requests: newLimiter(time.Now),
+		counters: newInstruments(handlers.Logger),
 	}
 }
 
@@ -93,14 +94,18 @@ const alertEventsRoute = "POST " + AlertEventsPath
 
 func (h *receiver) limit(next *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !h.deliveries.allowRequest() {
-			h.counters.countDelivery(request.Context(), dispositionRateLimited)
-			writer.Header().Set("X-Request-ID", uuid.NewString())
+		if !h.requests.allowRequest() {
 			writer.Header().Set("Retry-After", "1")
 			status := http.StatusTooManyRequests
+			surface := surfaceSlack
 			if _, pattern := next.Handler(request); pattern == alertEventsRoute {
 				status = http.StatusServiceUnavailable
+				surface = surfaceAlert
 			}
+			h.counters.countRequest(request.Context(), surface, resultRateLimited)
+			h.Logger.WarnContext(request.Context(), "webhook request rate limited",
+				slog.String("request_id", correlation.From(request.Context())),
+				slog.String("surface", surface))
 			writeStatus(writer, status, "slow down")
 			return
 		}
@@ -114,11 +119,11 @@ func (h *receiver) limit(next *http.ServeMux) http.Handler {
 func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
-	requestID := uuid.NewString()
-	writer.Header().Set("X-Request-ID", requestID)
+	requestID := correlation.From(ctx)
 
 	integrationID, ok := h.integrationID(writer, request)
 	if !ok {
+		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		return
 	}
 	integration, adapter, err := h.authenticate(ctx, integrationID, request)
@@ -132,25 +137,17 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 			h.Logger.ErrorContext(ctx, "could not read the integration",
 				slog.String("caller", callerOf(request)),
 				slog.String("error", err.Error()))
-			h.counters.countDelivery(ctx, dispositionUnavailable)
+			h.counters.countRequest(ctx, surfaceAlert, resultError)
 			writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 			return
 		}
 		h.refuse(ctx, request, "unauthenticated")
-		h.counters.countDelivery(ctx, dispositionUnauthenticated)
+		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		// One status and one message however it failed. A missing header, a wrong secret,
 		// an unknown Integration, a disabled one and one that receives no webhooks are
 		// indistinguishable, because telling them apart is how a caller learns which half
 		// of a guess was right.
 		writeStatus(writer, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !h.deliveries.allow(integration.ID) {
-		h.refuse(ctx, request, "rate limited")
-		h.counters.countDelivery(ctx, dispositionRateLimited)
-		writer.Header().Set("Retry-After", "1")
-		writeStatus(writer, http.StatusServiceUnavailable, "slow down")
 		return
 	}
 
@@ -164,7 +161,7 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 		h.Logger.ErrorContext(ctx, "an integration names an organization that is not a name",
 			slog.String("integration_id", integration.ID.String()),
 			slog.String("error", err.Error()))
-		h.counters.countDelivery(ctx, dispositionUnavailable)
+		h.counters.countRequest(ctx, surfaceAlert, resultError)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 		return
 	}
@@ -174,12 +171,12 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			h.refuse(ctx, request, "oversized")
-			h.counters.countDelivery(ctx, dispositionOversized)
+			h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 			writeStatus(writer, http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}
 		h.refuse(ctx, request, "incomplete")
-		h.counters.countDelivery(ctx, dispositionIncomplete)
+		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		writeStatus(writer, http.StatusBadRequest, "payload not received")
 		return
 	}
@@ -189,14 +186,13 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 		// The payload is not what this type's adapter accepts. Retrying will not change
 		// that, so the status has to say permanent or the source will retry a storm of them.
 		h.refuse(ctx, request, "malformed")
-		h.counters.countDelivery(ctx, dispositionMalformed)
+		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		writeStatus(writer, http.StatusBadRequest, "payload not understood")
 		return
 	}
 
-	h.recordAlertDelivery(ctx, writer, organization, storage.Delivery{
+	h.recordAlertDelivery(ctx, writer, organization, requestID, storage.Delivery{
 		Integration:   integration.ID,
-		RequestID:     requestID,
 		AlertDelivery: normalized,
 	})
 }
@@ -204,25 +200,24 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 // recordAlertDelivery commits the delivery and answers the source.
 func (h *receiver) recordAlertDelivery(
 	ctx context.Context, writer http.ResponseWriter,
-	organization uuid.UUID, delivery storage.Delivery,
+	organization uuid.UUID, requestID string, delivery storage.Delivery,
 ) {
-	started := time.Now()
 	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery, h.AlertAdmission)
 	var full storage.AlertCapacityError
 	if errors.As(err, &full) {
-		h.counters.countDelivery(ctx, dispositionCapacityRefused)
+		h.counters.countRequest(ctx, surfaceAlert, resultRateLimited)
 		writer.Header().Set("Retry-After", "1")
 		writeStatus(writer, http.StatusServiceUnavailable, "pending Investigation capacity exhausted")
 		return
 	}
 	var tooLarge storage.AlertBatchTooLargeError
 	if errors.As(err, &tooLarge) {
-		h.counters.countDelivery(ctx, dispositionBatchTooLarge)
+		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		writeStatus(writer, http.StatusBadRequest, "alert batch exceeds pending Investigation limit")
 		return
 	}
 	if errors.Is(err, storage.ErrDeliveryIdentityConflict) {
-		h.counters.countDelivery(ctx, dispositionMalformed)
+		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		h.Logger.WarnContext(ctx, "delivery refused",
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()),
@@ -237,13 +232,13 @@ func (h *receiver) recordAlertDelivery(
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()),
 			slog.String("error", err.Error()))
-		h.counters.countDelivery(ctx, dispositionUnavailable)
+		h.counters.countRequest(ctx, surfaceAlert, resultError)
 		writeStatus(writer, http.StatusServiceUnavailable, "not recorded")
 		return
 	}
 
 	if outcome.Duplicate {
-		h.counters.countDelivery(ctx, dispositionDuplicate)
+		h.counters.countRequest(ctx, surfaceAlert, resultDuplicate)
 		// This body was already accepted through this Integration. That covers both a source
 		// retrying because it never saw a response — which has done nothing wrong, and whose
 		// answer must let it stop — and a body replayed by someone who captured it, which is
@@ -266,11 +261,10 @@ func (h *receiver) recordAlertDelivery(
 			slog.Int("omitted", delivery.Truncated))
 	}
 
-	h.counters.countDelivery(ctx, dispositionAccepted)
-	h.counters.observeAlertAcceptance(ctx, time.Since(started))
-	h.counters.lifecycle.Count(ctx, "accepted")
-	h.counters.countAlertEvents(ctx, outcome.Recorded, outcome.IncidentsOpened, outcome.IncidentsJoined)
+	h.counters.countRequest(ctx, surfaceAlert, resultAccepted)
+	h.counters.countAlertEvents(ctx, outcome.Recorded)
 	h.Logger.InfoContext(ctx, "delivery accepted",
+		slog.String("request_id", requestID),
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", delivery.Integration.String()),
 		slog.Int("alertEvents", outcome.Recorded),

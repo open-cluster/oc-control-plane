@@ -24,7 +24,7 @@ const (
 	InvestigationRead       Permission = "investigation.read"
 	InvestigationOpen       Permission = "investigation.open"
 	InvestigationCancel     Permission = "investigation.cancel"
-	WebhookDeliveryReplay   Permission = "webhook-delivery.replay"
+	SlackMessageRecover     Permission = "slack-message.recover"
 	ConversationRead        Permission = "conversation.read"
 	ConversationWrite       Permission = "conversation.write"
 	IdentityRead            Permission = "identity.read"
@@ -52,7 +52,7 @@ var allPermissions = []Permission{
 	InvestigationRead,
 	InvestigationOpen,
 	InvestigationCancel,
-	WebhookDeliveryReplay,
+	SlackMessageRecover,
 	ConversationRead,
 	ConversationWrite,
 	IdentityRead,

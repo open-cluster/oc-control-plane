@@ -157,8 +157,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/relays/{registration}/failures",
 		"GET /api/v1/relays/{registration}/integrations",
 		"GET /api/v1/session",
-		"GET /api/v1/webhook-deliveries",
-		"GET /api/v1/webhook-deliveries/{delivery}",
 		"PATCH /api/v1/incidents/{incident}/postmortem",
 		"PATCH /api/v1/integrations/{integration}",
 		"PATCH /api/v1/members/{user}",
@@ -179,7 +177,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"POST /api/v1/local-users",
 		"POST /api/v1/relays/bootstrap-tokens",
 		"POST /api/v1/relays/{registration}/clear-conflict",
-		"POST /api/v1/webhook-deliveries/{delivery}/replay",
+		"POST /api/v1/slack/conversations/{conversation}/messages/{sequence}/recover",
 		"PUT /api/v1/policy",
 		"PUT /api/v1/auth/local/password",
 	}

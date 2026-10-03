@@ -320,7 +320,7 @@ func TestSlackEvents_AFailedPermalinkLookupDoesNotBlockTheAcceptedQuestion(t *te
 		var reference string
 		err = database.QueryRow(ctx, `
 			SELECT work.status, message.source_reference
-			  FROM webhook_job AS work
+			  FROM slack_message_work AS work
 			  JOIN conversation_message AS message
 			    ON message.org_id = work.org_id
 			   AND message.conversation_id = work.conversation_id

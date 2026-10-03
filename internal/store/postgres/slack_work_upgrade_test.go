@@ -3,11 +3,11 @@ package storage_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -34,55 +34,37 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 	}
 	var leased storage.SlackMessageWork
 	var terminalDelivery uuid.UUID
+	var terminalConversation uuid.UUID
 	for status := 1; status <= 5; status++ {
-		message, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
-			Integration: integration.ID, ContentDigest: randomDigest(t), Channel: "CCONTRACTION",
-			Thread: fmt.Sprintf("%d.0", status), Subject: "retained question", ActorID: "UCONTRACTION", Text: "investigate",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, `UPDATE webhook_job SET status = $3::smallint, attempts = $3::smallint,
-			available_at = now() + interval '1 day', lease_epoch = 7,
-			lease_owner = CASE WHEN $3::smallint = 2 THEN 'retained-owner' ELSE '' END,
-			lease_expires_at = CASE WHEN $3::smallint = 2 THEN now() + interval '1 hour' ELSE NULL END,
-			failure_class = CASE WHEN $3::smallint IN (3,4) THEN 'retained-failure' ELSE '' END,
-			failure_message = CASE WHEN $3::smallint IN (3,4) THEN 'retained diagnostic' ELSE '' END,
-			created_at = '2026-09-01T12:00:00Z', updated_at = '2026-09-02T12:00:00Z'
-			WHERE org_id = $1 AND conversation_id = $2`, organization, message.Conversation, status); err != nil {
-			t.Fatal(err)
-		}
+		conversationID, deliveryID, workID := seedLegacySlackMessageWork(
+			t, pool, organization, integration.ID, status)
 		if status == 2 {
-			leased.Organization, leased.IntegrationID, leased.ConversationID = organization, integration.ID, message.Conversation
+			leased.Organization, leased.IntegrationID, leased.ConversationID = organization, integration.ID, conversationID
 			leased.LeaseOwner, leased.LeaseEpoch = "retained-owner", 7
-			if err := pool.QueryRow(ctx, `SELECT job_id, delivery_id, message_sequence FROM webhook_job
-				WHERE org_id = $1 AND conversation_id = $2`, organization, message.Conversation).
-				Scan(&leased.ID, &leased.DeliveryID, &leased.MessageSequence); err != nil {
-				t.Fatal(err)
-			}
+			leased.ID, leased.DeliveryID, leased.MessageSequence = workID, deliveryID, 1
 		}
 		if status == 4 {
-			if err := pool.QueryRow(ctx, `SELECT delivery_id FROM webhook_job
-				WHERE org_id = $1 AND conversation_id = $2`, organization, message.Conversation).Scan(&terminalDelivery); err != nil {
-				t.Fatal(err)
-			}
+			terminalConversation, terminalDelivery = conversationID, deliveryID
 		}
 	}
-	snapshot := func() string {
-		t.Helper()
-		var rows string
-		if err := pool.QueryRow(ctx, `SELECT jsonb_agg(to_jsonb(work) - 'kind' - 'incident_id' ORDER BY job_id)::text
-			FROM webhook_job work WHERE org_id = $1`, organization).Scan(&rows); err != nil {
-			t.Fatal(err)
-		}
-		return rows
+	var before string
+	if err := pool.QueryRow(ctx, `SELECT jsonb_agg(jsonb_build_object(
+		'id', job_id, 'row', to_jsonb(work) - 'kind' - 'incident_id' - 'job_id') ORDER BY job_id)::text
+		FROM webhook_job work WHERE org_id = $1`, organization).Scan(&before); err != nil {
+		t.Fatal(err)
 	}
-	before := snapshot()
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 1 || applied[0] != "0013_contract_slack_message_work" {
+	if err != nil || len(applied) != 3 || applied[0] != "0013_contract_slack_message_work" ||
+		applied[1] != "0014_contract_webhook_delivery" || applied[2] != "0015_rename_slack_message_work" {
 		t.Fatalf("contraction applied %v: %v", applied, err)
 	}
-	if after := snapshot(); after != before {
+	var after string
+	if err := pool.QueryRow(ctx, `SELECT jsonb_agg(jsonb_build_object(
+		'id', work_id, 'row', to_jsonb(work) - 'work_id') ORDER BY work_id)::text
+		FROM slack_message_work work WHERE org_id = $1`, organization).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
 		t.Fatal("contraction changed retained Slack work fields")
 	}
 	if applied, err := database.Migrate(ctx); err != nil || len(applied) != 0 {
@@ -94,8 +76,8 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 	if err := database.HeartbeatSlackMessageWork(ctx, other, leased, time.Hour); !errors.Is(err, storage.ErrSlackMessageLeaseLost) {
 		t.Fatalf("another Organization renewed retained work: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE webhook_job SET available_at = now() - interval '1 second',
-		lease_expires_at = now() - interval '1 second' WHERE org_id = $1 AND job_id = $2`, organization, leased.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE slack_message_work SET available_at = now() - interval '1 second',
+		lease_expires_at = now() - interval '1 second' WHERE org_id = $1 AND work_id = $2`, organization, leased.ID); err != nil {
 		t.Fatal(err)
 	}
 	replacement, found, err := database.ClaimSlackMessageWork(ctx, "replacement-owner", time.Minute)
@@ -108,10 +90,10 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 	if err := database.ApplySlackMessageWork(ctx, organization, replacement, time.Hour, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.ReplayWebhookDelivery(ctx, ownerOf(t, other), other, terminalDelivery); !errors.Is(err, storage.ErrWebhookDeliveryUnknown) {
-		t.Fatalf("another Organization replayed retained work: %v", err)
+	if err := database.RecoverSlackMessage(ctx, ownerOf(t, other), other, terminalConversation, 1); !errors.Is(err, storage.ErrSlackMessageRecoveryUnavailable) {
+		t.Fatalf("another Organization recovered retained work: %v", err)
 	}
-	if err := database.ReplayWebhookDelivery(ctx, ownerOf(t, organization), organization, terminalDelivery); err != nil {
+	if err := database.RecoverSlackMessage(ctx, ownerOf(t, organization), organization, terminalConversation, 1); err != nil {
 		t.Fatal(err)
 	}
 	replayed, found, err := database.ClaimSlackMessageWork(ctx, "replay-owner", time.Minute)
@@ -121,10 +103,44 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 	if err := database.FailSlackMessageWork(ctx, organization, replayed, false, time.Minute, "retry", "retry diagnostic"); err != nil {
 		t.Fatal(err)
 	}
-	delivery, err := database.WebhookDeliveryByID(ctx, organization, terminalDelivery)
-	if err != nil || delivery.State != "processing" || delivery.Attempts != 1 || delivery.NextEligibleAt == nil {
-		t.Fatalf("retained work cannot retry: %+v, %v", delivery, err)
+	var status storage.SlackMessageWorkStatus
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT status, attempts FROM slack_message_work
+		WHERE org_id = $1 AND delivery_id = $2`, organization, terminalDelivery).Scan(&status, &attempts); err != nil ||
+		status != storage.SlackMessageRetry || attempts != 1 {
+		t.Fatalf("retained work cannot retry: status=%s attempts=%d error=%v", status, attempts, err)
 	}
+}
+
+func seedLegacySlackMessageWork(
+	t *testing.T, pool *pgxpool.Pool, organization, integration uuid.UUID, status int,
+) (uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	conversationID, deliveryID, workID := uuid.New(), uuid.New(), uuid.New()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO webhook_delivery
+			(delivery_id, org_id, integration_id, content_digest, provider_identity, request_id)
+		VALUES ($1, $2, $3, $4, $1::text, '');
+		INSERT INTO conversation (conversation_id, org_id, surface, subject)
+		VALUES ($5, $2, 2, 'retained question');
+		INSERT INTO conversation_message
+			(conversation_id, org_id, sequence, role, actor_kind, actor_id, text, window_from, window_until)
+		VALUES ($5, $2, 1, 1, 2, 'UCONTRACTION', 'investigate', now() - interval '1 hour', now());
+		INSERT INTO webhook_job
+			(job_id, org_id, kind, status, delivery_id, integration_id, conversation_id, message_sequence,
+			 attempts, available_at, lease_owner, lease_epoch, lease_expires_at,
+			 failure_class, failure_message, created_at, updated_at)
+		VALUES ($6, $2, 2, $7, $1, $3, $5, 1, $7, now() + interval '1 day',
+			CASE WHEN $7 = 2 THEN 'retained-owner' ELSE '' END, 7,
+			CASE WHEN $7 = 2 THEN now() + interval '1 hour' ELSE NULL END,
+			CASE WHEN $7 IN (3,4) THEN 'retained-failure' ELSE '' END,
+			CASE WHEN $7 IN (3,4) THEN 'retained diagnostic' ELSE '' END,
+			'2026-09-01T12:00:00Z', '2026-09-02T12:00:00Z')`,
+		deliveryID, organization, integration, randomDigest(t), conversationID, workID, status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conversationID, deliveryID, workID
 }
 
 func TestSlackWorkContractionRefusesUnrepairedAlertWork(t *testing.T) {

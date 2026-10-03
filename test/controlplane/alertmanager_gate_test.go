@@ -234,7 +234,7 @@ func TestAlertmanagerGate_BackpressureIsRetriedAndLaterAccepted(t *testing.T) {
 	}
 }
 
-// Refusals remain observable without becoming Webhook Deliveries. This is asserted against the
+// Refusals remain observable without creating delivery idempotency rows. This is asserted against the
 // body a real Alertmanager produced rather than a hand-built approximation.
 func TestAlertmanagerGate_ARefusedDeliveryIsNotPersisted(t *testing.T) {
 	gate := startAlertmanagerGate(t)

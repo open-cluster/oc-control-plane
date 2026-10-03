@@ -60,7 +60,7 @@ func TestAcceptedWebhookDeliverySurvivesAbruptProcessTermination(t *testing.T) {
 		t.Fatalf("202 returned before automatic Investigation creation: %v", err)
 	}
 	var jobs int
-	if err := h.truth.pool.QueryRow(ctx, `SELECT count(*) FROM webhook_job
+	if err := h.truth.pool.QueryRow(ctx, `SELECT count(*) FROM slack_message_work
 		WHERE org_id = $1 AND delivery_id = $2`, organization, deliveryID).Scan(&jobs); err != nil || jobs != 0 {
 		t.Fatalf("accepted alert retained webhook jobs=%d err=%v", jobs, err)
 	}

@@ -21,7 +21,7 @@ tags:
   - name: Investigations
   - name: Conversations
   - name: Postmortems
-  - name: Webhook Deliveries
+  - name: Slack
   - name: Webhook Intake
 
 # These anchors keep security policy identical across operations. The bundled release artifact
@@ -790,39 +790,18 @@ paths:
         "413": { $ref: "#/components/responses/WebhookOversized" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/WebhookUnavailable" }
-  /api/v1/webhook-deliveries:
-    get:
-      <<: *privileged-read
-      operationId: listWebhookDeliveries
-      summary: List webhook deliveries
-      tags: [Webhook Deliveries]
-      parameters:
-        - { $ref: "#/components/parameters/Cursor" }
-        - { $ref: "#/components/parameters/Limit" }
-        - { $ref: "#/components/parameters/WebhookDeliveryStatus" }
-      responses:
-        "200": { $ref: "#/components/responses/WebhookDeliveryList" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/webhook-deliveries/{delivery}:
-    parameters: &delivery-path
-      - { $ref: "#/components/parameters/WebhookDeliveryID" }
-    get:
-      <<: *privileged-read
-      operationId: getWebhookDelivery
-      summary: Get webhook delivery
-      tags: [Webhook Deliveries]
-      responses:
-        "200": { $ref: "#/components/responses/WebhookDelivery" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/webhook-deliveries/{delivery}/replay:
-    parameters: *delivery-path
+  /api/v1/slack/conversations/{conversation}/messages/{sequence}/recover:
+    parameters:
+      - { $ref: "#/components/parameters/ConversationID" }
+      - { $ref: "#/components/parameters/MessageSequence" }
     post:
       <<: *privileged-write
-      operationId: replayWebhookDelivery
-      summary: Replay webhook delivery
-      tags: [Webhook Deliveries]
+      operationId: recoverSlackMessage
+      summary: Recover terminal Slack message processing
+      tags: [Slack]
       responses:
         "204": { $ref: "#/components/responses/NoContent" }
+        "409": { $ref: "#/components/responses/Conflict" }
         default: { $ref: "#/components/responses/ErrorResponse" }
 
 components:
@@ -980,12 +959,7 @@ components:
     IncidentID: { name: incident, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     InvestigationID: { name: investigation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     ConversationID: { name: conversation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
-    WebhookDeliveryID: { name: delivery, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
-    WebhookDeliveryStatus:
-      name: status
-      in: query
-      required: false
-      schema: { type: string, enum: [accepted, processing, succeeded, failed] }
+    MessageSequence: { name: sequence, in: path, required: true, schema: { type: integer, minimum: 1 } }
   responses:
     ErrorResponse:
       description: The operation did not complete.
@@ -1048,8 +1022,6 @@ components:
     ConversationDetail: { description: Conversation with Messages and turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationDetail" } } } }
     ConversationMessageAccepted: { description: Message accepted; turn is absent when queued behind an active turn., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
     Postmortem: { description: Postmortem., content: { application/json: { schema: { $ref: "#/components/schemas/Postmortem" } } } }
-    WebhookDeliveryList: { description: Accepted webhook deliveries., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDeliveryList" } } } }
-    WebhookDelivery: { description: One accepted webhook delivery., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDelivery" } } } }
     WebhookAccepted: { description: Delivery durably accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     AlertWebhookAccepted: { description: "Delivery facts, Incident updates, and automatic Investigations for newly opened Incidents committed together.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookDuplicate: { description: Delivery was already accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
@@ -2020,26 +1992,3 @@ components:
       required: [status]
       properties:
         status: { type: string, maxLength: 128 }
-    WebhookDelivery:
-      type: object
-      additionalProperties: false
-      required: [id, integrationId, providerIdentity, status, attempts, receivedAt, lastAttemptAt, nextEligibleAt]
-      properties:
-        id: { $ref: "#/components/schemas/UUID" }
-        integrationId: { $ref: "#/components/schemas/UUID" }
-        providerIdentity: { type: string, minLength: 1, maxLength: 256 }
-        lifecyclePhase: { type: string, enum: [firing, resolved] }
-        requestId: { type: string, maxLength: 128 }
-        status: { type: string, enum: [accepted, processing, succeeded, failed] }
-        attempts: { type: integer, minimum: 0, maximum: 12 }
-        failureCategory: { type: string, minLength: 1, maxLength: 64 }
-        receivedAt: { $ref: "#/components/schemas/Timestamp" }
-        lastAttemptAt: { oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }] }
-        nextEligibleAt: { oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }] }
-    WebhookDeliveryList:
-      type: object
-      additionalProperties: false
-      required: [items, next, total]
-      properties:
-        <<: *page-metadata
-        items: { type: array, items: { $ref: "#/components/schemas/WebhookDelivery" } }

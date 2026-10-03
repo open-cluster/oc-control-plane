@@ -35,7 +35,6 @@ type SlackMessage struct {
 	// ContentDigest is SHA-256 over the raw body as received. Slack exposes no separate
 	// delivery identity, so its accepted content fingerprint supplies that identity.
 	ContentDigest []byte
-	RequestID     string
 	// Channel and Thread are Slack's identity for where this was said. Thread is the
 	// message's own timestamp when it started no thread, which is the thread OpenCluster's
 	// reply then creates.
@@ -91,11 +90,11 @@ func (p *Database) RecordSlackMessage(
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_delivery
 			(delivery_id, org_id, integration_id, content_digest, provider_identity,
-			 lifecycle_phase, request_id)
-		VALUES ($1, $2, $3, $4, encode($4, 'hex'), '', $5)
+			 lifecycle_phase)
+		VALUES ($1, $2, $3, $4, encode($4, 'hex'), '')
 		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
 		DO NOTHING`,
-		deliveryID, organization, said.Integration, said.ContentDigest, said.RequestID)
+		deliveryID, organization, said.Integration, said.ContentDigest)
 	if err != nil {
 		return SlackMessageOutcome{}, fmt.Errorf("recording a slack delivery: %w", err)
 	}
@@ -259,9 +258,9 @@ func (p *Database) SetSlackMessageSourceReference(
 	tag, err := pool.Exec(ctx, `
 		UPDATE conversation_message AS message
 		   SET source_reference = $4
-		  FROM webhook_job AS work
+		  FROM slack_message_work AS work
 		 WHERE message.org_id = $1 AND message.conversation_id = $2 AND message.sequence = $3
-		   AND work.org_id = $1 AND work.job_id = $5 AND work.status = 2
+		   AND work.org_id = $1 AND work.work_id = $5 AND work.status = 2
 		   AND work.lease_owner = $6 AND work.lease_epoch = $7 AND work.lease_expires_at > now()`,
 		organization, conversationID, sequence, reference,
 		work.ID, work.LeaseOwner, work.LeaseEpoch)

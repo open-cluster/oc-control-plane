@@ -48,9 +48,9 @@ Redelivery is idempotent, and its source timestamps remain distinct from receipt
 
 ## Webhook Delivery
 
-One accepted inbound webhook request and the operator-visible unit of retry. Its state is
-accepted, processing, succeeded, or failed based on all durable work created by that
-request. Internal work leases and attempts are not separate operator resources.
+One accepted inbound webhook request retained for durable idempotency. It is not an API
+resource or a work lifecycle. Alert effects commit during intake; accepted Slack Messages
+have their own durable processing and recovery lifecycle.
 
 ## Incident
 

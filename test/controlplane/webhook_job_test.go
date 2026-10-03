@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/http"
-	"net/url"
 	"testing"
 	"time"
 
@@ -21,7 +20,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-func TestFailedSlackDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
+func TestTerminalSlackMessageCanBeRecoveredByConversationAndMessage(t *testing.T) {
 	plane := startSlackPlane(t, newVendorFake(t, "xoxb-terminal-work"))
 	status, body := plane.createSlack(t, "Terminal webhook source", "xoxb-terminal-work")
 	if status != http.StatusCreated {
@@ -36,107 +35,44 @@ func TestFailedSlackDeliveryIsVisibleTenantScopedAndReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close(ctx) }()
-	deliveryID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
+	conversationID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
 		"terminal-group", []byte(`{"event_id":"terminal-slack-first"}`), 8)
-
-	base := plane.base(surfaceOrg) + "/webhook-deliveries"
-	status, body = plane.call(t, http.MethodGet, base, nil)
-	if status != http.StatusOK {
-		t.Fatalf("listing terminal work = %d: %s", status, body)
-	}
-	var listed struct {
-		Items []struct {
-			ID           string `json:"id"`
-			Status       string `json:"status"`
-			Attempts     int    `json:"attempts"`
-			FailureClass string `json:"failureCategory"`
-		} `json:"items"`
-	}
-	decodeInto(t, body, &listed)
-	if len(listed.Items) != 1 || listed.Items[0].ID != deliveryID || listed.Items[0].Attempts != 8 ||
-		listed.Items[0].FailureClass != "provider-work-failed" || listed.Items[0].Status != "failed" {
-		t.Fatalf("failed delivery listing = %+v", listed.Items)
-	}
-	status, body = plane.call(t, http.MethodGet, base+"?status=failed", nil)
-	if status != http.StatusOK {
-		t.Fatalf("filtering failed deliveries = %d: %s", status, body)
-	}
-	decodeInto(t, body, &listed)
-	if len(listed.Items) != 1 || listed.Items[0].Status != "failed" {
-		t.Errorf("failed status filter returned %+v", listed.Items)
-	}
-	if status, body = plane.call(t, http.MethodGet, base+"?cursor=invalid", nil); status != http.StatusBadRequest {
-		t.Fatalf("a malformed terminal-work cursor = %d: %s", status, body)
-	}
-	if status, body = plane.call(t, http.MethodGet, base+"?sort=receivedAt", nil); status != http.StatusBadRequest {
-		t.Fatalf("an unsupported ascending terminal-work order = %d: %s", status, body)
-	}
-	secondDeliveryID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
-		"terminal-group-second", []byte(`{"event_id":"terminal-slack-second"}`), 4)
-	status, body = plane.call(t, http.MethodGet, base+"?limit=1", nil)
-	if status != http.StatusOK {
-		t.Fatalf("reading the first bounded terminal-work page = %d: %s", status, body)
-	}
-	var firstPage struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-		Next string `json:"next"`
-	}
-	decodeInto(t, body, &firstPage)
-	if len(firstPage.Items) != 1 || firstPage.Items[0].ID != secondDeliveryID || firstPage.Next == "" {
-		t.Fatalf("first bounded terminal-work page = %+v", firstPage)
-	}
-	status, body = plane.call(t, http.MethodGet,
-		base+"?limit=1&cursor="+url.QueryEscape(firstPage.Next), nil)
-	if status != http.StatusOK {
-		t.Fatalf("reading the second bounded terminal-work page = %d: %s", status, body)
-	}
-	var secondPage struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-		Next string `json:"next"`
-	}
-	decodeInto(t, body, &secondPage)
-	if len(secondPage.Items) != 1 || secondPage.Items[0].ID != deliveryID || secondPage.Next != "" {
-		t.Fatalf("second bounded terminal-work page = %+v", secondPage)
-	}
-	if status, body = plane.call(t, http.MethodGet, base+"/"+deliveryID, nil); status != http.StatusOK {
-		t.Fatalf("reading terminal work = %d: %s", status, body)
-	}
+	base := plane.base(surfaceOrg) + "/slack/conversations/" + conversationID + "/messages/1/recover"
 	ensureTestOrganization(t, plane.dsn, neighbourOrg)
 	if _, err := database.Exec(ctx, `UPDATE organization_membership SET org_id = $2 WHERE org_id = $1`,
 		surfaceOrg, neighbourOrg); err != nil {
 		t.Fatal(err)
 	}
-	if status, body = plane.call(t, http.MethodGet,
-		plane.base(neighbourOrg)+"/webhook-deliveries/"+deliveryID, nil); status != http.StatusNotFound {
-		t.Fatalf("reading another organization's work = %d: %s", status, body)
+	other := plane.base(neighbourOrg) + "/slack/conversations/" + conversationID + "/messages/1/recover"
+	if status, body = plane.call(t, http.MethodPost, other, nil); status != http.StatusConflict {
+		t.Fatalf("recovering another organization's work = %d: %s", status, body)
 	}
 	if _, err := database.Exec(ctx, `UPDATE organization_membership SET org_id = $2 WHERE org_id = $1`,
 		neighbourOrg, surfaceOrg); err != nil {
 		t.Fatal(err)
 	}
-	if status, body = plane.call(t, http.MethodPost, base+"/"+deliveryID+"/replay", nil); status != http.StatusNoContent {
-		t.Fatalf("replaying terminal work = %d: %s", status, body)
+	if status, body = plane.call(t, http.MethodPost, base, nil); status != http.StatusNoContent {
+		t.Fatalf("recovering terminal work = %d: %s", status, body)
 	}
 	var auditedIntegration string
-	var auditedWork int
+	var auditedSequence int
 	if err = database.QueryRow(ctx, `
-		SELECT detail->>'integrationId', (detail->>'workReplayed')::integer
+		SELECT detail->>'integrationId', (detail->>'messageSequence')::integer
 		  FROM audit_event
-		 WHERE org_id = $1 AND action = 'webhook-delivery.replayed' AND target_id = $2`,
-		surfaceOrg, deliveryID).Scan(&auditedIntegration, &auditedWork); err != nil ||
-		auditedIntegration != created.Integration.ID || auditedWork != 1 {
-		t.Fatalf("replay audit omitted delivery context: integration=%q work=%d error=%v",
-			auditedIntegration, auditedWork, err)
+		 WHERE org_id = $1 AND action = 'slack-message.recovered' AND target_id = $2`,
+		surfaceOrg, conversationID).Scan(&auditedIntegration, &auditedSequence); err != nil ||
+		auditedIntegration != created.Integration.ID || auditedSequence != 1 {
+		t.Fatalf("recovery audit omitted message context: integration=%q sequence=%d error=%v",
+			auditedIntegration, auditedSequence, err)
 	}
-	if status, body = plane.call(t, http.MethodGet, base+"/"+deliveryID, nil); status != http.StatusOK {
-		t.Fatalf("replayed delivery disappeared: %d %s", status, body)
+	var workStatus, attempts int
+	if err := database.QueryRow(ctx, `SELECT status, attempts FROM slack_message_work
+		WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = 1`,
+		surfaceOrg, conversationID).Scan(&workStatus, &attempts); err != nil || workStatus != 1 || attempts != 0 {
+		t.Fatalf("recovered work status=%d attempts=%d error=%v", workStatus, attempts, err)
 	}
-	if status, body = plane.call(t, http.MethodPost, base+"/"+deliveryID+"/replay", nil); status != http.StatusConflict {
-		t.Fatalf("replaying nonterminal work = %d: %s", status, body)
+	if status, body = plane.call(t, http.MethodPost, base, nil); status != http.StatusConflict {
+		t.Fatalf("recovering nonterminal work = %d: %s", status, body)
 	}
 }
 
@@ -144,7 +80,7 @@ func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integratio
 	t.Helper()
 	ctx := context.Background()
 	digest := sha256.Sum256(body)
-	var deliveryID string
+	var conversationID string
 	if err := database.QueryRow(ctx, `WITH delivery AS (
 		INSERT INTO webhook_delivery (delivery_id, org_id, integration_id, content_digest, provider_identity)
 		VALUES ($4, $1, $2, $3, $8) RETURNING delivery_id, org_id, integration_id
@@ -157,24 +93,24 @@ func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integratio
 		SELECT conversation_id, org_id, 1, 1, 2, 'UREPLAY', 'investigate', now()-interval '1 hour', now()
 		FROM chat RETURNING conversation_id, org_id, sequence
 	)
-		INSERT INTO webhook_job
-			(job_id, org_id, delivery_id, integration_id, conversation_id, message_sequence,
+		INSERT INTO slack_message_work
+			(work_id, org_id, delivery_id, integration_id, conversation_id, message_sequence,
 			 status, attempts, failure_class, failure_message, updated_at)
 		SELECT $5, delivery.org_id, delivery.delivery_id, delivery.integration_id,
 		       message.conversation_id, message.sequence, 4, $7, 'provider-work-failed', 'safe failure', now()
 		FROM delivery JOIN message USING (org_id)
-		RETURNING delivery_id`, surfaceOrg, integration, digest[:], uuid.New(), uuid.New(), uuid.New(), attempts, identity).
-		Scan(&deliveryID); err != nil {
+		RETURNING conversation_id`, surfaceOrg, integration, digest[:], uuid.New(), uuid.New(), uuid.New(), attempts, identity).
+		Scan(&conversationID); err != nil {
 		t.Fatalf("recording terminal Slack Message work: %v", err)
 	}
-	return deliveryID
+	return conversationID
 }
 
-func TestWebhookDeliveryReplayIsRefusedToEditorsAndViewers(t *testing.T) {
+func TestSlackMessageRecoveryIsRefusedToEditorsAndViewers(t *testing.T) {
 	plane := startIdentityPlane(t)
 	admin := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin",
 		"initial administrator password")
-	base := plane.base(identityOrg) + "/webhook-deliveries"
+	base := plane.base(identityOrg) + "/slack/conversations/" + uuid.NewString() + "/messages/1/recover"
 	for _, role := range []string{"editor", "viewer"} {
 		email := role + "@example.test"
 		password := "a sufficiently long " + role + " password"
@@ -191,12 +127,8 @@ func TestWebhookDeliveryReplayIsRefusedToEditorsAndViewers(t *testing.T) {
 			t.Fatalf("signing in %s = %d: %s", role, signedIn.status, signedIn.body)
 		}
 		credential := asSession(sessionCookie(t, signedIn))
-		if listed := plane.call(t, http.MethodGet, base, nil, credential); listed.status != http.StatusOK {
-			t.Fatalf("%s terminal-work visibility = %d: %s", role, listed.status, listed.body)
-		}
-		if replayed := plane.call(t, http.MethodPost, base+"/"+uuid.NewString()+"/replay",
-			nil, credential); replayed.status != http.StatusForbidden {
-			t.Fatalf("%s replay = %d: %s", role, replayed.status, replayed.body)
+		if recovered := plane.call(t, http.MethodPost, base, nil, credential); recovered.status != http.StatusForbidden {
+			t.Fatalf("%s recovery = %d: %s", role, recovered.status, recovered.body)
 		}
 	}
 }
@@ -345,7 +277,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	var requested bool
 	if err = pool.QueryRow(context.Background(), `
 		SELECT status, cancel_requested_at IS NOT NULL
-		  FROM relay_job WHERE org_id = $1 AND job_id = $2`,
+		  FROM relay_job WHERE org_id = $1 AND work_id = $2`,
 		organization.String(), cancellable.GetJobId()).Scan(&jobStatus, &requested); err != nil || jobStatus != int16(storage.JobLeased) || !requested {
 		t.Fatalf("cancellation lost its durable leased Job: status=%d requested=%t error=%v",
 			jobStatus, requested, err)
@@ -356,7 +288,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		t.Fatalf("the cancelled Relay outcome was not durably recorded: %v", acknowledged.GetDisposition())
 	}
 	if err = pool.QueryRow(context.Background(), `
-		SELECT status FROM relay_job WHERE org_id = $1 AND job_id = $2`,
+		SELECT status FROM relay_job WHERE org_id = $1 AND work_id = $2`,
 		organization.String(), cancellable.GetJobId()).Scan(&jobStatus); err != nil || jobStatus != int16(storage.JobCancelled) {
 		t.Fatalf("the cancelled Job did not retain its terminal outcome: status=%d error=%v", jobStatus, err)
 	}

@@ -789,6 +789,29 @@ func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
 	}
 }
 
+func TestControlPlane_UnmatchedWebhookRequestsAreCorrelated(t *testing.T) {
+	plane := startControlPlane(t, nil)
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		plane.baseURL+"/webhooks/unknown", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set(correlation.Header, "attacker-supplied")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("unmatched webhook status = %d", response.StatusCode)
+	}
+	requestID := response.Header.Get(correlation.Header)
+	if len(requestID) != 32 || requestID == "attacker-supplied" {
+		t.Fatalf("unmatched webhook request ID = %q", requestID)
+	}
+}
+
 // Metrics must be scrapeable, and must not carry a per-organization label: at the stated
 // scale of five thousand organizations that is a cardinality failure in any
 // Prometheus-shaped backend.

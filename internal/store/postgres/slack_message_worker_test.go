@@ -27,10 +27,9 @@ func TestSlackMessageWorkerOpensAcceptedTurnExactlyOnce(t *testing.T) {
 	if err != nil || len(detail.Turns) != 1 || len(detail.Messages) != 1 {
 		t.Fatalf("processed message: %+v, %v", detail, err)
 	}
-	deliveries, err := database.WebhookDeliveries(ctx, organization, "", storage.Page{Limit: 10})
-	if err != nil || len(deliveries.Deliveries) != 1 ||
-		deliveries.Deliveries[0].State != storage.WebhookDeliverySucceeded || deliveries.Deliveries[0].Attempts != 1 {
-		t.Fatalf("processed delivery: %+v, %v", deliveries, err)
+	work := readSlackMessageWork(t, fixture)
+	if work.Status != storage.SlackMessageComplete || work.Attempts != 1 {
+		t.Fatalf("processed work: %+v", work)
 	}
 	if _, err := database.ConversationDetail(ctx, fixture.other, fixture.conversation, 50); err == nil {
 		t.Fatal("another Organization could read the processed Conversation")

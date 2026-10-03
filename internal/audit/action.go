@@ -37,13 +37,13 @@ const (
 	ActionPostmortemReviewed    Action = "postmortem.reviewed"
 
 	// Investigations
-	ActionInvestigationOpened     Action = "investigation.opened"
-	ActionInvestigationCancelled  Action = "investigation.cancelled"
-	ActionWebhookDeliveryReplayed Action = "webhook-delivery.replayed"
+	ActionInvestigationOpened    Action = "investigation.opened"
+	ActionInvestigationCancelled Action = "investigation.cancelled"
 
 	// Conversations
-	ActionConversationOpened  Action = "conversation.opened"
-	ActionConversationMessage Action = "conversation.message-sent"
+	ActionConversationOpened    Action = "conversation.opened"
+	ActionConversationMessage   Action = "conversation.message-sent"
+	ActionSlackMessageRecovered Action = "slack-message.recovered"
 
 	ActionAuthorizationRefused Action = "authorization.refused"
 	ActionCollaborationReplied Action = "collaboration.replied"
