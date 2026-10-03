@@ -2,6 +2,7 @@ package investigation
 
 import (
 	"context"
+
 	"github.com/google/uuid"
 )
 
@@ -31,7 +32,10 @@ const (
 )
 
 var ConclusionStatuses = []string{
-	string(VerifiedCause), string(SupportedExplanation), string(Inconclusive), string(AnswerOnly),
+	string(VerifiedCause),
+	string(SupportedExplanation),
+	string(Inconclusive),
+	string(AnswerOnly),
 }
 
 type Impact struct {
@@ -49,8 +53,10 @@ const (
 )
 
 var HypothesisStatuses = []string{
-	string(HypothesisExploring), string(HypothesisSupported),
-	string(HypothesisRuledOut), string(HypothesisUnresolved),
+	string(HypothesisExploring),
+	string(HypothesisSupported),
+	string(HypothesisRuledOut),
+	string(HypothesisUnresolved),
 }
 
 type HypothesisResult struct {
@@ -79,8 +85,10 @@ const (
 )
 
 var LimitationTypes = []string{
-	string(LimitationMissingTelemetry), string(LimitationMissingAccess),
-	string(LimitationContradiction), string(LimitationUnresolvedAssumption),
+	string(LimitationMissingTelemetry),
+	string(LimitationMissingAccess),
+	string(LimitationContradiction),
+	string(LimitationUnresolvedAssumption),
 	string(LimitationEssentialHumanInput),
 }
 
