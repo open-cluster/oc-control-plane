@@ -1,6 +1,3 @@
-// Package github is the GitHub provider: the Integration Type definition, the GitHub App
-// credential machinery, the live installation verification, and the read-only bounded
-// tools an investigation reads repositories, commits and pull requests through.
 package github
 
 import (
@@ -25,11 +22,9 @@ var ErrNoApp = errors.New(
 
 const jwtLifetime = 9 * time.Minute
 
-// jwtBackdate is how far in the past a JWT says it was issued. GitHub refuses tokens from
-// the future, and a deployment's clock can lead GitHub's by a few seconds.
+// GitHub rejects future-issued JWTs, so backdate them to tolerate clock skew.
 const jwtBackdate = time.Minute
 
-// tokenRefreshMargin is how close to expiry a cached installation token may be used.
 const tokenRefreshMargin = 5 * time.Minute
 
 type App struct {
@@ -45,8 +40,6 @@ type installationToken struct {
 	expires time.Time
 }
 
-// NewApp reads the deployment's App credential and binds it to the vendor client. The
-// key errors never quote the file's contents, because those contents are the credential.
 func NewApp(appID string, privateKeyPEM []byte, client *Client) (*App, error) {
 	key, err := parsePrivateKey(privateKeyPEM)
 	if err != nil {
@@ -64,11 +57,8 @@ func NewApp(appID string, privateKeyPEM []byte, client *Client) (*App, error) {
 	return app, nil
 }
 
-// Configured reports whether this deployment can reach GitHub at all.
 func (a *App) Configured() bool { return a != nil && a.key != nil }
 
-// installationToken returns a live token for one installation, minting only when the
-// cached one is missing or inside the refresh margin.
 func (a *App) installationToken(ctx context.Context, installation int64) (string, error) {
 	if !a.Configured() {
 		return "", ErrNoApp
@@ -96,10 +86,6 @@ func (a *App) installationToken(ctx context.Context, installation int64) (string
 	return minted.token, nil
 }
 
-// jwt signs the App's own identity token, the credential every installation operation
-// presents. Built on the standard library rather than a JWT dependency: the whole format
-// is two base64 JSON parts and one RS256 signature, and a library would be a larger
-// surface than the thing it wraps.
 func (a *App) jwt(now time.Time) (string, error) {
 	if !a.Configured() {
 		return "", ErrNoApp
@@ -127,8 +113,6 @@ func (a *App) jwt(now time.Time) (string, error) {
 	return signed + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }
 
-// parsePrivateKey reads the App key in either shape GitHub hands out. No error quotes the
-// input: the input is the credential.
 func parsePrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
@@ -148,7 +132,6 @@ func parsePrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-// cryptoSHA256 and sha256Sum name the one hash this signing uses.
 const cryptoSHA256 = crypto.SHA256
 
 func sha256Sum(data []byte) []byte {

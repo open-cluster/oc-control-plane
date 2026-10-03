@@ -15,7 +15,6 @@ import (
 
 type Secret string
 
-// redacted is what a credential looks like everywhere except the one call that reveals it.
 const redacted = "[redacted]"
 
 func (Secret) String() string               { return redacted }
@@ -26,35 +25,21 @@ func (Secret) LogValue() any                { return redacted }
 func (s Secret) Reveal() string             { return string(s) }
 func (s Secret) Empty() bool                { return strings.TrimSpace(string(s)) == "" }
 
-// ModelConfig names one provider, model, and the bounds it runs under.
 type ModelConfig struct {
-	// Provider names the adapter that serves this model.
-	Provider string
-	Model    string
-	// Effort is how hard to think, the primary resource and latency lever.
-	Effort Effort
-	// ContextWindowTokens is the provider's total input and output capacity for this exact model.
+	Provider            string
+	Model               string
+	Effort              Effort
 	ContextWindowTokens int
-	// MaxOutputTokens bounds one answer. It is set generously where thinking and answer share the
-	// bound, because a value sized around the answer alone truncates mid-thought.
-	MaxOutputTokens int64
-	// BaseURL overrides where the provider is reached. It is also the ONLY host this model
-	// may reach: the allowed host is derived from configuration rather than from anything a
-	// response contains, so a redirect cannot move where the credential is sent.
-	BaseURL string
-	// Credential is the API key, read from a file path and never from an environment value.
-	Credential Secret
-	// RequestTimeout bounds one call. Requests are retried, so the wall clock a single call can
-	// consume is this multiplied by the attempts allowed; the product must still fit inside the
-	// round's deadline.
-	RequestTimeout time.Duration
+	MaxOutputTokens     int64
+	BaseURL             string
+	Credential          Secret
+	RequestTimeout      time.Duration
 }
 
 const (
 	defaultRequestTimeout = 5 * time.Minute
 )
 
-// WithDefaults fills what an operator did not name. It never loosens what they did.
 func (d ModelConfig) WithDefaults() ModelConfig {
 	if d.Effort == "" {
 		d.Effort = EffortHigh
@@ -65,9 +50,6 @@ func (d ModelConfig) WithDefaults() ModelConfig {
 	return d
 }
 
-// Validate refuses model configuration that could not work, at startup, where the person who chose the
-// values is still the person reading the error. The alternative is discovering it on the first
-// round at 03:00, by which time nobody remembers configuring it.
 func (d ModelConfig) Validate() error {
 	switch {
 	case strings.TrimSpace(d.Provider) == "":
@@ -98,20 +80,16 @@ func (d ModelConfig) Validate() error {
 	return nil
 }
 
-// String renders model configuration for a log line. The credential is a Secret, so it cannot appear here.
 func (d ModelConfig) String() string {
 	return fmt.Sprintf("%s/%s effort=%s context=%d max_output=%d", d.Provider, d.Model, d.Effort,
 		d.ContextWindowTokens, d.MaxOutputTokens)
 }
 
-// ModelCapabilities are the provider-published limits for one exact model identifier.
 type ModelCapabilities struct {
 	ContextWindowTokens int
 	MaxOutputTokens     int64
 }
 
-// ResolveModelCapabilities applies optional operator overrides to an exact provider capability.
-// A nil capability represents a custom model and therefore requires both limits explicitly.
 func ResolveModelCapabilities(
 	config ModelConfig, published *ModelCapabilities,
 ) (ModelConfig, error) {
@@ -140,146 +118,73 @@ func ResolveModelCapabilities(
 	return config, nil
 }
 
-// Completer performs one provider completion.
-//
-// It is deliberately small. A provider does not hold a conversation, manage an investigation,
-// decide when to stop or interpret evidence: it is handed a rendered prompt and a declared output
-// schema, and returns a document.
 type Completer interface {
-	// Complete asks for one document.
-	//
-	// The returned Completion is populated even when the error is non-nil, because a refused or
-	// truncated request still consumed tokens, still names a model and still carries a request
-	// identifier — and all three have to reach telemetry. A caller reads the Completion
-	// for the figures and the error for the outcome.
 	Complete(ctx context.Context, prompt Prompt) (Completion, error)
 }
 
-// Prompt is one rendered ask, in the shape every provider is given it.
 type Prompt struct {
-	Model string
-	// System is the preamble(system prompt).
-	System []Block
-	// Content is the rendered deliberation, in the order the ordinals in the answer refer to.
-	Content []Block
-	Schema  Schema
-	// Tools are the native tool definitions, generated from the one declarative
-	// contract — never a second hand-written representation. Present, they put the
-	// prompt in tool-calling mode: the adapter translates each into its vendor's wire
-	// shape, and the answer may carry tool calls.
-	Tools []integrations.ToolDefinition
-	// ForceTool names the one tool the answer must call — the forced concluding turn.
-	ForceTool string
-	// Turns is the conversation so far, oldest first: each the assistant's own prior
-	// move with what answered it. The adapter replays them verbatim, because caching is
-	// a prefix match and the transcript is the prefix.
-	Turns []Turn
-	// MaxOutputTokens bounds the answer. On providers where thinking and answer text share the
-	// bound, a value sized around the answer alone truncates mid-thought.
+	Model           string
+	System          []Block
+	Content         []Block
+	Schema          Schema
+	Tools           []integrations.ToolDefinition
+	ForceTool       string
+	Turns           []Turn
 	MaxOutputTokens int64
-	// Effort is how hard to think. It is the primary resource and latency lever and the right value
-	// is an empirical question, so it is configuration rather than a constant.
-	Effort Effort
+	Effort          Effort
 }
 
-// Turn is one completed exchange in a tool-calling conversation: what the assistant
-// said and asked for, then what answered it.
 type Turn struct {
-	Assistant AssistantTurn
-	// Results answer the assistant's calls, in the same order.
-	Results []ToolResultTurn
-	// Instruction is trailing user text after the results — the forced-conclusion
-	// reason, rendered for the model to act on. Usually empty.
+	Assistant   AssistantTurn
+	Results     []ToolResultTurn
 	Instruction string
 }
 
-// AssistantTurn is the model's own prior move, echoed back on later requests.
 type AssistantTurn struct {
 	Text  string
 	Calls []CompletionCall
-	// Raw is the producing adapter's own verbatim rendering of this turn, opaque to
-	// everything else. An adapter whose vendor requires the turn replayed exactly — a
-	// thinking block with its signature, say — stores it here and prefers it when
-	// rebuilding; adapters that can rebuild from the neutral fields ignore it.
-	Raw []byte
+	Raw   []byte
 }
 
-// CompletionCall is one native tool call, in this system's shape.
 type CompletionCall struct {
-	// ID is the provider's own identifier for the call, echoed back with its result.
-	ID   string
-	Name string
-	// Arguments is the call's input exactly as the model produced it.
+	ID        string
+	Name      string
 	Arguments json.RawMessage
 }
 
-// ToolResultTurn is one call's answer, paired by the call's own identifier.
 type ToolResultTurn struct {
 	CallID  string
 	Content string
-	// IsError marks a read that failed or was refused, so the model treats the content
-	// as the reason rather than as data.
 	IsError bool
 }
 
-// Block is one span of prompt text and whether a cacheable prefix ends at it.
-//
-// Cache is structural rather than a vendor marker: it says this much of the prompt is stable, and
-// what a provider does with that — a breakpoint, an automatic prefix, nothing at all — is the
-// adapter's problem.
 type Block struct {
 	Text  string
 	Cache bool
 }
 
-// Schema is the declared output contract, as one JSON Schema this repository owns.
 type Schema struct {
 	Name     string
 	Version  string
 	Document map[string]any
 }
 
-// Completion is what one provider returned.
 type Completion struct {
-	// Model is the model that ANSWERED, read from the response rather than echoed from the
-	// request: a provider may re-serve a request on another model, and the record must
-	// name what actually spoke.
-	Model string
-	// RequestID is the provider's own identifier for this call, which is what a vendor support
-	// conversation is conducted in.
+	Model     string
 	RequestID string
-	// Document is the answer, as the bytes the schema describes. On a tool-calling
-	// prompt it is any plain answer text instead.
-	Document []byte
-	// ToolCalls are the native calls the answer asked for, empty when it did not.
+	Document  []byte
 	ToolCalls []CompletionCall
-	// Raw is the adapter's own verbatim rendering of this assistant turn, for replay —
-	// see AssistantTurn.Raw.
-	Raw []byte
-	// Stop is why generation ended, normalized. It is read before the document is, because
-	// reading the document first is the defect that presents a refusal as a conclusion.
-	Stop Stop
-	// Usage is what the call consumed, with unreported fields absent rather than zero.
-	Usage TokenUsage
+	Raw       []byte
+	Stop      Stop
+	Usage     TokenUsage
 }
 
-// Stop is why a provider stopped generating, in this system's terms.
-//
-// The values are recorded, so they are named rather than inherited from any vendor's spelling.
 type Stop int16
 
 const (
-	// StopComplete is a finished answer.
 	StopComplete Stop = iota + 1
-	// StopRefused is the provider's own safeguards declining. It is a successful response
-	// carrying a refusal, not a transport error, which is why it has to be checked for
-	// explicitly.
 	StopRefused
-	// StopTruncated is the output ceiling being reached before the answer finished. The document
-	// is incomplete and cannot be trusted to parse.
 	StopTruncated
-	// StopToolUse is a turn that ended by asking for tools: the completion carries the
-	// calls, and the conversation continues with their results.
 	StopToolUse
 )
 
@@ -298,7 +203,6 @@ func (s Stop) String() string {
 	}
 }
 
-// Effort is how hard a provider should think before answering.
 type Effort string
 
 const (
@@ -309,8 +213,6 @@ const (
 	EffortMax       Effort = "max"
 )
 
-// Valid reports whether this is an effort level this system recognises. An unrecognised level is
-// refused at startup rather than sent to a provider that would reject it mid-round.
 func (e Effort) Valid() bool {
 	switch e {
 	case EffortLow, EffortMedium, EffortHigh, EffortExtraHigh, EffortMax:
@@ -320,22 +222,15 @@ func (e Effort) Valid() bool {
 	}
 }
 
-// Count is a token figure and whether the provider actually reported it.
 type Count struct {
-	Tokens int64
-	// Reported is false when the provider said nothing about this figure. A consumer that treats
-	// an unreported count as zero is asserting a measurement nobody made.
+	Tokens   int64
 	Reported bool
 }
 
-// Counted is a figure a provider reported.
 func Counted(tokens int64) Count { return Count{Tokens: tokens, Reported: true} }
 
-// Unreported is the absence of a figure.
 func Unreported() Count { return Count{} }
 
-// Or returns the figure, or the fallback when the provider reported none. It exists so the few
-// places that genuinely must have a number say so at the call site.
 func (c Count) Or(fallback int64) int64 {
 	if !c.Reported {
 		return fallback
@@ -343,16 +238,12 @@ func (c Count) Or(fallback int64) int64 {
 	return c.Tokens
 }
 
-// TokenUsage is one call's consumption, normalized across every provider.
 type TokenUsage struct {
 	Input      Count
 	Output     Count
 	CacheWrite Count
 	CacheRead  Count
-	// Reasoning is tokens spent on internal reasoning where the provider breaks them out. They
-	// are already inside Output on every provider that reports both; this is a decomposition for
-	// observability, never an addend.
-	Reasoning Count
+	Reasoning  Count
 }
 
 func usageOf(usage TokenUsage) investigation.Usage {

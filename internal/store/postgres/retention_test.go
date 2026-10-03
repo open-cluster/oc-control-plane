@@ -9,18 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Applying the retention schedule a tenant declared, through the one path the database permits.
-//
-// The record is append-only and enforced as such by the database: an UPDATE, a DELETE and a
-// TRUNCATE are all refused, EXCEPT in a transaction that has declared itself the pruner. So the
-// assertions that matter are not "rows went" — they are that rows go ONLY through that path, and
-// that the declaration does not outlive the transaction that made it.
-
-// recordAuditEvent writes one event directly.
-//
-// It is raw SQL rather than the application's own writer because the writer commits an event
-// alongside a change it is describing, and what is under test here has no change to describe. The
-// INSERT is not what the trigger guards, so this reaches the same rows by the same door.
 func recordAuditEvent(
 	t *testing.T, dsn string, organization uuid.UUID, occurredAt time.Time,
 ) uuid.UUID {
@@ -123,8 +111,6 @@ func TestPruneEventsBefore_RemovesWhatAgedOutAndKeepsWhatDidNot(t *testing.T) {
 	}
 }
 
-// The bound is what keeps a first sweep against years of history from being one lock somebody
-// notices as an outage. A short batch is also how the pruner knows the backlog is gone.
 func TestPruneEventsBefore_RemovesNoMoreThanItWasAskedFor(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
@@ -153,7 +139,6 @@ func TestPruneEventsBefore_RemovesNoMoreThanItWasAskedFor(t *testing.T) {
 	}
 }
 
-// One tenant's schedule never reaches another tenant's record, even on the same database.
 func TestPruneEventsBefore_TouchesNoOtherTenantsRecord(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
@@ -178,13 +163,6 @@ func TestPruneEventsBefore_TouchesNoOtherTenantsRecord(t *testing.T) {
 	}
 }
 
-// THE PROPERTY THE WHOLE MECHANISM RESTS ON.
-//
-// The pruner declares itself with a setting local to its transaction. A SESSION-level setting
-// would survive on a pooled connection and turn every later transaction that happened to get it
-// into one permitted to delete the record — which would make an append-only guarantee depend on
-// connection assignment. So: an ordinary delete is refused, a declared one succeeds, and an
-// ordinary delete afterwards is refused again.
 func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
@@ -213,9 +191,6 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 
 	undeclared("before the pruner ran")
 
-	// The pool is small and reused deliberately: the assertion below is only meaningful if the
-	// connection the pruner declared on can come back to a later caller, which is exactly the
-	// leak a session-level setting would produce.
 	removed, err := database.PruneEventsBefore(
 		context.Background(), org, now.AddDate(0, 0, -30), 1000)
 	if err != nil {
@@ -235,8 +210,6 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	}
 }
 
-// An Organization that explicitly retains forever is not reported; treating zero as a horizon
-// of "now" would delete its entire record.
 func TestDeclaredRetentions_ReportsOnlyTheTenantsThatDeclaredASchedule(t *testing.T) {
 	t.Parallel()
 	dsn := postgresDSN(t)
@@ -263,7 +236,6 @@ func TestDeclaredRetentions_ReportsOnlyTheTenantsThatDeclaredASchedule(t *testin
 	if days[orgA] != 30 {
 		t.Errorf("org-a declared 30 days and is reported as %d", days[orgA])
 	}
-	// Every Organization in the deployment database is scanned.
 	orgFar := organization(t, "org-far").String()
 	if days[orgFar] != 7 {
 		t.Errorf("a second tenant declared 7 days and is reported as %d",

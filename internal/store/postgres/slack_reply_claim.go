@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 )
 
-// ReleaseSlackReply schedules a normal flush independently of crash recovery.
 func (p *Database) ReleaseSlackReply(ctx context.Context, org uuid.UUID, id, owner uuid.UUID, at time.Time) error {
 	return p.withSlackReplyClaim(ctx, org, id, owner, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE slack_reply SET status = $3, lease_owner = NULL,
@@ -43,7 +42,7 @@ func (p *Database) withSlackReplyClaim(
 	if err != nil {
 		return fmt.Errorf("locking a slack reply: %w", err)
 	}
-	// Check expiry after acquiring the lock; waiting for it may outlive the claim.
+	// Check expiry after locking because the wait may outlive the claim.
 	var owned bool
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(status = $4 AND lease_owner = $3
 		AND leased_until > clock_timestamp(), false) FROM slack_reply

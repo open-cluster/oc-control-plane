@@ -37,7 +37,7 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 	var terminalConversation uuid.UUID
 	for status := 1; status <= 5; status++ {
 		conversationID, deliveryID, workID := seedLegacySlackMessageWork(
-			t, pool, organization, integration.ID, status)
+			t, pool, organization, integration.ID, status, status, time.Now().Add(24*time.Hour))
 		if status == 2 {
 			leased.Organization, leased.IntegrationID, leased.ConversationID = organization, integration.ID, conversationID
 			leased.LeaseOwner, leased.LeaseEpoch = "retained-owner", 7
@@ -113,31 +113,49 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 }
 
 func seedLegacySlackMessageWork(
-	t *testing.T, pool *pgxpool.Pool, organization, integration uuid.UUID, status int,
+	t *testing.T, pool *pgxpool.Pool, organization, integration uuid.UUID,
+	status, attempts int, availableAt time.Time,
 ) (uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
+	ctx := context.Background()
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
 	conversationID, deliveryID, workID := uuid.New(), uuid.New(), uuid.New()
-	_, err := pool.Exec(context.Background(), `
-		INSERT INTO webhook_delivery
+	if _, err = transaction.Exec(ctx, `INSERT INTO webhook_delivery
 			(delivery_id, org_id, integration_id, content_digest, provider_identity, request_id)
-		VALUES ($1, $2, $3, $4, $1::text, '');
-		INSERT INTO conversation (conversation_id, org_id, surface, subject)
-		VALUES ($5, $2, 2, 'retained question');
-		INSERT INTO conversation_message
+		VALUES ($1, $2, $3, $4, $5, '')`,
+		deliveryID, organization, integration, randomDigest(t), deliveryID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = transaction.Exec(ctx, `INSERT INTO conversation
+			(conversation_id, org_id, surface, subject)
+		VALUES ($1, $2, 2, 'retained question')`, conversationID, organization); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = transaction.Exec(ctx, `INSERT INTO conversation_message
 			(conversation_id, org_id, sequence, role, actor_kind, actor_id, text, window_from, window_until)
-		VALUES ($5, $2, 1, 1, 2, 'UCONTRACTION', 'investigate', now() - interval '1 hour', now());
-		INSERT INTO webhook_job
+		VALUES ($1, $2, 1, 1, 2, 'UCONTRACTION', 'investigate', now() - interval '1 hour', now())`,
+		conversationID, organization); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = transaction.Exec(ctx, `INSERT INTO webhook_job
 			(job_id, org_id, kind, status, delivery_id, integration_id, conversation_id, message_sequence,
 			 attempts, available_at, lease_owner, lease_epoch, lease_expires_at,
 			 failure_class, failure_message, created_at, updated_at)
-		VALUES ($6, $2, 2, $7, $1, $3, $5, 1, $7, now() + interval '1 day',
-			CASE WHEN $7 = 2 THEN 'retained-owner' ELSE '' END, 7,
-			CASE WHEN $7 = 2 THEN now() + interval '1 hour' ELSE NULL END,
-			CASE WHEN $7 IN (3,4) THEN 'retained-failure' ELSE '' END,
-			CASE WHEN $7 IN (3,4) THEN 'retained diagnostic' ELSE '' END,
+		VALUES ($1, $2, 2, $3::smallint, $4, $5, $6, 1, $7, $8,
+			CASE WHEN $3::smallint = 2 THEN 'retained-owner' ELSE '' END, 7,
+			CASE WHEN $3::smallint = 2 THEN now() + interval '1 hour' ELSE NULL END,
+			CASE WHEN $3::smallint IN (3,4) THEN 'retained-failure' ELSE '' END,
+			CASE WHEN $3::smallint IN (3,4) THEN 'retained diagnostic' ELSE '' END,
 			'2026-09-01T12:00:00Z', '2026-09-02T12:00:00Z')`,
-		deliveryID, organization, integration, randomDigest(t), conversationID, workID, status)
-	if err != nil {
+		workID, organization, status, deliveryID, integration, conversationID, attempts, availableAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = transaction.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return conversationID, deliveryID, workID

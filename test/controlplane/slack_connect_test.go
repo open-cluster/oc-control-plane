@@ -14,15 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-// ONE-CLICK SLACK INSTALLATION AT THE COMPOSITION SEAM.
-//
-// These drive the composed process over HTTP against a fake Slack and assert what a
-// customer or an attacker would observe: the HTTP answer, what ended up in the database,
-// and which Slack endpoints were asked with which credential. The credential never travels
-// through the browser, and the tenant never comes from the callback's query.
-
-// startSlackInstallPlane starts a control plane whose Slack app is registered, so the
-// integration surface offers Connect Slack rather than the pasted-token form.
 func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *integrationPlane {
 	t.Helper()
 
@@ -42,14 +33,12 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 	return &integrationPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
 }
 
-// pressConnectSlack presses the button and returns where the browser would be sent.
 func (p *integrationPlane) pressConnectSlack(t *testing.T, organization string) (int, string) {
 	t.Helper()
 	return p.call(t, http.MethodPost,
 		p.base(organization)+"/integration-types/slack/connect?returnTo=/integrations", nil)
 }
 
-// returnFromSlack is the browser coming back from the authorization screen.
 func (p *integrationPlane) returnFromSlack(t *testing.T, parameters url.Values) (int, string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet,
@@ -89,7 +78,6 @@ func (p *integrationPlane) returnFromSlack(t *testing.T, parameters url.Values) 
 	return status, string(body)
 }
 
-// connectSlack drives the whole flow once and returns the callback's answer.
 func connectSlack(t *testing.T, plane *integrationPlane, code string) (int, string) {
 	t.Helper()
 
@@ -102,9 +90,6 @@ func connectSlack(t *testing.T, plane *integrationPlane, code string) (int, stri
 	})
 }
 
-// The flow the whole slice exists for: a customer presses one button and lands on an
-// integration that is already verified and active, with no token having passed through
-// their clipboard or their browser.
 func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
@@ -120,7 +105,6 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 		t.Fatalf("outcome = %q, want connected: %s", outcome.Connect, outcome.Note)
 	}
 
-	// The exchange happened server-side, once, with the client secret in the body.
 	if codes := vendor.codesExchanged(); len(codes) != 1 || codes[0] != "the-authorization-code" {
 		t.Errorf("codes exchanged = %v, want the one code exactly once", codes)
 	}
@@ -142,8 +126,6 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 			installed)
 	}
 
-	// The bot token is sealed and never rendered. A credential that reached a response
-	// once has reached a browser history, a proxy log and a screenshot.
 	if installed.Credential == nil || !installed.Credential.Configured {
 		t.Fatal("no credential is recorded; the integration cannot read anything")
 	}
@@ -160,9 +142,6 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 	}
 }
 
-// The documented attack. An organization identifier arriving in the callback's query must
-// bind nothing: the tenant comes from the flow the state redeemed, and the query is not
-// read at all.
 func TestTheSlackCallbackIgnoresAnOrganizationInItsQuery(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	plane := startSlackInstallPlane(t, vendor, "")
@@ -181,8 +160,6 @@ func TestTheSlackCallbackIgnoresAnOrganizationInItsQuery(t *testing.T) {
 		t.Fatalf("the callback = %d: %s", status, landed)
 	}
 
-	// The tenant that started the flow has it, and it names the workspace that was
-	// actually installed rather than anything the query asked for.
 	listed := plane.integrations(t, surfaceOrg)
 	if len(listed) != 1 {
 		t.Fatalf("the starting tenant holds %d integrations, want one", len(listed))
@@ -201,8 +178,6 @@ func TestTheSlackCallbackIgnoresAnOrganizationInItsQuery(t *testing.T) {
 	}
 }
 
-// Reconnecting the same workspace re-verifies what exists instead of leaving a customer
-// with two integrations for one Slack. This is what recording the workspace buys.
 func TestConnectingTheSameWorkspaceAgainDoesNotDuplicateIt(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	plane := startSlackInstallPlane(t, vendor, "")
@@ -220,7 +195,6 @@ func TestConnectingTheSameWorkspaceAgainDoesNotDuplicateIt(t *testing.T) {
 	}
 }
 
-// A code Slack will not exchange binds nothing and leaves nothing behind.
 func TestAnUnexchangeableSlackCodeBindsNothing(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	plane := startSlackInstallPlane(t, vendor, "")
@@ -234,8 +208,6 @@ func TestAnUnexchangeableSlackCodeBindsNothing(t *testing.T) {
 	}
 }
 
-// A deployment that registered no Slack app keeps the pasted-token form. This is the
-// air-gapped path, and it stays supported.
 func TestADeploymentWithNoSlackAppKeepsTheForm(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	plane := startSlackPlane(t, vendor)
@@ -266,7 +238,6 @@ func TestADeploymentWithNoSlackAppKeepsTheForm(t *testing.T) {
 	}
 }
 
-// A pasted token remains a supported credential for bounded Slack Tools.
 func TestAPastedSlackTokenOffersItsGrantedTools(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	plane := startSlackInstallPlane(t, vendor, "")
@@ -287,7 +258,6 @@ func TestAPastedSlackTokenOffersItsGrantedTools(t *testing.T) {
 	}
 }
 
-// A connected installation reports Tool availability through the same contract.
 func TestAConnectedSlackInstallationReportsItsTools(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	plane := startSlackInstallPlane(t, vendor, "")

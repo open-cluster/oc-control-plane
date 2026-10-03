@@ -49,8 +49,6 @@ func serve(ctx context.Context, process assembled) error {
 	}
 	logger.Info("listening", slog.String("address", listener.Addr().String()))
 
-	// One slot per surface that can report a failure. Too few would leave the last goroutines
-	// blocked forever on a send nobody is left to receive.
 	failed := make(chan error, 2)
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil &&
@@ -62,9 +60,6 @@ func serve(ctx context.Context, process assembled) error {
 	}()
 	defer func() { _ = server.Close() }()
 
-	// The Relay endpoint is a second listener on purpose. It speaks a different protocol to
-	// a different kind of caller, and putting it on the HTTP port would place it behind that
-	// surface's middleware and expose the health surface to relays.
 	relays, err := startRelayEndpoint(process, failed)
 	if err != nil {
 		return err
@@ -89,7 +84,6 @@ func serve(ctx context.Context, process assembled) error {
 	case <-ctx.Done():
 	}
 
-	// Drain: stop accepting, let in-flight requests finish within the budget, then exit.
 	logger.Info("draining", slog.Duration("timeout", defaultShutdownTimeout))
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultShutdownTimeout)
 	defer cancel()
@@ -109,8 +103,6 @@ func serve(ctx context.Context, process assembled) error {
 	return nil
 }
 
-// httpRoutes mounts the existing route owners behind one HTTP listener. Each owner keeps
-// its own authentication, authorization, body limits, and request middleware.
 func httpRoutes(process assembled) (http.Handler, error) {
 	healthRouter := health.Handlers{
 		Ready:   process.database.Ping,
@@ -145,7 +137,6 @@ func logMigrationSummary(logger *slog.Logger, applied []string) {
 	logger.Info("migrations applied", slog.Any("versions", applied))
 }
 
-// apiRouter assembles the authenticated API route table.
 func apiRouter(process assembled) (http.Handler, error) {
 	cfg := process.config
 	if bearing := process.catalog.CredentialBearing(); len(bearing) > 0 &&
@@ -187,7 +178,6 @@ func apiRouter(process assembled) (http.Handler, error) {
 	return correlation.Middleware(mux), nil
 }
 
-// authHandlers assembles authentication and identity handlers.
 func authHandlers(process assembled) (identity.Handlers, error) {
 	cfg := process.config
 	handlers := identity.Handlers{
@@ -209,7 +199,6 @@ func authHandlers(process assembled) (identity.Handlers, error) {
 	return handlers, nil
 }
 
-// webhookRouter assembles authenticated Alertmanager and Slack webhook routes.
 func webhookRouter(process assembled) http.Handler {
 	cfg := process.config
 	return webhooks.Handlers{

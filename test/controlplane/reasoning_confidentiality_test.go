@@ -15,8 +15,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-// The vendor may return private reasoning beside its tool call. The composed process must
-// discard it at the adapter boundary: it cannot become durable truth or operator output.
 func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	const marker = "private-reasoning-must-never-escape-4f2b"
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

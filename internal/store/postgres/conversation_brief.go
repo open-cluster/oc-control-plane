@@ -11,14 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The conversation brief carries a bounded message tail and prior cited findings.
-//
-// Nothing here copies a tool payload. A finding already carries the ordinals of the runs
-// that established it and those runs are still in the record, so the brief carries the
-// REFERENCE. Copying the evidence would double a long conversation's context to repeat
-// something the citation already says.
-
-// ConversationBrief reads what a conversation contributes to its next turn.
 func (p *Database) ConversationBrief(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, tail int,
 ) (investigation.Brief, error) {
@@ -53,7 +45,6 @@ func (p *Database) ConversationBrief(
 	if err != nil {
 		return investigation.Brief{}, err
 	}
-	// Transaction timestamps can precede lock acquisition; Message sequence stays authoritative.
 	brief.Recent = mergeExchange(brief.Recent, answers)
 	if len(brief.Recent) > tail {
 		brief.Recent = brief.Recent[len(brief.Recent)-tail:]
@@ -112,27 +103,12 @@ func briefExchangeText(text string) string {
 	return boundedRunes(text, investigation.BriefMessageBound-len(suffix)) + suffix
 }
 
-// conversationRolePerson is the message role a person's own words carry. Named here rather
-// than written as a literal, because the mapping between the column and the meaning is what
-// the frozen-enum gate exists to protect.
 const conversationRolePerson = 1
 
-// readPriorTurns fills the brief with what the conversation's concluded turns established.
-//
-// Only CONCLUDED turns contribute. A running one has established nothing yet, and a failed
-// one established nothing at all — carrying its findings would be carrying findings that do
-// not exist.
 func readPriorTurns(
 	ctx context.Context, pool querier, organization uuid.UUID, id uuid.UUID,
 	brief *investigation.Brief,
 ) error {
-	// This conversation's own concluded turns, and — when it is about an incident — the
-	// concluded investigations of every OTHER conversation on that same incident.
-	//
-	// That second half is the whole of what conversations about one incident share.
-	// FINDINGS ONLY: durable, cited, incident-level fact. Never another conversation's
-	// messages and never its summary, because what somebody else asked and was told is
-	// theirs. Citations retain Investigation identity independently of local turn ordinals.
 	rows, err := pool.Query(ctx, `
 		SELECT CASE WHEN turn.conversation_id = $2 THEN turn.turn ELSE 0 END,
 		       turn.investigation_id, turn.conclusion, turn.concluded_at,

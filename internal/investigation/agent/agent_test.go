@@ -362,7 +362,6 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// This adapter overrides only candidate discovery so Run sees both installations.
 			store.candidate = storeCandidates[0]
 			store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "Read this thread."}}
 			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
@@ -378,7 +377,6 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 					ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1}),
 				}}}, nil
 			}}
-			// records normally returns one candidate; use a small wrapper for this boundary case.
 			scopedStore := &candidateRecords{records: store, candidates: storeCandidates}
 			agent := configuredTestAgent(t, store, model, catalog)
 			agent.Store = scopedStore

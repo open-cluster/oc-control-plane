@@ -4,7 +4,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// Definition exports this provider's catalog metadata and behavior.
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{
@@ -21,11 +20,6 @@ func Definition() integrations.Definition {
 	}
 }
 
-// verify judges this integration from what has actually happened. There is nothing to
-// probe outbound — OpenCluster never calls an Alertmanager — so the honest verification is
-// the delivery record: a delivery that arrived and was accepted is proof the customer's
-// Alertmanager can reach the endpoint, and its absence is stated as an absence rather than
-// dressed up as a check.
 func verify(input integrations.VerifyInput) integrations.Verification {
 	if input.LastAcceptedDelivery.IsZero() {
 		return integrations.Verification{

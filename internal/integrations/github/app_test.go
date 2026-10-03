@@ -15,12 +15,6 @@ import (
 	"time"
 )
 
-// The App credential machinery against a fake GitHub: the JWT this build signs is one
-// GitHub would accept, and installation tokens are minted once and reused until near
-// expiry rather than on every read.
-
-// testKey generates an RSA key once per test that needs one. 1024 bits is far below any
-// deployment's key and exactly enough for a signature round-trip under test.
 func testKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -108,13 +102,10 @@ func TestAppJWTIsOneGitHubWouldAccept(t *testing.T) {
 	if claims.Issuer != "12345" {
 		t.Errorf("iss = %q, want the app id", claims.Issuer)
 	}
-	// Issued in the near past on purpose — GitHub refuses tokens from the future, and a
-	// deployment's clock can lead GitHub's by a few seconds.
 	if claims.IssuedAt >= claims.Expiry || claims.Expiry-claims.IssuedAt > 600 {
 		t.Errorf("iat=%d exp=%d; GitHub caps a JWT at ten minutes", claims.IssuedAt, claims.Expiry)
 	}
 
-	// The signature must verify under the public key, or nothing above matters.
 	if err := verifyRS256(key, parts[0]+"."+parts[1], parts[2]); err != nil {
 		t.Errorf("the signature does not verify: %v", err)
 	}
@@ -171,7 +162,6 @@ func TestAnExpiringInstallationTokenIsReplaced(t *testing.T) {
 			minted.Add(1)
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusCreated)
-			// Already inside the refresh margin, so every ask mints anew.
 			expiry := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
 			_, _ = writer.Write([]byte(`{"token":"ghs_short_lived","expires_at":"` +
 				expiry + `"}`))

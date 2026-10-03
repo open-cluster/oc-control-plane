@@ -12,13 +12,6 @@ import (
 	"time"
 )
 
-// The terminator is the Relay's trust anchor for the whole exercise, so the property that
-// matters is not that it serves TLS but that its pin is enforced. A harness whose pin were
-// decorative would let every later test pass against any server that happened to answer.
-//
-// The client below re-derives the pin from the presented certificate exactly as the Relay
-// does — SHA-256 over SubjectPublicKeyInfo, standard base64 — rather than trusting a chain,
-// because the Relay validates no chain either.
 func TestTheTerminatorIsAcceptedOnlyByAClientPinnedToItsKey(t *testing.T) {
 	t.Parallel()
 
@@ -47,8 +40,6 @@ func TestTheTerminatorIsAcceptedOnlyByAClientPinnedToItsKey(t *testing.T) {
 	})
 }
 
-// dialPinned completes a TLS handshake against address, accepting the peer only when its
-// SubjectPublicKeyInfo digest matches pin.
 func dialPinned(address, pin string) error {
 	expected, err := base64.StdEncoding.DecodeString(pin)
 	if err != nil {
@@ -59,7 +50,7 @@ func dialPinned(address, pin string) error {
 		ServerName:         "localhost",
 		MinVersion:         tls.VersionTLS12,
 		NextProtos:         []string{"h2"},
-		InsecureSkipVerify: true, // The pin is the trust decision, exactly as in the Relay.
+		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			leaf, parseErr := x509.ParseCertificate(rawCerts[0])
 			if parseErr != nil {
@@ -78,8 +69,6 @@ func dialPinned(address, pin string) error {
 	return connection.Close()
 }
 
-// startEchoUpstream stands in for the control plane's plaintext endpoint. It exists so the
-// terminator has somewhere to forward to; the transport is what this test is about.
 func startEchoUpstream(t *testing.T) string {
 	t.Helper()
 

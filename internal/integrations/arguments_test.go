@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-// The shared argument reader: both providers used to carry a private copy of this, and
-// the copies were where a security invariant lived. These tests pin the one shared
-// behavior the providers now call.
-
 func declaredArguments() []ToolArgument {
 	return []ToolArgument{
 		{Name: "channel", Description: "the channel id", Type: FieldString, Required: true},
@@ -46,7 +42,6 @@ func TestTextReadsAnOptionalString(t *testing.T) {
 	}
 }
 
-// readAs re-reads with the named value replaced, so type refusals stay one-liners.
 func readAs(values Arguments, name string, value any) (string, error) {
 	replaced, err := ReadArguments(declaredArguments(), map[string]any{name: value})
 	if err != nil {
@@ -135,23 +130,19 @@ func TestClampWindowNarrowsIntoTheRequests(t *testing.T) {
 	until := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	request := ToolRequest{WindowFrom: from, WindowUntil: until}
 
-	// A wider ask does not widen the read.
 	since, latest := request.ClampWindow(from.Add(-time.Hour), until.Add(time.Hour))
 	if !since.Equal(from) || !latest.Equal(until) {
 		t.Fatalf("a wider ask must clamp to the investigation's window, got %v..%v", since, latest)
 	}
-	// A narrower ask stands.
 	narrowFrom, narrowUntil := from.Add(30*time.Minute), until.Add(-30*time.Minute)
 	since, latest = request.ClampWindow(narrowFrom, narrowUntil)
 	if !since.Equal(narrowFrom) || !latest.Equal(narrowUntil) {
 		t.Fatalf("a narrower ask must stand, got %v..%v", since, latest)
 	}
-	// Zero arguments take the whole window.
 	since, latest = request.ClampWindow(time.Time{}, time.Time{})
 	if !since.Equal(from) || !latest.Equal(until) {
 		t.Fatalf("zero arguments must take the window, got %v..%v", since, latest)
 	}
-	// A direct call outside any investigation clamps nothing.
 	direct := ToolRequest{}
 	since, latest = direct.ClampWindow(narrowFrom, narrowUntil)
 	if !since.Equal(narrowFrom) || !latest.Equal(narrowUntil) {
@@ -160,7 +151,6 @@ func TestClampWindowNarrowsIntoTheRequests(t *testing.T) {
 }
 
 func TestReadArgumentsErrorsAreForOperators(t *testing.T) {
-	// The refusals travel into recorded run errors, so they must be sentences, not codes.
 	broken, _ := ReadArguments(declaredArguments(), map[string]any{"limit": "many"})
 	_, err := broken.Count("limit", 30, 100)
 	if err == nil || !strings.Contains(err.Error(), "limit") {

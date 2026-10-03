@@ -25,22 +25,15 @@ const (
 	maxRequestBytes = 16 << 10
 )
 
-// Handlers is this domain surface's dependencies.
 type Handlers struct {
 	Store        Store
 	Catalog      Catalog
 	WebhookTypes map[Provider]bool
 	Logger       *slog.Logger
-	// Sealer closes over outbound credentials at rest. Unconfigured means this deployment
-	// cannot hold one, and submitting a secret field is refused with that reason — never
-	// stored in the clear and never silently dropped.
-	Sealer seal.Sealer
-	// PublicURL is where this API and its webhooks are publicly reachable. Provider redirect
-	// and webhook URLs are configured rather than derived from a caller-controlled Host header.
-	PublicURL string
+	Sealer       seal.Sealer
+	PublicURL    string
 }
 
-// Routes is this domain surface's contribution to the application API's index.
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1"
 
@@ -49,11 +42,6 @@ func (h Handlers) Routes() []authz.Route {
 		{Method: http.MethodGet, Pattern: base + "/integrations", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.list)},
 		{Method: http.MethodPost, Pattern: base + "/integrations", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.create)},
 		{Method: http.MethodPost, Pattern: base + "/integration-types/{type}/connect", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.startConnect)},
-		// The provider returns the browser HERE, to one path that names no tenant: a
-		// vendor registration holds a single redirect URI, and a tenant read out of a
-		// callback URL is a tenant the caller chose. What binds the return trip to an
-		// organization is the single-use state redeemed against the stored flow, and
-		// what binds it to a person is the credential this route still requires.
 		{Method: http.MethodGet, Pattern: CallbackPath, Handler: http.HandlerFunc(h.completeConnect)},
 		{Method: http.MethodGet, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.read)},
 		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.revise)},
@@ -108,7 +96,6 @@ var listSpec = listing.Spec{
 	Filters:     []string{"type", "relay", "disabled"},
 }
 
-// list reports a page of the tenant's Integrations, newest first.
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
@@ -131,16 +118,13 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, listing.NewPage(views, listed.Next, nil))
 }
 
-// createRequest is what an operator submits.
 type createRequest struct {
-	// Type is the Integration Type's stable key: "alertmanager", "kubernetes".
 	Type          string         `json:"type"`
 	Name          string         `json:"name"`
 	Configuration map[string]any `json:"configuration"`
 	RelayID       string         `json:"relayId"`
 }
 
-// create records one configured installation.
 func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
@@ -164,10 +148,6 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	// An outbound type is verified against the real provider BEFORE anything is stored:
-	// a typo fails here, at setup, not during the next incident. The probe's judgement
-	// travels into the create, so the Integration is born verified in the same
-	// transaction that records it.
 	if definition.Probe != nil && !h.probeAndSeal(ctx, writer, definition, &wanted, credential) {
 		return
 	}
@@ -187,17 +167,11 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 		view.IntegrationView.VerificationNote = wanted.Verification.Note
 	}
 	if secret != "" {
-		// The one moment the secret exists in a response. It is not stored, not logged,
-		// and no path returns it again; an operator who loses it rotates.
 		view.WebhookSecret = secret
 	}
 	writeJSON(writer, http.StatusCreated, view)
 }
 
-// plan turns a request into what the store is asked to write, plus the two values that
-// exist only in this moment: the minted webhook secret, which after this exists only as a
-// digest, and the pasted credential, which after the probe exists only sealed. A refusal
-// is in the operator's language.
 func (h Handlers) plan(
 	definition Definition, asked createRequest,
 ) (NewIntegration, string, string, string) {
@@ -211,8 +185,6 @@ func (h Handlers) plan(
 	}
 
 	wanted := NewIntegration{
-		// Minted here, before the probe seals anything, so the sealed credential can
-		// bind to the row it will live on.
 		ID:            uuid.New(),
 		Provider:      definition.Key,
 		Name:          name,
@@ -244,10 +216,6 @@ func (h Handlers) plan(
 	return wanted, secret, credential, ""
 }
 
-// probeAndSeal verifies outbound reality before anything is stored: the definition's
-// probe is given the installation as it is about to exist, a failed judgement refuses the
-// create with the note as the reason, and only then is the credential sealed. The probe
-// runs before the seal so a credential the provider refused is never stored at all.
 func (h Handlers) probeAndSeal(
 	ctx context.Context, writer http.ResponseWriter, definition Definition,
 	wanted *NewIntegration, credential string,
@@ -281,7 +249,6 @@ func (h Handlers) probeAndSeal(
 	return true
 }
 
-// read reports one Integration.
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
@@ -299,14 +266,11 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, h.viewOf(found))
 }
 
-// reviseRequest is what a PATCH may change. Pointers distinguish "leave it" from "clear it".
 type reviseRequest struct {
 	Name          *string        `json:"name"`
 	Configuration map[string]any `json:"configuration"`
 }
 
-// revise changes part of an Integration and leaves its identity, its type, its relay
-// binding and its secret alone.
 func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
@@ -333,7 +297,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 	credential := ""
 	var definition Definition
 	if asked.Configuration != nil {
-		// The configuration is checked against the type's schema, which needs the type.
 		current, err := h.Store.Integration(ctx, organization, id)
 		if err != nil {
 			h.fail(writer, request, err)
@@ -346,8 +309,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				"integration %s has provider %q this build does not serve", id, current.Provider))
 			return
 		}
-		// A secret field may be absent here, unlike at creation: absence means "keep the
-		// credential I already gave you", which is what write-only after entry implies.
 		checked, submitted, refusal := checkConfiguration(definition, asked.Configuration, false)
 		if refusal != "" {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
@@ -357,9 +318,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 		credential = submitted
 
 		if credential != "" {
-			// The replacement is probed and sealed BEFORE anything is applied, and the
-			// store applies revision and credential in one transaction — so a pasted-wrong
-			// token, a missing sealing key or a name conflict each change nothing at all.
 			if !h.holdsCredentials(writer) {
 				return
 			}
@@ -377,8 +335,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				return
 			}
 
-			// nil installation: a credential typed into the configuration form names no
-			// vendor installation, so there is no routing record to refresh.
 			revised, err := h.Store.ReplaceIntegrationCredential(
 				ctx, principal, organization, id, Revision(asked), sealed,
 				verification, nil)
@@ -401,9 +357,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, h.viewOf(revised))
 }
 
-// holdsCredentials answers whether this deployment can store a pasted credential at all,
-// refusing in the operator's language when it cannot. Checked before the provider is
-// probed, so a deployment that could not store the answer never spends the vendor call.
 func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
 	if h.Sealer.Configured() {
 		return true
@@ -413,9 +366,6 @@ func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
 	return false
 }
 
-// sealCredential closes over a pasted credential, bound to the row it will live on, and
-// mints its identity — answering the operator when either fails. Both paths that accept
-// a credential refuse through here, so they cannot drift into refusing differently.
 func (h Handlers) sealCredential(
 	writer http.ResponseWriter, credential string, id uuid.UUID,
 ) ([]byte, bool) {
@@ -428,8 +378,6 @@ func (h Handlers) sealCredential(
 	return nil, false
 }
 
-// remove deletes an Integration nothing depends on. One with history is refused with the
-// reason; disabling is the operation for retiring a source without losing its record.
 func (h Handlers) remove(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
@@ -473,10 +421,6 @@ func (h Handlers) setDisabled(
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-// verify checks an Integration against reality and records what it established. The
-// handler gathers the observed facts; the type's own definition judges them; the store
-// records the judgement. "Verified" therefore means the far end actually answered — never
-// that a form was well-formed.
 func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
@@ -498,8 +442,6 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	// An outbound type is verified by asking the provider itself; nothing gathered here
-	// could say whether the credential still works.
 	if definition.Probe != nil {
 		outcome := h.probeExisting(ctx, organization, definition, found)
 		verified, probeErr := h.Store.RecordIntegrationVerification(
@@ -544,12 +486,6 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, view)
 }
 
-// probeExisting asks the provider about an Integration as recorded, unsealing its
-// credential for the one call that presents it. A credential that cannot be opened —
-// a rotated key, a tampered column, a blob moved from another row — is judged failed
-// with what the operator can do about it, because "this integration cannot
-// authenticate" is its operational truth. The unseal lands in the audit record first;
-// one that cannot be recorded is not used.
 func (h Handlers) probeExisting(
 	ctx context.Context, organization uuid.UUID, definition Definition,
 	found Integration,
@@ -577,7 +513,6 @@ func (h Handlers) probeExisting(
 	return definition.Probe(ctx, input)
 }
 
-// rotateSecret replaces the webhook secret, returning the new value exactly once.
 func (h Handlers) rotateSecret(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
@@ -603,12 +538,6 @@ func (h Handlers) rotateSecret(writer http.ResponseWriter, request *http.Request
 	})
 }
 
-// checkConfiguration reads submitted configuration against the type's declared fields.
-// An undeclared field is refused rather than dropped, and a declared secret field is
-// EXTRACTED rather than kept: the returned configuration never holds a credential, and
-// the credential is returned beside it for the sealer. requireSecret distinguishes
-// creation, where a required credential must arrive, from revision, where its absence
-// means "keep the one I already gave you".
 func checkConfiguration(
 	definition Definition, submitted map[string]any, requireSecret bool,
 ) (map[string]any, string, string) {
@@ -683,8 +612,6 @@ func checkFieldValue(field Field, value any) string {
 	return ""
 }
 
-// listQuery reads what a listing may be narrowed by, refusing anything the listing does
-// not declare: a filter silently dropped returns everything while looking narrowed.
 func (h Handlers) listQuery(
 	writer http.ResponseWriter, request *http.Request,
 ) (Query, bool) {
@@ -734,7 +661,6 @@ func (h Handlers) listQuery(
 	return query, true
 }
 
-// caller resolves the principal the guard put on this request.
 func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
@@ -743,7 +669,6 @@ func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 
-// addressed resolves the tenant and the Integration named in the path.
 func (h Handlers) addressed(
 	writer http.ResponseWriter, request *http.Request,
 ) (uuid.UUID, uuid.UUID, bool) {
@@ -756,7 +681,6 @@ func (h Handlers) addressed(
 	return organization, id, true
 }
 
-// decode reads a bounded JSON body, refusing fields nothing declares.
 func (h Handlers) decode(
 	writer http.ResponseWriter, request *http.Request, into any,
 ) bool {
@@ -770,12 +694,9 @@ func (h Handlers) decode(
 	return true
 }
 
-// fail answers an error, naming the ones a caller can act on.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, authz.ErrNotAMember):
-		// The same answer the authorization middleware gives, byte for byte. A different
-		// one would confirm to a caller that a tenant they may not reach exists.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "integration not found"})

@@ -6,8 +6,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// DraftFrom creates a conservative first draft from durable evidence. It never turns
-// testimony into system fact and leaves genuinely human fields explicit.
 func DraftFrom(input GenerationInput) Postmortem {
 	draft := Postmortem{
 		IncidentID: input.IncidentID, Status: StatusDraft, Revision: 1,

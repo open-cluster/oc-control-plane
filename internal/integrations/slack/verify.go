@@ -11,21 +11,16 @@ import (
 
 const grantUserToken = "user_token"
 
-// requiredScopes maps requested grants to the user-visible consequence of losing them.
 var requiredScopes = map[string]string{
 	"channels:read":    "listing channels",
 	"channels:history": "reading channel history and threads",
 	"users:read":       "resolving message authors to names",
 }
 
-// search:read stays optional so the installed bot cannot search an employee's workspace.
 var optionalScopes = map[string]string{
 	"search:read": "searching messages across the workspace",
 }
 
-// probe verifies a token live against auth.test and judges what came back. It is the one
-// place "verified" is decided for this provider: the far end answered as this workspace
-// and this bot, with these grants — or it did not, and the note says which.
 func probe(ctx context.Context, client *Client, token string) integrations.Verification {
 	identity, err := client.AuthTest(ctx, token)
 	if err != nil {
@@ -57,11 +52,6 @@ func probe(ctx context.Context, client *Client, token string) integrations.Verif
 	}
 }
 
-// grantsOf records the verified reality tool availability derives from: the granted
-// scopes verbatim, plus the token's kind — classic message search is user-token-only,
-// so "is this a user token" is a fact worth recording, read from the token's own
-// documented prefixes (xoxp for a plain user token, xoxe.xoxp for a rotated one) at the
-// one moment the plaintext is in hand.
 func grantsOf(identity Identity, token string) []string {
 	grants := append([]string(nil), identity.Scopes...)
 	if strings.HasPrefix(token, "xoxp-") || strings.HasPrefix(token, "xoxe.xoxp-") {
@@ -92,7 +82,6 @@ func judgeFailure(err error) integrations.Verification {
 	}
 }
 
-// missingScopes reports which needed scopes the token was not granted, in a stable order.
 func missingScopes(granted []string) []string {
 	held := make(map[string]bool, len(granted))
 	for _, scope := range granted {
@@ -108,7 +97,6 @@ func missingScopes(granted []string) []string {
 	return missing
 }
 
-// costOf says what the missing scopes stop working, in the operator's language.
 func costOf(missing []string) string {
 	costs := make([]string, 0, len(missing))
 	for _, scope := range missing {

@@ -66,7 +66,7 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 		t.Helper()
 		var snapshot string
 		if err := pool.QueryRow(ctx, `SELECT jsonb_build_object(
-			'deliveries', (SELECT jsonb_agg(to_jsonb(d) ORDER BY delivery_id) FROM webhook_delivery AS d WHERE org_id = $1),
+			'deliveries', (SELECT jsonb_agg((to_jsonb(d) - 'request_id') ORDER BY delivery_id) FROM webhook_delivery AS d WHERE org_id = $1),
 			'alerts', (SELECT jsonb_agg(to_jsonb(a) ORDER BY alert_event_id) FROM alert_event AS a WHERE org_id = $1),
 			'incidents', (SELECT jsonb_agg(to_jsonb(i) ORDER BY incident_id) FROM incident AS i WHERE org_id = $1))::text`,
 			organization).Scan(&snapshot); err != nil {
@@ -81,16 +81,11 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 	if _, err := pool.Exec(ctx, `ALTER TABLE webhook_job ALTER COLUMN kind SET DEFAULT 2`); err != nil {
 		t.Fatal(err)
 	}
-	slackOutcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
-		Integration: slack.ID, ContentDigest: randomDigest(t), Channel: "CBACKFILL", Thread: "1.0",
-		Subject: "Slack question", ActorID: "UBACKFILL", Text: "investigate",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	slackConversation, _, _ := seedLegacySlackMessageWork(
+		t, pool, organization, slack.ID, 1, 0, age)
 	var slackBefore string
 	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(job) - 'kind' - 'incident_id' - 'job_id')::text FROM webhook_job AS job
-		WHERE org_id = $1 AND conversation_id = $2`, organization, slackOutcome.Conversation).Scan(&slackBefore); err != nil {
+		WHERE org_id = $1 AND conversation_id = $2`, organization, slackConversation).Scan(&slackBefore); err != nil {
 		t.Fatal(err)
 	}
 	factsBefore := facts()
@@ -132,7 +127,7 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 	}
 	var slackAfter string
 	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(work) - 'work_id')::text FROM slack_message_work AS work
-		WHERE org_id = $1 AND conversation_id = $2`, organization, slackOutcome.Conversation).Scan(&slackAfter); err != nil || slackAfter != slackBefore {
+		WHERE org_id = $1 AND conversation_id = $2`, organization, slackConversation).Scan(&slackAfter); err != nil || slackAfter != slackBefore {
 		t.Fatalf("Slack work changed: %v", err)
 	}
 	var remaining int
@@ -150,7 +145,7 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 		t.Fatalf("repaired work is not claimable with its original queue age: found=%t err=%v", found, err)
 	}
 	work, found, err := database.ClaimSlackMessageWork(ctx, "slack-worker", time.Minute)
-	if err != nil || !found || work.ConversationID != slackOutcome.Conversation || work.IntegrationID != slack.ID {
+	if err != nil || !found || work.ConversationID != slackConversation || work.IntegrationID != slack.ID {
 		t.Fatalf("remaining Slack work is not claimable: found=%t err=%v", found, err)
 	}
 	if err := database.ApplySlackMessageWork(ctx, organization, work, 2*time.Hour, 0); err != nil {

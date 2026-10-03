@@ -30,10 +30,6 @@ func Definition(executors ...Executor) integrations.Definition {
 			Logo: "kubernetes", Category: integrations.CategoryInfrastructure,
 			SourceURL:         "https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole",
 			DocumentationSlug: "integrations/infrastructure/kubernetes",
-			// There is deliberately no "cluster name" field. The Integration is already named
-			// by the operator, and the cluster itself is pinned by the fingerprint the Relay
-			// attested at enrolment — a third name for the same thing is a field that can
-			// disagree with two others.
 			Config: []integrations.Field{
 				{
 					Key: "namespaceAllowList",
@@ -42,8 +38,6 @@ func Definition(executors ...Executor) integrations.Definition {
 					Type: integrations.FieldString,
 				},
 			},
-			// Relay only. A cluster's API server is usually private, which is the whole reason
-			// the Relay exists.
 			RequiresRelay: true, Tools: tools(executor),
 		},
 		Verify: verify,
@@ -116,10 +110,6 @@ func tools(executor Executor) []integrations.Tool {
 	}
 }
 
-// verify judges this integration from the bound Relay's own state: whether it is
-// connected right now, and whether it advertised each Relay Capability this type declares. A
-// Relay Capability the Relay did not advertise is the cluster's own configuration answering, not
-// this platform's.
 func verify(input integrations.VerifyInput) integrations.Verification {
 	if !input.RelayStatus.Bound {
 		return integrations.Verification{

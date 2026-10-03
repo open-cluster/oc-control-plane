@@ -53,7 +53,5 @@ func (h Handlers) ready(writer http.ResponseWriter, request *http.Request) {
 func writeStatus(writer http.ResponseWriter, code int, status string) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(code)
-	// The body is a fixed literal, so a write failure has nothing to report and nothing to
-	// retry; the status code has already been sent.
 	_, _ = writer.Write([]byte(`{"status":"` + status + `"}`))
 }

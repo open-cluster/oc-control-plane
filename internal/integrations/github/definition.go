@@ -8,8 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The Tools connecting GitHub makes available. All reads; no write path to
-// anyone's code exists in this build, by decision rather than by omission.
 const (
 	toolListRepositories = "github.list_repositories"
 	toolReadCommits      = "github.read_commits"
@@ -41,9 +39,6 @@ func Definition(app *App, client *Client) integrations.Definition {
 					Note:   "the integration carries no usable installation identity; reconnect it and verify again",
 				}
 			}
-			// What the last run established travels in: an installation GitHub has
-			// stopped serving is a removal when this deployment verified it before,
-			// and an unknown id when it never did.
 			return probe(ctx, where, installation)
 		},
 		Connect: connect(app, client),

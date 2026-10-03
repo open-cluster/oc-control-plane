@@ -9,15 +9,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 )
 
-// The grant a customer approves is described in two places: the permission map the GitHub
-// provider declares, and the table the product documentation publishes. A security team
-// reads the second and this build obeys the first, so the two disagreeing is worse than
-// either being wrong alone — the documentation would be a promise the code does not keep.
-//
-// This gate is what makes them one statement. It reads the published table out of the page
-// and compares it against the union of the map, in both directions.
-
-// githubPage is the published page whose permission table this gate holds.
 var githubPage = filepath.Join(moduleRoot, "docs", "integrations", "source-control", "github.mdx")
 
 func TestTheDocumentedGitHubPermissionsAreExactlyTheOnesTheToolsNeed(t *testing.T) {
@@ -49,8 +40,6 @@ func TestTheDocumentedGitHubPermissionsAreExactlyTheOnesTheToolsNeed(t *testing.
 	}
 }
 
-// No write permission is requested for any resource, and this reads the published table
-// rather than the map so that a documentation page cannot quietly describe one.
 func TestTheDocumentedGitHubGrantIsReadOnly(t *testing.T) {
 	t.Parallel()
 
@@ -66,7 +55,6 @@ func TestTheDocumentedGitHubGrantIsReadOnly(t *testing.T) {
 	}
 }
 
-// publishedPermissions is the first column of the page's permission table.
 func publishedPermissions(t *testing.T) map[string]bool {
 	t.Helper()
 
@@ -81,9 +69,6 @@ func publishedPermissions(t *testing.T) map[string]bool {
 	return published
 }
 
-// permissionTableRows returns the body rows of the "GitHub App permissions" table. The
-// section heading anchors the read, so another table on the page — or the same table moved
-// — fails the gate rather than being silently skipped.
 func permissionTableRows(t *testing.T) []string {
 	t.Helper()
 

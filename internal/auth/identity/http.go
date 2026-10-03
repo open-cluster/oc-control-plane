@@ -17,8 +17,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// maxRequestBody bounds what a caller may send. Every body on this surface is a handful of
-// short fields, and an unbounded one is an allocation somebody else chooses.
 const maxRequestBody = 64 * 1024
 
 type errorView struct {
@@ -42,9 +40,6 @@ func listQuery(writer http.ResponseWriter, request *http.Request, spec listing.S
 
 func decode(writer http.ResponseWriter, request *http.Request, into any) bool {
 	decoder := json.NewDecoder(io.LimitReader(request.Body, maxRequestBody))
-	// Unknown fields are refused rather than ignored. A caller who misspelled a field name
-	// would otherwise get a success whose effect is not what they asked for, and on this
-	// surface the fields being misspelled decide who may sign in.
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body is not valid JSON"})
@@ -67,8 +62,6 @@ func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 
-// identifier reads a UUID path segment, naming the segment in the refusal so an operator knows
-// which one they got wrong.
 func identifier(
 	writer http.ResponseWriter, request *http.Request, segment string,
 ) (uuid.UUID, bool) {
@@ -81,7 +74,6 @@ func identifier(
 	return id, true
 }
 
-// fail answers an error, naming the ones a caller can act on.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
@@ -112,9 +104,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 			errorView{Error: "cursor is not a page position from a previous response"})
 
 	case errors.Is(err, storage.ErrAuditFailed):
-		// The operation was rolled back because it could not be recorded. Saying so is the
-		// point: an operator who was told "it worked" about a change with no audit row would
-		// have a change nobody can attribute, which is the failure this design refuses.
+		// The mutation rolled back with its missing audit row; reporting success would create an
+		// unattributable state change.
 		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
 			slog.String("path", request.URL.Path),
 			slog.String("error", err.Error()))

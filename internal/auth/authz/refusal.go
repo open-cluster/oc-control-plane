@@ -22,7 +22,6 @@ const (
 	ReasonSessionExpired Reason = "session_expired"
 )
 
-// Refusal is an ErrCredentialRejected with a safe client-facing reason.
 type Refusal struct{ Because Reason }
 
 func (r Refusal) Error() string        { return "credential rejected: " + string(r.Because) }

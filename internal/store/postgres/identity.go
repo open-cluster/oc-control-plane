@@ -13,19 +13,12 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// Refusals the identity tables can produce.
 var (
-	// ErrUserDisabled reports a user who exists and may sign in to nothing.
-	ErrUserDisabled = errors.New("user disabled")
-	// ErrMembershipUnknown reports a membership this organization does not have.
+	ErrUserDisabled      = errors.New("user disabled")
 	ErrMembershipUnknown = errors.New("membership unknown")
-	// ErrLastAdmin reports the change that would leave an organization with no admin. It is
-	// refused, because a tenant nobody can administer needs a support ticket to recover and
-	// the mistake is one keystroke away from an ordinary role change.
-	ErrLastAdmin = errors.New("an organization must keep at least one admin")
+	ErrLastAdmin         = errors.New("an organization must keep at least one admin")
 )
 
-// User is a person who may sign in.
 type User struct {
 	ID          uuid.UUID
 	Issuer      string
@@ -36,10 +29,8 @@ type User struct {
 	CreatedAt   time.Time
 }
 
-// Disabled reports whether this user may sign in to anything.
 func (u User) Disabled() bool { return !u.DisabledAt.IsZero() }
 
-// Identity is what an identity provider asserted about a person at sign-in.
 type Identity struct {
 	Issuer      string
 	Subject     string
@@ -47,8 +38,6 @@ type Identity struct {
 	DisplayName string
 }
 
-// Member is one person's membership in one organization, with enough of the person to render a
-// list without a second read.
 type Member struct {
 	UserID      uuid.UUID
 	Email       string
@@ -59,7 +48,6 @@ type Member struct {
 	CreatedAt time.Time
 }
 
-// MemberList is a page of an organization's members.
 type MemberList struct {
 	Members []Member
 	Next    string
@@ -72,15 +60,11 @@ func orEmptyText(value *string) string {
 	return *value
 }
 
-// querier is a pool or a transaction. Reads that run both standalone and inside a mutation's
-// transaction take it, so the same SQL serves both.
 type querier interface {
 	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
 }
 
-// membershipOf resolves what a person may reach RIGHT NOW. Row presence grants the stored
-// Role, so a removal takes effect on the person's next request rather than their next sign-in.
 func membershipOf(ctx context.Context, on querier, user uuid.UUID) (authz.Membership, error) {
 	var organization uuid.UUID
 	var displayName, role string
@@ -105,7 +89,6 @@ func membershipOf(ctx context.Context, on querier, user uuid.UUID) (authz.Member
 	}, nil
 }
 
-// ListMembers reports who may reach an organization and as what.
 func (p *Database) ListMembers(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID, page Page,
 ) (MemberList, error) {
@@ -165,7 +148,6 @@ func (p *Database) ListMembers(
 	return MemberList{Members: members, Next: next}, nil
 }
 
-// UpdateMembership changes the supported Role in one audited transaction.
 func (p *Database) UpdateMembership(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	user uuid.UUID, wantedRole authz.Role,
@@ -223,9 +205,6 @@ func (p *Database) UpdateMembership(
 		})
 }
 
-// RemoveMembership ends a person's access to one organization. Their user row and their place
-// in the record survive: deleting the person would leave every event they produced naming an
-// identifier nothing resolves.
 func (p *Database) RemoveMembership(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	user uuid.UUID,
@@ -262,8 +241,6 @@ func (p *Database) RemoveMembership(
 	return err
 }
 
-// refuseIfLastAdmin refuses a change that would leave the organization with no admin —
-// a tenant nobody can administer is a lockout, not a configuration.
 func refuseIfLastAdmin(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, except uuid.UUID,
 ) error {

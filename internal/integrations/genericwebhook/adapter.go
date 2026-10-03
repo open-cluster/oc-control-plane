@@ -1,5 +1,3 @@
-// Package genericwebhook accepts the canonical Alert Event contract for alert sources
-// without a first-class provider adapter.
 package genericwebhook
 
 import (
@@ -31,7 +29,6 @@ type payload struct {
 	SourceURL        string     `json:"sourceUrl,omitempty"`
 }
 
-// Adapter normalizes the canonical Generic Webhook payload.
 type Adapter struct{}
 
 func (Adapter) Authenticate(headers http.Header, integration integrations.Integration) bool {

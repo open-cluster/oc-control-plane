@@ -26,14 +26,11 @@ func GenerateSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-// Digest is what the database holds. SHA-256 rather than a slow key derivation.
 func Digest(secret string) []byte {
 	sum := sha256.Sum256([]byte(secret))
 	return sum[:]
 }
 
-// CheckCredentialShape refuses a pasted credential that cannot be one: empty, oversized,
-// or carrying characters that would not survive an HTTP header.
 func CheckCredentialShape(credential string) error {
 	if credential == "" {
 		return fmt.Errorf("%w: it must not be empty", ErrWeakSecret)

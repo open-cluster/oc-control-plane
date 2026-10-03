@@ -56,7 +56,6 @@ func startSlackMessageWorker(ctx context.Context, group *errgroup.Group, process
 	process.logger.Info("slack message worker started")
 }
 
-// startAuditPruner runs the worker that applies each tenant's audit retention schedule.
 func startAuditPruner(ctx context.Context, group *errgroup.Group, process assembled) {
 	pruner := audit.Pruner{
 		Retentions: process.database,
@@ -72,7 +71,6 @@ func startAuditPruner(ctx context.Context, group *errgroup.Group, process assemb
 		slog.Duration("interval", auditPruneInterval))
 }
 
-// startChangesPruner runs the worker that ages captured changes out on the deployment's schedule.
 func startChangesPruner(ctx context.Context, group *errgroup.Group, process assembled) {
 	pruner := changes.Pruner{
 		Retention: process.database,
@@ -89,8 +87,6 @@ func startChangesPruner(ctx context.Context, group *errgroup.Group, process asse
 		slog.Int("retention_days", defaultChangeRetentionDays))
 }
 
-// newSlackAgent returns a Slack webhook agent when Slack integration is configured.
-// It returns nil when Slack event handling is disabled.
 func newSlackAgent(cfg config.Config) *webhooks.SlackAgent {
 	isSlackConfigured(cfg)
 	return &webhooks.SlackAgent{
@@ -101,8 +97,6 @@ func newSlackAgent(cfg config.Config) *webhooks.SlackAgent {
 	}
 }
 
-// startSlackReplyWorker starts the background worker that delivers replies to
-// Slack threads. It does nothing when Slack integration is disabled.
 func startSlackReplyWorker(
 	ctx context.Context,
 	group *errgroup.Group,

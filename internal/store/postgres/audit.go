@@ -13,26 +13,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// The two refusals this file produces, named here for the call sites in this package and owned
-// by the capabilities that define them.
-//
-// ErrNotAMember is the tenancy boundary answering inside storage, one layer below the
-// middleware that already asked the same question. The duplication is deliberate: the
-// middleware covers every route from a table, and this covers every call — including one made
-// from a path nobody routed through the middleware. Handlers map it to 404, never 403.
-//
-// They are the OWNING packages' values rather than copies, so a capability that recognises
-// authz.ErrNotAMember without importing persistence — which ADR-017 requires of it — matches
-// the same error this package returns.
 var (
 	ErrNotAMember  = authz.ErrNotAMember
 	ErrAuditFailed = audit.ErrWriteFailed
 )
 
-// RecordEvent writes one event on its own. It is what the authorization middleware uses for a
-// refusal — a denial has no operation to be inside the transaction of — and nothing else
-// should reach for it: a state change records itself through audited, in the transaction that
-// made it.
 func (p *Database) RecordEvent(
 	ctx context.Context, organization uuid.UUID, event audit.Event,
 ) error {
@@ -43,9 +28,6 @@ func (p *Database) RecordEvent(
 	return writeEvent(ctx, pool, event)
 }
 
-// writeEvent inserts one row. It is deliberately not exported: the two ways an event reaches
-// the database are RecordEvent and audited, and a third would be a way to record a change
-// outside its transaction.
 func writeEvent(ctx context.Context, on executor, event audit.Event) error {
 	bounded := event.Bounded()
 	bounded.Detail = orEmptyDetail(bounded.Detail)
@@ -89,19 +71,6 @@ func orEmptyDetail(detail audit.Detail) audit.Detail {
 	return detail
 }
 
-// audited runs a mutation and the audit row recording it inside ONE transaction.
-//
-// Two properties follow and both are the point. An operation nobody could attribute never
-// happens: if the event cannot be written, the change it describes rolls back. And an event
-// describing an operation that failed is never written: the transaction carries both or
-// neither.
-//
-// The membership check happens before the transaction opens, so a principal with no
-// membership never reaches a statement — the boundary refuses before the work rather than
-// after it.
-//
-// mutate returns the target the event names, because for a creation the identifier does not
-// exist until the insert has run and an event written beforehand would have to guess it.
 func audited[T any](
 	ctx context.Context,
 	p *Database,
@@ -110,6 +79,7 @@ func audited[T any](
 	action audit.Action,
 	mutate func(context.Context, pgx.Tx) (T, audit.Target, audit.Detail, error),
 ) (T, error) {
+	// The mutation and audit event commit together, so neither can exist without the other.
 	return auditedWithAction(ctx, p, principal, organization,
 		func(ctx context.Context, transaction pgx.Tx) (
 			T, audit.Action, audit.Target, audit.Detail, error,
@@ -119,8 +89,6 @@ func audited[T any](
 		})
 }
 
-// auditedWithAction is the audited transaction for a mutation whose action depends on the
-// state locked inside that transaction.
 func auditedWithAction[T any](
 	ctx context.Context,
 	p *Database,
@@ -171,10 +139,6 @@ func auditedWithAction[T any](
 	return result, nil
 }
 
-// AuditEvents reads a tenant's record, newest first.
-//
-// It takes the principal for the same reason every operator-facing read does: the middleware
-// has already decided, and this is the layer that cannot be reached around.
 func (p *Database) AuditEvents(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	page audit.Page,
@@ -207,8 +171,6 @@ func (p *Database) AuditEvents(
 	}
 	defer rows.Close()
 
-	// One row past the page is read rather than counted, so "is there more" is answered by the
-	// same query that answers "what is on this page".
 	events := make([]audit.Recorded, 0, limit)
 	var (
 		next   string
@@ -252,21 +214,6 @@ func (p *Database) AuditEvents(
 	return audit.List{Events: events, Next: next}, nil
 }
 
-// THE ONE PATH THROUGH WHICH AN AUDIT EVENT MAY LEAVE.
-//
-// The schema refuses an UPDATE, a DELETE and a TRUNCATE on audit_event outright, except in a
-// transaction that has declared itself the retention pruner. These two functions are that path.
-// Everything else in this program — every handler, every worker, every future refactor — is
-// refused by the database rather than by a reviewer noticing.
-
-// DeclaredRetentions reports every tenant that has declared how long it keeps the record.
-//
-// It names no organization, for the same reason InvestigationsAwaitingWork does not: its job is
-// to discover which tenants there are, so there is no tenant in the question to resolve a
-// database from. It reads no tenant data — only which tenants declared a number.
-//
-// A tenant whose declared period is zero is NOT reported. Zero explicitly disables pruning, and
-// treating it as a horizon of "now" would delete the entire record.
 func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, error) {
 	var declared []audit.Retention
 	rows, err := p.pool.Query(ctx, `
@@ -292,19 +239,11 @@ func (p *Database) DeclaredRetentions(ctx context.Context) ([]audit.Retention, e
 	return declared, nil
 }
 
-// PruneEventsBefore removes at most limit of one tenant's events older than the horizon.
-//
-// The declaration is made with set_config's LOCAL flag, so it lives for this transaction and no
-// longer. That is the load-bearing detail: a session-level setting would survive on a pooled
-// connection and turn every later transaction on it into one permitted to delete the record,
-// which would make the append-only guarantee depend on which connection a request happened to get.
-//
-// The delete is bounded by an inner select rather than by the horizon alone, so one statement
-// cannot take a lock proportional to a backlog. The order is oldest first, so a backlog worked
-// through over several sweeps always removes what aged out longest ago.
 func (p *Database) PruneEventsBefore(
 	ctx context.Context, organization uuid.UUID, before time.Time, limit int,
 ) (int64, error) {
+	// The pruning permission is transaction-local; a session setting could leak through the
+	// connection pool and authorize unrelated deletes.
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return 0, err

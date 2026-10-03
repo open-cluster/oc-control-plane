@@ -14,20 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// The route table is the protected API's index, and these gates are what make story 33
-// true: a new route without a declared permission cannot ship.
-//
-// Three mechanisms hold it, and each covers what the others cannot.
-//
-//  1. STARTUP. authz.Router validates the table before it becomes a mux, so an undeclared
-//     permission or duplicate is a process that refuses to start rather than a route that is
-//     served open.
-//  3. THESE GATES. The compiler cannot see a route registered on a mux directly, bypassing the
-//     table entirely — that is an ordinary-looking line in a capability package and it would be
-//     invisible in review. This is the half that catches it.
-
-// The surface the gates below read. It is assembled with nil dependencies deliberately: what is
-// under test is the SHAPE of the table, and no handler runs.
 func apiRoutes(t *testing.T) []authz.Route {
 	t.Helper()
 
@@ -40,8 +26,6 @@ func apiRoutes(t *testing.T) []authz.Route {
 
 func routeKey(route authz.Route) string { return route.Method + " " + route.Pattern }
 
-// Every route must be authorizable. Running the startup constructor here means a mistake fails
-// the build rather than the first deployment.
 func TestTheApplicationAPIRouteTableIsAuthorizable(t *testing.T) {
 	t.Parallel()
 
@@ -53,7 +37,6 @@ func TestTheApplicationAPIRouteTableIsAuthorizable(t *testing.T) {
 	}
 }
 
-// Every privileged route requires a permission this build declares.
 func TestEveryPrivilegedRouteRequiresADeclaredPermission(t *testing.T) {
 	t.Parallel()
 	for _, route := range apiRoutes(t) {
@@ -68,11 +51,6 @@ func TestEveryPrivilegedRouteRequiresADeclaredPermission(t *testing.T) {
 	}
 }
 
-// The routes that need a credential and no permission are likewise a named list, recorded
-// here with the reason each one cannot declare a permission. Two describe the caller to
-// themselves — requiring a permission would mean an Auditor could not sign out. The third
-// is a vendor's return trip, which arrives before this surface knows which tenant it
-// concerns.
 func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T) {
 	t.Parallel()
 
@@ -106,8 +84,6 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	}
 }
 
-// Every route reachable with a credential answers exactly one method, and net/http would panic
-// on a duplicate at registration. Catching it here names the route instead of a stack trace.
 func TestNoRouteIsRegisteredTwice(t *testing.T) {
 	t.Parallel()
 
@@ -215,26 +191,10 @@ func TestIntegrationStateHasExplicitCanonicalOperations(t *testing.T) {
 	}
 }
 
-// The half the compiler cannot see: a capability that registers a route on a mux DIRECTLY,
-// bypassing the table and therefore the authorization decision entirely.
-//
-// It would be one ordinary-looking line in an ordinary-looking file, and it would serve a
-// tenant's data to anybody. The gate reads the source of every package that contributes to the
-// application API and refuses a mux registration anywhere in it.
 func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 	t.Parallel()
 
-	// EVERY package under internal/ is read, not a list of the ones that contribute routes
-	// today. A list would mean a package added to the surface and not added to the list was a
-	// package this gate was not reading — and the failure would be an absence nobody sees,
-	// which is the shape of mistake the gate exists to catch in the first place.
-	//
-	// Two packages legitimately build a mux of their own, and each is here with the reason it
-	// is not the application API. Adding a third is a decision somebody has to write down.
 	permitted := map[string]string{
-		// The one legitimate registration in the product: authz.Router is the function that
-		// turns the validated table INTO the mux. Every other package must reach the mux
-		// through it, which is exactly what this gate enforces.
 		"internal/auth/authz": "Router builds the mux from the table; it is the registration every " +
 			"other package is required to go through",
 		"internal/health": "owns the liveness, readiness, and metrics route tree that the " +
@@ -270,9 +230,6 @@ func TestNoCapabilityRegistersARouteOutsideTheTable(t *testing.T) {
 				if selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc" {
 					return true
 				}
-				// http.ServeMux is the only thing in these packages with those methods. A call
-				// to either means a route that never passed through the table, and therefore a
-				// route served with no authorization decision at all.
 				t.Errorf("%s calls %s directly; every route on the application API must be "+
 					"declared in the package's Routes() table, or it is served with no "+
 					"authorization decision", name, selector.Sel.Name)
@@ -335,7 +292,6 @@ func TestOrganizationScopedHandlersDoNotReparseTheOrganizationPath(t *testing.T)
 	}
 }
 
-// internalPackages reports every directory under internal/ that holds production Go files.
 func internalPackages(t *testing.T) []string {
 	t.Helper()
 
@@ -371,10 +327,6 @@ func internalPackages(t *testing.T) []string {
 	return directories
 }
 
-// A route's pattern must be one net/http can serve, and a privileged one must name an
-// organization the guard can resolve a membership against. Validate enforces both; this asserts
-// the patterns are also well-formed enough to register, which Validate deliberately does not
-// try to decide for itself.
 func TestEveryPatternRegistersOnAServeMux(t *testing.T) {
 	t.Parallel()
 
@@ -391,7 +343,6 @@ func TestEveryPatternRegistersOnAServeMux(t *testing.T) {
 	}
 }
 
-// Every application API route lives under the product's versioned API prefix.
 func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -403,10 +354,6 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	for _, route := range apiRoutes(t) {
 		matched := ""
 		for prefix := range prefixes {
-			// A prefix's own root counts as under it. /api/v1 is the application API
-			// surface's index — the document saying what this deployment serves — and a
-			// gate that refused an API's base path would be refusing the one route whose
-			// whole job is to describe the prefix it sits at.
 			if route.Pattern == strings.TrimSuffix(prefix, "/") ||
 				strings.HasPrefix(route.Pattern, prefix) {
 				matched = prefix
@@ -419,8 +366,6 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 		}
 		counted[matched]++
 	}
-	// Each prefix is asserted to be in use. One recorded here and served by nothing would be a
-	// list that had stopped describing the surface.
 	for prefix, reason := range prefixes {
 		if counted[prefix] == 0 {
 			t.Errorf("%s is recorded as a prefix this listener serves (%s) and nothing is "+
@@ -429,11 +374,6 @@ func TestEveryRouteIsUnderAVersionedPrefix(t *testing.T) {
 	}
 }
 
-// The paths the specification corrects, asserted as paths rather than as prose.
-//
-// They are breaking changes made deliberately and versioned together, and the reason each is
-// here is that the old shape is the one a reviewer's fingers will type. A regression would look
-// like a fix.
 func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 	t.Parallel()
 
@@ -467,7 +407,6 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		{"POST /api/v1/integrations/{integration}/rotate-webhook-secret",
 			"rotating the webhook secret says which secret it rotates"},
 
-		// The fleet. A hundred relays is a hundred rows, and a hundred rows is not an assessment.
 		{"GET /api/v1/relays/summary",
 			"a fleet is assessable without reading every row"},
 		{"GET /api/v1/relays/{registration}/integrations",
@@ -477,8 +416,6 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		{"GET /api/v1/relays/{registration}/failures",
 			"an intermittent Relay is diagnosed from the record rather than from who was watching"},
 
-		// The investigation surface, on the provenance model: what it persists is what was
-		// triggered, queried, run and found — never a chain of thought.
 		{"GET /api/v1/investigations",
 			"investigations list as operational records, newest first"},
 		{"POST /api/v1/investigations",

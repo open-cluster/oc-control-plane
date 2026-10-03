@@ -15,13 +15,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The conversation capability owns its vocabulary; this file is its persistence.
 var _ conversation.Store = (*Database)(nil)
 
 const conversationColumns = `conversation_id, incident_id, surface, subject, state,
 	       created_by, created_at, last_activity_at`
 
-// OpenConversation records one and audits the act.
 func (p *Database) OpenConversation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	wanted conversation.NewConversation,
@@ -41,9 +39,6 @@ func (p *Database) OpenConversation(
 			opened, err := scanConversation(row, organization.String())
 			if err != nil {
 				if isForeignKeyViolation(err) {
-					// The only foreign key on the insert is the incident's, and it is
-					// org-composite: an incident from another tenant is not distinguishable
-					// here from one that does not exist, which is the answer either way.
 					return conversation.Conversation{}, audit.Target{}, nil,
 						conversation.ErrIncidentUnknown
 				}
@@ -56,7 +51,6 @@ func (p *Database) OpenConversation(
 		})
 }
 
-// Conversation reads one, scoped to the tenant.
 func (p *Database) Conversation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (conversation.Conversation, error) {
@@ -166,9 +160,6 @@ func (p *Database) QueryConversations(
 	return list, nil
 }
 
-// ConversationDetail reads one with its messages and the turns it opened. The message
-// read is bounded and returns the NEWEST, in order — a conversation of a thousand
-// messages is read from its end, and the whole transcript is not what a surface renders.
 func (p *Database) ConversationDetail(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, messages int,
 ) (conversation.Detail, error) {
@@ -193,8 +184,6 @@ func (p *Database) ConversationDetail(
 	return conversation.Detail{Conversation: found, Messages: said, Turns: turns.Turns, TurnsNext: turns.Next}, nil
 }
 
-// conversationMessages reads the newest bounded window of a conversation's transcript, in
-// order.
 func conversationMessages(
 	ctx context.Context, queries querier, organization uuid.UUID,
 	id uuid.UUID, limit int,
@@ -231,14 +220,6 @@ func conversationMessages(
 	return said, nil
 }
 
-// AppendMessage writes one message at the next sequence and stamps the conversation's
-// activity.
-//
-// The sequence is assigned inside the same statement that reads it, from the row the
-// conversation lock already serialises: two messages arriving at once take two positions
-// rather than racing for one. The message is written with NO investigation — opening a
-// turn is a separate decision, because whether one can be opened depends on whether
-// another is running.
 func (p *Database) AppendMessage(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, said conversation.NewMessage,
@@ -335,8 +316,6 @@ func appendMessage(
 	return written, nil
 }
 
-// WaitingTurns counts this organization's investigations that are running and unleased —
-// the queue, as the claimer sees it.
 func (p *Database) WaitingTurns(
 	ctx context.Context, organization uuid.UUID,
 ) (int, error) {
@@ -355,16 +334,6 @@ func (p *Database) WaitingTurns(
 	return waiting, nil
 }
 
-// OpenTurn opens the next turn from whatever messages are queued and attaches them to it.
-//
-// The second return is false when a turn is already running for this conversation. That
-// is the single-writer invariant refusing, and it is NOT an error: the messages stay
-// queued and the drain at the running turn's terminal takes them up, which is the "next
-// safe point" that keeps one conversation to one agent.
-//
-// lead is how far before the incident began the turn's window reaches back; a conversation
-// naming no incident gets a window of that length ending now, because a follow-up question
-// asked at three in the morning is about the last few hours and not about all of history.
 func (p *Database) OpenTurn(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	lead time.Duration,
@@ -395,13 +364,6 @@ func (p *Database) OpenTurn(
 	return turn, true, nil
 }
 
-// DrainConversation opens the next turn from whatever is queued, for the investigation
-// runtime, which knows conversations only as an identifier its record carries.
-//
-// It is OpenTurn under another name on purpose: the drain at a terminal boundary and a
-// message arriving to an idle conversation are the same act, and two implementations of
-// "start the next turn" would be two places for the single-writer invariant to be got
-// wrong.
 func (p *Database) DrainConversation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	lead time.Duration, maxPending int,
@@ -431,9 +393,6 @@ func (p *Database) DrainConversation(
 	return true, nil
 }
 
-// DrainQueuedConversation retries durable Conversation messages whose terminal drain met
-// a full Organization backlog. The candidate read is unlocked; the Organization advisory
-// lock is always taken before openTurn locks the Conversation row, matching every ingress path.
 func (p *Database) DrainQueuedConversation(
 	ctx context.Context, lead time.Duration, maxPending int,
 ) (bool, error) {
@@ -486,18 +445,10 @@ func (p *Database) DrainQueuedConversation(
 	return true, nil
 }
 
-// openTurn is the whole of opening a turn, inside somebody else's transaction: the
-// conversation lock, the ordinal, the guarded insert, and the queued messages moving onto
-// it. The drain at a terminal boundary runs exactly this, which is why it is a function
-// rather than a method.
 func openTurn(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID, lead time.Duration,
 ) (conversation.Turn, bool, error) {
-	// The lock serialises two openers of ONE conversation so that they take different
-	// ordinals rather than colliding on the turn uniqueness. It is not what makes the
-	// single-writer invariant hold — the partial unique index below is — because a lock
-	// held in one transaction says nothing to a replica that never took it.
 	var (
 		state      int16
 		incidentID *uuid.UUID
@@ -533,8 +484,6 @@ func openTurn(
 		return conversation.Turn{}, false, err
 	}
 	if lastSequence == 0 {
-		// Nothing is waiting to be asked. A drain that finds an empty queue is the
-		// ordinary case, not a failure.
 		return conversation.Turn{}, false, nil
 	}
 
@@ -584,10 +533,6 @@ func openTurn(
 	}, true, nil
 }
 
-// queuedQuestion renders the messages no turn has taken up into the turn's question, in
-// order. Several queued messages become one question because they are one thing to
-// answer: a person who typed three lines while the agent worked asked one thing in three
-// parts, and answering each separately would be three investigations of the same context.
 func queuedQuestion(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID,
@@ -622,17 +567,12 @@ func queuedQuestion(
 	return boundedRunes(question, maxQuestionLength), lastSequence, actor, nil
 }
 
-// turnWindow derives the turn's time bounds. An incident-associated conversation reaches
-// back before the incident began and forward to now while it is still open; one naming no
-// incident gets the lead ending now.
 func turnWindow(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	incidentID *uuid.UUID, lead time.Duration,
 ) (time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	if incidentID == nil {
-		// No incident to anchor to, so the lead has nothing to lead: a question reaches
-		// back its own documented span instead of borrowing an incident's.
 		return now.Add(-conversation.QuestionWindow(lead)), now, nil
 	}
 	var (
@@ -658,8 +598,6 @@ func turnWindow(
 	return firstSeen.Add(-lead), until, nil
 }
 
-// lockConversation takes the row lock and reports the conversation's state, or that this
-// organization does not have it.
 func lockConversation(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID,
@@ -678,10 +616,8 @@ func lockConversation(
 	return conversation.State(state), nil
 }
 
-// maxQuestionLength mirrors the investigation question column's own bound.
 const maxQuestionLength = 1024
 
-// boundedRunes cuts text at a rune boundary inside the limit.
 func boundedRunes(text string, limit int) string {
 	runes := []rune(text)
 	if len(runes) <= limit {
@@ -690,9 +626,6 @@ func boundedRunes(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-// investigationStatusWord renders a status column the way the investigation surface does.
-// It DEFERS to the capability that owns the vocabulary rather than re-spelling it: a second
-// copy of those words is exactly how a turn and the investigation it names come to disagree.
 func investigationStatusWord(status int16) string {
 	return investigation.Status(status).String()
 }

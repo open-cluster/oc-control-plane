@@ -9,26 +9,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The five deep reads and the release listing: the causal workflow past the commit
-// message. Each is one bounded step — the actual diff, the PR's intent and CI health,
-// the pipeline's runs, a failing job's log tail, the configuration a change touched,
-// and what shipped.
-
-// The named bounds on the deep reads.
 const (
-	// maxFilesRendered bounds how many changed files one answer carries; the vendor's
-	// own page holds at most 300 for a commit and 3000 ever for a pull request.
 	maxFilesRendered = 100
-	// maxPatchBytes bounds one file's rendered patch. Cut at a line boundary with the
-	// cut named, so a diff reads as a diff.
-	maxPatchBytes = 2048
-	// maxPatchBudget bounds all patches in one answer together, so a hundred-file
-	// commit answers file names and counts rather than a novel.
-	maxPatchBudget = 24 << 10
-	// logTailBytes is the slice of a failing job's log one read answers: the tail,
-	// where the failure is.
-	logTailBytes = 16 << 10
-	// maxFileToolBytes bounds one file read.
+	maxPatchBytes    = 2048
+	maxPatchBudget   = 24 << 10
+	logTailBytes     = 16 << 10
 	maxFileToolBytes = 64 << 10
 	maxChecks        = 50
 	defaultRuns      = 20
@@ -37,20 +22,16 @@ const (
 	maxReleases      = 50
 )
 
-// changedFileContent is one changed file as a tool reports it.
 type changedFileContent struct {
-	Path      string `json:"path"`
-	Status    string `json:"status"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Patch     string `json:"patch,omitempty"`
-	// PatchTruncated says the patch was cut at the bound; PatchOmitted says the
-	// answer's patch budget was spent before this file.
-	PatchTruncated bool `json:"patchTruncated,omitempty"`
-	PatchOmitted   bool `json:"patchOmitted,omitempty"`
+	Path           string `json:"path"`
+	Status         string `json:"status"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	Patch          string `json:"patch,omitempty"`
+	PatchTruncated bool   `json:"patchTruncated,omitempty"`
+	PatchOmitted   bool   `json:"patchOmitted,omitempty"`
 }
 
-// renderChangedFiles bounds the files and their patches inside the answer's budget.
 func renderChangedFiles(files []ChangedFile) ([]changedFileContent, bool) {
 	truncated := len(files) > maxFilesRendered
 	if truncated {
@@ -82,8 +63,6 @@ func renderChangedFiles(files []ChangedFile) ([]changedFileContent, bool) {
 	return rendered, truncated
 }
 
-// cutAtLine cuts text inside the bound at the last whole line, so a diff still reads
-// as a diff.
 func cutAtLine(text string, bound int) string {
 	cut := text[:bound]
 	if last := strings.LastIndexByte(cut, '\n'); last > 0 {
@@ -229,9 +208,6 @@ func readPullRequestTool(app *App, client *Client) integrations.Tool {
 				"author": detail.Author, "head": detail.Head, "base": detail.Base,
 				"permalink": detail.HTMLURL, "files": rendered,
 			}
-			// Checks are best-effort: an installation without the Checks permission
-			// still answers the pull request, with the absence named rather than the
-			// whole read failing.
 			checks, checksTruncated, checksErr := client.CheckRuns(
 				ctx, token, repository, detail.HeadSHA, maxChecks)
 			if checksErr != nil {
@@ -443,8 +419,6 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 	}
 }
 
-// chooseJob resolves which job's log to read: the named one, or the run's first
-// failed one — the job an investigation is here for.
 func chooseJob(values integrations.Arguments, jobs []Job) (Job, error) {
 	id, named, err := values.OptionalIdentity("jobId")
 	if err != nil {
@@ -616,7 +590,6 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 	}
 }
 
-// firstLine keeps a wrapped refusal to its first sentence for an embedded note.
 func firstLine(text string) string {
 	if index := strings.IndexByte(text, '\n'); index >= 0 {
 		return text[:index]

@@ -369,7 +369,6 @@ func (h Handlers) changeLocalPassword(writer http.ResponseWriter, request *http.
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-// RecoverLocalPassword accepts bounded stdin and uses deployment database authority.
 func RecoverLocalPassword(ctx context.Context, database *storage.Database, user uuid.UUID, input io.Reader) error {
 	raw, err := io.ReadAll(io.LimitReader(input, maxPasswordBytes+3))
 	if err != nil {

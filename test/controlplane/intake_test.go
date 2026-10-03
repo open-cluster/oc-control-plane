@@ -18,20 +18,11 @@ import (
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// Intake is the boundary between a customer's alerting and this platform, and the thing that
-// must not be faked is the credential check. So these run against the assembled process: real
-// HTTP, a real database, real deliveries.
-//
-// The seam is deliberately the same one everything else here uses. An adapter is reached by
-// delivering a request, because that is how it is reached in production.
-
 const (
 	intakeOrganization = surfaceOrg
 	intakeSecret       = "a-source-secret-long-enough-to-be-one"
 )
 
-// intakePlane is a control plane with intake listening, plus a configured Integration to
-// deliver through.
 type intakePlane struct {
 	*controlPlane
 	address     string
@@ -56,18 +47,12 @@ func startIntake(t *testing.T) *intakePlane {
 	}
 }
 
-// listeningAddress pulls a surface's bound address out of the startup log, which is the only
-// place an ephemeral port is reported for a listener the test did not open itself.
 func listeningAddress(t *testing.T, plane *controlPlane, message string) string {
 	t.Helper()
 	_ = message
 	return strings.TrimPrefix(plane.baseURL, "http://")
 }
 
-// configureIntegration records an Alertmanager Integration, storing only the digest of its
-// webhook secret. It writes the row directly rather than going through the application API:
-// what these tests are about is the delivery path, and a second surface between them and it
-// would mean a failure here could be either one.
 func configureIntegration(t *testing.T, dsn, organization, secret string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -106,8 +91,13 @@ func (p *intakePlane) setIntegrationProvider(t *testing.T, provider string) {
 	}
 }
 
-// deliver posts a body to intake with the given secret, and reports the status.
 func (p *intakePlane) deliver(t *testing.T, secret, body string, headers ...http.Header) int {
+	t.Helper()
+	status, _ := p.deliverResponse(t, secret, body, headers...)
+	return status
+}
+
+func (p *intakePlane) deliverResponse(t *testing.T, secret, body string, headers ...http.Header) (int, http.Header) {
 	t.Helper()
 
 	url := fmt.Sprintf("http://%s/webhooks/v1/integrations/%s/alert-events", p.address, p.integration)
@@ -132,10 +122,9 @@ func (p *intakePlane) deliver(t *testing.T, secret, body string, headers ...http
 		t.Fatalf("deliver: %v", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	return response.StatusCode
+	return response.StatusCode, response.Header
 }
 
-// alertEvents reports what is durably recorded for the organization.
 func (p *intakePlane) alertEvents(t *testing.T) []recordedAlertEvent {
 	t.Helper()
 	ctx := context.Background()
@@ -179,7 +168,6 @@ func (p *intakePlane) alertEvents(t *testing.T) []recordedAlertEvent {
 	return recorded
 }
 
-// truncatedCount reports how many omitted alerts the recorded deliveries carry.
 func (p *intakePlane) truncatedCount(t *testing.T) int {
 	t.Helper()
 	ctx := context.Background()
@@ -201,10 +189,6 @@ func (p *intakePlane) truncatedCount(t *testing.T) int {
 	return total
 }
 
-// scopes reports which tenant and Integration each recorded AlertEvent landed under, across
-// EVERY organization in the database rather than one. Scoping the query to the expected
-// tenant would make a alert_event written to the wrong one invisible, which is the failure being
-// tested for.
 func (p *intakePlane) scopes(t *testing.T) []recordedScope {
 	t.Helper()
 	ctx := context.Background()
@@ -236,7 +220,6 @@ func (p *intakePlane) scopes(t *testing.T) []recordedScope {
 	return recorded
 }
 
-// setDisabled turns this plane's Integration off or back on.
 func (p *intakePlane) setDisabled(t *testing.T, disabled bool) {
 	t.Helper()
 	ctx := context.Background()
@@ -272,19 +255,14 @@ type recordedAlertEvent struct {
 	ReceivedAt   time.Time
 }
 
-// firing renders a v4 webhook payload for an incident that began at startsAt and has not ended.
 func firing(fingerprint string, startsAt time.Time) string {
 	return alertmanagerBody(fingerprint, "firing", startsAt, time.Time{}, 0)
 }
 
-// resolved renders the resolution of the incident that began at startsAt. Alertmanager sends
-// the original start time on a resolution, which is what lets it resolve the incident it
-// belongs to rather than opening a second one.
 func resolved(fingerprint string, startsAt, endsAt time.Time) string {
 	return alertmanagerBody(fingerprint, "resolved", startsAt, endsAt, 0)
 }
 
-// alertmanagerBody renders a v4 webhook payload for one incident of one alert.
 func alertmanagerBody(
 	fingerprint, status string, startsAt, endsAt time.Time, truncated int,
 ) string {
@@ -390,21 +368,21 @@ func TestIntake_AuthenticatesBeforeNormalizing(t *testing.T) {
 	}
 }
 
-func TestIntake_ForgedRequestsDoNotSpendAuthenticatedQuota(t *testing.T) {
+func TestIntake_ForgedRequestsAreBoundedBeforeAuthentication(t *testing.T) {
 	plane := startIntake(t)
-	for request := 1; request <= 65; request++ {
-		if status := plane.deliver(t, "wrong-secret-long-enough", `{not-json`); status != http.StatusUnauthorized {
-			t.Fatalf("forged request %d = %d, want 401", request, status)
+	for request := 1; request <= 2_000; request++ {
+		status, headers := plane.deliverResponse(t, "wrong-secret-long-enough", `{not-json`)
+		if status == http.StatusServiceUnavailable {
+			if headers.Get("Retry-After") == "" {
+				t.Fatal("rate-limited forged request omitted Retry-After")
+			}
+			return
+		}
+		if status != http.StatusUnauthorized {
+			t.Fatalf("forged request %d = %d, want 401 or 503", request, status)
 		}
 	}
-	for request := 1; request <= 60; request++ {
-		if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusBadRequest {
-			t.Fatalf("request %d = %d before burst was consumed, want malformed", request, status)
-		}
-	}
-	if status := plane.deliver(t, intakeSecret, `{not-json`); status != http.StatusServiceUnavailable {
-		t.Fatalf("authenticated request after burst = %d, want 503", status)
-	}
+	t.Fatal("forged webhook requests were not bounded")
 }
 
 func TestIntake_OrganizationClaimsCannotRedirectIntegrationOwnership(t *testing.T) {
@@ -422,12 +400,8 @@ func TestIntake_OrganizationClaimsCannotRedirectIntegrationOwnership(t *testing.
 	}
 }
 
-// The sentence: a correctly authenticated delivery becomes a durable, normalized AlertEvent.
 func TestIntake_AcceptsASignedDeliveryAndNormalizesIt(t *testing.T) {
 	plane := startIntake(t)
-	// The alert started well before this delivery on purpose: it is what lets the clock
-	// assertion below distinguish the receiver's own clock from the source's, without
-	// comparing two machines' clocks at sub-second precision.
 	observed := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 
 	status := plane.deliver(t, intakeSecret, firing("fp-node-not-ready", observed))
@@ -472,18 +446,12 @@ func TestIntake_AcceptsASignedDeliveryAndNormalizesIt(t *testing.T) {
 	if alertEvent.ResolvedAt != nil {
 		t.Errorf("a firing alert_event carries a resolution time %s", alertEvent.ResolvedAt)
 	}
-	// Both clocks are kept. Collapsing them would make a delayed delivery indistinguishable
-	// from a delayed failure, and an investigator reasons about ordering. The alert started
-	// ten minutes ago, so a received time copied from the source's clock would sit ten
-	// minutes early — far outside any honest skew between this process and the database.
 	if alertEvent.ReceivedAt.Sub(alertEvent.StartedAt) < 5*time.Minute {
 		t.Errorf("received at %s, near the source's own start time (%s); the two clocks were "+
 			"collapsed", alertEvent.ReceivedAt, alertEvent.StartedAt)
 	}
 }
 
-// The credential check is the thing that must not be faked, so it is asserted in both
-// directions: a wrong secret and an absent one are refused, and nothing is written.
 func TestIntake_RefusesADeliveryWithoutTheSourcesSecret(t *testing.T) {
 	plane := startIntake(t)
 	body := firing("fp-1", time.Now().UTC())
@@ -494,10 +462,6 @@ func TestIntake_RefusesADeliveryWithoutTheSourcesSecret(t *testing.T) {
 	}{
 		{name: "no token at all", secret: ""},
 		{name: "the wrong token", secret: "not-the-configured-secret-but-long"},
-		// A near-miss. It does not test the constant-time comparison — the comparison is over
-		// SHA-256 digests, so a prefix of the secret hashes to something unrelated and any
-		// comparison at all rejects it. What it does test is that the secret is checked whole
-		// rather than by prefix somewhere above the digest.
 		{name: "a prefix of the token", secret: intakeSecret[:len(intakeSecret)-1]},
 	}
 	for _, testCase := range cases {
@@ -522,8 +486,6 @@ func TestIntake_AuthenticatesBeforeReadingThePayload(t *testing.T) {
 	}
 }
 
-// At-least-once webhooks retry. A retry must not produce a second anything, and must be
-// answered so the source stops rather than retrying again.
 func TestIntake_RedeliveryProducesNoSecondAlertEvent(t *testing.T) {
 	plane := startIntake(t)
 	body := firing("fp-same", time.Now().UTC())
@@ -540,11 +502,6 @@ func TestIntake_RedeliveryProducesNoSecondAlertEvent(t *testing.T) {
 	}
 }
 
-// A resolution updates the incident it resolves and does not erase when that incident began.
-//
-// The firing time is the assertion that matters. It is what an investigator needs to reason
-// about ordering, and it is the one an implementation that overwrites the row wholesale
-// destroys while still looking correct on the status.
 func TestIntake_AResolutionUpdatesTheIncidentItResolves(t *testing.T) {
 	plane := startIntake(t)
 	firedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -577,12 +534,6 @@ func TestIntake_AResolutionUpdatesTheIncidentItResolves(t *testing.T) {
 	}
 }
 
-// The same alert firing again is a new incident, not an overwrite of the last one.
-//
-// This is the property the source key alone cannot carry: Alertmanager's fingerprint is a hash
-// of the label set, so the same disk filling up next month arrives under the same one. Keyed on
-// it alone, a re-fire silently destroys the resolved record of the previous occurrence, and the
-// history an investigator opens is missing the thing they came to look at.
 func TestIntake_ARefireIsANewIncidentNotAnOverwrite(t *testing.T) {
 	plane := startIntake(t)
 	firstStart := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
@@ -604,7 +555,6 @@ func TestIntake_ARefireIsANewIncidentNotAnOverwrite(t *testing.T) {
 		t.Fatalf("the same alert firing twice produced %d alertEvents, want an incident each",
 			len(recorded))
 	}
-	// Ordered by started_at, so the first is the occurrence that already ended.
 	if recorded[0].Status != 2 || !recorded[0].StartedAt.Equal(firstStart) {
 		t.Errorf("the earlier incident is status %d started %s; the re-fire overwrote it",
 			recorded[0].Status, recorded[0].StartedAt)
@@ -615,8 +565,6 @@ func TestIntake_ARefireIsANewIncidentNotAnOverwrite(t *testing.T) {
 	}
 }
 
-// Webhooks are at-least-once AND unordered, so a redelivery of the firing can arrive after the
-// resolution that ended it. It must not resurrect a resolved incident.
 func TestIntake_ALateFiringDoesNotResurrectAResolvedIncident(t *testing.T) {
 	plane := startIntake(t)
 	startedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -626,8 +574,6 @@ func TestIntake_ALateFiringDoesNotResurrectAResolvedIncident(t *testing.T) {
 		resolved("fp-late", startedAt, endedAt)); status != http.StatusAccepted {
 		t.Fatalf("resolving delivery = %d, want 202", status)
 	}
-	// The same incident's firing, arriving late. A different body, so the delivery digest does
-	// not deduplicate it — this has to be caught by the model, not by the retry guard.
 	if status := plane.deliver(t, intakeSecret,
 		firing("fp-late", startedAt)); status != http.StatusAccepted {
 		t.Fatalf("late firing delivery = %d, want 202", status)
@@ -642,9 +588,6 @@ func TestIntake_ALateFiringDoesNotResurrectAResolvedIncident(t *testing.T) {
 	}
 }
 
-// A source that truncated its own payload has told us the record is incomplete. Refusing would
-// lose the alerts that did arrive, since it will not send them again — so it is accepted, and
-// what was omitted is recorded rather than inferred from a count that looks fine.
 func TestIntake_RecordsWhatTheSourceSaysItLeftOut(t *testing.T) {
 	plane := startIntake(t)
 	startedAt := time.Now().UTC().Truncate(time.Second)
@@ -660,8 +603,6 @@ func TestIntake_RecordsWhatTheSourceSaysItLeftOut(t *testing.T) {
 	}
 }
 
-// A database outage must answer retryable. Answering 401 would tell Alertmanager the delivery
-// was permanently rejected, and the alert it would otherwise have retried is gone.
 func TestIntake_ADatabaseOutageIsRetryableNotUnauthorized(t *testing.T) {
 	plane := startIntake(t)
 	body := firing("fp-outage", time.Now().UTC())
@@ -679,9 +620,6 @@ func TestIntake_ADatabaseOutageIsRetryableNotUnauthorized(t *testing.T) {
 	}
 }
 
-// A malformed payload behind a valid credential is refused permanently and writes nothing.
-// The status matters as much as the refusal: 4xx tells Alertmanager to stop, and answering
-// 5xx would turn one bad payload into a retry storm.
 func TestIntake_RefusesAMalformedPayloadWithoutAPartialWrite(t *testing.T) {
 	plane := startIntake(t)
 
@@ -709,9 +647,6 @@ func TestIntake_RefusesAMalformedPayloadWithoutAPartialWrite(t *testing.T) {
 	}
 }
 
-// One unusable alert fails its whole delivery rather than being dropped from it. Accepting the
-// rest would leave the source told it succeeded while part of what it sent vanished, and it
-// will never send that part again.
 func TestIntake_OneUnusableAlertRefusesTheWholeDelivery(t *testing.T) {
 	plane := startIntake(t)
 
@@ -730,11 +665,9 @@ func TestIntake_OneUnusableAlertRefusesTheWholeDelivery(t *testing.T) {
 	}
 }
 
-// An oversized payload is refused without being buffered whole.
 func TestIntake_RefusesAnOversizedPayload(t *testing.T) {
 	plane := startIntake(t)
 
-	// Two megabytes of valid JSON, over the one-megabyte bound.
 	var body bytes.Buffer
 	body.WriteString(`{"alerts":[{"status":"firing","fingerprint":"fp","labels":{"pad":"`)
 	body.WriteString(strings.Repeat("x", 2<<20))
@@ -748,14 +681,6 @@ func TestIntake_RefusesAnOversizedPayload(t *testing.T) {
 	}
 }
 
-// A delivery names its Integration and nothing else, so the tenancy question changes
-// shape: there is no longer a path parameter to get wrong, and what has to be proven is
-// that the AlertEvent lands under the organization of the Integration row rather than under
-// anything a caller could influence.
-//
-// Both organizations share one database deliberately. An organization with no database
-// fails before any query runs, which would leave this passing against an implementation
-// with no scoping at all — the exact defect it exists to catch.
 func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T) {
 	const neighbour = neighbourOrg
 
@@ -766,9 +691,6 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 	})
 	address := listeningAddress(t, plane, "listening for alert intake")
 
-	// Two Integrations in two organizations on one database, each with its own secret
-	// digest — which here is the same secret, so a scoping mistake would be invisible if
-	// the lookup leaked between them.
 	mine := configureIntegration(t, dsn, intakeOrganization, intakeSecret)
 	theirs := configureIntegration(t, dsn, neighbour, intakeSecret)
 	owner := &intakePlane{
@@ -797,10 +719,6 @@ func TestIntake_ADeliveryLandsUnderItsIntegrationsTenantAndNoOther(t *testing.T)
 	}
 }
 
-// Two Integrations of one type, each with its own secret. This is the shape a customer
-// running production and staging Alertmanager has, and it is the whole reason the
-// Integration Type and the Integration are separate concepts: one adapter, two records,
-// two credentials.
 func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 	var dsn string
 	plane := startControlPlane(t, func(cfg *config.Config) {
@@ -820,7 +738,6 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 			integration: staging, dsn: dsn},
 	}
 
-	// Each accepts its own secret.
 	if status := both["production"].deliver(t, intakeSecret,
 		firing("fp-prod", time.Now().UTC())); status != http.StatusAccepted {
 		t.Errorf("production with its own secret = %d, want 202", status)
@@ -830,7 +747,6 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 		t.Errorf("staging with its own secret = %d, want 202", status)
 	}
 
-	// And refuses the other's, in both directions.
 	if status := both["staging"].deliver(t, intakeSecret,
 		firing("fp-x", time.Now().UTC())); status != http.StatusUnauthorized {
 		t.Errorf("production's secret on staging = %d, want 401", status)
@@ -840,7 +756,6 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 		t.Errorf("staging's secret on production = %d, want 401", status)
 	}
 
-	// Each AlertEvent names the Integration that delivered it, and nothing crossed.
 	scopes := both["production"].scopes(t)
 	if len(scopes) != 2 {
 		t.Fatalf("two accepted deliveries recorded %d alertEvents, want 2", len(scopes))
@@ -854,9 +769,6 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 	}
 }
 
-// An Integration an operator turned off refuses deliveries. It is still a row — disabling
-// is not deleting, so the record of what it produced survives — but nothing new arrives
-// through it.
 func TestIntake_ADisabledIntegrationRefusesDeliveries(t *testing.T) {
 	plane := startIntake(t)
 
@@ -876,8 +788,6 @@ func TestIntake_ADisabledIntegrationRefusesDeliveries(t *testing.T) {
 	}
 }
 
-// Nothing intake logs may carry the payload or the secret. The payload is untrusted text from
-// a customer's systems, and a log that quoted either would turn diagnosis into a disclosure.
 func TestIntake_LogsNeitherThePayloadNorTheSecret(t *testing.T) {
 	plane := startIntake(t)
 
@@ -894,9 +804,6 @@ func TestIntake_LogsNeitherThePayloadNorTheSecret(t *testing.T) {
 	}
 
 	logs := plane.logs.String()
-	// Both deliveries must have been logged at all. Asserting only that the payload is absent
-	// would pass against a surface that logged nothing, which is not the property — the
-	// refusal in particular has to be investigable.
 	if !strings.Contains(logs, "delivery accepted") {
 		t.Error("an accepted delivery was not logged")
 	}

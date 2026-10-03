@@ -20,20 +20,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// Enums across this module are persisted as integers in columns, and some of the same integers are
-// written as bare literals inside the SQL that reads and writes those columns. Nothing in the
-// language connects the two: reordering a constant block shifts every value after it while every
-// literal keeps its old meaning, and the rows already stored keep the old numbering. The compiler
-// cannot see it, the linter cannot see it, and it is invisible in review.
-//
-// Two gates cover it. The first freezes the values. The second checks that no SQL literal names
-// a value no constant holds.
-
-// The values as they are stored. A constant that moves fails here, naming itself, rather than
-// silently changing what every existing row means.
-//
-// These are a storage contract, not an implementation detail. Changing one requires a migration
-// that rewrites the column, and this table is where that decision becomes visible.
 func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 	t.Parallel()
 
@@ -57,16 +43,11 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"AlertEventFiring", int(alertevent.AlertEventFiring), 1},
 		{"AlertEventResolved", int(alertevent.AlertEventResolved), 2},
 
-		// An incident's vocabulary is the capability's rather than persistence's, because
-		// the capability owns what it defines. What is frozen is the same thing either
-		// way: the integers the SQL writes as bare literals.
 		{"StatusOpen", int(incident.StatusOpen), 1},
 		{"StatusResolved", int(incident.StatusResolved), 2},
 		{"BasisSourceGrouping", int(incident.BasisSourceGrouping), 1},
 		{"BasisUngrouped", int(incident.BasisUngrouped), 2},
 
-		// An investigation's lifecycle and its runs' outcomes. The still-running guard in
-		// the ending update is written as `status = 1`.
 		{"InvestigationRunning", int(investigation.StatusRunning), 1},
 		{"InvestigationConcluded", int(investigation.StatusConcluded), 2},
 		{"InvestigationFailed", int(investigation.StatusFailed), 3},
@@ -74,9 +55,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"RunSucceeded", int(investigation.RunSucceeded), 1},
 		{"RunFailed", int(investigation.RunFailed), 2},
 
-		// The investigation event stream's vocabulary. The column CHECK is written as a
-		// range, so a value that moved would still be stored and would simply mean
-		// something else to every reader.
 		{"EventStarted", int(investigation.EventStarted), 1},
 		{"EventProgress", int(investigation.EventProgress), 2},
 		{"EventToolStarted", int(investigation.EventToolStarted), 3},
@@ -86,18 +64,12 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"EventCancelled", int(investigation.EventCancelled), 9},
 		{"EventHypothesesUpdated", int(investigation.EventHypothesesUpdated), 10},
 
-		// The Changes capability's vocabulary. The baseline exclusion in every change query is
-		// written as `change_kind <> 1`, so ChangeBaseline moving would silently turn
-		// every baseline into a reportable change.
 		{"KindDeployment", int(changes.KindDeployment), 1},
 		{"KindStatefulSet", int(changes.KindStatefulSet), 2},
 		{"KindDaemonSet", int(changes.KindDaemonSet), 3},
 		{"KindConfigMap", int(changes.KindConfigMap), 4},
 		{"KindSecret", int(changes.KindSecret), 5},
 
-		// A conversation's own vocabularies. Every one is written as a bare literal in
-		// the SQL that reads or writes it, so a constant that moved would silently
-		// re-label rows: a person's message would start reading as the agent's.
 		{"SurfaceWeb", int(conversation.SurfaceWeb), 1},
 		{"SurfaceSlack", int(conversation.SurfaceSlack), 2},
 		{"StateOpen", int(conversation.StateOpen), 1},
@@ -149,8 +121,6 @@ func TestRetiredInvestigationEventNumbersAreNeverReused(t *testing.T) {
 	}
 }
 
-// The value sets, named once so a file below says which enum governs it rather than restating
-// the numbers.
 var (
 	jobStatusValues = []int{
 		int(storage.JobPending), int(storage.JobLeased), int(storage.JobSucceeded),
@@ -165,10 +135,7 @@ var (
 		int(alertevent.AlertEventFiring), int(alertevent.AlertEventResolved),
 	}
 	incidentStatusValues = []int{int(incident.StatusOpen), int(incident.StatusResolved)}
-	// A Slack delivery's own lifecycle, which is NOT an investigation's: it is pending,
-	// delivering, delivered or failed, and a delivery that failed says nothing about the
-	// investigation behind it.
-	slackReplyValues = []int{
+	slackReplyValues     = []int{
 		int(storage.SlackReplyPending), int(storage.SlackReplyDelivering),
 		int(storage.SlackReplyDelivered), int(storage.SlackReplyFailed),
 	}
@@ -185,55 +152,30 @@ var (
 	}
 )
 
-// enumColumns maps a file in internal/store/postgres to the values its SQL may compare each enum
-// column against. Two different enums are both stored in a column called status — a job's, a
-// Alert Event's and an incident's — so the legal set is decided per file rather than per column name.
-//
-// A file is listed here when its SQL compares one of the scanned columns to a literal. Adding
-// SQL that does so to any other file fails the gate below, which is the point: the new file has
-// to say which enum governs it.
 var enumColumns = map[string]map[string][]int{
-	"lease.go":        {"status": jobStatusValues},
-	"result.go":       {"status": jobStatusValues},
-	"cancellation.go": {"status": jobStatusValues},
-	// Relay counts include leased jobs to report what the relays are holding.
+	"lease.go":              {"status": jobStatusValues},
+	"result.go":             {"status": jobStatusValues},
+	"cancellation.go":       {"status": jobStatusValues},
 	"relays.go":             {"status": jobStatusValues},
 	"slack_message_work.go": {"status": slackMessageStatusValues},
 	"webhook_delivery.go": {
 		"status": slackMessageStatusValues,
 	},
-	// The delivery path: the upsert guard compares an Alert Event's status.
 	"alert_event.go": {"status": alertEventStatusValues},
-	// Grouping compares an EPISODE's status — an open incident is the one a new AlertEvent joins —
-	// and recomputing one counts the alertEvents still firing, which shares the value 1.
 	"incident.go": {"status": append(append([]int(nil), incidentStatusValues...),
 		alertEventStatusValues...)},
-	// An inbound Slack message claims its delivery through the same idempotence key every
-	// other delivery uses.
 	"slack_conversation.go": {
 		"status": slackMessageStatusValues,
 	},
-	// The outbound half: claiming compares a delivery's own lifecycle state.
 	"slack_reply.go": {"status": slackReplyValues},
-	// The ending update is guarded on the investigation still running, and the
-	// open-incident listing filters on an EPISODE's status; the two enums share the file.
 	"investigation.go": {"status": append(append(append([]int(nil), investigationStatusValues...),
 		incidentStatusValues...), jobStatusValues...)},
 	"investigation_capacity.go": {"status": investigationStatusValues},
-	// The brief carries only what CONCLUDED turns established: a running turn has
-	// established nothing yet, and a failed one established nothing at all.
 	"conversation_brief.go": {
 		"status": investigationStatusValues, "role": conversationRoleValues,
 	},
-	// Claiming, renewing and sweeping all guard on the investigation still running, and
-	// the recovery sweep fails it — so the file writes an investigation status as a
-	// literal twice, in the two places that mean the most.
 	"investigation_lease.go": {"status": investigationStatusValues},
 	"investigation_event.go": {"status": investigationStatusValues},
-	// Opening a turn counts INVESTIGATIONS that are still running and derives the window
-	// from whether the EPISODE is still open, so the same two enums share this file too.
-	// The queued-message reads filter on a MESSAGE's role, because only what a person
-	// said becomes the turn's question.
 	"conversation.go": {
 		"status": append(append([]int(nil), investigationStatusValues...),
 			incidentStatusValues...),
@@ -243,19 +185,13 @@ var enumColumns = map[string]map[string][]int{
 	"conversation_window.go":   {"role": conversationRoleValues},
 	"conversation_history.go":  {"status": investigationStatusValues},
 	"investigation_message.go": {"role": conversationRoleValues},
-	// The change history excludes baselines from every change query.
-	"changes.go": {"change_kind": changeKindValues},
+	"changes.go":               {"change_kind": changeKindValues},
 }
 
-// scannedColumns is every column name the gate reads comparisons against. A column absent from
-// this list is invisible to the gate, so extending the persisted vocabulary starts here.
 var scannedColumns = []string{
 	"status", "outcome", "change_kind", "role",
 }
 
-// Every integer an enum column is compared against must be a value some constant holds. This
-// catches the literal gate one cannot see: a typed 5 where 4 was meant, or a value invented for
-// a state that was never declared.
 func TestSQLComparesEnumColumnsOnlyToDeclaredValues(t *testing.T) {
 	t.Parallel()
 
@@ -287,15 +223,11 @@ func TestSQLComparesEnumColumnsOnlyToDeclaredValues(t *testing.T) {
 		}
 	}
 
-	// A gate that read nothing has stopped working rather than found nothing wrong.
 	if inspected == 0 {
 		t.Fatal("no enum literals were inspected; the gate would pass vacuously")
 	}
 }
 
-// The scanner must report a literal that no declared constant holds. This is the violation the
-// gate exists for, and testing it against a fixture is what stops the gate passing because its
-// detection never worked rather than because the tree is clean.
 func TestEnumLiteralScannerCatchesAnUndeclaredValue(t *testing.T) {
 	t.Parallel()
 
@@ -308,9 +240,6 @@ func TestEnumLiteralScannerCatchesAnUndeclaredValue(t *testing.T) {
 	}
 }
 
-// The forms the scanner has to read, and the ones it must leave alone. A scanner that reported a
-// bound parameter as a literal would fail the gate on correct SQL, which is the failure that
-// gets a gate deleted.
 func TestEnumLiteralScannerReadsTheFormsInUse(t *testing.T) {
 	t.Parallel()
 
@@ -344,9 +273,6 @@ func TestEnumLiteralScannerReadsTheFormsInUse(t *testing.T) {
 	}
 }
 
-// enumLiteralsFor reports the integer literals one SQL fragment compares a column against,
-// reading the equality, inequality and IN forms this codebase uses. A table qualifier is
-// tolerated because the SQL uses aliases; a bound parameter is not a literal and is skipped.
 func enumLiteralsFor(sql, column string) []int {
 	qualified := `(?i)(?:\w+\.)?\b` + regexp.QuoteMeta(column) + `\b`
 
@@ -369,8 +295,6 @@ func enumLiteralsFor(sql, column string) []int {
 	return found
 }
 
-// sqlLiterals returns the string literals in one file that look like SQL. Every query in
-// internal/store/postgres is a raw literal passed to pgx, so this is where the column comparisons are.
 func sqlLiterals(file *ast.File) []string {
 	var found []string
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -380,8 +304,6 @@ func sqlLiterals(file *ast.File) []string {
 		}
 		value, err := strconv.Unquote(literal.Value)
 		if err != nil {
-			// A raw string literal containing a backquote cannot occur, so the only unquote
-			// failures here are literals this walk has no interest in.
 			return true
 		}
 		if looksLikeSQL(value) {
@@ -402,8 +324,6 @@ func looksLikeSQL(value string) bool {
 	return false
 }
 
-// storageProductionFiles parses internal/store/postgres by file name, which the gate needs because the
-// legal value set is decided per file. The shared helper discards names.
 func storageProductionFiles(t *testing.T) map[string]*ast.File {
 	t.Helper()
 

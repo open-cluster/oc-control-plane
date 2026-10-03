@@ -17,9 +17,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// jobStatus mirrors the durable status column. It is redeclared here rather than imported
-// because the schema is the contract this harness holds an implementation to — importing the
-// implementation's own constants would make the harness agree with it by construction.
 type jobStatus int16
 
 const (
@@ -53,18 +50,12 @@ func (s jobStatus) terminal() bool {
 
 const databaseStartTimeout = 3 * time.Minute
 
-// truth is the durable state both halves are measured against.
-//
-// The harness reads and writes it directly, in SQL, rather than through either
-// implementation's helpers or through protocol messages. Messages would prove they were sent;
-// the guarantee is about what was written.
 type truth struct {
 	container *tcpostgres.PostgresContainer
 	pool      *pgxpool.Pool
 	dsn       string
 }
 
-// startTruth brings up the database the control plane will be given.
 func startTruth(ctx context.Context) (*truth, error) {
 	startCtx, cancel := context.WithTimeout(ctx, databaseStartTimeout)
 	defer cancel()
@@ -90,13 +81,6 @@ func startTruth(ctx context.Context) (*truth, error) {
 	return &truth{container: container, dsn: dsn}, nil
 }
 
-// connect opens the harness's own pool and reaches the schema through it. It is deferred
-// until after the control plane has started, because the control plane applies the migrations
-// and there is nothing to read before it has.
-//
-// The read at the end is the point. Building a pool dials nothing — it would succeed against
-// a database that is gone — and the first thing to notice would otherwise be a test failing
-// on an assertion about a job.
 func (t *truth) connect(ctx context.Context) error {
 	pool, err := pgxpool.New(ctx, t.dsn)
 	if err != nil {
@@ -122,9 +106,6 @@ func (t *truth) close() {
 	_ = testcontainers.TerminateContainer(t.container)
 }
 
-// issueBootstrapToken mints a single-use enrolment token and records its digest, which is
-// what an operator issuing one would leave behind. The token itself is returned once and
-// held nowhere else, exactly as the real issuance path requires.
 func (t *truth) issueBootstrapToken(ctx context.Context, organization string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -143,8 +124,6 @@ func (t *truth) issueBootstrapToken(ctx context.Context, organization string) (s
 	return token, nil
 }
 
-// registration reports the identity an organization's relay enrolled with, and whether one
-// exists yet. Absence is not an error: the caller is usually waiting for enrolment.
 func (t *truth) registration(ctx context.Context, organization string) (uuid.UUID, bool, error) {
 	var id uuid.UUID
 	err := t.pool.QueryRow(ctx, `
@@ -162,8 +141,6 @@ func (t *truth) registration(ctx context.Context, organization string) (uuid.UUI
 	return id, true, nil
 }
 
-// countRegistrations reports how many identities an organization has. It is how a spent
-// token is proven not to have minted a second one.
 func (t *truth) countRegistrations(ctx context.Context, organization string) (int, error) {
 	var count int
 	err := t.pool.QueryRow(ctx,
@@ -175,13 +152,6 @@ func (t *truth) countRegistrations(ctx context.Context, organization string) (in
 	return count, nil
 }
 
-// kubernetesIntegration records the Kubernetes Integration every job reaches, served by
-// the enrolled relay.
-//
-// The Integration is what a job reaches; the relay is where it runs. The row is written
-// here in SQL for the same reason everything else in this harness is: the schema is the
-// contract an implementation is being held to, and going through the implementation's own
-// helpers would make the harness agree with it by construction.
 func (t *truth) kubernetesIntegration(
 	ctx context.Context, organization string, registration uuid.UUID,
 ) (uuid.UUID, error) {
@@ -197,13 +167,6 @@ func (t *truth) kubernetesIntegration(
 	return integration, nil
 }
 
-// enqueueJob records work to be done, pending and unleased — which is what an investigation
-// planner will do once one exists. Nothing is delivered until a session claims it, so a job
-// enqueued while every relay is offline waits rather than being lost.
-//
-// The Integration is named rather than left out, because the schema will not accept a job
-// without one: the tenant boundary is a checked precondition on the execution path, and a
-// job with nothing to compare against could not be one.
 func (t *truth) enqueueJob(
 	ctx context.Context, organization string, registration, integration uuid.UUID,
 	capability string, version uint32, arguments []byte,
@@ -221,7 +184,6 @@ func (t *truth) enqueueJob(
 	return id, nil
 }
 
-// jobRecord is a job as the database holds it.
 type jobRecord struct {
 	Status     jobStatus
 	Result     []byte
@@ -241,15 +203,6 @@ func (t *truth) job(ctx context.Context, organization string, id uuid.UUID) (job
 	return record, nil
 }
 
-// occurrencesOf searches EVERY text and binary column of every table for a string, and reports
-// where it was found.
-//
-// This is deliberately a sweep rather than a read of the one column a secret was expected in. The
-// claim being tested is that a secret does not reach the control plane's durable state AT ALL,
-// and a test that checked only the column somebody thought of would pass against an
-// implementation that also wrote it to an audit row, a log table or a cached projection. The
-// schema is read from the catalogue rather than listed here, so a table added later is swept
-// without anyone remembering to add it.
 func (t *truth) occurrencesOf(ctx context.Context, needle string) ([]string, error) {
 	rows, err := t.pool.Query(ctx, `
 		SELECT table_name, column_name, data_type
@@ -275,16 +228,12 @@ func (t *truth) occurrencesOf(ctx context.Context, needle string) ([]string, err
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading the schema to sweep: %w", err)
 	}
-	// A sweep that found no columns would report success while having looked at nothing, which is
-	// exactly the failure mode a negative assertion has to be built against.
 	if len(columns) == 0 {
 		return nil, errors.New("no text or binary columns found; the sweep would be vacuous")
 	}
 
 	var found []string
 	for _, candidate := range columns {
-		// bytea is cast rather than skipped: a serialized protocol message is stored as bytes, and
-		// it is the single most likely place for an unredacted value to survive.
 		expression := fmt.Sprintf("%q::text", candidate.name)
 		if candidate.kind == "bytea" {
 			expression = fmt.Sprintf("encode(%q, 'escape')", candidate.name)

@@ -11,12 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Relays: counted, filtered, ordered and paged by the backend, plus what a Relay serves
-// and the token that adds one.
-//
-// The scale assertions matter more than they look. A page that is fast at ten relays and slow at
-// a thousand is a page that works for everybody who has not deployed the product yet.
-
 type relaySummaryBody struct {
 	Total           int `json:"total"`
 	Connected       int `json:"connected"`
@@ -106,9 +100,6 @@ func TestRelays(t *testing.T) {
 		if len(listed.Items) == 0 {
 			t.Fatal("no relays")
 		}
-		// The harness enrols a relay but does not open a session, so presence is genuinely
-		// absent. What is asserted is that the field is SERVED and honest, not that it is true:
-		// a relay that never connected reporting `connected` would be the worse failure.
 		for _, relay := range listed.Items {
 			if relay.Connected && relay.LastSeenAt == nil {
 				t.Errorf("%s reports connected with no last-seen time",
@@ -321,8 +312,6 @@ func TestRelays(t *testing.T) {
 			t.Error("nothing says the token is shown once")
 		}
 
-		// Issued twice is two distinct tokens. A stable one would be a permanent secret wearing
-		// a single-use label.
 		status, body = plane.call(t, http.MethodPost, relays+"/bootstrap-tokens", nil)
 		if status != http.StatusCreated {
 			t.Fatalf("issuing a second bootstrap token = %d: %s", status, body)
@@ -337,19 +326,11 @@ func TestRelays(t *testing.T) {
 	})
 }
 
-// Relays at the sizes the specification names: 1, 20, 100 and 1000.
-//
-// Three properties are asserted at each size, and each is one an offset-paginated listing would
-// fail silently: the summary agrees with the rows under it, the cursor walks every row exactly
-// once, and the time to answer stays bounded. The third is the one that decides whether this
-// page works for a customer who has actually deployed the product — a listing that is fast at
-// ten relays and slow at a thousand is a listing that works for everybody who has not.
 func TestRelaysAtScale(t *testing.T) {
 	for _, size := range []int{1, 20, 100, 1000} {
 		t.Run(fmt.Sprintf("%d relays", size), func(t *testing.T) {
 			plane := startIntegrationPlane(t)
 			relays := plane.base(surfaceOrg) + "/relays"
-			// The harness enrols one relay of its own, so one fewer is seeded to hit the number.
 			plane.seedRelays(t, size-1)
 
 			started := time.Now()
@@ -368,8 +349,6 @@ func TestRelaysAtScale(t *testing.T) {
 				t.Errorf("the states do not add up: %+v", summary)
 			}
 
-			// The cursor walks every row exactly once. An offset would skip or duplicate rows as
-			// relays enrol underneath the reader, and the way that fails is silent.
 			seen := make(map[string]int, size)
 			url := relays + "?limit=100"
 			walkStarted := time.Now()
@@ -406,9 +385,6 @@ func TestRelaysAtScale(t *testing.T) {
 					summary.Total, len(seen))
 			}
 
-			// A bound rather than a benchmark. It is loose on purpose — this runs against a
-			// container on whatever machine CI gave us — and it is still the assertion that
-			// would fail on a sequential scan per page or an unindexed sort.
 			const summaryBudget = 5 * time.Second
 			if summaryTook > summaryBudget {
 				t.Errorf("the summary took %s at %d relays, past the %s budget; it is one query "+
@@ -419,8 +395,6 @@ func TestRelaysAtScale(t *testing.T) {
 	}
 }
 
-// seedRelays inserts relay registrations directly, because enrolling a hundred through the
-// protocol would be testing the enrolment path a hundred times rather than the listing once.
 func (p *integrationPlane) seedRelays(t *testing.T, count int) {
 	t.Helper()
 

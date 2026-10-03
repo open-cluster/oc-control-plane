@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// The client against a fake GitHub. The fake speaks the REST shapes, headers and refusal
-// forms the real API does; the code under test is the real transport, decoding and bounds.
-
 type fakeGitHub struct {
 	*httptest.Server
 	calls   map[string]*atomic.Int64
@@ -173,8 +170,6 @@ func TestRepositoriesAreListedUnderTheInstallationToken(t *testing.T) {
 	}
 }
 
-// grantsPayments teaches the fake the installation's repository grant, which is what
-// the client resolves documented /repos/{owner}/{repo} paths from.
 func grantsPayments(fake *fakeGitHub) {
 	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -226,7 +221,6 @@ func TestAnEmptyRepositoryAnswersNoCommitsRatherThanAnError(t *testing.T) {
 	fake := newFakeGitHub(t)
 	grantsPayments(fake)
 	fake.answers["/repos/acme-corp/payments/commits"] = func(writer http.ResponseWriter, _ *http.Request) {
-		// GitHub's own answer for a repository with no commits yet.
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusConflict)
 		_, _ = writer.Write([]byte(`{"message":"Git Repository is empty."}`))
@@ -410,8 +404,6 @@ func TestRunJobsNameTheFailedStep(t *testing.T) {
 	}
 }
 
-// The log endpoint 302s to an expiring storage URL; the tail is asked for with a Range
-// request, and Go's client drops Authorization on the cross-host redirect by itself.
 func TestJobLogFollowsTheRedirectAndReadsTheTail(t *testing.T) {
 	t.Parallel()
 
@@ -442,8 +434,6 @@ func TestJobLogFollowsTheRedirectAndReadsTheTail(t *testing.T) {
 	}
 }
 
-// A suffix range wider than the log answers 206 carrying the log whole — which is the
-// whole answer, not a truncation, and must not be flagged as one.
 func TestJobLogDoesNotClaimTruncationWhenThePartialAnswerIsWhole(t *testing.T) {
 	t.Parallel()
 
@@ -470,7 +460,6 @@ func TestJobLogDoesNotClaimTruncationWhenThePartialAnswerIsWhole(t *testing.T) {
 	}
 }
 
-// A storage that ignores Range answers 200 with everything; the tail is cut locally.
 func TestJobLogTailsLocallyWhenRangeIsIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -553,7 +542,6 @@ func TestARenamedRepositoryIsReResolvedOnce(t *testing.T) {
 			{"id":1296269,"name":"payments","full_name":"` + name + `"}]}`))
 	}
 	fake.answers["/repos/acme-corp/payments/releases"] = func(writer http.ResponseWriter, _ *http.Request) {
-		// The rename happened between resolution and this read.
 		renamed.Store(true)
 		writer.WriteHeader(http.StatusNotFound)
 		_, _ = writer.Write([]byte(`{"message":"Not Found"}`))
@@ -667,7 +655,6 @@ func TestAnExhaustedRateBudgetIsTypedWithoutSleeping(t *testing.T) {
 
 	fake := newFakeGitHub(t)
 	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, _ *http.Request) {
-		// The primary rate limit: 403 with a reset far away and no Retry-After.
 		writer.Header().Set("X-RateLimit-Remaining", "0")
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusForbidden)
@@ -692,9 +679,6 @@ func TestTheDefaultBaseURLIsTheVendors(t *testing.T) {
 	}
 }
 
-// A refused credential and a malformed request are not rate limits, and repeating either
-// would spend the budget the retry exists to protect. Only a vendor that ASKS for a wait
-// gets a second attempt.
 func TestARefusedCredentialAndAValidationFailureAreNotRetried(t *testing.T) {
 	t.Parallel()
 

@@ -22,18 +22,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The endpoint serves plaintext HTTP/2. TLS terminates at the edge, which is where the
-// Relay's key pinning applies; a test that dialled TLS here would be testing a topology
-// that does not ship.
-//
-// What is asserted is what a Relay or an operator could observe: an identity was issued, a
-// second attempt with the same token was refused, an invented token was refused
-// identically, and the credential appeared in no log line. How consumption is implemented is
-// deliberately not asserted, so the implementation can change without rewriting this.
 func TestRelayRegistration(t *testing.T) {
-	// The organization the harness assigns a database to. An unassigned one is refused
-	// exactly like a bad token, which is deliberate — the refusal must not reveal which
-	// organizations exist — and makes a wrong name here look like a registration defect.
 	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
@@ -131,8 +120,6 @@ func register(
 	return client.Register(ctx, request)
 }
 
-// requireFailedPrecondition asserts the terminal refusal status and returns its message, so
-// the caller can compare one refusal against another.
 func requireFailedPrecondition(t *testing.T, err error) string {
 	t.Helper()
 
@@ -147,8 +134,6 @@ func requireFailedPrecondition(t *testing.T, err error) string {
 	return reported.Message()
 }
 
-// issueBootstrapToken seeds a token the way an operator eventually will, through the same
-// storage function rather than by writing the row from the test.
 func issueBootstrapToken(t *testing.T, dsn, organization, token string) {
 	t.Helper()
 
@@ -163,9 +148,6 @@ func issueBootstrapToken(t *testing.T, dsn, organization, token string) {
 	}
 }
 
-// openDatabase connects to the same database the running control plane uses, so a test can
-// act as the parts of the system that are not built yet — the operator issuing a token, the
-// planner enqueueing work — through their real storage functions rather than by writing rows.
 func openDatabase(t *testing.T, dsn string) *storage.Database {
 	t.Helper()
 
@@ -191,24 +173,11 @@ func dialRelay(t *testing.T, address string) *grpc.ClientConn {
 	return connection
 }
 
-// A port is reserved and released, rather than discovered after binding, because the relay
-// endpoint is configured by address. The alternative — a fixed port — makes the suite fail
-// whenever anything else on the machine holds it.
-//
-// handedOut remembers every address this process has already given a test, because the
-// reservation below releases the port before anyone binds it: a second call can be handed
-// the port the first one just let go, and the two surfaces of one control plane then race
-// for it. That is not hypothetical — on 2026-08-22 a full-suite run failed with the
-// application API holding 62970 and alert intake refused the same number.
 var handedOut = struct {
 	sync.Mutex
 	taken map[string]bool
 }{taken: map[string]bool{}}
 
-// freeAddress reserves a loopback port and releases it, returning an address nothing in
-// this process has been given before. It cannot defend against another process taking the
-// port in the gap; it does remove the collision this suite actually hits, which is one
-// test asking twice.
 func freeAddress(t *testing.T) string {
 	t.Helper()
 

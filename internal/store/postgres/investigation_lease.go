@@ -13,7 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// ClaimInvestigation leases the oldest waiting investigation.
 func (p *Database) ClaimInvestigation(
 	ctx context.Context, claim investigation.Claim,
 ) (uuid.UUID, investigation.Investigation, bool, error) {
@@ -46,7 +45,6 @@ func (p *Database) ClaimInvestigation(
 	return organization, claimed, true, nil
 }
 
-// Heartbeat renews only an unexpired lease held by this worker.
 func (p *Database) Heartbeat(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	claim investigation.Claim,
@@ -85,15 +83,6 @@ func (p *Database) Heartbeat(
 	return tag.RowsAffected() == 1, nil
 }
 
-// RecoverStale fails every investigation whose lease lapsed and writes each a terminal
-// event, so a reader watching one is told it stopped instead of watching forever.
-//
-// The record and the event are written in ONE transaction. Failing the investigation
-// without ending its stream would leave exactly the symptom this exists to cure, one level
-// down: a record that says failed and a reader still waiting.
-//
-// The event's sequence is read from the table rather than held in memory, because the
-// process that held the in-memory counter is the process that died.
 func (p *Database) RecoverStale(
 	ctx context.Context, reason string, limit int,
 ) (int, error) {
@@ -107,7 +96,6 @@ func (p *Database) RecoverStale(
 	return recovered, nil
 }
 
-// recoverStaleIn recovers up to limit stale investigations.
 func recoverStaleIn(
 	ctx context.Context, pool *pgxpool.Pool, reason string, limit int,
 ) (int, error) {
@@ -125,8 +113,6 @@ func recoverStaleIn(
 		}
 	}()
 
-	// The failing update and the identifiers it touched, in one statement: anything read
-	// first and updated after would be a window in which the lease could be renewed.
 	rows, err := transaction.Query(ctx, `
 		UPDATE investigation
 		   SET status           = 3,
@@ -172,8 +158,6 @@ func recoverStaleIn(
 		return 0, fmt.Errorf("encoding a recovery reason: %w", err)
 	}
 	for _, one := range swept {
-		// The sequence comes from the TABLE, not from memory: the process that held the
-		// in-memory counter for this investigation is the process that died.
 		if _, err = transaction.Exec(ctx, `
 			INSERT INTO investigation_event (investigation_id, org_id, sequence, type,
 			                                 payload)
@@ -195,7 +179,6 @@ func recoverStaleIn(
 	return len(swept), nil
 }
 
-// scanClaimedInvestigation includes the Organization and claim token returned by leasing.
 func scanClaimedInvestigation(
 	row scanned, organization *uuid.UUID,
 ) (investigation.Investigation, error) {
@@ -205,7 +188,6 @@ func scanClaimedInvestigation(
 	return found, err
 }
 
-// prefixedRow preserves the shared Investigation mapping after the claim metadata.
 type prefixedRow struct {
 	row   scanned
 	first *uuid.UUID

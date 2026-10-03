@@ -34,15 +34,9 @@ type Handlers struct {
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
 	Sealer                  seal.Sealer
-	// Origin is the browser origin a cookie-authenticated unsafe request may come from.
-	// Empty means no browser may make one, which is the correct posture for a deployment that
-	// has not said where its console is served from.
-	Origin string
-	// MaxWaitingTurns bounds one organization's unclaimed turns, so overload is a plain
-	// refusal rather than a queue that grows without bound.
-	MaxWaitingTurns int
-	// PublicURL is where this surface is reachable from a browser and where a browser is sent afterward.
-	PublicURL string
+	Origin                  string
+	MaxWaitingTurns         int
+	PublicURL               string
 }
 
 func (h Handlers) Router() (http.Handler, error) {
@@ -61,7 +55,6 @@ func (h Handlers) Router() (http.Handler, error) {
 	return router, nil
 }
 
-// Routes is the whole application API.
 func (h Handlers) Routes() []authz.Route {
 	const relays = "/api/v1/relays"
 
@@ -142,7 +135,6 @@ func (h Handlers) Routes() []authz.Route {
 	return routes
 }
 
-// recordRefusal writes an authorization denial to the tenant's record.
 func (h Handlers) recordRefusal(
 	ctx context.Context, organization uuid.UUID, event audit.Event,
 ) {
@@ -153,12 +145,10 @@ func (h Handlers) recordRefusal(
 	}
 }
 
-// fail answers an error, naming the ones a caller can act on.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, storage.ErrNotAMember), errors.Is(err, storage.ErrUnknownOrganization):
-		// The same answer the authorization middleware gives, byte for byte. A different one
-		// here would confirm to a caller that a tenant they may not reach exists.
+		// Match authorization refusals so callers cannot probe whether another Organization exists.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, storage.ErrBadCursor), errors.Is(err, integrations.ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest,
@@ -177,7 +167,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	}
 }
 
-// clearConflict withdraws the mark on a contested relay identity.
 func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, registration, ok := h.relay(writer, request)
@@ -198,8 +187,6 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "relay not found"})
 		return
 	case storage.WithdrawalNothingMarked:
-		// The state asked for already holds. Nothing is written to the audit record because an
-		// act that changed nothing is not part of the history of what happened.
 		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -212,24 +199,19 @@ func (h Handlers) clearConflict(writer http.ResponseWriter, request *http.Reques
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-// caller resolves the principal the guard put on this request. Its absence is a route mounted
-// outside the permission table, which is a programming error rather than a runtime condition.
 func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
 
-// callerName is who acted, for the log lines.
 func (h Handlers) callerName(request *http.Request) string {
 	principal := authz.MustPrincipal(request.Context())
 	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
 }
 
-// organization returns the tenant verified by the authorization middleware.
 func (h Handlers) organization(request *http.Request) uuid.UUID {
 	return authz.MustPrincipal(request.Context()).Organization()
 }
 
-// relay resolves the tenant and the relay named in the path, for the routes that address one.
 func (h Handlers) relay(
 	writer http.ResponseWriter, request *http.Request,
 ) (uuid.UUID, uuid.UUID, bool) {

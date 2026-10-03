@@ -93,9 +93,6 @@ func TestTheOnlyConfigurationFieldIsTheSecretToken(t *testing.T) {
 	}
 }
 
-// Every tool carries its full contract. The model chooses by this metadata, so
-// an empty field is not missing documentation — it is a tool that will be misrouted and
-// then patched with prompts.
 func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	t.Parallel()
 
@@ -126,13 +123,9 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	}
 }
 
-// The scopes verification checks are exactly the ones the tools claim to need, so a scope
-// can be neither demanded for nothing nor needed silently.
 func TestVerifiedScopesMatchWhatTheToolsClaim(t *testing.T) {
 	t.Parallel()
 
-	// Both halves: a required scope must be needed by something, and an optional one must
-	// be worth holding. A scope in neither map is a scope nothing checks.
 	known := map[string]string{}
 	for scope, cost := range requiredScopes {
 		known[scope] = cost

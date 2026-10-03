@@ -8,9 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// Verification is honest about what it can establish. OpenCluster never calls an
-// Alertmanager, so the only proof the path works is a delivery that actually arrived —
-// and its absence is stated as an absence, never dressed up as a check.
 func TestVerify_SaysWhatADeliveryProved(t *testing.T) {
 	t.Parallel()
 

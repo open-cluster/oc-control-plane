@@ -10,12 +10,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The event stream where it has to be durable. Replay is the whole reason these are rows
-// rather than a broadcast: a reader that reconnects and one that landed on another replica
-// both ask for what comes after a sequence, and both are answered from here.
-
-// aTurn opens a conversation, asks something, and returns the investigation the turn
-// created — an event stream needs an investigation to hang off.
 func aTurn(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) uuid.UUID {
@@ -31,7 +25,6 @@ func aTurn(
 	return turn.InvestigationID
 }
 
-// appendEvents writes a scripted run's worth of events.
 func appendEvents(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	id uuid.UUID, types ...investigation.EventType,
@@ -51,8 +44,6 @@ func appendEvents(
 	}
 }
 
-// Resuming from an arbitrary point produces exactly the missing suffix — no gap and no
-// repeat. This is the entire reconnect contract.
 func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 	t.Parallel()
 
@@ -104,9 +95,6 @@ func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Model a database already migrated by a newer binary. The current schema correctly
-	// refuses values it cannot write; a rolling-back reader must still preserve their row
-	// and continue reading the known history around it.
 	if _, err = pool.Exec(ctx,
 		`ALTER TABLE investigation_event DROP CONSTRAINT investigation_event_type_check`); err != nil {
 		t.Fatalf("modeling a newer event schema: %v", err)
@@ -174,8 +162,6 @@ func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
 	}
 }
 
-// A payload round-trips through JSONB unchanged, so what a reader is handed is what the
-// platform composed.
 func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -275,8 +261,6 @@ func TestInvestigationCannotBeDeletedThroughItsEventHistory(t *testing.T) {
 	}
 }
 
-// An investigation identifier from another tenant reads as an empty stream, never as
-// somebody else's events.
 func TestAnotherOrganizationsEventsAreNotReadable(t *testing.T) {
 	t.Parallel()
 

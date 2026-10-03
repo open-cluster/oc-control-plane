@@ -17,18 +17,14 @@ import (
 	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-// Name is how this provider is written in configuration and telemetry.
 const Name = "zai"
 
-// defaultBaseURL is where Z.AI serves its open platform API.
 const defaultBaseURL = "https://api.z.ai"
 
-// completionsPath is the chat completions endpoint, relative to the base.
 const completionsPath = "/api/paas/v4/chat/completions"
 
 const maxResponseBytes = 8 << 20
 
-// Provider is one configured Z.AI model.
 type Provider struct {
 	client   *http.Client
 	endpoint string
@@ -149,13 +145,11 @@ func transportFailure(model string, cause error) error {
 		"the provider could not be reached", cause)
 }
 
-// Options is what a caller may put in place of the real thing for an offline test.
 type Options struct {
 	HTTPClient *http.Client
 	Wait       func(context.Context, time.Duration) error
 }
 
-// New builds a provider for one model configuration, refusing a configuration that could not work.
 func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 	config = config.WithDefaults()
 	if err := config.Validate(); err != nil {
@@ -170,9 +164,6 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 	if client == nil {
 		client = &http.Client{
 			Timeout: config.RequestTimeout,
-			// A redirect is refused rather than followed. The host this adapter may reach comes
-			// from configuration, and following a redirect would let a response decide where the
-			// credential is sent next.
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -196,7 +187,6 @@ const (
 	retryDelayCap = 30 * time.Second
 )
 
-// RequestTokens sizes the same provider request structure Complete sends.
 func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
 	encoded, err := json.Marshal(p.request(prompt))
 	if err != nil {
@@ -208,9 +198,6 @@ func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
-	// Checked before anything is encoded or sent. A round whose deadline has already passed must
-	// not continue an answer nobody is waiting for, and the transport cannot be relied on to
-	// notice: it is asked to send a request, not to decide whether one is still wanted.
 	if err := ctx.Err(); err != nil {
 		return reasoning.Completion{}, transportFailure(prompt.Model, err)
 	}
@@ -265,7 +252,6 @@ func retryDelay(attempt int) time.Duration {
 	return floor + time.Duration(rand.Int64N(int64(ceiling-floor)+1))
 }
 
-// once performs one attempt.
 func (p *Provider) once(
 	ctx context.Context, prompt reasoning.Prompt, body []byte,
 ) (reasoning.Completion, time.Duration, error) {
@@ -308,7 +294,6 @@ func retryAfter(value string, now time.Time) time.Duration {
 	return min(max(at.Sub(now), 0), retryDelayCap)
 }
 
-// send performs the request. The credential travels in a header and appears nowhere else.
 func (p *Provider) send(ctx context.Context, body []byte) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
@@ -321,7 +306,6 @@ func (p *Provider) send(ctx context.Context, body []byte) (*http.Response, error
 	return p.client.Do(request)
 }
 
-// answer turns a successful body into a completion.
 func (p *Provider) answer(
 	prompt reasoning.Prompt, response *http.Response, payload []byte,
 ) (reasoning.Completion, error) {
@@ -343,9 +327,6 @@ func (p *Provider) answer(
 		Usage:     usageOf(decoded.Usage),
 	}
 
-	// The finish reason is read BEFORE the content is, for the same reason it is on every other
-	// provider: a declined request comes back as a successful response, and reading the content
-	// first would present an empty one as a conclusion.
 	switch completion.Stop {
 	case reasoning.StopRefused:
 		failure := reasoning.Failed(reasoning.OutcomeRefused, Name, completion.Model,
@@ -369,8 +350,6 @@ func (p *Provider) answer(
 	return completion, nil
 }
 
-// answeringModel reads which model actually replied, falling back to what was asked for only when
-// the response does not say.
 func answeringModel(answered, requested string) string {
 	if trimmed := strings.TrimSpace(answered); trimmed != "" {
 		return trimmed
@@ -378,8 +357,6 @@ func answeringModel(answered, requested string) string {
 	return requested
 }
 
-// requestIdentifier digs the provider's own identifier out of a failed response, so a support
-// conversation about a failure has the same handle as one about a success.
 func requestIdentifier(response *http.Response, payload []byte) string {
 	var envelope struct {
 		RequestID string `json:"request_id"`
@@ -398,7 +375,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// completionResponse is this vendor's answer envelope, named exactly as it arrives.
 type completionResponse struct {
 	ID        string `json:"id"`
 	RequestID string `json:"request_id"`
@@ -407,10 +383,8 @@ type completionResponse struct {
 		Index        int    `json:"index"`
 		FinishReason string `json:"finish_reason"`
 		Message      struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-			// ReasoningContent is this vendor's thinking output. It is read only so that it is
-			// never mistaken for the document; nothing here records or logs it.
+			Role             string     `json:"role"`
+			Content          string     `json:"content"`
 			ReasoningContent string     `json:"reasoning_content"`
 			ToolCalls        []toolCall `json:"tool_calls"`
 		} `json:"message"`
@@ -418,7 +392,6 @@ type completionResponse struct {
 	Usage usage `json:"usage"`
 }
 
-// usage is this vendor's token accounting.
 type usage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
 	CompletionTokens    int64 `json:"completion_tokens"`

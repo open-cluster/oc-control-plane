@@ -2,7 +2,6 @@ package investigation
 
 import "github.com/google/uuid"
 
-// EvidenceRef identifies a Tool Run outside the containing Investigation.
 type EvidenceRef struct {
 	InvestigationID uuid.UUID `json:"investigationId"`
 	ToolRunOrdinal  int       `json:"toolRunOrdinal"`

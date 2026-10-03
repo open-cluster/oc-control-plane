@@ -11,27 +11,8 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 )
 
-// The two reads that carry the answer in most Kubernetes workload failures, proven across the
-// real protocol against a real cluster.
-//
-// What is proven here and nowhere else is that the COMPLETENESS BASIS arrives intact. Both
-// executors have unit tests against a fake port, and those prove the executor computes the
-// basis; only this proves it survives encoding, the stream, the recording transaction, and the
-// column it lands in. The central certificate logic depends on exactly that survival, and a
-// field lost anywhere along the path would look, from the control plane's side, like a cluster
-// where nothing happened.
-//
-// There is no parity oracle for either capability — the frozen .NET reference has no events
-// reader and no log reader — so the refusal paths get as much attention as the happy ones.
-
-// restartTimeout bounds waiting for the crashing fixture to die and come back. A container
-// that echoes and exits restarts quickly, but the kubelet's backoff grows, so the budget is
-// generous.
 const restartTimeout = 3 * time.Minute
 
-// recordedResultOf decodes the whole capability payload as it was durably stored. Tests that only
-// need one capability's half go through the helpers below; this exists for the ones whose subject
-// is the envelope itself, such as what redaction reported.
 func recordedResultOf(t *testing.T, record jobRecord) *relayv1.CapabilityResult {
 	t.Helper()
 
@@ -64,16 +45,9 @@ func logsResultOf(t *testing.T, record jobRecord) *relayv1.KubernetesContainerLo
 	return logs
 }
 
-// The cluster's own account of what it did crosses the protocol with its completeness basis
-// intact. A namespace that has just started three workloads has a great deal to say, so this
-// asserts on the shape of the answer rather than on any particular event.
 func TestProof_TheClusterSaysWhatItDidAndTheBasisSurvives(t *testing.T) {
 	h := newHarness(t)
 
-	// Half the attested horizon, not all of it. A window exactly one horizon wide is a boundary
-	// value: the Relay judges it against its own clock at execution time, which is necessarily
-	// later than the clock that built the window, so such a window legitimately reaches past the
-	// horizon by however long dispatch took. Asserting on that would be asserting on latency.
 	record := h.awaitTerminal(t, h.dispatchEvents(t, fixtureNamespace, 30*time.Minute, 100))
 	if record.Status != jobSucceeded {
 		t.Fatalf("the events job reached %s, want succeeded\n\n%s", record.Status, h.diagnostics())
@@ -104,8 +78,6 @@ func TestProof_TheClusterSaysWhatItDidAndTheBasisSurvives(t *testing.T) {
 			events.GetAppliedMaxEvents(), events.GetReadAt())
 	}
 
-	// Every event carries the object it is about and something the cluster said. Both are
-	// untrusted text and both are what an investigator reads.
 	for _, event := range events.GetEvents() {
 		if event.GetInvolvedObject().GetName() == "" {
 			t.Errorf("an event arrived with no object: %+v", event)
@@ -117,14 +89,9 @@ func TestProof_TheClusterSaysWhatItDidAndTheBasisSurvives(t *testing.T) {
 	}
 }
 
-// A window entirely in the past says so, and that flag is what stops an empty result being
-// read as an absence. It is reported rather than inferred, because nobody but the operator
-// knows their apiserver's event TTL.
 func TestProof_AWindowBeyondRetentionSaysSoRatherThanLookingEmpty(t *testing.T) {
 	h := newHarness(t)
 
-	// A window that began a day ago, against a Relay attesting the Kubernetes default horizon
-	// of one hour.
 	record := h.awaitTerminal(t, h.dispatchEvents(t, fixtureNamespace, 24*time.Hour, 100))
 	if record.Status != jobSucceeded {
 		t.Fatalf("the events job reached %s, want succeeded\n\n%s", record.Status, h.diagnostics())
@@ -137,9 +104,6 @@ func TestProof_AWindowBeyondRetentionSaysSoRatherThanLookingEmpty(t *testing.T) 
 	}
 }
 
-// A namespace with nothing in it returns an empty COMPLETE read, which is what a certified
-// absence is minted from. The distinction between this and a refused read is the one the whole
-// truth model rests on.
 func TestProof_AnEmptyNamespaceIsACompleteReadRatherThanAFailure(t *testing.T) {
 	h := newHarness(t)
 
@@ -162,7 +126,6 @@ func TestProof_AnEmptyNamespaceIsACompleteReadRatherThanAFailure(t *testing.T) {
 	}
 }
 
-// A running container's own words cross the protocol, with their timestamps.
 func TestProof_AContainerSaysWhatItSaidAndTheLinesCarryTheirTimes(t *testing.T) {
 	h := newHarness(t)
 
@@ -201,8 +164,6 @@ func TestProof_AContainerSaysWhatItSaidAndTheLinesCarryTheirTimes(t *testing.T) 
 	}
 }
 
-// The container that DIED is the one that explains the failure, and the one that replaced it
-// is usually silent. This is the read the whole capability exists for.
 func TestProof_ThePreviousContainerIsWhatExplainsTheFailure(t *testing.T) {
 	h := newHarness(t)
 
@@ -228,8 +189,6 @@ func TestProof_ThePreviousContainerIsWhatExplainsTheFailure(t *testing.T) {
 	}
 }
 
-// A container that has never restarted has no previous instance, and that is a different fact
-// from a wrong container name. An investigator told the wrong one looks in the wrong place.
 func TestProof_APreviousReadOnAContainerThatNeverDiedIsItsOwnOutcome(t *testing.T) {
 	h := newHarness(t)
 
@@ -254,9 +213,6 @@ func TestProof_APreviousReadOnAContainerThatNeverDiedIsItsOwnOutcome(t *testing.
 	}
 }
 
-// A pod that is not there, and a container that is not on a pod that is, are typed outcomes
-// rather than failures. The difference between "not there" and "could not look" is what a
-// certified absence rests on.
 func TestProof_MissingPodsAndContainersAreTypedOutcomes(t *testing.T) {
 	h := newHarness(t)
 
@@ -287,9 +243,6 @@ func TestProof_MissingPodsAndContainersAreTypedOutcomes(t *testing.T) {
 	}
 }
 
-// A capability version no Relay has is refused and never executed. Both new capabilities get
-// this test because the one it exists for found a real defect: before it, the Relay dispatched
-// every assignment to its single executor without reading the capability or the version at all.
 func TestProof_AVersionNoRelayHasIsRefusedForBothNewCapabilities(t *testing.T) {
 	h := newHarness(t)
 
@@ -314,9 +267,6 @@ func TestProof_AVersionNoRelayHasIsRefusedForBothNewCapabilities(t *testing.T) {
 		eventsCapability: events,
 		logsCapability:   logs,
 	} {
-		// Version 2 of a frozen schema means semantics no build has. The control plane refuses
-		// it before dispatch and the Relay would refuse it on receipt; either way it must reach
-		// a recorded terminal failure rather than being executed under v1's meaning.
 		record := h.awaitTerminal(t, h.enqueueCapability(t, name, 2, arguments))
 		if record.Status != jobFailed {
 			t.Errorf("%s v2 reached %s, want failed\n\n%s", name, record.Status, h.diagnostics())
@@ -324,9 +274,6 @@ func TestProof_AVersionNoRelayHasIsRefusedForBothNewCapabilities(t *testing.T) {
 	}
 }
 
-// awaitPod waits for a fixture workload's pod to be running and returns its name.
-// Running rather than existing: a log read racing container start is answered with a
-// typed failure, and the tests waiting here are about what a started container said.
 func (h *harness) awaitPod(t *testing.T, ctx context.Context, workload string) string {
 	t.Helper()
 

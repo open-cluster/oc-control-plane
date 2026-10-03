@@ -10,8 +10,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 )
 
-// The credential exists in a readable form exactly once. What is stored must not be it, or a
-// disclosure of the sessions table is a disclosure of every live session.
 func TestTheStoredValueIsNotTheCredential(t *testing.T) {
 	t.Parallel()
 
@@ -38,10 +36,6 @@ func TestTheStoredValueIsNotTheCredential(t *testing.T) {
 	}
 }
 
-// The cookie's attributes are the transport half of the design, and every one of them is
-// load-bearing: HttpOnly against script, Secure against a plaintext hop, Lax against a
-// cross-site post, Path=/ so one cookie serves the surface. The __Host- prefix makes the
-// browser enforce three of them too.
 func TestTheCookieCarriesEveryAttributeTheDesignDependsOn(t *testing.T) {
 	t.Parallel()
 
@@ -77,8 +71,6 @@ func TestTheCookieCarriesEveryAttributeTheDesignDependsOn(t *testing.T) {
 	}
 }
 
-// Sign-out clears the cookie in the same response that deleted the row, so the browser stops
-// presenting a credential that is already dead.
 func TestClearingTheCookieExpiresItImmediately(t *testing.T) {
 	t.Parallel()
 

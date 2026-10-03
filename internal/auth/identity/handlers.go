@@ -32,15 +32,11 @@ type Handlers struct {
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
-	// PublicURL is where this surface is reachable from a browser.
-	PublicURL       string
-	Bootstrap       Bootstrap
-	SessionLifetime time.Duration
+	PublicURL        string
+	Bootstrap        Bootstrap
+	SessionLifetime  time.Duration
 }
 
-// Resolve turns whatever a request presents into the principal holding it. It is what the
-// API surface hands internal/auth/authz, and it is the only place this build decides that a
-// credential is good.
 func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 	requestID := correlation.From(request.Context())
 
@@ -54,12 +50,11 @@ func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {
 	return authz.Principal{}, authz.ErrNoCredential
 }
 
-// fromSession resolves a browser session into the person holding it, with the Membership they
-// hold right now rather than the Role they held when they signed in. That is what makes an
-// administrator's Membership removal take effect on the colleague's next request.
 func (h Handlers) fromSession(
 	request *http.Request, token session.Token,
 ) (authz.Principal, error) {
+	// Resolve current Membership on every request so removal takes effect without waiting for
+	// the browser session to expire.
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 

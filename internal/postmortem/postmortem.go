@@ -1,6 +1,3 @@
-// Package postmortem owns the reviewed incident-learning record. It is deliberately
-// separate from Investigation: an investigation concludes operational work, while a
-// postmortem is an operator-triggered draft that humans correct and review.
 package postmortem
 
 import (
@@ -86,8 +83,6 @@ type Message struct {
 	At     time.Time
 }
 
-// HumanInput contains only facts an operator explicitly supplied. Messages elsewhere
-// in the Incident context remain testimony and are never promoted into these fields.
 type HumanInput struct {
 	Impact        string   `json:"impact"`
 	Resolution    string   `json:"resolution"`

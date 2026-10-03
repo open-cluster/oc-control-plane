@@ -81,8 +81,6 @@ func TestDefinitionWithoutArgumentsRequiresNothing(t *testing.T) {
 }
 
 func TestDefinitionRendersDeterministically(t *testing.T) {
-	// Provider prompt caches depend on these bytes remaining stable.
-	// between renders of the same declaration.
 	first, err := json.Marshal(definedTool().Definition())
 	if err != nil {
 		t.Fatal(err)

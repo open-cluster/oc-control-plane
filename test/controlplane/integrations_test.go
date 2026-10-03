@@ -23,12 +23,6 @@ import (
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// The Integration surface, asserted at the seam every slice uses: the assembled process,
-// real HTTP, a real database. What is asserted is what an operator could observe — the
-// catalog says what this build serves, a created Integration can actually receive a
-// delivery, the webhook secret is shown once and never again, and a request naming another
-// tenant is refused as if nothing existed.
-
 const (
 	surfaceToken   = "bootstrap-token-for-the-integration-surface"
 	surfaceOrg     = "11111111-1111-4111-8111-111111111111"
@@ -36,8 +30,6 @@ const (
 	alertmanagerAt = "2026-01-02T15:04:05Z"
 )
 
-// integrationPlane is a control plane with the application API and intake both listening,
-// plus an enrolled relay for a kubernetes Integration to bind to.
 type integrationPlane struct {
 	*controlPlane
 	api     string
@@ -84,7 +76,6 @@ func (p *integrationPlane) base(organization string) string {
 	return "http://" + p.api + "/api/v1"
 }
 
-// call sends an authenticated application API request with an optional JSON body.
 func (p *integrationPlane) call(
 	t *testing.T, method, url string, body any, headers ...http.Header,
 ) (int, string) {
@@ -133,7 +124,6 @@ func (p *integrationPlane) call(
 	return response.StatusCode, string(answer)
 }
 
-// deliver posts a webhook body to intake with the given secret.
 func (p *integrationPlane) deliver(
 	t *testing.T, integrationID, secret string, payload []byte,
 ) (int, string) {
@@ -194,15 +184,12 @@ type integrationBody struct {
 	} `json:"inbound"`
 }
 
-// toolAvailabilityBody is one Tool as the integration read reports it: available or not,
-// and why not. Served rather than joined in a console, so every client reads one answer.
 type toolAvailabilityBody struct {
 	Tool      string `json:"tool"`
 	Available bool   `json:"available"`
 	Reason    string `json:"reason"`
 }
 
-// tool finds one reported Tool by name.
 func (b integrationBody) tool(t *testing.T, name string) toolAvailabilityBody {
 	t.Helper()
 	for _, reported := range b.ToolAvailability {
@@ -219,8 +206,6 @@ type createdBody struct {
 	WebhookSecret string          `json:"webhookSecret"`
 }
 
-// createAlertmanager creates one Alertmanager Integration and returns it with the secret
-// the response carried.
 func (p *integrationPlane) createAlertmanager(t *testing.T, name string) createdBody {
 	t.Helper()
 
@@ -236,7 +221,6 @@ func (p *integrationPlane) createAlertmanager(t *testing.T, name string) created
 	return created
 }
 
-// alertmanagerPayload is one firing alert in the v4 webhook shape.
 func alertmanagerPayload(fingerprint, groupKey string) []byte {
 	return fmt.Appendf(nil, `{
 		"groupKey": %q,
@@ -267,16 +251,12 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		Tools       []struct {
 			Name string `json:"name"`
 		} `json:"tools"`
-		RequiresRelay       bool            `json:"requiresRelay"`
-		ReceivesWebhooks    bool            `json:"receivesWebhooks"`
-		ConfigurationSchema json.RawMessage `json:"configurationSchema"`
-		Configured          int             `json:"configured"`
-		// DocumentationURL is the VENDOR's page and ProductDocumentationURL is ours. Both
-		// are served because an operator setting up Alertmanager needs both: Prometheus's
-		// webhook_config reference, and our receiver YAML with the header name and the
-		// version floor.
-		DocumentationURL        string `json:"documentationUrl"`
-		ProductDocumentationURL string `json:"productDocumentationUrl"`
+		RequiresRelay           bool            `json:"requiresRelay"`
+		ReceivesWebhooks        bool            `json:"receivesWebhooks"`
+		ConfigurationSchema     json.RawMessage `json:"configurationSchema"`
+		Configured              int             `json:"configured"`
+		DocumentationURL        string          `json:"documentationUrl"`
+		ProductDocumentationURL string          `json:"productDocumentationUrl"`
 	}
 	var catalog struct {
 		Types []catalogType `json:"types"`
@@ -315,14 +295,6 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	}
 
 	t.Run("every type reaches our own documentation and provider types reach the vendor", func(t *testing.T) {
-		// The operator on an Integration page needs OUR page — the receiver YAML, the
-		// header name, the version floor — and every type named only the vendor's. The
-		// page exists and was unreachable from the product.
-		//
-		// The path is derived from the definition rather than typed per provider, so this
-		// asserts what the docs gate asserts from the other side: the URL a customer is
-		// given resolves to a page that is really in this repository. A type added
-		// without one fails here as well as in the gate.
 		for _, entry := range catalog.Types {
 			if entry.DocumentationURL == "" && entry.Key != "generic_webhook" {
 				t.Errorf("%s names no vendor documentation", entry.Key)
@@ -630,9 +602,6 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 	})
 }
 
-// The two packages that decide "connected" cannot import each other, so the agreement is
-// asserted here: a verification and the fleet roster must never disagree about whether one
-// relay is alive.
 func TestLivenessAllowancesAgree(t *testing.T) {
 	t.Parallel()
 	if storage.LivenessAllowance != relay.LivenessAllowance {
@@ -657,7 +626,6 @@ func TestKubernetesVerification(t *testing.T) {
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	// The harness enrols the relay and opens no session, so verification must fail.
 	status, body = plane.call(t, http.MethodPost,
 		base+"/integrations/"+created.Integration.ID+"/verify", nil)
 	if status != http.StatusOK {

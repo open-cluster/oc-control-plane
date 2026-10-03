@@ -6,8 +6,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// Definition declares the canonical inbound adapter for alert sources without a
-// first-class provider integration.
 func Definition() integrations.Definition {
 	return integrations.Definition{
 		Manifest: integrations.Manifest{

@@ -38,8 +38,6 @@ func TestABoundedAnswerSaysItWasCut(t *testing.T) {
 	}
 }
 
-// The mark is only worth its characters if it is inside the bound: appending it after
-// truncating to the ceiling would put the result back over.
 func TestTheCutMarkIsInsideTheBound(t *testing.T) {
 	t.Parallel()
 
@@ -60,20 +58,12 @@ func tail(text string) string {
 	return string(runes[len(runes)-80:])
 }
 
-// A READ REPORTS A WINDOW ONLY WHEN IT USED ONE.
-//
-// Every run carries the window in force, because the record's column is NOT NULL and the
-// bound is real. But a repository listing is not filtered by time, and an event that hands
-// a reader a window beside it answers "did this read cover my period?" wrongly rather than
-// not at all. Only a read that actually filtered by the window reports one.
-
 func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
 	t.Parallel()
 
 	payload := investigation.ToolCompletedPayload(investigation.ToolRun{
 		Ordinal: 1, Tool: "github.list_repositories", Outcome: investigation.RunSucceeded,
-		Summary: "1 repositories matched",
-		// The bound in force, as every run carries — but this read did not filter by it.
+		Summary:       "1 repositories matched",
 		WindowFrom:    time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC),
 		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
 		WindowApplied: false,
@@ -101,15 +91,6 @@ func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
 			payload.WindowFrom)
 	}
 }
-
-// THE WINDOW A READ ACTUALLY COVERED.
-//
-// Every windowed read is clamped into the investigation's own window, including one the
-// model phrased with no window at all. A model that is not told which window it got reads
-// an empty result as a fact about the estate rather than about the bounds it was given —
-// which is how "no commits in the last two hours" becomes "the repository has no commits".
-// The rendered run states the window beside the arguments the model asked with, so a
-// narrowing is visible by comparison.
 
 func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
 	t.Parallel()
@@ -142,9 +123,6 @@ func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
 	}
 }
 
-// A read that carries no window of its own — a repository listing, a pull request by
-// number — must not grow a window line. Stating a window on a read that has none would
-// tell the model its answer was bounded in time when it was not.
 func TestARunWithNoWindowStatesNone(t *testing.T) {
 	t.Parallel()
 
@@ -227,10 +205,6 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 	}
 }
 
-// Tool availability derives from verified reality: a tool whose Requires are not all
-// among the integration's recorded grants is absent from the offered tool set — never a
-// call that always fails. Nothing recorded offers only ungated tools, and a candidate
-// whose grants support no tool at all is not a readable source.
 func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 	t.Parallel()
 

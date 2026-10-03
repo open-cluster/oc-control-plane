@@ -10,13 +10,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// THE ROUTING RECORD, AT THE SEAM THAT DECIDES WHOSE EVENT AN INBOUND MESSAGE IS.
-//
-// Two properties matter here and nothing else does. An Integration that exists is one an
-// event can reach, because the two rows are written together. And one Provider Installation
-// resolves to exactly one Integration ACROSS THE DEPLOYMENT — not per tenant — because the
-// first hop of installation to Integration to Organization is what everything after it trusts.
-
 func slackInstallation(workspace string) *integrations.Installation {
 	return &integrations.Installation{
 		Key:             integrations.InstallationKey{"A0OPENCLUSTER", workspace},
@@ -93,9 +86,6 @@ func TestAConnectedWorkspaceResolvesToItsIntegrationAndTenant(t *testing.T) {
 	if found.OrgID != organization.String() {
 		t.Errorf("resolved organization %q, want %q", found.OrgID, organization)
 	}
-	// The bot's own identity comes back with it. It is what stops the agent answering its
-	// own message, so a resolution that did not carry it would be one the endpoint cannot
-	// act on.
 	if routing.ProviderActorID != installed.ProviderActorID {
 		t.Errorf("resolved provider actor %q, want %q",
 			routing.ProviderActorID, installed.ProviderActorID)
@@ -111,9 +101,6 @@ func TestAWorkspaceNobodyInstalledResolvesToNothing(t *testing.T) {
 		t.Fatalf("connecting slack: %v", err)
 	}
 
-	// A workspace this deployment has never seen, and a key that is not a key. Both answer
-	// the same: unknown. An event resolving through a partial key would be an event
-	// resolved through a wildcard.
 	for name, key := range map[string]integrations.InstallationKey{
 		"another workspace": {"A0OPENCLUSTER", "T0STRANGER"},
 		"another app":       {"A0SOMETHINGELSE", "T0ACME"},
@@ -131,11 +118,6 @@ func TestAWorkspaceNobodyInstalledResolvesToNothing(t *testing.T) {
 func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 	t.Parallel()
 
-	// The constraint that has to exist BEFORE any inbound event is accepted. While Slack
-	// is outbound-only, two organizations each holding this workspace is harmless — each
-	// reads it with its own token and sees only what its own token can see. It stops being
-	// harmless the instant an event arrives, because resolution would have two answers at
-	// exactly the moment the product starts trusting it has one.
 	database, organization := migratedDatabase(t)
 	if _, err := connectSlack(t, database, organization, "Slack — first",
 		slackInstallation("T0ACME")); err != nil {
@@ -148,8 +130,6 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 		t.Fatalf("a second claim on one installation = %v, want ErrInstallationTaken", err)
 	}
 
-	// And nothing was left behind. The refusal has to take the Integration with it, or the
-	// customer holds a connected integration whose events reach the first one.
 	pool, err := database.Pool(organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
@@ -168,9 +148,6 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 	t.Parallel()
 
-	// The pasted-token path: a credential for READING, which names no installation for a
-	// vendor to deliver events to. It is a supported way to connect and it is not an agent
-	// installation, and nothing about it should look like one.
 	database, organization := migratedDatabase(t)
 	created, err := database.CreateIntegration(context.Background(),
 		ownerOf(t, organization), organization, integrations.NewIntegration{
@@ -199,9 +176,6 @@ func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 func TestAnInstallationCannotNameNothing(t *testing.T) {
 	t.Parallel()
 
-	// A provider returning a key that routes nothing is a programming error, and it is
-	// refused loudly rather than written. The alternative is discovering it at the first
-	// inbound event, as silence.
 	database, organization := migratedDatabase(t)
 	_, err := database.CreateIntegration(context.Background(), ownerOf(t, organization),
 		organization, integrations.NewIntegration{
@@ -217,9 +191,6 @@ func TestAnInstallationCannotNameNothing(t *testing.T) {
 func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 	t.Parallel()
 
-	// The routing record is part of the Integration rather than a dependent of it.
-	// Leaving one behind would leave a workspace claimed by a row that is gone, and the
-	// customer could not reconnect.
 	database, organization := migratedDatabase(t)
 	installed := slackInstallation("T0ACME")
 	created, err := connectSlack(t, database, organization, "Slack — Acme", installed)
@@ -237,15 +208,12 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 		t.Errorf("a disconnected workspace still resolves: %v", err)
 	}
 
-	// And the workspace can be connected again, which is the point of removing it.
 	if _, err := connectSlack(t, database, organization, "Slack — again",
 		slackInstallation("T0ACME")); err != nil {
 		t.Errorf("reconnecting a disconnected workspace: %v", err)
 	}
 }
 
-// A second tenant cannot take a workspace the first holds, and learns nothing about who
-// does. The refusal is the same one a same-tenant duplicate gets.
 func TestAnotherTenantCannotTakeAConnectedWorkspace(t *testing.T) {
 	t.Parallel()
 

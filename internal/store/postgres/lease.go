@@ -8,28 +8,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// JobClaim is what a session asks for when it takes work.
 type JobClaim struct {
 	RegistrationID uuid.UUID
 	SessionID      uuid.UUID
 	LeaseFor       time.Duration
-	// Capacity is the most work this session may hold at once, not the most it may take in
-	// one call. What it already holds is subtracted before anything more is leased.
-	Capacity int
+	Capacity       int
 }
 
-// ClaimJobs leases up to limit jobs for a session and returns them. The transition to leased
-// commits before anything is delivered: a crash between claiming and sending leaves a leased
-// job whose lease expires and is swept, which is recoverable. Sending first and claiming
-// after would leave work delivered but unrecorded, which is not.
-//
-// Expired leases are claimable again, and every claim raises the generation, so a result
-// from the execution that lost its lease is refused rather than recorded.
 func (p *Database) ClaimJobs(
 	ctx context.Context,
 	organization uuid.UUID,
 	claim JobClaim,
 ) ([]RelayJob, error) {
+	// Claiming commits before delivery so a crash leaves recoverable leased work. Each claim
+	// raises the epoch, fencing results from executions whose lease expired.
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return nil, err
@@ -71,7 +63,7 @@ func (p *Database) ClaimJobs(
 	defer rows.Close()
 
 	var claimed []RelayJob
-	for rows.Next() { // mapping to Job
+	for rows.Next() {
 		var job RelayJob
 		if err = rows.Scan(&job.ID, &job.IntegrationID, &job.RegistrationID, &job.CapabilityID,
 			&job.CapabilityVersion, &job.Arguments, &job.LeaseSession, &job.LeaseEpoch); err != nil {
@@ -82,15 +74,11 @@ func (p *Database) ClaimJobs(
 	return claimed, rows.Err()
 }
 
-// InFlightJob is a job a relay says it is still executing, as the relay names it: the job, and
-// the generation of the lease it was assigned under. The session is not part of it, because a
-// relay never learns which session held its lease.
 type InFlightJob struct {
 	JobID      uuid.UUID
 	LeaseEpoch int64
 }
 
-// LeaseAdoption is a reconnected relay's account of what it never stopped doing.
 type LeaseAdoption struct {
 	RegistrationID uuid.UUID
 	SessionID      uuid.UUID
@@ -98,21 +86,11 @@ type LeaseAdoption struct {
 	InFlight       []InFlightJob
 }
 
-// AdoptInFlightLeases moves the leases for work a relay is still executing onto its new
-// session, and reports which jobs were actually adopted.
-//
-// This is the one place a relay's own account of the world changes durable state, so what it
-// cannot do is the point. The declaration has no authority: it can only renew a lease on a job
-// already leased to this registration at the generation it names. It cannot create work,
-// complete work, take work from another registration, revive work that has finished, or claim
-// an execution that superseded its own — in every one of those cases no row matches and
-// nothing happens, which is the fence deciding rather than the relay.
-//
-// The generation is deliberately not raised. Raising it would invalidate the very result the
-// relay is holding, which is the thing this exists to preserve.
 func (p *Database) AdoptInFlightLeases(
 	ctx context.Context, organization uuid.UUID, adoption LeaseAdoption,
 ) ([]uuid.UUID, error) {
+	// Adoption may only move an existing lease for this registration at the declared epoch;
+	// the epoch stays unchanged so the result already in flight remains valid.
 	if len(adoption.InFlight) == 0 {
 		return nil, nil
 	}
@@ -157,22 +135,13 @@ func (p *Database) AdoptInFlightLeases(
 	return adopted, rows.Err()
 }
 
-// ReleaseStrandedLeases returns to pending every job this registration has leased to anything
-// other than the given holder, and reports how many.
-//
-// It is the other half of adoption. A relay has one session, so once its current session has
-// adopted everything the relay says it is still executing, whatever is left leased belongs to a
-// session that is gone and to an execution the relay is not running. Waiting out a full lease
-// on that work would add ten minutes of nothing to every network blip.
-//
-// The caller must only use this when it knows the relay's account was complete. Releasing work
-// a relay is in fact still executing does not corrupt anything — the fence still decides who
-// may record — but it does mean that execution's result is refused and the work is done twice.
 func (p *Database) ReleaseStrandedLeases(
 	ctx context.Context,
 	organization uuid.UUID,
 	registrationID, holder uuid.UUID,
 ) (int64, error) {
+	// Call only after receiving a complete roster. The fence prevents corruption if the roster
+	// is wrong, but an omitted execution would be repeated.
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return 0, err
@@ -199,10 +168,6 @@ func (p *Database) ReleaseStrandedLeases(
 	return tag.RowsAffected(), nil
 }
 
-// SweepExpiredLeases returns work whose lease ran out to pending, so a relay that
-// disappeared mid-job does not strand it forever. Terminal jobs are never touched: their
-// outcome is already recorded, and re-running them would be the duplicate execution the
-// fence exists to prevent.
 func (p *Database) SweepExpiredLeases(
 	ctx context.Context, organization uuid.UUID,
 ) (int64, error) {

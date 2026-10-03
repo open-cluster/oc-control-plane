@@ -6,40 +6,23 @@ import (
 	"time"
 )
 
-// Bounds on one sweep, for the same reason the audit pruner has them: a quarter of a
-// busy fleet's change history is not a DELETE anybody should hold locks for.
 const (
 	pruneBatch         = 1000
 	maxBatchesPerSweep = 50
 )
 
-// Retention is what the pruner needs from durable state. Declared here because the
-// capability owns its vocabulary and persistence depends on it; a test's implementation
-// needs no database.
 type Retention interface {
-	// PruneChangesBefore removes at most limit events older than the horizon,
-	// across every database, reporting how many went.
 	PruneChangesBefore(ctx context.Context, before time.Time, limit int) (int64, error)
 }
 
-// Pruner applies change retention on an interval. Purely by age and deliberately
-// simpler than the audit pruner's per-tenant schedule: the change history is derived operational
-// context, its retention is the deployment's, and a pruned event is recoverable as a
-// fresh baseline the next time a Relay observes the object.
 type Pruner struct {
 	Retention Retention
 	Logger    *slog.Logger
-	// Days is how long an event is kept.
-	Days int
-	// Interval is how often the horizon is applied. Retention is measured in days, so
-	// hourly is close enough to be honest and far enough to cost nothing.
-	Interval time.Duration
-	// Now is the clock, injectable so a test can age rows without waiting a day out.
-	Now func() time.Time
+	Days      int
+	Interval  time.Duration
+	Now       func() time.Time
 }
 
-// Run applies the horizon until the context ends. The first sweep waits for the first
-// tick, so a crash-looping process does not scan per restart.
 func (p Pruner) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.Interval)
 	defer ticker.Stop()
@@ -53,10 +36,6 @@ func (p Pruner) Run(ctx context.Context) {
 	}
 }
 
-// Sweep works the backlog down in bounded batches, stopping early when a batch comes
-// back short — that is the backlog gone — and at a fixed batch count either way, so a
-// horizon applied for the first time against months of history spreads over several
-// sweeps instead of one long-held lock.
 func (p Pruner) Sweep(ctx context.Context) {
 	horizon := p.now().AddDate(0, 0, -p.Days).UTC()
 	var removed int64

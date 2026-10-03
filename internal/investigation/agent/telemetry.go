@@ -12,8 +12,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// meterName identifies this surface's instruments and spans: the package path, so a
-// metric found in a dashboard leads back to the code that emits it.
 const meterName = "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 
 type Telemetry struct {
@@ -50,7 +48,6 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 	return built
 }
 
-// complete runs one provider call inside its span and emits the call's telemetry.
 func (t *Telemetry) complete(
 	ctx context.Context, provider Completer, config ModelConfig, prompt Prompt,
 ) (Completion, error) {
@@ -58,8 +55,6 @@ func (t *Telemetry) complete(
 		return provider.Complete(ctx, prompt)
 	}
 
-	// The configured provider and model: bounded, this process's own strings. The
-	// model that ANSWERED goes on the span and the log line, never on a metric.
 	measured := metric.WithAttributes(
 		attribute.String("provider", config.Provider),
 		attribute.String("model", config.Model),
@@ -95,7 +90,6 @@ func (t *Telemetry) complete(
 			"cache_read":  completion.Usage.CacheRead,
 			"reasoning":   completion.Usage.Reasoning,
 		} {
-			// An unreported figure adds nothing: zero is a measurement, absent is not.
 			if count.Reported {
 				t.tokens.Add(ctx, count.Tokens, measured,
 					metric.WithAttributes(attribute.String("kind", kind)))

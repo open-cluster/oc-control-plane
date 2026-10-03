@@ -99,10 +99,6 @@ func Run(
 	}
 	logMigrationSummary(logger, applied)
 
-	// The GitHub App is deployment configuration; a deployment without one still serves
-	// github in the catalog — the compiled provider set and the seeded reference rows
-	// must agree exactly — and connecting it fails live, with the reason. A key that
-	// cannot sign refuses startup, where whoever supplied it is still reading.
 	gitHubClient := github.NewClient(options.GitHubAPIURL)
 	var gitHubApp *github.App
 	if len(cfg.GitHubAppPrivateKey) > 0 {
@@ -112,9 +108,6 @@ func Run(
 		}
 	}
 
-	// Slack's installation flow is registered separately from its credential, exactly as
-	// GitHub's is: a deployment that registered no Slack app offers no connect button and
-	// serves the pasted-token form, which is the air-gapped path and stays supported.
 	var slackInstaller *slack.Installer
 	if cfg.SlackClientID != "" {
 		slackInstaller, err = slack.NewInstaller(
@@ -187,7 +180,6 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 	return seal.New(cfg.SealingKey)
 }
 
-// modelBoundary validates and builds the configured model-backed agent.
 func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*agent.Agent, error) {
 	modelConfig := agent.ModelConfig{
 		Provider:            cfg.ModelProvider,
@@ -238,8 +230,6 @@ func inventoryInterval(replacement time.Duration) time.Duration {
 	return defaultInventoryInterval
 }
 
-// assembled is the constructed process: the pieces serve needs, which are meaningless
-// apart and always travel together.
 type assembled struct {
 	streamContext     context.Context
 	config            config.Config

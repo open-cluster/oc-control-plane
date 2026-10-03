@@ -1,4 +1,3 @@
-// Command controlplane-e2e starts the shipping composition with a test-only model endpoint.
 package main
 
 import (

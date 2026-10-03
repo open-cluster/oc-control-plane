@@ -19,19 +19,6 @@ import (
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// AlertEvents grouping into the operational incident an investigation attaches to.
-//
-// The seam is the composition root, for the same reason intake's is: what is under test is what an
-// operator could observe. Alerts are delivered as real signed requests to the real intake listener,
-// and the incidents they produce are read back through the real application API. Nothing here asserts
-// how grouping is implemented, because a second Integration will change that.
-//
-// The one thing every test below turns on: the grouping identity is the SOURCE's. Two alerts land
-// in one incident because the customer's own Alertmanager put them in one group, never because this
-// platform decided their labels looked similar.
-
-// incidentPlane is a control plane with both surfaces bound: intake to deliver alerts to, and the
-// application API to read the Incidents they became.
 type incidentPlane struct {
 	*controlPlane
 	intake      string
@@ -126,13 +113,9 @@ func (p *incidentPlane) call(
 	return response.StatusCode, string(answer)
 }
 
-// episodeBody mirrors what the surface answers with. It is written out rather than imported so a
-// field renamed in the view is a failure here rather than a client silently reading a zero.
 type incidentBody struct {
-	ID            string `json:"id"`
-	IntegrationID string `json:"integrationId"`
-	// IntegrationName is what a responder reads: which of this tenant's installations
-	// delivered the alerts. The identity beside it is what a link is built from.
+	ID              string `json:"id"`
+	IntegrationID   string `json:"integrationId"`
 	IntegrationName string `json:"integrationName"`
 	Title           string `json:"title"`
 	Status          string `json:"status"`
@@ -197,8 +180,6 @@ func (p *incidentPlane) incident(t *testing.T, id string) incidentBody {
 	return incident
 }
 
-// grouped renders a v4 payload for one alert under a named group key, which is the identity
-// Alertmanager computes from the group_by its own operator wrote.
 func grouped(groupKey, fingerprint, alertName string, startsAt time.Time) string {
 	return groupedBody(groupKey, fingerprint, alertName, "firing", startsAt, time.Time{})
 }
@@ -233,8 +214,6 @@ func groupedBody(
 		startsAt.Format(time.RFC3339Nano), ends)
 }
 
-// ungrouped renders a payload carrying no group key at all, which is what a source that groups
-// nothing looks like.
 func ungrouped(fingerprint, alertName string, startsAt time.Time) string {
 	return fmt.Sprintf(`{
 	  "version": "4",
@@ -251,7 +230,6 @@ func ungrouped(fingerprint, alertName string, startsAt time.Time) string {
 	}`, fingerprint, alertName, startsAt.Format(time.RFC3339Nano))
 }
 
-// The sentence the whole slice exists for: a single failure does not open twenty investigations.
 func TestIncidents_AlertsTheSourceGroupedBecomeOneIncident(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
@@ -280,8 +258,6 @@ func TestIncidents_AlertsTheSourceGroupedBecomeOneIncident(t *testing.T) {
 	if incident.Status != "open" {
 		t.Errorf("the incident is %q while its alerts are firing, want open", incident.Status)
 	}
-	// The grouping is EXPLAINABLE. An operator looking at three alerts in one incident is told who
-	// decided that, in the source's own terms, without having to read the code.
 	if incident.Grouping.Basis != "source_grouping" {
 		t.Errorf("the grouping basis is %q, want source_grouping", incident.Grouping.Basis)
 	}
@@ -295,9 +271,6 @@ func TestIncidents_AlertsTheSourceGroupedBecomeOneIncident(t *testing.T) {
 	}
 }
 
-// Grouping is CONSERVATIVE. Two failures the customer's own alerting kept apart stay apart here,
-// because a wrong merge produces one investigation with an incoherent scope and a wrong split
-// produces one redundant record.
 func TestIncidents_AlertsTheSourceKeptApartStayApart(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
@@ -312,8 +285,6 @@ func TestIncidents_AlertsTheSourceKeptApartStayApart(t *testing.T) {
 	}
 }
 
-// A source that supplies no grouping identity gets one incident per alert, and the record says so
-// rather than implying somebody grouped them.
 func TestIncidents_ASourceThatGroupsNothingGetsAnIncidentPerAlert(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
@@ -334,8 +305,6 @@ func TestIncidents_ASourceThatGroupsNothingGetsAnIncidentPerAlert(t *testing.T) 
 	}
 }
 
-// An incident is resolved when every alert in it has stopped, and not before. A record that said a
-// failure recovered while part of it was still firing is the worst thing this table could say.
 func TestIncidents_AnIncidentResolvesOnlyWhenEveryAlertInItHas(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
@@ -364,16 +333,12 @@ func TestIncidents_AnIncidentResolvesOnlyWhenEveryAlertInItHas(t *testing.T) {
 	if incident.ResolvedAt == nil {
 		t.Error("a resolved incident carries no resolution time")
 	}
-	// And the record of what happened survives: the AlertEvents are still there and still readable.
 	if incident.AlertEventCount != 2 {
 		t.Errorf("the resolved incident holds %d alertEvents, want the 2 it grouped",
 			incident.AlertEventCount)
 	}
 }
 
-// A resolved incident releases its grouping key, so the same failure next month is a NEW incident
-// rather than the resolved record of the last one being reopened. It is the same rule the AlertEvent
-// table already keeps for an alert's own incidents.
 func TestIncidents_TheSameFailureAgainOpensANewIncidentRatherThanReopeningTheOld(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
@@ -405,8 +370,6 @@ func TestIncidents_TheSameFailureAgainOpensANewIncidentRatherThanReopeningTheOld
 	}
 }
 
-// The AlertEvents an incident grouped are readable, oldest first, because a reader following an
-// incident follows it forwards.
 func TestIncidents_TheAlertEventsGroupedIntoAnIncidentAreReadable(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
@@ -435,7 +398,6 @@ func TestIncidents_TheAlertEventsGroupedIntoAnIncidentAreReadable(t *testing.T) 
 	}
 }
 
-// Correcting a grouping does not destroy the record of having made the original one.
 func TestIncidents_AMergeRecordsTheCorrectionAndRewritesNothing(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
@@ -457,8 +419,6 @@ func TestIncidents_AMergeRecordsTheCorrectionAndRewritesNothing(t *testing.T) {
 		t.Fatalf("merging answered %d: %s", status, body)
 	}
 
-	// NOTHING is rewritten. The absorbed incident keeps its identity, its alertEvents and its own
-	// grouping key, and gains a pointer to the one that survives it with the operator's reason.
 	after := plane.incident(t, absorbed.ID)
 	if after.Supersession == nil {
 		t.Fatal("the absorbed incident does not say it was merged")
@@ -481,8 +441,6 @@ func TestIncidents_AMergeRecordsTheCorrectionAndRewritesNothing(t *testing.T) {
 	}
 }
 
-// A merge is refused when it would not mean anything, and the refusal says which reason applies —
-// the caller is an operator correcting a grouping, and a refusal nobody can act on is a defect.
 func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
@@ -494,30 +452,24 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 
 	base := "/api/v1/incidents/"
 
-	// Into itself.
 	status, _ := plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": first.ID, "reason": "because"})
 	if status != http.StatusBadRequest {
 		t.Errorf("merging an incident into itself answered %d, want 400", status)
 	}
 
-	// With no reason. A merge nobody explained is a grouping decision a later reader cannot check,
-	// which is exactly what recording the basis exists to prevent in the automatic case.
 	status, _ = plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": second.ID})
 	if status != http.StatusBadRequest {
 		t.Errorf("merging with no reason answered %d, want 400", status)
 	}
 
-	// Into an incident that does not exist.
 	status, _ = plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": uuid.NewString(), "reason": "because"})
 	if status != http.StatusNotFound {
 		t.Errorf("merging into an incident that does not exist answered %d, want 404", status)
 	}
 
-	// And a chain: merging into an incident that has itself been merged. A reader that had to walk
-	// a chain would find a different answer depending on where it started.
 	if status, body := plane.call(t, http.MethodPost, base+first.ID+"/merge",
 		map[string]string{"into": second.ID, "reason": "they are one"}); status != http.StatusOK {
 		t.Fatalf("the first merge answered %d: %s", status, body)
@@ -536,8 +488,6 @@ func TestIncidents_AMergeThatWouldNotMeanAnythingIsRefused(t *testing.T) {
 	}
 }
 
-// A listing that ignored a filter would answer a question nobody asked, and an empty page is
-// exactly what "this tenant has none of those" looks like.
 func TestIncidents_TheListingRefusesAFilterItCannotServe(t *testing.T) {
 	plane := startIncidents(t)
 
@@ -553,9 +503,6 @@ func TestIncidents_TheListingRefusesAFilterItCannotServe(t *testing.T) {
 	}
 }
 
-// A responder arriving from their own alerting wants to know whether to go and look at
-// Alertmanager or at something else. The view carried the identity alone, so the only field
-// a console could render restated its own label.
 func TestIncidents_AnIncidentNamesTheIntegrationThatDeliveredIt(t *testing.T) {
 	plane := startIncidents(t)
 	began := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
@@ -566,8 +513,6 @@ func TestIncidents_AnIncidentNamesTheIntegrationThatDeliveredIt(t *testing.T) {
 		t.Fatalf("delivering answered %d", status)
 	}
 
-	// The name the integration was configured with, read back off the same record the
-	// listing resolves it from, so this asserts the join rather than a literal.
 	want := integrationName(t, plane.dsn, plane.integration)
 
 	listed := plane.incidents(t, "")
@@ -584,8 +529,6 @@ func TestIncidents_AnIncidentNamesTheIntegrationThatDeliveredIt(t *testing.T) {
 	}
 }
 
-// integrationName reads what the integration is actually called, so the assertion above
-// compares the served name against the record rather than against a repeated literal.
 func integrationName(t *testing.T, dsn string, id uuid.UUID) string {
 	t.Helper()
 	ctx := context.Background()

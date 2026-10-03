@@ -20,7 +20,6 @@ const (
 	defaultSearchMatches   = 20
 )
 
-// tools is the declared set of bounded Slack reads.
 func tools(client *Client) []integrations.Tool {
 	return []integrations.Tool{
 		listChannelsTool(client),
@@ -30,7 +29,6 @@ func tools(client *Client) []integrations.Tool {
 	}
 }
 
-// channelContent is one channel as a tool reports it.
 type channelContent struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -39,12 +37,8 @@ type channelContent struct {
 	Members int    `json:"members"`
 }
 
-// messageContent is one message as a tool reports it: the author as a human-readable
-// name beside the raw id, and a permalink an operator can follow to the message itself.
 type messageContent struct {
-	TS string `json:"ts"`
-	// User is the resolved display name, or the raw id when the workspace will not
-	// resolve it; UserID keeps the raw id either way.
+	TS         string `json:"ts"`
 	User       string `json:"user,omitempty"`
 	UserID     string `json:"userId,omitempty"`
 	Text       string `json:"text"`
@@ -55,9 +49,6 @@ type messageContent struct {
 	Permalink  string `json:"permalink,omitempty"`
 }
 
-// renderMessages resolves authors and attaches permalinks for one read's messages.
-// channel is the channel the read addressed; search matches carry their own channel id
-// instead. Resolution is best-effort: a transcript with raw ids beats a failed read.
 func renderMessages(
 	ctx context.Context, client *Client, request integrations.ToolRequest,
 	channel string, messages []Message,
@@ -93,8 +84,6 @@ func renderMessages(
 	return content
 }
 
-// looksLikeUserID reports whether the author field is a raw id worth resolving; search
-// matches already carry names, and resolving a name as an id would waste a call.
 func looksLikeUserID(user string) bool {
 	if len(user) < 8 || (user[0] != 'U' && user[0] != 'W') {
 		return false
@@ -109,14 +98,11 @@ func looksLikeUserID(user string) bool {
 	return true
 }
 
-// permalink builds the workspace's documented archive link for one message — the
-// scope-free pointer an operator follows from a finding to the conversation itself.
 func permalink(workspace, channel, ts string) string {
 	return strings.TrimSuffix(workspace, "/") + "/archives/" + channel +
 		"/p" + strings.ReplaceAll(ts, ".", "")
 }
 
-// Permalink returns the stable workspace URL for one Slack message.
 func Permalink(workspace, channel, ts string) string { return permalink(workspace, channel, ts) }
 
 func listChannelsTool(client *Client) integrations.Tool {
@@ -168,9 +154,6 @@ func listChannelsTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
-			// The filter runs inside a bounded pagination walk. Filtering one page
-			// client-side was the defect: a matching channel beyond page one was
-			// invisible while the answer looked complete.
 			var selected []channelContent
 			var sources []string
 			matched, cursor := 0, ""
@@ -425,8 +408,6 @@ func searchMessagesTool(client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
-			// The window is the investigation's own, structurally: the model asks with
-			// terms, never with dates.
 			found, err := client.Search(ctx, request.Credential, SearchQuery{
 				Query: query, Count: limit,
 				After: request.WindowFrom, Before: request.WindowUntil,
@@ -444,8 +425,6 @@ func searchMessagesTool(client *Client) integrations.Tool {
 	}
 }
 
-// matchChannels reports the distinct channels the matches were said in, by id where
-// the vendor gave one — the id is what a history pivot takes.
 func matchChannels(matches []Message) []string {
 	seen := map[string]bool{}
 	var channels []string
@@ -463,8 +442,6 @@ func matchChannels(matches []Message) []string {
 	return channels
 }
 
-// matchesChannel reports whether a channel's name, topic or purpose carries the needle.
-// An empty needle selects everything, which is the unfiltered listing.
 func matchesChannel(channel Channel, needle string) bool {
 	if needle == "" {
 		return true

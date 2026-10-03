@@ -14,7 +14,6 @@ type alertFixture struct {
 	Labels map[string]string `json:"labels"`
 }
 
-// Cases returns every executable scenario with operational timestamps relative to now.
 func Cases(now time.Time) []Case {
 	cases, err := LoadCases(now)
 	if err != nil {
@@ -23,7 +22,6 @@ func Cases(now time.Time) []Case {
 	return cases
 }
 
-// LoadCases composes independent alert, cluster, GitHub, Slack, and truth fixtures.
 func LoadCases(now time.Time) ([]Case, error) {
 	catalog, err := Load()
 	if err != nil {

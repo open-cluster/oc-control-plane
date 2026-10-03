@@ -16,14 +16,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
 )
 
-// THE SEAM IS THE HTTP ROUND-TRIPPER, AND THIS SUITE NEVER REACHES THE NETWORK.
-//
-// Every case here is a canned response. A test that called the real API would be non-deterministic,
-// priced and offline-hostile — three properties a commit gate must not have. What is asserted is
-// what this adapter SENDS and what it does with what comes back, never whether an answer was any
-// good.
-
-// transport is the canned round-tripper.
 type transport struct {
 	mutex     sync.Mutex
 	responses []*http.Response
@@ -80,7 +72,6 @@ func (t *transport) lastBody(tb testing.TB) string {
 	return t.bodies[len(t.bodies)-1]
 }
 
-// streamed builds a successful streaming response carrying one text document.
 func streamed(document string, usage string, stopReason string, stopDetails string) *http.Response {
 	events := &strings.Builder{}
 	fmt.Fprintf(events, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":"+
@@ -196,7 +187,6 @@ func TestComplete_ReturnsTheDocumentAndNormalizesUsage(t *testing.T) {
 	if string(completion.Document) != `{"findings":[]}` {
 		t.Errorf("the document is %q", completion.Document)
 	}
-	// The model that ANSWERED, read from the response rather than echoed from the request.
 	if completion.Model != "claude-opus-5" {
 		t.Errorf("the answering model is %q", completion.Model)
 	}
@@ -211,9 +201,6 @@ func TestComplete_ReturnsTheDocumentAndNormalizesUsage(t *testing.T) {
 	if usage.Input.Or(0) != 1000 || usage.Output.Or(0) != 250 {
 		t.Errorf("input and output tokens are wrong: %+v", usage)
 	}
-	// Both cache figures are recorded, which is what makes cache effectiveness measurable rather
-	// than assumed: a cache that silently stopped working looks exactly like one that is working
-	// unless both are there.
 	if usage.CacheWrite.Or(0) != 300 || usage.CacheRead.Or(0) != 4000 {
 		t.Errorf("cache tokens are wrong: %+v", usage)
 	}
@@ -246,16 +233,12 @@ func TestComplete_ARefusalIsANamedFailureAndNeverADocument(t *testing.T) {
 	if !errors.Is(err, reasoning.ErrRefused) {
 		t.Fatalf("got %v, want a named refusal", err)
 	}
-	// Asserted before the content is read, because reading first is the defect that presents an
-	// empty or partial response as a conclusion.
 	if len(completion.Document) != 0 {
 		t.Errorf("a refused request returned a document: %q", completion.Document)
 	}
 	if completion.Stop != reasoning.StopRefused {
 		t.Errorf("stop is %s, want refused", completion.Stop)
 	}
-	// The completion is still populated, because a refused request consumed real tokens and the
-	// record has to carry them.
 	if completion.Usage.Input.Or(0) != 1000 {
 		t.Errorf("a refused request recorded %d input tokens, want 1000",
 			completion.Usage.Input.Or(0))
@@ -268,8 +251,6 @@ func TestComplete_ARefusalIsANamedFailureAndNeverADocument(t *testing.T) {
 	if errors.As(err, &failure) && failure.Category != "cyber" {
 		t.Errorf("the refusal category is %q, want the provider's own", failure.Category)
 	}
-	// A refusal is a fact about the provider. It must never read as an abstention, which is a
-	// finding about the evidence.
 	if errors.Is(err, reasoning.ErrMalformed) || errors.Is(err, reasoning.ErrOutage) {
 		t.Error("a refusal also reads as another outcome")
 	}
@@ -424,19 +405,18 @@ func TestComplete_SendsTheDeclaredSchemaEffortAndCacheBreakpoints(t *testing.T) 
 	body := round.lastBody(t)
 
 	for _, expected := range []string{
-		`"output_config"`,    // the schema and the effort travel together
-		`"effort":"high"`,    // effort is configuration, not a constant
-		`"json_schema"`,      // the answer is constrained rather than parsed out of prose
-		`"adaptive"`,         // thinking depth is set by effort, not a token budget
-		`"cache_control"`,    // the breakpoints the prompt asked for
-		`"max_tokens":32000`, // a generous ceiling, because thinking shares it
-		`"stream":true`,      // which is why the request streams
+		`"output_config"`,
+		`"effort":"high"`,
+		`"json_schema"`,
+		`"adaptive"`,
+		`"cache_control"`,
+		`"max_tokens":32000`,
+		`"stream":true`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("the request does not carry %s", expected)
 		}
 	}
-	// Sampling parameters are removed on this model and sending one is refused outright.
 	for _, forbidden := range []string{`"temperature"`, `"top_p"`, `"top_k"`, `"budget_tokens"`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("the request carries %s, which this model rejects", forbidden)

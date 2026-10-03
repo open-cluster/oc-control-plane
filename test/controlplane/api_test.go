@@ -17,24 +17,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-// The control plane can tell that a relay identity is being taken over by two parties, and
-// until there was something to read it that finding sat in a column. What is asserted here is
-// that an operator can now see it and act on it, and that nobody else can.
-//
-// The token is the whole access control on a surface that reads across tenants, so the
-// refusals matter as much as the reads: they are asserted to be indistinguishable from each
-// other, and the token is asserted to appear in no log line.
-//
-// Both directions are asserted deliberately, and together they are what makes the check
-// load-bearing without having to break it to find out. A comparison that always passed would
-// serve the roster to a caller presenting nothing, and the first case would fail; one that
-// always failed would refuse the right token, and the reads would fail. Neither can be true of
-// a suite that is green.
 func TestApplicationAPI(t *testing.T) {
 	const organization = surfaceOrg
 
-	// Long enough that the configuration accepts it, which is itself the point: a token short
-	// enough to guess is the same as no token on a cross-tenant surface.
 	const bootstrapToken = surfaceToken
 
 	apiAddress := freeAddress(t)
@@ -46,9 +31,6 @@ func TestApplicationAPI(t *testing.T) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(bootstrapToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		// The credential names the one tenant it reaches. That binding is the whole difference
-		// between it and the shared token it replaces, and the last case in this test asserts
-		// that a second organization is not reachable with it.
 		databaseDSN = cfg.DatabaseDSN
 	})
 	token := plane.sessionCookie
@@ -99,9 +81,6 @@ func TestApplicationAPI(t *testing.T) {
 		}
 	})
 
-	// More than one relay, because a page size that quietly defaults to one is invisible to any
-	// test with a single row in it — and it would mean an operator scanning for contested
-	// identities sees the first and none of the rest.
 	t.Run("asking for no particular size returns the list", func(t *testing.T) {
 		registered := []string{relay.registration.String()}
 		for range 3 {
@@ -135,8 +114,6 @@ func TestApplicationAPI(t *testing.T) {
 				"the whole list")
 		}
 
-		// `cursor` rather than `after`: the shared table contract names the resume parameter
-		// once, so a console that has learned one listing has learned all of them.
 		second := readRoster(t, base+"/relays?limit=2&cursor="+first.next(), token)
 		if len(second.Relays) == 0 {
 			t.Fatal("the next page is empty")
@@ -157,9 +134,6 @@ func TestApplicationAPI(t *testing.T) {
 	})
 
 	t.Run("a contested identity is surfaced as one", func(t *testing.T) {
-		// Recorded through the same storage function the session service uses, rather than by
-		// writing the row: what is under test here is that the finding surfaces, not how it
-		// comes to be — that is covered where the detection lives.
 		if err := database.RecordSessionConflict(
 			context.Background(), owner, relay.registration, 2); err != nil {
 			t.Fatalf("recording a session conflict: %v", err)
@@ -306,8 +280,6 @@ func TestBootstrapTokenComesFromAFile(t *testing.T) {
 	})
 }
 
-// environment builds a lookup over a minimal valid configuration plus the overrides under
-// test, so each case fails for the reason it is about rather than for a missing database.
 func environment(t *testing.T, overrides map[string]string) func(string) (string, bool) {
 	t.Helper()
 	dsn := secretFile(t, "dsn", "postgres://user:password@127.0.0.1:5432/controlplane")
@@ -367,21 +339,12 @@ func apiRequest(t *testing.T, method, url, token string) (int, string) {
 	return response.StatusCode, string(body)
 }
 
-// These mirror what the application API sends. They are spelled out rather than decoded into
-// a map so that a renamed field breaks here, where the contract is asserted, instead of in
-// whatever reads this months later and quietly stops seeing a finding.
-// The roster answers in the shared table envelope: `items`, `next`, `total`,
-// the same shape every list endpoint on this surface uses. That is a deliberate breaking change
-// — one contract for a console to build one table against — and this type is where a regression
-// back to a bespoke shape would show up.
 type rosterResponse struct {
 	Relays []relayResponse `json:"items"`
 	Next   *string         `json:"next"`
 	Total  *int            `json:"total"`
 }
 
-// next renders the resume position, so assertions read the same as they did when it was a plain
-// string. Absent means this is the last page, which is the fact the pointer carries.
 func (r rosterResponse) next() string {
 	if r.Next == nil {
 		return ""

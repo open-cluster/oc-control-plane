@@ -18,14 +18,12 @@ type Retention struct {
 	Days         int
 }
 
-// Horizon is the instant before which this tenant's events have aged out.
 func (r Retention) Horizon(now time.Time) time.Time {
 	return now.AddDate(0, 0, -r.Days).UTC()
 }
 
 type Retentions interface {
 	DeclaredRetentions(ctx context.Context) ([]Retention, error)
-	// PruneEventsBefore removes at most limit events older than the horizon, reporting how many went.
 	PruneEventsBefore(ctx context.Context, organization uuid.UUID,
 		before time.Time, limit int) (int64, error)
 }
@@ -37,7 +35,6 @@ type Pruner struct {
 	Now        func() time.Time
 }
 
-// Run applies the schedule until the context is cancelled.
 func (p Pruner) Run(ctx context.Context) {
 	ticker := time.NewTicker(p.Interval)
 	defer ticker.Stop()
@@ -98,8 +95,6 @@ func (p Pruner) prune(ctx context.Context, retention Retention) (int64, error) {
 			return removed, nil
 		}
 	}
-	// The backlog outlasted this sweep. It is stated rather than left to be inferred from a
-	// figure that happens to be a multiple of the batch size.
 	p.Logger.InfoContext(ctx, "a tenant's audit backlog outlasted this sweep and continues next",
 		slog.String("organization", retention.Organization.String()),
 		slog.Int64("removed", removed))

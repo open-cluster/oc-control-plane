@@ -45,7 +45,6 @@ func TestSummary_ADeletionAndACreationSayWhatHappened(t *testing.T) {
 	}
 }
 
-// fakeRetention scripts what each prune call removes.
 type fakeRetention struct {
 	batches []int64
 	calls   int

@@ -14,7 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 )
 
-// Route declares one protected application endpoint.
 type Route struct {
 	Method     string
 	Pattern    string
@@ -24,7 +23,6 @@ type Route struct {
 
 func routeID(route Route) string { return route.Method + " " + route.Pattern }
 
-// Guard holds the dependencies needed to protect the application API.
 type Guard struct {
 	Resolve func(*http.Request) (Principal, error)
 	Record  func(context.Context, uuid.UUID, audit.Event)
@@ -32,7 +30,6 @@ type Guard struct {
 	Logger  *slog.Logger
 }
 
-// Router validates and registers protected routes in one pass.
 func Router(routes []Route, guard Guard) (http.Handler, error) {
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("authz: the route table is empty")
@@ -89,15 +86,12 @@ func (g Guard) protect(route Route) http.Handler {
 	})
 }
 
-// An unexported context key prevents callers outside this package from installing a Principal.
 type principalKey struct{}
 
-// WithPrincipal returns a context carrying the Principal resolved at an authentication boundary.
 func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, principal)
 }
 
-// MustPrincipal returns the authenticated Principal installed by the protected router.
 func MustPrincipal(ctx context.Context) Principal {
 	principal, ok := ctx.Value(principalKey{}).(Principal)
 	if !ok || principal.IsZero() {
@@ -118,7 +112,6 @@ func (g Guard) cookieOriginIsAllowed(request *http.Request) bool {
 	return CookieOriginAllowed(request, g.Origin)
 }
 
-// CookieOriginAllowed checks an unsafe cookie request against the configured browser origin.
 func CookieOriginAllowed(request *http.Request, allowed string) bool {
 	origin := strings.TrimSpace(request.Header.Get("Origin"))
 	if origin == "" {

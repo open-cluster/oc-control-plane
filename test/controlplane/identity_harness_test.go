@@ -23,43 +23,22 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-// The identity tests run against a LOCAL MOCK ISSUER rather than a live provider, and the
-// reason is worth stating: what is under test is this control plane's handling of PKCE, state,
-// nonce, code replay and the tenant's provisioning policy. A live provider would test the
-// provider, would need a credential in CI, and could not be made to answer wrongly on purpose —
-// which is what most of these cases need it to do.
-//
-// The issuer signs with a real RSA key and publishes a real JWKS, so the signature verification
-// path is exercised rather than stubbed. It can be told to misbehave in each of the specific
-// ways an attacker would need it to.
-
 const (
 	identityOrg       = "11111111-1111-4111-8111-111111111111"
 	identityNeighbour = "22222222-2222-4222-8222-222222222222"
 	identityToken     = "an-operator-bootstrap-token-long-enough"
 )
 
-// mockIssuer is an OpenID Connect provider that can be made to answer wrongly.
 type mockIssuer struct {
 	server *httptest.Server
 	key    *rsa.PrivateKey
 
-	mu sync.Mutex
-	// claims is what the next identity token asserts. A test rewrites it to change who is
-	// signing in and what the provider says about them.
-	claims map[string]any
-	// redeemed is every authorization code this issuer has already exchanged, so it can refuse
-	// a second redemption the way a real provider does.
-	redeemed map[string]bool
-	// challenges maps an authorization code to the PKCE challenge the request carried, so the
-	// verifier presented at redemption can be checked.
-	challenges map[string]string
-	// refuseVerifier makes the issuer accept a mismatched verifier, so a test can prove that
-	// THIS control plane's own defences are what refuse a replay rather than the provider's.
-	refuseVerifier bool
-	// audience overrides who the token is minted for.
-	audience string
-	// signWithAnotherKey mints the token under a key the issuer never published.
+	mu                 sync.Mutex
+	claims             map[string]any
+	redeemed           map[string]bool
+	challenges         map[string]string
+	refuseVerifier     bool
+	audience           string
 	signWithAnotherKey *rsa.PrivateKey
 }
 
@@ -123,8 +102,6 @@ func (m *mockIssuer) jwks(writer http.ResponseWriter, _ *http.Request) {
 	}}})
 }
 
-// authorize records the PKCE challenge against a fresh code and redirects back, exactly as a
-// provider does once a person has authenticated.
 func (m *mockIssuer) authorize(writer http.ResponseWriter, request *http.Request) {
 	query := request.URL.Query()
 
@@ -204,8 +181,6 @@ func (m *mockIssuer) token(writer http.ResponseWriter, request *http.Request) {
 	})
 }
 
-// signRS256 mints a compact JWS. It is spelled out rather than pulled from a library so the
-// test can produce a token that is wrong in exactly one way.
 func signRS256(claims map[string]any, key *rsa.PrivateKey) string {
 	header, _ := json.Marshal(map[string]any{"alg": "RS256", "typ": "JWT", "kid": "issuer-key-1"})
 	payload, _ := json.Marshal(claims)
@@ -225,8 +200,6 @@ func writeIssuerJSON(writer http.ResponseWriter, body any) {
 	_ = json.NewEncoder(writer).Encode(body)
 }
 
-// identityPlane is a control plane with the application API, a bootstrap credential bound to
-// one organization, and a console origin the CSRF check will accept.
 type identityPlane struct {
 	*controlPlane
 	api string
@@ -243,15 +216,10 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 		digest := sha256.Sum256([]byte(identityToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.PublicURL = "http://" + apiAddress
-		// A key, so a provider's client secret can be held at all. Without one, configuring a
-		// provider is refused rather than stored in the clear — which is itself asserted below.
 		cfg.SealingKey = make([]byte, 32)
 		for index := range cfg.SealingKey {
 			cfg.SealingKey[index] = byte(index + 1)
 		}
-		// The neighbour shares this database deliberately. An organization with no database
-		// fails before any query runs, which would leave the cross-tenant assertions passing
-		// against an implementation with no scoping at all.
 		dsn = cfg.DatabaseDSN
 		for _, apply := range configure {
 			apply(cfg)
@@ -262,13 +230,6 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 	return identity
 }
 
-// waitForAPISurface blocks until the application API listener answers.
-//
-// startControlPlane returns as soon as the health listener is up, and the application API is a
-// separate listener that binds afterwards. Without this the first request in a test races that
-// bind and fails as a refused connection — which reads as a product defect and is a harness
-// one. It also turns a genuine failure to assemble the surface into the reason for it rather
-// than a dial error, because the logs are printed.
 func (p *identityPlane) waitForAPISurface(t *testing.T) {
 	t.Helper()
 
@@ -291,20 +252,13 @@ func (p *identityPlane) base(organization string) string {
 	return "http://" + p.api + "/api/v1"
 }
 
-// answer is one exchange with the application API, as a caller observes it.
 type answer struct {
-	status  int
-	body    string
-	cookies []*http.Cookie
-	// location is where a redirect pointed, which is the whole observable result of a sign-in.
+	status   int
+	body     string
+	cookies  []*http.Cookie
 	location string
 }
 
-// call makes one request as whatever credential the caller names.
-//
-// The Origin header is set on every unsafe request, because a browser sets it on every unsafe
-// request; a test that omitted it would be asserting the CSRF check rather than the thing it
-// meant to assert. The one case that omits it deliberately says so.
 func (p *identityPlane) call(
 	t *testing.T, method, url string, body any, credential ...func(*http.Request),
 ) answer {
@@ -337,8 +291,6 @@ func (p *identityPlane) call(
 		apply(request)
 	}
 
-	// Redirects are not followed: where the surface sent the browser is the observable result
-	// of a sign-in, and following it would land on a console that does not exist here.
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
@@ -360,19 +312,16 @@ func (p *identityPlane) call(
 	}
 }
 
-// asBootstrap presents the configured bootstrap credential.
 func asBootstrap(request *http.Request) {
 	request.Header.Set("Authorization", "Bearer "+identityToken)
 }
 
-// asSession presents a session cookie.
 func asSession(token string) func(*http.Request) {
 	return func(request *http.Request) {
 		request.AddCookie(&http.Cookie{Name: session.CookieName, Value: token})
 	}
 }
 
-// sessionCookie reads the opaque credential out of a response, or reports that there was none.
 func sessionCookie(t *testing.T, from answer) string {
 	t.Helper()
 	for _, cookie := range from.cookies {
@@ -384,7 +333,6 @@ func sessionCookie(t *testing.T, from answer) string {
 	return ""
 }
 
-// decodeAnswer reads a response body into a shape, failing with the body when it will not fit.
 func decodeAnswer(t *testing.T, from answer, into any) {
 	t.Helper()
 	if err := json.Unmarshal([]byte(from.body), into); err != nil {

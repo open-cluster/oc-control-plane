@@ -11,10 +11,6 @@ import (
 	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-// Native function calling on the wire: the generated definitions travel as this
-// vendor's function tools, tool_calls decode into this system's calls, and a replayed
-// turn is rebuilt as assistant tool_calls plus role-"tool" results.
-
 func toolDefinitions() []integrations.ToolDefinition {
 	channelTool := integrations.Tool{
 		Name:        "slack.list_channels",
@@ -101,7 +97,6 @@ func TestComplete_SendsTheGeneratedFunctionTools(t *testing.T) {
 		t.Error("a tool-calling prompt declares no response format; the conclude tool " +
 			"is the contract")
 	}
-	// The schema-in-prompt workaround belongs to document mode alone.
 	for _, message := range sent.Messages {
 		if strings.Contains(message.Content, "JSON Schema") {
 			t.Error("the schema workaround leaked into a tool-calling prompt")
@@ -184,7 +179,6 @@ func TestComplete_ReplaysTheTurnAsToolCallsAndToolResults(t *testing.T) {
 		sent.ToolChoice["type"] != "function" || function["name"] != "conclude" {
 		t.Errorf("tool_choice = %v; the forced turn names the one callable tool", sent.ToolChoice)
 	}
-	// system, user orientation, assistant tool_calls, tool result, user instruction.
 	if len(sent.Messages) != 5 {
 		t.Fatalf("messages = %d: %+v", len(sent.Messages), sent.Messages)
 	}

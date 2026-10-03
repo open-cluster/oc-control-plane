@@ -17,7 +17,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The Investigation capability owns its vocabulary; this file is its persistence.
 var _ investigation.HTTPStore = (*Database)(nil)
 
 const investigationColumns = `investigation_id, incident_id, question,
@@ -26,9 +25,6 @@ const investigationColumns = `investigation_id, incident_id, question,
 	       spend_output_tokens, created_by, created_at, concluded_at,
 	       lease_worker <> '' AND lease_expires_at > now()`
 
-// CreateInvestigation records one, born running. Opening is an operator act and lands in
-// the audit record; everything the runner writes afterwards is the investigation's own
-// provenance, which is a record of its own.
 func (p *Database) CreateInvestigation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	wanted investigation.NewInvestigation, maxPending int,
@@ -68,7 +64,6 @@ func (p *Database) CreateInvestigation(
 		})
 }
 
-// Investigation reads one, scoped to the tenant.
 func (p *Database) Investigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
@@ -97,7 +92,6 @@ func (p *Database) Investigation(
 	return found, nil
 }
 
-// InvestigationToolRuns reads the durable Tool Runs beside one Investigation.
 func (p *Database) InvestigationToolRuns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) ([]investigation.ToolRun, error) {
@@ -154,7 +148,6 @@ func (p *Database) InvestigationToolRuns(
 	return runs, nil
 }
 
-// QueryInvestigations reports a page, newest first.
 func (p *Database) QueryInvestigations(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	query investigation.Query,
@@ -179,8 +172,6 @@ func (p *Database) QueryInvestigations(
 		arguments = append(arguments, *cursorAt, *cursorID)
 		cursor = "AND (created_at, investigation_id) < ($3, $4)"
 	}
-	// The incident narrows the same org-scoped read. It is appended AFTER the cursor so
-	// the placeholder numbers do not depend on whether a page position was supplied.
 	incident := ""
 	if query.IncidentID != uuid.Nil {
 		arguments = append(arguments, query.IncidentID)
@@ -219,7 +210,6 @@ func (p *Database) QueryInvestigations(
 	return list, nil
 }
 
-// RecordToolRun writes one execution as it finished.
 func (p *Database) RecordToolRun(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	run investigation.ToolRun,
@@ -267,9 +257,6 @@ func (p *Database) RecordToolRun(
 	return tx.Commit(ctx)
 }
 
-// ConcludeInvestigation ends one with its concluding document and token usage. stoppedBy
-// names the ceiling that forced the concluding turn, empty when the model concluded
-// freely.
 func (p *Database) ConcludeInvestigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage,
@@ -283,7 +270,6 @@ func (p *Database) ConcludeInvestigation(
 		investigation.ConcludedPayload(conclusion, stoppedBy))
 }
 
-// FailInvestigation ends one with the reason it could not conclude.
 func (p *Database) FailInvestigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	reason string, usage investigation.Usage,
@@ -292,7 +278,6 @@ func (p *Database) FailInvestigation(
 		[]byte("{}"), "", reason, usage, investigation.FailedPayload(reason))
 }
 
-// CancelInvestigation ends active work and records the operator action atomically.
 func (p *Database) CancelInvestigation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
@@ -359,8 +344,6 @@ func (p *Database) CancelInvestigation(
 		})
 }
 
-// endInvestigation is the one write both endings share. Guarded on the row still
-// running, so an investigation cannot be ended twice.
 func (p *Database) endInvestigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
@@ -418,10 +401,6 @@ func (p *Database) endInvestigation(
 	return transaction.Commit(ctx)
 }
 
-// triggerColumns joins an incident with its newest alert_event's labels, annotations and
-// generator URL: the labels are the terms routing and subject inference match on, and
-// the annotations carry the operator's own runbook and dashboard links — held context
-// the autonomous orientation renders. The incident row carries none of them itself.
 const triggerColumns = `e.incident_id, e.integration_id, e.title, e.status,
 	       e.first_seen_at, e.last_seen_at, coalesce(s.labels, '{}'::jsonb),
 	       coalesce(s.annotations, '{}'::jsonb), coalesce(s.generator_url, '')
@@ -433,7 +412,6 @@ const triggerColumns = `e.incident_id, e.integration_id, e.title, e.status,
 	       LIMIT 1
 	  ) s ON true`
 
-// TriggerIncident reads what an incident contributes to the investigation it starts.
 func (p *Database) TriggerIncident(
 	ctx context.Context, organization uuid.UUID, incident uuid.UUID,
 ) (investigation.Trigger, error) {
@@ -454,7 +432,6 @@ func (p *Database) TriggerIncident(
 	return trigger, nil
 }
 
-// InvestigationCandidates reports the enabled integrations an investigation may be offered.
 func (p *Database) InvestigationCandidates(
 	ctx context.Context, organization uuid.UUID,
 ) ([]integrations.Integration, error) {
