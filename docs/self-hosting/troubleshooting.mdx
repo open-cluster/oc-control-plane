@@ -3,7 +3,7 @@ title: "Troubleshooting"
 description: "Diagnose readiness, webhook, Relay, provider, and Investigation failures without exposing secrets."
 ---
 
-Start with health and readiness, then inspect structured logs using the request or delivery identifier. Never paste cookies, bootstrap tokens, webhook secrets, model keys, or raw customer payloads into an issue.
+Start with health and readiness, then inspect structured logs using the request identifier. Never paste cookies, bootstrap tokens, webhook secrets, model keys, or raw customer payloads into an issue.
 
 For webhook failures, distinguish permanent `400` or `401` responses from retryable `429` and `503` responses. For Relay failures, verify outbound connectivity, certificate pins, protocol compatibility, and the closed capability list. For provider failures, check the mounted key file, model name, outbound HTTPS, quota, and timeout.
 
@@ -14,7 +14,7 @@ An Investigation ending `partial` or `needs_input` is an explicit bounded result
 | `/healthz` fails | Confirm the process and HTTP listener are running. | Inspect startup logs and correct the first fatal configuration error. |
 | `/healthz` passes but `/readyz` fails | Check PostgreSQL and required provider connectivity. | Restore the unavailable dependency, then wait for readiness before serving traffic. |
 | Webhook returns `401` | Check the Integration ID and one-time webhook secret. | Rotate the secret if its value is no longer available; update the sender before retrying. |
-| No Incident appears | Check the Webhook Delivery status and Alert Event schema. | Correct a permanent `400`, or retry a documented retryable response. |
+| No Incident appears | Check the webhook response, correlated logs, and Alert Event schema. | Correct a permanent `400`, or retry a documented retryable response. |
 | Relay is disconnected | Check outbound reachability, SPKI pins, and protocol compatibility. | Correct the endpoint or pins, then reconnect the Relay. |
 | Investigation is `partial` | Read the recorded limitations and Tool Run failures. | Fix missing access or evidence and ask a focused follow-up in a new Message. |
 | Expected GitHub evidence is absent | Run Integration verification and check repository access. | Grant only the required read permission, then verify again. |

@@ -289,7 +289,6 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 		"listInvestigations":      append(slices.Clone(paged), "InvestigationIncidentFilter"),
 		"listConversations":       append(slices.Clone(paged), "ConversationSearch", "ConversationSort", "ConversationIncidentFilter", "ConversationStateFilter"),
 		"listConversationTurns":   paged,
-		"listWebhookDeliveries":   append(slices.Clone(paged), "WebhookDeliveryStatus"),
 	}
 
 	for pathName, path := range document.Paths {
@@ -305,7 +304,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 				switch name {
 				case "", "Organization", "OptionalOrganization", "UserID",
 					"IntegrationID", "IntegrationType", "RelayRegistrationID",
-					"IncidentID", "InvestigationID", "ConversationID", "WebhookDeliveryID":
+					"IncidentID", "InvestigationID", "ConversationID", "MessageSequence":
 					continue
 				}
 				got = append(got, name)

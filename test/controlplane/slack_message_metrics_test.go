@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestSlackMessageMetricsKeepPublicNamesAndScope(t *testing.T) {
+func TestSlackMessageMetricsUseTheBoundedWebhookContract(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
 	plane := startSlackEventPlane(t, vendor)
@@ -22,8 +22,12 @@ func TestSlackMessageMetricsKeepPublicNamesAndScope(t *testing.T) {
 		if status != http.StatusOK {
 			t.Fatalf("GET /metrics = %d: %s", status, body)
 		}
-		if strings.Contains(body, "oc_webhooks_delivery_delay") {
-			if !strings.Contains(body, "oc_webhooks_deliveries") ||
+		if strings.Contains(body, "oc_webhooks_slack_ack_duration") &&
+			strings.Contains(body, "oc_webhooks_delivery_delay") {
+			if !strings.Contains(body, "oc_webhooks_requests_total") ||
+				!strings.Contains(body, "oc_webhooks_deliveries") ||
+				!strings.Contains(body, `surface="slack"`) ||
+				!strings.Contains(body, `result="accepted"`) ||
 				!strings.Contains(body, `otel_scope_name="github.com/open-cluster/oc-control-plane/internal/webhooks"`) {
 				t.Fatalf("Slack Message metric names or scope changed: %s", body)
 			}
@@ -34,7 +38,7 @@ func TestSlackMessageMetricsKeepPublicNamesAndScope(t *testing.T) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("Slack Message claim did not publish the existing delay metric: %s", body)
+			t.Fatalf("Slack acknowledgement metric was not published: %s", body)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

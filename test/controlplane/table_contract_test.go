@@ -32,7 +32,6 @@ func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 		"incident alert events": {base + "/incidents/" + incidentID + "/alert-events", "items"},
 		"investigations":        {base + "/investigations", "items"},
 		"conversations":         {base + "/conversations", "items"},
-		"webhook deliveries":    {base + "/webhook-deliveries", "items"},
 	}
 
 	for name, listing := range listings {
@@ -122,20 +121,19 @@ func TestListFilterAndSortValuesAreStrict(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
 	cases := map[string]string{
-		"integration boolean":     base + "/integrations?disabled=foo",
-		"integration type":        base + "/integrations?type=unknown",
-		"integration relay":       base + "/integrations?relay=bad",
-		"integration plus sort":   base + "/integrations?sort=%2BcreatedAt",
-		"relay state":             base + "/relays?state=unknown",
-		"relay plus sort":         base + "/relays?sort=%2BregisteredAt",
-		"incident status":         base + "/incidents?status=unknown",
-		"incident integration":    base + "/incidents?integrationId=bad",
-		"incident plus sort":      base + "/incidents?sort=%2BlastSeenAt",
-		"investigation incident":  base + "/investigations?incidentId=bad",
-		"conversation state":      base + "/conversations?state=unknown",
-		"conversation incident":   base + "/conversations?incidentId=bad",
-		"conversation plus sort":  base + "/conversations?sort=%2BlastActivityAt",
-		"webhook delivery status": base + "/webhook-deliveries?status=unknown",
+		"integration boolean":    base + "/integrations?disabled=foo",
+		"integration type":       base + "/integrations?type=unknown",
+		"integration relay":      base + "/integrations?relay=bad",
+		"integration plus sort":  base + "/integrations?sort=%2BcreatedAt",
+		"relay state":            base + "/relays?state=unknown",
+		"relay plus sort":        base + "/relays?sort=%2BregisteredAt",
+		"incident status":        base + "/incidents?status=unknown",
+		"incident integration":   base + "/incidents?integrationId=bad",
+		"incident plus sort":     base + "/incidents?sort=%2BlastSeenAt",
+		"investigation incident": base + "/investigations?incidentId=bad",
+		"conversation state":     base + "/conversations?state=unknown",
+		"conversation incident":  base + "/conversations?incidentId=bad",
+		"conversation plus sort": base + "/conversations?sort=%2BlastActivityAt",
 	}
 	for name, endpoint := range cases {
 		t.Run(name, func(t *testing.T) {

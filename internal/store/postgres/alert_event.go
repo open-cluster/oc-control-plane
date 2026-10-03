@@ -21,7 +21,6 @@ type Delivery struct {
 	// Integration is the installation the body arrived through, and the only authority for
 	// the tenant everything in it belongs to.
 	Integration uuid.UUID
-	RequestID   string
 	alertevent.AlertDelivery
 }
 
@@ -150,13 +149,12 @@ func claimDelivery(
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_delivery
 			(delivery_id, org_id, integration_id, content_digest, provider_identity,
-			 lifecycle_phase, request_id, truncated)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 lifecycle_phase, truncated)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (integration_id, provider_identity, lifecycle_phase)
 		DO NOTHING`,
 		deliveryID, organization, delivery.Integration, delivery.ContentDigest,
-		providerIdentity, delivery.LifecyclePhase, delivery.RequestID,
-		delivery.Truncated)
+		providerIdentity, delivery.LifecyclePhase, delivery.Truncated)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("recording delivery: %w", err)
 	}

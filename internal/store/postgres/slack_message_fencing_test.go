@@ -43,7 +43,7 @@ func TestSlackMessageLeaseRejectsOtherOrganizationsAndSupersededOwners(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE webhook_job SET lease_expires_at = now() - interval '1 second'
+	if _, err := pool.Exec(ctx, `UPDATE slack_message_work SET lease_expires_at = now() - interval '1 second'
 		WHERE org_id = $1 AND delivery_id = $2`, organization, fixture.delivery); err != nil {
 		t.Fatal(err)
 	}

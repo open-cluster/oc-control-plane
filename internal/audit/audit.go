@@ -78,17 +78,16 @@ func System(what string) Actor {
 type TargetKind string
 
 const (
-	TargetIntegration     TargetKind = "integration"
-	TargetUser            TargetKind = "user"
-	TargetInvestigation   TargetKind = "investigation"
-	TargetConversation    TargetKind = "conversation"
-	TargetIncident        TargetKind = "incident"
-	TargetPostmortem      TargetKind = "postmortem"
-	TargetRelay           TargetKind = "relay"
-	TargetSession         TargetKind = "session"
-	TargetOrganization    TargetKind = "organization"
-	TargetRoute           TargetKind = "route"
-	TargetWebhookDelivery TargetKind = "webhook_delivery"
+	TargetIntegration   TargetKind = "integration"
+	TargetUser          TargetKind = "user"
+	TargetInvestigation TargetKind = "investigation"
+	TargetConversation  TargetKind = "conversation"
+	TargetIncident      TargetKind = "incident"
+	TargetPostmortem    TargetKind = "postmortem"
+	TargetRelay         TargetKind = "relay"
+	TargetSession       TargetKind = "session"
+	TargetOrganization  TargetKind = "organization"
+	TargetRoute         TargetKind = "route"
 )
 
 // Target is what was acted on.

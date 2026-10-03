@@ -19,14 +19,24 @@ func TestFreshSlackWorkSchemaContainsOnlySlackState(t *testing.T) {
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
 		 WHERE table_schema = 'public' AND
 		 ((table_name = 'investigation' AND column_name = 'webhook_job_id') OR
-		  (table_name = 'webhook_job' AND column_name IN ('incident_id', 'kind'))))`,
+		  (table_name = 'slack_message_work' AND column_name IN ('incident_id', 'kind'))))`,
 		`SELECT count(*) = 2 FROM information_schema.columns
-		 WHERE table_schema = 'public' AND table_name = 'webhook_job'
+		 WHERE table_schema = 'public' AND table_name = 'slack_message_work'
 		 AND column_name IN ('conversation_id', 'message_sequence') AND is_nullable = 'NO'`,
 		`SELECT NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname IN
-		 ('investigation_webhook_job_is_in_the_same_org', 'webhook_job_incident_is_in_the_same_org',
-		  'webhook_job_kind_check', 'webhook_job_has_one_effect_reference'))`,
+		 ('investigation_webhook_job_is_in_the_same_org', 'slack_message_work_incident_is_in_the_same_org',
+		  'slack_message_work_kind_check', 'slack_message_work_has_one_effect_reference'))`,
 		`SELECT to_regclass('investigation_webhook_job_is_unique') IS NULL`,
+		`SELECT to_regclass('webhook_job') IS NULL`,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = 'slack_message_work' AND column_name = 'work_id')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname LIKE 'webhook_job%')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM pg_class WHERE relname LIKE 'webhook_job%')`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+		 ARRAY['delivery_id','org_id','integration_id','content_digest','truncated',
+		       'received_at','provider_identity','lifecycle_phase']
+		 FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = 'webhook_delivery'`,
 	} {
 		var valid bool
 		if err := pool.QueryRow(context.Background(), assertion).Scan(&valid); err != nil || !valid {
@@ -52,8 +62,8 @@ func TestSlackWorkSchemaRejectsDuplicateAndCrossOrganizationReferences(t *testin
 		{"missing Message", fixture.organization, nil, "23502"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			_, err := pool.Exec(context.Background(), `INSERT INTO webhook_job
-				(job_id, org_id, delivery_id, integration_id, conversation_id, message_sequence, updated_at)
+			_, err := pool.Exec(context.Background(), `INSERT INTO slack_message_work
+				(work_id, org_id, delivery_id, integration_id, conversation_id, message_sequence, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, now())`, uuid.New(), scenario.organization,
 				fixture.delivery, fixture.integration, fixture.conversation, scenario.sequence)
 			var databaseError *pgconn.PgError

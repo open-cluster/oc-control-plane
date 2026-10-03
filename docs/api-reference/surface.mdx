@@ -96,8 +96,6 @@ cURL starting point. Before calling a state-changing product operation, apply th
 - `POST /webhooks/v1/integrations/{integration}/alert-events`
 - `POST /webhooks/v1/slack/events`
 
-## Webhook deliveries
+## Slack recovery
 
-- `GET /api/v1/webhook-deliveries`
-- `GET /api/v1/webhook-deliveries/{delivery}`
-- `POST /api/v1/webhook-deliveries/{delivery}/replay`
+- `POST /api/v1/slack/conversations/{conversation}/messages/{sequence}/recover`

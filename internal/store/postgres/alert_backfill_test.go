@@ -89,14 +89,15 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 		t.Fatal(err)
 	}
 	var slackBefore string
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(job) - 'kind' - 'incident_id')::text FROM webhook_job AS job
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(job) - 'kind' - 'incident_id' - 'job_id')::text FROM webhook_job AS job
 		WHERE org_id = $1 AND conversation_id = $2`, organization, slackOutcome.Conversation).Scan(&slackBefore); err != nil {
 		t.Fatal(err)
 	}
 	factsBefore := facts()
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 2 || applied[0] != "0012_retire_alert_webhook_jobs" ||
-		applied[1] != "0013_contract_slack_message_work" {
+	if err != nil || len(applied) != 4 || applied[0] != "0012_retire_alert_webhook_jobs" ||
+		applied[1] != "0013_contract_slack_message_work" ||
+		applied[2] != "0014_contract_webhook_delivery" || applied[3] != "0015_rename_slack_message_work" {
 		t.Fatalf("alert backfill applied %v: %v", applied, err)
 	}
 	for index, incident := range incidents {
@@ -130,12 +131,12 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 		t.Fatalf("manual Investigation lost: %v", err)
 	}
 	var slackAfter string
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(job) - 'kind' - 'incident_id')::text FROM webhook_job AS job
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(work) - 'work_id')::text FROM slack_message_work AS work
 		WHERE org_id = $1 AND conversation_id = $2`, organization, slackOutcome.Conversation).Scan(&slackAfter); err != nil || slackAfter != slackBefore {
 		t.Fatalf("Slack work changed: %v", err)
 	}
 	var remaining int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM webhook_job WHERE org_id = $1`, organization).
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM slack_message_work WHERE org_id = $1`, organization).
 		Scan(&remaining); err != nil || remaining != 1 {
 		t.Fatalf("expected only retained Slack work: %d: %v", remaining, err)
 	}

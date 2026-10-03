@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-func TestAlertAdmissionMetricsDistinguishCapacityAndPermanentRefusals(t *testing.T) {
+func TestWebhookMetricsExposeOnlyRequestAlertEventAndSlackAcknowledgementSignals(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	previous := otel.GetMeterProvider()
@@ -19,49 +19,64 @@ func TestAlertAdmissionMetricsDistinguishCapacityAndPermanentRefusals(t *testing
 	defer otel.SetMeterProvider(previous)
 
 	instruments := newInstruments(slog.New(slog.DiscardHandler))
-	instruments.countDelivery(context.Background(), dispositionCapacityRefused)
-	instruments.countDelivery(context.Background(), dispositionBatchTooLarge)
-	instruments.observeAlertAcceptance(context.Background(), 125*time.Millisecond)
+	instruments.countRequest(context.Background(), surfaceAlert, resultRateLimited)
+	instruments.countRequest(context.Background(), surfaceSlack, resultAccepted)
+	instruments.countAlertEvents(context.Background(), 2)
+	instruments.observeSlackAcknowledgement(context.Background(), 125*time.Millisecond)
 
 	var collected metricdata.ResourceMetrics
 	if err := reader.Collect(context.Background(), &collected); err != nil {
 		t.Fatal(err)
 	}
-	dispositions := map[string]bool{}
-	latencyObservations := uint64(0)
+	found := map[string]bool{}
 	for _, scope := range collected.ScopeMetrics {
 		for _, measured := range scope.Metrics {
+			found[measured.Name] = true
 			switch measured.Name {
-			case "oc.intake.deliveries":
+			case "oc.webhooks.requests":
 				sum, ok := measured.Data.(metricdata.Sum[int64])
 				if !ok {
-					t.Fatalf("delivery metric data = %T", measured.Data)
+					t.Fatalf("request metric data = %T", measured.Data)
 				}
 				for _, point := range sum.DataPoints {
-					if point.Attributes.Len() != 1 {
-						t.Fatalf("delivery metric attributes = %v, want only disposition", point.Attributes)
+					if point.Attributes.Len() != 2 {
+						t.Fatalf("request metric attributes = %v, want surface and result", point.Attributes)
 					}
-					if value, ok := point.Attributes.Value(dispositionKey); ok {
-						dispositions[value.AsString()] = true
+					if _, ok := point.Attributes.Value("surface"); !ok {
+						t.Fatalf("request metric omitted surface: %v", point.Attributes)
+					}
+					if _, ok := point.Attributes.Value("result"); !ok {
+						t.Fatalf("request metric omitted result: %v", point.Attributes)
 					}
 				}
-			case "oc.intake.alert_acceptance":
+			case "oc.webhooks.alert_events":
+				sum, ok := measured.Data.(metricdata.Sum[int64])
+				if !ok || len(sum.DataPoints) != 1 || sum.DataPoints[0].Value != 2 ||
+					sum.DataPoints[0].Attributes.Len() != 0 {
+					t.Fatalf("alert event metric = %#v", measured.Data)
+				}
+			case "oc.webhooks.slack_ack_duration":
 				histogram, ok := measured.Data.(metricdata.Histogram[float64])
-				if !ok {
-					t.Fatalf("alert acceptance metric data = %T", measured.Data)
-				}
-				for _, point := range histogram.DataPoints {
-					latencyObservations += point.Count
+				if !ok || len(histogram.DataPoints) != 1 || histogram.DataPoints[0].Count != 1 ||
+					histogram.DataPoints[0].Attributes.Len() != 0 {
+					t.Fatalf("Slack acknowledgement metric = %#v", measured.Data)
 				}
 			}
 		}
 	}
-	for _, disposition := range []string{dispositionCapacityRefused, dispositionBatchTooLarge} {
-		if !dispositions[disposition] {
-			t.Errorf("delivery disposition %q was not emitted", disposition)
+	for _, name := range []string{
+		"oc.webhooks.requests",
+		"oc.webhooks.alert_events",
+		"oc.webhooks.slack_ack_duration",
+	} {
+		if !found[name] {
+			t.Errorf("metric %q was not emitted", name)
 		}
 	}
-	if latencyObservations != 1 {
-		t.Fatalf("alert acceptance latency observations = %d, want 1", latencyObservations)
+	for name := range found {
+		if name != "oc.webhooks.requests" && name != "oc.webhooks.alert_events" &&
+			name != "oc.webhooks.slack_ack_duration" {
+			t.Errorf("obsolete webhook metric %q was emitted", name)
+		}
 	}
 }

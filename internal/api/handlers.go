@@ -19,7 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
-	"github.com/open-cluster/oc-control-plane/internal/webhooks"
+	webhookslack "github.com/open-cluster/oc-control-plane/internal/webhooks/slack"
 )
 
 const readTimeout = 15 * time.Second
@@ -135,10 +135,9 @@ func (h Handlers) Routes() []authz.Route {
 		WindowLead:      h.InvestigationWindowLead,
 		MaxWaitingTurns: h.MaxWaitingTurns,
 	}.Routes()...)
-	routes = append(routes, webhooks.DeliveryHandlers{
+	routes = append(routes, webhookslack.RecoveryHandlers{
 		Database: h.Database,
 		Logger:   h.Logger,
-		Counters: webhooks.NewDeliveryInstruments(h.Logger),
 	}.Routes()...)
 	return routes
 }

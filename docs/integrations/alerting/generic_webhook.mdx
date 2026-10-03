@@ -64,8 +64,8 @@ fetches `sourceUrl` during intake.
 ## Verify
 
 Send one firing event and confirm the response is `202 Accepted`. Open the matching
-Webhook Delivery, Alert Event, and Incident. An exact retry should return `200 OK` without
-creating another lifecycle phase.
+Alert Event and Incident. An exact retry should return `200 OK` without creating another
+lifecycle phase.
 
 When a firing event opens a new Incident, acceptance also queues its automatic
 Investigation. Updates to the same Incident do not open another Investigation. Manual

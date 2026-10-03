@@ -182,11 +182,12 @@ changing an Integration identifier or forwarding header does not create fresh ca
 During overload, alert webhooks receive `503` and Slack receives `429`; both include
 `Retry-After`.
 
-After authentication, each Integration has a separate burst of 60 deliveries and restores
-one delivery per second. Incorrect credentials do not spend that quota. A process tracks
-at most 4,096 active Integrations. An Alert Integration over either limit receives `503`;
-a Slack Integration receives `429`. Capacity returns after an entry has been idle for ten
-minutes. Limits are per process and multiply across replicas.
+The budget is process-wide and multiplies across replicas. Integration identifiers and
+credentials do not create separate in-memory quotas.
+
+The metrics endpoint exposes `oc.webhooks.requests` by `surface` and bounded `result`,
+`oc.webhooks.alert_events` for newly committed Alert Events, and
+`oc.webhooks.slack_ack_duration` for Slack acknowledgement latency.
 
 `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` separately bounds the durable pending
 Investigation queue; its default is `100`. Automatic alert Investigations, manual

@@ -124,7 +124,7 @@ conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQ
 outbound Relay sessions.
 
 Alert acceptance creates automatic Investigations atomically. Slack owns the asynchronous inbound Message worker,
-including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and administrator replay.
+including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and Admin recovery.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
@@ -144,7 +144,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - Customer data and Tool execution are Organization-scoped; authentication and User-owned sessions are deployment-wide.
 - Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
 - Background cleanup removes expired sessions in bounded passes, including before any Organization exists.
-- Webhooks have bounded pre-authentication admission and separate authenticated Integration quotas; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
+- Webhooks have one bounded pre-authentication admission budget per process; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
 - Alert acceptance records Incident updates and automatic Investigations atomically; each newly opened Incident gets one, within the shared pending Investigation limit.
 - Authenticated API requests resolve the User's sole current Organization and Role before handlers run.
 - A User has at most one current Organization Membership; Organization Admins cannot replace an existing User's password or manage their global sessions.

@@ -41,14 +41,18 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 	if _, found, err := database.ClaimSlackMessageWork(ctx, "unused-alert-worker", time.Minute); err != nil || found {
 		t.Fatalf("new alert delivery queued webhook work: found=%t err=%v", found, err)
 	}
-	page, err := database.WebhookDeliveries(ctx, organization, "", storage.Page{Limit: 10})
-	if err != nil || len(page.Deliveries) != 1 || page.Deliveries[0].State != storage.WebhookDeliverySucceeded ||
-		page.Deliveries[0].Attempts != 0 {
-		t.Fatalf("accepted alert delivery projection: %+v, %v", page, err)
+	pool, err := database.Pool(organization)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := database.ReplayWebhookDelivery(ctx, ownerOf(t, organization), organization,
-		page.Deliveries[0].ID); !errors.Is(err, storage.ErrWebhookDeliveryUnknown) {
-		t.Fatalf("succeeded alert delivery replay=%v, want no-op conflict", err)
+	var deliveries, work int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM webhook_delivery WHERE org_id = $1),
+		(SELECT count(*) FROM slack_message_work WHERE org_id = $1)`, organization).Scan(&deliveries, &work); err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 1 || work != 0 {
+		t.Fatalf("accepted alert idempotency rows=%d slack work=%d", deliveries, work)
 	}
 }
 

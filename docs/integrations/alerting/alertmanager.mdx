@@ -91,9 +91,8 @@ existing Incident do not open another. Accepted duplicates and Incident updates 
 succeed even when the pending Investigation queue is full. When a new delivery cannot
 fit, none of its changes are recorded and `503` includes `Retry-After`.
 
-Accepted alert deliveries complete during admission and appear in Webhook Delivery history as
-`succeeded` with `attempts: 0`. They cannot be replayed; replay requests return `409 Conflict`.
-Replay is reserved for failed Slack Webhook Deliveries whose processing continues after acknowledgement.
+Accepted alert deliveries complete during admission. Exact retries remain idempotent and
+do not create another Alert Event, Incident, or Investigation.
 
 ## Limitations
 
@@ -111,7 +110,7 @@ explain the alert.
   If an ungrouped batch exceeds the pending Investigation limit, split it into smaller
   deliveries or configure source grouping before retrying.
 - **`503`:** honor `Retry-After` when present, reduce delivery frequency, or group alerts more aggressively.
-  See the [shared and per-Integration limits](/self-hosting/configuration#webhook-admission-limits).
+  See the [process-wide admission limit](/self-hosting/configuration#webhook-admission-limits).
 
 ## Rotate or disconnect
 
