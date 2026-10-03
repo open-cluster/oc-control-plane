@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// The permission map is only worth having if it cannot drift from the tools it maps. These
-// hold it to the declared set in both directions and prove the union is what the App
-// registration is asked to request.
-
 func TestEveryToolIsMappedToItsEndpointsAndPermissions(t *testing.T) {
 	t.Parallel()
 
@@ -51,9 +47,6 @@ func TestEveryToolIsMappedToItsEndpointsAndPermissions(t *testing.T) {
 	}
 }
 
-// The union is what the App registration requests. A permission needed by the map and
-// missing from the request order would leave it silently, which is exactly the drift the
-// union exists to prevent.
 func TestTheRequestedPermissionsAreTheUnionOfTheMap(t *testing.T) {
 	t.Parallel()
 
@@ -76,9 +69,6 @@ func TestTheRequestedPermissionsAreTheUnionOfTheMap(t *testing.T) {
 	}
 }
 
-// A tool's operator-facing permission line is rendered from the map, so the line and the
-// endpoints cannot disagree. Reading a pull request needs Pull requests, not Contents —
-// which is what the hand-written line used to say.
 func TestAToolsPermissionLineIsRenderedFromItsMapping(t *testing.T) {
 	t.Parallel()
 

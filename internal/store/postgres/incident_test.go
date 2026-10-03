@@ -14,14 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The operational incident, at the storage seam. Grouping itself is asserted through the
-// intake listener at the composition root, because that is where an operator can observe
-// it. What is asserted here is what the database keeps on its own: a merge that rewrites
-// nothing, and two concurrent deliveries agreeing on one incident.
-
-// recordIncident writes one incident directly, standing in for the delivery that would have
-// created it. Intake is not involved here deliberately: delivering an alert to produce one
-// would make every assertion below depend on the adapter as well.
 func recordIncident(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	integration uuid.UUID, key string,
@@ -45,9 +37,6 @@ func recordIncident(
 	return id
 }
 
-// A merge points the absorbed incident at the survivor and leaves everything else alone,
-// including the AlertEvents — the record of the grouping being corrected is what makes the
-// correction checkable.
 func TestAMerge_LeavesBothRecordsIntact(t *testing.T) {
 	t.Parallel()
 
@@ -80,7 +69,6 @@ func TestAMerge_LeavesBothRecordsIntact(t *testing.T) {
 		t.Errorf("the absorbed incident's grouping key is now %q; a merge must rewrite nothing",
 			gone.GroupingKey)
 	}
-	// The merge is on the record, and the record is append-only, so it is there for good.
 	if !recordedIncidentMerge(t, database, organization, absorbed) {
 		t.Error("no audit event names the merged incident; a grouping correction nobody can " +
 			"attribute is one an auditor cannot answer for")
@@ -108,7 +96,6 @@ func recordedIncidentMerge(
 	return count > 0
 }
 
-// alertmanagerIntegration is an Alertmanager Integration deliveries arrive through.
 func alertmanagerIntegration(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) uuid.UUID {
@@ -127,14 +114,6 @@ func alertmanagerIntegration(
 	return created.ID
 }
 
-// TWO DELIVERIES CARRYING ONE GROUP, AT ONCE.
-//
-// This is the case the grouping insert is shaped for, and it is the one a review caught:
-// an ON CONFLICT DO NOTHING does not wait for the conflicting transaction and returns no
-// row, so the delivery that lost would then read nothing — the winner has not committed —
-// and fail a delivery that was never wrong. What must hold is that both deliveries
-// succeed, they agree on one incident, and exactly one of them is recorded as having opened
-// it.
 func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t *testing.T) {
 	t.Parallel()
 

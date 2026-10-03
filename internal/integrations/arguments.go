@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// Arguments is one call's inputs after the undeclared ones were refused.
 type Arguments struct {
 	values map[string]any
 }
@@ -30,7 +29,6 @@ func declaresArgument(declared []ToolArgument, name string) bool {
 	return false
 }
 
-// Text reads an optional string argument, trimmed.
 func (a Arguments) Text(name string) (string, error) {
 	value, given := a.values[name]
 	if !given {
@@ -43,7 +41,6 @@ func (a Arguments) Text(name string) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
-// Required reads a string argument that must be present and non-empty.
 func (a Arguments) Required(name string) (string, error) {
 	text, err := a.Text(name)
 	if err != nil {
@@ -55,9 +52,6 @@ func (a Arguments) Required(name string) (string, error) {
 	return text, nil
 }
 
-// Identity reads a required positive whole number, the shape every stable id has.
-// Decoded JSON numbers arrive as float64; a whole positive value is required, not
-// merely truncated.
 func (a Arguments) Identity(name string) (int64, error) {
 	value, given := a.values[name]
 	if !given {
@@ -70,8 +64,6 @@ func (a Arguments) Identity(name string) (int64, error) {
 	return int64(number), nil
 }
 
-// OptionalIdentity reads a positive whole number when the caller gave one, reporting
-// absence apart from malformation.
 func (a Arguments) OptionalIdentity(name string) (int64, bool, error) {
 	if _, given := a.values[name]; !given {
 		return 0, false, nil
@@ -80,7 +72,6 @@ func (a Arguments) OptionalIdentity(name string) (int64, bool, error) {
 	return id, err == nil, err
 }
 
-// Count reads a bounded whole number, applying the default when absent.
 func (a Arguments) Count(name string, fallback, maximum int) (int, error) {
 	value, given := a.values[name]
 	if !given {
@@ -93,7 +84,6 @@ func (a Arguments) Count(name string, fallback, maximum int) (int, error) {
 	return int(number), nil
 }
 
-// Moment reads an optional RFC 3339 timestamp.
 func (a Arguments) Moment(name string) (time.Time, error) {
 	text, err := a.Text(name)
 	if err != nil || text == "" {

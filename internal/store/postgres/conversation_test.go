@@ -15,16 +15,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// Conversations at the storage seam. What is asserted here is what the DATABASE keeps on
-// its own — the sequence, the single-writer invariant, the queue and its drain — because
-// those are the properties that have to hold across replicas, and a test that went through
-// one process could not tell whether they do.
-
 const turnWindowLead = time.Hour
 
-// twoOrganizationsInOneDatabase is the shape the tenant boundary has to hold in: one
-// database, two tenants, the organization a column rather than a connection. Two separate
-// database would prove nothing — the pools could not reach each other's rows anyway.
 func twoOrganizationsInOneDatabase(
 	t *testing.T,
 ) (*storage.Database, uuid.UUID, uuid.UUID) {
@@ -40,13 +32,10 @@ func twoOrganizationsInOneDatabase(
 	return database, first, second
 }
 
-// conclusionSaying is a minimal concluding document: an answer and no findings, which is
-// legal — a turn that established nothing still concluded.
 func conclusionSaying(answer string) investigation.Conclusion {
 	return investigation.Conclusion{Summary: answer}
 }
 
-// openConversation records one for a test, with no incident.
 func openConversation(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	subject string,
@@ -64,7 +53,6 @@ func openConversation(
 	return opened
 }
 
-// say appends one person message.
 func say(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	id uuid.UUID, text string,
@@ -82,9 +70,6 @@ func say(
 	return said
 }
 
-// The sequence is assigned by the database, from one, without gaps. It is what the whole
-// transcript is ordered by, and a client that reconnects asks for what comes after a
-// number it already has.
 func TestAConversationsMessagesTakeConsecutiveSequences(t *testing.T) {
 	t.Parallel()
 
@@ -101,13 +86,6 @@ func TestAConversationsMessagesTakeConsecutiveSequences(t *testing.T) {
 	}
 }
 
-// THE SINGLE-WRITER INVARIANT.
-//
-// Two messages racing into one conversation must produce exactly one running
-// investigation. The loser is not an error: its message stays queued, and the drain at the
-// running turn's terminal takes it up. This is the property that stops two agents writing
-// one conversation, and it is enforced by the partial unique index rather than by any
-// process, which is why it is asserted here.
 func TestTwoMessagesRacingOpenExactlyOneTurn(t *testing.T) {
 	t.Parallel()
 
@@ -129,9 +107,6 @@ func TestTwoMessagesRacingOpenExactlyOneTurn(t *testing.T) {
 			defer done.Done()
 			start.Wait()
 
-			// Both calls run OUTSIDE the mutex. The mutex guards the result slices and
-			// nothing else: serialising the opens would test the invariant against one
-			// caller at a time, which is the case that was never in doubt.
 			_, appendErr := database.AppendMessage(context.Background(),
 				ownerOf(t, organization), organization, opened.ID,
 				conversation.NewMessage{
@@ -179,9 +154,6 @@ func TestTwoMessagesRacingOpenExactlyOneTurn(t *testing.T) {
 		t.Fatalf("the conversation holds %d messages, want %d; every racer's message is "+
 			"accepted even when its turn is not", len(detail.Messages), racers)
 	}
-	// Whichever messages were written before the winning turn opened are attached to it;
-	// the rest are queued. What must not happen is a message belonging to nothing while no
-	// turn is running, because nothing would ever take it up.
 	queued := 0
 	for _, message := range detail.Messages {
 		if message.Queued() {
@@ -209,9 +181,6 @@ func countAttached(messages []conversation.Message) int {
 	return attached
 }
 
-// Messages that arrived while a turn was running are drained into exactly ONE next turn,
-// in order, when that turn ends. Two follow-ups typed while the agent worked are one thing
-// to answer, not two investigations of the same context.
 func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 	t.Parallel()
 
@@ -228,7 +197,6 @@ func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 	say(t, database, organization, opened.ID, "ignore the database")
 	say(t, database, organization, opened.ID, "check deployments instead")
 
-	// While the first turn runs, no second turn may open.
 	if _, took, err = database.OpenTurn(context.Background(), organization, opened.ID,
 		turnWindowLead); err != nil || took {
 		t.Fatalf("a second turn opened while the first was running: took=%v err=%v",
@@ -271,8 +239,6 @@ func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 	}
 }
 
-// A drain with nothing waiting is the ordinary case and not a failure. It happens at the
-// end of every turn nobody interrupted.
 func TestDrainingAnEmptyQueueOpensNothing(t *testing.T) {
 	t.Parallel()
 
@@ -289,9 +255,6 @@ func TestDrainingAnEmptyQueueOpensNothing(t *testing.T) {
 	}
 }
 
-// THE TENANT BOUNDARY. An identifier from one organization supplied while acting as
-// another answers not-found, with nothing that distinguishes it from an identifier that
-// never existed.
 func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -321,7 +284,6 @@ func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 	}
 }
 
-// The queue is countable, because the ceiling on it is what keeps overload boring.
 func TestWaitingTurnsCountsUnclaimedWork(t *testing.T) {
 	t.Parallel()
 
@@ -351,9 +313,6 @@ func TestWaitingTurnsCountsUnclaimedWork(t *testing.T) {
 	}
 }
 
-// The listing NARROWS IN THE DATABASE. A listing that answered everything and left a
-// console to filter it would be one whose paging lies: page one of a hundred conversations
-// filtered down to three is not three conversations.
 func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	t.Parallel()
 
@@ -362,7 +321,6 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	openConversation(t, database, organization, "payments are failing")
 	openConversation(t, database, organization, "checkout returns 500")
 
-	// By subject, case-insensitively.
 	listed, err := database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization, conversation.Page{Search: "CHECKOUT"})
 	if err != nil {
@@ -373,7 +331,6 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 			"CHECKOUT")
 	}
 
-	// By state.
 	listed, err = database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization,
 		conversation.Page{State: conversation.StateOpen})
@@ -393,8 +350,6 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 		t.Errorf("%d closed conversations, want none", len(listed.Conversations))
 	}
 
-	// Narrowing composes with paging, and the cursor resumes the NARROWED order rather
-	// than the unnarrowed one.
 	listed, err = database.QueryConversations(context.Background(),
 		ownerOf(t, organization), organization,
 		conversation.Page{Search: "checkout", Limit: 1})
@@ -452,11 +407,6 @@ func TestConversationListingAppliesAscendingSortAcrossPages(t *testing.T) {
 	}
 }
 
-// EPISODE-LEVEL SHARING, AND ITS BOUNDARY.
-//
-// Two people narrowing one incident hold separate conversations. They share the incident's
-// durable fact — what its investigations ESTABLISHED, with the citations behind it — and
-// nothing else. What somebody else asked, and the prose they were answered with, is theirs.
 func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -465,7 +415,6 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	integration := kubernetesIntegration(t, database, organization, registration)
 	incident := recordIncident(t, database, organization, integration, "group-shared")
 
-	// Ada's conversation about the incident, with one concluded turn.
 	ada := openConversationAbout(t, database, organization, "checkout is slow", incident)
 	say(t, database, organization, ada.ID, "ADA-PRIVATE-QUESTION: what changed?")
 	adaTurn, took, err := database.OpenTurn(context.Background(), organization, ada.ID,
@@ -520,7 +469,6 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 			adaBrief)
 	}
 
-	// Bo opens a separate conversation about the SAME incident.
 	bo := openConversationAbout(t, database, organization, "why is checkout slow", incident)
 	say(t, database, organization, bo.ID, "what do we know already?")
 
@@ -529,7 +477,6 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Fatalf("reading Bo's brief: %v", err)
 	}
 
-	// SHARED: the finding, with its citation intact.
 	shared := false
 	for _, finding := range brief.Findings {
 		if finding.Statement == "the deploy at 14:02 changed the pool size" {
@@ -551,7 +498,6 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 			brief.Findings)
 	}
 
-	// NOT SHARED: Ada's messages, and Ada's prose.
 	for _, message := range brief.Recent {
 		if strings.Contains(message.Text, "ADA-PRIVATE") || message.Answer != nil {
 			t.Errorf("Bo's brief carries Ada's message %q; conversations about one "+
@@ -562,7 +508,6 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Errorf("Bo's brief carries Ada's private conclusion prose: limitations=%+v",
 			brief.Limitations)
 	}
-	// A conversation about a DIFFERENT incident shares nothing at all.
 	other := recordIncident(t, database, organization, integration, "group-unrelated")
 	cass := openConversationAbout(t, database, organization, "payments are failing", other)
 	unrelated, err := database.ConversationBrief(context.Background(), organization,
@@ -594,7 +539,6 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	}
 }
 
-// openConversationAbout records one tied to an incident incident.
 func openConversationAbout(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	subject string, incident uuid.UUID,

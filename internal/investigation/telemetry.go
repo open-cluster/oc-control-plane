@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Metrics omit Organization and other unbounded customer- or vendor-supplied labels.
 const meterName = "github.com/open-cluster/oc-control-plane/internal/investigation"
 
 type Telemetry struct {
@@ -29,8 +28,6 @@ func (t *Telemetry) Ended(duration time.Duration, status, stoppedBy string) {
 
 func (t *Telemetry) RanTool(run ToolRun) { t.ranTool(run) }
 
-// NewTelemetry builds the instruments. A failure to construct one is logged and leaves it
-// nil — telemetry that refused to start would take investigations with it.
 func NewTelemetry(logger *slog.Logger) *Telemetry {
 	meter := otel.Meter(meterName)
 	built := &Telemetry{logger: logger}
@@ -72,8 +69,6 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 	return built
 }
 
-// claimed records how long work waited before anybody picked it up. It is the number that
-// says whether the ceilings are set wrong before any customer notices.
 func (t *Telemetry) claimed(openedAt time.Time) {
 	if t == nil || t.queueWait == nil || openedAt.IsZero() {
 		return
@@ -81,7 +76,6 @@ func (t *Telemetry) claimed(openedAt time.Time) {
 	t.queueWait.Record(context.Background(), time.Since(openedAt).Seconds())
 }
 
-// firstEvent records how long a reader waited before anything at all appeared.
 func (t *Telemetry) firstEvent(since time.Duration) {
 	if t == nil || t.firstProgress == nil {
 		return
@@ -89,8 +83,6 @@ func (t *Telemetry) firstEvent(since time.Duration) {
 	t.firstProgress.Record(context.Background(), since.Seconds())
 }
 
-// ended records one whole investigation, labeled by how it ended and by the ceiling that
-// forced it — both this build's own frozen words.
 func (t *Telemetry) ended(since time.Duration, outcome, stoppedBy string) {
 	if t == nil || t.duration == nil {
 		return
@@ -103,8 +95,6 @@ func (t *Telemetry) ended(since time.Duration, outcome, stoppedBy string) {
 		metric.WithAttributes(attributes...))
 }
 
-// ranTool records one read. The TOOL NAME is a bounded string this build declares, so it
-// is safe as an attribute; nothing the vendor returned is.
 func (t *Telemetry) ranTool(run ToolRun) {
 	if t == nil || t.toolDuration == nil {
 		return
@@ -116,8 +106,6 @@ func (t *Telemetry) ranTool(run ToolRun) {
 			attribute.String("outcome", outcomeWord(run.Outcome))))
 }
 
-// RecoveredStale counts investigations a lapsed lease ended. A crash loop is only visible
-// as a number.
 func (t *Telemetry) RecoveredStale(count int) {
 	if t == nil || t.recovered == nil || count <= 0 {
 		return

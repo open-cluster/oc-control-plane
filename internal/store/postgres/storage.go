@@ -18,26 +18,21 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationLockKey serializes schema migration across concurrently starting instances.
 const migrationLockKey int64 = 7_263_041_998_120_001
 
-// ErrUnknownOrganization reports an empty Organization at the storage boundary.
 var ErrUnknownOrganization = errors.New("organization names no tenant")
 
-// Database is the one durable PostgreSQL store owned by a deployment.
 type Database struct {
 	pool *pgxpool.Pool
 }
 
-// OpenDatabase opens the deployment database. The pool dials lazily; reachability is a
-// readiness concern so a transient outage does not prevent the process from explaining it.
 func OpenDatabase(ctx context.Context, dsn string) (*Database, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return nil, errors.New("storage: database connection string is required")
 	}
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		// The DSN may contain a password, so the parser's cause is deliberately omitted.
+		// The parser error may contain a password from the DSN.
 		return nil, errors.New("storage: database has an unusable connection string")
 	}
 	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer(
@@ -51,8 +46,6 @@ func OpenDatabase(ctx context.Context, dsn string) (*Database, error) {
 	return &Database{pool: pool}, nil
 }
 
-// Pool returns the deployment pool after rejecting an empty Organization. Store methods
-// still receive the Organization and include it in every tenant-owned query.
 func (d *Database) Pool(organization uuid.UUID) (*pgxpool.Pool, error) {
 	if organization == uuid.Nil {
 		return nil, fmt.Errorf("%w: the empty organization names no tenant", ErrUnknownOrganization)
@@ -60,7 +53,6 @@ func (d *Database) Pool(organization uuid.UUID) (*pgxpool.Pool, error) {
 	return d.pool, nil
 }
 
-// Ping reports whether the deployment database is reachable.
 func (d *Database) Ping(ctx context.Context) error {
 	if err := d.pool.Ping(ctx); err != nil {
 		return fmt.Errorf("database is unreachable: %w", err)
@@ -68,14 +60,12 @@ func (d *Database) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Close releases the deployment pool.
 func (d *Database) Close() {
 	if d != nil && d.pool != nil {
 		d.pool.Close()
 	}
 }
 
-// Migrate applies every pending embedded migration under one advisory lock.
 func (d *Database) Migrate(ctx context.Context) ([]string, error) {
 	pending, err := loadMigrations()
 	if err != nil {
@@ -84,7 +74,6 @@ func (d *Database) Migrate(ctx context.Context) ([]string, error) {
 	return migrateDatabase(ctx, d.pool, pending)
 }
 
-// MigrationCount reports how many migrations this binary carries.
 func MigrationCount() int {
 	migrations, err := loadMigrations()
 	if err != nil {
@@ -98,8 +87,6 @@ type migration struct {
 	statements string
 }
 
-// loadMigrations reads the embedded migrations in lexical order. Filenames are
-// zero-padded, so lexical order is version order.
 func loadMigrations() ([]migration, error) {
 	entries, err := fs.ReadDir(migrationFiles, "migrations")
 	if err != nil {
@@ -128,11 +115,6 @@ func loadMigrations() ([]migration, error) {
 	return migrations, nil
 }
 
-// migrateDatabase applies pending migrations inside one transaction holding a
-// transaction-scoped advisory lock. Postgres has transactional DDL, so either every
-// pending migration and its ledger row commit together or none do — a half-applied schema
-// is not reachable. Concurrent instances serialise on the lock and the loser observes the
-// winner's ledger rather than racing it.
 func migrateDatabase(
 	ctx context.Context, pool *pgxpool.Pool, migrations []migration,
 ) (applied []string, err error) {
@@ -142,14 +124,11 @@ func migrateDatabase(
 	}
 	defer func() {
 		if err != nil {
-			// Rollback on the failure path only; a committed transaction rolls back to a
-			// no-op error that would otherwise mask the real one.
 			_ = transaction.Rollback(ctx)
 		}
 	}()
 
-	// The lock is taken before the ledger is read or created, so two instances cannot both
-	// observe an empty ledger.
+	// Lock before reading the ledger so concurrent instances cannot both observe it as empty.
 	if _, err = transaction.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationLockKey); err != nil {
 		return nil, fmt.Errorf("acquiring the migration lock: %w", err)
 	}

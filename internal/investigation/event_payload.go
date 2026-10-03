@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// EventPayload ties a current writer's payload to its wire event identity.
 type EventPayload interface {
 	EventType() EventType
 }

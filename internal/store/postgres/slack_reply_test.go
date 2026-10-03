@@ -13,16 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// AN ANSWER OWED, AND THE CURSOR THAT MAKES A RETRY SAFE.
-//
-// Two properties carry the whole design. Every turn of a Slack conversation owes exactly one
-// answer, DERIVED from records that already exist rather than hooked into the two places a turn
-// can be opened — a hook in one of them is a silent gap in the other. And the cursor only ever
-// moves forward, which is what makes a retry append what was missed instead of reposting what
-// was already seen.
-
-// aSlackTurn connects a workspace, binds a thread to a conversation and opens a turn on it,
-// returning the investigation that now owes an answer.
 func aSlackTurn(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	workspace, channel, thread string,
@@ -60,9 +50,6 @@ func aSlackTurn(
 	return turn.InvestigationID, integration.ID
 }
 
-// claimed takes the delivery a worker would be holding. A delivery is only ever advanced by
-// the worker that claimed it, so acting on one that was never claimed would be testing a state
-// the product does not reach.
 func claimed(
 	t *testing.T, database *storage.Database, investigation uuid.UUID, lease time.Duration,
 ) slack.Reply {
@@ -84,9 +71,6 @@ func claimed(
 func TestEveryTurnOfASlackConversationOwesAnAnswer(t *testing.T) {
 	t.Parallel()
 
-	// Nothing hooked this: the delivery is derived from the investigation and the thread
-	// binding, both of which already exist. That is what makes it impossible for a turn
-	// opened by the drain behind a running one to be silently missed.
 	database, organization := migratedDatabase(t)
 	investigation, integration := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
@@ -215,8 +199,6 @@ func TestSlackMessageCannotBindAnotherOrganizationsIntegration(t *testing.T) {
 func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	t.Parallel()
 
-	// A console conversation has no thread to answer in, and nothing about it should look
-	// like an answer owed.
 	database, organization := migratedDatabase(t)
 	ctx := context.Background()
 	opened, err := database.OpenConversation(ctx, ownerOf(t, organization), organization,
@@ -250,8 +232,6 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 func TestAClaimedDeliveryIsNotClaimedTwice(t *testing.T) {
 	t.Parallel()
 
-	// The lease is what stops two workers writing into one visible message, which is the
-	// one failure a reader in the thread could not make sense of.
 	database, organization := migratedDatabase(t)
 	aSlackTurn(t, database, organization, "T0ACME", "C0INCIDENTS", "1700000001.1")
 
@@ -271,8 +251,6 @@ func TestAClaimedDeliveryIsNotClaimedTwice(t *testing.T) {
 func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	t.Parallel()
 
-	// The property a retry depends on. A cursor that could go backwards would make a
-	// retry repost what the thread has already seen.
 	database, organization := migratedDatabase(t)
 	investigation, _ := aSlackTurn(t, database, organization,
 		"T0ACME", "C0INCIDENTS", "1700000001.1")
@@ -283,7 +261,6 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 12}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
-	// A later pass that somehow read an older batch must not undo it.
 	if err := database.AdvanceSlackReply(ctx, organization, investigation, reply.ClaimToken,
 		slack.Progress{Stream: slack.Stream{TS: "1700000100.100", Native: true}, Sequence: 4}); err != nil {
 		t.Fatalf("advancing backwards: %v", err)
@@ -297,8 +274,6 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 	if sequence != 12 {
 		t.Errorf("the cursor is at %d, want it to have stayed at 12", sequence)
 	}
-	// And the visible message's identity is written once. A second identity would be a
-	// second message in the thread.
 	if err := database.AdvanceSlackReply(ctx, organization, investigation, reply.ClaimToken,
 		slack.Progress{Stream: slack.Stream{TS: "1700000999.999", Native: true}, Sequence: 13}); err != nil {
 		t.Fatalf("advancing: %v", err)
@@ -336,7 +311,6 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 	if note == "" {
 		t.Error("giving up recorded no reason an operator could read")
 	}
-	// And it is never claimed again, because there is nothing left to try.
 	claimed, err := database.ClaimSlackReplies(ctx, 10, time.Minute)
 	if err != nil {
 		t.Fatalf("claiming: %v", err)
@@ -347,8 +321,6 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 		}
 	}
 
-	// The INVESTIGATION is untouched. A chat outage must not be able to make completed
-	// work look failed.
 	record, err := database.Investigation(ctx, organization, investigation)
 	if err != nil {
 		t.Fatalf("reading the investigation: %v", err)
@@ -381,8 +353,6 @@ func TestADeliveredAnswerIsNeverClaimedAgain(t *testing.T) {
 	}
 }
 
-// Guards the assumption the rest of this file rests on: the message that opened the turn is
-// bound to a thread the delivery can answer in.
 func TestTheThreadBindingIsReadableForDelivery(t *testing.T) {
 	t.Parallel()
 

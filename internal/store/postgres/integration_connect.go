@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// StartConnectFlow removes expired state opportunistically before storing a new digest.
 func (p *Database) StartConnectFlow(
 	ctx context.Context, organization uuid.UUID, flow integrations.ConnectFlow,
 	state string,
@@ -38,7 +37,6 @@ func (p *Database) StartConnectFlow(
 	return nil
 }
 
-// RedeemConnectFlow atomically deletes live state and supplies its Organization boundary.
 func (p *Database) RedeemConnectFlow(
 	ctx context.Context, state string,
 ) (integrations.ConnectFlow, error) {

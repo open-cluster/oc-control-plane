@@ -10,66 +10,24 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 )
 
-// A SLACK THREAD BECOMES A CONVERSATION, IN ONE TRANSACTION.
-//
-// The three things that must commit together are the delivery's idempotence claim, the
-// thread-to-Conversation binding, and the message itself. Any two of them without the third
-// is a state a customer can see: a claimed delivery with no message is a question OpenCluster
-// silently dropped and the retry cannot recover, because the source has already been told it
-// succeeded; a message without the claim is one answered twice on the next redelivery.
-//
-// Deduplication reuses the DELIVERY record the product already has rather than a Slack event
-// table, so there is one idempotence story and one place to look when a customer says "it
-// answered twice". A Slack retry carries the same body and is therefore already covered.
-//
-// Nothing here waits on a model, a repository, a cluster or an investigation. The turn is
-// opened as an unclaimed record and the ordinary claiming worker takes it, which is what keeps
-// acknowledgement inside Slack's timeout however long the investigation then takes.
-
-// SlackMessage is one agent-directed message from a workspace, already authenticated,
-// already resolved to its Integration and already judged to be something to answer.
 type SlackMessage struct {
-	// Integration is the installation the event resolved through, and the only authority
-	// for the tenant everything in it belongs to.
-	Integration uuid.UUID
-	// ContentDigest is SHA-256 over the raw body as received. Slack exposes no separate
-	// delivery identity, so its accepted content fingerprint supplies that identity.
+	Integration   uuid.UUID
 	ContentDigest []byte
-	// Channel and Thread are Slack's identity for where this was said. Thread is the
-	// message's own timestamp when it started no thread, which is the thread OpenCluster's
-	// reply then creates.
-	Channel string
-	Thread  string
-	// MessageID is Slack's timestamp identifier for this exact message. It is retained as
-	// a safe provider reference so a worker can attach provenance after acknowledgement.
-	MessageID string
-	// Subject names the Conversation when this message opens one. It is derived from the
-	// message rather than asked for, because nobody types a subject into a chat box.
-	Subject string
-	// Actor is who said it, in Slack's identifiers and in their display name. Recorded on
-	// every message so that a shared thread stays attributable.
-	ActorID      string
-	ActorDisplay string
-	// Text is what they said. UNTRUSTED for its whole life: it reaches a model as evidence
-	// about what somebody typed, never as an instruction.
-	Text string
+	Channel       string
+	Thread        string
+	MessageID     string
+	Subject       string
+	ActorID       string
+	ActorDisplay  string
+	Text          string
 }
 
-// SlackMessageOutcome is what happened to one inbound message.
 type SlackMessageOutcome struct {
-	// Duplicate reports that this exact body was already accepted through this Integration,
-	// so nothing was written a second time. It is a SUCCESS: a workspace retrying because
-	// it never saw our answer has done nothing wrong, and the answer must let it stop.
-	Duplicate bool
-	// Conversation is the thread's conversation, whether this message opened it or joined
-	// it.
+	Duplicate    bool
 	Conversation uuid.UUID
-	// Opened reports that this message started the conversation rather than continuing one.
-	Opened bool
+	Opened       bool
 }
 
-// RecordSlackMessage claims the delivery, resolves the thread to its Conversation, and
-// appends the message — all or nothing.
 func (p *Database) RecordSlackMessage(
 	ctx context.Context, organization uuid.UUID, said SlackMessage,
 ) (SlackMessageOutcome, error) {
@@ -83,9 +41,7 @@ func (p *Database) RecordSlackMessage(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	// The idempotence claim comes FIRST, so a redelivery that arrives while the first is
-	// still committing loses the race at the database rather than at a read-then-write both
-	// could pass.
+	// Insert the claim first so concurrent redeliveries cannot both pass a read-then-write check.
 	deliveryID := uuid.New()
 	tag, err := transaction.Exec(ctx, `
 		INSERT INTO webhook_delivery
@@ -123,13 +79,6 @@ func (p *Database) RecordSlackMessage(
 	return SlackMessageOutcome{Conversation: conversationID, Opened: opened}, nil
 }
 
-// bindThread resolves this thread to its Conversation, opening one the first time.
-//
-// DETERMINISTIC. The binding is a lookup on the integration, the channel and the thread, and
-// there is no inference anywhere near it: no similarity matching, no guessing which incident
-// a thread is about. A Conversation is associated with an incident only when it was opened
-// from one, and this path opens it from a mention, so it has none — which is the honest state
-// rather than a guess that reads like knowledge.
 func bindThread(
 	ctx context.Context, transaction pgx.Tx,
 	organization uuid.UUID, said SlackMessage,
@@ -166,9 +115,6 @@ func bindThread(
 		return uuid.Nil, false, fmt.Errorf("binding a slack thread: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
-		// Two messages in one thread arriving at once, and the other one won. Read the
-		// binding it wrote rather than failing: both messages belong in one conversation,
-		// which is the whole point of the binding being unique.
 		if err := transaction.QueryRow(ctx, `
 			SELECT conversation_id
 			  FROM slack_conversation
@@ -182,12 +128,6 @@ func bindThread(
 	return opened, true, nil
 }
 
-// appendSlackMessage writes the message at the next sequence and stamps the conversation.
-//
-// The author is an EXTERNAL actor rather than a principal. A person speaking in a workspace
-// may hold no OpenCluster account at all, and recording their Slack identity as though it
-// were one would be inventing a principal — while dropping the identity would lose attribution
-// in exactly the case it matters, a thread several people are working in.
 func appendSlackMessage(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	conversationID uuid.UUID, said SlackMessage,
@@ -225,8 +165,6 @@ func appendSlackMessage(
 	return sequence, nil
 }
 
-// SlackMessageProviderReference reports the safe provider identifiers retained for one
-// accepted message. It never returns the message body or a credential.
 func (p *Database) SlackMessageProviderReference(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID, sequence int64,
 ) (channel, message, reference string, err error) {
@@ -245,8 +183,6 @@ func (p *Database) SlackMessageProviderReference(
 	return channel, message, reference, nil
 }
 
-// SetSlackMessageSourceReference records a scope-free navigation URL derived after the
-// acknowledgement path has completed.
 func (p *Database) SetSlackMessageSourceReference(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 	sequence int64, reference string, work SlackMessageWork,
@@ -273,9 +209,6 @@ func (p *Database) SetSlackMessageSourceReference(
 	return nil
 }
 
-// SlackThreadOf reports where a conversation's replies belong, so a delivery worker can
-// answer in the thread the question was asked in. It answers false for a conversation that
-// did not come from Slack.
 func (p *Database) SlackThreadOf(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 ) (channel string, thread string, integration uuid.UUID, found bool, err error) {
@@ -298,15 +231,6 @@ func (p *Database) SlackThreadOf(
 	return channel, thread, integration, true, nil
 }
 
-// UnnamedSlackAuthors reports the Slack identities in one conversation that are still recorded
-// under their raw identifier.
-//
-// It exists because resolving a name costs a call to the vendor, and the ONE place that must
-// not make one is the endpoint that acknowledges an event: Slack retries anything it is not
-// answered inside three seconds, and a users.info on that path is a vendor outage becoming a
-// retry storm. So the message is recorded under the identity it arrived with, and the worker
-// that answers — which already holds the credential and is under no deadline anybody sees —
-// resolves it afterwards.
 func (p *Database) UnnamedSlackAuthors(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 ) ([]string, error) {
@@ -339,12 +263,6 @@ func (p *Database) UnnamedSlackAuthors(
 	return unnamed, nil
 }
 
-// NameSlackAuthor records what one Slack identity is called, on every message they wrote in
-// this conversation.
-//
-// The identity is never replaced, only named beside itself. Attribution has to survive a
-// display name changing or a name that cannot be resolved at all, and the identifier is the
-// half that does.
 func (p *Database) NameSlackAuthor(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 	actor, display string,

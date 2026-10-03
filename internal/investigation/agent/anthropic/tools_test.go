@@ -13,11 +13,6 @@ import (
 	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-// Native tool calling on the wire: the definitions generated from the one declarative
-// contract are what this adapter sends, the tool_use blocks are what it decodes, and a
-// replayed turn reaches the vendor verbatim — thinking block included, because this
-// vendor requires its own thinking echoed back during a tool loop.
-
 func toolDefinitions() []integrations.ToolDefinition {
 	channelTool := integrations.Tool{
 		Name:        "slack.list_channels",
@@ -45,8 +40,6 @@ func toolPrompt() reasoning.Prompt {
 	}
 }
 
-// streamedToolUse builds a streaming response whose content is one thinking block and
-// one tool_use block.
 func streamedToolUse(id, name, arguments string) *http.Response {
 	events := &strings.Builder{}
 	fmt.Fprintf(events, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":"+

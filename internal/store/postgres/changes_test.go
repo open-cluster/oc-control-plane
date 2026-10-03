@@ -11,11 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The Changes capability's storage contract: at-least-once deltas collapse instead of
-// duplicating history, an Integration another Relay serves is refused, baselines never
-// read as changes, and the coverage boundary moves exactly when a gap in watching held
-// a change.
-
 func changeScope(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) (registration, integration uuid.UUID) {
@@ -98,8 +93,6 @@ func TestChanges_TheWindowAnswersChangesAndNeverBaselines(t *testing.T) {
 	registration, integration := changeScope(t, database, organization)
 	ctx := context.Background()
 
-	// Postgres keeps microseconds; a nanosecond-precise instant would fail an equality it
-	// deserves to pass.
 	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 	baseline := changes.Delta{
 		IntegrationID: integration, Baseline: true, ObservedAt: start,
@@ -173,10 +166,6 @@ func TestChanges_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testing.T) 
 		t.Fatalf("recording the first baseline: %v", err)
 	}
 
-	// A quick restart re-baselines within the scope's own cadence (two requested intervals
-	// past the last confirmation; the scope asks for five minutes). Every row collapses, so
-	// no watched field moved, and the short gap bounds what a collapse cannot prove — the
-	// boundary survives.
 	quiet := changes.Delta{
 		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(8 * time.Minute),
 		Changes: []changes.Change{object},
@@ -194,9 +183,6 @@ func TestChanges_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testing.T) 
 			answer.Scope.CoveredSince)
 	}
 
-	// A LONG silence moves the boundary even when everything collapsed: a collapse proves
-	// no watched field moved, and cannot prove an object was not deleted and mourned by
-	// nobody while the Relay was away.
 	longGap := changes.Delta{
 		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(time.Hour),
 		Changes: []changes.Change{object},
@@ -214,8 +200,6 @@ func TestChanges_ACollapsedRebaselinePreservesTheCoverageBoundary(t *testing.T) 
 			"must move to where watching resumed, got %v", answer.Scope.CoveredSince)
 	}
 
-	// A re-baseline that finds anything new proves the gap held a change, and the boundary
-	// moves regardless of how short the gap was.
 	moved := changes.Delta{
 		IntegrationID: integration, Baseline: true, ObservedAt: start.Add(65 * time.Minute),
 		Changes: []changes.Change{{
@@ -263,8 +247,6 @@ func TestChanges_FreshnessStampsAdvanceTheScope(t *testing.T) {
 		t.Fatal("a truncated tick must be visible on the scope")
 	}
 
-	// A stranger's stamp for this integration changes nothing: the guard is the same one
-	// deltas pass through.
 	stranger := enrolledRelay(t, database, organization)
 	later := confirmed.Add(time.Hour)
 	err = database.RecordInventoryFreshness(ctx, organization, stranger,
@@ -297,8 +279,6 @@ func TestChanges_RetentionPrunesByAgeAndOnlyByAge(t *testing.T) {
 		t.Fatalf("recording: %v", err)
 	}
 
-	// received_at is the transaction clock, so "older than now" ages the row out and
-	// "older than an hour ago" does not.
 	removed, err := database.PruneChangesBefore(ctx, time.Now().UTC().Add(-time.Minute), 100)
 	if err != nil || removed != 0 {
 		t.Fatalf("nothing has aged out yet, got %d, %v", removed, err)

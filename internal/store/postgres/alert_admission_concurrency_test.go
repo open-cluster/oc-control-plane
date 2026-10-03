@@ -14,7 +14,6 @@ import (
 )
 
 func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *testing.T) {
-	// The fence, four producers, and lock observer each need a connection.
 	database := openDatabaseForTest(t, postgresDSN(t)+"&pool_max_conns=6")
 	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatal(err)

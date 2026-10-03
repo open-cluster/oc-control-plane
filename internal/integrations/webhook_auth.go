@@ -8,8 +8,6 @@ import (
 
 const WebhookTokenHeader = "X-OpenCluster-Token"
 
-// AuthenticateWebhookToken checks the bounded static sender credential without exposing
-// whether an Integration holds a secret.
 func AuthenticateWebhookToken(headers http.Header, integration Integration) bool {
 	presented := headers.Get(WebhookTokenHeader)
 	if presented == "" || len(presented) > 256 {

@@ -14,8 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 )
 
-// The reply states, as the column stores them. Frozen, and exported so the enum gate can
-// hold this file to them.
 const (
 	SlackReplyPending    = 1
 	SlackReplyDelivering = 2
@@ -23,17 +21,6 @@ const (
 	SlackReplyFailed     = 4
 )
 
-// oweSlackReplies records an answer owed for every turn of a Slack conversation that has
-// none yet.
-//
-// DERIVED RATHER THAN HOOKED, and that is the point. A turn is opened in two places — by the
-// events endpoint when somebody speaks, and by the drain at a running turn's terminal boundary
-// when they spoke while it was working — and a hook in one of them is a silent gap in the
-// other: an investigation that ran and never answered in the thread. Reading the two records
-// that already exist cannot have that gap, and it heals a deployment that was upgraded while
-// turns were in flight.
-//
-// Idempotent, bounded, and run at the start of each claim pass.
 func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO slack_reply
@@ -53,15 +40,9 @@ func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 	return nil
 }
 
-// ClaimSlackReplies leases the replies that are due.
-//
-// This cross-Organization sweep grants a unique token for each local delivery claim.
-// Provider acceptance is outside the database transaction.
 func (p *Database) ClaimSlackReplies(
 	ctx context.Context, limit int, lease time.Duration,
 ) ([]slack.Reply, error) {
-	// Every turn of a Slack conversation owes an answer, whether it was opened by
-	// somebody speaking or by the drain behind a running turn.
 	if err := oweSlackReplies(ctx, p.pool, limit); err != nil {
 		return nil, err
 	}
@@ -111,7 +92,6 @@ func (p *Database) ClaimSlackReplies(
 	return claimed, nil
 }
 
-// AdvanceSlackReply saves acknowledged progress under the current claim.
 func (p *Database) AdvanceSlackReply(
 	ctx context.Context, organization uuid.UUID, investigation, owner uuid.UUID,
 	made slack.Progress,
@@ -134,17 +114,6 @@ func (p *Database) AdvanceSlackReply(
 	})
 }
 
-// RecordCollaborationWrite puts one reply into a customer's workspace on the audit record.
-//
-// A COLLABORATION write, and the word is the point: it is the only thing this product writes
-// into a system it does not own, and it is deliberately distinct from an external read and
-// firmly distinct from a production or remediation write, which remain unsupported. It is
-// recorded once per turn, when the message appears, so "what did OpenCluster say in our Slack"
-// has an answer that does not depend on Slack's own retention.
-//
-// The actor is the SYSTEM. Nobody pressed a button: a turn the worker picked up is the product
-// answering a question somebody asked, and attributing it to that person would say they wrote
-// what OpenCluster wrote.
 func (p *Database) RecordCollaborationWrite(
 	ctx context.Context, organization uuid.UUID,
 	integration uuid.UUID, where string,
@@ -155,14 +124,10 @@ func (p *Database) RecordCollaborationWrite(
 		Action:       audit.ActionCollaborationReplied,
 		Target:       audit.Target{Kind: audit.TargetIntegration, ID: integration.String()},
 		Outcome:      audit.OutcomeAllowed,
-		// The channel, and nothing said in it. What OpenCluster answered is the
-		// investigation's own record; repeating it here would be a second copy of a
-		// customer's operational detail in a record kept for a different reason.
-		Detail: audit.Detail{"surface": "slack", "channel": where},
+		Detail:       audit.Detail{"surface": "slack", "channel": where},
 	})
 }
 
-// CompleteSlackReply marks one delivered. Nothing claims it again.
 func (p *Database) CompleteSlackReply(
 	ctx context.Context, organization uuid.UUID, investigation, owner uuid.UUID,
 ) error {
@@ -178,11 +143,6 @@ func (p *Database) CompleteSlackReply(
 	})
 }
 
-// RetrySlackReply schedules another attempt, or gives up.
-//
-// Giving up is TERMINAL for the reply and says nothing about the investigation, which has
-// its own status and its own record. That separation is the point: a Slack outage must not be
-// able to make a completed investigation look failed.
 func (p *Database) RetrySlackReply(
 	ctx context.Context, organization uuid.UUID, investigation, owner uuid.UUID,
 	at time.Time, note string, giveUp bool,
@@ -209,8 +169,6 @@ func (p *Database) RetrySlackReply(
 	})
 }
 
-// SlackReplyState reports what one reply looks like, for the tests and for support. It
-// answers false where the investigation owes no Slack answer.
 func (p *Database) SlackReplyState(
 	ctx context.Context, organization uuid.UUID, investigation uuid.UUID,
 ) (status int, sequence int64, streamTS string, note string, found bool, err error) {

@@ -1,4 +1,3 @@
-// Package listing defines collection query and response conventions.
 package listing
 
 import (
@@ -49,7 +48,6 @@ func (q Query) Filter(name string) string {
 	return q.filters[name]
 }
 
-// Parse rejects unsupported, repeated, blank, or malformed scalar parameters.
 func Parse(values url.Values, spec Spec) (Query, error) {
 	for name, given := range values {
 		if len(given) != 1 {
@@ -168,7 +166,6 @@ func CursorPtr(next string) *string {
 	return &next
 }
 
-// SlicePage pages a stable in-memory collection with an ordinal cursor.
 func SlicePage[T any](items []T, query Query) ([]T, string, error) {
 	scope := query.Sort.Field
 	if query.Sort.Descending {

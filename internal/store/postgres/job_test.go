@@ -13,13 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The guarantee under test is narrow and absolute: a job is never lost and never silently
-// completed twice. Each test below is one way that could break.
-//
-// Every assertion is about durable state — what the job reached, what was recorded, what was
-// refused — rather than about which calls were made. Only the database proves the guarantee
-// held; a sequence of calls proves a conversation happened.
-
 const testOrganization = "11111111-1111-4111-8111-111111111111"
 
 func TestJob_ClaimingLeasesTheWorkAndFencesIt(t *testing.T) {
@@ -55,8 +48,6 @@ func TestJob_ResultIsRecordedOnceAndResendsAreAnsweredDefinitively(t *testing.T)
 		t.Fatalf("recording the result: %v", err)
 	}
 
-	// A relay that never saw the acknowledgement resends. It must be told the outcome is
-	// already recorded, so its buffer drains rather than growing.
 	refusal, err := database.RecordResult(context.Background(), organization, fence, outcome)
 	if !errors.Is(err, storage.ErrResultRefused) {
 		t.Fatalf("a resend returned %v, want a refusal", err)
@@ -66,9 +57,6 @@ func TestJob_ResultIsRecordedOnceAndResendsAreAnsweredDefinitively(t *testing.T)
 	}
 }
 
-// A result produced by an execution that has since lost its lease must not overwrite the
-// outcome of the execution that owns the work now. This is the failure a healthy run never
-// produces and the reason the fence exists.
 func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -96,8 +84,6 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 		t.Errorf("refused as %v, want lease superseded", refusal)
 	}
 
-	// The current execution must still be able to record, which is the point of refusing
-	// the older one rather than treating the job as finished.
 	current := storage.JobFence{
 		JobID: second.ID, LeaseSession: second.LeaseSession, LeaseEpoch: second.LeaseEpoch,
 	}
@@ -107,10 +93,6 @@ func TestJob_ResultUnderASupersededLeaseIsRefused(t *testing.T) {
 	}
 }
 
-// Losing the fence is not the same as being superseded, and the difference decides whether a
-// finished execution's result survives. A relay told it is superseded drops the result it is
-// holding, so saying that when nothing has taken the job over throws away work no other
-// execution is going to redo.
 func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -118,8 +100,6 @@ func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 	enqueue(t, database, organization, registration)
 	leased := claim(t, database, organization, registration, uuid.New())[0]
 
-	// The job is still at the generation this execution was given; only the session holding it
-	// differs, which is what a reconnection without adoption looks like.
 	elsewhere := storage.JobFence{
 		JobID: leased.ID, LeaseSession: uuid.New(), LeaseEpoch: leased.LeaseEpoch,
 	}
@@ -140,9 +120,6 @@ func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.
 	database, organization := migratedDatabase(t)
 	registration := enrolledRelay(t, database, organization)
 
-	// Both jobs are claimed together, then one is finished and the other abandoned. Claiming
-	// them separately would not work: a claim reclaims expired leases itself, so the second
-	// call would take the abandoned job back before the sweep could see it.
 	enqueue(t, database, organization, registration)
 	enqueue(t, database, organization, registration)
 	leased := claim(t, database, organization, registration, uuid.New())
@@ -173,8 +150,6 @@ func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.
 	}
 }
 
-// Work enqueued while nothing is connected must still be there when a session arrives. An
-// outage delays investigation; it must not lose it.
 func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -189,9 +164,6 @@ func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 	}
 }
 
-// Asking a job to stop means three different things depending on where the job has got to,
-// and conflating them either loses an outcome that already happened or leaves a job that
-// nothing will ever finish.
 func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -209,7 +181,6 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 				"executing it, so nothing else can ever finish it", outcome)
 		}
 
-		// It must not then be handed to a relay: it is already over.
 		claimed, err := database.ClaimJobs(context.Background(), organization, storage.JobClaim{
 			RegistrationID: registration, SessionID: uuid.New(),
 			LeaseFor: time.Minute, Capacity: 10,
@@ -235,8 +206,6 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 			t.Fatalf("cancelling an executing job gave %v, want it requested", outcome)
 		}
 
-		// The request is advisory, so the relay's report of what actually happened must still
-		// be recordable. Anything else would decide the outcome of an execution it cannot see.
 		fence := storage.JobFence{
 			JobID: leased.ID, LeaseSession: leased.LeaseSession, LeaseEpoch: leased.LeaseEpoch,
 		}
@@ -269,8 +238,6 @@ func TestJob_CancellationDependsOnWhetherTheJobHasStarted(t *testing.T) {
 	})
 }
 
-// The session sends a cancellation to the relay executing the job, so the request has to be
-// findable from the session that holds the lease.
 func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -300,7 +267,6 @@ func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 			"a relay could not tell which execution it was being asked to stop")
 	}
 
-	// Another session must not be told to stop work it is not executing.
 	other, err := database.PendingCancellations(context.Background(), organization, uuid.New())
 	if err != nil {
 		t.Fatalf("reading pending cancellations: %v", err)
@@ -310,10 +276,6 @@ func TestJob_PendingCancellationsAreScopedToTheHoldingSession(t *testing.T) {
 	}
 }
 
-// A relay that reconnects mid-execution is still holding the result of work it was legitimately
-// assigned. Adoption is what lets that result still be recorded — and it is the one place a
-// relay's own account of the world is allowed to change durable state, so what it CANNOT do
-// matters more than what it can.
 func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -333,8 +295,6 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 			},
 		}, 1)
 
-		// The generation must be unchanged. Raising it would invalidate the very result the
-		// relay is holding, which is the thing adoption exists to preserve.
 		fence := storage.JobFence{
 			JobID: leased.ID, LeaseSession: reconnected, LeaseEpoch: leased.LeaseEpoch,
 		}
@@ -349,8 +309,6 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 		enqueue(t, database, organization, registration)
 		leased := claim(t, database, organization, registration, uuid.New())[0]
 
-		// Naming a later generation is how a relay would claim an execution that superseded
-		// its own. The fence decides, not the declaration.
 		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: registration,
 			SessionID:      uuid.New(),
@@ -386,8 +344,6 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 			t.Fatalf("recording: %v", err)
 		}
 
-		// A job whose outcome exists must not be reopened by a relay that still thinks it is
-		// running it — that would put a finished job back on the wire.
 		adopt(t, database, organization, storage.LeaseAdoption{
 			RegistrationID: registration,
 			SessionID:      uuid.New(),
@@ -408,9 +364,6 @@ func TestJob_LeaseAdoptionRenewsOnlyWhatTheRelayAlreadyHeld(t *testing.T) {
 	})
 }
 
-// Once a reconnected relay has said what it is still executing, whatever else it holds belongs
-// to a session that is gone. Leaving that work leased adds a full lease of doing nothing to the
-// far side of every network blip.
 func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -455,14 +408,12 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 			"executed and the finished one is over", released)
 	}
 
-	// The abandoned job comes straight back; the adopted one stays with the relay running it.
 	reclaimed := claim(t, database, organization, registration, reconnected)
 	if len(reclaimed) != 1 || reclaimed[0].ID != abandoned.ID {
 		t.Fatalf("reclaimed %d jobs, want the abandoned one back at once", len(reclaimed))
 	}
 }
 
-// adopt runs an adoption and asserts how much of it was accepted.
 func adopt(
 	t *testing.T,
 	database *storage.Database,
@@ -517,7 +468,6 @@ func enqueue(
 		kubernetesIntegration(t, database, organization, registration))
 }
 
-// enqueueThrough records work against a named Integration, for the tests that care which one.
 func enqueueThrough(
 	t *testing.T, database *storage.Database,
 	organization uuid.UUID, registration, integration uuid.UUID,
@@ -539,11 +489,6 @@ func enqueueThrough(
 	return job.ID
 }
 
-// enrolledRelay records a real relay identity through the enrolment path.
-//
-// A bare identifier no longer satisfies the schema: a job names an Integration, and an
-// Integration names the installation that serves it. That is the boundary being enforced
-// rather than a friction to work around, so these tests enrol rather than inventing a UUID.
 func enrolledRelay(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) uuid.UUID {
@@ -568,8 +513,6 @@ func enrolledRelay(
 	return registration
 }
 
-// kubernetesIntegration creates a Kubernetes Integration served by the given relay. It is
-// what a job reaches; the relay is where the job runs.
 func kubernetesIntegration(
 	t *testing.T, database *storage.Database,
 	organization uuid.UUID, registration uuid.UUID,
@@ -618,8 +561,6 @@ func claim(
 	return claimed
 }
 
-// expireLease moves a lease's deadline into the past. Expiry is induced rather than waited
-// for: a suite that depends on winning a timing race is a suite that gets disabled.
 func expireLease(
 	t *testing.T, database *storage.Database,
 	organization uuid.UUID, job uuid.UUID,

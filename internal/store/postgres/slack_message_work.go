@@ -13,10 +13,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// SlackMessageWorkStatus is the persisted lifecycle state of one accepted Slack Message.
 type SlackMessageWorkStatus int16
 
-// MaxSlackMessageAttempts is frozen by the persisted work-row CHECK constraint.
 const MaxSlackMessageAttempts = 12
 
 const (
@@ -27,7 +25,6 @@ const (
 	SlackMessageComplete
 )
 
-// String returns the stable operator-facing name of a Slack Message work status.
 func (status SlackMessageWorkStatus) String() string {
 	names := [...]string{"unknown", "ready", "leased", "retry", "terminal", "complete"}
 	if status <= 0 || int(status) >= len(names) {
@@ -36,12 +33,10 @@ func (status SlackMessageWorkStatus) String() string {
 	return names[status]
 }
 
-// ErrSlackMessageLeaseLost means a transition no longer owns the fenced Slack Message lease.
 var ErrSlackMessageLeaseLost = errors.New("slack message work lease is no longer held")
 
 var ErrSlackMessageRecoveryUnavailable = errors.New("slack message work is not recoverable")
 
-// SlackMessageWork is one durable, fenced Slack Message processing attempt.
 type SlackMessageWork struct {
 	ID              uuid.UUID
 	Organization    uuid.UUID
@@ -89,13 +84,12 @@ func (d *Database) RecoverSlackMessage(
 	return err
 }
 
-// ApplySlackMessageWork opens the next Conversation turn through the existing queue seam
-// and advances the fenced Slack Message work atomically. The Message assignment is the durable
-// idempotency boundary when a prior attempt already opened the turn.
 func (d *Database) ApplySlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork,
 	windowLead time.Duration, maxWaiting int,
 ) error {
+	// Opening the Conversation turn and advancing the fenced work row share one transaction;
+	// the Message assignment is the idempotency boundary after a retry.
 	work.Organization = organization
 	pool, err := d.Pool(organization)
 	if err != nil {
@@ -160,8 +154,6 @@ func enqueueSlackMessageWork(
 	return nil
 }
 
-// ClaimSlackMessageWork discovers ready work across Organizations. The returned Organization is
-// authoritative for every later transition, which must also present the lease epoch.
 func (d *Database) ClaimSlackMessageWork(
 	ctx context.Context, owner string, lease time.Duration,
 ) (SlackMessageWork, bool, error) {
@@ -209,7 +201,6 @@ func (d *Database) ClaimSlackMessageWork(
 	return work, true, nil
 }
 
-// HeartbeatSlackMessageWork renews a currently fenced Slack Message lease.
 func (d *Database) HeartbeatSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, lease time.Duration,
 ) error {
@@ -230,7 +221,6 @@ func (d *Database) HeartbeatSlackMessageWork(
 	return requireSlackMessageLease(tag.RowsAffected())
 }
 
-// FailSlackMessageWork records a retryable or terminal Slack Message processing failure.
 func (d *Database) FailSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, terminal bool, delay time.Duration,
 	class, message string,
@@ -244,8 +234,6 @@ func (d *Database) FailSlackMessageWork(
 		boundedText(class, 64), boundedText(message, 512))
 }
 
-// DeferSlackMessageWork preserves an accepted Message behind Organization backpressure without
-// consuming its failure budget or making a permanently delayed Message terminal.
 func (d *Database) DeferSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, delay time.Duration,
 ) error {

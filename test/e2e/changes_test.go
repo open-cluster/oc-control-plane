@@ -10,17 +10,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// The property that keeps the changes an investigation tool rather than a monitoring
-// platform, provable only end to end: a change made in a REAL cluster becomes a durable
-// change history row naming the field that moved with both values — and status movement in the same
-// namespace produces no row at all.
-//
-// The second half is the important one and it is written so that WIDENING THE WATCHED FIELD
-// SET MAKES IT FAIL: deleting a pod churns ready counts, phases and conditions through the
-// same objects the change history watches, and a build that recorded any of that produces a row this
-// test refuses.
-
-// changeEventRow is one change_event as this test reads it back.
 type changeEventRow struct {
 	changeKind int16
 	objectName string
@@ -57,16 +46,12 @@ func (h *harness) awaitChangeBaseline(t *testing.T) {
 			SELECT baseline_at IS NOT NULL FROM change_scope
 			 WHERE integration_id = $1`, h.integration).Scan(&baselined)
 		if err != nil {
-			// The scope row itself may not exist yet; the poll continues and the timeout
-			// message names this error if it never does.
 			return false, err
 		}
 		return baselined, nil
 	})
 }
 
-// awaitConfirmations waits until the relay has confirmed at least `ticks` further completed
-// synchronizations, so an assertion of silence is an assertion about ticks that actually ran.
 func (h *harness) awaitConfirmations(t *testing.T, after time.Time, ticks int) {
 	t.Helper()
 	deadline := time.Duration(ticks)*10*time.Second + 30*time.Second
@@ -89,9 +74,6 @@ func TestProof_AClusterChangeBecomesAChangeEventAndStatusChurnDoesNot(t *testing
 
 	h.awaitChangeBaseline(t)
 
-	// STATUS CHURN FIRST. Deleting the settled workload's pod makes the deployment's ready
-	// count fall and recover, pod phases move, and conditions rewrite — everything a
-	// monitoring platform would record and this change history must not.
 	pod, err := h.cluster.podFor(ctx, fixtureWorkload)
 	if err != nil {
 		t.Fatalf("finding the settled workload's pod: %v", err)
@@ -101,8 +83,6 @@ func TestProof_AClusterChangeBecomesAChangeEventAndStatusChurnDoesNot(t *testing
 		Delete(ctx, pod, metav1.DeleteOptions{}); err != nil {
 		t.Fatalf("deleting the pod: %v", err)
 	}
-	// A deleted Deployment pod is REPLACED under a fresh name, not restarted, so the wait
-	// is for a differently-named pod — and that replacement is itself more status churn.
 	h.await(t, "the replacement pod", 2*time.Minute, func(ctx context.Context) (bool, error) {
 		replacement, podErr := h.cluster.podFor(ctx, fixtureWorkload)
 		return podErr == nil && replacement != pod, nil
@@ -115,8 +95,6 @@ func TestProof_AClusterChangeBecomesAChangeEventAndStatusChurnDoesNot(t *testing
 			"platform: %+v", len(rows), rows)
 	}
 
-	// NOW A REAL CHANGE: the image moves. This is declared intent, and it is exactly what an
-	// on-call engineer at 03:40 needs the platform to have remembered.
 	deployments := h.cluster.client.AppsV1().Deployments(fixtureNamespace)
 	settled, err := deployments.Get(ctx, fixtureWorkload, metav1.GetOptions{})
 	if err != nil {
@@ -168,7 +146,6 @@ func TestProof_AClusterChangeBecomesAChangeEventAndStatusChurnDoesNot(t *testing
 				t.Fatalf("both values must survive to the row, got %q -> %q", field.Before, field.After)
 			}
 		}
-		// The belt on the second half: no itemized field may ever speak status vocabulary.
 		lowered := strings.ToLower(field.Field)
 		for _, banned := range []string{"status", "ready", "available", "phase", "condition"} {
 			if strings.Contains(lowered, banned) {
@@ -181,7 +158,4 @@ func TestProof_AClusterChangeBecomesAChangeEventAndStatusChurnDoesNot(t *testing
 	}
 }
 
-// pauseImage is a second pinned image the fixture does not run, so an image change has a
-// visible before and after. Whether the cluster can pull it is irrelevant: the change history
-// records DECLARED intent, and the declaration happened the moment the spec moved.
 const pauseImage = "registry.k8s.io/pause:3.10"

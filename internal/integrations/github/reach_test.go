@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// WHAT AN INVESTIGATION IS AND IS NOT ALLOWED TO SEE, and what it does with what it reads.
-//
-// Reach is the installation's own selection and nothing else. A read outside it is answered
-// with the reason rather than with a 404 that reads like a bug, and nothing else is tried.
-// Everything that IS read is a customer's own text, and it stays evidence.
-
-// A repository the customer did not select is a bounded, named answer. The investigation
-// gets an explanation for the gap, not a mystery.
 func TestAReadOutsideTheInstallationsSelectionSaysWhy(t *testing.T) {
 	t.Parallel()
 
@@ -24,7 +16,6 @@ func TestAReadOutsideTheInstallationsSelectionSaysWhy(t *testing.T) {
 	app := appAgainst(t, fake)
 	client := NewClient(fake.URL)
 
-	// 4242 is real somewhere; it is not in this installation's grant.
 	_, err := run(t, app, client, "github.read_commits", map[string]any{
 		"repositoryId": float64(4242),
 	})
@@ -39,8 +30,6 @@ func TestAReadOutsideTheInstallationsSelectionSaysWhy(t *testing.T) {
 	}
 }
 
-// Nothing is retried and no second credential path is tried: the installation's own
-// listing is walked once to resolve the id, and then the read stops.
 func TestAReadOutsideTheSelectionIsNotRetried(t *testing.T) {
 	t.Parallel()
 
@@ -59,17 +48,12 @@ func TestAReadOutsideTheSelectionIsNotRetried(t *testing.T) {
 			"the whole attempt, and a repeat would be a retry of something that cannot "+
 			"change", walked)
 	}
-	// The mint is what a fallback credential path would look like from here.
 	if minted := fake.called("/app/installations/77/access_tokens"); minted != 1 {
 		t.Errorf("%d installation tokens were minted; a refused read must not reach for "+
 			"another credential", minted)
 	}
 }
 
-// Repository content is a customer's text, and a customer's text may be an attacker's. A
-// README telling the agent to ignore its policy comes back as CONTENT — the same field any
-// other file's text lands in — and never as a summary, a source, or anything a caller would
-// read as a control.
 func TestRepositoryContentCarryingAnInstructionStaysEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -94,7 +78,6 @@ func TestRepositoryContentCarryingAnInstructionStaysEvidence(t *testing.T) {
 	if !strings.Contains(rendered, "IGNORE ALL PREVIOUS INSTRUCTIONS") {
 		t.Fatalf("the file's text did not survive the read: %s", rendered)
 	}
-	// The instruction is in the content and nowhere that reads as this build talking.
 	if strings.Contains(result.Summary, "IGNORE") ||
 		strings.Contains(result.Summary, "evil.example.com") {
 		t.Errorf("repository text reached the summary, which is this build's own voice: %q",
@@ -107,8 +90,6 @@ func TestRepositoryContentCarryingAnInstructionStaysEvidence(t *testing.T) {
 	}
 }
 
-// A commit message is the same: it is what somebody typed, and somebody may have typed an
-// instruction.
 func TestACommitMessageCarryingAnInstructionStaysEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +116,6 @@ func TestACommitMessageCarryingAnInstructionStaysEvidence(t *testing.T) {
 	}
 }
 
-// render is a tool's content as JSON, which is how everything downstream of a tool sees it.
 func render(t *testing.T, content any) string {
 	t.Helper()
 	encoded, err := json.Marshal(content)

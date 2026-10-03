@@ -16,26 +16,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 )
 
-// Persistence for the operational incident AlertEvents group into.
-//
-// The grouping half runs inside RecordDelivery, in the transaction that writes the AlertEvents. An
-// incident assigned afterwards would be a history that changed, and a AlertEvent that briefly belonged
-// to nothing is a AlertEvent a reader could see ungrouped and then grouped.
-
-// groupAlertEvent puts one newly recorded AlertEvent into its incident.
-//
-// It is called only for a AlertEvent that was actually INSERTED. A redelivery of a firing that arrives
-// after its resolution updates nothing — the guard in upsertAlertEvent sees a resolved row and matches
-// no rows — and such a delivery must open no incident either. Doing the AlertEvent first is what makes
-// that free rather than something to remember.
-//
-// The effective key is the source's own grouping identity where it supplied one, and the AlertEvent's
-// own alert identity where it did not. The second is not a fallback that pretends to group: it
-// means one incident per alert, which is what "the source grouped nothing" honestly produces, and
-// the basis recorded alongside says which of the two happened.
-// It reports whether this AlertEvent OPENED an incident or joined one that was already open. That
-// distinction is the grouping outcome an operator watches: a source whose every alert opens its own
-// incident is one whose group_by is not doing what its author thinks.
 func groupAlertEvent(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delivery Delivery, alertEvent alertevent.AlertEvent, alertEventID uuid.UUID,
@@ -58,37 +38,16 @@ func groupAlertEvent(
 	return incidentID, opened, refreshIncident(ctx, transaction, organization, incidentID)
 }
 
-// openIncident returns the open incident for a grouping key, creating it when there is none.
-//
-// It is ONE statement, and that is the whole of the concurrency argument. Two deliveries carrying
-// the same group arrive at once; the partial unique index decides which of them creates the row,
-// and the other is handed the same row rather than being told there is none.
-//
-// DO UPDATE rather than DO NOTHING, and the difference is not cosmetic. DO NOTHING does not wait
-// for the conflicting transaction and returns no row, so the loser would then have to SELECT — and
-// would find nothing, because the winner has not committed. The delivery would fail and the source
-// would retry a delivery that was never wrong. DO UPDATE takes the lock, waits, and always returns
-// the row. The update itself is a touch: what the incident actually holds is recomputed afterwards
-// from its own AlertEvents.
-//
-// xmax is zero on a row this statement INSERTED and non-zero on one it found, which is how the
-// same statement answers "did this open an incident" without a second query a concurrent delivery
-// could get a different answer from.
 func openIncident(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delivery Delivery, alertEvent alertevent.AlertEvent, key string, basis incident.Basis,
 ) (uuid.UUID, bool, error) {
-	// The times come from the SOURCE's clock. An incident's window is what an investigation opened
-	// for it would be scoped to, so a delivery delay must not widen it.
 	started := alertEvent.StartedAt
 
 	var (
 		incidentID uuid.UUID
 		opened     bool
 	)
-	// The conflict target repeats the index predicate because the index is partial. That is also
-	// what makes a RESOLVED incident under the same key invisible here: it is a different
-	// occurrence, and attaching to it would resurrect a record that has already been closed.
 	err := transaction.QueryRow(ctx, `
 		INSERT INTO incident
 			(incident_id, org_id, integration_id, grouping_key,
@@ -105,20 +64,10 @@ func openIncident(
 	return incidentID, opened, nil
 }
 
-// refreshIncident recomputes an incident from the AlertEvents it holds.
-//
-// RECOMPUTED rather than incremented. A counter maintained by hand drifts the first time a write
-// path is added that forgets it, and the field that drifts here is whether the failure is still
-// happening — a record that says an incident recovered when it did not is the worst thing this
-// table could say. The cost is one aggregate over an incident's own AlertEvents, which is a handful of
-// rows.
 func refreshIncident(
 	ctx context.Context, transaction pgx.Tx,
 	organization uuid.UUID, incidentID uuid.UUID,
 ) error {
-	// An incident is resolved when NO AlertEvent in it is still firing. The resolution time is the last
-	// one to stop, because that is when the failure ended rather than when the first part of it
-	// did.
 	if _, err := transaction.Exec(ctx, `
 		UPDATE incident AS incident
 		   SET first_seen_at = counted.first_seen,
@@ -141,16 +90,6 @@ func refreshIncident(
 	return nil
 }
 
-// episodeColumns is what every read of an incident selects, written once because there are four
-// of them and a column added to three is a field that is populated in a listing and empty in the
-// read of one row.
-//
-// The delivering integration's NAME comes through a scalar subquery rather than a join, for two
-// reasons that both matter. A LEFT JOIN would widen what `FOR UPDATE` locks, and lockIncident uses
-// this same list to read an incident for a merge — locking an unrelated integration row there
-// would be a lock nobody asked for. And a subquery answers NULL where a join would drop the row
-// entirely, which is the difference between an incident whose name could not be resolved and an
-// incident that vanished from a listing.
 const incidentColumns = `incident_id, integration_id,
 		       (SELECT name FROM integration i
 		         WHERE i.integration_id = e.integration_id
@@ -164,7 +103,6 @@ const incidentAlertEventCount = `(SELECT count(*)::integer FROM alert_event a
 		         WHERE a.org_id = e.org_id
 		           AND a.incident_id = e.incident_id)`
 
-// QueryIncidents reports a page of a tenant's incidents.
 func (p *Database) QueryIncidents(
 	ctx context.Context, organization uuid.UUID, query incident.Query,
 ) (incident.Page, error) {
@@ -264,7 +202,6 @@ var incidentOrderings = map[string]struct {
 	}},
 }
 
-// Incident reads one, scoped to the tenant.
 func (p *Database) Incident(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (incident.Incident, error) {
@@ -291,11 +228,6 @@ func (p *Database) Incident(
 	return scanIncident(rows, organization)
 }
 
-// IncidentAlertEvents reports the AlertEvents grouped into one incident, oldest first.
-//
-// Oldest first because a reader following an incident follows it forwards: what fired, then what
-// fired next. Every other listing on this surface is newest first, and the difference is the point
-// rather than an inconsistency.
 func (p *Database) IncidentAlertEvents(
 	ctx context.Context, organization uuid.UUID,
 	id uuid.UUID, page incident.AlertEventPage,
@@ -304,8 +236,6 @@ func (p *Database) IncidentAlertEvents(
 	if err != nil {
 		return incident.AlertEventList{}, err
 	}
-	// The incident is resolved first, so a caller asking for another tenant's AlertEvents gets the
-	// same answer as one asking for an incident that does not exist rather than an empty page.
 	if _, err = p.Incident(ctx, organization, id); err != nil {
 		return incident.AlertEventList{}, err
 	}
@@ -359,17 +289,6 @@ func (p *Database) IncidentAlertEvents(
 	return list, nil
 }
 
-// MergeIncidents records that two incidents are one incident.
-//
-// NOTHING IS REWRITTEN. The absorbed incident keeps its identity, its AlertEvents, its grouping key and
-// its own record, and gains a pointer to the one that survives it. A merge that moved AlertEvents
-// would destroy the record of the grouping it was correcting, which is the thing revisability
-// exists to preserve.
-//
-// The AlertEvents that arrive afterwards still land on the absorbed incident, because they still match
-// its key. That is deliberate: a reader follows the pointer and sees them under the survivor, and
-// freeing the key would mean the next delivery opened a third incident and the operator's decision
-// quietly stopped applying.
 func (p *Database) MergeIncidents(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	merge incident.Merge,
@@ -403,8 +322,6 @@ func (p *Database) MergeIncidents(
 					fmt.Errorf("merging incident incidents: %w", err)
 			}
 
-			// The SURVIVOR is returned, because that is what the operator now reads the incident
-			// as. The audit event names it too, alongside the one that gave way.
 			after, err := readIncident(ctx, transaction, organization, surviving.ID)
 			if err != nil {
 				return incident.Incident{}, audit.Target{}, nil, err
@@ -413,23 +330,17 @@ func (p *Database) MergeIncidents(
 				audit.Target{Kind: audit.TargetIncident, ID: absorbed.ID.String()},
 				audit.Detail{
 					"mergedInto": surviving.ID.String(),
-					// The reason is an operator's own words about a grouping, which is exactly what
-					// an auditor asking "why are these one incident" needs. It carries no
-					// credential and no evidence content.
-					"reason": merge.Reason,
+					"reason":     merge.Reason,
 				}, nil
 		})
 }
 
-// mergeable refuses a merge that would not mean anything, with the reason.
 func mergeable(absorbed, surviving incident.Incident) error {
 	switch {
 	case absorbed.Superseded():
 		return fmt.Errorf("%w: %s has already been merged into %s",
 			incident.ErrMerge, absorbed.ID, absorbed.SupersededBy)
 	case surviving.Superseded():
-		// One hop, never a chain. A reader that had to walk a chain would find a different answer
-		// depending on where it started, and a cycle would be a read that never ends.
 		return fmt.Errorf("%w: %s has itself been merged into %s; merge into that one instead",
 			incident.ErrMerge, surviving.ID, surviving.SupersededBy)
 	default:
@@ -437,8 +348,6 @@ func mergeable(absorbed, surviving incident.Incident) error {
 	}
 }
 
-// lockIncident reads one incident for update, so two operators merging at once cannot both decide
-// the other is still unmerged.
 func lockIncident(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, id uuid.UUID,
 ) (incident.Incident, error) {
@@ -481,14 +390,11 @@ func readIncident(
 
 func scanIncident(rows pgx.Rows, organization uuid.UUID) (incident.Incident, error) {
 	var (
-		found        incident.Incident
-		basis        int16
-		status       int16
-		resolvedAt   *time.Time
-		supersededAt *time.Time
-		// Nullable because the subquery that resolves it can answer nothing. Scanned into
-		// a pointer rather than a string so "no name was resolved" cannot be mistaken for
-		// an integration named the empty string, which the table's own check forbids.
+		found           incident.Incident
+		basis           int16
+		status          int16
+		resolvedAt      *time.Time
+		supersededAt    *time.Time
 		integrationName *string
 	)
 	if err := rows.Scan(&found.ID, &found.Integration, &integrationName,

@@ -9,18 +9,15 @@ import (
 )
 
 type request struct {
-	Model     string    `json:"model"`
-	Messages  []message `json:"messages"`
-	MaxTokens int64     `json:"max_tokens"`
-	// Stream is explicitly false because usage figures arrive complete only in the final body.
+	Model           string          `json:"model"`
+	Messages        []message       `json:"messages"`
+	MaxTokens       int64           `json:"max_tokens"`
 	Stream          bool            `json:"stream"`
 	Thinking        *thinking       `json:"thinking,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 	ResponseFormat  *responseFormat `json:"response_format,omitempty"`
 	Tools           []functionTool  `json:"tools,omitempty"`
-	// ToolChoice is "auto", or {"type":"function","function":{"name":...}} on the
-	// forced concluding turn.
-	ToolChoice any `json:"tool_choice,omitempty"`
+	ToolChoice      any             `json:"tool_choice,omitempty"`
 }
 
 type message struct {
@@ -30,8 +27,6 @@ type message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
-// functionTool is this vendor's OpenAI-style tool declaration. Parameters carry the
-// generated input schema verbatim.
 type functionTool struct {
 	Type     string   `json:"type"`
 	Function function `json:"function"`
@@ -43,8 +38,6 @@ type function struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
-// toolCall is one native call as this vendor speaks it, in requests and responses
-// alike: the arguments are a JSON document in a string.
 type toolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
@@ -64,17 +57,11 @@ type responseFormat struct {
 	Type string `json:"type"`
 }
 
-// request builds the body for one prompt. A document prompt keeps the schema-in-prompt
-// workaround and the JSON response mode; a tool-calling prompt declares the generated
-// tools instead — the conclude tool's parameters are that mode's output contract, and
-// forcing a JSON response mode would fight the tool-call answer shape.
 func (p *Provider) request(prompt reasoning.Prompt) request {
 	body := request{
-		Model:     prompt.Model,
-		MaxTokens: prompt.MaxOutputTokens,
-		Stream:    false,
-		// Thinking is asked for explicitly on this vendor, where the other one has it on by
-		// default. Depth is the effort level rather than a token budget.
+		Model:           prompt.Model,
+		MaxTokens:       prompt.MaxOutputTokens,
+		Stream:          false,
 		Thinking:        &thinking{Type: "enabled"},
 		ReasoningEffort: effortOf(prompt.Effort),
 	}
@@ -83,8 +70,7 @@ func (p *Provider) request(prompt reasoning.Prompt) request {
 			{Role: "system", Content: joined(prompt.System)},
 			{Role: "user", Content: userContent(prompt)},
 		}
-		// A JSON mode rather than a schema. It stops the model wrapping the answer in prose; it
-		// does not stop the answer being the wrong shape, which is what the decoder is for.
+		// JSON mode prevents prose wrapping but does not enforce the schema embedded in the prompt.
 		body.ResponseFormat = &responseFormat{Type: "json_object"}
 		return body
 	}
@@ -102,9 +88,6 @@ func (p *Provider) request(prompt reasoning.Prompt) request {
 	return body
 }
 
-// conversationMessages renders the transcript: system, the orientation, then each
-// turn — the assistant's calls, one role-"tool" message per result, and any trailing
-// instruction as a user message.
 func conversationMessages(prompt reasoning.Prompt) []message {
 	rendered := []message{
 		{Role: "system", Content: joined(prompt.System)},
@@ -124,8 +107,6 @@ func conversationMessages(prompt reasoning.Prompt) []message {
 	return rendered
 }
 
-// assistantMessage rebuilds one prior assistant turn from the neutral fields. This
-// vendor's conversation is stateless text, so nothing needs the captured raw form.
 func assistantMessage(assistant reasoning.AssistantTurn) message {
 	calls := make([]toolCall, 0, len(assistant.Calls))
 	for _, call := range assistant.Calls {
@@ -137,7 +118,6 @@ func assistantMessage(assistant reasoning.AssistantTurn) message {
 	return message{Role: "assistant", Content: assistant.Text, ToolCalls: calls}
 }
 
-// functionTools translates the generated definitions into this vendor's tool shape.
 func functionTools(definitions []integrations.ToolDefinition) []functionTool {
 	tools := make([]functionTool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -153,10 +133,6 @@ func functionTools(definitions []integrations.ToolDefinition) []functionTool {
 	return tools
 }
 
-// userContent renders the deliberation and appends the schema the answer must match.
-//
-// The schema goes last, after everything the prompt marked cacheable, so the cacheable prefix is
-// byte-identical to what it would have been on a provider that enforces schemas natively.
 func userContent(prompt reasoning.Prompt) string {
 	content := &strings.Builder{}
 	content.WriteString(joined(prompt.Content))
@@ -166,22 +142,14 @@ func userContent(prompt reasoning.Prompt) string {
 	return content.String()
 }
 
-// renderedSchema writes the schema deterministically. Go's JSON encoder sorts map keys, so the
-// same schema renders the same bytes every time — which matters because these bytes are part of
-// what a prompt cache would key on.
 func renderedSchema(schema reasoning.Schema) []byte {
 	encoded, err := json.MarshalIndent(schema.Document, "", "  ")
 	if err != nil {
-		// The schemas are compiled-in literals, so this cannot happen from configuration. Saying
-		// so beats returning a silent empty schema that would make every answer the wrong shape.
 		return []byte("{}")
 	}
 	return encoded
 }
 
-// joined concatenates the prompt's blocks. This vendor takes whole messages rather than content
-// blocks, so the cache boundaries the blocks carry are not expressible on the wire — the ordering
-// they enforce still is, and that is what keeps the prefix stable.
 func joined(blocks []reasoning.Block) string {
 	parts := make([]string, 0, len(blocks))
 	for _, block := range blocks {
@@ -190,8 +158,6 @@ func joined(blocks []reasoning.Block) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// effortOf maps this system's effort vocabulary onto the vendor's, which offers a finer scale at
-// the bottom than this system uses.
 func effortOf(effort reasoning.Effort) string {
 	switch effort {
 	case reasoning.EffortLow:

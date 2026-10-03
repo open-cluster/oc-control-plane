@@ -11,22 +11,12 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// THE LEASE, WHERE IT HAS TO BE TRUE.
-//
-// Every property here is one that has to hold ACROSS processes: two workers claiming the
-// same work, a worker that died leaving a record nobody would ever end, a renewal by a
-// process that has already lost its claim. None of that can be observed from inside one
-// process, so none of it is tested there.
-
 func aClaim(worker string) investigation.Claim {
 	return investigation.Claim{
 		Worker: worker, LeaseFor: turnWindowLead,
 	}
 }
 
-// expireInvestigationLease pushes a held lease into the past, standing in for the worker
-// that stopped heartbeating because it stopped existing. Expiry is induced rather than
-// waited for: a suite that depends on winning a timing race is a suite that gets disabled.
 func expireInvestigationLease(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 	id uuid.UUID,
@@ -45,8 +35,6 @@ func expireInvestigationLease(
 	}
 }
 
-// TWO WORKERS, ONE DATABASE. Each investigation is claimed exactly once. This is what lets
-// a deployment run more than one replica.
 func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 	t.Parallel()
 
@@ -76,8 +64,6 @@ func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 			defer wait.Done()
 			name := "worker-" + string(rune('a'+worker))
 			for {
-				// A ceiling above the whole set, so what is being tested is the claim and
-				// not the backpressure beside it.
 				_, investigationRecord, took, err := database.ClaimInvestigation(
 					context.Background(), aClaim(name))
 				if err != nil {
@@ -160,9 +146,6 @@ func TestHeartbeatIsFencedByWorkerIdentity(t *testing.T) {
 	}
 }
 
-// CRASH RECOVERY. A worker that stops heartbeating leaves an investigation that is FAILED
-// with a stated reason and a terminal event — never left saying `running` forever, and
-// never resumed, because there is nothing honest to resume from.
 func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 	t.Parallel()
 
@@ -179,7 +162,6 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 		aClaim("worker-that-dies")); err != nil || !took {
 		t.Fatalf("claiming: took=%v err=%v", took, err)
 	}
-	// The worker got as far as saying it had started, and then stopped existing.
 	if err = database.AppendEvent(context.Background(), organization,
 		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Event{
 			Sequence: 1, At: time.Now().UTC(), Type: investigation.EventStarted,
@@ -236,8 +218,6 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 	}
 }
 
-// A recovered investigation is not re-claimed. It ended; re-running it would be the
-// duplicate execution the fence exists to prevent.
 func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 	t.Parallel()
 
@@ -265,8 +245,6 @@ func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 	}
 }
 
-// Concluding releases the lease. A terminal investigation is nobody's to hold, and one
-// left held would make the sweeper reason about work that is already finished.
 func TestConcludingReleasesTheLease(t *testing.T) {
 	t.Parallel()
 
@@ -289,16 +267,11 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 		t.Fatalf("concluding: %v", err)
 	}
 
-	// Nothing to renew, and nothing for the sweeper to find.
 	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
 		turn.InvestigationID, aClaim("worker-a")); heartbeatErr != nil || held {
 		t.Errorf("a concluded investigation still holds a lease: held=%v err=%v",
 			held, heartbeatErr)
 	}
-	// The lease cannot even be pushed into the past to force the question: the schema's
-	// own "a lease is a worker and an expiry together" constraint refuses a half lease, so
-	// a concluded investigation with a lapsing lease is not a row that can exist. The
-	// sweep is guarded on the status as well, and finds nothing here either way.
 	recovered, err := database.RecoverStale(context.Background(),
 		investigation.RecoveryReason, 10)
 	if err != nil {

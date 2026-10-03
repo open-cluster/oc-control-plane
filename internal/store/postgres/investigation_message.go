@@ -8,7 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// InvestigationMessages reads only the person Messages assigned to this exact turn.
 func (p *Database) InvestigationMessages(ctx context.Context, org uuid.UUID, conversationID, id uuid.UUID) ([]investigation.AssignedMessage, error) {
 	pool, err := p.Pool(org)
 	if err != nil {

@@ -30,7 +30,6 @@ func TestSlackAttemptTimeoutPreservesRetryBudget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Shorten the actual database claim, preserving the worker's deadline calculation.
 			if _, err = pool.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION short_slack_claim() RETURNS trigger LANGUAGE plpgsql AS $$
 				BEGIN IF NEW.lease_owner IS NOT NULL AND NEW.lease_owner IS DISTINCT FROM OLD.lease_owner THEN
 				NEW.leased_until := clock_timestamp() + interval '2 seconds'; NEW.attempts := %d;

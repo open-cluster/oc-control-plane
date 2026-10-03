@@ -1,4 +1,3 @@
-// Package correlation assigns server-controlled request identifiers.
 package correlation
 
 import (

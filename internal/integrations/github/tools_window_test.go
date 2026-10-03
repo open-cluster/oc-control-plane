@@ -9,15 +9,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// THE WINDOW A READ REPORTS.
-//
-// A windowed read is clamped into the investigation's own window, including one the model
-// phrased with no window at all — there is no unbounded path. A result that does not say
-// which window it covered lets an empty answer read as a fact about the estate: on
-// 2026-08-22 a live investigation reported that a repository had no commits when it had
-// twenty-seven, because the read it believed was unbounded had been narrowed to two hours
-// without being told.
-
 func runInWindow(
 	t *testing.T, app *App, client *Client, name string, args map[string]any,
 	from, until time.Time,
@@ -47,8 +38,6 @@ func TestReadCommitsReportsTheWindowItWasNarrowedTo(t *testing.T) {
 	from := mustTime(t, "2026-08-22T08:00:00Z")
 	until := mustTime(t, "2026-08-22T10:00:00Z")
 
-	// The model asks with NO window, which the contract used to describe as a recent
-	// tail. It is silently the investigation's window, so the result must say so.
 	result, err := runInWindow(t, appAgainst(t, fake), NewClient(fake.URL),
 		"github.read_commits", map[string]any{
 			"repositoryId": float64(1296269),
@@ -89,8 +78,6 @@ func TestReadWorkflowRunsReportsItsWindow(t *testing.T) {
 	}
 }
 
-// A read with no window of its own must not claim one. Stating a window on a repository
-// listing would tell the model its answer was bounded in time when it was not.
 func TestAnUnwindowedReadReportsNoWindow(t *testing.T) {
 	t.Parallel()
 
@@ -113,8 +100,6 @@ func TestAnUnwindowedReadReportsNoWindow(t *testing.T) {
 	}
 }
 
-// The contract must not promise a read the implementation cannot perform. Both of these
-// told the model that omitting the window reads the recent tail; it never does.
 func TestNoToolPromisesAnUnboundedRecentTail(t *testing.T) {
 	t.Parallel()
 

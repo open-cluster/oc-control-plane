@@ -12,7 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// RelaySummary excludes credential material.
 type RelaySummary struct {
 	RegistrationID     uuid.UUID
 	ClusterFingerprint string
@@ -44,7 +43,6 @@ type RelayQuery struct {
 	LivenessWindow time.Duration
 }
 
-// Public sort names map only to fixed SQL expressions.
 var relayOrderings = map[string]struct {
 	column string
 	cast   string
@@ -171,7 +169,6 @@ func (p *Database) ListRelays(
 	return roster, nil
 }
 
-// Connected state is derived because a stored value would go stale when a Relay disappears.
 const relayConnectedExpression = `(registration.revoked_at IS NULL
 	                                   AND registration.session_ended_at IS NULL
 	                                   AND registration.last_seen_at IS NOT NULL

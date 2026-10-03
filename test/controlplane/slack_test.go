@@ -16,42 +16,21 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
-// The Slack surface at the composition seam: the assembled process, a real database, and
-// a fake vendor standing where slack.com would. What is asserted is what an operator and
-// a security reviewer care about — a pasted token is verified live before saving, stored
-// sealed, never echoed; verification re-probes the real far end; and a deployment without
-// a sealing key refuses to serve a credential-bearing catalog at all.
-
-// vendorFake is the minimal Slack the composition tests need: auth.test, judging the
-// presented bearer token against what the fake currently accepts.
 type vendorFake struct {
 	*httptest.Server
 
-	mu sync.Mutex
-	// accepts is the one token auth.test answers ok to; everything else is invalid_auth.
-	accepts string
-	// scopes is what an accepted token is granted.
-	scopes string
-	// channels, when set, is what conversations.list answers, for the tests that read.
-	channels string
-	// authCalls counts auth.test calls, so a test can prove the probe happened.
+	mu        sync.Mutex
+	accepts   string
+	scopes    string
+	channels  string
 	authCalls int
 
-	// knownCode is the one authorization code the fake will exchange; anything else is
-	// refused, which is how a replayed or invented code is exercised.
-	knownCode string
-	// team is the workspace the exchange reports installing into. Two tests need two
-	// workspaces to prove that reconnecting one re-verifies rather than duplicating.
-	team string
-	// exchanged records every code the fake was asked to exchange, so a test can prove
-	// the exchange happened server-side and happened once.
-	exchanged []string
-	// exchangeSecret records the client secret the exchange was presented with, so a test
-	// can prove it went in the body rather than through a browser.
+	knownCode      string
+	team           string
+	exchanged      []string
 	exchangeSecret string
 }
 
-// exchange answers oauth.v2.access: the authorization code for the workspace's bot token.
 func (f *vendorFake) exchange(writer http.ResponseWriter, request *http.Request) {
 	if err := request.ParseForm(); err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
@@ -75,7 +54,6 @@ func (f *vendorFake) exchange(writer http.ResponseWriter, request *http.Request)
 		`"authed_user":{"id":"U0ADMIN"}}`))
 }
 
-// codesExchanged reports every code the fake was asked to exchange.
 func (f *vendorFake) codesExchanged() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -101,8 +79,6 @@ func newVendorFake(t *testing.T, accepts string) *vendorFake {
 			writer.Header().Set("Content-Type", "application/json")
 			switch {
 			case request.URL.Path == "/oauth.v2.access":
-				// Before the bearer check: an authorization code exchange presents the
-				// app's client credential in the body, not a workspace token.
 				fake.exchange(writer, request)
 			case !accepted:
 				_, _ = writer.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
@@ -139,7 +115,6 @@ func (f *vendorFake) probes() int {
 	return f.authCalls
 }
 
-// startSlackPlane starts a control plane whose Slack provider reaches the fake vendor.
 func startSlackPlane(t *testing.T, vendor *vendorFake) *integrationPlane {
 	t.Helper()
 
@@ -265,8 +240,6 @@ func TestSlackVerifyReProbesTheRealFarEnd(t *testing.T) {
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	// The workspace admin revokes the token at the vendor. Nothing in this database
-	// changed, so only a real probe can notice.
 	vendor.accept("xoxb-a-newer-token")
 
 	status, answer := plane.call(t, http.MethodPost,
@@ -304,9 +277,6 @@ func TestSlackMissingScopesLimitTools(t *testing.T) {
 		t.Errorf("the note %q does not name the missing scope users:read",
 			created.Integration.VerificationNote)
 	}
-	// search:read is NOT named. Degraded means a capability this integration was
-	// configured to provide is failing, and workspace-wide search was never asked for —
-	// listing it here is what made every correct installation look broken.
 	if strings.Contains(created.Integration.VerificationNote, "search:read") {
 		t.Errorf("the note %q holds a scope this product never requests",
 			created.Integration.VerificationNote)
@@ -322,7 +292,6 @@ func TestSlackPatchReplacesTheCredentialWriteOnly(t *testing.T) {
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	// The rotation at the vendor: the old token dies, a new one is issued and pasted.
 	vendor.accept("xoxb-second-token-5678")
 
 	status, answer := plane.call(t, http.MethodPatch,
@@ -427,9 +396,6 @@ func TestSlackAnotherTenantSeesNothing(t *testing.T) {
 	}
 }
 
-// A deployment whose catalog holds a credential-bearing type and whose configuration
-// names no sealing key must refuse to serve the application API: the alternative is a
-// setup flow that accepts a token it can only store in the clear or drop.
 func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test: requires a Docker daemon")
@@ -473,8 +439,6 @@ func TestSlackRecommendedBotInstallationIsVerifiedWithSearchUnavailable(t *testi
 			created.Integration.Status, created.Integration.VerificationNote)
 	}
 
-	// Unavailable, not missing. Its absence is a stated choice, and saying so is what
-	// stops an operator going looking for a permission to grant.
 	search := created.Integration.tool(t, "slack.search_messages")
 	if search.Available {
 		t.Error("workspace-wide search reads as available on a token that was never " +
@@ -484,8 +448,6 @@ func TestSlackRecommendedBotInstallationIsVerifiedWithSearchUnavailable(t *testi
 		t.Error("search is unavailable and says nothing about why")
 	}
 
-	// The Tools the installation does have are reported as working, individually,
-	// so an operator can see what OpenCluster can and cannot read.
 	for _, working := range []string{"slack.list_channels", "slack.get_channel_history"} {
 		if reported := created.Integration.tool(t, working); !reported.Available {
 			t.Errorf("%s has its scope and reads as unavailable: %+v", working, reported)

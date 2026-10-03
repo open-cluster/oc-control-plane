@@ -12,9 +12,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 )
 
-// Verification judges the bound Relay's own state, and every answer names what is wrong in
-// the operator's language: a missing binding, a dead session, or a Relay Capability the Relay
-// did not advertise.
 func TestVerify_JudgesTheRelayHonestly(t *testing.T) {
 	t.Parallel()
 

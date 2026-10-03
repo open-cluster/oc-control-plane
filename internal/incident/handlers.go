@@ -19,17 +19,11 @@ const (
 	mergeTimeout = 30 * time.Second
 )
 
-// Handlers is this capability's dependencies.
 type Handlers struct {
 	Store  Store
 	Logger *slog.Logger
 }
 
-// Routes is this capability's contribution to the application API's index.
-//
-// Reading a grouping and CHANGING one are separate permissions. Reading is what everybody looking
-// at the tenant does; regrouping decides what an incident is about, and so what an investigation
-// opened for it would be scoped to.
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/incidents"
 
@@ -119,11 +113,6 @@ func (h Handlers) alertEvents(writer http.ResponseWriter, request *http.Request)
 	writeJSON(writer, http.StatusOK, listing.NewPage(views, list.Next, nil))
 }
 
-// merge records that two incidents an operator is looking at are one incident.
-//
-// The incident in the PATH is the one that gives way, and the body names the one that survives. That
-// direction is the one an operator is in: they are looking at a duplicate and saying where it
-// belongs, rather than looking at the survivor and listing what to absorb into it.
 func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
@@ -156,8 +145,6 @@ func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	// Identifiers and counts. Never a title and never a AlertEvent's text: both are what a customer's
-	// systems produced and a log that quoted them would turn diagnosis into a disclosure channel.
 	h.Logger.InfoContext(ctx, "incident incidents merged",
 		slog.String("organization", organization.String()),
 		slog.String("absorbed_incident_id", id.String()),
@@ -233,8 +220,6 @@ func (h Handlers) addressed(
 	return organization, id, true
 }
 
-// caller returns the Principal guaranteed by the protected router. Its absence is a programming
-// error and MustPrincipal panics.
 func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
@@ -244,16 +229,9 @@ func (h Handlers) callerName(request *http.Request) string {
 	return principal.DisplayName() + " (" + request.RemoteAddr + ")"
 }
 
-// fail answers an error, naming the ones a caller can act on.
-//
-// An incident this organization does not have and one that is another organization's are ONE
-// answer, for the same reason the investigation surface gives: telling them apart would let a
-// caller compose path parameters until one of them landed.
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, authz.ErrNotAMember):
-		// The same answer the authorization middleware gives. A different one here would confirm
-		// to a caller that a tenant they may not reach exists.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, audit.ErrWriteFailed):
 		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",

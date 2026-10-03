@@ -20,7 +20,6 @@ type ConnectFlow struct {
 }
 
 type Connect struct {
-	// SealsCredential lets the handler refuse before authorization, when no sealer exists.
 	SealsCredential bool
 	Authorize       func(ctx context.Context, state, callback string) (string, error)
 	Redeem          func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
@@ -38,7 +37,6 @@ type ConnectBinding struct {
 	Installation  *Installation
 }
 
-// Connectable reports whether this definition offers a provider installation flow.
 func (d Definition) Connectable() bool {
 	return d.Connect != nil && d.Connect.Authorize != nil && d.Connect.Redeem != nil
 }

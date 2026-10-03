@@ -13,11 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 )
 
-// The registry is what stops a job leaving this control plane that no Relay could serve and no
-// investigator could use. It is the control plane's HALF of "neither side trusts the other" —
-// the Relay re-validates everything on receipt, and these tests exist so that it is never the
-// only thing that does.
-
 var window = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 
 func encode(t *testing.T, arguments *relayv1.CapabilityArguments) []byte {
@@ -89,10 +84,6 @@ func TestValidate_AcceptsEachCompiledCapabilityAtItsFrozenVersion(t *testing.T) 
 
 func TestValidate_RefusesAVersionThisBuildDoesNotDispatch(t *testing.T) {
 	t.Parallel()
-	// Schema versions are frozen, so v2 means semantics this build does not have. Sending it
-	// anyway and letting the Relay refuse would cost a lease and a round trip to learn what is
-	// knowable here — and the one failure worse than either is a Relay that has v2 and answers
-	// under semantics this side cannot read.
 	err := capability.Validate(capability.KubernetesContainerLogs, 2,
 		encode(t, logs("shop", "checkout-7f", "api", 100, 65536)))
 	if !errors.Is(err, capability.ErrUnknownCapability) {
@@ -110,9 +101,6 @@ func TestValidate_RefusesACapabilityThatDoesNotExist(t *testing.T) {
 
 func TestValidate_RefusesArgumentsForADifferentCapability(t *testing.T) {
 	t.Parallel()
-	// Perfectly valid log arguments, dispatched under the events capability. Nothing about the
-	// bytes is wrong; what is wrong is that they answer a different question, and a Relay
-	// executing them would return a result nothing could interpret.
 	err := capability.Validate(capability.KubernetesNamespaceEvents, 1,
 		encode(t, logs("shop", "checkout-7f", "api", 100, 65536)))
 	if !errors.Is(err, capability.ErrInvalidArguments) {
@@ -178,9 +166,6 @@ func TestValidate_RefusesAnUnboundedOrInvertedEventWindow(t *testing.T) {
 	}
 }
 
-// A bound above what the schema serves is refused rather than lowered. An operator reading the
-// effective bound in a result should find the number they asked for or a refusal, and never a
-// third value nobody chose.
 func TestValidate_RefusesBoundsAboveWhatTheSchemaServes(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
@@ -199,9 +184,6 @@ func TestValidate_RefusesBoundsAboveWhatTheSchemaServes(t *testing.T) {
 	}
 }
 
-// The narrowing is rendered into a Kubernetes field selector on the far side, so anything that
-// could carry a separator into one is refused before it is sent. The Relay refuses it too;
-// this is the half that stops it being sent at all.
 func TestValidate_RefusesANarrowingThatCouldCarryASelectorSeparator(t *testing.T) {
 	t.Parallel()
 	for name, involved := range map[string]*relayv1.KubernetesInvolvedObject{

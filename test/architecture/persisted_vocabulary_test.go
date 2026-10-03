@@ -8,18 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// Some persisted vocabularies are TEXT rather than integers: a finding's kind and
-// confidence live inside a JSONB document, and the ceiling that stopped an investigation
-// is a column the application API and its clients key on. The integer gate beside this one
-// cannot see them, and the compiler cannot either — renaming a constant's VALUE changes
-// what every stored row means while every call site keeps compiling.
-//
-// So they are frozen here in the same way and for the same reason. A value that changes
-// fails naming itself; a value that is ADDED fails too, which is the point: extending a
-// persisted vocabulary is a decision, and this file is where it becomes visible.
-
-// TestPersistedFindingVocabularyIsFrozen holds the words stored inside investigation
-// findings. They travel to clients and are compared as strings by the application API.
 func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
 	t.Parallel()
 
@@ -31,8 +19,6 @@ func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
 		"propagation",
 		"ruled_out",
 		"unresolved",
-		// A peacetime question establishes facts with no causal role, and forcing one
-		// into "symptom" would be a lie about an incident that is not happening.
 		"observation",
 	})
 
@@ -57,9 +43,6 @@ func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
 			"unresolved_assumption", "essential_human_input"})
 }
 
-// TestTheHonestStopsAreFrozen holds the ceilings stopped_by records. A client renders a
-// stopped investigation differently from a freely concluded one, so a word that moved
-// would silently start rendering resource exhaustion as a finished diagnosis.
 func TestTheHonestStopsAreFrozen(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +57,6 @@ func TestTheHonestStopsAreFrozen(t *testing.T) {
 		"reasoner_turns",
 		"wall_clock",
 		"stagnation",
-		// A turn whose transcript alone outgrows the model's budget stops for a stated
-		// reason instead of failing.
 		"context",
 	})
 }
@@ -89,9 +70,6 @@ func TestSlackMessageRecoveryAuditActionIsFrozen(t *testing.T) {
 	}
 }
 
-// assertVocabulary compares a persisted word list against the words as they are stored,
-// in order. Order matters as much as membership: several of these render as an ordered
-// set to a client, and a list that quietly reordered is a list nobody can diff.
 func assertVocabulary(t *testing.T, name string, got, frozen []string) {
 	t.Helper()
 

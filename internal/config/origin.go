@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-// optionalBrowserURL reads a URL a browser will be sent to or arrive from. It must be an
-// absolute origin with no path, because everything downstream appends one.
 func optionalBrowserURL(lookup func(string) (string, bool), key string) (string, error) {
 	return optionalOrigin(lookup, key, "a session cookie is Secure and would never reach a "+
 		"plaintext origin")

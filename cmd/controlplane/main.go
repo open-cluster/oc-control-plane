@@ -18,7 +18,6 @@ import (
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// version is stamped at release build time via -ldflags; "dev" otherwise.
 var version = "dev"
 
 func main() {

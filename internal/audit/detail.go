@@ -5,11 +5,7 @@ import (
 	"strings"
 )
 
-// credentialWords are the substrings that make a key's value unfit for the record.
-//
-// The list is deliberately broad. A false positive costs an auditor one field of context; a
-// false negative writes a live credential into a table the database will not let anyone delete
-// from, on every database, forever.
+// False positives omit one audit detail; false negatives persist a live credential permanently.
 var credentialWords = []string{
 	"secret",
 	"token",
@@ -27,8 +23,6 @@ var credentialWords = []string{
 	"assertion",
 }
 
-// Detail is the structured context one event carries — the previous and new value of a changed
-// setting, the reason a request was refused, the count something acted on.
 type Detail map[string]any
 
 func (d Detail) Safe() Detail {

@@ -21,7 +21,6 @@ var (
 	ErrLocalAccountExists     = errors.New("local account already exists")
 )
 
-// LocalIssuer identifies identities whose credential is managed by this deployment.
 const LocalIssuer = "opencluster:local"
 
 type LocalIdentity struct {
@@ -30,7 +29,6 @@ type LocalIdentity struct {
 	PasswordHash string
 }
 
-// BootstrapLocalUser creates the first Organization, Admin User, password, and session atomically.
 func (p *Database) BootstrapLocalUser(
 	ctx context.Context, organizationName, email, displayName, passwordHash string, issued session.Session,
 	digest []byte, sourceAddress string,

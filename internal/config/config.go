@@ -21,11 +21,9 @@ const (
 )
 
 var SupportedEnvironmentKeys = []string{
-	// ---------------- Required ENVs ----------------
 	EnvDatabaseDSN,
 	EnvDatabaseDSNFile,
 
-	// ---------------- Optional ENVs ----------------
 	EnvConfigFile,
 	EnvHTTPAddress,
 	EnvPublicURL,
@@ -105,29 +103,22 @@ const (
 type Config struct {
 	LogLevel slog.Level
 
-	// Server
 	HTTPListenAddress  string
 	RelayListenAddress string
 	PublicURL          string
 	OTLPEndpoint       string
 
-	// Database
 	DatabaseDSN string
 
-	// Security
 	BootstrapTokenDigest []byte
 	SealingKey           []byte
 
-	// RelaySPKIPins contains accepted control-plane public key pins.
-	// Multiple pins allow key rotation without disconnecting Relays.
 	RelaySPKIPins []string
 
-	// Authentication
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
 
-	// Integrations
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
@@ -135,20 +126,17 @@ type Config struct {
 	GitHubAppID         string
 	GitHubAppPrivateKey []byte
 
-	// AI
 	ModelProvider        string
 	ModelName            string
 	ModelAPIKey          string
 	ModelContextWindow   int
 	ModelMaxOutputTokens int64
 
-	// Runtime
 	InvestigationWorkers     int
 	MaxPendingInvestigations int
 	SessionLifetime          time.Duration
 }
 
-// Load reads and validates the application configuration.
 func Load(lookup func(string) (string, bool)) (Config, error) {
 	effective, err := effectiveLookup(lookup)
 	if err != nil {
@@ -390,7 +378,6 @@ func slackApp(lookup func(string) (string, bool), cfg *Config) error {
 	return nil
 }
 
-// Relay pins are required when the Relay listener is enabled.
 func relaySPKIPins(lookup func(string) (string, bool), relayAddress string) ([]string, error) {
 	raw, _ := lookup(EnvRelaySPKIPins)
 	fields := strings.Split(raw, ",")

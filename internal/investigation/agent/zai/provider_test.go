@@ -15,12 +15,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/zai"
 )
 
-// THE SEAM IS THE HTTP ROUND-TRIPPER, AND THIS SUITE NEVER REACHES THE NETWORK.
-//
-// What is worth asserting here is mostly where this vendor DIFFERS from the other one: a JSON
-// mode rather than schema enforcement, cached input tokens with no cache-write count, and its
-// own word for a refusal.
-
 type transport struct {
 	mutex     sync.Mutex
 	responses []*http.Response
@@ -68,7 +62,6 @@ func answered(status int, body string) *http.Response {
 	return response
 }
 
-// completion is this vendor's answer envelope.
 func completion(content, finishReason, usage string) string {
 	return `{"id":"chat_test","request_id":"zai_req_1","model":"glm-4.7",` +
 		`"choices":[{"index":0,"finish_reason":"` + finishReason + `",` +
@@ -301,7 +294,6 @@ func TestComplete_TakesCachedTokensOutOfTheInputTotalAndReportsNoCacheWrite(t *t
 	}
 	usage := answer.Usage
 
-	// Cached tokens are part of the prompt total on this vendor, so input excludes them.
 	if usage.Input.Or(0) != 1000 {
 		t.Errorf("input tokens are %d, want the prompt total minus the cached part",
 			usage.Input.Or(0))
@@ -309,9 +301,6 @@ func TestComplete_TakesCachedTokensOutOfTheInputTotalAndReportsNoCacheWrite(t *t
 	if usage.CacheRead.Or(0) != 4000 {
 		t.Errorf("cache-read tokens are %d, want 4000", usage.CacheRead.Or(0))
 	}
-	// This vendor says nothing at all about tokens written to a cache. Absent is not zero: a zero
-	// would claim a measurement nobody made, and would make a cache that stopped working
-	// indistinguishable from a vendor that never reported one.
 	if usage.CacheWrite.Reported {
 		t.Error("a cache-write figure this vendor never reports is recorded as measured")
 	}
@@ -346,12 +335,9 @@ func TestComplete_ThisVendorsWordForARefusalIsANamedRefusal(t *testing.T) {
 	if len(answer.Document) != 0 {
 		t.Error("a refused request returned a document")
 	}
-	// Still populated, because a refused request consumed real tokens.
 	if answer.Usage.Input.Or(0) == 0 {
 		t.Error("a refused request recorded no input tokens")
 	}
-	// A refusal is a fact about the provider and must never read as an abstention, which is a
-	// finding about the evidence.
 	if errors.Is(err, reasoning.ErrOutage) || errors.Is(err, reasoning.ErrRejected) {
 		t.Error("a refusal also reads as another outcome")
 	}
@@ -404,9 +390,6 @@ func TestComplete_RendersTheSchemaIntoThePromptBecauseThisVendorCannotEnforceIt(
 	}
 	body := round.lastBody(t)
 
-	// The workaround for a missing capability belongs to the provider that is missing it, so a
-	// vendor that enforces schemas natively is not charged for one that does not. The marker is
-	// a property only the declared schema carries.
 	if !strings.Contains(body, `\"statement\"`) && !strings.Contains(body, `"statement"`) {
 		t.Error("the schema was not rendered into the prompt, so this vendor has nothing to " +
 			"match the answer against")
@@ -415,8 +398,6 @@ func TestComplete_RendersTheSchemaIntoThePromptBecauseThisVendorCannotEnforceIt(
 		!strings.Contains(body, `"json_object"`) {
 		t.Error("the request does not ask for this vendor's json mode")
 	}
-	// The request is deliberately not streamed: the usage figures arrive complete in one body
-	// this way, and a cost figure that is silently absent disables the cost ceiling.
 	if !strings.Contains(body, `"stream":false`) {
 		t.Error("the request streams, which is not what this adapter declares")
 	}

@@ -16,8 +16,6 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 )
 
-// The compiled capabilities, named here rather than at each call site because the version is
-// something several tests vary deliberately.
 const (
 	capabilityID      = "kubernetes.workload.runtime"
 	eventsCapability  = "kubernetes.namespace.events"
@@ -25,14 +23,8 @@ const (
 	capabilityVersion = 1
 )
 
-// jobTimeout bounds waiting for a job to reach a terminal recorded state. It is generous
-// because the path is long — dispatch, a real cluster read, a result, a durable write — and
-// because a timeout here should mean the path is broken, not that a container was slow.
 const jobTimeout = 2 * time.Minute
 
-// TestMain gives the compiled halves somewhere to live for the whole run. Building each
-// binary once rather than per test matters: the Relay pulls a Kubernetes dependency graph,
-// and per-test builds would cost more than the tests do.
 func TestMain(m *testing.M) {
 	remove, err := useBuildRoot()
 	if err != nil {
@@ -46,8 +38,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// harness is one complete run: a database, a cluster, a control plane, a TLS terminator and
-// a Relay, all of them real.
 type harness struct {
 	truth        *truth
 	cluster      *cluster
@@ -55,21 +45,11 @@ type harness struct {
 	plane        *controlPlane
 	relay        *relay
 	registration uuid.UUID
-	// integration is the Kubernetes Integration every job reaches through the enrolled Relay.
-	integration uuid.UUID
-	workDir     string
-	// token is the bootstrap token the first Relay consumed. It is kept so a second Relay can
-	// present it and be refused, which is the only way single-use consumption is observable
-	// from outside this process.
-	token string
+	integration  uuid.UUID
+	workDir      string
+	token        string
 }
 
-// newHarness assembles everything and returns once a Relay has enrolled and the two halves
-// are connected.
-//
-// It fails fast on the cheap things first — a missing Relay tree, a build error — because
-// the expensive part is several minutes of containers, and discovering a typo after them is
-// a poor trade.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	if testing.Short() {
@@ -88,8 +68,6 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-// buildBothHalves compiles the two processes, skipping rather than failing when the Relay's
-// tree is absent: a machine without it checked out has not disproved anything.
 func buildBothHalves(t *testing.T) {
 	t.Helper()
 	if _, err := relayBinary(); err != nil {
@@ -103,9 +81,6 @@ func buildBothHalves(t *testing.T) {
 	}
 }
 
-// startDependencies brings up the database and the cluster together. They take minutes and
-// have nothing to say to each other, so starting them in sequence would waste the slower
-// one's time twice over.
 func (h *harness) startDependencies(ctx context.Context, t *testing.T) {
 	t.Helper()
 
@@ -128,8 +103,6 @@ func (h *harness) startDependencies(ctx context.Context, t *testing.T) {
 		results <- started{cluster: kubernetes, err: err}
 	}()
 
-	// Both results are collected before anything is judged, so a failure in one still hands
-	// back the other for cleanup rather than leaking a container for the rest of the run.
 	var failures []error
 	for range 2 {
 		result := <-results
@@ -148,12 +121,6 @@ func (h *harness) startDependencies(ctx context.Context, t *testing.T) {
 	}
 }
 
-// requireDocker skips when there is no container runtime, and only then.
-//
-// The distinction is the whole reason this exists. A machine with no Docker has not
-// disproved anything, so skipping is honest. A machine with Docker where a container failed
-// to start has found something — a pinned image that no longer exists, a daemon out of disk —
-// and reporting that as a skip would let a run that proved nothing read as a run that passed.
 func requireDocker(t *testing.T) {
 	t.Helper()
 
@@ -168,11 +135,6 @@ func requireDocker(t *testing.T) {
 	}
 }
 
-// startControlPlane puts the process behind the TLS terminator the Relay will dial.
-//
-// The terminator comes first because the pin it generates is what the control plane must
-// advertise at enrolment. A fresh certificate per run is deliberate: a fixed one would let a
-// run pass by trusting a key an earlier run left behind.
 func (h *harness) startControlPlane(ctx context.Context, t *testing.T) {
 	t.Helper()
 
@@ -192,14 +154,11 @@ func (h *harness) startControlPlane(ctx context.Context, t *testing.T) {
 	if err = plane.start(ctx, terminator.SPKIPin); err != nil {
 		t.Fatalf("starting the control plane: %v", err)
 	}
-	// The schema exists only after the control plane has applied its migrations, so the
-	// harness connects to a database it did not create and does not migrate.
 	if err = h.truth.connect(ctx); err != nil {
 		t.Fatalf("connecting to the database: %v", err)
 	}
 }
 
-// startRelay issues a bootstrap token, runs the Relay, and waits for an identity to appear.
 func (h *harness) startRelay(ctx context.Context, t *testing.T) {
 	t.Helper()
 
@@ -227,8 +186,6 @@ func (h *harness) startRelay(ctx context.Context, t *testing.T) {
 	h.integration = integration
 }
 
-// installation describes a Relay pointed at this harness's control plane and cluster. Every
-// Relay in a run differs only in its name and the token it presents.
 func (h *harness) installation(name, token string) relayInstallation {
 	return relayInstallation{
 		Name:                name,
@@ -241,8 +198,6 @@ func (h *harness) installation(name, token string) relayInstallation {
 	}
 }
 
-// awaitRegistration waits for an enrolment to be recorded, which is the first thing that
-// requires both halves to agree about anything.
 func (h *harness) awaitRegistration(t *testing.T) uuid.UUID {
 	t.Helper()
 
@@ -255,25 +210,16 @@ func (h *harness) awaitRegistration(t *testing.T) uuid.UUID {
 	return registration
 }
 
-// dispatch enqueues a job that reads the fixture workload.
 func (h *harness) dispatch(t *testing.T) uuid.UUID {
 	t.Helper()
 	return h.dispatchRead(t, fixtureNamespace, fixtureWorkload)
 }
 
-// dispatchRead enqueues a workload-runtime job for the enrolled relay and returns its
-// identity. The workload it names need not exist: what a read of an absent workload reports
-// is itself a property worth proving.
 func (h *harness) dispatchRead(t *testing.T, namespace, workload string) uuid.UUID {
 	t.Helper()
 	return h.dispatchVersion(t, capabilityVersion, namespace, workload)
 }
 
-// dispatchVersion enqueues a job at a stated capability version.
-//
-// It can name a version no Relay has, which is the only way to reach that path from outside:
-// the control plane sends whatever version the job carries, so writing the job is how a
-// too-old Relay is simulated without pretending to be one.
 func (h *harness) dispatchVersion(
 	t *testing.T, version uint32, namespace, workload string,
 ) uuid.UUID {
@@ -296,7 +242,6 @@ func (h *harness) dispatchVersion(
 	return h.enqueueCapability(t, capabilityID, version, arguments)
 }
 
-// enqueueCapability enqueues one job for any compiled capability.
 func (h *harness) enqueueCapability(
 	t *testing.T, capability string, version uint32, arguments []byte,
 ) uuid.UUID {
@@ -310,7 +255,6 @@ func (h *harness) enqueueCapability(
 	return id
 }
 
-// dispatchEvents enqueues a namespace-events read over the window given.
 func (h *harness) dispatchEvents(
 	t *testing.T, namespace string, since time.Duration, maxEvents uint32,
 ) uuid.UUID {
@@ -333,7 +277,6 @@ func (h *harness) dispatchEvents(
 	return h.enqueueCapability(t, eventsCapability, capabilityVersion, arguments)
 }
 
-// dispatchLogs enqueues a container-logs read.
 func (h *harness) dispatchLogs(
 	t *testing.T, namespace, pod, container string, previous bool,
 	maxLines, maxBytes uint32,
@@ -358,14 +301,11 @@ func (h *harness) dispatchLogs(
 	return h.enqueueCapability(t, logsCapability, capabilityVersion, arguments)
 }
 
-// awaitTerminal waits for a job to reach a recorded terminal state and returns it.
 func (h *harness) awaitTerminal(t *testing.T, id uuid.UUID) jobRecord {
 	t.Helper()
 	return h.awaitTerminalWithin(t, id, jobTimeout)
 }
 
-// awaitTerminalWithin is awaitTerminal with a stated budget, for the cases that have to
-// absorb a reconnect and would otherwise need their own copy of the polling loop.
 func (h *harness) awaitTerminalWithin(
 	t *testing.T, id uuid.UUID, budget time.Duration,
 ) jobRecord {
@@ -381,10 +321,6 @@ func (h *harness) awaitTerminalWithin(
 	return record
 }
 
-// await polls until the condition holds, and reports both halves' output when it does not.
-//
-// Reporting both is the whole point: a failure here has two candidate causes by construction,
-// and a message that named neither would send the reader to bisect two codebases.
 func (h *harness) await(
 	t *testing.T, description string, budget time.Duration,
 	condition func(context.Context) (bool, error),
@@ -412,7 +348,6 @@ func (h *harness) await(
 	}
 }
 
-// diagnostics renders what each half said, labelled, so a failure starts from evidence.
 func (h *harness) diagnostics() string {
 	return fmt.Sprintf("--- control plane ---\n%s\n--- relay ---\n%s",
 		h.plane.logs(), h.relay.logs())

@@ -11,44 +11,20 @@ import (
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// The documentation page read as configuration.
-//
-// The reason to run the YAML off the page, rather than keep a copy of it beside a test,
-// is that the failure this gate exists to catch is exactly documentation drift: a test
-// carrying its own copy passes forever while the page rots.
-
 const (
-
-	// alertmanagerDocPage is the page a customer copies from. Its YAML is this test's input.
 	alertmanagerDocPage = "../../docs/integrations/alerting/alertmanager.mdx"
 
-	// alertmanagerDocOrigin is the example intake origin the page publishes, and one of the
-	// three deployment-specific values a customer replaces.
 	alertmanagerDocOrigin = "https://oc.example.com"
 
-	// idleReceiver stands in for the default receiver a customer's existing configuration
-	// already has. The documented fragment deliberately carries no root receiver — it says
-	// "add the receiver, then route alerts to it" — and Alertmanager refuses a configuration
-	// without one.
 	idleReceiver = "the-customers-existing-default"
 )
 
-// deployment is the three values the page leaves as placeholders — everything about the
-// configuration that is specific to where it runs. They travel together because they are
-// substituted together, and because three bare strings in a row is an argument order
-// waiting to be got wrong.
 type deployment struct {
 	integration string
 	secret      string
 	origin      string
 }
 
-// documentedReceiver returns the one fenced YAML block on the documentation page that
-// configures a webhook receiver, dedented to column zero.
-//
-// Extraction is asserted rather than attempted. A page that no longer carries exactly one
-// such block fails the build, because the alternative — quietly falling back to a copy of
-// the YAML held here — is the failure this whole gate exists to prevent.
 func documentedReceiver(t *testing.T) string {
 	t.Helper()
 
@@ -63,9 +39,6 @@ func documentedReceiver(t *testing.T) string {
 		if strings.TrimSpace(lines[index]) != "```yaml" {
 			continue
 		}
-		// The fence sits inside an MDX step, so the block is indented. That indent is the
-		// page's layout rather than the configuration's, and carrying it into the YAML would
-		// make every documented line a child of nothing.
 		indent := lines[index][:len(lines[index])-len(strings.TrimLeft(lines[index], " \t"))]
 		var block []string
 		for index++; index < len(lines) && strings.TrimSpace(lines[index]) != "```"; index++ {
@@ -84,9 +57,6 @@ func documentedReceiver(t *testing.T) string {
 	return receivers[0]
 }
 
-// documentedConfiguration renders the configuration a customer following the page would
-// actually be running: the documented lines with the three deployment-specific values
-// substituted, plus the root route their existing configuration already has.
 func documentedConfiguration(t *testing.T, where deployment) string {
 	t.Helper()
 
@@ -99,9 +69,6 @@ func documentedConfiguration(t *testing.T, where deployment) string {
 				"longer substitute what a customer substitutes:\n%s", placeholder, documented)
 		}
 	}
-	// Three substitutions, and only three. The scheme becomes plain HTTP with the origin
-	// because terminating TLS is not what this gate proves; everything else is the page's
-	// own text.
 	substituted := strings.NewReplacer(
 		"<integration-id>", where.integration,
 		"<webhook-secret>", where.secret,
@@ -112,9 +79,6 @@ func documentedConfiguration(t *testing.T, where deployment) string {
 	return withCustomerRootRoute(t, substituted)
 }
 
-// assertDocumentedReceiver checks that what was extracted is a usable receiver rather than
-// prose that happened to mention a webhook. Each failure here names a way the page could rot
-// while still looking like a configuration.
 func assertDocumentedReceiver(t *testing.T, configuration string, where deployment) {
 	t.Helper()
 
@@ -183,19 +147,6 @@ func assertDocumentedReceiver(t *testing.T, configuration string, where deployme
 	}
 }
 
-// withCustomerRootRoute adds what the customer's own configuration supplies around the
-// documented fragment, and nothing else.
-//
-// Every documented line is carried through BYTE FOR BYTE — lines are inserted, never
-// rewritten. Parsing and re-emitting the document would hand Alertmanager the YAML library's
-// rendering rather than the page's, and then the quoting, the anchors and the block scalars
-// on the page would be outside the gate while it still reported green.
-//
-// What is inserted is a root receiver, which Alertmanager requires and the fragment
-// deliberately omits because it says "add the receiver, then route alerts to it"; grouping by
-// alert name; and group timings short enough that this gate does not spend Alertmanager's
-// default thirty-second group wait on every alert. All three live on the ROOT route, which is
-// the customer's, never on the documented one.
 func withCustomerRootRoute(t *testing.T, documented string) string {
 	t.Helper()
 
@@ -211,10 +162,6 @@ func withCustomerRootRoute(t *testing.T, documented string) string {
 	}), "\n")
 }
 
-// insertAfterKey puts lines directly beneath a top-level mapping key, leaving every other
-// line untouched. A key the page no longer publishes at the top level is fatal: silently
-// producing a configuration missing what a customer's own file supplies would make the gate
-// fail for a reason that is not the customer's.
 func insertAfterKey(t *testing.T, lines []string, key string, inserted []string) []string {
 	t.Helper()
 

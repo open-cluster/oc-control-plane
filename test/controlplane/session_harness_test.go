@@ -19,26 +19,17 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// Everything the session tests use to act as a relay: enrolling one, opening its stream,
-// saying what it is, and reading what it is told. Kept apart from the tests so that what a
-// test asserts stays legible without the plumbing that gets it there.
-
-// The capability the test dispatches. Its version travels on the assignment because the
-// relay picks an implementation by it.
 const (
 	capabilityUnderTest        = "kubernetes.workload.runtime"
 	capabilityVersionUnderTest = 1
 	protocolVersionUnderTest   = 1
 )
 
-// relayCredentials is a registered relay's durable identity, as the relay itself holds it.
 type relayCredentials struct {
 	registration uuid.UUID
 	credential   string
 }
 
-// registerRelay enrols a relay the way one really enrols, through the registration service,
-// so the session is authenticated against a credential the control plane actually issued.
 func registerRelay(
 	t *testing.T, connection *grpc.ClientConn, dsn, organization string, capabilities ...string,
 ) relayCredentials {
@@ -73,7 +64,6 @@ func registerRelay(
 	return relayCredentials{registration: registration, credential: response.GetCredential()}
 }
 
-// connectSession opens a stream for a relay carrying nothing over from a previous one.
 func connectSession(
 	t *testing.T, connection *grpc.ClientConn, organization string, relay relayCredentials,
 ) relayv1.RelaySessionService_ConnectClient {
@@ -81,12 +71,6 @@ func connectSession(
 	return connectSessionDeclaring(t, connection, organization, relay, nil)
 }
 
-// connectSessionDeclaring opens the stream, says hello as a real relay does, and leaves it
-// open for the duration of the test. The hello is what opens delivery, so a client that
-// skipped it would be testing a session no relay ever has.
-//
-// The deadline bounds a failure: without it a message that never arrives hangs until the whole
-// suite times out, which reports nothing about which message was missing.
 func connectSessionDeclaring(
 	t *testing.T,
 	connection *grpc.ClientConn,
@@ -101,8 +85,6 @@ func connectSessionDeclaring(
 	return stream
 }
 
-// openStream opens the session without saying anything on it, for the tests whose subject is
-// the hello itself.
 func openStream(
 	t *testing.T, connection *grpc.ClientConn, organization string, relay relayCredentials,
 ) relayv1.RelaySessionService_ConnectClient {
@@ -143,9 +125,6 @@ func sayHello(
 	}
 }
 
-// refuseSession opens a session that must not be accepted and returns the refusal message.
-// A stream reports its refusal on the first receive rather than when it is opened, because
-// the server has said nothing until then.
 func refuseSession(
 	t *testing.T, connection *grpc.ClientConn, organization string, relay relayCredentials,
 ) string {
@@ -208,8 +187,6 @@ func awaitResultAck(
 		})
 }
 
-// awaitReconnectInstruction drains a session that is being closed, returning the reconnect
-// instruction if one arrived before the end and the status that ended it.
 func awaitReconnectInstruction(
 	t *testing.T, stream relayv1.RelaySessionService_ConnectClient,
 ) (*relayv1.GracefulReconnect, error) {
@@ -237,10 +214,6 @@ func awaitCancellation(
 		})
 }
 
-// awaitMessage reads until the wanted kind arrives, ignoring the rest. Skipping rather than
-// failing on an unexpected kind is deliberate: the server may add messages a real relay
-// tolerates, and a test that breaks on a new heartbeat is testing the wire order instead of
-// the guarantee.
 func awaitMessage[T any](
 	t *testing.T,
 	stream relayv1.RelaySessionService_ConnectClient,
@@ -260,8 +233,6 @@ func awaitMessage[T any](
 	}
 }
 
-// sendResult reports a successful execution. The epoch is echoed rather than remembered
-// server-side, which is what makes a result from a superseded lease refusable.
 func sendResult(
 	t *testing.T, stream relayv1.RelaySessionService_ConnectClient, job string, epoch uint64,
 ) {
@@ -287,8 +258,6 @@ func sendResult(
 	}
 }
 
-// acknowledgeCancellation reports that the stop was processed. It changes nothing durable —
-// the outcome still arrives as a result — so it is sent here mainly to prove that it does not.
 func acknowledgeCancellation(
 	t *testing.T,
 	stream relayv1.RelaySessionService_ConnectClient,
@@ -308,8 +277,6 @@ func acknowledgeCancellation(
 	}
 }
 
-// sendCancelledResult reports that an execution stopped because it was asked to. A cancelled
-// job is a failure with a reason, not an absence of an outcome.
 func sendCancelledResult(
 	t *testing.T, stream relayv1.RelaySessionService_ConnectClient, job string, epoch uint64,
 ) {
@@ -329,8 +296,6 @@ func sendCancelledResult(
 	}
 }
 
-// workloadArguments encodes a capability argument as the planner will: already reduced to
-// the wire form, so nothing has to interpret it between here and the relay.
 func workloadArguments(workload string) []byte {
 	encoded, err := proto.Marshal(&relayv1.CapabilityArguments{
 		Arguments: &relayv1.CapabilityArguments_KubernetesWorkloadRuntimeV1{
@@ -375,8 +340,6 @@ func enqueueJob(
 	return job.ID
 }
 
-// kubernetesIntegration creates a Kubernetes Integration served by this relay. Every job
-// names one: the Integration is what the job reaches, and the relay is where it runs.
 func kubernetesIntegration(
 	t *testing.T, database *storage.Database,
 	organization uuid.UUID, registration uuid.UUID,
@@ -408,9 +371,6 @@ func namedOrganization(t *testing.T, organization string) uuid.UUID {
 	return named
 }
 
-// ownerOf is the principal a harness acts as when it arranges state through the store rather
-// than through the surface. Every application-facing store function takes one, because the tenancy
-// boundary is checked in storage as well as in the authorization middleware.
 func ownerOf(t *testing.T, organization uuid.UUID) authz.Principal {
 	t.Helper()
 

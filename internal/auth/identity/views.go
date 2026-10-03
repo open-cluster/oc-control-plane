@@ -8,9 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// Response shapes are spelled out rather than serialised from storage types. A column
-// added to a table must not silently become a field in a response — several of these tables
-// hold a digest, and one holds a sealed client secret.
 type sessionView struct {
 	User         userView         `json:"user"`
 	Organization organizationView `json:"organization"`
@@ -73,11 +70,8 @@ func memberViewOf(member storage.Member) memberView {
 }
 
 type policyView struct {
-	SessionLifetimeSeconds int `json:"sessionLifetimeSeconds"`
-	AuditRetentionDays     int `json:"auditRetentionDays"`
-	// AuditRetentionEnforced states plainly that the schedule is declared and not yet applied.
-	// A product reporting a retention period it does not enforce is worse than one reporting
-	// none, so the surface says which this is.
+	SessionLifetimeSeconds int  `json:"sessionLifetimeSeconds"`
+	AuditRetentionDays     int  `json:"auditRetentionDays"`
 	AuditRetentionEnforced bool `json:"auditRetentionEnforced"`
 }
 

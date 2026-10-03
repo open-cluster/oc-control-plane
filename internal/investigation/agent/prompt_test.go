@@ -8,14 +8,6 @@ import (
 	"time"
 )
 
-// INCIDENT TURNS AND QUESTION TURNS.
-//
-// The preamble used to open by asserting that every turn was one operational incident.
-// Conversations made that false: "which revision is deployed?" arrives with no alert, no
-// onset and no cause to name, and a model told it is investigating an incident will look
-// for one. The answer field and the observation finding kind already exist for exactly
-// this; the preamble simply never admitted the second kind of turn existed.
-
 func TestThePreambleDoesNotClaimEveryTurnIsAnIncident(t *testing.T) {
 	t.Parallel()
 
@@ -37,9 +29,6 @@ func TestThePreambleNamesBothKindsOfTurn(t *testing.T) {
 	}
 }
 
-// The orientation is what says which kind THIS turn is. A question turn carries the
-// operator's words and no triggering alert; leaving that implicit makes the model infer
-// from an absence, which is the weakest signal available to it.
 func TestAQuestionTurnIsNamedAsOneInTheOrientation(t *testing.T) {
 	t.Parallel()
 
@@ -72,10 +61,6 @@ func TestAnIncidentTurnIsNamedAsOneInTheOrientation(t *testing.T) {
 	}
 }
 
-// Element-aware truncation: a run's list content is cut between elements, never through
-// one, so what the model reads is valid items plus an honest count of what it did not
-// get — not JSON severed mid-token.
-
 func TestBoundedJSONCutsBetweenElementsAndSaysWhatWasCut(t *testing.T) {
 	t.Parallel()
 
@@ -102,7 +87,6 @@ func TestBoundedJSONCutsBetweenElementsAndSaysWhatWasCut(t *testing.T) {
 	if !strings.Contains(rendered, "of 6 items") {
 		t.Errorf("the cut does not say what it kept out of what: %s", rendered[len(rendered)-120:])
 	}
-	// Everything before the cut note is whole elements: the note follows a closed array.
 	if !strings.Contains(rendered, "}]") {
 		t.Error("the kept elements do not end as a closed JSON array")
 	}

@@ -9,14 +9,11 @@ type requestSizer interface {
 	RequestTokens(Prompt) (int, error)
 }
 
-// EstimateSerializedRequest counts every UTF-8 byte as one token, then adds ten percent. A token
-// cannot represent less than one byte, so this remains conservative without a vendor tokenizer.
 func EstimateSerializedRequest(encoded []byte) int {
 	base := len(encoded)
 	return base + (base+9)/10
 }
 
-// EstimatePromptTokens is the fallback for injected models without a provider encoder.
 func EstimatePromptTokens(prompt Prompt) (int, error) {
 	encoded, err := json.Marshal(prompt)
 	if err != nil {

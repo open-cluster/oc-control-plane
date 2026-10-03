@@ -22,15 +22,8 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// TLSTerminator fronts a plaintext HTTP/2 control-plane endpoint with TLS, which is how the
-// Relay reaches one in production: the Relay pins the edge's public key and refuses anything
-// else, while the control plane behind it speaks h2c. Connecting the two directly is not
-// possible and not desirable — it would remove the layer this exercise exists to test.
 type TLSTerminator struct {
-	// SPKIPin is the Relay's trust anchor for this endpoint: standard base64 of the
-	// SHA-256 over the certificate's SubjectPublicKeyInfo.
 	SPKIPin string
-	// Address is the host:port the Relay dials.
 	Address string
 
 	server   *http.Server
@@ -38,9 +31,6 @@ type TLSTerminator struct {
 	acks     *acknowledgementProbe
 }
 
-// StartTLSTerminator listens on an ephemeral port and forwards to upstream over h2c, using a
-// freshly generated certificate for serverName. The certificate is generated per run rather
-// than fixed, so a test can never pass by trusting a key some earlier run left behind.
 func StartTLSTerminator(serverName, upstream string) (*TLSTerminator, error) {
 	certificate, pin, err := selfSignedCertificate(serverName)
 	if err != nil {
@@ -55,8 +45,7 @@ func StartTLSTerminator(serverName, upstream string) (*TLSTerminator, error) {
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
 		Certificates: []tls.Certificate{certificate},
 		MinVersion:   tls.VersionTLS12,
-		// gRPC requires HTTP/2, and negotiating it over ALPN is how a real edge does it.
-		NextProtos: []string{"h2"},
+		NextProtos:   []string{"h2"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listening: %w", err)
@@ -74,14 +63,10 @@ func StartTLSTerminator(serverName, upstream string) (*TLSTerminator, error) {
 	return terminator, nil
 }
 
-// Close stops accepting and releases the port.
 func (t *TLSTerminator) Close() error {
 	return t.server.Close()
 }
 
-// h2cReverseProxy forwards to an upstream that speaks HTTP/2 without TLS. gRPC needs HTTP/2
-// end to end — downgrading to HTTP/1.1 across the proxy would break streaming, which is
-// most of the protocol.
 func h2cReverseProxy(target *url.URL, acknowledgements *acknowledgementProbe) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = &http2.Transport{
@@ -97,14 +82,10 @@ func h2cReverseProxy(target *url.URL, acknowledgements *acknowledgementProbe) ht
 		}
 		return nil
 	}
-	proxy.FlushInterval = -1 // Stream responses through rather than buffering them.
+	proxy.FlushInterval = -1
 	return proxy
 }
 
-// selfSignedCertificate returns a certificate for serverName and the SPKI pin a Relay must
-// be configured with to accept it. The pin is computed the way the Relay computes it, from
-// the certificate's SubjectPublicKeyInfo, so the two agree by construction rather than by a
-// value copied between them.
 func selfSignedCertificate(serverName string) (tls.Certificate, string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

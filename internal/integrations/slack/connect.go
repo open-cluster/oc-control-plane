@@ -13,15 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// requestedScopes is the least-privilege bot grant for connection and inbound mentions.
-// search:read IS NOT REQUESTED. The security story is that OpenCluster reasons over
-// conversations it has deliberately been invited into, not everything an employee can see.
-// If workspace-wide search is ever worth having it becomes an explicit elevated Tool,
-// re-authorized deliberately — not a scope that arrived quietly with everything else.
-//
-// VERIFY THESE AGAINST SLACK'S CURRENT DOCUMENTATION before a release. Slack's agent
-// platform is moving quickly, and a scope name that has been renamed fails at install time
-// in front of a customer.
 var requestedScopes = []string{
 	"assistant:write",
 	"chat:write",
@@ -32,25 +23,14 @@ var requestedScopes = []string{
 	"groups:history",
 }
 
-// ErrNotAnInstallation reports a callback that is not one: no authorization code.
 var ErrNotAnInstallation = errors.New("this is not a slack installation callback")
 
-// ErrExchangeRefused reports a code Slack would not exchange — expired, already used, or
-// issued for another client. Its text is OURS. Slack's own message arrives on a route a
-// browser reached, which makes it somebody else's string, and repeating it onward would put
-// attacker-influenced text in front of an operator.
 var ErrExchangeRefused = errors.New(
 	"slack would not complete the authorization; start the connection again")
 
-// ErrNotABotInstall reports an exchange that returned no bot token. Every Tool this
-// integration offers is the bot's, so a user-token-only grant is an installation that
-// cannot do the thing it was installed for.
 var ErrNotABotInstall = errors.New(
 	"slack returned no bot token for this installation, so nothing was connected")
 
-// Installer is the deployment's registration of the OpenCluster Slack app: the OAuth
-// client an installation is exchanged through. A deployment that registered none has no
-// Installer, offers no connect flow, and keeps the configuration form.
 type Installer struct {
 	clientID     string
 	clientSecret string
@@ -58,8 +38,6 @@ type Installer struct {
 	http         *http.Client
 }
 
-// NewInstaller builds the installation flow. Both halves are required: one of two would
-// offer a button that cannot finish.
 func NewInstaller(clientID, clientSecret, apiURL string) (*Installer, error) {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" || clientSecret == "" {
@@ -77,16 +55,11 @@ func NewInstaller(clientID, clientSecret, apiURL string) (*Installer, error) {
 	}, nil
 }
 
-// connect is what this provider contributes to the shared installation flow.
 func connect(installer *Installer, client *Client) *integrations.Connect {
 	if installer == nil {
 		return nil
 	}
 	return &integrations.Connect{
-		// The flow comes back holding the bot token, so a deployment that cannot seal
-		// must refuse before the browser is sent anywhere. Saying so here is what makes
-		// that refusal happen at the start rather than after the customer has granted
-		// real permissions in their own workspace.
 		SealsCredential: true,
 		Authorize: func(_ context.Context, state, callback string) (string, error) {
 			return installer.authorize(state, callback)
@@ -99,19 +72,10 @@ func connect(installer *Installer, client *Client) *integrations.Connect {
 	}
 }
 
-// browserOrigin is where a person authorizes, as against where the API is called.
-//
-// Slack serves the two from one host under different paths — https://slack.com/api for
-// calls and https://slack.com/oauth/... for the install screen — so the browser origin is
-// derived by dropping the API path segment rather than configured separately. A test
-// pointing the API at a fake gets that fake's origin, which is what lets the whole flow run
-// against one scripted server.
 func browserOrigin(apiURL string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(apiURL, "/"), "/api")
 }
 
-// authorize is Slack's own installation screen. Workspace selection and permission consent
-// happen there, where the permissions live; this product never asks for either.
 func (i *Installer) authorize(state, callback string) (string, error) {
 	if state == "" || callback == "" {
 		return "", errors.New("a slack installation needs a state and a callback")
@@ -125,8 +89,6 @@ func (i *Installer) authorize(state, callback string) (string, error) {
 	return browserOrigin(i.apiURL) + "/oauth/v2/authorize?" + parameters.Encode(), nil
 }
 
-// installation is what an exchange established. Everything here is non-secret except the
-// bot token, which travels separately and is never logged.
 type installation struct {
 	AppID        string
 	TeamID       string
@@ -136,11 +98,6 @@ type installation struct {
 	Scopes       []string
 }
 
-// redeem exchanges the code for the workspace's bot token and reports what to record.
-//
-// Nothing else in the query is read. An organization identifier arriving here is not
-// consulted by anything: the tenant comes from the flow the state redeemed, which is the
-// property that makes a tampered callback bind nothing.
 func (i *Installer) redeem(
 	ctx context.Context, client *Client, returned integrations.ConnectReturn,
 ) (integrations.ConnectBinding, error) {
@@ -154,9 +111,6 @@ func (i *Installer) redeem(
 		return integrations.ConnectBinding{}, err
 	}
 
-	// Proven against the workspace before anything is recorded. The exchange says what
-	// Slack believes; auth.test is the far end answering as this bot, which is the only
-	// check that survives a stale or partially-revoked install.
 	identity, err := client.AuthTest(ctx, token)
 	if err != nil {
 		return integrations.ConnectBinding{}, ErrExchangeRefused
@@ -166,9 +120,6 @@ func (i *Installer) redeem(
 	if name == "" {
 		name = installed.TeamName
 	}
-	// The bot's own identity comes from auth.test rather than from the exchange, because
-	// auth.test is the far end answering as this bot right now. It is what stops the agent
-	// replying to its own messages, so a stale value would be a loop.
 	agent := identity.BotUserID
 	if agent == "" {
 		agent = installed.BotUserID
@@ -177,9 +128,6 @@ func (i *Installer) redeem(
 		Name:          "Slack — " + name,
 		Credential:    token,
 		Configuration: map[string]any{},
-		// The routing record, written in the same transaction as the Integration. Without
-		// it the integration exists and no event can reach it, which is a customer who
-		// pressed Connect, authorized, and has an agent that never answers.
 		Installation: &integrations.Installation{
 			Key: integrations.InstallationKey(providerInstallationKey(
 				installed.AppID, installed.EnterpriseID, installed.TeamID)),
@@ -188,11 +136,6 @@ func (i *Installer) redeem(
 	}, nil
 }
 
-// exchange trades the authorization code for the workspace's bot token, server-side.
-//
-// The client secret is presented in the POST body over TLS, which is what Slack's own
-// documentation specifies for this call. The code is single-use at Slack's end; a replay
-// is refused there and reaches this process as a refusal to exchange.
 func (i *Installer) exchange(
 	ctx context.Context, code, callback string,
 ) (string, installation, error) {
@@ -231,8 +174,6 @@ func (i *Installer) exchange(
 			ID string `json:"id"`
 		} `json:"enterprise"`
 	}
-	// Bounded like every other read of a vendor answer: this is reached by a browser and
-	// the far end is not this deployment's to trust with an unbounded body.
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes)).
 		Decode(&decoded); err != nil || !decoded.OK {
 		return "", installation{}, ErrExchangeRefused

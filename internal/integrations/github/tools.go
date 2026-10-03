@@ -16,8 +16,6 @@ const (
 	maxRepositoryPages  = 5
 )
 
-// tools is the declared set of bounded GitHub reads:
-// the eight steps of the causal workflow, from finding the repository to reading what shipped.
 func tools(app *App, client *Client) []integrations.Tool {
 	return []integrations.Tool{
 		listRepositoriesTool(app, client),
@@ -31,7 +29,6 @@ func tools(app *App, client *Client) []integrations.Tool {
 	}
 }
 
-// repositoryContent is one repository as a tool reports it.
 type repositoryContent struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
@@ -42,7 +39,6 @@ type repositoryContent struct {
 	Description   string `json:"description,omitempty"`
 }
 
-// commitContent is one commit as a tool reports it.
 type commitContent struct {
 	SHA       string `json:"sha"`
 	Message   string `json:"message"`
@@ -97,8 +93,6 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 				return integrations.ToolResult{}, err
 			}
 
-			// The filter runs inside a bounded pagination walk, so a matching
-			// repository beyond page one is still found.
 			var content []repositoryContent
 			var sources []string
 			matched, walkEnded := 0, false
@@ -125,9 +119,6 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 					break
 				}
 			}
-			// A whole walk answers untruncated however many pages it took: the
-			// per-page Truncated says one PAGE held less than the installation, which
-			// is every page of a multi-page grant and not what this answer means.
 			return integrations.ToolResult{
 				Content:   content,
 				Truncated: matched > len(content) || !walkEnded,
@@ -232,9 +223,6 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 	}
 }
 
-// installationTokenFor resolves the integration's installation and mints or reuses its
-// token. Every tool starts here, so an unconfigured deployment or a broken installation
-// id fails the same way everywhere.
 func installationTokenFor(
 	ctx context.Context, app *App, integration integrations.Integration,
 ) (string, error) {
@@ -249,8 +237,6 @@ func repositoryContentOf(repository Repository) repositoryContent {
 	return repositoryContent(repository)
 }
 
-// matchesRepository reports whether a repository's names or description carry the
-// needle. An empty needle selects everything, which is the unfiltered listing.
 func matchesRepository(repository Repository, needle string) bool {
 	if needle == "" {
 		return true

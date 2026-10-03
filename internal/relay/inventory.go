@@ -11,16 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
-// The Changes session half: policies out at greeting, deltas in as the third
-// durable write this stream carries, freshness off the heartbeat. Nothing here is
-// leased or fenced — a delta is at-least-once with a dedup key, so recording is
-// idempotent and an ack is safe the moment the transaction commits.
-
-// refreshInventoryPolicies keeps a live session's policies current: once at greeting, then
-// on the synchronization cadence. The repeat is not a retry — it is what lets an Integration
-// created or re-bound WHILE its relay is connected start being watched now, rather than at
-// the relay's next reconnect, which a healthy relay may not make for weeks. Resending is
-// idempotent on both ends: the relay applies the same policy onto the same scope.
 func (s *SessionService) refreshInventoryPolicies(session *sessionState) {
 	s.sendInventoryPolicies(session)
 	if s.inventoryInterval <= 0 {
@@ -38,10 +28,6 @@ func (s *SessionService) refreshInventoryPolicies(session *sessionState) {
 	}
 }
 
-// sendInventoryPolicies opens one synchronization scope per Kubernetes Integration
-// this registration serves and asks the relay to watch each. Failure is
-// logged and not fatal to the session: a relay that received no policy synchronizes
-// nothing, which the scope's freshness surface reports, and the refresh retries.
 func (s *SessionService) sendInventoryPolicies(session *sessionState) {
 	scopes, err := s.database.OpenInventoryScopes(
 		session.ctx, session.organization, session.registrationID, s.inventoryInterval)
@@ -60,20 +46,12 @@ func (s *SessionService) sendInventoryPolicies(session *sessionState) {
 	}
 }
 
-// recordInventoryDelta records one delta and only then acknowledges it — record before
-// acknowledge, exactly as results are handled, because an ack is the relay's licence to
-// forget. A delta naming an Integration this Relay does not serve is refused, logged and
-// STILL acknowledged: the relay can do nothing to make it recordable, and resending it
-// forever helps nobody.
 func (s *SessionService) recordInventoryDelta(
 	session *sessionState, delta *relayv1.InventoryDelta,
 ) error {
 	ctx := session.ctx
 	integrationID, err := uuid.Parse(delta.GetConnectionId())
 	if err != nil {
-		// Refused and acknowledged, like a delta for an unserved Integration: nothing the
-		// relay does can make this recordable, and an unacked refusal would be resent
-		// forever.
 		session.logger.WarnContext(ctx, "inventory delta names no integration",
 			slog.String("delta_id", delta.GetDeltaId()))
 		return send(session, inventoryDeltaAck(delta.GetDeltaId()))
@@ -81,10 +59,6 @@ func (s *SessionService) recordInventoryDelta(
 
 	reduced, skipped := reduceDelta(delta, integrationID)
 	if skipped > 0 {
-		// A change this build cannot read — an unknown kind from a newer relay, or an
-		// identity outside the schema's bounds — is dropped rather than allowed to refuse
-		// the whole delta. Dedup makes the drop safe: the rest records once, and what was
-		// dropped stays observable to a build that understands it.
 		session.logger.WarnContext(ctx, "inventory changes were not recordable by this build",
 			slog.String("delta_id", delta.GetDeltaId()),
 			slog.Int("skipped", skipped))
@@ -93,8 +67,6 @@ func (s *SessionService) recordInventoryDelta(
 	recorded, err := s.database.RecordInventoryDelta(
 		ctx, session.organization, session.registrationID, reduced)
 	if err != nil {
-		// Nothing acknowledged, so the relay resends and the redelivery collapses
-		// against whatever part was recorded.
 		session.logger.ErrorContext(ctx, "recording an inventory delta",
 			slog.String("error", err.Error()))
 		return nil
@@ -106,8 +78,6 @@ func (s *SessionService) recordInventoryDelta(
 	return send(session, inventoryDeltaAck(delta.GetDeltaId()))
 }
 
-// recordInventoryFreshness applies a heartbeat's scope stamps. A heartbeat with none is
-// the common case and writes nothing.
 func (s *SessionService) recordInventoryFreshness(
 	session *sessionState, heartbeat *relayv1.Heartbeat,
 ) {
@@ -140,8 +110,6 @@ func (s *SessionService) recordInventoryFreshness(
 	}
 }
 
-// reduceDelta converts a wire delta to domain terms, dropping what this build cannot
-// record and counting the drops.
 func reduceDelta(
 	delta *relayv1.InventoryDelta, integrationID uuid.UUID,
 ) (changes.Delta, int) {
@@ -172,8 +140,6 @@ func reduceChange(change *relayv1.InventoryObjectChange) (changes.Change, bool) 
 	if !ok {
 		return changes.Change{}, false
 	}
-	// The schema's own bounds, checked here so one out-of-bounds change costs itself and
-	// not the transaction the rest of the delta records in.
 	if !within(change.GetNamespace(), 1, 63) || !within(change.GetName(), 1, 253) ||
 		!within(change.GetUid(), 1, 128) || !within(change.GetObservedRevision(), 0, 128) {
 		return changes.Change{}, false

@@ -17,35 +17,19 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/k3s"
 )
 
-// clusterImage pins the Kubernetes version under test. It is pinned rather than floating so
-// that a cluster upgrade cannot silently change what was proven — the capability reads
-// workload and pod status, and those shapes are exactly the kind that move between releases.
 const clusterImage = "rancher/k3s:v1.31.4-k3s1"
 
-// Bounds on the cluster. Starting a single-node Kubernetes is slow on a cold image cache,
-// and a workload has to reach a settled state before it is read: endpoint mirroring and pod
-// status settle asynchronously, and racing them produces flakes that look like protocol
-// defects.
 const (
 	clusterStartTimeout = 5 * time.Minute
 	fixtureTimeout      = 3 * time.Minute
 )
 
-// The workload the proof reads. One replica of a container that starts and stays up, so the
-// read has a settled answer rather than one that changes between the assertion and the
-// evidence behind it.
 const (
 	fixtureNamespace = "e2e-workloads"
 	fixtureWorkload  = "settled"
 	fixtureImage     = "registry.k8s.io/pause:3.9"
 )
 
-// The workloads the log capability reads. One that starts and keeps talking, and one that says
-// something and dies — because the container that DIED is the one that explains a failure, and
-// reading it needs a container that has actually restarted.
-//
-// Their output is a fixed marker rather than anything incidental, so an assertion can say the
-// application's own words arrived rather than that some bytes did.
 const (
 	talkativeWorkload = "talkative"
 	crashingWorkload  = "crashing"
@@ -54,38 +38,18 @@ const (
 	dyingMarker       = "e2e-dying-container-said-this"
 )
 
-// The workload that leaks, and what it leaks.
-//
-// leakedSecret is SYNTHETIC and belongs to nothing. It is shaped like a credential a
-// built-in redaction rule recognises with near-certainty, because what is being proven is
-// that redaction stands between a real container's output and the control plane's durable
-// state — not that any particular pattern is clever.
-//
-// It is a distinct constant from the markers above so that the assertion can search the
-// whole database for THIS string and find nothing, which is the only form of that claim
-// worth making.
 const (
 	leakingWorkload = "leaking"
 	leakedSecret    = "AKIAIOSFODNN7EXAMPLE"
-	// keptAlongside is printed on the same line. A rule that masked the entire line rather than
-	// the credential in it would destroy evidence while passing a test that only looked for the
-	// secret's absence, so the assertion checks this survived.
-	keptAlongside = "e2e-line-that-must-survive-redaction"
+	keptAlongside   = "e2e-line-that-must-survive-redaction"
 )
 
-// cluster is the disposable Kubernetes the Relay reads through.
 type cluster struct {
 	container      *k3s.K3sContainer
 	kubeconfigPath string
 	client         *kubernetes.Clientset
 }
 
-// startCluster brings up a single-node Kubernetes and writes its kubeconfig where the Relay
-// can be pointed at it.
-//
-// The kubeconfig is written to a file rather than handed over another way because that is
-// the Relay's only supported harness path, and its loader refuses anything that is not fully
-// self-contained. Exercising that loader is part of what running the real process buys.
 func startCluster(ctx context.Context, workDir string) (*cluster, error) {
 	startCtx, cancel := context.WithTimeout(ctx, clusterStartTimeout)
 	defer cancel()
@@ -95,7 +59,6 @@ func startCluster(ctx context.Context, workDir string) (*cluster, error) {
 		return nil, fmt.Errorf("starting kubernetes: %w", err)
 	}
 
-	// One place undoes the container, so no later failure can return without it.
 	started, err := configureCluster(startCtx, container, workDir)
 	if err != nil {
 		_ = testcontainers.TerminateContainer(container)
@@ -143,12 +106,6 @@ func (c *cluster) close() {
 	_ = testcontainers.TerminateContainer(c.container)
 }
 
-// createFixture creates the workload the proof reads and waits for it to settle.
-//
-// Settling is not politeness. The result carries a completeness basis the central
-// certificate logic consumes, and a read taken while pods are still appearing reports a
-// truthful answer about a moving cluster — which is indistinguishable, from the assertion's
-// side, from a protocol that lost a field.
 func (c *cluster) createFixture(ctx context.Context) error {
 	createCtx, cancel := context.WithTimeout(ctx, fixtureTimeout)
 	defer cancel()
@@ -181,21 +138,14 @@ func (c *cluster) createFixture(ctx context.Context) error {
 		return fmt.Errorf("creating deployment %s: %w", fixtureWorkload, err)
 	}
 
-	// A container that talks and stays up, for reading a running container's output.
 	if err = c.createTalker(createCtx, talkativeWorkload,
 		"echo "+livingMarker+"; sleep 3600"); err != nil {
 		return err
 	}
-	// A container that talks and exits, so it restarts. Reading its PREVIOUS instance is the
-	// whole point of the capability's previous flag, and it also produces the BackOff warnings
-	// the events read looks for.
 	if err = c.createTalker(createCtx, crashingWorkload,
 		"echo "+dyingMarker+"; exit 1"); err != nil {
 		return err
 	}
-	// A container that prints a credential the way a misconfigured client does. It is what the
-	// negative assertion about redaction reads: the claim is about what leaves a cluster, so it
-	// has to leave a real one.
 	if err = c.createTalker(createCtx, leakingWorkload,
 		"echo "+keptAlongside+" aws_access_key_id="+leakedSecret+"; sleep 3600"); err != nil {
 		return err
@@ -203,9 +153,6 @@ func (c *cluster) createFixture(ctx context.Context) error {
 	return c.awaitSettled(createCtx)
 }
 
-// createTalker creates a one-replica deployment whose container runs a shell command. The
-// command is a fixture of this harness rather than anything the product does: the Relay has no
-// path that can run one, which is enforced by its own build-failing gates.
 func (c *cluster) createTalker(ctx context.Context, name, command string) error {
 	labels := map[string]string{"app": name}
 	deployment := &appsv1.Deployment{
@@ -230,9 +177,6 @@ func (c *cluster) createTalker(ctx context.Context, name, command string) error 
 	return nil
 }
 
-// podFor reports the name of the one pod behind a fixture workload, once it exists. The pod's
-// name is not knowable in advance, and the log capability addresses a pod rather than a
-// workload — reading what the cluster called it is the only honest way to name it.
 func (c *cluster) podFor(ctx context.Context, workload string) (string, error) {
 	pods, err := c.client.CoreV1().Pods(fixtureNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=" + workload,
@@ -247,10 +191,6 @@ func (c *cluster) podFor(ctx context.Context, workload string) (string, error) {
 	return pods.Items[0].Name, nil
 }
 
-// runningPodFor reports a workload's pod once its container has actually started. The
-// tests that read a container's own words wait on this rather than on existence: a read
-// dispatched between pod creation and container start is answered with a typed failure,
-// which is correct behavior and not what those tests are about.
 func (c *cluster) runningPodFor(ctx context.Context, workload string) (string, error) {
 	pods, err := c.client.CoreV1().Pods(fixtureNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=" + workload,
@@ -269,8 +209,6 @@ func (c *cluster) runningPodFor(ctx context.Context, workload string) (string, e
 	return "", fmt.Errorf("no running pod for %s yet", workload)
 }
 
-// awaitRestarted waits until a workload's pod has died and been restarted at least once, which
-// is what makes a previous-container read possible at all.
 func (c *cluster) awaitRestarted(ctx context.Context, workload string) (string, error) {
 	for {
 		pods, err := c.client.CoreV1().Pods(fixtureNamespace).List(ctx, metav1.ListOptions{
@@ -294,7 +232,6 @@ func (c *cluster) awaitRestarted(ctx context.Context, workload string) (string, 
 	}
 }
 
-// awaitSettled waits for the workload to report a ready replica.
 func (c *cluster) awaitSettled(ctx context.Context) error {
 	deployments := c.client.AppsV1().Deployments(fixtureNamespace)
 	for {

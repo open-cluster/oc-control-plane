@@ -1,8 +1,3 @@
-// Package webhooks accepts alerts from the systems a customer already runs.
-//
-// Intake owns its authenticated, bounded route tree. The application mounts that tree on the
-// shared HTTP listener; a reverse proxy may apply path-specific exposure without bypassing
-// provider authentication or body limits.
 package webhooks
 
 import (
@@ -23,47 +18,25 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// TokenHeader authenticates the sender but does not attest the body. Adapters that support
-// signatures verify them directly.
 const TokenHeader = integrations.WebhookTokenHeader
 
 const AlertEventsPath = "/webhooks/v1/integrations/{integration}/alert-events"
 
-// maxBodyBytes bounds a delivery. It is enforced as the body is read rather than after, so an
-// oversized payload is refused without ever being held whole — intake is reachable by anything
-// that can guess an Integration identifier, and a size bound applied after buffering is not a
-// bound.
 const maxBodyBytes = 1 << 20
 
-// readTimeout bounds how long one delivery may take. A source that opens a connection and
-// then goes quiet must not be able to hold it.
 const readTimeout = 15 * time.Second
 
-// Handlers is the intake surface's dependencies.
 type Handlers struct {
 	Database       *storage.Database
 	Logger         *slog.Logger
 	AlertAdmission storage.AlertAdmissionPolicy
-	// Adapters routes a payload to its type's parser. Supplied by the composition root,
-	// which is the only place that knows every provider.
-	Adapters Adapters
-	// Slack is what this listener needs to receive Slack events, and nil where the
-	// deployment holds no signing secret. A deployment with none does not serve the
-	// endpoint at all rather than serving one that refuses everything: an endpoint that
-	// exists and refuses is a configuration to check, and one that does not exist is a
-	// deployment nobody asked to receive events.
-	Slack *SlackAgent
+	Adapters       Adapters
+	Slack          *SlackAgent
 }
 
-// receiver is one running intake listener: its dependencies plus the state that belongs to a
-// listener rather than to a configuration. The rate limiter is per receiver because it holds
-// live counters, and a Handlers value that carried them could be copied into two limiters
-// enforcing half a limit each.
 type receiver struct {
 	Handlers
 	requests *limiter
-	// counters are this listener's own instruments. They are per receiver for the same reason the
-	// limiter is: an instrument rebuilt per request is a new time series per request.
 	counters instruments
 }
 
@@ -75,10 +48,6 @@ func newReceiver(handlers Handlers) *receiver {
 	}
 }
 
-// Router returns the intake surface.
-//
-// The route names the Integration and nothing else. There is no organization in it, and
-// adding one would be adding a tenant identifier the caller chooses.
 func (h Handlers) Router() http.Handler {
 	receiver := newReceiver(h)
 
@@ -122,7 +91,6 @@ func (h *receiver) limit(next *http.ServeMux) http.Handler {
 	})
 }
 
-// handleAlertEvents accepts one webhook delivery.
 func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
@@ -135,11 +103,8 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 	}
 	integration, adapter, err := h.authenticate(ctx, integrationID, request)
 	if err != nil {
-		// A failure to READ the Integration is not a failure to authenticate, and answering
-		// it as one would be the worst mistake available here: 401 is permanent, so a
-		// database outage would tell every source to give up, and the alerts they would
-		// otherwise have retried are gone for good. Only an Integration that was read and
-		// did not match is refused.
+		// Authentication failures are permanent, but database failures must remain retryable;
+		// returning 401 for an outage would make alert sources discard the delivery.
 		if !errors.Is(err, errNotAuthenticated) {
 			h.Logger.ErrorContext(ctx, "could not read the integration",
 				slog.String("request_id", requestID),
@@ -151,16 +116,10 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 		}
 		h.refuse(ctx, request, "unauthenticated")
 		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
-		// One status and one message however it failed. A missing header, a wrong secret,
-		// an unknown Integration, a disabled one and one that receives no webhooks are
-		// indistinguishable, because telling them apart is how a caller learns which half
-		// of a guess was right.
 		writeStatus(writer, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	// The tenant is now known, and it was DISCOVERED rather than claimed: it comes from the
-	// row whose secret just matched. Nothing the caller sent contributed to it.
 	organization, err := uuid.Parse(strings.TrimSpace(integration.OrgID))
 	if err != nil || organization == uuid.Nil {
 		if err == nil {
@@ -192,8 +151,6 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 
 	normalized, err := adapter.Normalize(body)
 	if err != nil {
-		// The payload is not what this type's adapter accepts. Retrying will not change
-		// that, so the status has to say permanent or the source will retry a storm of them.
 		h.refuse(ctx, request, "malformed")
 		h.counters.countRequest(ctx, surfaceAlert, resultRejected)
 		writeStatus(writer, http.StatusBadRequest, "payload not understood")
@@ -206,7 +163,6 @@ func (h *receiver) handleAlertEvents(writer http.ResponseWriter, request *http.R
 	})
 }
 
-// recordAlertDelivery commits the delivery and answers the source.
 func (h *receiver) recordAlertDelivery(
 	ctx context.Context, writer http.ResponseWriter,
 	organization uuid.UUID, requestID string, delivery storage.Delivery,
@@ -236,8 +192,6 @@ func (h *receiver) recordAlertDelivery(
 		return
 	}
 	if err != nil {
-		// Nothing was written, and the source should try again — this is the one failure that
-		// is genuinely ours and genuinely transient.
 		h.Logger.ErrorContext(ctx, "recording a delivery failed",
 			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
@@ -250,10 +204,6 @@ func (h *receiver) recordAlertDelivery(
 
 	if outcome.Duplicate {
 		h.counters.countRequest(ctx, surfaceAlert, resultDuplicate)
-		// This body was already accepted through this Integration. That covers both a source
-		// retrying because it never saw a response — which has done nothing wrong, and whose
-		// answer must let it stop — and a body replayed by someone who captured it, which is
-		// applied to nothing for the same reason.
 		h.Logger.InfoContext(ctx, "delivery already accepted",
 			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
@@ -262,10 +212,6 @@ func (h *receiver) recordAlertDelivery(
 		return
 	}
 
-	// A truncated delivery is recorded and reported, not refused. The alerts that did arrive
-	// are real and refusing would lose them, since the source will not send them again — but a
-	// truncation is the sender saying this platform's record of the moment is incomplete, and
-	// that must be visible rather than inferred from a count that looks fine.
 	if delivery.Truncated > 0 {
 		h.Logger.WarnContext(ctx, "the source truncated this delivery",
 			slog.String("request_id", requestID),
@@ -286,19 +232,8 @@ func (h *receiver) recordAlertDelivery(
 	writeStatus(writer, http.StatusAccepted, "accepted")
 }
 
-// errNotAuthenticated marks the failures that are the caller's: no credential, a wrong
-// one, an Integration that does not exist, one that has been turned off, and one that
-// receives no webhooks. Everything else reaching the caller of authenticate is ours, and
-// must not be answered as a refusal.
 var errNotAuthenticated = errors.New("not authenticated")
 
-// authenticate resolves the Integration from its opaque identifier and checks the secret
-// it was configured with.
-//
-// The identifier is looked up across the database this deployment serves, and the row
-// that is found is the authority for the organization. The comparison is constant-time and
-// happens whether or not a secret is held, so the answer says nothing about which
-// identifiers exist.
 func (h *receiver) authenticate(
 	ctx context.Context, integrationID uuid.UUID, request *http.Request,
 ) (integrations.Integration, Adapter, error) {
@@ -321,25 +256,15 @@ func (h *receiver) authenticate(
 		return integration, adapter, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
 	}
 	if integration.Disabled {
-		// An operator who turned an Integration off wants deliveries refused, not merely
-		// recorded.
 		return integration, adapter, fmt.Errorf("%w: integration is disabled", errNotAuthenticated)
 	}
 	return integration, adapter, nil
 }
 
-// callerOf reports where a delivery came from. It is what makes a campaign of credential
-// guesses investigable: this surface has no operator identity behind it, so an address is the
-// whole of the attribution available.
 func callerOf(request *http.Request) string {
 	return request.RemoteAddr
 }
 
-// integrationID resolves the Integration named in the path.
-//
-// A path that does not parse is answered exactly as a wrong secret is: same status, same body.
-// Anything else lets a caller separate "this is not the shape of an identifier" from "this is
-// not an integration", and probing the first is how you learn to probe the second.
 func (h *receiver) integrationID(
 	writer http.ResponseWriter, request *http.Request,
 ) (uuid.UUID, bool) {
@@ -351,25 +276,13 @@ func (h *receiver) integrationID(
 	return integrationID, true
 }
 
-// readBody reads the delivery under its bound. MaxBytesReader stops at the limit rather than
-// after it, so an oversized payload is never held whole.
 func readBody(writer http.ResponseWriter, request *http.Request) ([]byte, error) {
 	limited := http.MaxBytesReader(writer, request.Body, maxBodyBytes)
 	return io.ReadAll(limited)
 }
 
-// refuse records a rejected delivery: its reason, its Integration and where it came from, and
-// never its payload. The body is untrusted text from a customer's systems, and a log that
-// quoted it would turn diagnosis into a disclosure channel. The caller's address is recorded
-// for the opposite reason — without it a campaign of credential guesses leaves nothing to
-// investigate.
-//
-// Recording the addressed Integration rather than an Organization keeps refusals attributable
-// before and after authentication without accepting a caller-supplied tenant claim.
-//
-// Nothing the caller sent in a header is recorded. A refused delivery's headers are the one
-// place guaranteed to hold a guess at the credential.
 func (h *receiver) refuse(ctx context.Context, request *http.Request, reason string) {
+	// Never log the body or headers: both are untrusted and headers may contain credential guesses.
 	h.Logger.WarnContext(ctx, "delivery refused",
 		slog.String("request_id", correlation.From(ctx)),
 		slog.String("integration_id", request.PathValue("integration")),
@@ -377,18 +290,10 @@ func (h *receiver) refuse(ctx context.Context, request *http.Request, reason str
 		slog.String("reason", reason))
 }
 
-// statusBody is what every answer this surface gives looks like.
 type statusBody struct {
 	Status string `json:"status"`
 }
 
-// writeStatus answers the source. An encoding failure cannot be reported — the status is
-// already written — so it is dropped here and would surface as a truncated body, which is
-// visibly wrong rather than quietly wrong.
-//
-// Nothing this surface returns may be cached: an answer concerns a named tenant's Integration,
-// and an intermediary holding one response is a cross-tenant disclosure waiting for the next
-// request.
 func writeStatus(writer http.ResponseWriter, code int, status string) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Cache-Control", "no-store")

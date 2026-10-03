@@ -77,11 +77,6 @@ func (h Handlers) listRelays(writer http.ResponseWriter, request *http.Request) 
 	writeJSON(writer, http.StatusOK, listing.NewPage(relays, roster.Next, nil))
 }
 
-// relaySummary counts an organization's relays.
-//
-// It exists because a hundred rows is not an assessment. Every number comes from one query, so
-// the counts cannot disagree with each other the way separate reads at separate moments would —
-// a summary saying eleven connected out of ten is worse than no summary.
 func (h Handlers) relaySummary(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
@@ -104,8 +99,6 @@ func (h Handlers) relaySummary(writer http.ResponseWriter, request *http.Request
 	})
 }
 
-// relayIntegrations lists what a Relay serves, so an operator knows what disabling it
-// costs before they disable it.
 func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, registration, ok := h.relay(writer, request)
@@ -194,7 +187,6 @@ var relayIntegrationsSpec = listing.Spec{
 	DefaultSort: listing.Sort{Field: "createdAt", Descending: true},
 }
 
-// issueBootstrapToken mints a single-use enrolment token and shows it once.
 func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
@@ -203,8 +195,6 @@ func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.
 
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		// Refused rather than served with a weaker token. A bootstrap token enrols a Relay into
-		// this tenant, and there is no acceptable fallback for the randomness behind it.
 		h.Logger.ErrorContext(ctx, "a bootstrap token could not be generated",
 			slog.String("error", err.Error()))
 		writeJSON(writer, http.StatusServiceUnavailable,
@@ -220,8 +210,6 @@ func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.
 		h.fail(writer, request, err)
 		return
 	}
-	// As loud as any other credential issuance. The token itself is not logged and could not
-	// usefully be: what an investigation needs later is who issued one and when.
 	h.Logger.WarnContext(ctx, "operator issued a relay bootstrap token",
 		slog.String("organization", organization.String()),
 		slog.String("actor", principal.UserID().String()),
@@ -236,10 +224,6 @@ func (h Handlers) issueBootstrapToken(writer http.ResponseWriter, request *http.
 	})
 }
 
-// query parses a listing's query string against what that listing serves, answering the caller
-// itself on a refusal. An unknown sort or filter is refused rather than ignored: a sort silently
-// dropped returns rows in an order nobody chose, and a filter silently dropped returns
-// everything while looking narrowed.
 func (h Handlers) query(
 	writer http.ResponseWriter, request *http.Request, spec listing.Spec,
 ) (listing.Query, bool) {

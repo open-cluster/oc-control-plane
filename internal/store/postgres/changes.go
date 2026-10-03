@@ -13,8 +13,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 )
 
-// OpenInventoryScopes upserts one synchronization scope per Kubernetes Integration
-// served by this registration and reports them, so the session can send one policy each.
 func (p *Database) OpenInventoryScopes(
 	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, requestedInterval time.Duration,
@@ -74,17 +72,6 @@ func (p *Database) OpenInventoryScopes(
 	return scopes, nil
 }
 
-// RecordInventoryDelta records one at-least-once delta, deduplicated by observation.
-//
-// The Integration check and the writes share one transaction, and the check is the
-// same shape EnqueueJob uses in reverse: the delta is recorded only if the Integration
-// it names belongs to this organization, is served by this registration and is not
-// disabled. A delta failing that is REFUSED but still acknowledged —
-// the Relay can do nothing about it, and resending forever helps nobody; the refusal is
-// the log's to report.
-//
-// A redelivery collapses row by row against the dedup key, so recording is idempotent
-// without any notion of a delta having been seen before.
 func (p *Database) RecordInventoryDelta(
 	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, delta changes.Delta,
@@ -116,8 +103,6 @@ func (p *Database) RecordInventoryDelta(
 		return changes.Recorded{}, fmt.Errorf("resolving a delta's integration: %w", err)
 	}
 
-	// A fixed write order, for the same reason alertEvents are sorted: two chunks carrying
-	// overlapping objects must not take row locks in opposite orders.
 	ordered := slices.SortedFunc(slices.Values(delta.Changes), compareChanges)
 	inserted := 0
 	for _, change := range ordered {
@@ -162,13 +147,6 @@ func advanceChangeScope(
 ) error {
 	var err error
 	if delta.Baseline {
-		// Continuity is decided by what the baseline changed AND by how long nobody was
-		// watching. A re-baseline that collapsed entirely proved no watched field moved —
-		// declared-intent revisions only advance — but a collapse cannot prove an object was
-		// not DELETED in the gap, so the boundary survives only a gap short enough (two
-		// requested intervals past the last confirmation) that the unprovable window is
-		// bounded by the scope's own cadence. Any insert, or a longer silence, moves the
-		// boundary to where watching demonstrably resumed.
 		_, err = transaction.Exec(ctx, `
 			UPDATE change_scope
 			   SET covered_since = CASE
@@ -201,9 +179,6 @@ func advanceChangeScope(
 	return nil
 }
 
-// RecordInventoryFreshness applies a heartbeat's per-scope stamps. The guard subquery
-// is the tenancy and serving check: a stamp naming an Integration this registration
-// does not serve updates nothing.
 func (p *Database) RecordInventoryFreshness(
 	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, stamps []changes.Freshness,
@@ -239,11 +214,6 @@ func (p *Database) RecordInventoryFreshness(
 	return nil
 }
 
-// RecentChanges answers the question: what changed in this namespace, through
-// this Integration, in this window. Baselines are excluded — they record where
-// watching began, not something changing — and the scope's boundaries travel with the
-// answer so an empty list is readable as "nothing changed" only where that is actually
-// knowable.
 func (p *Database) RecentChanges(
 	ctx context.Context, organization uuid.UUID,
 	integrationID uuid.UUID, namespace string, from, to time.Time, limit int,
@@ -319,10 +289,6 @@ func (p *Database) RecentChanges(
 	return answer, nil
 }
 
-// PruneChangesBefore removes at most limit events older than the horizon, oldest
-// first. Purely by age: captured changes are derived operational
-// context on its own retention schedule, and a pruned event is recoverable as a fresh
-// baseline the next time a Relay observes the object.
 func (p *Database) PruneChangesBefore(
 	ctx context.Context, before time.Time, limit int,
 ) (int64, error) {
@@ -344,8 +310,6 @@ func (p *Database) PruneChangesBefore(
 	return tag.RowsAffected(), nil
 }
 
-// compareChanges orders two changes by the identity they are written under — the dedup
-// key's own order.
 func compareChanges(a, b changes.Change) int {
 	if byUID := strings.Compare(a.UID, b.UID); byUID != 0 {
 		return byUID
@@ -360,8 +324,6 @@ func orEmptyFields(fields []changes.FieldChange) []changes.FieldChange {
 	return fields
 }
 
-// scanSeconds reads an integer seconds column into a duration, so the interval is one
-// type inside the program and one honest unit in the schema.
 type scanSeconds struct{ into *time.Duration }
 
 func (s *scanSeconds) Scan(value any) error {
@@ -377,10 +339,6 @@ func (s *scanSeconds) Scan(value any) error {
 	}
 }
 
-// WorkloadInventory reads a bounded digest of the current workload
-// identities — each rendered with its Integration and "namespace/kind name" — for the autonomous
-// orientation. A navigation index, never evidence: deletions drop out, and only the
-// watched workload kinds appear. Empty when no Relay has synchronized anything.
 func (p *Database) WorkloadInventory(
 	ctx context.Context, organization uuid.UUID, limit int,
 ) ([]string, error) {

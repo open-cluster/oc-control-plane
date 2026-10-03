@@ -26,19 +26,15 @@ type conversationView struct {
 }
 
 type messageView struct {
-	WindowFrom  string `json:"windowFrom"`
-	WindowUntil string `json:"windowUntil"`
-	Sequence    int64  `json:"sequence"`
-	Role        string `json:"role"`
-	// ActorKind says whether the actor is an OpenCluster principal or an identity that
-	// belongs to some other surface, so a client never renders one as the other.
+	WindowFrom      string `json:"windowFrom"`
+	WindowUntil     string `json:"windowUntil"`
+	Sequence        int64  `json:"sequence"`
+	Role            string `json:"role"`
 	ActorKind       string `json:"actorKind"`
 	ActorID         string `json:"actorId,omitempty"`
 	ActorDisplay    string `json:"actorDisplay,omitempty"`
 	Text            string `json:"text"`
 	SourceReference string `json:"sourceReference,omitempty"`
-	// InvestigationID is the turn this message opened or came from. Absent while the
-	// message is still queued, which is what a client renders as "waiting".
 	InvestigationID string `json:"investigationId,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 }
@@ -54,7 +50,6 @@ type turnView struct {
 	ConcludedAt     string `json:"concludedAt,omitempty"`
 }
 
-// detailView is one conversation with what was said in it and the turns it opened.
 type detailView struct {
 	conversationView
 	Messages  []messageView `json:"messages"`
@@ -62,22 +57,12 @@ type detailView struct {
 	TurnsNext *string       `json:"turnsNext"`
 }
 
-// messageAcceptedView is the answer to posting a message. It always reports the message
-// that was recorded, and reports a turn only when one actually opened — a message
-// accepted while the agent is working is queued, and saying so is the difference between
-// "we took it" and "we are answering it now".
 type messageAcceptedView struct {
 	Message messageView `json:"message"`
 	Turn    *turnView   `json:"turn,omitempty"`
-	// Queued is true when the message was accepted and no turn opened for it, because
-	// one is already running. It is drained into the next turn at that one's end.
-	Queued bool `json:"queued"`
+	Queued  bool        `json:"queued"`
 }
 
-// openedView is the answer to opening a conversation WITH a first message: the
-// conversation, and the same message answer that posting one to an existing conversation
-// gives. One shape for one meaning, so a client that has learned the message answer has
-// already learned this one.
 type openedView struct {
 	conversationView
 	messageAcceptedView
@@ -152,7 +137,6 @@ func detailViewOf(detail Detail) detailView {
 	return view
 }
 
-// stamp renders a timestamp in the one format this surface uses.
 func stamp(at time.Time) string {
 	if at.IsZero() {
 		return ""

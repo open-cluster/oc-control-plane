@@ -15,42 +15,25 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 )
 
-// Delivery is one accepted webhook body and everything in it. The parts travel together
-// because they are one fact: this body, through this Integration, carried these alertEvents.
 type Delivery struct {
-	// Integration is the installation the body arrived through, and the only authority for
-	// the tenant everything in it belongs to.
 	Integration uuid.UUID
 	alertevent.AlertDelivery
 }
 
-// ErrDeliveryIdentityConflict means a provider reused one lifecycle identity for
-// different normalized content. Retrying cannot make that payload safe to accept.
 var ErrDeliveryIdentityConflict = errors.New("delivery identity conflicts with accepted content")
 
-// DeliveryOutcome is what happened to one delivery.
 type DeliveryOutcome struct {
-	// Duplicate reports that this exact body was already accepted from this source, so
-	// nothing was written a second time. It is a success: a source retrying because it
-	// never saw a response has done nothing wrong, and the answer must let it stop.
-	Duplicate bool
-	// Recorded counts the alertEvents this delivery created or updated, and is zero on a
-	// duplicate.
-	Recorded int
-	// IncidentsOpened and IncidentsJoined are the GROUPING outcome. They are reported apart
-	// because the ratio is what tells an operator their own alert grouping is doing
-	// something.
+	Duplicate       bool
+	Recorded        int
 	IncidentsOpened int
 	IncidentsJoined int
 }
 
-// RecordDelivery accepts one delivery and everything in it, in one transaction.
-//
-// Delivery facts, Incident changes, and automatic Investigations commit together.
-// The unique provider identity and lifecycle key makes concurrent retries idempotent.
 func (p *Database) RecordDelivery(
 	ctx context.Context, organization uuid.UUID, delivery Delivery, policy AlertAdmissionPolicy,
 ) (DeliveryOutcome, error) {
+	// Delivery facts, Incident changes, and automatic Investigations commit together. The
+	// provider identity and lifecycle key make concurrent retries idempotent.
 	pool, err := p.Pool(organization)
 	if err != nil {
 		return DeliveryOutcome{}, err
@@ -70,12 +53,9 @@ func (p *Database) RecordDelivery(
 		return DeliveryOutcome{Duplicate: true}, nil
 	}
 
-	// AlertEvents are written in a fixed order. Two deliveries carrying the same alerts in
-	// different orders would otherwise take row locks in opposite orders, and Postgres
-	// would abort one of them as a deadlock — recoverable, since the source retries, but a
-	// self-inflicted failure that costs nothing to avoid.
 	var grouping DeliveryOutcome
 	var openedIncidents []uuid.UUID
+	// Fixed lock order prevents concurrent deliveries of the same alerts from deadlocking.
 	ordered := slices.SortedFunc(slices.Values(delivery.AlertEvents), compareAlertEvents)
 	for _, alertEvent := range ordered {
 		alertEventID, inserted, upsertErr := upsertAlertEvent(
@@ -84,19 +64,12 @@ func (p *Database) RecordDelivery(
 			return DeliveryOutcome{}, upsertErr
 		}
 		if alertEventID == uuid.Nil {
-			// The guard in upsertAlertEvent matched nothing: a firing redelivered after its own
-			// resolution. Nothing changed and nothing should be grouped, because grouping
-			// it would reopen an incident this alert has already finished.
 			continue
 		}
 		if inserted {
 			if alertEvent.Status == alertevent.AlertEventResolved {
-				// A resolution with no matching firing remains visible as a source fact, but
-				// cannot create the incident it claims already existed.
 				continue
 			}
-			// A new incident of this alert. Everything else is an update to a AlertEvent that
-			// already has its incident, and moving one would be the history changing.
 			incidentID, opened, groupErr := groupAlertEvent(
 				ctx, transaction, organization, delivery, alertEvent, alertEventID)
 			if groupErr != nil {
@@ -110,8 +83,6 @@ func (p *Database) RecordDelivery(
 			}
 			continue
 		}
-		// An update to a AlertEvent already in an incident — most often its resolution, which is
-		// what decides whether the incident as a whole has recovered.
 		if err = regroupUpdatedAlertEvent(ctx, transaction, organization, alertEventID); err != nil {
 			return DeliveryOutcome{}, err
 		}
@@ -126,7 +97,6 @@ func (p *Database) RecordDelivery(
 	return grouping, nil
 }
 
-// compareAlertEvents orders two alertEvents by the identity they are written under.
 func compareAlertEvents(a, b alertevent.AlertEvent) int {
 	if byKey := strings.Compare(a.SourceKey, b.SourceKey); byKey != 0 {
 		return byKey
@@ -134,9 +104,6 @@ func compareAlertEvents(a, b alertevent.AlertEvent) int {
 	return a.StartedAt.Compare(b.StartedAt)
 }
 
-// claimDelivery records accepted content, reporting false when the provider identity and
-// lifecycle phase were already accepted. Their unique key makes retries idempotent; the
-// digest detects a provider identity reused for different content.
 func claimDelivery(
 	ctx context.Context, transaction pgx.Tx,
 	organization uuid.UUID, delivery Delivery,
@@ -176,28 +143,15 @@ func claimDelivery(
 	return deliveryID, false, nil
 }
 
-// upsertAlertEvent writes one incident, or updates the incident this source already reported.
-//
-// Two things are deliberately never rewritten. received_at keeps its original value, so
-// when this platform first heard of an incident stays true however many times the source
-// repeats it. started_at cannot change at all, because it is half the identity — which is
-// what makes a re-fire a new incident rather than an overwrite of the resolved record of
-// the last one.
-//
-// The guard is the point of the WHERE clause. Webhooks are at-least-once AND unordered, so
-// a redelivery of the firing can arrive after the resolution that ended it. Updating only
-// while the incident is still firing means a late firing cannot resurrect something already
-// resolved, and a repeated resolution is a no-op.
 func upsertAlertEvent(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	delivery Delivery, alertEvent alertevent.AlertEvent,
 ) (uuid.UUID, bool, error) {
+	// Webhooks are unordered: a late firing must not overwrite a resolution and reopen its Incident.
 	labels, err := json.Marshal(alertEvent.Labels)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("encoding alert_event labels: %w", err)
 	}
-	// A nil map must land as an empty document, not JSON null: the column is a set of
-	// pointers, and "none" is the empty set.
 	annotations := []byte("{}")
 	if len(alertEvent.Annotations) > 0 {
 		if annotations, err = json.Marshal(alertEvent.Annotations); err != nil {
@@ -211,9 +165,6 @@ func upsertAlertEvent(
 		resolvedAt = &resolved
 	}
 
-	// xmax is zero on a row this statement INSERTED and non-zero on one it updated. It is
-	// how the same statement answers "was this new" without a second query that a
-	// concurrent delivery could get a different answer from.
 	var (
 		alertEventID uuid.UUID
 		inserted     bool
@@ -240,8 +191,6 @@ func upsertAlertEvent(
 		alertEvent.StartedAt, resolvedAt).
 		Scan(&alertEventID, &inserted)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// The guard refused the update: this incident of the alert is already resolved and a
-		// firing has arrived late. Nothing was written, which is the point of the guard.
 		return uuid.Nil, false, nil
 	}
 	if err != nil {
@@ -250,10 +199,6 @@ func upsertAlertEvent(
 	return alertEventID, inserted, nil
 }
 
-// regroupUpdatedAlertEvent brings the incident of an already-grouped AlertEvent back in line with
-// it. The AlertEvent itself does not move — an update never changes which incident a AlertEvent
-// belongs to. What is recomputed is the incident's own state, most importantly whether
-// every AlertEvent in it has now stopped firing.
 func regroupUpdatedAlertEvent(
 	ctx context.Context, transaction pgx.Tx,
 	organization uuid.UUID, alertEventID uuid.UUID,

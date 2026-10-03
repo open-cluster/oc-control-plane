@@ -19,8 +19,6 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	// The semconv version MUST match the one resource.Default() carries, or resource.Merge
-	// refuses the pair with a schema-URL conflict.
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -35,7 +33,6 @@ type Options struct {
 	LogLevel       slog.Level
 }
 
-// Telemetry is the assembled stack. Shutdown flushes and releases it.
 type Telemetry struct {
 	Logger         *slog.Logger
 	Tracer         trace.Tracer

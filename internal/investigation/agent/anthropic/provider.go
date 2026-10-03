@@ -18,13 +18,11 @@ import (
 	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-// Name is how this provider is written in configuration and telemetry.
 const Name = "anthropic"
 
 const maxAttempts = 3
 const retryAfterCap = 30 * time.Second
 
-// Provider is one configured Anthropic model.
 type Provider struct {
 	client sdk.Client
 	config reasoning.ModelConfig
@@ -128,19 +126,10 @@ func transportFailure(provider, model string, cause error) error {
 		"the provider could not be reached", cause)
 }
 
-// Options is what a caller may put in place of the real thing. There is exactly one entry and it
-// is the HTTP round-tripper, which is the seam every test in this package uses: the suite never
-// reaches the network, because a test that called the real API would be non-deterministic and
-// offline-hostile.
 type Options struct {
 	HTTPClient *http.Client
 }
 
-// New builds a provider for one model configuration, refusing a configuration that could not work.
-//
-// The base URL is also the only host this provider may reach. It is taken from configuration
-// rather than from anything a response contains, so a redirect cannot move where the credential is
-// sent.
 func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 	config = config.WithDefaults()
 	if err := config.Validate(); err != nil {
@@ -149,22 +138,16 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 
 	requestOptions := []option.RequestOption{
 		option.WithAPIKey(config.Credential.Reveal()),
-		// One attempt plus the retries that make up the rest. Retrying is what turns a rate limit
-		// into an answer rather than an outage, and bounding it is what keeps the wall clock a
-		// single call can consume inside the round's deadline.
 		option.WithMaxRetries(maxAttempts - 1),
 		option.WithRequestTimeout(config.RequestTimeout),
 	}
 	if config.BaseURL != "" {
 		requestOptions = append(requestOptions, option.WithBaseURL(config.BaseURL))
 	}
-	// A redirect is refused rather than followed, on the client this adapter actually uses. The
-	// host it may reach comes from configuration, and following a redirect would let a response
-	// decide where the credential is sent next — which is the one thing the egress rule exists to
-	// prevent. A test supplying its own client owns that decision itself.
 	client := options.HTTPClient
 	if client == nil {
 		client = &http.Client{
+			// Following a provider redirect could send the configured credential to another host.
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -208,7 +191,6 @@ func boundedRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return min(max(at.Sub(now), 0), retryAfterCap), true
 }
 
-// RequestTokens sizes the same provider request structure Complete sends.
 func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
 	encoded, err := json.Marshal(p.params(prompt))
 	if err != nil {
@@ -235,9 +217,6 @@ func (p *Provider) Complete(
 		streamErr = stream.Err()
 	}
 
-	// Built before the error is returned, not instead of it. A stream that failed partway still
-	// consumed whatever it had already reported, and returning an empty completion here would
-	// under-report usage for exactly the calls most likely to be retried.
 	completion := reasoning.Completion{
 		Model:     answeringModel(message, prompt.Model),
 		RequestID: captured.value(),
@@ -248,8 +227,6 @@ func (p *Provider) Complete(
 		return completion, p.failure(prompt, captured.value(), streamErr)
 	}
 
-	// The stop reason is read BEFORE the content is. Reading the content first is the defect that
-	// presents an empty or partial response as a conclusion.
 	switch completion.Stop {
 	case reasoning.StopRefused:
 		return completion, refused(p.config.Provider, completion.Model, message.StopDetails)
@@ -262,15 +239,13 @@ func (p *Provider) Complete(
 
 	completion.Document = []byte(textOf(message))
 	completion.ToolCalls = toolCallsOf(message)
-	// The whole turn is captured for verbatim replay: this vendor requires its own
-	// thinking blocks, signatures included, echoed back during a tool loop.
+	// Anthropic requires thinking blocks and their signatures to be replayed verbatim in tool loops.
 	if raw, err := json.Marshal(message); err == nil {
 		completion.Raw = raw
 	}
 	return completion, nil
 }
 
-// toolCallsOf reads the native calls out of the answer, in this system's shape.
 func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
 	var calls []reasoning.CompletionCall
 	for _, block := range message.Content {
@@ -283,9 +258,6 @@ func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
 	return calls
 }
 
-// answeringModel reads which model actually replied, falling back to what was asked for only when
-// the response does not say: a provider may re-serve a request on another model, and the record
-// must name what actually spoke.
 func answeringModel(message sdk.Message, requested string) string {
 	if answered := strings.TrimSpace(string(message.Model)); answered != "" {
 		return answered
@@ -293,9 +265,6 @@ func answeringModel(message sdk.Message, requested string) string {
 	return requested
 }
 
-// textOf collects the answer text. Thinking blocks are skipped rather than concatenated: they are
-// not the document, and a provider configured to summarise them would otherwise prepend prose to
-// the JSON and fail the decode for a reason nobody could see.
 func textOf(message sdk.Message) string {
 	answer := &strings.Builder{}
 	for _, block := range message.Content {
@@ -306,11 +275,7 @@ func textOf(message sdk.Message) string {
 	return answer.String()
 }
 
-// requestID captures the provider's own identifier for a call, which is what a vendor support
-// conversation is conducted in.
-//
-// It is per call rather than per client: one provider serves many concurrent rounds, and a field on
-// the provider would report whichever request finished last.
+// Request identity is per call because one Provider serves concurrent rounds.
 type requestID struct {
 	mutex      sync.Mutex
 	identifier string
@@ -338,7 +303,6 @@ func (r *requestID) value() string {
 	return r.identifier
 }
 
-// failure turns whatever went wrong into one of this system's named outcomes.
 func (p *Provider) failure(prompt reasoning.Prompt, identifier string, err error) error {
 	var apiError *sdk.Error
 	if errors.As(err, &apiError) {

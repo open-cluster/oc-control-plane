@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// SchemaVersion identifies the conclusion document shape.
 const SchemaVersion = "7"
 
 type properties map[string]any
@@ -34,7 +33,6 @@ func array(items map[string]any) map[string]any {
 	return map[string]any{"type": "array", "items": items}
 }
 
-// object closes the shape so providers cannot add or omit fields.
 func object(fields properties) map[string]any {
 	required := make([]any, 0, len(fields))
 	for name := range fields {
@@ -49,7 +47,6 @@ func object(fields properties) map[string]any {
 	}
 }
 
-// sortStrings keeps schema bytes stable for provider prompt caches.
 func sortStrings(values []any) {
 	for outer := 1; outer < len(values); outer++ {
 		for inner := outer; inner > 0; inner-- {
@@ -63,7 +60,6 @@ func sortStrings(values []any) {
 	}
 }
 
-// splitCalls separates the conclude call from the reads.
 func splitCalls(calls []CompletionCall) (reads []CompletionCall, conclude *CompletionCall) {
 	for index, call := range calls {
 		if call.Name == ConcludeToolName {
@@ -77,10 +73,6 @@ func splitCalls(calls []CompletionCall) (reads []CompletionCall, conclude *Compl
 	return reads, conclude
 }
 
-// decodeConclusion reads the conclude call against the conclusion contract and
-// enforces the bounds the schema deliberately does not: citations must name runs that happened,
-// kinds and confidences must be the declared vocabulary, and the texts must fit the
-// record.
 func decodeConclusion(
 	document []byte, runs int, allowed []investigation.EvidenceRef,
 ) (investigation.Conclusion, error) {
@@ -335,6 +327,4 @@ func oneOf(value string, allowed []string) bool {
 	return slices.Contains(allowed, value)
 }
 
-// maxStatementLength bounds one finding. Enforced here rather than in the schema because
-// several providers silently drop schema bounds.
 const maxStatementLength = 2048

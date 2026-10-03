@@ -24,7 +24,6 @@ type RunnerStore interface {
 	DrainQueuedConversation(context.Context, time.Duration, int) (bool, error)
 }
 
-// Runner owns only queued-work lifecycle and lease coordination.
 type Runner struct {
 	Store      RunnerStore
 	Agent      Agent
@@ -262,7 +261,6 @@ const (
 	sweepBatch        = 50
 )
 
-// RecoveryReason is terminal because model transcripts are not durable enough to resume safely.
 const RecoveryReason = "worker interrupted"
 
 type Claim struct {

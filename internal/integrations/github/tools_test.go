@@ -18,10 +18,6 @@ func mustTime(t *testing.T, value string) time.Time {
 	return at
 }
 
-// The tools against the fake vendor: bounds applied, ids required, truncation surfaced,
-// refusals in plain language. The Run functions under test are the real ones the catalog
-// serves.
-
 func toolNamed(t *testing.T, app *App, client *Client, name string) integrations.Tool {
 	t.Helper()
 	for _, tool := range tools(app, client) {
@@ -51,8 +47,6 @@ func TestListRepositoriesReportsStableIDsAndTruncation(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 	fake.answers["/installation/repositories"] = func(writer http.ResponseWriter, request *http.Request) {
-		// Full vendor pages: the filter walk selects client-side, so the page size is
-		// the vendor's ceiling, not the caller's bound.
 		if got := request.URL.Query().Get("per_page"); got != "100" {
 			t.Errorf("per_page = %q, want a full page", got)
 		}

@@ -19,29 +19,14 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 )
 
-// ANSWERING IN A THREAD, ASSERTED ON THE SEQUENCE OF SLACK CALLS.
-//
-// What a person in the thread sees is the log of calls this worker made, so that is what is
-// asserted: the stream is opened ONCE, appended to, and closed once. A retry appends what was
-// missed rather than reposting what was seen. A worker killed mid-stream resumes. And where
-// streaming is not available, one placeholder is edited in place and never a series of posts —
-// which is the failure that makes a channel unreadable.
-
-// slackCallLog is a fake Slack that records what it was asked to do.
 type slackCallLog struct {
 	*httptest.Server
-	mu sync.Mutex
-	// calls is every method asked for, in order. It IS the visible outcome.
-	calls []string
-	// text is what each call carried, so a repost is distinguishable from an append.
-	text []string
-	// streaming reports whether this workspace offers the native streaming methods.
+	mu        sync.Mutex
+	calls     []string
+	text      []string
 	streaming bool
-	// failFor makes the next n calls to a method fail transiently.
-	failFor map[string]int
-	// names are the display names this workspace will resolve. An id absent from it is an
-	// account the token cannot see, which is a case the worker must survive.
-	names map[string]string
+	failFor   map[string]int
+	names     map[string]string
 }
 
 func newSlackCallLog(t *testing.T, streaming bool) *slackCallLog {
@@ -62,8 +47,6 @@ func newSlackCallLog(t *testing.T, streaming bool) *slackCallLog {
 
 			writer.Header().Set("Content-Type", "application/json")
 			if !fake.streaming && strings.HasSuffix(method, "Stream") {
-				// The installation does not offer streaming. Answered as Slack would, so
-				// the fallback is exercised by the same code path a real one takes.
 				_, _ = writer.Write([]byte(`{"ok":false,"error":"unknown_method"}`))
 				return
 			}
@@ -110,7 +93,6 @@ func (f *slackCallLog) carried() []string {
 	return append([]string(nil), f.text...)
 }
 
-// name teaches the fake what one user id is called.
 func (f *slackCallLog) name(id, display string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -123,25 +105,17 @@ func (f *slackCallLog) failNext(method string, times int) {
 	f.failFor[method] = times
 }
 
-// repliesInMemory is the durable state the worker reads and writes, in memory.
 type repliesInMemory struct {
-	mu     sync.Mutex
-	reply  Reply
-	events []investigation.Event
-	// retries records every reschedule, which is what says a failure was recorded against
-	// the DELIVERY.
-	retries []string
-	// audited is every channel a collaboration write was recorded against.
-	audited []string
-	// unnamed are the authors still recorded under a raw identifier, and named is what the
-	// worker resolved them to.
+	mu        sync.Mutex
+	reply     Reply
+	events    []investigation.Event
+	retries   []string
+	audited   []string
 	unnamed   []string
 	named     map[string]string
 	completed bool
 	gaveUp    bool
-	// sealed is the bot token as it rests. The worker opens it the way every other read
-	// does, so the credential path is exercised rather than stubbed past.
-	sealed []byte
+	sealed    []byte
 }
 
 func (d *repliesInMemory) ClaimSlackReplies(
@@ -176,9 +150,6 @@ func (d *repliesInMemory) AdvanceSlackReply(
 	return nil
 }
 
-// RecordCollaborationWrite counts the audit record the worker owes for putting a message in
-// somebody's workspace. It is the only write this product makes into a system it does not own,
-// so the test asserts it happens rather than trusting that it does.
 func (d *repliesInMemory) RecordCollaborationWrite(
 	_ context.Context, _ uuid.UUID, _ uuid.UUID, where string,
 ) error {
@@ -231,11 +202,6 @@ func (d *repliesInMemory) Events(
 	return found, nil
 }
 
-// answering builds a worker over a fake Slack and an in-memory reply.
-//
-// The credential is really sealed and really opened, because a reply that could not open
-// its token is a reply that answers nothing — and stubbing past that would leave the one
-// failure most likely to happen in production untested.
 func answering(t *testing.T, fake *slackCallLog, events []investigation.Event) (
 	Worker, *repliesInMemory,
 ) {
@@ -356,8 +322,6 @@ func TestAFinalAnswerLinksOnlyTheInvestigation(t *testing.T) {
 func TestAWorkerKilledMidStreamResumesRatherThanReposting(t *testing.T) {
 	t.Parallel()
 
-	// The first pass takes the first three events; the process then "dies" and a second
-	// worker picks the reply up with the cursor where the first left it.
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn()[:3])
 	worker.answer(context.Background(), state.reply)
@@ -374,7 +338,6 @@ func TestAWorkerKilledMidStreamResumesRatherThanReposting(t *testing.T) {
 		t.Errorf("a resumed reply opened %d streams; it must continue the one that "+
 			"exists, or the thread holds the answer twice", starts)
 	}
-	// What the second pass sent must be what was MISSED, not what was already seen.
 	sent := fake.carried()
 	second := strings.Join(sent[len(sent)-1:], "")
 	if strings.Contains(second, "read 40 commits") && strings.Contains(first, "read 40 commits") {
@@ -389,7 +352,6 @@ func TestATransientFailureIsRetriedAndAddsNothingTwice(t *testing.T) {
 	fake.failNext("chat.startStream", 1)
 	worker, state := answering(t, fake, aTurn())
 
-	// The first pass fails before anything visible exists.
 	worker.answer(context.Background(), state.reply)
 	if len(fake.made()) != 0 {
 		t.Fatalf("a failed open still made visible calls: %v", fake.made())
@@ -401,7 +363,6 @@ func TestATransientFailureIsRetriedAndAddsNothingTwice(t *testing.T) {
 	retry := state.reply
 	state.mu.Unlock()
 
-	// The second pass succeeds and produces exactly one stream.
 	worker.answer(context.Background(), retry)
 	if starts := count(fake.made(), "chat.startStream"); starts != 1 {
 		t.Errorf("a retried reply opened %d streams, want one", starts)
@@ -411,8 +372,6 @@ func TestATransientFailureIsRetriedAndAddsNothingTwice(t *testing.T) {
 func TestWithoutStreamingOnePlaceholderIsEditedInPlace(t *testing.T) {
 	t.Parallel()
 
-	// The failure this guards against is a series of separate posts, which is what makes a
-	// channel unreadable and is the reason the stream design exists.
 	fake := newSlackCallLog(t, false)
 	worker, state := answering(t, fake, aTurn()[:3])
 	worker.answer(context.Background(), state.reply)
@@ -430,8 +389,6 @@ func TestWithoutStreamingOnePlaceholderIsEditedInPlace(t *testing.T) {
 	if updates := count(calls, "chat.update"); updates == 0 {
 		t.Errorf("the placeholder was never updated: %v", calls)
 	}
-	// And the last edit carries the whole answer, because editing in place means sending
-	// everything — an edit with only the new part would erase what came before.
 	sent := fake.carried()
 	last := sent[len(sent)-1]
 	if !strings.Contains(last, "The deploy at 14:02 is the cause.") ||
@@ -443,8 +400,6 @@ func TestWithoutStreamingOnePlaceholderIsEditedInPlace(t *testing.T) {
 func TestGivingUpIsRecordedAgainstTheDeliveryAndNotTheInvestigation(t *testing.T) {
 	t.Parallel()
 
-	// A Slack outage that never clears. The reply gives up; nothing here can touch the
-	// investigation, which concludes on its own terms and stays complete in the console.
 	fake := newSlackCallLog(t, true)
 	fake.failNext("chat.startStream", 100)
 	worker, state := answering(t, fake, aTurn())
@@ -472,7 +427,6 @@ func TestGivingUpIsRecordedAgainstTheDeliveryAndNotTheInvestigation(t *testing.T
 func TestAFailedTurnSaysSoInTheThreadRatherThanGoingQuiet(t *testing.T) {
 	t.Parallel()
 
-	// A question that got no answer and no explanation is the worst outcome available.
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, []investigation.Event{
 		progressed(1, investigation.EventStarted, nil),
@@ -497,15 +451,11 @@ func count(values []string, wanted string) int {
 	return found
 }
 
-// testLogger discards, so a failing reply does not fill the test output with the log
-// lines it is supposed to write.
 func testLogger(t *testing.T) *slog.Logger {
 	t.Helper()
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// The author names the worker resolved. A shared thread whose participants all read as U0…
-// has attribution that technically survives and practically does not.
 func (d *repliesInMemory) UnnamedSlackAuthors(
 	context.Context, uuid.UUID, uuid.UUID,
 ) ([]string, error) {
@@ -526,20 +476,12 @@ func (d *repliesInMemory) NameSlackAuthor(
 	return nil
 }
 
-// The window a crash could repost through, closed.
-//
-// The visible message is opened EMPTY and its identity recorded before any content is sent. A
-// process that dies between the two resumes into the message it already opened; one that had
-// posted content with the opening would have content outside the identity's protection, and the
-// resumed pass would say it all again.
 func TestAProcessThatDiesAfterOpeningTheMessageDoesNotRepost(t *testing.T) {
 	t.Parallel()
 
 	fake := newSlackCallLog(t, true)
 	worker, state := answering(t, fake, aTurn())
 
-	// The first pass opens the message and then everything after that fails, which stands
-	// in for the process ending there.
 	fake.failNext("chat.appendStream", 100)
 	worker.answer(context.Background(), state.reply)
 
@@ -550,14 +492,12 @@ func TestAProcessThatDiesAfterOpeningTheMessageDoesNotRepost(t *testing.T) {
 		t.Fatal("the message's identity was not recorded before content was sent, so a " +
 			"crash here would repost")
 	}
-	// Nothing visible was said yet: opening it carried no content.
 	for _, carried := range fake.carried() {
 		if carried != "" {
 			t.Errorf("opening the message carried content: %q", carried)
 		}
 	}
 
-	// The resumed pass opens nothing new and says everything once.
 	fake.failNext("chat.appendStream", 0)
 	worker.answer(context.Background(), held)
 	if starts := count(fake.made(), "chat.startStream"); starts != 1 {
@@ -565,7 +505,6 @@ func TestAProcessThatDiesAfterOpeningTheMessageDoesNotRepost(t *testing.T) {
 	}
 }
 
-// Putting a message in somebody else's workspace is on the record.
 func TestAReplyIntoAWorkspaceIsAuditedAsACollaborationWrite(t *testing.T) {
 	t.Parallel()
 
@@ -581,12 +520,9 @@ func TestAReplyIntoAWorkspaceIsAuditedAsACollaborationWrite(t *testing.T) {
 	}
 }
 
-// The plan and the reads as they happen, not only the answer at the end.
 func TestTheThreadShowsTheWorkAsItHappens(t *testing.T) {
 	t.Parallel()
 
-	// A turn that has read something and is still working. What a person watching wants is
-	// evidence it is doing something, and one completed read with what it found is that.
 	fake := newSlackCallLog(t, false)
 	worker, state := answering(t, fake, []investigation.Event{
 		progressed(1, investigation.EventStarted, nil),
@@ -605,7 +541,6 @@ func TestTheThreadShowsTheWorkAsItHappens(t *testing.T) {
 	}
 }
 
-// A shared thread stays readable: the people in it are named, not numbered.
 func TestTheAuthorsOfAThreadAreNamedRatherThanNumbered(t *testing.T) {
 	t.Parallel()
 
@@ -628,8 +563,6 @@ func TestTheAuthorsOfAThreadAreNamedRatherThanNumbered(t *testing.T) {
 	}
 }
 
-// A name that cannot be resolved leaves the identity in place, which still attributes the
-// message. The answer matters more than the label on the question.
 func TestAnUnresolvableNameDoesNotStopTheAnswer(t *testing.T) {
 	t.Parallel()
 

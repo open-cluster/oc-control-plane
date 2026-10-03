@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// Provider is the stable, readable key a provider definition owns.
 type Provider string
 
 type Category string
@@ -36,7 +35,6 @@ type Field struct {
 	Options  []string
 }
 
-// Verification is what a verify run established.
 type Verification struct {
 	Status Status
 	Note   string
@@ -48,53 +46,30 @@ type VerifyInput struct {
 	LastAcceptedDelivery time.Time
 }
 
-// RelayStatus is what verification may know about the Relay serving an integration.
 type RelayStatus struct {
 	Bound        bool
 	Connected    bool
 	Capabilities []string
 }
 
-// ProbeInput is what a live outbound verification is given: the integration as recorded —
-// or as it is about to be recorded, at creation — and the plaintext credential, unsealed
-// for this one call and never stored by anything downstream of it. Empty for a type whose
-// probe authenticates with deployment-level credentials instead.
 type ProbeInput struct {
 	Integration Integration
 	Credential  string
 }
 
-// InboundAvailability describes whether an installed Integration can receive its
-// provider-specific inbound interaction, independently of investigation Tools.
 type InboundAvailability struct {
 	Available bool
 	Reason    string
 }
 
-// Definition is everything one provider package exports about its Integration Type.
-// Its manifest owns catalog metadata; behavior is the provider's own.
 type Definition struct {
 	Manifest
-	// Verify judges an integration against the facts in VerifyInput. It is pure: the
-	// handler gathers, the definition judges, the store records. A definition declares
-	// exactly one of Verify and Probe.
-	Verify func(VerifyInput) Verification
-	// Probe verifies live against the provider: the far end is asked, and the judgement
-	// comes back with what it answered. It is the verification for every outbound type,
-	// because a credential's only honest check is presenting it.
-	Probe func(ctx context.Context, input ProbeInput) Verification
-	// Inbound judges a provider-specific interactive endpoint against deployment setup
-	// and recorded installation facts. Nil means the provider declares no such endpoint.
+	Verify  func(VerifyInput) Verification
+	Probe   func(ctx context.Context, input ProbeInput) Verification
 	Inbound func(Integration) InboundAvailability
-	// Connect is the provider's own installation flow, when this deployment can offer
-	// one. Nil means the type is connected through its configuration form — which is
-	// what a self-hosted deployment that registered no application with the vendor has,
-	// and it stays supported.
 	Connect *Connect
 }
 
-// Manifest is the authoritative provider declaration used by runtime routing, database
-// reconciliation, docs, and clients that render the catalog.
 type Manifest struct {
 	Key               Provider
 	Name              string
@@ -108,18 +83,8 @@ type Manifest struct {
 	Tools             []Tool
 }
 
-// documentationSite is where this product's own documentation is published. One constant,
-// beside the schema $id's origin above, because the site is the product's and not a
-// deployment's: a self-hosted install reads the same published pages.
 const documentationSite = "https://docs.open-cluster.io"
 
-// ProductDocumentationURL is OUR page for this type — the one that carries the receiver
-// YAML, the header name and the version floor, rather than the vendor's reference.
-//
-// DocumentationSlug is declared beside the rest of the provider metadata and the catalog
-// rejects any non-empty value that differs from integrations/<category>/<key>. The product
-// documentation gate additionally requires every shipped provider to declare that canonical
-// slug and verifies the corresponding page exists.
 func (m Manifest) ProductDocumentationURL() string {
 	if m.DocumentationSlug == "" {
 		return ""
@@ -127,7 +92,6 @@ func (m Manifest) ProductDocumentationURL() string {
 	return documentationSite + "/" + m.DocumentationSlug
 }
 
-// ConfigurationSchema renders this definition's fields as JSON Schema draft 2020-12.
 func (m Manifest) ConfigurationSchema() json.RawMessage {
 	properties := make(map[string]any, len(m.Config))
 	required := make([]string, 0, len(m.Config))
@@ -169,7 +133,6 @@ func (m Manifest) ConfigurationSchema() json.RawMessage {
 	return encoded
 }
 
-// Capabilities returns the stable tool names this provider makes available.
 func (m Manifest) Capabilities() []string {
 	capabilities := make([]string, 0, len(m.Tools))
 	for _, tool := range m.Tools {
@@ -178,7 +141,6 @@ func (m Manifest) Capabilities() []string {
 	return capabilities
 }
 
-// SecretFields returns configuration field names whose values are sealed at rest.
 func (m Manifest) SecretFields() []string {
 	fields := make([]string, 0, len(m.Config))
 	for _, field := range m.Config {
@@ -189,8 +151,6 @@ func (m Manifest) SecretFields() []string {
 	return fields
 }
 
-// Field resolves one configuration field by name. It is the single lookup: Declares reads
-// it, and so does the check that decides whether a submitted value may be stored.
 func (d Definition) Field(key string) (Field, bool) {
 	for _, field := range d.Config {
 		if field.Key == key {
@@ -200,13 +160,11 @@ func (d Definition) Field(key string) (Field, bool) {
 	return Field{}, false
 }
 
-// Declares reports whether this definition has a configuration field by that name.
 func (d Definition) Declares(name string) bool {
 	_, declared := d.Field(name)
 	return declared
 }
 
-// SecretField resolves this definition's one credential field, when it declares one.
 func (d Definition) SecretField() (Field, bool) {
 	for _, field := range d.Config {
 		if field.Secret {
@@ -344,7 +302,6 @@ func (c Catalog) Tools() []Tool {
 	return tools
 }
 
-// Lookup resolves a definition from its stable key.
 func (c Catalog) Lookup(key Provider) (Definition, bool) {
 	definition, ok := c.byKey[key]
 	return definition, ok

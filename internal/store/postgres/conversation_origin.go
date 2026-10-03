@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// ConversationOrigin reads the provider resource that constrains this Conversation.
 func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUID, id uuid.UUID) (*investigation.ConversationOrigin, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {

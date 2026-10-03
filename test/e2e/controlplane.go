@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// controlPlaneStartTimeout bounds how long the process may take to bind and report ready. It
-// includes applying the migrations, which is the slowest thing a first start does.
 const (
 	controlPlaneStartTimeout    = 2 * time.Minute
 	investigationBootstrapToken = "e2e-investigation-bootstrap-token-with-sufficient-entropy"
@@ -22,18 +20,10 @@ const (
 
 var organization string
 
-// controlPlane is the control plane running as a real process.
-//
-// Its ports are fixed for the lifetime of the harness rather than ephemeral per start,
-// because the TLS terminator in front of it and the Relay's persisted view of where to
-// connect both outlive any single process. A restart that moved the port would be a property
-// of the harness rather than of the control plane.
 type controlPlane struct {
 	program *program
-	// output spans restarts, so a failure after one is still reported against everything the
-	// control plane said, not only what the process that happened to be alive said.
-	output *syncBuffer
-	starts int
+	output  *syncBuffer
+	starts  int
 
 	httpAddress   string
 	relayAddress  string
@@ -47,9 +37,6 @@ type controlPlane struct {
 	session       *http.Cookie
 }
 
-// newControlPlane reserves the addresses the control plane will serve on, without starting
-// it. The relay address is needed before the process exists, because the TLS terminator that
-// fronts it — and therefore the pin the process must advertise — has to be built first.
 func newControlPlane(workDir, dsn, modelURL string) (*controlPlane, error) {
 	dsnPath := filepath.Join(workDir, "database.dsn")
 	if err := os.WriteFile(dsnPath, []byte(dsn), 0o600); err != nil {
@@ -85,10 +72,6 @@ func newControlPlane(workDir, dsn, modelURL string) (*controlPlane, error) {
 	}, nil
 }
 
-// start launches the process and waits for it to report ready. spkiPin is the key of the
-// terminator in front of it: the control plane hands this to a relay at enrolment, and the
-// relay pins every later connection to it, so a mismatch here would show up as an
-// unexplainable handshake refusal rather than as configuration.
 func (c *controlPlane) start(ctx context.Context, spkiPin string) error {
 	binary, err := controlPlaneBinary()
 	if err != nil {
@@ -176,9 +159,6 @@ func (c *controlPlane) bootstrap(ctx context.Context) error {
 	return fmt.Errorf("bootstrapping the e2e administrator issued no session")
 }
 
-// restart kills the process and brings another up on the same addresses. It models the
-// control plane going away without warning — a crash, an evicted pod, a node lost — which is
-// the case the durable job model exists to survive.
 func (c *controlPlane) restart(ctx context.Context) error {
 	c.program.kill()
 	return c.start(ctx, c.spkiPin)
@@ -198,9 +178,6 @@ func (c *controlPlane) logs() string {
 	return c.output.String()
 }
 
-// logsSinceStart is what the process running now has said, which is what a claim about a
-// restarted control plane has to rest on. Searching the whole history instead would find its
-// predecessor's line and call it proof.
 func (c *controlPlane) logsSinceStart() string {
 	whole := c.logs()
 	marker := fmt.Sprintf("--- control plane, start %d ---", c.starts)
@@ -210,9 +187,6 @@ func (c *controlPlane) logsSinceStart() string {
 	return whole
 }
 
-// awaitReady polls readiness until the process answers or gives up. Readiness rather than a
-// log line, because readiness is the statement that the database is reachable — and every
-// assertion in this harness is a read of that database.
 func (c *controlPlane) awaitReady(ctx context.Context) error {
 	deadline := time.Now().Add(controlPlaneStartTimeout)
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -249,12 +223,6 @@ func ready(ctx context.Context, client *http.Client, url string) bool {
 	return response.StatusCode == http.StatusOK
 }
 
-// reservePorts finds two distinct ports nothing is listening on and releases them together.
-//
-// There is a window between releasing and binding in which something else could take it. It
-// is accepted rather than closed because the alternative — handing an already-bound listener
-// to a child process — is platform-specific work for a race that has one loser: a start that
-// fails loudly with an address already in use.
 func reservePorts() (int, int, error) {
 	httpListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

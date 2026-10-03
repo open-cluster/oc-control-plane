@@ -11,7 +11,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-// LocalPasswordHash reads only the authenticated User's local verifier.
 func (p *Database) LocalPasswordHash(ctx context.Context, principal authz.Principal) (string, error) {
 	user := principal.UserID()
 	if user == uuid.Nil {
@@ -29,7 +28,6 @@ func (p *Database) LocalPasswordHash(ctx context.Context, principal authz.Princi
 	return encoded, nil
 }
 
-// ChangeLocalPassword atomically replaces a reauthenticated User's verifier and ends all sessions.
 func (p *Database) ChangeLocalPassword(ctx context.Context, principal authz.Principal, previous, replacement string) error {
 	user := principal.UserID()
 	if user == uuid.Nil {
@@ -41,7 +39,6 @@ func (p *Database) ChangeLocalPassword(ctx context.Context, principal authz.Prin
 	})
 }
 
-// RecoverLocalPassword uses deployment database authority to recover an existing local account.
 func (p *Database) RecoverLocalPassword(ctx context.Context, user uuid.UUID, replacement string) error {
 	if user == uuid.Nil {
 		return ErrLocalCredentialUnknown

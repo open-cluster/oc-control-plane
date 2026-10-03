@@ -9,21 +9,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// JobCancellation is what asking a job to stop actually did. The three cases are genuinely
-// different events, and a caller that cannot tell them apart either reports a stop that never
-// happened or hides an outcome that already did.
 type JobCancellation int
 
 const (
-	// CancellationRefused means the job had already reached an outcome. Nothing changed: a
-	// result that already exists is not undone by asking for a stop.
 	CancellationRefused JobCancellation = iota + 1
-	// CancellationRecorded means the job had not started, so it was cancelled outright. No
-	// relay is involved, because nothing is executing it and nothing else could ever finish it.
 	CancellationRecorded
-	// CancellationRequested means the job is executing. The request is advisory: the job stays
-	// leased and its terminal outcome still arrives from the relay, because there is exactly
-	// one write path into job truth and this is not it.
 	CancellationRequested
 )
 
@@ -40,11 +30,6 @@ func (c JobCancellation) String() string {
 	}
 }
 
-// RequestJobCancellation asks for a job to stop and reports what that meant for this job.
-//
-// Both cases are decided in one statement, so a job cannot start executing between reading
-// its state and acting on it — which would otherwise cancel a job outright while a relay was
-// already running it, and leave that execution's result with nowhere to go.
 func (p *Database) RequestJobCancellation(
 	ctx context.Context, organization uuid.UUID, jobID uuid.UUID,
 ) (JobCancellation, error) {
@@ -67,7 +52,6 @@ func (p *Database) RequestJobCancellation(
 		jobID, organization).Scan(&resulting)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		// Either terminal already or no such job. Both mean there is nothing here to stop.
 		return CancellationRefused, nil
 	case err != nil:
 		return 0, fmt.Errorf("requesting job cancellation: %w", err)
@@ -78,8 +62,6 @@ func (p *Database) RequestJobCancellation(
 	}
 }
 
-// PendingCancellations lists the executing jobs a session has been asked to stop. It is scoped
-// to the session holding the lease, so no relay is ever told to stop work it is not executing.
 func (p *Database) PendingCancellations(
 	ctx context.Context, organization uuid.UUID, sessionID uuid.UUID,
 ) ([]JobFence, error) {

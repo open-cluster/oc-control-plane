@@ -18,7 +18,6 @@ var (
 	ErrContextWindow = errors.New("the model provider rejected the request context")
 )
 
-// Outcome is which named failure happened.
 type Outcome int16
 
 const (
@@ -46,8 +45,6 @@ func (o Outcome) String() string {
 	}
 }
 
-// sentinel is the error each outcome reads as, so a caller can ask errors.Is about the specific
-// thing that went wrong rather than string-matching a message.
 func (o Outcome) sentinel() error {
 	switch o {
 	case OutcomeRefused:
@@ -65,7 +62,6 @@ func (o Outcome) sentinel() error {
 	}
 }
 
-// Failure is one named failure with the provider and model it happened on.
 type Failure struct {
 	Outcome  Outcome
 	Provider string
@@ -86,8 +82,6 @@ func (f *Failure) Error() string {
 	return message
 }
 
-// Unwrap returns both the outcome's own sentinel and the domain's model-unavailable error, so
-// errors.Is answers yes to the specific failure and to the general one the round is ended by.
 func (f *Failure) Unwrap() []error {
 	unwrapped := []error{ErrModelUnavailable}
 	if sentinel := f.Outcome.sentinel(); sentinel != nil {
@@ -99,27 +93,21 @@ func (f *Failure) Unwrap() []error {
 	return unwrapped
 }
 
-// Failed builds a named failure.
 func Failed(outcome Outcome, provider, model, detail string) *Failure {
 	return &Failure{Outcome: outcome, Provider: provider, Model: model, Detail: detail}
 }
 
-// FailedBecause builds a named failure that keeps an underlying cause reachable, for a transport
-// error worth inspecting further up.
 func FailedBecause(outcome Outcome, provider, model, detail string, cause error) *Failure {
 	return &Failure{
 		Outcome: outcome, Provider: provider, Model: model, Detail: detail, cause: cause,
 	}
 }
 
-// ContextRejected preserves the rejected-request outcome while making bounded recovery explicit.
 func ContextRejected(provider, model, detail string, cause error) *Failure {
 	return FailedBecause(OutcomeRejected, provider, model, detail,
 		errors.Join(ErrContextWindow, cause))
 }
 
-// OutcomeOf reports the named outcome behind an error, and whether there was one. An error from
-// somewhere else in the program is not forced into this vocabulary.
 func OutcomeOf(err error) (Outcome, bool) {
 	var failure *Failure
 	if errors.As(err, &failure) {

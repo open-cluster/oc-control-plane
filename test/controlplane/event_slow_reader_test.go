@@ -110,7 +110,6 @@ func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 	if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 		t.Fatalf("server did not close the slow reader: %v", err)
 	}
-	// A normal reconnect can still reach the durable ending after the slow connection closes.
 	replay := openEventStream(t, plane, turn, "?after=20000")
 	defer func() { _ = replay.Body.Close() }()
 	ending, err := io.ReadAll(replay.Body)

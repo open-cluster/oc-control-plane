@@ -10,18 +10,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ErrEnrolmentRefused reports that a bootstrap token did not entitle its presenter to an
-// identity. Every reason produces this one error, because telling an unknown token from a
-// spent one is exactly what lets an attacker probe for valid tokens. The distinction is
-// carried alongside it for the audit trail and must not reach the presenter.
 var ErrEnrolmentRefused = errors.New("relay enrolment refused")
 
-// EnrolmentRefusal is why an enrolment was refused. It exists for the server-side audit
-// trail; it is never rendered into a response.
 type EnrolmentRefusal int
 
 const (
-	// RefusalNone is the zero value, used when no refusal occurred.
 	RefusalNone EnrolmentRefusal = iota
 	RefusalTokenUnknown
 	RefusalTokenExpired
@@ -49,9 +42,6 @@ func (r EnrolmentRefusal) String() string {
 	}
 }
 
-// RelayEnrolment is everything a relay presents at registration, already reduced to what is
-// durable. The bootstrap token and the credential appear only as digests: this type crosses
-// no boundary carrying a secret in a form that could be stored or logged by accident.
 type RelayEnrolment struct {
 	TokenDigest        []byte
 	CredentialDigest   []byte
@@ -61,15 +51,6 @@ type RelayEnrolment struct {
 	Capabilities       []byte
 }
 
-// EnrolRelay spends the bootstrap token and records the identity it mints, in one
-// transaction. Both happen or neither does: a token consumed without an identity issued
-// would strand an operator with an installation that can never register, and an identity
-// without the token spent would let one token enrol a second relay.
-//
-// Concurrency is resolved by the database rather than by application locking. Two
-// simultaneous presentations of one token serialise on its row, so exactly one observes it
-// unspent and the other is refused. An application-level guard would be a second source of
-// truth for something the row already decides.
 func (p *Database) EnrolRelay(
 	ctx context.Context,
 	organization uuid.UUID,
@@ -91,8 +72,6 @@ func (p *Database) EnrolRelay(
 		return uuid.Nil, RefusalNone, err
 	}
 	if !spent {
-		// The token was not spendable. Read why, for the audit trail only, from inside the
-		// same transaction so the explanation describes the state the guard actually saw.
 		refusal, reasonErr := explainUnspendableToken(ctx, transaction, organization, enrolment.TokenDigest)
 		if reasonErr != nil {
 			return uuid.Nil, RefusalNone, reasonErr
@@ -115,9 +94,6 @@ func (p *Database) EnrolRelay(
 	return registrationID, RefusalNone, nil
 }
 
-// spendBootstrapToken marks the token consumed, reporting whether this call was the one that
-// spent it. Every condition is in the WHERE clause, so the decision is the database's and
-// cannot be raced between a read and a write.
 func spendBootstrapToken(
 	ctx context.Context,
 	transaction pgx.Tx,
@@ -139,8 +115,6 @@ func spendBootstrapToken(
 	return tag.RowsAffected() == 1, nil
 }
 
-// explainUnspendableToken reports why the guarded update matched nothing. Its result reaches
-// the audit trail and never the caller of Register.
 func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
 	organization uuid.UUID, tokenDigest []byte) (EnrolmentRefusal, error) {
 	var (
@@ -171,14 +145,10 @@ func explainUnspendableToken(ctx context.Context, transaction pgx.Tx,
 	case expired:
 		return RefusalTokenExpired, nil
 	default:
-		// The row is spendable now, so it was spent and rolled back between the update and
-		// this read. Reporting it as already consumed is the honest description.
 		return RefusalTokenAlreadyConsumed, nil
 	}
 }
 
-// relayRegistration is the row about to be written, bundled so the insert takes what it
-// needs as one value rather than as a widening parameter list.
 type relayRegistration struct {
 	id           uuid.UUID
 	organization uuid.UUID
@@ -205,9 +175,6 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 	return nil
 }
 
-// IssueBootstrapToken records a single-use enrolment token for an organization. Only the
-// digest is stored, so this is the one moment the token exists here; the caller shows it to
-// the operator once and keeps no copy either.
 func (p *Database) IssueBootstrapToken(
 	ctx context.Context,
 	organization uuid.UUID,
@@ -228,9 +195,6 @@ func (p *Database) IssueBootstrapToken(
 	return nil
 }
 
-// VerifyRelayCredential reports whether a credential digest matches a live registration.
-// It fails closed: a revoked registration authenticates nothing, and an unknown one is
-// indistinguishable from a wrong credential.
 func (p *Database) VerifyRelayCredential(
 	ctx context.Context,
 	organization uuid.UUID,

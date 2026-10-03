@@ -1,5 +1,3 @@
-// Package agent runs an Investigation through model completions and read-only Tools.
-// Provider adapters remain in subpackages, and customer evidence is never logged or traced.
 package agent
 
 import (
@@ -17,7 +15,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 )
 
-// Store is the durable state Agent.Run consumes.
 type Store interface {
 	InvestigationCandidates(context.Context, uuid.UUID) ([]integrations.Integration, error)
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (investigation.Trigger, error)
@@ -34,7 +31,6 @@ type Store interface {
 	FailInvestigation(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, investigation.Usage) error
 }
 
-// Agent runs investigations against one validated model configuration.
 type Agent struct {
 	completer        Completer
 	modelConfig      ModelConfig
@@ -48,7 +44,6 @@ type Agent struct {
 	MaxTurns         int
 }
 
-// NewAgent binds one validated model configuration to the Investigation runtime.
 func NewAgent(config ModelConfig, completer Completer) (*Agent, error) {
 	if config.ContextWindowTokens <= 0 || config.MaxOutputTokens <= 0 ||
 		int64(config.ContextWindowTokens) <= config.MaxOutputTokens {
@@ -76,8 +71,6 @@ var (
 
 const UpdateHypothesesToolName = "update_hypotheses"
 
-// runState is the private data carried by Agent.Run. It has no behavior so the state
-// machine remains visible in Run.
 type runState struct {
 	organization uuid.UUID
 	opened       investigation.Investigation
@@ -139,7 +132,6 @@ type modelMove struct {
 	Conclusion *investigation.Conclusion
 }
 
-// Run performs one investigation through a durable terminal result.
 func (r *Agent) Run(
 	ctx context.Context,
 	organization uuid.UUID,
@@ -550,7 +542,6 @@ func (r *Agent) Run(
 	}
 }
 
-// modelPrompt renders the immutable orientation and the transcript Agent.Run owns.
 func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
 	prompt := Prompt{
 		Model: r.modelConfig.Model,
@@ -644,13 +635,6 @@ func hypothesisStatusAllowed(status investigation.HypothesisStatus) bool {
 	return false
 }
 
-// offeredName renders a tool name for a PROGRESS line, which is prose the platform writes.
-//
-// A tool name arrives from the model, and a model can invent one — the run then fails with
-// "not one of the tools the selected sources offer". Interpolating it would put a string
-// the model chose into a sentence the platform is supposed to have authored, which is the
-// one thing this stream promises never to carry. So a name is only spoken when it is one
-// this deployment actually offers; anything else is described rather than quoted.
 func offeredName(offeredSources []offeredSource, tool string) string {
 	if _, _, offered := toolNamed(selections(offeredSources), tool); offered {
 		return tool
@@ -658,9 +642,6 @@ func offeredName(offeredSources []offeredSource, tool string) string {
 	return "a tool that is not offered"
 }
 
-// announceToolStarted says which read is about to happen and where it is going, resolving
-// the integration from the offered sources with the same lookup the execution itself uses,
-// so the event names the source the read actually reaches.
 func (r *Agent) announceToolStarted(
 	ctx context.Context, state *runState, call toolCall, ordinal int,
 ) {
@@ -675,7 +656,6 @@ func (r *Agent) announceToolStarted(
 	r.announce(ctx, state.events, payload)
 }
 
-// record writes one run into the provenance, in ordinal order.
 func (r *Agent) recordToolRun(
 	ctx context.Context, state *runState, run investigation.ToolRun,
 ) error {
@@ -690,8 +670,6 @@ func (r *Agent) recordToolRun(
 	return nil
 }
 
-// failureReason renders a model error as the recordable failure reason: the
-// loop's own sentinels speak for themselves, anything else came from the model boundary.
 func failureReason(err error) string {
 	if errors.Is(err, errProvenance) || errors.Is(err, errNoConclusion) {
 		return err.Error()
@@ -699,9 +677,6 @@ func failureReason(err error) string {
 	return reasonerFailure(err)
 }
 
-// offeredSources is every enabled candidate whose verified grants support at least one
-// tool, in stable name order: the investigator's whole universe, derived from verified
-// reality.
 func offeredSources(
 	catalog integrations.Catalog, candidates []integrations.Integration,
 ) []offeredSource {
@@ -722,9 +697,6 @@ func offeredSources(
 	return sources
 }
 
-// offeredSourcesForConversation confines a provider-originated Conversation to its
-// originating thread. Other provider categories remain available, while another
-// installation of the originating provider and its broader reads are not implied.
 func offeredSourcesForConversation(
 	catalog integrations.Catalog,
 	candidates []integrations.Integration,
@@ -777,9 +749,6 @@ func offeredSourcesForConversation(
 	return scoped
 }
 
-// bindDuplicateToolNames keeps two Integrations of one type independently reachable. A
-// single Integration retains the provider's stable Tool name; only collisions gain the
-// full Integration identity, so model APIs receive deterministic unique names.
 func bindDuplicateToolNames(sources []offeredSource) {
 	counts := map[string]int{}
 	for _, source := range sources {
@@ -797,9 +766,6 @@ func bindDuplicateToolNames(sources []offeredSource) {
 	}
 }
 
-// suppressedRun records an identical repeat that was not re-executed, with an in-band
-// note the model reads in its next turn: where the original result sits, and the
-// allowed next moves.
 func suppressedRun(
 	opened investigation.Investigation, call toolCall, ordinal, original int,
 ) investigation.ToolRun {
@@ -819,8 +785,6 @@ func suppressedRun(
 	}
 }
 
-// callIdentityOf canonicalises one call for duplicate detection. json.Marshal renders
-// map keys sorted, so two identical argument sets render identically.
 func callIdentityOf(call toolCall) string {
 	encoded, err := json.Marshal(call.Arguments)
 	if err != nil {
@@ -829,7 +793,6 @@ func callIdentityOf(call toolCall) string {
 	return call.Tool + " " + string(encoded)
 }
 
-// concludeReason says why reads are over, written for the model to act on.
 func concludeReason(stoppedBy string, offered int) string {
 	if offered == 0 {
 		return "No readable sources are connected. Conclude from the subject alone."
@@ -850,15 +813,11 @@ func concludeReason(stoppedBy string, offered int) string {
 	}
 }
 
-// wallClockAlmostOver reports whether less than reserve remains before ctx's deadline.
-// No deadline is never almost over.
 func wallClockAlmostOver(ctx context.Context, reserve time.Duration) bool {
 	deadline, has := ctx.Deadline()
 	return has && time.Until(deadline) < reserve
 }
 
-// boundActions keeps proposed actions inside the record's bounds; the decode
-// side enforces the same limits, so this is the runner's own defensive copy of them.
 func boundActions(actions []investigation.ActionProposal) []investigation.ActionProposal {
 	if len(actions) > investigation.MaxConclusionActions {
 		actions = actions[:investigation.MaxConclusionActions]
@@ -873,9 +832,6 @@ func boundActions(actions []investigation.ActionProposal) []investigation.Action
 	return kept
 }
 
-// orientation assembles what the investigator is given: only what the platform already
-// holds. The trigger and the inventory are best-effort — an unreadable one narrows the
-// orientation, never fails the investigation.
 func (r *Agent) orientation(
 	ctx context.Context,
 	organization uuid.UUID,
@@ -889,9 +845,7 @@ func (r *Agent) orientation(
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Sources:     offered,
-		// Prior cited findings and a bounded Message tail, or nil for a single-shot
-		// Investigation that has no Conversation to continue.
-		Brief: brief,
+		Brief:       brief,
 	}
 	if opened.IncidentID != uuid.Nil {
 		if trigger, err := r.Store.TriggerIncident(ctx, organization, opened.IncidentID); err == nil {
@@ -905,7 +859,6 @@ func (r *Agent) orientation(
 	return oriented
 }
 
-// selections adapts the offered sources to the executor's shape.
 func selections(offered []offeredSource) []selection {
 	selections := make([]selection, 0, len(offered))
 	for _, source := range offered {

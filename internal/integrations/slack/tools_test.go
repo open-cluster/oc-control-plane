@@ -9,9 +9,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The tools against the fake vendor: bounds applied, truncation surfaced, refusals in
-// plain language. The Run functions under test are the real ones the catalog serves.
-
 func toolNamed(t *testing.T, client *Client, name string) integrations.Tool {
 	t.Helper()
 	for _, tool := range tools(client) {
@@ -33,8 +30,6 @@ func run(
 	})
 }
 
-// resolvable adds the auth.test and users.info answers name resolution and permalinks
-// read, so a message-reading test's fake speaks the whole conversation.
 func resolvable(fake *fakeSlack) {
 	fake.answer("auth.test",
 		`{"ok":true,"team":"Acme","user":"bot","url":"https://acme.slack.com/"}`)
@@ -197,8 +192,6 @@ func TestChannelHistorySurfacesTruncation(t *testing.T) {
 	}
 }
 
-// A transcript is evidence someone can act on: authors resolve to display names with
-// the raw id kept beside, and every message carries the workspace's own permalink.
 func TestChannelHistoryResolvesAuthorsAndAttachesPermalinks(t *testing.T) {
 	t.Parallel()
 
@@ -245,8 +238,6 @@ func TestChannelHistoryKeepsRawIDsWhenResolutionCannot(t *testing.T) {
 	}
 }
 
-// A refused resolution is remembered: a transcript full of one author's messages costs
-// one refused users.info, not one per message.
 func TestARefusedUserResolutionIsAskedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -266,8 +257,6 @@ func TestARefusedUserResolutionIsAskedOnce(t *testing.T) {
 	}
 }
 
-// The long thread is readable from its newest end, honestly flagged — never refused
-// and never a middle presented as the end.
 func TestThreadRepliesReadTheNewestTailOfALongThread(t *testing.T) {
 	t.Parallel()
 
@@ -390,8 +379,6 @@ func TestSearchCarriesChannelIdsAndTheRemainderFlag(t *testing.T) {
 	}
 }
 
-// The window travels structurally into the search query: the model asks with terms,
-// and the investigation's own window becomes the date modifiers.
 func TestSearchDerivesTheWindowFromTheInvestigation(t *testing.T) {
 	t.Parallel()
 

@@ -11,7 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ScorerRevision identifies the deterministic structural scoring contract.
 const ScorerRevision = "structural-v2"
 
 //go:embed cases/*/*.yaml cases/*/*.json structured-results.yaml baseline.json
@@ -84,20 +83,17 @@ func LoadStructuredResults() (string, []StructuredResultFixture, error) {
 	return catalog.Revision, catalog.Fixtures, nil
 }
 
-// Cause describes a conclusion that must be supported by an observed tool read.
 type Cause struct {
 	Name    string   `json:"name"`
 	Markers []string `json:"markers"`
 	Tools   []string `json:"tools"`
 }
 
-// Read describes evidence that separates competing explanations.
 type Read struct {
 	Tool      string `json:"tool"`
 	ArgMarker string `json:"argMarker,omitempty"`
 }
 
-// GroundTruth is the independently authored structural scoring expectation.
 type GroundTruth struct {
 	Causes         []Cause  `json:"causes,omitempty"`
 	MustNotClaim   []string `json:"mustNotClaim,omitempty"`
@@ -109,21 +105,18 @@ type GroundTruth struct {
 	Survives       []string `json:"survives,omitempty"`
 }
 
-// World describes the observable operational situation independently of composition.
 type World struct {
 	Template    string   `json:"template"`
 	Situation   string   `json:"situation"`
 	Distractors []string `json:"distractors,omitempty"`
 }
 
-// Safety captures assertions that remain mandatory for every model and prompt revision.
 type Safety struct {
 	RequireCitations    bool `json:"requireCitations"`
 	RejectSecretLeakage bool `json:"rejectSecretLeakage"`
 	HonestInsufficiency bool `json:"honestInsufficiency,omitempty"`
 }
 
-// Fixture is one versioned investigation or follow-up evaluation world.
 type Fixture struct {
 	Name        string      `json:"name"`
 	Revision    string      `json:"revision"`
@@ -132,7 +125,6 @@ type Fixture struct {
 	Safety      Safety      `json:"safety"`
 }
 
-// Catalog contains all versioned evaluation worlds.
 type Catalog struct {
 	Revision string    `json:"revision"`
 	Fixtures []Fixture `json:"fixtures"`
@@ -156,7 +148,6 @@ type scenarioMetadata struct {
 	GeneratePostmortem       bool      `yaml:"generatePostmortem"`
 }
 
-// Load reads independently authored scenario descriptions and expected outcomes.
 func Load() (Catalog, error) {
 	scenarios, err := fs.ReadDir(fixtureFiles, "cases")
 	if err != nil {
@@ -232,7 +223,6 @@ func decodeYAML(name string, destination any) error {
 	return nil
 }
 
-// Lookup finds the independently versioned fixture for a named world.
 func (c Catalog) Lookup(name string) (Fixture, bool) {
 	for _, fixture := range c.Fixtures {
 		if fixture.Name == name {

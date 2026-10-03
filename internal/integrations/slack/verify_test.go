@@ -32,8 +32,6 @@ func TestProbeWithEveryScopeIsVerifiedAndNamesTheWorkspace(t *testing.T) {
 		t.Errorf("the note %q does not say whose workspace and bot answered", verified.Note)
 	}
 
-	// The verified grants are on the record — tool availability derives from them —
-	// and a bot token never records user_token, so user-token-only search stays absent.
 	granted := strings.Join(verified.Grants, " ")
 	for _, scope := range []string{"channels:read", "channels:history", "search:read", "users:read"} {
 		if !strings.Contains(granted, scope) {
@@ -64,9 +62,6 @@ func TestProbeRecordsAUserTokenAsOne(t *testing.T) {
 func TestProbeWithAMissingScopeIsVerifiedAndNamesWhatItCosts(t *testing.T) {
 	t.Parallel()
 
-	// A scope this product DOES request and the installation did not grant. It used to be
-	// search:read here, which is the one scope we never ask for — asserting on it was
-	// asserting that a correct installation reads as broken.
 	fake := newFakeSlack(t)
 	fake.answers["auth.test"] = authTestGranting("channels:read,channels:history")
 
@@ -97,8 +92,6 @@ func TestProbeWithARefusedTokenIsFailedInTheOperatorsLanguage(t *testing.T) {
 func TestProbeAgainstAnUnreachableVendorIsFailedWithoutGuessing(t *testing.T) {
 	t.Parallel()
 
-	// A closed port: the vendor cannot be reached at all, which is a different fact from a
-	// refused token and must read as one.
 	verified := probe(testContext(t), NewClient("http://127.0.0.1:1"), "xoxb-under-test")
 	if verified.Status != integrations.StatusFailed {
 		t.Fatalf("status = %s, want failed; note: %s", verified.Status, verified.Note)
@@ -147,9 +140,6 @@ func TestProbeWithUnreportedScopesIsVerifiedWithoutGrants(t *testing.T) {
 func TestProbeWithABotTokensOwnScopesIsVerified(t *testing.T) {
 	t.Parallel()
 
-	// The recommended bot installation, exactly: every scope the offered tools need and
-	// no workspace-wide search, which this product deliberately does not ask for. It
-	// reported degraded, which told a customer their correct installation was broken.
 	fake := newFakeSlack(t)
 	fake.answers["auth.test"] = authTestGranting("channels:read,channels:history,users:read")
 

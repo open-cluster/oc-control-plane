@@ -6,44 +6,15 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// WHAT AN INVESTIGATION LOOKS LIKE IN A SLACK THREAD.
-//
-// The mapping is here, in the provider package, and the investigation knows nothing about it.
-// This file takes the persisted event stream — the same stream the console renders — and turns
-// it into the two things a thread shows: task updates as the work happens, and the answer as
-// text. Nothing is invented and nothing is asked of the model: every payload was composed by
-// the control plane from facts it already held, which is why there is no reasoning to leak here
-// and nothing to sanitize.
-//
-// THE MODEL'S OWN REASONING NEVER APPEARS. The event stream carries none by construction, so a
-// thread holds operational fact: what is being read, what it found, and the answer.
-
-// Rendered is what one batch of events becomes in a thread.
 type Rendered struct {
-	// Status is the one-line "what is happening now" a thread shows above the answer while
-	// the turn runs. Empty when this batch changed nothing about it.
-	Status string
-	// Text is answer text to append, already coalesced. Slack is never called per token:
-	// the caller flushes on a size or interval boundary, and this is what has accumulated.
-	Text string
-	// Progress is completed reads, one line each, so the answer stays traceable in the
-	// thread without a reader leaving it.
+	Status   string
+	Text     string
 	Progress []string
-	// Done reports that the turn reached a terminal state and the stream should be closed.
-	Done bool
-	// Failed reports that the terminal state was a failure. The thread says so plainly
-	// rather than going quiet, because a question that got no answer and no explanation is
-	// the worst outcome available.
-	Failed bool
-	// Footer is deployment-authored navigation appended only to a terminal answer.
-	Footer string
+	Done     bool
+	Failed   bool
+	Footer   string
 }
 
-// Render maps events onto what a thread shows.
-//
-// Events arrive in order and each is rendered once, so a caller that advances its cursor by
-// what it delivered cannot repeat itself. An event kind this build does not render is skipped
-// rather than refused: a thread missing a line is a smaller failure than a delivery that stops.
 func Render(events []investigation.Event) Rendered {
 	var rendered Rendered
 	var text strings.Builder
@@ -61,8 +32,6 @@ func Render(events []investigation.Event) Rendered {
 				rendered.Status = "Reading " + line
 			}
 		case investigation.EventToolCompleted:
-			// One line per completed read, with what it found. This is what makes an
-			// answer traceable in the thread rather than only in the console.
 			if line := payloadText(event, "summary", "message", "tool", "name"); line != "" {
 				rendered.Progress = append(rendered.Progress, line)
 			}
@@ -88,9 +57,6 @@ func Render(events []investigation.Event) Rendered {
 	return rendered
 }
 
-// payloadText reads the first of several keys that carries a non-empty string, trimmed, so a
-// payload shape that gains a field does not silently render nothing. It is for the LINES a
-// thread shows — a status, a completed read, a reason — each of which is a whole thing.
 func payloadText(event investigation.Event, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := event.Payload[key].(string); ok {
@@ -102,9 +68,5 @@ func payloadText(event investigation.Event, keys ...string) string {
 	return ""
 }
 
-// FailureNotice is what a thread is told when delivery itself could not finish.
-//
-// It is this build's own words. A vendor's message is text somebody else chose, and repeating
-// it into a customer's workspace would put attacker-influenced text in front of a person.
 const FailureNotice = "OpenCluster could not finish answering here. " +
 	"The investigation itself is unaffected and is readable in the console."

@@ -16,13 +16,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-// The integrations capability owns its vocabulary; this file is its persistence. The
-// contract is asserted here so a drifted method signature is a compile error.
 var _ integrations.Store = (*Database)(nil)
 
-// integrationColumns is every column an Integration is read from, named once. One list
-// rather than five copies, because a column added to one query and forgotten in another is
-// a field that is silently always zero.
 const integrationColumns = `integration_id, provider, name, configuration,
 	       webhook_secret_digest, credential_sealed, relay_id, verification_status,
 	       verified_at, verification_grants, disabled, created_at,
@@ -33,12 +28,6 @@ const integrationColumns = `integration_id, provider, name, configuration,
 	         WHERE installed.integration_id = integration.integration_id
 	           AND installed.org_id = integration.org_id)`
 
-// CreateIntegration records one configured installation.
-//
-// The Relay is not read first and then written against: the composite foreign key means
-// the insert itself fails when it belongs to another organization, so a request naming
-// another tenant's Relay is refused by the database rather than by a check that has to be
-// remembered at every call site.
 func (p *Database) CreateIntegration(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	wanted integrations.NewIntegration,
@@ -53,10 +42,6 @@ func (p *Database) CreateIntegration(
 					fmt.Errorf("encoding configuration: %w", err)
 			}
 
-			// A pre-creation probe's judgement lands with the row itself, so a
-			// credential-bearing Integration is born verified in one transaction: there
-			// is no moment where it exists with a checked credential and an unchecked
-			// status.
 			var status *string
 			verified := false
 			grants := []string{}
@@ -89,10 +74,6 @@ func (p *Database) CreateIntegration(
 				return integrations.Integration{}, audit.Target{}, nil,
 					fmt.Errorf("creating an integration: %w", err)
 			}
-			// The routing record lands in the SAME transaction, so an Integration that
-			// exists is one an inbound event can reach. A provider installation another Integration
-			// already holds refuses the whole creation rather than leaving a connected
-			// integration whose events resolve somewhere else.
 			if wanted.Installation != nil {
 				if err := recordInstallation(ctx, transaction, organization, created.ID,
 					created.Provider, *wanted.Installation); err != nil {
@@ -102,8 +83,6 @@ func (p *Database) CreateIntegration(
 				created.Installation = &installed
 			}
 
-			// The webhook secret is nowhere in the detail and could not be: audit.Detail
-			// drops anything named like a credential on the way in.
 			return created,
 				audit.Target{Kind: audit.TargetIntegration, ID: created.ID.String()},
 				audit.Detail{
@@ -113,14 +92,6 @@ func (p *Database) CreateIntegration(
 		})
 }
 
-// IntegrationByID resolves an Integration from its opaque identifier alone and returns
-// the organization it belongs to.
-//
-// This is the ONE integration read that does not take an organization, and it is
-// deliberate. An inbound delivery names its Integration and nothing else, because a path
-// is chosen by the caller and a caller who could name a tenant could try every tenant.
-// The row that is found is itself the authority for the organization: it discovers a
-// tenant rather than trusting one.
 func (p *Database) IntegrationByID(
 	ctx context.Context, id uuid.UUID,
 ) (integrations.Integration, error) {
@@ -140,7 +111,6 @@ func (p *Database) IntegrationByID(
 	return found, nil
 }
 
-// Integration reads one, scoped to the tenant.
 func (p *Database) Integration(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (integrations.Integration, error) {
@@ -262,9 +232,6 @@ func (p *Database) QueryIntegrations(
 	return list, nil
 }
 
-// CountIntegrationsByProvider reports how many Integrations of each type a tenant has, for
-// the catalog's "3 configured" column. Counted by the database rather than by walking a
-// bounded page, so the number cannot be silently short.
 func (p *Database) CountIntegrationsByProvider(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 ) ([]integrations.ProviderCount, error) {
@@ -304,7 +271,6 @@ func (p *Database) CountIntegrationsByProvider(
 	return counts, nil
 }
 
-// ReviseIntegration changes what a PATCH may change.
 func (p *Database) ReviseIntegration(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, revision integrations.Revision,
@@ -347,8 +313,6 @@ func (p *Database) ReviseIntegration(
 		})
 }
 
-// SetIntegrationDisabled turns an Integration off or back on without deleting it, so an
-// operator can stop using a source without losing the record of what it produced.
 func (p *Database) SetIntegrationDisabled(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, disabled bool,
@@ -381,11 +345,6 @@ func (p *Database) SetIntegrationDisabled(
 	return err
 }
 
-// DeleteIntegration removes an Integration nothing depends on.
-//
-// The dependents are counted inside the deleting transaction, so an Alert Event arriving between
-// the check and the delete serialises on the row rather than racing it. Historical deliveries
-// are dependents too; deletion must not erase accepted external evidence.
 func (p *Database) DeleteIntegration(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID,
@@ -416,8 +375,6 @@ func (p *Database) DeleteIntegration(
 					integrations.ErrInUse, alertEvents, deliveries, jobs, changeEvents, investigations)
 			}
 
-			// Removing the Integration retires its reply obligations atomically; a
-			// mapping cannot be removed independently while a reply still uses it.
 			if _, err := transaction.Exec(ctx, `
 				DELETE FROM slack_reply r USING slack_conversation s
 				WHERE r.org_id = $2 AND s.org_id = r.org_id
@@ -440,8 +397,6 @@ func (p *Database) DeleteIntegration(
 				 WHERE integration_id = $1 AND org_id = $2`,
 				id, organization)
 			if err != nil {
-				// A dependent created between the count and the delete surfaces as a
-				// foreign-key refusal, which is the race answered by the database.
 				if isForeignKeyViolation(err) {
 					return struct{}{}, audit.Target{}, nil, integrations.ErrInUse
 				}
@@ -457,18 +412,12 @@ func (p *Database) DeleteIntegration(
 	return err
 }
 
-// RotateIntegrationWebhookSecret replaces the digest without disturbing identity, so a
-// suspected disclosure does not mean recreating the Integration and reconfiguring the
-// source. One digest is live at a time; a rotation is a brief outage the operator
-// schedules.
 func (p *Database) RotateIntegrationWebhookSecret(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, digest []byte,
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationSecretRotated,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			// Guarded on the Integration already carrying one: rotating a secret onto a
-			// type that receives no webhooks would create a credential with no user.
 			tag, err := transaction.Exec(ctx, `
 				UPDATE integration
 				   SET webhook_secret_digest = $3
@@ -490,13 +439,6 @@ func (p *Database) RotateIntegrationWebhookSecret(
 	return err
 }
 
-// ReplaceIntegrationCredential swaps the sealed outbound credential, applies the revision
-// it travelled with, and records what the probe of the new one established — one
-// transaction, so there is no moment where the revision holds without the credential, or
-// the new credential sits beside the old one's verification.
-//
-// Guarded on the Integration already holding one: a credential can be replaced, never
-// acquired, because a type that takes one requires it at creation.
 func (p *Database) ReplaceIntegrationCredential(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, revision integrations.Revision, sealed []byte,
@@ -539,10 +481,6 @@ func (p *Database) ReplaceIntegrationCredential(
 					fmt.Errorf("replacing a credential: %w", err)
 			}
 
-			// The routing record moves WITH the credential, in this transaction.
-			// Authorizing again can issue a new agent identity, and a credential replaced
-			// without its routing refreshed is a live credential answering as an identity
-			// it no longer holds — which is how an agent starts replying to itself.
 			if installed != nil {
 				if err := recordInstallationIn(ctx, transaction, organization, id,
 					replaced.Provider, *installed); err != nil {
@@ -557,7 +495,6 @@ func (p *Database) ReplaceIntegrationCredential(
 		})
 }
 
-// RecordIntegrationVerification writes what a verify run established onto the record.
 func (p *Database) RecordIntegrationVerification(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, verification integrations.Verification,
@@ -590,10 +527,6 @@ func (p *Database) RecordIntegrationVerification(
 		})
 }
 
-// IntegrationRelayStatus reports a Relay's presence and advertised capabilities, for
-// verification. A relay that does not exist in this tenant answers as unbound rather than
-// as an error: the verify run's job is to report, and "the relay this names is gone" is a
-// report.
 func (p *Database) IntegrationRelayStatus(
 	ctx context.Context, organization uuid.UUID, relayID uuid.UUID,
 ) (integrations.RelayStatus, error) {
@@ -628,21 +561,13 @@ func (p *Database) IntegrationRelayStatus(
 	if names, decodeErr := decodeCapabilityNames(capabilities); decodeErr == nil {
 		status.Capabilities = names
 	}
-	// Connected is derived, never stored: a recent heartbeat, no recorded ending for the
-	// current session, and an identity that has not been revoked.
 	status.Connected = revoked == nil && sessionEnded == nil && lastSeen != nil &&
 		time.Since(*lastSeen) <= LivenessAllowance
 	return status, nil
 }
 
-// LivenessAllowance is how stale a relay's heartbeat may be before "connected" stops
-// being an honest answer. It must equal relay.LivenessAllowance — the session's own idle
-// timeout — and a composition-root test asserts the two agree, because this package cannot
-// import the one that owns the protocol cadence.
 const LivenessAllowance = 45 * time.Second
 
-// decodeCapabilityNames flattens the enrolment attestation's capability list to names.
-// The attestation stores [{id, version}] objects; verification compares names.
 func decodeCapabilityNames(raw []byte) ([]string, error) {
 	if len(raw) == 0 {
 		return []string{}, nil
@@ -662,8 +587,6 @@ func decodeCapabilityNames(raw []byte) ([]string, error) {
 	return names, nil
 }
 
-// LastAcceptedDelivery reports when an integration last accepted a webhook delivery, zero
-// when it never has.
 func (p *Database) LastAcceptedDelivery(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (time.Time, error) {
@@ -688,9 +611,6 @@ func (p *Database) LastAcceptedDelivery(
 	return last, nil
 }
 
-// nullableIntegration holds the columns that may be SQL NULL, so one struct is threaded
-// through both scanners rather than pointers being declared twice and getting out of order
-// once.
 type nullableIntegration struct {
 	configuration []byte
 	relay         *uuid.UUID
@@ -699,8 +619,6 @@ type nullableIntegration struct {
 	installation  []byte
 }
 
-// destinations is the scan target list, in the order integrationColumns names them. A
-// method rather than an inline list so the two scanners cannot drift apart.
 func (n *nullableIntegration) destinations(found *integrations.Integration) []any {
 	return []any{
 		&found.ID, &found.Provider, &found.Name, &n.configuration,
@@ -777,8 +695,6 @@ func verificationGrants(verification integrations.Verification) []string {
 	return orEmptyGrants(verification.Grants)
 }
 
-// identityOrNew honors an identity the handler minted before the insert — the sealed
-// credential is bound to it — and mints one only for a caller that supplied none.
 func identityOrNew(id uuid.UUID) uuid.UUID {
 	if id == uuid.Nil {
 		return uuid.New()
@@ -786,8 +702,6 @@ func identityOrNew(id uuid.UUID) uuid.UUID {
 	return id
 }
 
-// nullableUUID renders the zero UUID as SQL NULL, which is what "no Relay serves this"
-// means in the column.
 func nullableUUID(id uuid.UUID) *uuid.UUID {
 	if id == uuid.Nil {
 		return nil
@@ -795,10 +709,6 @@ func nullableUUID(id uuid.UUID) *uuid.UUID {
 	return &id
 }
 
-// RecordCredentialUnseal writes the audit event for one credential unseal: a system act
-// naming the integration whose credential was opened and the path that opened it. It is
-// recorded BEFORE the credential is used — a use that cannot be recorded does not
-// happen, for the same reason audited operations roll back with their record.
 func (p *Database) RecordCredentialUnseal(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, purpose string,
 ) error {

@@ -9,7 +9,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
 )
 
-// HTTPRequestLogger records one completion event with the request and trace identifiers.
 func HTTPRequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -30,7 +29,6 @@ func HTTPRequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-// LoggerFrom returns the request logger when HTTPRequestLogger installed one.
 func LoggerFrom(ctx context.Context, fallback *slog.Logger) *slog.Logger {
 	if logger, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
 		return logger

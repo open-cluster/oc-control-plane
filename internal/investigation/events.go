@@ -52,31 +52,19 @@ func (t EventType) String() string {
 	}
 }
 
-// Terminal reports whether nothing follows this event for its investigation.
 func (t EventType) Terminal() bool {
 	return t == EventConcluded || t == EventFailed || t == EventCancelled
 }
 
-// EventSchemaVersion travels in the wire envelope rather than in a persisted column,
-// because the table's shape IS version 1: a reader needs to know what it is being handed,
-// and a column would record the same number on every row forever.
 const EventSchemaVersion = 1
 
-// Event is one thing that happened, at its position in the investigation.
 type Event struct {
-	// Sequence is monotonic within the investigation, from one. A reader that reconnects
-	// asks for what comes after the number it already has, so this is the whole of the
-	// resume contract.
 	Sequence int64
 	At       time.Time
 	Type     EventType
-	// Replay stays open to historical and future fields; current writers use EventPayload.
-	Payload map[string]any
+	Payload  map[string]any
 }
 
-// eventTextBound caps any single string a payload carries. Progress lines are composed
-// here and are short by construction; the bound is what stops a provider's own summary
-// from being the exception.
 const (
 	eventTextBound    = 512
 	maxRunErrorLength = 1024
@@ -95,19 +83,13 @@ type stream struct {
 	organization  uuid.UUID
 	investigation uuid.UUID
 	telemetry     *Telemetry
-	// startedAt is when this stream began, which is when the run did.
-	startedAt time.Time
-	mu        sync.Mutex
-	sequence  int64
-	// sawFirst makes the time-to-first measurement happen once.
-	sawFirst bool
-	// closed is set by the terminal event. After it, nothing more is written for this
-	// investigation — a reader that saw a terminal event may stop, and an event arriving
-	// afterwards would mean it stopped too early.
-	closed bool
+	startedAt     time.Time
+	mu            sync.Mutex
+	sequence      int64
+	sawFirst      bool
+	closed        bool
 }
 
-// EventStream writes sanitized semantic progress for one Investigation.
 type EventStream = stream
 
 func NewEventStream(appendEvent func(
@@ -156,7 +138,6 @@ func (s *stream) Emit(
 	return s.emit(ctx, payload.EventType(), fields)
 }
 
-// emit writes one event, returning whatever went wrong so the caller can log it.
 func (s *stream) emit(
 	ctx context.Context, eventType EventType, payload map[string]any,
 ) error {
@@ -182,8 +163,6 @@ func (s *stream) emit(
 	if eventType.Terminal() {
 		s.closed = true
 	}
-	// Measured inside the lock so "first" is decided once, and reported outside it so a
-	// meter cannot hold up the writer.
 	firstEvent := !s.sawFirst
 	s.sawFirst = true
 	s.mu.Unlock()
@@ -194,9 +173,6 @@ func (s *stream) emit(
 	return nil
 }
 
-// safePayload drops credential-shaped keys, mechanically, by the SAME rule the audit path
-// applies — audit.NamesACredential is the one list, and a second copy of it would be a
-// second place for one of the words to be missing.
 func safePayload(payload map[string]any) map[string]any {
 	safe := make(map[string]any, len(payload))
 	if len(payload) == 0 {
@@ -214,11 +190,6 @@ func safePayload(payload map[string]any) map[string]any {
 	return safe
 }
 
-// safeValue applies the same rule one level down and bounds what it finds there.
-//
-// The nested case is tool arguments, which is the one part of a payload the model wrote.
-// They are bounded HERE rather than by whoever built the payload, because nothing upstream
-// knows how long a value a model will invent.
 func safeValue(value any) any {
 	nested, isMap := value.(map[string]any)
 	if !isMap {
@@ -241,9 +212,6 @@ func safeValue(value any) any {
 	return inner
 }
 
-// sortedKeys orders a payload's keys so that dropping the overflow keeps the same entries
-// every time. Map iteration order is random in Go, and one event keeping a field that the
-// next one drops is a difference nobody can explain.
 func sortedKeys(payload map[string]any) []string {
 	keys := make([]string, 0, len(payload))
 	for key := range payload {
@@ -256,25 +224,12 @@ func sortedKeys(payload map[string]any) []string {
 const maxPayloadEntries = 32
 
 const (
-	// eventPollInterval is how often a following connection looks for more. There is no
-	// pub/sub here on purpose: a poll against a primary-key range scan is cheap, and the
-	// alternative is an infrastructure dependency for a latency nobody is measuring.
-	eventPollInterval = 500 * time.Millisecond
-	// eventHeartbeat keeps an idle connection from being reaped by whatever sits in front
-	// of it. A comment line is not an event and no reader has to know about it.
-	eventHeartbeat    = 15 * time.Second
-	eventWriteTimeout = 10 * time.Second
-	// eventStreamLifetime bounds one connection. It is the investigation's own ceiling
-	// plus room to see the ending: a stream that outlived every possible investigation
-	// would be a connection held open for nothing.
+	eventPollInterval   = 500 * time.Millisecond
+	eventHeartbeat      = 15 * time.Second
+	eventWriteTimeout   = 10 * time.Second
 	eventStreamLifetime = investigationTimeout + time.Minute
 )
 
-// streamEvents serves one investigation's events.
-//
-// The tenant check happens FIRST, by reading the investigation itself. An identifier from
-// another organization answers not-found with the same body as one that never existed,
-// before a single event is read — the boundary must not depend on the stream being empty.
 func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request) {
 	if h.StreamContext != nil {
 		ctx, cancel := context.WithCancel(request.Context())
@@ -301,8 +256,6 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	// Bounded, and still cancelled by the request's own context, so a reader that
-	// disconnects stops the read it was waiting on.
 	readCtx, cancelRead := context.WithTimeout(request.Context(), readTimeout)
 	found, err := h.Store.Investigation(readCtx, organization, id)
 	cancelRead()
@@ -322,21 +275,16 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.Header().Set("Cache-Control", "no-cache")
-	// Named for the reverse proxies that buffer by default and turn a live stream into one
-	// silent minute followed by everything.
 	writer.Header().Set("X-Accel-Buffering", "no")
 	writer.WriteHeader(http.StatusOK)
 	if err := controller.Flush(); err != nil {
 		return
 	}
-	// net/http must still flush the response ending after an idle shutdown.
 	defer func() { _ = controller.SetWriteDeadline(time.Now().Add(eventWriteTimeout)) }()
 
 	h.follow(request, writer, controller, organization, found, after)
 }
 
-// follow drains what is already recorded and then keeps draining until the investigation
-// ends, the connection goes, or the lifetime is up.
 func (h Handlers) follow(
 	request *http.Request, writer http.ResponseWriter, controller *http.ResponseController,
 	organization uuid.UUID, found Investigation, after int64,
@@ -369,7 +317,6 @@ func (h Handlers) follow(
 				return
 			}
 			if found.Status != StatusRunning {
-				// Re-read events after observing completion to include its committed ending.
 				continue
 			}
 		}
@@ -381,14 +328,10 @@ func (h Handlers) follow(
 		}
 		for _, event := range events {
 			if err := writeEvent(writer, envelopeOf(organization, found, event)); err != nil {
-				// The reader is gone. That is the ordinary way a stream ends.
 				return
 			}
 			after = event.Sequence
 			if event.Type.Terminal() {
-				// Nothing follows a terminal event, so the connection has served its whole
-				// purpose. Holding it open would be a client waiting for something this
-				// investigation will never produce.
 				_ = controller.Flush()
 				return
 			}
@@ -398,8 +341,6 @@ func (h Handlers) follow(
 				return
 			}
 			lastHeartbeat = time.Now()
-			// A full page means there is probably more waiting; read again rather than
-			// sleeping through a backlog.
 			if len(events) == maxEventsPerRead {
 				continue
 			}
@@ -426,8 +367,6 @@ func (h Handlers) follow(
 	}
 }
 
-// maxEventsPerRead mirrors persistence's own page bound, so the follower can tell a full
-// page from a drained one without asking.
 const maxEventsPerRead = 500
 
 type eventEnvelope struct {
@@ -459,9 +398,6 @@ func envelopeOf(
 	return envelope
 }
 
-// writeEvent renders one event in the SSE framing. The id is the sequence, so a browser's
-// own EventSource reconnect sends Last-Event-ID and resumes exactly where it stopped —
-// which is the same resume the `after` parameter serves.
 func writeEvent(writer http.ResponseWriter, envelope eventEnvelope) error {
 	body, err := json.Marshal(envelope)
 	if err != nil {
@@ -472,10 +408,6 @@ func writeEvent(writer http.ResponseWriter, envelope eventEnvelope) error {
 	return err
 }
 
-// afterSequence reads the resume point from the query, or from the browser's own
-// Last-Event-ID header when a native EventSource reconnected. Absent is from the
-// beginning; anything unreadable is refused rather than treated as the beginning, because
-// silently replaying a whole investigation is not what a resuming client asked for.
 func afterSequence(request *http.Request) (int64, bool) {
 	value := request.URL.Query().Get("after")
 	if value == "" {

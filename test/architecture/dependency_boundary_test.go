@@ -9,18 +9,10 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-// The Relay's own module, which implements customer-side execution.
 const relayModule = "github.com/open-cluster/oc-relay"
 
-// The generated protocol contract, published as a module of its own.
 const relayProtocolModule = relayModule + "/gen/go"
 
-// The Relay reads Kubernetes clusters, so its module depends on client-go and the rest of
-// the Kubernetes libraries. This service speaks the Relay's protocol and never touches a
-// cluster. Reaching for the generated types by requiring the Relay module would pull that
-// whole graph into these requirements, this vulnerability report and this licence
-// inventory, for types that need two libraries. The contract module exists to make that
-// unnecessary, and it is the only part of the Relay this module may ever require.
 func TestOnlyTheRelaysProtocolContractMayBeRequired(t *testing.T) {
 	t.Parallel()
 
@@ -36,11 +28,6 @@ func TestOnlyTheRelaysProtocolContractMayBeRequired(t *testing.T) {
 	}
 }
 
-// Reading a customer's cluster is the Relay's job, performed inside the customer's own
-// infrastructure over a connection the customer opens outward. A Kubernetes client here
-// would mean the control plane reaching into customer infrastructure directly, which is
-// the property the whole execution design exists to avoid — and it would look like an
-// ordinary import in review.
 func TestNoKubernetesLibraryIsRequired(t *testing.T) {
 	t.Parallel()
 
@@ -52,8 +39,6 @@ func TestNoKubernetesLibraryIsRequired(t *testing.T) {
 	}
 }
 
-// The source-level form of the same mistake, caught one step earlier: an import lands
-// before anyone runs `go mod tidy`, so the requirement gates would not see it yet.
 func TestNoPackageImportsKubernetes(t *testing.T) {
 	t.Parallel()
 
@@ -67,9 +52,6 @@ func TestNoPackageImportsKubernetes(t *testing.T) {
 	}
 }
 
-// requiredModules reports every module path this module requires, direct and indirect. It
-// fails rather than returning nothing if the file cannot be parsed or lists no
-// requirements, so a gate built on it cannot pass by reading an empty list.
 func requiredModules(t *testing.T) []string {
 	t.Helper()
 

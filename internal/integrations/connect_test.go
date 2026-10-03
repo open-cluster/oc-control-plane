@@ -16,13 +16,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 )
 
-// storeUnderSeal is a Store that must not be reached. Its methods are the embedded
-// interface's, which is nil, so any call panics — which is the assertion: a flow refused
-// before it starts must record nothing, and "recorded nothing" is stronger stated as
-// "could not have recorded anything".
 type storeUnderSeal struct{ Store }
 
-// connectingPrincipal is a member who may create integrations in the named organization.
 func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 	t.Helper()
 	org, err := uuid.Parse(organization)
@@ -37,8 +32,6 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 	return principal
 }
 
-// sealingDefinition is a type whose installation flow comes back holding a credential,
-// which is the case that cannot proceed without somewhere to seal it.
 func sealingDefinition(authorized *bool) Definition {
 	return Definition{
 		Manifest: Manifest{Key: "stub", Name: "Stub", Category: CategoryCollaboration,
@@ -62,7 +55,6 @@ func sealingDefinition(authorized *bool) Definition {
 	}
 }
 
-// startConnectAgainst drives the start leg as an authenticated member of the tenant.
 func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -88,13 +80,6 @@ func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseReco
 	return recorder
 }
 
-// A deployment with nowhere to seal must refuse at the START of the flow.
-//
-// The order is the whole point. Refusing on the way back means the customer has already
-// chosen a workspace and granted real permissions in somebody else's product, and what
-// they get for it is an error and no integration — with a live credential in this
-// process's memory that it cannot store. The only honest moment to say "this deployment
-// cannot hold a credential" is before the browser leaves.
 func TestStartConnectRefusesBeforeTheBrowserLeavesWhenNothingCanSeal(t *testing.T) {
 	t.Parallel()
 
@@ -125,9 +110,6 @@ func TestStartConnectRefusesBeforeTheBrowserLeavesWhenNothingCanSeal(t *testing.
 	}
 }
 
-// The same deployment still connects a type whose flow returns no credential. GitHub's
-// runtime credential is minted from the deployment's own App, so a missing sealing key is
-// nothing to do with it, and refusing it would be refusing for a reason that is not true.
 func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -157,7 +139,6 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 	}
 }
 
-// recordingConnectStore accepts the one write the start leg makes and nothing else.
 type recordingConnectStore struct{ Store }
 
 func (recordingConnectStore) StartConnectFlow(
@@ -166,16 +147,11 @@ func (recordingConnectStore) StartConnectFlow(
 	return nil
 }
 
-// capturingStore is enough of a Store to drive one callback to its write, and it keeps
-// what was written so the test can assert on what reached durable state.
 type capturingStore struct {
 	Store
-	flow     ConnectFlow
-	created  NewIntegration
-	replaced []byte
-	// reinstalled is the routing record the reconnect carried into the SAME write as the
-	// credential. A reconnect that replaced one and not the other would be a live
-	// credential with stale routing.
+	flow        ConnectFlow
+	created     NewIntegration
+	replaced    []byte
 	reinstalled *Installation
 	reVerified  bool
 	existing    bool
@@ -204,7 +180,6 @@ func (s *capturingStore) CreateIntegration(
 	}, nil
 }
 
-// completeConnectAgainst drives the return leg as the principal that started the flow.
 func completeConnectAgainst(
 	t *testing.T, handlers Handlers, principal authz.Principal,
 ) *httptest.ResponseRecorder {
@@ -218,10 +193,6 @@ func completeConnectAgainst(
 	return recorder
 }
 
-// A proven return that came back holding a credential must seal it through the ordinary
-// path. Before this, ConnectBinding carried no credential at all, so a provider whose
-// runtime access needs one had nowhere to put it — and the only ways out were a second
-// credential path or an integration that verifies once and can never read again.
 func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 	t.Parallel()
 
@@ -261,8 +232,6 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 		t.Fatalf("a proven return = %d: %s", recorder.Code, recorder.Body.String())
 	}
 
-	// Probed before stored. A credential the provider would refuse must never come to
-	// rest, which is the rule the pasted path already keeps.
 	if probed != "a-token" {
 		t.Errorf("the probe was given %q, want the credential the flow obtained", probed)
 	}
@@ -274,7 +243,6 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 		t.Fatal("nothing was sealed onto the record; the integration would verify once " +
 			"and never be able to read again")
 	}
-	// The plaintext reaches durable state only as sealed bytes.
 	if bytes.Contains(store.created.CredentialSealed, []byte("a-token")) {
 		t.Fatal("the credential is recoverable from what was stored")
 	}
@@ -304,11 +272,6 @@ func (s *capturingStore) RecordIntegrationVerification(
 	return Integration{ID: id, Provider: "stub", Status: verification.Status}, nil
 }
 
-// Reconnecting a workspace this tenant already has must take the credential the flow just
-// obtained, not re-verify the one on the record. Authorizing again issues a new
-// credential, and the old one having stopped working is the ordinary reason somebody
-// reconnects — so re-verifying the stored one would report the very failure they came to
-// fix and drop the working credential on the floor.
 func TestReconnectingReplacesTheCredentialRatherThanReverifyingTheOldOne(t *testing.T) {
 	t.Parallel()
 

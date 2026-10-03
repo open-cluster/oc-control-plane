@@ -10,18 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AlertAdmissionPolicy bounds automatic Investigations opened by one delivery.
 type AlertAdmissionPolicy struct {
 	WindowLead     time.Duration
 	MaximumPending int
 }
 
-// AlertCapacityError means the current backlog cannot fit the delivery's Investigations.
 type AlertCapacityError struct{}
 
 func (AlertCapacityError) Error() string { return "pending Investigation capacity exhausted" }
 
-// AlertBatchTooLargeError means the delivery cannot fit even an empty pending queue.
 type AlertBatchTooLargeError struct{}
 
 func (AlertBatchTooLargeError) Error() string {

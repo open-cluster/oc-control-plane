@@ -21,21 +21,15 @@ const (
 	maxRequestBytes = 16 << 10
 )
 
-// Handlers is this domain surface's dependencies.
 type Handlers struct {
-	Store      HTTPStore
-	Runner     *Runner
-	Logger     *slog.Logger
-	MaxPending int
-	// StreamContext stops long-lived streams while ordinary requests drain at shutdown.
+	Store         HTTPStore
+	Runner        *Runner
+	Logger        *slog.Logger
+	MaxPending    int
 	StreamContext context.Context
-	// WindowLead widens an investigation's window before the incident began: the change
-	// that caused an incident usually landed before it fired. Configuration, because the
-	// right lead follows an organization's deploy cadence, not a constant.
-	WindowLead time.Duration
+	WindowLead    time.Duration
 }
 
-// HTTPStore is the durable state used by the Investigation API surface.
 type HTTPStore interface {
 	CreateInvestigation(context.Context, authz.Principal, uuid.UUID,
 		NewInvestigation, int) (Investigation, error)
@@ -48,7 +42,6 @@ type HTTPStore interface {
 	Events(context.Context, uuid.UUID, uuid.UUID, int64, int) ([]Event, error)
 }
 
-// Routes is this domain surface's contribution to the application API's index.
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1"
 
@@ -61,13 +54,10 @@ func (h Handlers) Routes() []authz.Route {
 	}
 }
 
-// openRequest is what starts a direct investigation.
 type openRequest struct {
 	IncidentID string `json:"incidentId"`
 }
 
-// open starts an investigation for one Incident and answers 202 with the running record;
-// the runner fills it in the background.
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
@@ -113,7 +103,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusAccepted, investigationViewOf(opened))
 }
 
-// resolveTrigger turns the required identifier into the Incident the Investigation is about.
 func (h Handlers) resolveTrigger(
 	ctx context.Context, organization uuid.UUID, asked openRequest,
 ) (Trigger, string, error) {
@@ -132,18 +121,13 @@ func (h Handlers) resolveTrigger(
 	return trigger, "", nil
 }
 
-// parseIdentity reads a caller-supplied identifier, reporting only whether it is one.
 func parseIdentity(value string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(value)
 	return id, err == nil
 }
 
-// maxSubjectLength mirrors the schema's own bound on the subject column.
 const maxSubjectLength = 512
 
-// subjectOf is what the investigation is about, in plain language. An incident may carry
-// an empty title — a payload can omit every name — and a subject the schema refuses
-// would turn opening into a server error, so the absence is said instead.
 func subjectOf(trigger Trigger) string {
 	title := strings.TrimSpace(trigger.Title)
 	if title == "" {
@@ -152,14 +136,11 @@ func subjectOf(trigger Trigger) string {
 	return bounded(title, maxSubjectLength)
 }
 
-// window is the investigation's time bounds.
 type window struct {
 	from  time.Time
 	until time.Time
 }
 
-// windowOf derives the window from the incident: widened backwards by the configured
-// lead, and ending now while the incident is still open.
 func windowOf(trigger Trigger, lead time.Duration) window {
 	until := trigger.LastSeenAt
 	if !trigger.Resolved {
@@ -293,8 +274,6 @@ func (h Handlers) decode(
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, authz.ErrNotAMember):
-		// The same answer the authorization middleware gives, byte for byte. A different
-		// one would confirm to a caller that a tenant they may not reach exists.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "investigation not found"})
@@ -321,22 +300,16 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	}
 }
 
-// What this surface says on the wire. Kept apart from the handlers because it is a
-// contract: a field renamed here is a client broken somewhere else.
-
 type errorView struct {
 	Error string `json:"error"`
 }
 
 type findingView struct {
-	ID        string `json:"id"`
-	Statement string `json:"statement"`
-	// Kind is the finding's causal role and Confidence its categorical certainty.
-	// Absent on findings concluded before the vocabulary existed.
-	Kind       string `json:"kind,omitempty"`
-	Confidence string `json:"confidence,omitempty"`
-	Mechanism  string `json:"mechanism,omitempty"`
-	// Sources are one-based ordinals among the investigation's runs.
+	ID           string        `json:"id"`
+	Statement    string        `json:"statement"`
+	Kind         string        `json:"kind,omitempty"`
+	Confidence   string        `json:"confidence,omitempty"`
+	Mechanism    string        `json:"mechanism,omitempty"`
 	RunRefs      []int         `json:"runRefs"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
@@ -362,16 +335,12 @@ type investigationView struct {
 	Actions                   []ActionProposal   `json:"actions"`
 	Limitations               []Limitation       `json:"limitations"`
 	HumanConfirmationRequired bool               `json:"humanConfirmationRequired"`
-	// StoppedBy labels a conclusion a ceiling forced — "tool_runs", "reasoner_turns",
-	// "wall_clock", "stagnation", "context" — so a stopped
-	// investigation never renders as a free diagnosis. Absent when the model concluded
-	// freely.
-	StoppedBy   string    `json:"stoppedBy,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	Usage       usageView `json:"usage"`
-	CreatedBy   string    `json:"createdBy,omitempty"`
-	CreatedAt   string    `json:"createdAt"`
-	ConcludedAt string    `json:"concludedAt,omitempty"`
+	StoppedBy                 string             `json:"stoppedBy,omitempty"`
+	Error                     string             `json:"error,omitempty"`
+	Usage                     usageView          `json:"usage"`
+	CreatedBy                 string             `json:"createdBy,omitempty"`
+	CreatedAt                 string             `json:"createdAt"`
+	ConcludedAt               string             `json:"concludedAt,omitempty"`
 }
 
 type runView struct {
@@ -392,7 +361,6 @@ type runView struct {
 	FinishedAt    string         `json:"finishedAt"`
 }
 
-// detailView is one Investigation with the durable Tool Runs that support it.
 type detailView struct {
 	investigationView
 	Runs []runView `json:"runs"`
@@ -508,8 +476,6 @@ func outcomeWord(outcome RunOutcome) string {
 
 func stamp(at time.Time) string { return at.UTC().Format(time.RFC3339) }
 
-// writeJSON answers with a body. Nothing this surface returns may be cached: every answer
-// concerns a named tenant's record.
 func writeJSON(writer http.ResponseWriter, code int, body any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Cache-Control", "no-store")

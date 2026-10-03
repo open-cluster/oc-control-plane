@@ -17,28 +17,18 @@ import (
 )
 
 const (
-	readTimeout     = 15 * time.Second
-	maxRequestBytes = 32 << 10
-	// transcriptWindow bounds how much of a conversation one read returns: the newest
-	// messages, in order. A conversation that has run for hours is read from its end.
+	readTimeout      = 15 * time.Second
+	maxRequestBytes  = 32 << 10
 	transcriptWindow = 100
 )
 
-// Handlers is this capability's dependencies.
 type Handlers struct {
-	Store  Store
-	Logger *slog.Logger
-	// WindowLead is how far before an incident began a turn's window reaches back, and how
-	// far back a turn with no incident looks.
-	WindowLead time.Duration
-	// MaxWaitingTurns bounds an organization's unclaimed turns. Opening past it is
-	// refused with a plain reason, which is what keeps the queue a queue rather than a
-	// backlog that grows until something falls over. Zero means no ceiling, which only a
-	// test should mean.
+	Store           Store
+	Logger          *slog.Logger
+	WindowLead      time.Duration
 	MaxWaitingTurns int
 }
 
-// Routes is this capability's contribution to the application API's index.
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/conversations"
 
@@ -51,8 +41,6 @@ func (h Handlers) Routes() []authz.Route {
 	}
 }
 
-// openRequest starts a conversation: a subject, optionally the incident it is about, and
-// optionally the first thing to say.
 type openRequest struct {
 	windowInput
 	IncidentID string `json:"incidentId"`
@@ -60,9 +48,6 @@ type openRequest struct {
 	Message    string `json:"message"`
 }
 
-// open records a conversation and, when the request carried a first message, opens its
-// first turn. A conversation opened from an incident already knows the alert, so nobody
-// has to paste labels into a chat box.
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	principal, organization := h.caller(request)
 	var asked openRequest
@@ -92,9 +77,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "give a subject for the conversation"})
 		return
-	// Counted in RUNES, because the column's own CHECK counts characters. Counting bytes
-	// here would refuse a subject written in any non-Latin script at a fraction of the
-	// length the schema actually allows.
 	case len([]rune(subject)) > MaxSubjectLength:
 		writeJSON(writer, http.StatusBadRequest, errorView{
 			Error: "the subject must be at most 512 characters"})
@@ -137,17 +119,11 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	})
 }
 
-// sayRequest is one thing to say.
 type sayRequest struct {
 	windowInput
 	Message string `json:"message"`
 }
 
-// say records a message and opens a turn for it if none is running.
-//
-// A message sent while the agent is still working is ACCEPTED rather than refused: the
-// person should not have to watch for a green light. It is taken up at the next safe
-// point — the running turn's terminal — rather than by starting a second competing agent.
 func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	principal, organization, id, ok := h.addressed(writer, request)
 	if !ok {
@@ -191,12 +167,8 @@ func (h Handlers) append(
 	id uuid.UUID, text string, window *Window,
 ) (Message, *turnView, bool, error) {
 	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
-		Role:      RolePerson,
-		ActorKind: ActorPrincipal,
-		// Both bounded here rather than left to the column. A principal's identifier and
-		// display name come from an identity provider, which has its own idea of how long
-		// a name may be; a message refused because somebody's name is long would be a
-		// message lost for a reason nobody could act on.
+		Role:         RolePerson,
+		ActorKind:    ActorPrincipal,
 		ActorID:      boundedRunes(principal.UserID().String(), MaxActorIDLength),
 		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
@@ -274,7 +246,6 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, listing.NewPage(views, listed.Next, nil))
 }
 
-// read answers one conversation with its recent transcript and first page of turns.
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	_, organization, id, ok := h.addressed(writer, request)
 	if !ok {
@@ -291,7 +262,6 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, detailViewOf(detail))
 }
 
-// caller resolves the principal and the organization.
 func (h Handlers) caller(request *http.Request) (authz.Principal, uuid.UUID) {
 	principal := authz.MustPrincipal(request.Context())
 	return principal, principal.Organization()
@@ -330,8 +300,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	case errors.Is(err, ErrWindowConflict):
 		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
 	case errors.Is(err, authz.ErrNotAMember):
-		// The same answer the authorization middleware gives, byte for byte. A different
-		// one would confirm to a caller that a tenant they may not reach exists.
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "conversation not found"})

@@ -8,16 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 )
 
-// The vocabulary, asserted where nothing else can reach it.
-//
-// Grouping itself is asserted through the webhook listener and the application API at the composition
-// root, because that is where an operator observes it. What is left here is the small set of
-// properties that have no observable surface until they are already wrong: a status nobody can
-// name, a basis nobody can explain, a merge admitted that means nothing.
-
-// Every persisted status renders as something a caller can send back. A value that rendered as
-// "unrecognised" would appear in a listing and then be refused as a filter, which is a surface
-// that contradicts itself.
 func TestEveryStatusRoundTripsThroughTheNameItIsShownUnder(t *testing.T) {
 	t.Parallel()
 
@@ -34,9 +24,6 @@ func TestEveryStatusRoundTripsThroughTheNameItIsShownUnder(t *testing.T) {
 	}
 }
 
-// A status nobody typed is REFUSED rather than resolved to something. A filter silently narrowed
-// to a value nobody asked for answers a different question, and an empty page is exactly what "you
-// have none of those" looks like.
 func TestAStatusNobodyTypedIsRefusedRatherThanGuessedAt(t *testing.T) {
 	t.Parallel()
 
@@ -47,8 +34,6 @@ func TestAStatusNobodyTypedIsRefusedRatherThanGuessedAt(t *testing.T) {
 	}
 }
 
-// Every basis says who decided the grouping, in words. A basis added later without an explanation
-// would render as a badge an operator cannot act on, which defeats the reason the field exists.
 func TestEveryGroupingBasisCanBeExplainedToAnOperator(t *testing.T) {
 	t.Parallel()
 
@@ -71,8 +56,6 @@ func TestEveryGroupingBasisCanBeExplainedToAnOperator(t *testing.T) {
 	}
 }
 
-// An unrecorded value is inert rather than an error nobody handles, which is what makes a row
-// written by a newer build safe to read.
 func TestAnUnrecordedValueIsInertRatherThanMistakenForADeclaredOne(t *testing.T) {
 	t.Parallel()
 
@@ -88,9 +71,6 @@ func TestAnUnrecordedValueIsInertRatherThanMistakenForADeclaredOne(t *testing.T)
 	}
 }
 
-// A merge that could not mean anything is refused before any row is read, and the refusal names
-// which reason applies — the caller is an operator correcting a grouping, and one they cannot act
-// on is a defect.
 func TestAMergeThatCouldNotMeanAnythingIsRefusedBeforeAnythingIsRead(t *testing.T) {
 	t.Parallel()
 

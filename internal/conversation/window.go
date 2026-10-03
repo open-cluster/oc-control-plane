@@ -11,13 +11,11 @@ var (
 	ErrWindowConflict = errors.New("the queued batch has a different window; retry after it opens")
 )
 
-// Window is a half-open interval, normalized to PostgreSQL timestamp precision.
 type Window struct {
 	From  time.Time
 	Until time.Time
 }
 
-// Normalized converts the window to UTC and PostgreSQL timestamp precision.
 func (w Window) Normalized() Window {
 	return Window{
 		From:  w.From.UTC().Truncate(time.Microsecond),
@@ -62,12 +60,10 @@ func (input windowInput) parse(now time.Time) (*Window, error) {
 	return &w, nil
 }
 
-// MinimumQuestionWindow is the default lookback used for questions without an incident.
 const MinimumQuestionWindow = 24 * time.Hour
 
 const DefaultIncidentWindowLead = 2 * time.Hour
 
-// QuestionWindow preserves the default lookback floor when no explicit window is supplied.
 func QuestionWindow(lead time.Duration) time.Duration {
 	if lead > MinimumQuestionWindow {
 		return lead

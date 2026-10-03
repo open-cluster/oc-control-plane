@@ -12,16 +12,9 @@ import (
 	"time"
 )
 
-// The client against a fake Slack. The fake speaks the envelope, the headers and the
-// failure shapes the real API does, because the client's whole job is decoding those
-// correctly — a test that mocked the client itself would prove nothing about that.
-
-// fakeSlack is a configurable stand-in for the Slack Web API.
 type fakeSlack struct {
 	*httptest.Server
-	// calls counts requests per method, so a test can assert a retry happened once.
-	calls map[string]*atomic.Int64
-	// answers maps a method ("auth.test") to what the fake returns for it.
+	calls   map[string]*atomic.Int64
 	answers map[string]func(writer http.ResponseWriter, request *http.Request)
 }
 
@@ -54,7 +47,6 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	return fake
 }
 
-// answer sets what one method returns.
 func (f *fakeSlack) answer(method string, body string) {
 	f.answers[method] = func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -311,9 +303,6 @@ func TestHistoryIsBoundedToTheAskedWindow(t *testing.T) {
 	}
 }
 
-// A thread longer than one page is read by walking the vendor's oldest-first pages and
-// keeping the newest tail — the >200-reply war-room thread stays readable, and the
-// answer says how much of it this is.
 func TestRepliesWalkToTheThreadsNewestTail(t *testing.T) {
 	t.Parallel()
 
@@ -347,8 +336,6 @@ func TestRepliesWalkToTheThreadsNewestTail(t *testing.T) {
 	}
 }
 
-// A thread the page cap cannot exhaust answers with WalkEnded false, so the tool can
-// say the thread continues rather than presenting a middle as the end.
 func TestRepliesStopAtThePageCapAndSaySo(t *testing.T) {
 	t.Parallel()
 
@@ -422,9 +409,6 @@ func TestAnOversizedAnswerIsRefusedNotSwallowed(t *testing.T) {
 	}
 }
 
-// The fake above answers what it is asked; this pins that the client sends token requests
-// the way Slack documents them, so the fake cannot drift into testing a dialect only this
-// repository speaks.
 func TestRequestsCarryTheBearerTokenAndNoQueryToken(t *testing.T) {
 	t.Parallel()
 
@@ -454,9 +438,6 @@ func TestTheDefaultBaseURLIsTheVendors(t *testing.T) {
 	}
 }
 
-// decode is exercised through every method above; this pins the envelope rule itself: ok
-// false with no error code is still a refusal, because trusting the body shape of a
-// refusal is how a refusal gets read as an empty success.
 func TestAnEnvelopeRefusalWithoutACodeIsStillARefusal(t *testing.T) {
 	t.Parallel()
 
@@ -473,7 +454,6 @@ func TestAnEnvelopeRefusalWithoutACodeIsStillARefusal(t *testing.T) {
 	}
 }
 
-// A helper the other tests lean on implicitly: the fake must be reachable and JSON-clean.
 func TestFakeSpeaksJSON(t *testing.T) {
 	t.Parallel()
 

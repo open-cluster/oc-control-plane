@@ -10,7 +10,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 )
 
-// acceptedWindow runs under the Conversation lock shared by admission and drain.
 func acceptedWindow(
 	ctx context.Context,
 	tx pgx.Tx,

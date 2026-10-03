@@ -20,7 +20,6 @@ type SignedIn struct {
 	Membership authz.Membership
 }
 
-// IssueSession records a session and its audit event atomically.
 func (p *Database) IssueSession(
 	ctx context.Context, organization uuid.UUID,
 	issued session.Session, digest []byte, actor audit.Actor, sourceAddress string, detail audit.Detail,
@@ -51,7 +50,6 @@ func (p *Database) IssueSession(
 	return issued, nil
 }
 
-// IssueLocalSession holds the verifier lock through issuance so password replacement invalidates concurrent sign-ins.
 func (p *Database) IssueLocalSession(
 	ctx context.Context, organization uuid.UUID,
 	issued session.Session, digest []byte, actor audit.Actor, sourceAddress string,
@@ -109,7 +107,6 @@ func issueSessionIn(
 	return issued, nil
 }
 
-// SessionByToken resolves a credential to its User and current Membership.
 func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn, error) {
 	return signedInFrom(ctx, p.pool, digest)
 }
@@ -155,7 +152,6 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 	return found, nil
 }
 
-// DeleteCurrentSession deletes the caller's current session and audits it in deployment scope.
 func (p *Database) DeleteCurrentSession(ctx context.Context, principal authz.Principal) error {
 	userID := principal.UserID()
 	id := principal.SessionID()
@@ -189,7 +185,6 @@ func (p *Database) DeleteCurrentSession(ctx context.Context, principal authz.Pri
 	return nil
 }
 
-// PruneSessions removes at most 1000 expired global sessions.
 func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
 	tag, err := p.pool.Exec(ctx, `
 		DELETE FROM session
@@ -205,7 +200,6 @@ func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-// OrganizationAuditRetention reports the Organization-owned audit retention schedule.
 func (p *Database) OrganizationAuditRetention(
 	ctx context.Context, organization uuid.UUID,
 ) (int, error) {
@@ -227,7 +221,6 @@ func (p *Database) OrganizationAuditRetention(
 	return retention, nil
 }
 
-// SetOrganizationAuditRetention records a tenant's own audit retention policy.
 func (p *Database) SetOrganizationAuditRetention(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	retentionDays int,

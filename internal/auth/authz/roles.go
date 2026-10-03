@@ -34,7 +34,6 @@ const (
 	AuditRead               Permission = "audit.read"
 )
 
-// allPermissions is every permission this build declares, in a stable order.
 var allPermissions = []Permission{
 	IntegrationRead,
 	IntegrationCreate,
@@ -62,8 +61,6 @@ var allPermissions = []Permission{
 	AuditRead,
 }
 
-// Declared reports whether a permission is one this build knows. A route requiring anything
-// else is a build failure rather than a route nobody can reach.
 func Declared(permission Permission) bool {
 	return slices.Contains(allPermissions, permission)
 }
@@ -87,7 +84,6 @@ func ParseRole(value string) (Role, bool) {
 	return role, KnownRole(role)
 }
 
-// Identity reads are deliberately excluded: who may sign in is the Admin's to see.
 var estateReads = []Permission{
 	IntegrationRead,
 	RelayRead,
@@ -98,7 +94,6 @@ var estateReads = []Permission{
 	AuditRead,
 }
 
-// granted is the compact specification of what each Role can do.
 var granted = map[Role]map[Permission]bool{
 	Admin: setOf(allPermissions...),
 
@@ -115,7 +110,6 @@ var granted = map[Role]map[Permission]bool{
 	Viewer: setOf(estateReads...),
 }
 
-// Grants reports whether a Role holds a Permission. Unknown Roles grant nothing.
 func (r Role) Grants(permission Permission) bool { return granted[r][permission] }
 
 func setOf(permissions ...Permission) map[Permission]bool {

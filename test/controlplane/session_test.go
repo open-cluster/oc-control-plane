@@ -19,19 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-// The session stream is a delivery channel and nothing more: every guarantee about a job not
-// being lost or completed twice lives in the database. So what is asserted here is what a
-// relay could observe of that guarantee — work waiting through an outage arrived, an outcome
-// was acknowledged only once recorded, a resend was answered definitively, and a result from
-// a lease that no longer owns the job was refused. How the server reaches those answers is
-// deliberately not asserted, so the implementation can change without rewriting this.
-//
-// Durability is proven the same way a relay proves it: by resending. An acknowledgement of
-// "already recorded" can only come from a committed row, so it is stronger evidence than
-// reading the database from the test would be, and it uses nothing a relay cannot see.
 func TestRelaySession(t *testing.T) {
-	// The organization the harness assigns a database to. An unassigned one is refused
-	// exactly like a bad credential, which makes a wrong name here look like a session defect.
 	const organization = surfaceOrg
 
 	relayAddress := freeAddress(t)
@@ -47,8 +35,6 @@ func TestRelaySession(t *testing.T) {
 	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	// Enqueued before anything is connected. An outage must delay an investigation, never
-	// lose it, so this job has to be waiting when the session arrives.
 	waiting := enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
 	fenced := enqueueJob(t, database, owner, relay.registration, workloadArguments("checkout"))
 
@@ -143,9 +129,6 @@ func TestRelaySession(t *testing.T) {
 		if assignment == nil {
 			t.Fatal("the assignment never arrived; the delivery guarantee under test did not hold")
 		}
-		// A relay that never saw the first acknowledgement resends. Being told the outcome
-		// already exists is the only answer that drains its buffer, and it can only come
-		// from a committed row.
 		sendResult(t, stream, assignment.GetJobId(), assignment.GetLeaseEpoch())
 
 		acknowledged := awaitResultAck(t, stream)
@@ -160,8 +143,6 @@ func TestRelaySession(t *testing.T) {
 		if assignment == nil {
 			t.Fatal("the assignment never arrived; the delivery guarantee under test did not hold")
 		}
-		// The generation before the one that was assigned belongs to no execution that ever
-		// held this job. A relay resending across a lease change produces exactly this.
 		sendResult(t, stream, assignment.GetJobId(), assignment.GetLeaseEpoch()-1)
 
 		acknowledged := awaitResultAck(t, stream)
@@ -183,11 +164,8 @@ func TestRelaySession(t *testing.T) {
 	})
 
 	t.Run("a job that cannot be expressed does not strand the work behind it", func(t *testing.T) {
-		// The arguments were written by the control plane, so this can only happen through a
-		// defect here — but one undeliverable job holding up every job behind it turns a
-		// defect into an outage, which is the part that must not happen.
 		unexpressable := enqueueJob(t, database, owner, relay.registration,
-			[]byte{0x0a, 0x05}) // A length-delimited field claiming five bytes that follow nothing.
+			[]byte{0x0a, 0x05})
 		behind := enqueueJob(t, database, owner, relay.registration, workloadArguments("billing"))
 
 		assignment := awaitAssignment(t, stream)
@@ -223,14 +201,8 @@ func TestRelaySession(t *testing.T) {
 
 		acknowledgeCancellation(t, stream, cancellation)
 
-		// Long enough for several delivery rounds to pass. A stop repeated on every round
-		// would be noise on a stream that carries real work, and a long execution would
-		// receive hundreds of them.
 		time.Sleep(12 * time.Second)
 
-		// The terminal outcome still comes from the relay. A stop that recorded the outcome
-		// itself would be deciding the fate of an execution it cannot see — one that may well
-		// have finished before the request arrived.
 		sendCancelledResult(t, stream, job.String(), assignment.GetLeaseEpoch())
 
 		repeats := 0
@@ -255,9 +227,6 @@ func TestRelaySession(t *testing.T) {
 		}
 	})
 
-	// The two subtests below each register their own relay, because both end a session on
-	// purpose and would otherwise take the one the assertions above depend on with them.
-
 	t.Run("a reconnection ends the session it replaces", func(t *testing.T) {
 		reconnecting := registerRelay(t, connection, databaseDSN, organization)
 
@@ -267,12 +236,6 @@ func TestRelaySession(t *testing.T) {
 		successor := connectSession(t, connection, organization, reconnecting)
 		awaitSessionAccepted(t, successor)
 
-		// A relay has one session. Left running, the session it reconnected away from would go
-		// on claiming work it can no longer receive, and hold it for the length of a lease.
-		//
-		// The elapsed bound is what makes this an assertion rather than a formality: the
-		// client's own deadline would eventually end the stream too, and a test that accepted
-		// any error would pass against a server that never supersedes anything.
 		started := time.Now()
 		told, err := awaitReconnectInstruction(t, replaced)
 		waited := time.Since(started)
@@ -284,9 +247,6 @@ func TestRelaySession(t *testing.T) {
 			t.Errorf("the replaced session took %v to end; the relay is already gone", waited)
 		}
 
-		// Being displaced is told, not merely done. A relay that is dropped without explanation
-		// re-enters its backoff and goes quiet — and a relay displaced by something holding its
-		// credential must come back rather than assume it was meant to stop.
 		if told == nil {
 			t.Fatal("the replaced session was closed without being told to reconnect")
 		}
@@ -302,9 +262,6 @@ func TestRelaySession(t *testing.T) {
 		stream := connectSession(t, connection, organization, silent)
 		awaitSessionAccepted(t, stream)
 
-		// This waits out the real idle allowance rather than a shortened one. A relay behind a
-		// half-open connection looks exactly like this, and the allowance is the only thing
-		// that distinguishes it from a quiet but healthy relay — so it is the thing under test.
 		started := time.Now()
 		_, err := stream.Recv()
 		waited := time.Since(started)
@@ -320,8 +277,6 @@ func TestRelaySession(t *testing.T) {
 			t.Errorf("a silent session was ended after %v; a healthy relay between "+
 				"heartbeats must not be cut off", waited)
 		}
-		// The client's own deadline is longer than the allowance, so an upper bound is what
-		// separates the server ending this session from the test's deadline ending it.
 		if waited > 75*time.Second {
 			t.Errorf("a silent session survived %v; a relay behind a half-open connection "+
 				"holds its leases for exactly as long as this takes", waited)
@@ -329,12 +284,6 @@ func TestRelaySession(t *testing.T) {
 	})
 }
 
-// The relay states the highest protocol version it speaks, so the two ends of that comparison
-// mean opposite things: a newer relay can speak this one and must be let in, while one that
-// cannot reach this version has to be turned away. Getting the direction wrong either locks out
-// every relay released after this control plane, or admits one that cannot understand what it
-// is told — and two sides that disagree about meaning still exchange messages successfully,
-// which is how evidence nobody can vouch for gets recorded.
 func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 	const organization = surfaceOrg
 
@@ -358,8 +307,6 @@ func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 		awaitSessionAccepted(t, stream)
 		sayHello(t, stream, protocolVersionUnderTest+1, nil)
 
-		// Work arriving is the proof. The session being left open proves only that nothing has
-		// gone wrong yet; delivery only starts once the hello has been accepted.
 		assignment := awaitAssignment(t, stream)
 		if assignment.GetJobId() != job.String() {
 			t.Fatalf("delivered job %q, want %v", assignment.GetJobId(), job)
@@ -386,10 +333,6 @@ func TestRelaySessionNegotiatesTheProtocolVersion(t *testing.T) {
 	})
 }
 
-// A relay that reconnects part-way through a job is still holding that job's result. Without
-// adoption the result arrives on a session that does not own the lease, is refused as stale,
-// and the whole execution is thrown away and done again once the lease expires — so a network
-// blip costs an investigation its evidence twice over.
 func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	const organization = surfaceOrg
 
@@ -400,8 +343,6 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		databaseDSN = cfg.DatabaseDSN
 	})
-	// Reconciling a reconnection is the one thing here the relay cannot see the reasoning for,
-	// so a failure that reports only "nothing arrived" would say nothing about why.
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("control plane logs:\n%s", plane.logs.String())
@@ -413,7 +354,6 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	// Two jobs, so the reconnection has something to carry over and something to give up.
 	enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
 	enqueueJob(t, database, owner, relay.registration, workloadArguments("checkout"))
 
@@ -422,8 +362,6 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	running := awaitAssignment(t, before)
 	dropped := awaitAssignment(t, before)
 
-	// The relay reconnects still executing one of them, and says so. Reconnecting is what ends
-	// the session before it, so nothing has to be closed here.
 	after := connectSessionDeclaring(t, connection, organization, relay,
 		[]*relayv1.InFlightJob{{
 			JobId:      running.GetJobId(),
@@ -432,14 +370,7 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 		}})
 	awaitSessionAccepted(t, after)
 
-	// Redelivery is asserted before anything is sent, because it is the only thing the control
-	// plane can be saying at this point. Sending the result first would race: whichever helper
-	// skipped past the other's message would discard it, and the test would pass or fail on
-	// which goroutine got there first rather than on the behaviour.
 	t.Run("work the relay is not running comes back at once", func(t *testing.T) {
-		// The job it did not declare is being executed by nothing: the session that held it is
-		// gone. Leaving it leased would add a full lease of doing nothing to the far side of
-		// every blip, so it must be redelivered now rather than in ten minutes.
 		redelivered := awaitAssignment(t, after)
 		if redelivered.GetJobId() != dropped.GetJobId() {
 			t.Fatalf("delivered job %q, want the undeclared %q back",
@@ -453,8 +384,6 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	})
 
 	t.Run("work the relay never stopped can still be recorded", func(t *testing.T) {
-		// The execution finishes on the new stream, still echoing the generation it was assigned
-		// under, because adoption deliberately did not raise it.
 		sendResult(t, after, running.GetJobId(), running.GetLeaseEpoch())
 
 		acknowledged := awaitResultAck(t, after)
@@ -469,13 +398,6 @@ func TestRelaySessionCarriesWorkAcrossAReconnection(t *testing.T) {
 	})
 }
 
-// A relay identity that keeps being taken over is recorded as contested, and an ordinary
-// reconnection is not. Both halves matter: an alert that fires on every reconnection is an
-// alert nobody reads, and the thing it would be hiding is a stolen credential.
-//
-// What this cannot show from here is the part that distinguishes the two, because every
-// connection a test makes comes from the loopback host. That distinction is exercised where the
-// peer address is an input rather than a property of the machine running the suite.
 func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
 	const organization = surfaceOrg
 
@@ -513,9 +435,6 @@ func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
 	})
 
 	t.Run("being taken over repeatedly is", func(t *testing.T) {
-		// Enough further connections that the takeovers stop being a sequence of unrelated
-		// reconnections. They are made back to back, which is the shape of two parties holding
-		// one credential rather than one relay recovering.
 		for range 4 {
 			stream := connectSession(t, connection, organization, relay)
 			awaitSessionAccepted(t, stream)
@@ -537,10 +456,6 @@ func TestRelaySessionRecordsAContestedIdentity(t *testing.T) {
 	})
 }
 
-// A capability payload carrying fields this build cannot read is refused, and refusing it
-// touches nothing durable. Recording it would state that a workload was read and understood
-// when part of what came back was never looked at, and evidence is only worth what its
-// provenance is worth.
 func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
 	const organization = surfaceOrg
 
@@ -574,9 +489,6 @@ func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
 			"InvalidArgument", err)
 	}
 
-	// Nothing durable may have happened. The relay reconnects, declares the job it is still
-	// holding a result for, and sends a result this build can read: if the refused one had been
-	// stored, this would come back as already recorded rather than recorded.
 	after := connectSessionDeclaring(t, connection, organization, relay,
 		[]*relayv1.InFlightJob{{
 			JobId:      assignment.GetJobId(),
@@ -593,16 +505,12 @@ func TestRelaySessionRefusesAResultItCannotFullyRead(t *testing.T) {
 	}
 }
 
-// sendUnreadableResult reports an outcome carrying a field this build has never heard of,
-// nested inside a repeated message so the refusal has to be looking further than the top level.
-// It is how a relay built against a newer schema would sound.
 func sendUnreadableResult(
 	t *testing.T, stream relayv1.RelaySessionService_ConnectClient, job string, epoch uint64,
 ) {
 	t.Helper()
 
 	pod := &relayv1.KubernetesPodRuntime{Name: "api-0", Phase: "Running"}
-	// Field 999, a varint — a number no version of this schema assigns.
 	pod.ProtoReflect().SetUnknown(protoreflect.RawFields{0xb8, 0x3e, 0x01})
 
 	err := stream.Send(&relayv1.RelayToControl{Message: &relayv1.RelayToControl_JobResult{
@@ -625,14 +533,6 @@ func sendUnreadableResult(
 	}
 }
 
-// A relay that stops reading, with work queued behind it, must still be ended.
-//
-// This does NOT prove why the liveness watch runs on its own goroutine. That change was made
-// because acknowledgements queue on the same bounded channel as assignments, so the session
-// loop can block inside a send while it is the only thing watching for silence — but the queue
-// cannot actually fill while dispatch is capped at what the relay can hold, and this test was
-// checked against the previous in-loop timer and passed. It is here for the behaviour it
-// states, not as evidence for that reasoning.
 func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 	const organization = surfaceOrg
 
@@ -649,7 +549,6 @@ func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 	database := openDatabase(t, databaseDSN)
 	owner := namedOrganization(t, organization)
 
-	// More work than the outbound queue holds, so delivery fills it and blocks.
 	for range 40 {
 		enqueueJob(t, database, owner, relay.registration, workloadArguments("payments"))
 	}
@@ -658,16 +557,10 @@ func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 	awaitSessionAccepted(t, stream)
 	assignment := awaitAssignment(t, stream)
 
-	// One result, which is what puts the session loop on the same blocked queue as delivery:
-	// it has to send an acknowledgement, and there is nowhere to put it.
 	sendResult(t, stream, assignment.GetJobId(), assignment.GetLeaseEpoch())
 
-	// Nothing is read for longer than the allowance. A real relay in this state is one whose
-	// process is wedged or whose connection is half-open.
 	time.Sleep(55 * time.Second)
 
-	// Whatever was already queued arrives first; what matters is that the stream then ends,
-	// rather than staying open until this test's own deadline expires.
 	resumed := time.Now()
 	var err error
 	for err == nil {
@@ -684,9 +577,6 @@ func TestRelaySessionEndsARelayThatStoppedReading(t *testing.T) {
 	}
 }
 
-// A long-lived stream does not end because the process was asked to stop, so shutdown has to
-// end it. Waiting for the relay to notice would let one unresponsive relay hold the process
-// open for as long as it stayed silent — a deploy that hangs on a customer's network problem.
 func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 	const organization = surfaceOrg
 
@@ -702,8 +592,6 @@ func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 	unresponsive := registerRelay(t, connection, databaseDSN, organization)
 	stream := connectSession(t, connection, organization, unresponsive)
 	awaitSessionAccepted(t, stream)
-	// Nothing reads or writes on that stream again. It is established, idle, and holding a
-	// handler open — which is what a relay behind a stalled network looks like from here.
 
 	started := time.Now()
 	plane.shutdown()
@@ -718,9 +606,6 @@ func TestRelayEndpointStopsWithinItsBudget(t *testing.T) {
 	}
 }
 
-// A session is refused with one status whatever is wrong with the identity presented. The
-// alternative tells a caller which registrations exist, which is the same disclosure the
-// enrolment refusals are shaped to avoid.
 func TestRelaySessionRefusesUnprovenIdentity(t *testing.T) {
 	const organization = surfaceOrg
 

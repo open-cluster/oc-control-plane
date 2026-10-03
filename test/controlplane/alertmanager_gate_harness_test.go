@@ -29,23 +29,11 @@ import (
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// The harness behind the Alertmanager compatibility gate: the documentation page read as
-// configuration, a real Alertmanager running on it, a recorder in the delivery path, and
-// the readers the gate asserts through. The sentences it exists for are next door in
-// alertmanager_gate_test.go.
-
 const (
-	// alertmanagerGateImage is THE supported version. It is stated in the documentation as
-	// the version this gate proves, and raising it is a deliberate edit with the gate re-run
-	// — not something that drifts because a tag moved.
 	alertmanagerGateImage = "prom/alertmanager:v0.34.0"
 )
 
 func TestAlertmanagerGate_PinnedNotifierRetryContract(t *testing.T) {
-	// v0.34.0 constructs the webhook Retrier without additional retry codes and retries
-	// only 5xx responses. Re-check both sources before changing the supported image:
-	// https://github.com/prometheus/alertmanager/blob/v0.34.0/notify/webhook/webhook.go#L46-L53
-	// https://github.com/prometheus/alertmanager/blob/v0.34.0/notify/util.go#L214-L244
 	if alertmanagerGateImage != "prom/alertmanager:v0.34.0" {
 		t.Fatalf("the supported Alertmanager changed to %s; re-check its webhook retry contract",
 			alertmanagerGateImage)
@@ -62,9 +50,6 @@ func alertmanagerWebhookRetries(status int) bool {
 	return status/100 == 5
 }
 
-// alertmanagerGate is the composed product with a real Alertmanager in front of it: the
-// application API, intake, a real database, a scripted model boundary so this gate never
-// pays a provider, and a recorder in the delivery path.
 type alertmanagerGate struct {
 	*integrationPlane
 	integration  string
@@ -113,8 +98,6 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	}
 }
 
-// forwarded is one delivery as it passed through the recorder: the body and token
-// Alertmanager sent, and the answer the recorder returned to it.
 type forwarded struct {
 	Body    []byte
 	Token   string
@@ -122,8 +105,6 @@ type forwarded struct {
 	Payload deliveredPayload
 }
 
-// deliveredPayload is the v4 webhook body as Alertmanager renders it. Only what this gate
-// asserts on is declared.
 type deliveredPayload struct {
 	Status   string `json:"status"`
 	GroupKey string `json:"groupKey"`
@@ -138,14 +119,6 @@ type deliveredPayload struct {
 	} `json:"alerts"`
 }
 
-// intakeRecorder stands between Alertmanager and intake, normally forwarding each request
-// verbatim and returning intake's own answer.
-//
-// It exists for three reasons, all needing Alertmanager's own body rather than one this test
-// wrote. A delivery is stored as a digest and never as a body, so the only place to capture
-// what Alertmanager actually sent is in flight. It can answer before forwarding to model
-// admission backpressure, or answer with a server error AFTER intake has accepted a delivery
-// to provoke Alertmanager's own retry of an identical body.
 type intakeRecorder struct {
 	server *httptest.Server
 
@@ -208,7 +181,6 @@ func startIntakeRecorder(t *testing.T, intakeAddress string) *intakeRecorder {
 	return recorder
 }
 
-// backpressureNextDelivery refuses the next delivery before it reaches intake.
 func (r *intakeRecorder) backpressureNextDelivery() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -224,8 +196,6 @@ func (r *intakeRecorder) takeBackpressure() bool {
 }
 
 func (r *intakeRecorder) record(delivery forwarded) {
-	// A body that does not decode is still recorded: what it was is exactly what a failing
-	// assertion needs to report.
 	_ = json.Unmarshal(delivery.Body, &delivery.Payload)
 
 	r.mu.Lock()
@@ -233,8 +203,6 @@ func (r *intakeRecorder) record(delivery forwarded) {
 	r.deliveries = append(r.deliveries, delivery)
 }
 
-// failNextDelivery tells the recorder to answer the next delivery with a server error after
-// intake has already accepted it.
 func (r *intakeRecorder) failNextDelivery() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -249,7 +217,6 @@ func (r *intakeRecorder) takeFailure() bool {
 	return failing
 }
 
-// matching reports the deliveries carrying one alert in one state.
 func (r *intakeRecorder) matching(alertname, status string) []forwarded {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -266,27 +233,11 @@ func (r *intakeRecorder) matching(alertname, status string) []forwarded {
 	return found
 }
 
-// The gate's waiting budgets. quiet is how long NOTHING may arrive before the wait is
-// given up; total is the backstop so a wait cannot run until the suite's own timeout.
-//
-// The budget is IDLE time rather than total time, and that distinction is the whole point.
-// A total budget cannot tell a configuration that does not work from a runner that is
-// merely busy: this gate takes about 37s alone and has taken over 114s inside a full suite
-// competing for one container runtime, and what it printed when it lost that race was "the
-// documented configuration did not reach intake" — a sentence about a configuration that
-// was fine. That is the mirror of the defect #16 closed: there, CI could report success
-// over a suite that never ran; here, it could report failure over a product that works.
-//
-// Resetting on ANY new delivery keeps the honest failure fast. A pipe that is moving keeps
-// its time; a pipe that is silent still fails in 90 seconds, which is the case that means
-// something.
 const (
 	awaitQuiet = 90 * time.Second
 	awaitTotal = 8 * time.Minute
 )
 
-// await blocks until at least count deliveries of one alert in one state have been
-// forwarded, and returns them.
 func (r *intakeRecorder) await(t *testing.T, alertname, status string, count int) []forwarded {
 	t.Helper()
 
@@ -298,7 +249,6 @@ func (r *intakeRecorder) await(t *testing.T, alertname, status string, count int
 			return found
 		}
 		if now := r.count(); now != seen {
-			// Something arrived. The pipe is working and this runner is just slow.
 			seen, lastArrival = now, time.Now()
 		}
 		if verdict := awaitVerdict(seen, count, alertname, status,
@@ -309,18 +259,11 @@ func (r *intakeRecorder) await(t *testing.T, alertname, status string, count int
 	}
 }
 
-// awaitVerdict decides whether a wait has ended and says why, or returns empty while it
-// should carry on. It is a pure function so that all three endings can be tested without
-// waiting eight minutes for one of them — which matters here, because the WORDS are the
-// thing being fixed: the old budget's failure said "the documented configuration did not
-// reach intake" about configurations that were fine.
 func awaitVerdict(
 	seen, want int, alertname, status string, quiet, elapsed time.Duration,
 ) string {
 	switch {
 	case quiet > awaitQuiet && seen == 0:
-		// Nothing has arrived at all. This is the failure that means something, and it
-		// is still prompt: a broken configuration does not get eight minutes.
 		return fmt.Sprintf("alertmanager delivered nothing at all in %s; the documented "+
 			"configuration did not reach intake", elapsed.Round(time.Second))
 	case quiet > awaitQuiet:
@@ -328,9 +271,6 @@ func awaitVerdict(
 			"nothing new arrived for %s; the configuration reaches intake and this state "+
 			"did not follow", seen, status, alertname, want, awaitQuiet)
 	case elapsed > awaitTotal:
-		// Deliveries kept arriving and the awaited one never did. Said as a give-up
-		// rather than as a verdict on the configuration, because a runner this slow has
-		// not proved anything about it either way.
 		return fmt.Sprintf("gave up after %s waiting for %s %s (%d deliveries arrived); "+
 			"this is a timeout on a loaded runner, not a configuration result",
 			awaitTotal, status, alertname, seen)
@@ -339,7 +279,6 @@ func awaitVerdict(
 	}
 }
 
-// count reports how many deliveries have arrived in all.
 func (r *intakeRecorder) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -360,16 +299,11 @@ func (r *intakeRecorder) port(t *testing.T) int {
 	return port
 }
 
-// origin is the recorder as the container reaches it, which is what a customer substitutes
-// for the example origin on the page.
 func (r *intakeRecorder) origin(t *testing.T) string {
 	t.Helper()
 	return "http://" + net.JoinHostPort(testcontainers.HostInternal, strconv.Itoa(r.port(t)))
 }
 
-// startAlertmanagerContainer runs the pinned Alertmanager on the documented configuration and
-// returns its API base URL. The host port is exposed to the container, so the endpoint in the
-// configuration is one the container can genuinely reach.
 func startAlertmanagerContainer(t *testing.T, configuration string, hostPort int) string {
 	t.Helper()
 	ctx := context.Background()
@@ -395,9 +329,6 @@ func startAlertmanagerContainer(t *testing.T, configuration string, hostPort int
 		},
 	})
 	if err != nil {
-		// Not a skip. By the time this runs the suite has already started Postgres in a
-		// container, so a container runtime exists and this is a real failure — most likely
-		// a configuration the documented page can no longer produce.
 		t.Fatalf("starting %s on the documented configuration: %v\n%s",
 			alertmanagerGateImage, err, configuration)
 	}
@@ -418,8 +349,6 @@ func startAlertmanagerContainer(t *testing.T, configuration string, hostPort int
 	return "http://" + net.JoinHostPort(host, port.Port())
 }
 
-// fire posts alerts through Alertmanager's own API, which is how a customer's Prometheus
-// reaches it — so what arrives at intake is Alertmanager's body, not this test's.
 func (g *alertmanagerGate) fire(t *testing.T, alerts ...map[string]any) {
 	t.Helper()
 
@@ -448,8 +377,6 @@ func (g *alertmanagerGate) fire(t *testing.T, alerts ...map[string]any) {
 	}
 }
 
-// firingAlert is one alert as a customer's Prometheus posts it to their own Alertmanager,
-// carrying everything an investigation wants to start from.
 func firingAlert(alertname string, began time.Time) map[string]any {
 	return map[string]any{
 		"labels": map[string]string{
@@ -460,34 +387,24 @@ func firingAlert(alertname string, began time.Time) map[string]any {
 			"runbook_url":   "https://runbooks.acme.example/" + alertname,
 			"dashboard_url": "https://grafana.acme.example/d/" + alertname,
 		},
-		"startsAt": began.Format(time.RFC3339),
-		// A firing alert states when it stops being true, as a Prometheus that keeps
-		// re-posting it does. Leaving it out would hand Alertmanager its own resolve
-		// timeout instead, and a slow run would then deliver a resolution nobody asked
-		// for — a clock this gate does not control deciding what it observes.
+		"startsAt":     began.Format(time.RFC3339),
 		"endsAt":       began.Add(time.Hour).Format(time.RFC3339),
 		"generatorURL": "https://prometheus.acme.example/graph?g0.expr=up",
 	}
 }
 
-// resolvedAlert is the same alert with an end time, which is how a source tells its own
-// Alertmanager the failure stopped. The start time is unchanged on purpose: it identifies
-// the incident being closed.
 func resolvedAlert(alertname string, began, ended time.Time) map[string]any {
 	alert := firingAlert(alertname, began)
 	alert["endsAt"] = ended.Format(time.RFC3339)
 	return alert
 }
 
-// replay posts a body straight to intake, bypassing Alertmanager. Used only for bodies
-// Alertmanager already produced, and for the one mangled body it will not produce on request.
 func (g *alertmanagerGate) replay(t *testing.T, secret string, body []byte) int {
 	t.Helper()
 	status, _ := g.deliver(t, g.integration, secret, body)
 	return status
 }
 
-// incident reads one Incident through the application API an operator uses.
 func (g *alertmanagerGate) incident(t *testing.T, id string) incidentBody {
 	t.Helper()
 
@@ -500,7 +417,6 @@ func (g *alertmanagerGate) incident(t *testing.T, id string) incidentBody {
 	return incident
 }
 
-// incidents lists this organization's incidents.
 func (g *alertmanagerGate) incidents(t *testing.T) incidentListBody {
 	t.Helper()
 
@@ -513,7 +429,6 @@ func (g *alertmanagerGate) incidents(t *testing.T) incidentListBody {
 	return list
 }
 
-// alertEventsNamed reports what is durably recorded for one alert name.
 func (g *alertmanagerGate) alertEventsNamed(t *testing.T, alertname string) []recordedAlertEvent {
 	t.Helper()
 	ctx := context.Background()
@@ -558,7 +473,6 @@ func (g *alertmanagerGate) alertEventsNamed(t *testing.T, alertname string) []re
 	return recorded
 }
 
-// countDeliveries reports how many accepted deliveries this Integration recorded.
 func (g *alertmanagerGate) countDeliveries(t *testing.T) int {
 	t.Helper()
 	ctx := context.Background()
@@ -579,7 +493,6 @@ func (g *alertmanagerGate) countDeliveries(t *testing.T) int {
 	return counted
 }
 
-// setEnabled turns this gate's Integration on or off through the surface an operator uses.
 func (g *alertmanagerGate) setEnabled(t *testing.T, enabled bool) {
 	t.Helper()
 
@@ -594,23 +507,15 @@ func (g *alertmanagerGate) setEnabled(t *testing.T, enabled bool) {
 	}
 }
 
-// The three endings, and which sentence each one says.
-//
-// The words are the fix. A gate that fails a working configuration is bad; a gate that
-// fails a working configuration while SAYING the configuration is broken sends whoever
-// reads it to the wrong place entirely, and on a release day that is expensive.
 func TestTheWaitSaysWhichKindOfFailureItIs(t *testing.T) {
 	t.Parallel()
 
-	// Nothing arrived: the honest product failure, and still prompt.
 	verdict := awaitVerdict(0, 1, "PoolExhausted", "resolved",
 		awaitQuiet+time.Second, awaitQuiet+time.Second)
 	if !strings.Contains(verdict, "did not reach intake") {
 		t.Errorf("a silent pipe must say the configuration did not reach intake: %q", verdict)
 	}
 
-	// Deliveries arrived, this state did not, and the pipe then went quiet. Still a
-	// failure, but not one that blames the configuration for being unreachable.
 	verdict = awaitVerdict(3, 1, "PoolExhausted", "resolved",
 		awaitQuiet+time.Second, awaitQuiet+time.Second)
 	if strings.Contains(verdict, "did not reach intake") {
@@ -620,7 +525,6 @@ func TestTheWaitSaysWhichKindOfFailureItIs(t *testing.T) {
 		t.Errorf("the verdict does not say what did work: %q", verdict)
 	}
 
-	// Still arriving after the backstop: a loaded runner, said as one.
 	verdict = awaitVerdict(9, 1, "PoolExhausted", "resolved",
 		time.Second, awaitTotal+time.Second)
 	if !strings.Contains(verdict, "not a configuration result") {
@@ -628,8 +532,6 @@ func TestTheWaitSaysWhichKindOfFailureItIs(t *testing.T) {
 			"configuration, and the verdict must say so: %q", verdict)
 	}
 
-	// The case the flake produced: slow, but still moving, and well inside the backstop.
-	// This is the one that used to fail, and it must now say nothing at all.
 	if verdict = awaitVerdict(2, 1, "PoolExhausted", "resolved",
 		30*time.Second, 5*time.Minute); verdict != "" {
 		t.Errorf("a slow but moving pipe was failed: %q", verdict)

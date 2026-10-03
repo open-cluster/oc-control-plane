@@ -17,7 +17,6 @@ type Store interface {
 		merge Merge) (Incident, error)
 }
 
-// Query is a narrowed, ordered, paged request for a tenant's incidents.
 type Query struct {
 	Search      string
 	Integration *uuid.UUID
@@ -28,19 +27,16 @@ type Query struct {
 	Limit       int
 }
 
-// Page is what one query answered.
 type Page struct {
 	Incidents []Incident
 	Next      string
 }
 
-// AlertEventPage is a position within one incident's AlertEvents.
 type AlertEventPage struct {
 	Limit int
 	After string
 }
 
-// AlertEventList is a page of an incident's AlertEvents.
 type AlertEventList struct {
 	AlertEvents []AlertEvent
 	Next        string

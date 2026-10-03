@@ -5,16 +5,12 @@ import (
 	"strings"
 )
 
-// ToolAvailability reports whether one declared Tool can be offered from the grants
-// established by the Integration's latest Verification.
 type ToolAvailability struct {
 	Tool      string
 	Available bool
 	Reason    string
 }
 
-// ToolAvailabilityFor reports every Tool a definition declares. The operator view and
-// investigation offer use this one decision so unavailable Tools remain explainable.
 func ToolAvailabilityFor(definition Definition, integration Integration) []ToolAvailability {
 	recorded := recordedGrants(integration)
 	eligible, refusal := integrationEligible(integration)
@@ -33,7 +29,6 @@ func ToolAvailabilityFor(definition Definition, integration Integration) []ToolA
 	return found
 }
 
-// SupportedTools returns the Tools an Investigation may be offered.
 func SupportedTools(definition Definition, integration Integration) []Tool {
 	if eligible, _ := integrationEligible(integration); !eligible {
 		return nil

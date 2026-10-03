@@ -25,7 +25,6 @@ type Principal struct {
 	email         string
 }
 
-// Membership is one organization and the role held in it.
 type Membership struct {
 	Organization uuid.UUID
 	DisplayName  string
@@ -56,14 +55,11 @@ func NewPrincipal(
 	}, nil
 }
 
-// WithRequest records where the request came from and what it is called in the logs, so every
-// event this principal produces can name both without each handler threading them.
 func (p Principal) WithRequest(sourceAddress, requestID string) Principal {
 	p.sourceAddress, p.requestID = sourceAddress, requestID
 	return p
 }
 
-// IsZero reports the principal nobody resolved. It reaches nothing.
 func (p Principal) IsZero() bool { return p.userID == uuid.Nil }
 
 func (p Principal) UserID() uuid.UUID { return p.userID }
@@ -76,10 +72,8 @@ func (p Principal) DisplayName() string { return p.displayName }
 
 func (p Principal) SourceAddress() string { return p.sourceAddress }
 
-// RequestID ties this principal's events to the log lines for the same request.
 func (p Principal) RequestID() string { return p.requestID }
 
-// Organization is the sole tenant resolved during authentication.
 func (p Principal) Organization() uuid.UUID { return p.membership.Organization }
 
 func (p Principal) OrganizationName() string { return p.membership.DisplayName }
@@ -88,9 +82,6 @@ func (p Principal) Role() Role { return p.membership.Role }
 
 func (p Principal) Can(permission Permission) bool { return p.membership.Role.Grants(permission) }
 
-// Actor is how this principal appears in the record. The display name is copied here rather
-// than joined at read time, so renaming or deleting a user never rewrites what the record says
-// about what they did.
 func (p Principal) Actor() audit.Actor {
 	return audit.Actor{
 		Kind:        audit.ActorUser,

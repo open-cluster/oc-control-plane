@@ -11,25 +11,10 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 )
 
-// reconnectTimeout bounds a job dispatched after a control-plane restart. It is longer than
-// an ordinary job because the Relay's reconnect backoff is capped at thirty seconds with full
-// jitter, and a restart usually costs it at least one failed attempt.
 const reconnectTimeout = 3 * time.Minute
 
-// observationWindow is how long the harness watches for something that must not happen. It is
-// longer than the control plane's delivery round, so work that was going to be dispatched has
-// had its chance.
 const observationWindow = 12 * time.Second
 
-// The proof, as one run. The subtests are phases of a single life rather than independent
-// cases: they share a Relay that enrols once, a cluster that is created once, and a control
-// plane whose restart in the last phase is the thing being tested. Splitting them into
-// separate top-level tests would multiply several minutes of containers by the number of
-// phases and prove nothing extra.
-//
-// The order is not incidental. Each phase leaves the harness usable by the next, and the two
-// that disturb it — stopping the Relay, killing the control plane — come last and restore
-// what they took.
 func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 	h := newHarness(t)
 
@@ -53,12 +38,6 @@ func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 		assertCompletenessBasisIntact(t, result)
 	})
 
-	// A read that established the workload is not there is a successful investigation, not a
-	// failed one, and the difference is load-bearing: certified absence claims are minted
-	// centrally from typed read outcomes, and a not-found is never absence evidence. If the
-	// transport collapsed the two — recording a failure, or a success whose completeness flag
-	// defaulted true — the platform would either lose the finding or certify a fact it never
-	// established.
 	t.Run("an absent workload is a typed outcome, not a failure", func(t *testing.T) {
 		job := h.dispatchRead(t, fixtureNamespace, "no-such-workload")
 		record := h.awaitTerminal(t, job)
@@ -81,26 +60,6 @@ func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 		}
 	})
 
-	// The contract says a Relay selects its implementation by version, and gives it a typed
-	// way to say it cannot: KIND_UNSUPPORTED_CAPABILITY_VERSION. Both halves have to agree,
-	// and only a real pair can show whether they do.
-	//
-	// What is at stake is not this version. It is the day a v2 exists: an old Relay that
-	// ignores the version executes the job with whatever implementation it has and returns a
-	// result under the wrong semantics, and nothing downstream can tell. Rejecting the
-	// assignment is what makes "this Relay is too old" a fact the control plane learns rather
-	// than a difference it never sees.
-	// WHERE this is refused moved, and the move is worth stating rather than leaving to be
-	// noticed. The control plane now validates a job's capability and version against its own
-	// compiled registry before dispatch, so a version neither half carries is refused before it
-	// costs a lease and a round trip. What this test still proves is the property that matters:
-	// such a job reaches a recorded terminal failure carrying the kind that says the fleet
-	// disagrees about what exists, and is never executed under another version's semantics.
-	//
-	// The Relay's own refusal of an assignment it never advertised is no longer reachable from
-	// here, because both halves compile the same contract and there is no version one has and
-	// the other does not. It is proven in the Relay's suite instead, where the advertised set
-	// can be varied.
 	t.Run("a capability version the relay does not have is refused, not executed", func(t *testing.T) {
 		job := h.dispatchVersion(t, 99, fixtureNamespace, fixtureWorkload)
 		record := h.awaitTerminal(t, job)
@@ -127,18 +86,10 @@ func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 
 	t.Run("work enqueued while no relay is connected is delivered on connect", func(t *testing.T) {
 		h.relay.stop()
-		// Whatever happens below, the next subtest must not inherit a stopped Relay. Restarting
-		// one that is already running is harmless; leaving the rest of the run against a dead
-		// one would turn one failure into four.
 		t.Cleanup(func() { _ = h.relay.start() })
 
 		job := h.dispatch(t)
 
-		// Waiting is the assertion. There is no way to observe that something did not happen
-		// except by giving it time to, and the window is longer than the round on which the
-		// control plane claims work — so a job that was going to be delivered to a relay that
-		// is not there would have been by now. Reading immediately after the insert would prove
-		// only that a database write outruns a network round trip.
 		time.Sleep(observationWindow)
 		record, err := h.truth.job(context.Background(), organization, job)
 		if err != nil {
@@ -148,8 +99,6 @@ func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 			t.Fatalf("a job reached %s with no relay running; nothing executed it", record.Status)
 		}
 
-		// The same credential file, so this start loads the durable identity rather than
-		// enrolling again — which is the half of identity a fresh enrolment never tests.
 		if err = h.relay.start(); err != nil {
 			t.Fatalf("restarting the relay: %v", err)
 		}
@@ -170,9 +119,6 @@ func TestTheProtocolCarriesWorkBetweenRealProcesses(t *testing.T) {
 			t.Fatalf("after a control-plane restart the job ended %s, want succeeded: %s\n\n%s",
 				record.Status, describeFailure(record), h.diagnostics())
 		}
-		// Only what the process running now has said counts. Searching the whole history
-		// would find the session its predecessor accepted and call that proof, which would
-		// leave this passing against a control plane that never went away.
 		if !strings.Contains(h.plane.logsSinceStart(), "relay session established") {
 			t.Errorf("the restarted control plane never accepted a session\n%s", h.plane.logs())
 		}
@@ -213,11 +159,6 @@ func (h *harness) assertRelayNamespaceBoundary(t *testing.T) {
 	}
 }
 
-// assertTokenIsSpent runs a second Relay with the token the first one consumed.
-//
-// A fresh credential file is the point: this Relay has no identity, so it will attempt
-// enrolment, and the only thing standing between it and one is the token having been spent
-// once already. That guard is proven here against a real client rather than a modelled one.
 func (h *harness) assertTokenIsSpent(t *testing.T) {
 	before, err := h.truth.countRegistrations(context.Background(), organization)
 	if err != nil {
@@ -245,15 +186,6 @@ func (h *harness) assertTokenIsSpent(t *testing.T) {
 		t.Errorf("a relay presenting a spent token persisted a credential\n%s", impostor.logs())
 	}
 
-	// The control plane must have refused it. Everything above is also true of a Relay that
-	// fell over before it ever dialled — a bad path, an unreadable kubeconfig — so without
-	// this the test would pass while proving nothing about single-use consumption.
-	//
-	// The audit line is the observable here because a refusal deliberately writes nothing
-	// else: no token is spent, no identity is minted, and telling an unknown token from a
-	// spent one in the response is exactly what would let an attacker probe for valid ones.
-	// It is read from the process running now rather than the whole history, for the same
-	// reason the reconnect assertion is.
 	h.await(t, "the control plane to record a refused enrolment", 30*time.Second,
 		func(context.Context) (bool, error) {
 			return strings.Contains(h.plane.logsSinceStart(), "relay enrolment refused"), nil
@@ -268,8 +200,6 @@ func (h *harness) assertTokenIsSpent(t *testing.T) {
 	}
 }
 
-// assertReadTheFixture checks the result describes the workload that was created, which is
-// what proves the job reached a real cluster rather than any cluster.
 func assertReadTheFixture(t *testing.T, result *relayv1.KubernetesWorkloadRuntimeResultV1) {
 	t.Helper()
 
@@ -289,7 +219,6 @@ func assertReadTheFixture(t *testing.T, result *relayv1.KubernetesWorkloadRuntim
 		t.Errorf("replicas: desired %d ready %d, want 1 and 1",
 			workload.GetDesiredReplicas(), workload.GetReadyReplicas())
 	}
-	// Empty exactly when the outcome is SELECTOR_UNREPRESENTABLE, which this is not.
 	if workload.GetSelectorSummary() == "" {
 		t.Error("a successful read must render the workload's selector")
 	}
@@ -307,13 +236,6 @@ func assertReadTheFixture(t *testing.T, result *relayv1.KubernetesWorkloadRuntim
 	}
 }
 
-// assertCompletenessBasisIntact checks the fields the central certificate logic depends on
-// arrived and are typed as expected.
-//
-// This is the assertion with the least margin for politeness. A certified absence claim is
-// minted centrally and only from a complete read, so a transport that quietly dropped
-// `complete` would leave every claim resting on a default false — or, worse the other way
-// round, a default true would let an incomplete read certify an absence that is not a fact.
 func assertCompletenessBasisIntact(t *testing.T, result *relayv1.KubernetesWorkloadRuntimeResultV1) {
 	t.Helper()
 
@@ -324,7 +246,6 @@ func assertCompletenessBasisIntact(t *testing.T, result *relayv1.KubernetesWorkl
 	if got, want := result.GetReturnedPodCount(), int32(len(result.GetPods())); got != want {
 		t.Errorf("returned pod count = %d, but %d pods arrived", got, want)
 	}
-	// The dispatch asked for ten and the Relay's local cap is higher, so ten is what applies.
 	if result.GetAppliedMaxPods() != 10 {
 		t.Errorf("applied max pods = %d, want the dispatched bound of 10",
 			result.GetAppliedMaxPods())
@@ -351,9 +272,6 @@ func decodeResult(t *testing.T, recorded []byte) *relayv1.KubernetesWorkloadRunt
 	return result
 }
 
-// describeFailure renders a non-success outcome for a failure message. A job that failed
-// carries a typed reason, and printing it is the difference between "the path is broken" and
-// "the capability refused the arguments".
 func describeFailure(record jobRecord) string {
 	if record.Status == jobCancelled {
 		return "the job was cancelled, which records no payload"

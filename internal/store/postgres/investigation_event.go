@@ -9,18 +9,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-// The investigation event stream's persistence. It is a table rather than a broadcast
-// because persistence is what makes reconnect and replica change THE SAME code path: a
-// reader that lost its connection and one that landed on a different process both ask for
-// what comes after a sequence, and both are answered from here.
-
-// maxEventPage bounds one replay read, so a long investigation is drained in pages rather
-// than in one answer nobody sized.
 const maxEventPage = 500
 
-// AppendEvent allocates a durable sequence after locking the Investigation.
-//
-// The parent-row lock serializes progress with terminal transitions across replicas.
 func (p *Database) AppendEvent(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	event investigation.Event,
@@ -60,12 +50,6 @@ func (p *Database) AppendEvent(
 	return tx.Commit(ctx)
 }
 
-// Events reports this investigation's events after a sequence, in order.
-//
-// It is scoped by organization in the WHERE clause like every other read here, so an
-// identifier from another tenant returns nothing rather than somebody else's stream. The
-// caller turns an empty answer for an investigation it could not read into not-found; this
-// read does not distinguish "no events yet" from "not yours", and does not need to.
 func (p *Database) Events(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	after int64, limit int,
@@ -117,8 +101,6 @@ func (p *Database) Events(
 	return events, nil
 }
 
-// orEmptyPayload renders a payload for the JSONB column. A nil map would encode as null,
-// and a reader would have to tell null from an absent structure for no reason.
 func orEmptyPayload(payload map[string]any) map[string]any {
 	if payload == nil {
 		return map[string]any{}

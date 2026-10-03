@@ -10,23 +10,6 @@ import (
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
-// The compatibility gate for the front door.
-//
-// Every other test of intake posts a body this repository wrote in the shape it believes
-// Alertmanager sends. That proves the parser handles what we believe, which is exactly the
-// belief worth checking. Here a REAL Alertmanager is started, handed the configuration the
-// documentation page gives customers, and told to fire an alert; the body under test is
-// Alertmanager's own.
-//
-// The configuration is not written twice. It is read out of the page, and only the three
-// values a customer substitutes are substituted. If somebody edits the page into something
-// that does not work, or changes intake so the documented configuration no longer reaches
-// it, this fails — which is the point, because the failure it guards against is a customer
-// whose first alert vanished, and the symptom of that is silence.
-
-// THE GATE. A real alert, fired through a real Alertmanager configured exactly as the
-// documentation page says, becomes an incident an SRE can investigate — and closes when the
-// alert does.
 func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncident(t *testing.T) {
 	gate := startAlertmanagerGate(t)
 	const alertname = "GateNodeNotReady"
@@ -45,8 +28,6 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 			delivered.Token, intake.TokenHeader, alertmanagerGateImage)
 	}
 
-	// The AlertEvent is what the alert became. Everything the customer's alerting already knew
-	// has to survive intake, because it is what the investigation starts from.
 	alertEvents := gate.alertEventsNamed(t, alertname)
 	if len(alertEvents) != 1 {
 		t.Fatalf("one fired alert produced %d alertEvents, want 1", len(alertEvents))
@@ -73,8 +54,6 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 		t.Errorf("the Alert Event started at %s, want the alert's own %s", alertEvent.StartedAt, began)
 	}
 
-	// The page tells an SRE to fire a test alert and select Verify. That is how they learn
-	// their first alert arrived, so it is asserted against a real one.
 	verifyStatus, verifyBody := gate.call(t, http.MethodPost,
 		gate.base(surfaceOrg)+"/integrations/"+gate.integration+"/verify", nil)
 	if verifyStatus != http.StatusOK {
@@ -87,7 +66,6 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 			"verified; note: %s", verified.Status, verified.VerificationNote)
 	}
 
-	// The incident, grouped on the identity ALERTMANAGER supplied. Nothing here infers it.
 	incidentID := gate.incidentByTitle(t, alertname)
 	incident := gate.incident(t, incidentID)
 	if incident.Grouping.Basis != "source_grouping" {
@@ -102,8 +80,6 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 		t.Errorf("the incident is %q while its alert fires, want open", incident.Status)
 	}
 
-	// Acceptance already opened the Incident's initial Investigation. Use that durable handoff
-	// for the walkthrough rather than creating a second manual Investigation.
 	status, body := gate.call(t, http.MethodGet,
 		gate.base(surfaceOrg)+"/investigations?incidentId="+incidentID, nil)
 	if status != http.StatusOK {
@@ -141,7 +117,6 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 		}
 	}
 
-	// A resolution closes the incident the firing opened rather than opening a second one.
 	ended := time.Now().UTC().Truncate(time.Second)
 	gate.fire(t, resolvedAlert(alertname, began, ended))
 	gate.recorder.await(t, alertname, "resolved", 1)
@@ -160,14 +135,11 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 	}
 }
 
-// A network blip must not double an SRE's noise. Alertmanager retries a delivery it was told
-// failed, and the retry carries the identical body — which intake has already accepted.
 func TestAlertmanagerGate_ARetriedDeliveryCreatesNoSecondIncident(t *testing.T) {
 	gate := startAlertmanagerGate(t)
 	const alertname = "GateRetriedDelivery"
 	began := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 
-	// Intake will accept this one; Alertmanager will be told it did not.
 	gate.recorder.failNextDelivery()
 	gate.fire(t, firingAlert(alertname, began))
 	delivered := gate.recorder.await(t, alertname, "firing", 2)
@@ -185,8 +157,6 @@ func TestAlertmanagerGate_ARetriedDeliveryCreatesNoSecondIncident(t *testing.T) 
 			"about redelivery")
 	}
 
-	// The same body once more, by hand: idempotence is a property of the body, not of who
-	// happened to send it.
 	if status := gate.replay(t, gate.secret, delivered[0].Body); status != http.StatusOK {
 		t.Errorf("the same body redelivered = %d, want 200", status)
 	}
@@ -203,8 +173,6 @@ func TestAlertmanagerGate_ARetriedDeliveryCreatesNoSecondIncident(t *testing.T) 
 	}
 }
 
-// Alertmanager must retry temporary admission backpressure rather than losing the alert.
-// The first attempt never reaches intake; the later attempt must be accepted exactly once.
 func TestAlertmanagerGate_BackpressureIsRetriedAndLaterAccepted(t *testing.T) {
 	gate := startAlertmanagerGate(t)
 	const alertname = "GateBackpressureRetry"
@@ -234,8 +202,6 @@ func TestAlertmanagerGate_BackpressureIsRetriedAndLaterAccepted(t *testing.T) {
 	}
 }
 
-// Refusals remain observable without creating delivery idempotency rows. This is asserted against the
-// body a real Alertmanager produced rather than a hand-built approximation.
 func TestAlertmanagerGate_ARefusedDeliveryIsNotPersisted(t *testing.T) {
 	gate := startAlertmanagerGate(t)
 	const accepted = "GateAcceptedAlert"
@@ -248,20 +214,16 @@ func TestAlertmanagerGate_ARefusedDeliveryIsNotPersisted(t *testing.T) {
 		t.Fatalf("the delivery this test refuses variants of = %d, want 202", genuine.Status)
 	}
 
-	// A wrong secret. The operator who rotated one wants to see it, not to wonder.
 	status := gate.replay(t, "not-the-webhook-secret", genuine.Body)
 	if status != http.StatusUnauthorized {
 		t.Errorf("a real body with a wrong secret = %d, want 401", status)
 	}
 
-	// A mangled body — half of a real one, which is what middleware rewriting a delivery
-	// looks like. This is the one body Alertmanager will not produce on request.
 	status = gate.replay(t, gate.secret, genuine.Body[:len(genuine.Body)/2])
 	if status != http.StatusBadRequest {
 		t.Errorf("a truncated real body = %d, want 400", status)
 	}
 
-	// Turning the integration off has to mean something at the door.
 	gate.setEnabled(t, false)
 	gate.fire(t, firingAlert(afterDisabling, began))
 	refused := gate.recorder.await(t, afterDisabling, "firing", 1)[0]

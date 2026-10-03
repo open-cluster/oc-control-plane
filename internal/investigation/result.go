@@ -5,14 +5,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// Agent owns one Investigation's reasoning, Tool execution, provenance, and terminal state.
 type Agent interface {
 	Run(context.Context, uuid.UUID, Investigation) error
 }
 
 const MaxHypothesisSnapshotItems = 8
 
-// Conclusion is the versioned, operator-facing result of an investigation.
 type Conclusion struct {
 	Status      ConclusionStatus   `json:"status"`
 	Summary     string             `json:"summary"`
@@ -136,13 +134,8 @@ type Limitation struct {
 	MessageSequences []int64        `json:"messageSequences,omitempty"`
 }
 
-// The concluding document's record bounds, enforced where it is decoded and again
-// before the record is written — the same twice-enforced pattern the citation invariant
-// uses, with one set of numbers for both.
 const (
 	MaxConclusionActions = 8
 	MaxActionTextLength  = 512
-	// MaxAnswerLength bounds the direct reply. Long enough for a paragraph that names
-	// identifiers and versions; past this it is a report, and the report is the findings.
-	MaxSummaryLength = 4096
+	MaxSummaryLength     = 4096
 )
