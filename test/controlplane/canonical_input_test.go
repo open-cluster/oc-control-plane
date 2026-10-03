@@ -67,6 +67,17 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 		result.Limitations[0].MessageSequences[0] != 1 {
 		t.Fatalf("oversized input lacks an explicit persisted sequence refusal: %s", final)
 	}
+	var contract map[string]any
+	if err := json.Unmarshal([]byte(final), &contract); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := contract["humanConfirmationRequired"]; present {
+		t.Fatalf("needs_input response exposes a duplicate human-input flag: %s", final)
+	}
+	impact, ok := contract["impact"].(map[string]any)
+	if !ok || len(impact) != 2 || impact["summary"] != "Input was not processed." {
+		t.Fatalf("unprocessed impact does not use the reduced contract: %s", final)
+	}
 	select {
 	case <-prompts:
 		t.Fatal("model was called with input that cannot fit")

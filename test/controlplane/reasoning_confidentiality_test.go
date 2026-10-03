@@ -20,11 +20,7 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		document := map[string]any{
 			"status": "inconclusive", "summary": "No cause was established.",
-			"impact": map[string]any{
-				"status": "unknown", "current_state": "unknown",
-				"affected_services": []string{}, "affected_users": []string{},
-				"summary": "Impact is unknown.", "run_refs": []int{},
-			},
+			"impact":   map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
 			"findings": []any{}, "hypotheses": []any{}, "actions": []any{},
 			"limitations": []map[string]any{{
 				"type": "essential_human_input", "statement": "Operator context is required.",

@@ -8,7 +8,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
+func TestFindingVocabulariesSeparateHistoricalReadsFromNewOutput(t *testing.T) {
 	t.Parallel()
 
 	assertVocabulary(t, "investigation.FindingKinds", investigation.FindingKinds, []string{
@@ -21,23 +21,17 @@ func TestPersistedFindingVocabularyIsFrozen(t *testing.T) {
 		"unresolved",
 		"observation",
 	})
-
-	assertVocabulary(t, "investigation.Confidences", investigation.Confidences, []string{
-		"confirmed",
-		"likely",
-		"possible",
+	assertVocabulary(t, "investigation.GeneratedFindingKinds", investigation.GeneratedFindingKinds, []string{
+		"cause",
+		"contributing_factor",
+		"observation",
+		"ruled_out",
 	})
 
 	assertVocabulary(t, "investigation.ConclusionStatuses", investigation.ConclusionStatuses,
 		[]string{"verified_cause", "supported_explanation", "inconclusive", "answer_only"})
-	assertVocabulary(t, "investigation.ImpactStatuses", investigation.ImpactStatuses,
-		[]string{"known", "partial", "unknown"})
 	assertVocabulary(t, "investigation.HypothesisStatuses", investigation.HypothesisStatuses,
 		[]string{"exploring", "supported", "ruled_out", "unresolved"})
-	assertVocabulary(t, "investigation.ActionTypes", investigation.ActionTypes,
-		[]string{"mitigate", "rollback", "verify", "fix", "monitor"})
-	assertVocabulary(t, "investigation.ActionRisks", investigation.ActionRisks,
-		[]string{"low", "medium", "high"})
 	assertVocabulary(t, "investigation.LimitationTypes", investigation.LimitationTypes,
 		[]string{"missing_telemetry", "missing_access", "contradiction",
 			"unresolved_assumption", "essential_human_input"})

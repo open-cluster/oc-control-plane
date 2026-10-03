@@ -153,6 +153,15 @@ func readPriorTurns(
 						boundedRunes(limitation.Statement, investigation.BriefMessageBound))
 				}
 			}
+			for _, hypothesis := range decoded.Hypotheses {
+				if (hypothesis.Status == investigation.HypothesisExploring ||
+					hypothesis.Status == investigation.HypothesisUnresolved) &&
+					hypothesis.Statement != "" &&
+					len(brief.OpenHypotheses) < investigation.BriefMaxConstraints {
+					brief.OpenHypotheses = append(brief.OpenHypotheses,
+						boundedRunes(hypothesis.Statement, investigation.BriefMessageBound))
+				}
+			}
 		}
 		if len(decoded.Findings) == 0 {
 			continue
@@ -170,9 +179,8 @@ func readPriorTurns(
 				InvestigationID: investigationID,
 				Turn:            turn,
 				Statement:       finding.Statement,
-				Kind:            finding.Kind,
-				Confidence:      finding.Confidence,
-				Runs:            finding.Sources,
+				Kind:            string(finding.Kind),
+				Runs:            finding.RunRefs,
 				EvidenceRefs:    finding.EvidenceRefs,
 				ObservedAt:      observedAt,
 				WindowFrom:      windowFrom,

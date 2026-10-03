@@ -1,4 +1,4 @@
-revision: structured-conclusion-v1
+revision: structured-conclusion-v2
 fixtures:
   - name: verified-cause
     runs: 1
@@ -6,12 +6,12 @@ fixtures:
     document:
       status: verified_cause
       summary: Deployment abc123 caused checkout failures.
-      impact: {status: known, current_state: ongoing, affected_services: [checkout-api], affected_users: [checkout customers], summary: Checkout requests are failing., run_refs: [1]}
+      impact: {summary: Checkout requests are failing., run_refs: [1]}
       findings:
-        - {id: finding-1, statement: Deployment abc123 exhausted the connection pool., kind: cause, confidence: confirmed, mechanism: The new timeout retained failed connections until the pool was exhausted., run_refs: [1]}
+        - {statement: Deployment abc123 exhausted the connection pool., kind: cause, mechanism: The new timeout retained failed connections until the pool was exhausted., run_refs: [1], evidence_refs: []}
       hypotheses: []
       actions:
-        - {title: Roll back deployment abc123, type: rollback, rationale: The deployment introduced the confirmed failure mechanism., risk: medium, reversible: true, requires_approval: true, verification: Confirm checkout errors and pool saturation return to baseline., run_refs: [1]}
+        - {title: Roll back deployment abc123, rationale: The deployment introduced the failure mechanism., verification: Confirm checkout errors and pool saturation return to baseline., run_refs: [1]}
       limitations: []
   - name: answer-only
     runs: 1
@@ -19,9 +19,9 @@ fixtures:
     document:
       status: answer_only
       summary: checkout-api is running v2.14.1.
-      impact: {status: unknown, current_state: unknown, affected_services: [], affected_users: [], summary: Impact was not assessed for this operator question., run_refs: []}
+      impact: {summary: Impact was not assessed for this operator question., run_refs: []}
       findings:
-        - {id: finding-1, statement: checkout-api is running v2.14.1., kind: observation, confidence: confirmed, mechanism: "", run_refs: [1]}
+        - {statement: checkout-api is running v2.14.1., kind: observation, mechanism: "", run_refs: [1], evidence_refs: []}
       hypotheses: []
       actions: []
       limitations: []
@@ -32,46 +32,9 @@ fixtures:
     document:
       status: verified_cause
       summary: The deployment caused the outage.
-      impact: {status: known, current_state: ongoing, affected_services: [checkout-api], affected_users: [], summary: Checkout is failing., run_refs: [1]}
+      impact: {summary: Checkout is failing., run_refs: [1]}
       findings:
-        - {id: finding-1, statement: Deployment abc123 caused the outage., kind: cause, confidence: confirmed, mechanism: "", run_refs: [1]}
-      hypotheses: []
-      actions: []
-      limitations: []
-  - name: uncited-impact
-    runs: 1
-    valid: false
-    errorContains: impact cites no run
-    document:
-      status: inconclusive
-      summary: Impact is only partially known.
-      impact: {status: partial, current_state: ongoing, affected_services: [checkout-api], affected_users: [], summary: Checkout may be degraded., run_refs: []}
-      findings: []
-      hypotheses: []
-      actions: []
-      limitations: []
-  - name: unsafe-action
-    runs: 1
-    valid: false
-    errorContains: does not require approval
-    document:
-      status: inconclusive
-      summary: The cause is not yet established.
-      impact: {status: unknown, current_state: unknown, affected_services: [], affected_users: [], summary: Impact is unknown., run_refs: []}
-      findings: []
-      hypotheses: []
-      actions:
-        - {title: Restart checkout-api, type: mitigate, rationale: A restart may restore service while diagnosis continues., risk: medium, reversible: true, requires_approval: false, verification: Confirm request success returns to baseline., run_refs: [1]}
-      limitations: []
-  - name: invented-unknown-impact
-    runs: 1
-    valid: false
-    errorContains: unknown impact cannot claim state
-    document:
-      status: inconclusive
-      summary: The cause is not established.
-      impact: {status: unknown, current_state: checkout is failing, affected_services: [], affected_users: [], summary: Checkout is failing., run_refs: []}
-      findings: []
+        - {statement: Deployment abc123 caused the outage., kind: cause, mechanism: "", run_refs: [1], evidence_refs: []}
       hypotheses: []
       actions: []
       limitations: []
@@ -82,10 +45,49 @@ fixtures:
     document:
       status: supported_explanation
       summary: The available evidence supports an explanation.
-      impact: {status: unknown, current_state: unknown, affected_services: [], affected_users: [], summary: Impact is unknown., run_refs: []}
+      impact: {summary: Impact is not established., run_refs: []}
       findings:
-        - {id: finding-1, statement: checkout-api returned errors., kind: symptom, confidence: confirmed, mechanism: "", run_refs: [1]}
+        - {statement: checkout-api returned errors., kind: observation, mechanism: "", run_refs: [1], evidence_refs: []}
       hypotheses:
         - {id: hypothesis-1, statement: A pool change may explain the errors., status: unresolved, test: Read the deployed pool configuration., run_refs: []}
+      actions: []
+      limitations: []
+  - name: supported-explanation
+    runs: 1
+    valid: true
+    document:
+      status: supported_explanation
+      summary: The deployment likely contributed, while another explanation remains open.
+      impact: {summary: Checkout requests were degraded., run_refs: [1]}
+      findings:
+        - {statement: The deployment increased database connection pressure., kind: contributing_factor, mechanism: Larger pools consumed the remaining connection capacity., run_refs: [1], evidence_refs: []}
+      hypotheses:
+        - {id: hypothesis-1, statement: A concurrent traffic increase may also have contributed., status: exploring, test: Read request volume for the same window., run_refs: []}
+      actions: []
+      limitations: []
+  - name: unavailable-run-reference
+    runs: 1
+    valid: false
+    errorContains: only 1 ran
+    document:
+      status: answer_only
+      summary: The deployed revision was observed.
+      impact: {summary: Impact is not established., run_refs: []}
+      findings:
+        - {statement: checkout-api is running v2.14.1., kind: observation, mechanism: "", run_refs: [2], evidence_refs: []}
+      hypotheses: []
+      actions: []
+      limitations: []
+  - name: legacy-kind-is-not-generated
+    runs: 1
+    valid: false
+    errorContains: declared vocabulary
+    document:
+      status: answer_only
+      summary: A deployment occurred before the alert.
+      impact: {summary: Impact is not established., run_refs: []}
+      findings:
+        - {statement: Deployment abc123 occurred before the alert., kind: trigger, mechanism: "", run_refs: [1], evidence_refs: []}
+      hypotheses: []
       actions: []
       limitations: []

@@ -427,7 +427,7 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 		t.Error("Investigation usage omits outputTokens")
 	}
 	for field, schemaName := range map[string]string{
-		"impact": "ImpactAssessment", "findings": "Finding",
+		"impact": "Impact", "findings": "Finding",
 		"hypotheses": "Hypothesis", "actions": "ActionProposal",
 		"limitations": "Limitation",
 	} {
@@ -442,11 +442,40 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 			t.Errorf("Investigation.%s does not contain typed %s items", field, schemaName)
 		}
 	}
-	for _, name := range []string{"ImpactAssessment", "Finding", "Hypothesis", "ActionProposal", "Limitation"} {
+	for _, name := range []string{"Impact", "Finding", "Hypothesis", "ActionProposal", "Limitation"} {
 		schema, present := document.Components.Schemas[name]
 		closed, isBoolean := schema.AdditionalProperties.(bool)
 		if !present || !isBoolean || closed {
 			t.Errorf("%s must exist and reject undeclared fields", name)
+		}
+	}
+	for name, fields := range map[string][]string{
+		"Impact":         {"summary", "runRefs"},
+		"ActionProposal": {"title", "rationale", "verification", "runRefs"},
+	} {
+		schema := document.Components.Schemas[name]
+		if len(schema.Properties) != len(fields) || len(schema.Required) != len(fields) {
+			t.Errorf("%s fields = %v, want %v", name, schema.Required, fields)
+			continue
+		}
+		for _, field := range fields {
+			if _, present := schema.Properties[field]; !present || !slices.Contains(schema.Required, field) {
+				t.Errorf("%s does not require %s", name, field)
+			}
+		}
+	}
+	finding := document.Components.Schemas["Finding"]
+	if len(finding.Properties) != 5 || len(finding.Required) != 4 {
+		t.Errorf("Finding fields = %v, want statement, kind, mechanism, runRefs and optional evidenceRefs", finding.Required)
+	}
+	for _, field := range []string{"statement", "kind", "mechanism", "runRefs", "evidenceRefs"} {
+		if _, present := finding.Properties[field]; !present {
+			t.Errorf("Finding omits %s", field)
+		}
+	}
+	for _, retired := range []string{"humanConfirmationRequired"} {
+		if _, present := investigation.Properties[retired]; present {
+			t.Errorf("Investigation schema still contains retired field %s", retired)
 		}
 	}
 	request := document.Components.Schemas["OpenInvestigationRequest"]

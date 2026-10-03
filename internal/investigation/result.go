@@ -14,7 +14,7 @@ const MaxHypothesisSnapshotItems = 8
 type Conclusion struct {
 	Status      ConclusionStatus   `json:"status"`
 	Summary     string             `json:"summary"`
-	Impact      ImpactAssessment   `json:"impact"`
+	Impact      Impact             `json:"impact"`
 	Findings    []Finding          `json:"findings"`
 	Hypotheses  []HypothesisResult `json:"hypotheses"`
 	Actions     []ActionProposal   `json:"actions"`
@@ -34,23 +34,9 @@ var ConclusionStatuses = []string{
 	string(VerifiedCause), string(SupportedExplanation), string(Inconclusive), string(AnswerOnly),
 }
 
-type ImpactStatus string
-
-const (
-	ImpactKnown   ImpactStatus = "known"
-	ImpactPartial ImpactStatus = "partial"
-	ImpactUnknown ImpactStatus = "unknown"
-)
-
-var ImpactStatuses = []string{string(ImpactKnown), string(ImpactPartial), string(ImpactUnknown)}
-
-type ImpactAssessment struct {
-	Status           ImpactStatus `json:"status"`
-	CurrentState     string       `json:"currentState"`
-	AffectedServices []string     `json:"affectedServices"`
-	AffectedUsers    []string     `json:"affectedUsers"`
-	Summary          string       `json:"summary"`
-	RunRefs          []int        `json:"runRefs"`
+type Impact struct {
+	Summary string `json:"summary"`
+	RunRefs []int  `json:"runRefs"`
 }
 
 type HypothesisStatus string
@@ -75,40 +61,11 @@ type HypothesisResult struct {
 	RunRefs   []int            `json:"runRefs"`
 }
 
-type ActionType string
-
-const (
-	ActionMitigate ActionType = "mitigate"
-	ActionRollback ActionType = "rollback"
-	ActionVerify   ActionType = "verify"
-	ActionFix      ActionType = "fix"
-	ActionMonitor  ActionType = "monitor"
-)
-
-var ActionTypes = []string{
-	string(ActionMitigate), string(ActionRollback), string(ActionVerify),
-	string(ActionFix), string(ActionMonitor),
-}
-
-type ActionRisk string
-
-const (
-	RiskLow    ActionRisk = "low"
-	RiskMedium ActionRisk = "medium"
-	RiskHigh   ActionRisk = "high"
-)
-
-var ActionRisks = []string{string(RiskLow), string(RiskMedium), string(RiskHigh)}
-
 type ActionProposal struct {
-	Title            string     `json:"title"`
-	Type             ActionType `json:"type"`
-	Rationale        string     `json:"rationale"`
-	Risk             ActionRisk `json:"risk"`
-	Reversible       bool       `json:"reversible"`
-	RequiresApproval bool       `json:"requiresApproval"`
-	Verification     string     `json:"verification"`
-	RunRefs          []int      `json:"runRefs"`
+	Title        string `json:"title"`
+	Rationale    string `json:"rationale"`
+	Verification string `json:"verification"`
+	RunRefs      []int  `json:"runRefs"`
 }
 
 type LimitationType string

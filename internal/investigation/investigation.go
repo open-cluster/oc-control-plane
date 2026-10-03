@@ -46,47 +46,42 @@ const (
 )
 
 type Finding struct {
-	ID           string        `json:"id"`
 	Statement    string        `json:"statement"`
-	Kind         string        `json:"kind"`
-	Confidence   string        `json:"confidence"`
+	Kind         FindingKind   `json:"kind"`
 	Mechanism    string        `json:"mechanism"`
-	Sources      []int         `json:"runRefs"`
+	RunRefs      []int         `json:"runRefs"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
-const (
-	FindingCause              = "cause"
-	FindingContributingFactor = "contributing_factor"
-	FindingSymptom            = "symptom"
-	FindingTrigger            = "trigger"
-	FindingPropagation        = "propagation"
-	FindingRuledOut           = "ruled_out"
-	FindingUnresolved         = "unresolved"
-	FindingObservation        = "observation"
-)
+type FindingKind string
 
 const (
-	ConfidenceConfirmed = "confirmed"
-	ConfidenceLikely    = "likely"
-	ConfidencePossible  = "possible"
+	FindingCause              FindingKind = "cause"
+	FindingContributingFactor FindingKind = "contributing_factor"
+	FindingSymptom            FindingKind = "symptom"
+	FindingTrigger            FindingKind = "trigger"
+	FindingPropagation        FindingKind = "propagation"
+	FindingRuledOut           FindingKind = "ruled_out"
+	FindingUnresolved         FindingKind = "unresolved"
+	FindingObservation        FindingKind = "observation"
 )
 
 var (
 	FindingKinds = []string{
-		FindingCause,
-		FindingTrigger,
-		FindingContributingFactor,
-		FindingSymptom,
-		FindingPropagation,
-		FindingRuledOut,
-		FindingUnresolved,
-		FindingObservation,
+		string(FindingCause),
+		string(FindingTrigger),
+		string(FindingContributingFactor),
+		string(FindingSymptom),
+		string(FindingPropagation),
+		string(FindingRuledOut),
+		string(FindingUnresolved),
+		string(FindingObservation),
 	}
-	Confidences = []string{
-		ConfidenceConfirmed,
-		ConfidenceLikely,
-		ConfidencePossible,
+	GeneratedFindingKinds = []string{
+		string(FindingCause),
+		string(FindingContributingFactor),
+		string(FindingObservation),
+		string(FindingRuledOut),
 	}
 )
 

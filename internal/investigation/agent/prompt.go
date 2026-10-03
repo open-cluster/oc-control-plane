@@ -46,18 +46,17 @@ Rules that are not yours to bend:
   the window does not apply to it.
 
 Causal reasoning, wherever there is a cause to find:
-- Distinguish the causal roles you report: a cause initiated the incident; a trigger is
-  the deployment or edit that set it off; a contributing factor
-  made it worse or let it spread; a symptom is a visible effect, not an explanation; a
-  propagation finding is damage arriving downstream of the cause. An explanation you
-  checked and excluded is ruled out; a plausible explanation you could not check is an
-  unresolved finding.
+- Use four finding kinds. A cause states the established mechanism that produced impact.
+  A contributing factor made the impact worse or allowed it to spread. An observation
+  states a supported fact or downstream effect without asserting causation. An explanation
+  you checked and excluded is ruled out. Keep open explanations as hypotheses and evidence
+  gaps as limitations, not findings.
 - Correlation is not causation, and looking related is not a mechanism. A cause is
   established by tracing how it produces the observed impact — and it must explain the
   timing: impact cannot precede its cause, and a change made after the impact began may
   be a response to the incident rather than its origin.
-- A commit is a change to code, not to production. Before treating a change as the
-  trigger, establish that it reached production where the evidence allows.
+- A commit is a change to code, not to production. Before treating a change as a cause,
+  establish that it reached production where the evidence allows.
 - What people say in messages is testimony: a lead worth verifying, never evidence by
   itself. An explanation whose only support is testimony is unresolved
   — never a cause or contributing factor, however confidently someone stated it.
@@ -91,15 +90,14 @@ Stopping:
   never converts an open possibility into a cause.
 
 Concluding:
-- Conclude by calling the conclude tool, once. Give every finding its kind and its
-  confidence: confirmed means the cited reads establish it; likely means the cited
-  reads support it while a plausible alternative remains; possible means it is one open
-  explanation among several. A finding stated above its evidence is wrong even when it
-  turns out true.
-- Propose actions rather than claiming execution. Each action states risk, reversibility,
-  approval needs, verification, and the runs supporting its rationale.
-- If reads are over and questions remain, record what is open as unresolved findings and
-  name the read that would settle each.`
+- Conclude by calling the conclude tool, once. Conclusion status expresses assessment
+  certainty. A finding stated above its evidence is wrong even when it turns out true.
+- Keep impact separate from the overall summary. Cite impact only when reads establish it;
+  otherwise state plainly that impact is not established and use no run references.
+- Propose actions rather than claiming execution. Each action states its rationale,
+  verification, and the runs supporting it.
+- If reads are over and questions remain, keep open explanations as hypotheses and name
+  evidence gaps in limitations.`
 
 func taskInstruction(orientation orientation) string {
 	task := "incident_triage"
@@ -204,20 +202,16 @@ func concludeSchema() Schema {
 
 func impactSchema() map[string]any {
 	return object(properties{
-		"status": enumField(investigation.ImpactStatuses...), "current_state": stringField,
-		"affected_services": array(stringField), "affected_users": array(stringField),
 		"summary": stringField, "run_refs": array(integerField),
 	})
 }
 
 func agentFindingSchema() map[string]any {
 	return object(properties{
-		"id":         stringField,
-		"statement":  stringField,
-		"kind":       enumField(investigation.FindingKinds...),
-		"confidence": enumField(investigation.Confidences...),
-		"mechanism":  stringField,
-		"run_refs":   array(integerField),
+		"statement": stringField,
+		"kind":      enumField(investigation.GeneratedFindingKinds...),
+		"mechanism": stringField,
+		"run_refs":  array(integerField),
 		"evidence_refs": array(object(properties{
 			"investigationId": map[string]any{"type": "string", "format": "uuid"},
 			"toolRunOrdinal":  map[string]any{"type": "integer", "minimum": 1},
@@ -235,9 +229,7 @@ func hypothesisSchema() map[string]any {
 
 func actionSchema() map[string]any {
 	return object(properties{
-		"title": stringField, "type": enumField(investigation.ActionTypes...),
-		"rationale": stringField, "risk": enumField(investigation.ActionRisks...),
-		"reversible": booleanField, "requires_approval": booleanField,
+		"title": stringField, "rationale": stringField,
 		"verification": stringField, "run_refs": array(integerField),
 	})
 }
@@ -560,9 +552,15 @@ func renderBrief(brief *investigation.Brief) string {
 	writeFindings(out, "PRIOR OBSERVATIONS — reconsider when corrected or refreshed",
 		establishedOf(brief.Findings))
 	writeFindings(out, "PRIORLY RULED OUT — reconsider when scope or evidence changes",
-		kindOf(brief.Findings, investigation.FindingRuledOut))
+		kindOf(brief.Findings, string(investigation.FindingRuledOut)))
 	writeFindings(out, "STILL OPEN — questions earlier turns could not settle",
-		kindOf(brief.Findings, investigation.FindingUnresolved))
+		kindOf(brief.Findings, string(investigation.FindingUnresolved)))
+	if len(brief.OpenHypotheses) > 0 {
+		out.WriteString("\nOPEN HYPOTHESES — explanations earlier turns did not settle:\n")
+		for _, hypothesis := range bounded(brief.OpenHypotheses, investigation.BriefMaxConstraints) {
+			out.WriteString("- " + oneLine(hypothesis) + "\n")
+		}
+	}
 	if len(brief.Limitations) > 0 {
 		out.WriteString("\nKNOWN LIMITATIONS — gaps earlier turns could not resolve:\n")
 		for _, limitation := range bounded(brief.Limitations, investigation.BriefMaxConstraints) {
@@ -610,12 +608,8 @@ func writeFindings(
 	out.WriteString("\n" + heading + ":\n")
 	for _, finding := range findings {
 		line := "- " + oneLine(finding.Statement)
-		if finding.Confidence != "" {
-			line += " (" + finding.Confidence
-			if finding.Kind != "" {
-				line += ", " + finding.Kind
-			}
-			line += ")"
+		if finding.Kind != "" {
+			line += " (" + finding.Kind + ")"
 		}
 		if !finding.ObservedAt.IsZero() {
 			line += " scoped observation at " + stamp(finding.ObservedAt)
@@ -630,8 +624,8 @@ func writeFindings(
 func establishedOf(findings []investigation.PriorFinding) []investigation.PriorFinding {
 	var kept []investigation.PriorFinding
 	for _, finding := range findings {
-		if finding.Kind == investigation.FindingRuledOut ||
-			finding.Kind == investigation.FindingUnresolved {
+		if finding.Kind == string(investigation.FindingRuledOut) ||
+			finding.Kind == string(investigation.FindingUnresolved) {
 			continue
 		}
 		kept = append(kept, finding)

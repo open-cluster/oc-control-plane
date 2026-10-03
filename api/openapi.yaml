@@ -1445,21 +1445,17 @@ components:
       properties:
         <<: *page-metadata
         items: { type: array, items: { $ref: "#/components/schemas/AlertEvent" } }
-    ImpactAssessment:
+    Impact:
       type: object
       additionalProperties: false
-      required: [status, currentState, affectedServices, affectedUsers, summary, runRefs]
+      required: [summary, runRefs]
       properties:
-        status: { type: string, enum: [known, partial, unknown] }
-        currentState: { type: string, maxLength: 4096 }
-        affectedServices: { type: array, items: { type: string, minLength: 1, maxLength: 512 }, uniqueItems: true }
-        affectedUsers: { type: array, items: { type: string, minLength: 1, maxLength: 512 }, uniqueItems: true }
         summary: { type: string, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
     Finding:
       type: object
       additionalProperties: false
-      required: [id, statement, kind, confidence, mechanism, runRefs]
+      required: [statement, kind, mechanism, runRefs]
       anyOf:
         - properties:
             runRefs: { minItems: 1 }
@@ -1467,10 +1463,11 @@ components:
           properties:
             evidenceRefs: { minItems: 1 }
       properties:
-        id: { type: string, minLength: 1, maxLength: 128 }
         statement: { type: string, minLength: 1, maxLength: 4096 }
-        kind: { type: string, enum: [cause, trigger, contributing_factor, symptom, propagation, ruled_out, unresolved, observation] }
-        confidence: { type: string, enum: [confirmed, likely, possible] }
+        kind:
+          type: string
+          enum: [cause, trigger, contributing_factor, symptom, propagation, ruled_out, unresolved, observation]
+          description: New Investigations generate cause, contributing_factor, observation, or ruled_out. Other values may appear only in retained historical results.
         mechanism: { type: string, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
         evidenceRefs:
@@ -1497,14 +1494,10 @@ components:
     ActionProposal:
       type: object
       additionalProperties: false
-      required: [title, type, rationale, risk, reversible, requiresApproval, verification, runRefs]
+      required: [title, rationale, verification, runRefs]
       properties:
         title: { type: string, minLength: 1, maxLength: 512 }
-        type: { type: string, enum: [mitigate, rollback, verify, fix, monitor] }
         rationale: { type: string, minLength: 1, maxLength: 512 }
-        risk: { type: string, enum: [low, medium, high] }
-        reversible: { type: boolean }
-        requiresApproval: { type: boolean }
         verification: { type: string, minLength: 1, maxLength: 512 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
     Limitation:
@@ -1525,7 +1518,7 @@ components:
     Investigation:
       type: object
       additionalProperties: false
-      required: [id, status, subject, windowFrom, windowUntil, impact, findings, hypotheses, actions, limitations, humanConfirmationRequired, usage, createdAt]
+      required: [id, status, subject, windowFrom, windowUntil, impact, findings, hypotheses, actions, limitations, usage, createdAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
         status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
@@ -1536,12 +1529,11 @@ components:
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
         conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
         summary: { type: string, maxLength: 32768 }
-        impact: { $ref: "#/components/schemas/ImpactAssessment" }
+        impact: { $ref: "#/components/schemas/Impact" }
         findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
         hypotheses: { type: array, items: { $ref: "#/components/schemas/Hypothesis" } }
         actions: { type: array, items: { $ref: "#/components/schemas/ActionProposal" } }
         limitations: { type: array, items: { $ref: "#/components/schemas/Limitation" } }
-        humanConfirmationRequired: { type: boolean }
         stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
         error: { type: string, maxLength: 4096 }
         usage: { type: object, additionalProperties: false, required: [inputTokens, outputTokens], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 } } }
@@ -1880,7 +1872,6 @@ components:
       required: [statement, runRefs]
       properties:
         investigationId: { $ref: "#/components/schemas/UUID" }
-        findingId: { type: string, maxLength: 128 }
         statement: { type: string, minLength: 1, maxLength: 8192 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
     ActionItem:

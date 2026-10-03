@@ -2972,40 +2972,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AlertEvent'
-    ImpactAssessment:
+    Impact:
       type: object
       additionalProperties: false
       required:
-        - status
-        - currentState
-        - affectedServices
-        - affectedUsers
         - summary
         - runRefs
       properties:
-        status:
-          type: string
-          enum:
-            - known
-            - partial
-            - unknown
-        currentState:
-          type: string
-          maxLength: 4096
-        affectedServices:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 512
-          uniqueItems: true
-        affectedUsers:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 512
-          uniqueItems: true
         summary:
           type: string
           maxLength: 4096
@@ -3019,10 +2992,8 @@ components:
       type: object
       additionalProperties: false
       required:
-        - id
         - statement
         - kind
-        - confidence
         - mechanism
         - runRefs
       anyOf:
@@ -3035,10 +3006,6 @@ components:
             evidenceRefs:
               minItems: 1
       properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 128
         statement:
           type: string
           minLength: 1
@@ -3054,12 +3021,7 @@ components:
             - ruled_out
             - unresolved
             - observation
-        confidence:
-          type: string
-          enum:
-            - confirmed
-            - likely
-            - possible
+          description: New Investigations generate cause, contributing_factor, observation, or ruled_out. Other values may appear only in retained historical results.
         mechanism:
           type: string
           maxLength: 4096
@@ -3125,11 +3087,7 @@ components:
       additionalProperties: false
       required:
         - title
-        - type
         - rationale
-        - risk
-        - reversible
-        - requiresApproval
         - verification
         - runRefs
       properties:
@@ -3137,28 +3095,10 @@ components:
           type: string
           minLength: 1
           maxLength: 512
-        type:
-          type: string
-          enum:
-            - mitigate
-            - rollback
-            - verify
-            - fix
-            - monitor
         rationale:
           type: string
           minLength: 1
           maxLength: 512
-        risk:
-          type: string
-          enum:
-            - low
-            - medium
-            - high
-        reversible:
-          type: boolean
-        requiresApproval:
-          type: boolean
         verification:
           type: string
           minLength: 1
@@ -3219,7 +3159,6 @@ components:
         - hypotheses
         - actions
         - limitations
-        - humanConfirmationRequired
         - usage
         - createdAt
       properties:
@@ -3259,7 +3198,7 @@ components:
           type: string
           maxLength: 32768
         impact:
-          $ref: '#/components/schemas/ImpactAssessment'
+          $ref: '#/components/schemas/Impact'
         findings:
           type: array
           items:
@@ -3276,8 +3215,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Limitation'
-        humanConfirmationRequired:
-          type: boolean
         stoppedBy:
           type: string
           enum:
@@ -4211,9 +4148,6 @@ components:
       properties:
         investigationId:
           $ref: '#/components/schemas/UUID'
-        findingId:
-          type: string
-          maxLength: 128
         statement:
           type: string
           minLength: 1

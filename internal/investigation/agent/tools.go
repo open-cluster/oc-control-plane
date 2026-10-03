@@ -214,13 +214,13 @@ func firstLine(text string) string {
 
 func checkCitations(findings []investigation.Finding, runs int) string {
 	for _, finding := range findings {
-		if len(finding.Sources) == 0 && len(finding.EvidenceRefs) == 0 {
+		if len(finding.RunRefs) == 0 && len(finding.EvidenceRefs) == 0 {
 			return "the reasoner stated a finding citing no read at all"
 		}
-		if len(finding.Sources) == 0 {
+		if len(finding.RunRefs) == 0 {
 			continue
 		}
-		cited := append([]int(nil), finding.Sources...)
+		cited := append([]int(nil), finding.RunRefs...)
 		sort.Ints(cited)
 		if cited[0] < 1 || cited[len(cited)-1] > runs {
 			return "the reasoner cited a read that never ran"

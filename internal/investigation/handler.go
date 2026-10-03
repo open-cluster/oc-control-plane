@@ -305,10 +305,8 @@ type errorView struct {
 }
 
 type findingView struct {
-	ID           string        `json:"id"`
 	Statement    string        `json:"statement"`
-	Kind         string        `json:"kind,omitempty"`
-	Confidence   string        `json:"confidence,omitempty"`
+	Kind         FindingKind   `json:"kind,omitempty"`
 	Mechanism    string        `json:"mechanism,omitempty"`
 	RunRefs      []int         `json:"runRefs"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
@@ -320,27 +318,26 @@ type usageView struct {
 }
 
 type investigationView struct {
-	ID                        string             `json:"id"`
-	Status                    string             `json:"status"`
-	Subject                   string             `json:"subject"`
-	Question                  string             `json:"question,omitempty"`
-	IncidentID                string             `json:"incidentId,omitempty"`
-	WindowFrom                string             `json:"windowFrom"`
-	WindowUntil               string             `json:"windowUntil"`
-	ConclusionStatus          ConclusionStatus   `json:"conclusionStatus,omitempty"`
-	Summary                   string             `json:"summary,omitempty"`
-	Impact                    ImpactAssessment   `json:"impact"`
-	Findings                  []findingView      `json:"findings"`
-	Hypotheses                []HypothesisResult `json:"hypotheses"`
-	Actions                   []ActionProposal   `json:"actions"`
-	Limitations               []Limitation       `json:"limitations"`
-	HumanConfirmationRequired bool               `json:"humanConfirmationRequired"`
-	StoppedBy                 string             `json:"stoppedBy,omitempty"`
-	Error                     string             `json:"error,omitempty"`
-	Usage                     usageView          `json:"usage"`
-	CreatedBy                 string             `json:"createdBy,omitempty"`
-	CreatedAt                 string             `json:"createdAt"`
-	ConcludedAt               string             `json:"concludedAt,omitempty"`
+	ID               string             `json:"id"`
+	Status           string             `json:"status"`
+	Subject          string             `json:"subject"`
+	Question         string             `json:"question,omitempty"`
+	IncidentID       string             `json:"incidentId,omitempty"`
+	WindowFrom       string             `json:"windowFrom"`
+	WindowUntil      string             `json:"windowUntil"`
+	ConclusionStatus ConclusionStatus   `json:"conclusionStatus,omitempty"`
+	Summary          string             `json:"summary,omitempty"`
+	Impact           Impact             `json:"impact"`
+	Findings         []findingView      `json:"findings"`
+	Hypotheses       []HypothesisResult `json:"hypotheses"`
+	Actions          []ActionProposal   `json:"actions"`
+	Limitations      []Limitation       `json:"limitations"`
+	StoppedBy        string             `json:"stoppedBy,omitempty"`
+	Error            string             `json:"error,omitempty"`
+	Usage            usageView          `json:"usage"`
+	CreatedBy        string             `json:"createdBy,omitempty"`
+	CreatedAt        string             `json:"createdAt"`
+	ConcludedAt      string             `json:"concludedAt,omitempty"`
 }
 
 type runView struct {
@@ -369,18 +366,7 @@ type detailView struct {
 func investigationViewOf(found Investigation) investigationView {
 	findings := make([]findingView, 0, len(found.Conclusion.Findings))
 	for _, finding := range found.Conclusion.Findings {
-		findings = append(findings, findingView{
-			ID: finding.ID, Statement: finding.Statement, Kind: finding.Kind,
-			Confidence: finding.Confidence, Mechanism: finding.Mechanism, RunRefs: finding.Sources,
-			EvidenceRefs: finding.EvidenceRefs,
-		})
-	}
-	humanConfirmationRequired := false
-	for _, action := range found.Conclusion.Actions {
-		humanConfirmationRequired = humanConfirmationRequired || action.RequiresApproval
-	}
-	for _, limitation := range found.Conclusion.Limitations {
-		humanConfirmationRequired = humanConfirmationRequired || limitation.Type == LimitationEssentialHumanInput
+		findings = append(findings, findingView(finding))
 	}
 	view := investigationView{
 		ID:               found.ID.String(),
@@ -393,9 +379,8 @@ func investigationViewOf(found Investigation) investigationView {
 		Summary:          found.Conclusion.Summary, Impact: found.Conclusion.Impact,
 		Findings: findings, Hypotheses: found.Conclusion.Hypotheses,
 		Actions: found.Conclusion.Actions, Limitations: found.Conclusion.Limitations,
-		HumanConfirmationRequired: humanConfirmationRequired,
-		StoppedBy:                 found.StoppedBy,
-		Error:                     found.Error,
+		StoppedBy: found.StoppedBy,
+		Error:     found.Error,
 		Usage: usageView{
 			InputTokens: found.Usage.InputTokens, OutputTokens: found.Usage.OutputTokens,
 		},

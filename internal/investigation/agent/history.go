@@ -68,7 +68,7 @@ func historyEvidence(page investigation.HistoryPage) []investigation.EvidenceRef
 		}
 		for _, finding := range entry.Answer.Findings {
 			refs = append(refs, finding.EvidenceRefs...)
-			for _, ordinal := range finding.Sources {
+			for _, ordinal := range finding.RunRefs {
 				refs = append(refs, investigation.EvidenceRef{
 					InvestigationID: entry.InvestigationID, ToolRunOrdinal: ordinal,
 				})

@@ -25,8 +25,8 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	for index, id := range ids {
 		conclusion := investigation.Conclusion{Status: investigation.AnswerOnly, Summary: "Prior observations."}
 		if index == 2 {
-			conclusion.Findings = []investigation.Finding{{ID: "reused", Statement: "Two prior observations.", Kind: investigation.FindingObservation,
-				Confidence: investigation.ConfidenceConfirmed, Sources: []int{}, EvidenceRefs: refs}}
+			conclusion.Findings = []investigation.Finding{{Statement: "Two prior observations.", Kind: investigation.FindingObservation,
+				RunRefs: []int{}, EvidenceRefs: refs}}
 		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {
