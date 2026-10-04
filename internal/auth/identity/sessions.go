@@ -108,7 +108,7 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request, principal authz.Principal) {
-	if principal.IsZero() {
+	if principal.IsEmpty() {
 		writeJSON(writer, http.StatusOK, signOutView{SignedOut: true})
 		return
 	}

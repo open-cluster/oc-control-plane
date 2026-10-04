@@ -60,7 +60,7 @@ func (p Principal) WithRequest(sourceAddress, requestID string) Principal {
 	return p
 }
 
-func (p Principal) IsZero() bool { return p.userID == uuid.Nil }
+func (p Principal) IsEmpty() bool { return p.userID == uuid.Nil }
 
 func (p Principal) UserID() uuid.UUID { return p.userID }
 

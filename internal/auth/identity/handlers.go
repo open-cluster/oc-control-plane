@@ -62,7 +62,7 @@ func (h Handlers) fromSession(
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrExpired):
-			return authz.Principal{}, authz.Refusal{Because: authz.ReasonSessionExpired}
+			return authz.Principal{}, authz.Refusal{BecauseReason: authz.ReasonSessionExpired}
 		case errors.Is(err, session.ErrUnknown):
 			return authz.Principal{}, authz.ErrCredentialRejected
 		default:

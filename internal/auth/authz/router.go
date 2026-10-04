@@ -30,6 +30,8 @@ type Guard struct {
 	Logger  *slog.Logger
 }
 
+type principalKey struct{}
+
 func Router(routes []Route, guard Guard) (http.Handler, error) {
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("authz: the route table is empty")
@@ -61,7 +63,7 @@ func Router(routes []Route, guard Guard) (http.Handler, error) {
 func (g Guard) protect(route Route) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		principal, err := g.Resolve(request)
-		if err != nil || principal.IsZero() {
+		if err != nil || principal.IsEmpty() {
 			if errors.Is(err, ErrAuthenticationUnavailable) {
 				writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
 				return
@@ -86,15 +88,13 @@ func (g Guard) protect(route Route) http.Handler {
 	})
 }
 
-type principalKey struct{}
-
 func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, principal)
 }
 
 func MustPrincipal(ctx context.Context) Principal {
 	principal, ok := ctx.Value(principalKey{}).(Principal)
-	if !ok || principal.IsZero() {
+	if !ok || principal.IsEmpty() {
 		panic("authz: protected handler has no Principal")
 	}
 	return principal
