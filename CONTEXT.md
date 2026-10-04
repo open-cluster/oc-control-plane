@@ -73,9 +73,8 @@ copying raw source payloads or private model reasoning.
 ## Finding
 
 A factual statement established by an Investigation and supported by Tool Run references.
-New results use cause, contributing_factor, observation, or ruled_out. Retained historical
-results may also contain trigger, symptom, propagation, or unresolved. Causal Findings
-state the mechanism that produced impact.
+Findings use cause, contributing_factor, observation, or ruled_out. Causal Findings state
+the mechanism that produced impact.
 
 ## Tool Run
 

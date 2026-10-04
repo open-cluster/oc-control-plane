@@ -49,7 +49,7 @@ func (p *Database) CreateInvestigation(
 				wanted.Question, wanted.Subject,
 				wanted.WindowFrom, wanted.WindowUntil, wanted.CreatedBy)
 
-			created, err := scanInvestigation(row, organization.String())
+			created, err := scanInvestigation(row)
 			if err != nil {
 				if isForeignKeyViolation(err) {
 					return investigation.Investigation{}, audit.Target{}, nil,
@@ -75,7 +75,7 @@ func (p *Database) Investigation(
 		SELECT `+investigationColumns+`
 		  FROM investigation
 		 WHERE investigation_id = $1 AND org_id = $2`, id, organization)
-	found, err := scanInvestigation(row, organization.String())
+	found, err := scanInvestigation(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return investigation.Investigation{}, investigation.ErrUnknown
 	}
@@ -193,7 +193,7 @@ func (p *Database) QueryInvestigations(
 		Investigations: make([]investigation.Investigation, 0, limit),
 	}
 	for rows.Next() {
-		found, scanErr := scanInvestigation(rows, organization.String())
+		found, scanErr := scanInvestigation(rows)
 		if scanErr != nil {
 			return investigation.List{}, scanErr
 		}
@@ -301,7 +301,7 @@ func (p *Database) CancelInvestigation(
 				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 				RETURNING `+investigationColumns,
 				id, organization, int16(investigation.StatusCancelled), principal.UserID().String())
-			ended, err := scanInvestigation(row, organization.String())
+			ended, err := scanInvestigation(row)
 			if errors.Is(err, pgx.ErrNoRows) {
 				var exists bool
 				if checkErr := transaction.QueryRow(ctx,
@@ -463,9 +463,9 @@ func (p *Database) InvestigationCandidates(
 	return candidates, nil
 }
 
-func scanInvestigation(row scanned, organization string) (investigation.Investigation, error) {
+func scanInvestigation(row scanned) (investigation.Investigation, error) {
 	var (
-		found          = investigation.Investigation{OrgID: organization}
+		found          investigation.Investigation
 		incidentID     *uuid.UUID
 		conversationID *uuid.UUID
 		turn           *int

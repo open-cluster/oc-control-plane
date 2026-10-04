@@ -72,10 +72,9 @@ func splitCalls(calls []CompletionCall) (reads []CompletionCall, conclude *Compl
 	return reads, conclude
 }
 
-func decodeConclusion(
-	document []byte, runs int, allowed []investigation.EvidenceRef,
+func decodeConclusion(document []byte, runs int, allowed []investigation.EvidenceRef,
 ) (investigation.Conclusion, error) {
-	var decoded struct {
+	var jsonObject struct {
 		Status  string `json:"status"`
 		Summary string `json:"summary"`
 		Impact  struct {
@@ -90,8 +89,11 @@ func decodeConclusion(
 			EvidenceRefs []investigation.EvidenceRef `json:"evidence_refs"`
 		} `json:"findings"`
 		Hypotheses []struct {
-			ID, Statement, Status, Test string
-			RunRefs                     []int `json:"run_refs"`
+			ID,
+			Statement,
+			Status,
+			Test string
+			RunRefs []int `json:"run_refs"`
 		} `json:"hypotheses"`
 		Actions []struct {
 			Title        string `json:"title"`
@@ -104,36 +106,39 @@ func decodeConclusion(
 			RunRefs         []int `json:"run_refs"`
 		} `json:"limitations"`
 	}
-	if err := json.Unmarshal(document, &decoded); err != nil {
+	if err := json.Unmarshal(document, &jsonObject); err != nil {
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the conclusion is not the declared document: %w", err)
 	}
 
-	if strings.TrimSpace(decoded.Summary) == "" {
+	if strings.TrimSpace(jsonObject.Summary) == "" {
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the conclusion summary is empty")
 	}
-	if !oneOf(decoded.Status, investigation.ConclusionStatuses) {
-		return investigation.Conclusion{}, fmt.Errorf("invalid conclusion status %q", decoded.Status)
+	if !oneOf(jsonObject.Status, investigation.ConclusionStatuses) {
+		return investigation.Conclusion{}, fmt.Errorf("invalid conclusion status %q", jsonObject.Status)
 	}
-	if err := validateRunRefs(decoded.Impact.RunRefs, runs, "impact"); err != nil {
+	if err := validateRunRefs(jsonObject.Impact.RunRefs, runs, "impact"); err != nil {
 		return investigation.Conclusion{}, err
 	}
-	if strings.TrimSpace(decoded.Impact.Summary) == "" {
+	if strings.TrimSpace(jsonObject.Impact.Summary) == "" {
 		return investigation.Conclusion{}, fmt.Errorf("the impact summary is empty")
 	}
 	conclusion := investigation.Conclusion{
-		Status: investigation.ConclusionStatus(decoded.Status), Summary: decoded.Summary,
+		Status:  investigation.ConclusionStatus(jsonObject.Status),
+		Summary: jsonObject.Summary,
 		Impact: investigation.Impact{
-			Summary: decoded.Impact.Summary, RunRefs: decoded.Impact.RunRefs,
+			Summary: jsonObject.Impact.Summary,
+			RunRefs: jsonObject.Impact.RunRefs,
 		},
 	}
-	for _, finding := range decoded.Findings {
+	// Findings ------->
+	for _, finding := range jsonObject.Findings {
 		if finding.Statement == "" || len(finding.Statement) > maxStatementLength {
 			return investigation.Conclusion{}, fmt.Errorf(
 				"a finding's statement is empty or past %d characters", maxStatementLength)
 		}
-		if !oneOf(finding.Kind, investigation.GeneratedFindingKinds) {
+		if !oneOf(finding.Kind, investigation.FindingKinds) {
 			return investigation.Conclusion{}, fmt.Errorf(
 				"a finding's kind %q is not in the declared vocabulary", finding.Kind)
 		}
@@ -157,12 +162,16 @@ func decodeConclusion(
 			return investigation.Conclusion{}, fmt.Errorf("causal finding has no mechanism")
 		}
 		conclusion.Findings = append(conclusion.Findings, investigation.Finding{
-			Statement: finding.Statement, Kind: investigation.FindingKind(finding.Kind),
-			Mechanism: finding.Mechanism, RunRefs: finding.RunRefs,
+			Statement:    finding.Statement,
+			Kind:         investigation.FindingKind(finding.Kind),
+			Mechanism:    finding.Mechanism,
+			RunRefs:      finding.RunRefs,
 			EvidenceRefs: finding.EvidenceRefs,
 		})
 	}
-	for _, hypothesis := range decoded.Hypotheses {
+
+	// Hypotheses ------->
+	for _, hypothesis := range jsonObject.Hypotheses {
 		if hypothesis.ID == "" || hypothesis.Statement == "" || hypothesis.Test == "" ||
 			!oneOf(hypothesis.Status, investigation.HypothesisStatuses) {
 			return investigation.Conclusion{}, fmt.Errorf("a hypothesis is incomplete or has an invalid status")
@@ -171,16 +180,20 @@ func decodeConclusion(
 			return investigation.Conclusion{}, err
 		}
 		conclusion.Hypotheses = append(conclusion.Hypotheses, investigation.HypothesisResult{
-			ID: hypothesis.ID, Statement: hypothesis.Statement,
-			Status: investigation.HypothesisStatus(hypothesis.Status), Test: hypothesis.Test,
-			RunRefs: hypothesis.RunRefs,
+			ID:        hypothesis.ID,
+			Statement: hypothesis.Statement,
+			Status:    investigation.HypothesisStatus(hypothesis.Status),
+			Test:      hypothesis.Test,
+			RunRefs:   hypothesis.RunRefs,
 		})
 	}
-	if len(decoded.Actions) > investigation.MaxConclusionActions {
+	if len(jsonObject.Actions) > investigation.MaxConclusionActions {
 		return investigation.Conclusion{}, fmt.Errorf("the conclusion proposes %d actions, past %d",
-			len(decoded.Actions), investigation.MaxConclusionActions)
+			len(jsonObject.Actions), investigation.MaxConclusionActions)
 	}
-	for _, action := range decoded.Actions {
+
+	// Actions ------->
+	for _, action := range jsonObject.Actions {
 		if action.Title == "" || action.Rationale == "" || action.Verification == "" ||
 			len(action.Title) > investigation.MaxActionTextLength ||
 			len(action.Rationale) > investigation.MaxActionTextLength ||
@@ -195,11 +208,15 @@ func decodeConclusion(
 			return investigation.Conclusion{}, fmt.Errorf("action %q cites no run", action.Title)
 		}
 		conclusion.Actions = append(conclusion.Actions, investigation.ActionProposal{
-			Title: action.Title, Rationale: action.Rationale,
-			Verification: action.Verification, RunRefs: action.RunRefs,
+			Title:        action.Title,
+			Rationale:    action.Rationale,
+			Verification: action.Verification,
+			RunRefs:      action.RunRefs,
 		})
 	}
-	for _, limitation := range decoded.Limitations {
+
+	// Limitations ------->
+	for _, limitation := range jsonObject.Limitations {
 		if limitation.Statement == "" || !oneOf(limitation.Type, investigation.LimitationTypes) {
 			return investigation.Conclusion{}, fmt.Errorf("a limitation is incomplete or has an invalid type")
 		}
@@ -207,8 +224,9 @@ func decodeConclusion(
 			return investigation.Conclusion{}, err
 		}
 		conclusion.Limitations = append(conclusion.Limitations, investigation.Limitation{
-			Type: investigation.LimitationType(limitation.Type), Statement: limitation.Statement,
-			RunRefs: limitation.RunRefs,
+			Type:      investigation.LimitationType(limitation.Type),
+			Statement: limitation.Statement,
+			RunRefs:   limitation.RunRefs,
 		})
 	}
 	if err := validateConclusionStatus(conclusion); err != nil {

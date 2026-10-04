@@ -40,7 +40,8 @@ func (p *Database) IssueSession(
 		}
 	}()
 
-	if issued, err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, sourceAddress, detail); err != nil {
+	if issued, err = issueSessionIn(
+		ctx, transaction, organization, issued, digest, actor, sourceAddress, detail); err != nil {
 		return session.Session{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -51,9 +52,14 @@ func (p *Database) IssueSession(
 }
 
 func (p *Database) IssueLocalSession(
-	ctx context.Context, organization uuid.UUID,
-	issued session.Session, digest []byte, actor audit.Actor, sourceAddress string,
-	detail audit.Detail, previous string,
+	ctx context.Context,
+	organization uuid.UUID,
+	issued session.Session,
+	digest []byte,
+	actor audit.Actor,
+	sourceAddress string,
+	detail audit.Detail,
+	previous string,
 ) (session.Session, error) {
 	pool, err := p.Pool(organization)
 	if err != nil {

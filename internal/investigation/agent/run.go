@@ -252,6 +252,7 @@ func (r *Agent) Run(
 			return terminalErr
 		}
 		state.turns++
+		stagnated := false
 		if stoppedBy == "" {
 			switch {
 			case state.executed >= state.maxRuns:
@@ -261,16 +262,24 @@ func (r *Agent) Run(
 			case wallClockAlmostOver(ctx, wallClockReserve):
 				stoppedBy = investigation.StoppedByWallClock
 			case stagnant >= maxStagnantTurns:
-				stoppedBy = investigation.StoppedByStagnation
+				stagnated = true
 			}
-			if stoppedBy != "" {
+			if stoppedBy != "" || stagnated {
+				progress := ceilingProgress(stoppedBy)
+				if stagnated {
+					progress = "Stopping the reads: the last few produced no new evidence"
+				}
 				r.announce(ctx, events,
-					investigation.ProgressPayload(ceilingProgress(stoppedBy)))
+					investigation.ProgressPayload(progress))
 			}
 		}
 
-		mustConclude := stoppedBy != "" || (len(state.offered) == 0 && state.historyBefore <= 1)
+		mustConclude := stoppedBy != "" || stagnated ||
+			(len(state.offered) == 0 && state.historyBefore <= 1)
 		reason := concludeReason(stoppedBy, len(state.offered))
+		if stagnated {
+			reason = "Your recent reads produced no new evidence."
+		}
 		if len(results) > 0 {
 			rendered := make([]ToolResultTurn, 0, len(results))
 			for _, result := range results {
@@ -488,11 +497,9 @@ func (r *Agent) Run(
 							"Skipped a repeat of "+offeredName(offered, call.Tool)+
 								"; the earlier read already answers it"))
 				case state.executed >= state.maxRuns:
-					run = droppedRun(opened,
-						investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
-						len(state.runs)+1, fmt.Sprintf(
-							"not executed: the investigation's read budget of %d was exhausted",
-							state.maxRuns))
+					run = droppedRun(opened, call, len(state.runs)+1, fmt.Sprintf(
+						"not executed: the investigation's read budget of %d was exhausted",
+						state.maxRuns))
 					r.announce(ctx, events,
 						investigation.ProgressPayload(
 							"Did not run "+offeredName(offered, call.Tool)+
@@ -502,9 +509,7 @@ func (r *Agent) Run(
 					r.announceToolStarted(ctx, state, call, ordinal)
 					var executeErr error
 					run, executeErr = r.execute(ctx, opened, selections(offered),
-						state.credentials, origin,
-						investigation.ToolCall{Tool: call.Tool, Arguments: call.Arguments},
-						ordinal)
+						state.credentials, origin, call, ordinal)
 					if executeErr != nil {
 						terminalErr := failRun(failureReason(executeErr), state.usage)
 						r.RuntimeTelemetry.Ended(time.Since(startedAt),
@@ -804,8 +809,6 @@ func concludeReason(stoppedBy string, offered int) string {
 		return "The investigation's turn budget was exhausted."
 	case investigation.StoppedByWallClock:
 		return "The investigation's time is nearly over."
-	case investigation.StoppedByStagnation:
-		return "Your recent reads produced no new evidence."
 	case investigation.StoppedByContext:
 		return "This turn has filled the working context available to it."
 	default:

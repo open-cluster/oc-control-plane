@@ -182,6 +182,24 @@ func validConclusion(t *testing.T, refs []int) json.RawMessage {
 	return raw
 }
 
+func validUncertainConclusion(t *testing.T, refs []int) json.RawMessage {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal(validConclusion(t, refs), &document); err != nil {
+		t.Fatal(err)
+	}
+	document["status"] = "inconclusive"
+	document["hypotheses"] = []map[string]any{{
+		"id": "h1", "statement": "Another change may explain the alert.",
+		"status": "unresolved", "test": "Read the change history.", "run_refs": refs,
+	}}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func configuredTestAgent(t *testing.T, store *records, completer Completer, catalog integrations.Catalog) *Agent {
 	t.Helper()
 	return &Agent{completer: completer, modelConfig: ModelConfig{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
@@ -804,7 +822,7 @@ func TestRunReservesTheModelOutputFromTheContextWindow(t *testing.T) {
 	}
 }
 
-func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
+func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 	tests := []struct {
 		name      string
 		want      string
@@ -815,8 +833,7 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 	}{
 		{name: "tool budget", want: investigation.StoppedByToolRuns,
 			configure: func(a *Agent) { a.MaxToolRuns = 1 }},
-		{name: "stagnation", want: investigation.StoppedByStagnation,
-			arguments: json.RawMessage(`{"input":{}}`)},
+		{name: "stagnation", want: ""},
 		{name: "wall clock", want: investigation.StoppedByWallClock,
 			context: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), time.Minute)
@@ -843,8 +860,12 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 				return 0, nil
 			}, next: func(_ int, prompt Prompt) (Completion, error) {
 				if prompt.ForceTool == ConcludeToolName {
+					conclusion := validConclusion(t, nil)
+					if test.name == "stagnation" {
+						conclusion = validUncertainConclusion(t, []int{1})
+					}
 					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-						ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
+						ID: "done", Name: ConcludeToolName, Arguments: conclusion,
 					}}}, nil
 				}
 				return Completion{Stop: StopToolUse, Usage: test.usage, ToolCalls: []CompletionCall{{
@@ -871,6 +892,17 @@ func TestRunRecordsEveryReasonThatForcesAConclusion(t *testing.T) {
 			}
 			if store.stoppedBy != test.want {
 				t.Fatalf("stopped_by=%q, want %q", store.stoppedBy, test.want)
+			}
+			if test.name == "stagnation" {
+				if model.calls != 4 || len(store.conclusion.Findings) != 1 ||
+					len(store.conclusion.Findings[0].RunRefs) != 1 ||
+					len(store.conclusion.Hypotheses) != 1 ||
+					store.conclusion.Hypotheses[0].Status != investigation.HypothesisUnresolved {
+					t.Fatalf("stagnation conclusion lost evidence or uncertainty: %+v", store.conclusion)
+				}
+				if _, present := store.events[len(store.events)-1].Payload["stoppedBy"]; present {
+					t.Fatalf("concluded event exposed stagnation: %+v", store.events[len(store.events)-1])
+				}
 			}
 		})
 	}

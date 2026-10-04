@@ -207,7 +207,7 @@ func (h Handlers) protectSignOut(origin string) http.Handler {
 			h.signOut(writer, request, authz.Principal{})
 			return
 		}
-		if err != nil || principal.IsZero() {
+		if err != nil || principal.IsEmpty() {
 			writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
 			return
 		}

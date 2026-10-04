@@ -1466,8 +1466,7 @@ components:
         statement: { type: string, minLength: 1, maxLength: 4096 }
         kind:
           type: string
-          enum: [cause, trigger, contributing_factor, symptom, propagation, ruled_out, unresolved, observation]
-          description: New Investigations generate cause, contributing_factor, observation, or ruled_out. Other values may appear only in retained historical results.
+          enum: [cause, contributing_factor, observation, ruled_out]
         mechanism: { type: string, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
         evidenceRefs:
@@ -1534,7 +1533,7 @@ components:
         hypotheses: { type: array, items: { $ref: "#/components/schemas/Hypothesis" } }
         actions: { type: array, items: { $ref: "#/components/schemas/ActionProposal" } }
         limitations: { type: array, items: { $ref: "#/components/schemas/Limitation" } }
-        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, context] }
         error: { type: string, maxLength: 4096 }
         usage: { type: object, additionalProperties: false, required: [inputTokens, outputTokens], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 } } }
         createdBy: { type: string, maxLength: 256 }
@@ -1680,7 +1679,7 @@ components:
             status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
             findings: { type: integer, minimum: 0 }
             summary: { type: string, maxLength: 4096 }
-            stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+            stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, context] }
     FailedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -1805,7 +1804,7 @@ components:
         turn: { type: integer, minimum: 1 }
         status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
         answer: { type: string, maxLength: 32768 }
-        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, stagnation, context] }
+        stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, context] }
         error: { type: string, maxLength: 4096 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
         concludedAt: { $ref: "#/components/schemas/Timestamp" }

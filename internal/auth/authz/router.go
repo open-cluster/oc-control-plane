@@ -30,6 +30,8 @@ type Guard struct {
 	Logger  *slog.Logger
 }
 
+type principalKey struct{}
+
 func Router(routes []Route, guard Guard) (http.Handler, error) {
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("authz: the route table is empty")
@@ -61,7 +63,9 @@ func Router(routes []Route, guard Guard) (http.Handler, error) {
 func (g Guard) protect(route Route) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		principal, err := g.Resolve(request)
-		if err != nil || principal.IsZero() {
+
+		// principal check ---->
+		if err != nil || principal.IsEmpty() {
 			if errors.Is(err, ErrAuthenticationUnavailable) {
 				writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
 				return
@@ -69,12 +73,16 @@ func (g Guard) protect(route Route) http.Handler {
 			g.refuseUnauthenticated(writer, request, err)
 			return
 		}
+
+		// origin check ---->
 		if !g.originIsAllowed(request) {
 			g.recordRefusal(request, principal, route, "origin not allowed")
 			g.refuseOrigin(writer, request, principal)
 			return
 		}
-		if route.Permission != "" && !principal.Can(route.Permission) {
+
+		//  permission check ---->
+		if route.Permission != "" && !principal.HavePermission(route.Permission) {
 			g.recordRefusal(request, principal, route, "role does not grant it")
 			writeJSON(writer, http.StatusForbidden, errorView{
 				Error: "forbidden", Requires: string(route.Permission),
@@ -86,15 +94,13 @@ func (g Guard) protect(route Route) http.Handler {
 	})
 }
 
-type principalKey struct{}
-
 func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, principal)
 }
 
 func MustPrincipal(ctx context.Context) Principal {
 	principal, ok := ctx.Value(principalKey{}).(Principal)
-	if !ok || principal.IsZero() {
+	if !ok || principal.IsEmpty() {
 		panic("authz: protected handler has no Principal")
 	}
 	return principal

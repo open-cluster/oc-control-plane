@@ -43,7 +43,7 @@ func router(t *testing.T, resolved authz.Principal, permission authz.Permission,
 	}}
 	guard := authz.Guard{
 		Resolve: func(*http.Request) (authz.Principal, error) {
-			if resolved.IsZero() {
+			if resolved.IsEmpty() {
 				return authz.Principal{}, authz.ErrNoCredential
 			}
 			return resolved, nil

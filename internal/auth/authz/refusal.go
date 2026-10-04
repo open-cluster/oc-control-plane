@@ -22,15 +22,19 @@ const (
 	ReasonSessionExpired Reason = "session_expired"
 )
 
-type Refusal struct{ Because Reason }
+type Refusal struct{ BecauseReason Reason }
 
-func (r Refusal) Error() string        { return "credential rejected: " + string(r.Because) }
-func (r Refusal) Is(target error) bool { return target == ErrCredentialRejected }
+func (r Refusal) Error() string {
+	return "credential rejected: " + string(r.BecauseReason)
+}
+func (r Refusal) Is(target error) bool {
+	return target == ErrCredentialRejected
+}
 
 func reasonOf(err error) Reason {
 	var refusal Refusal
-	if errors.As(err, &refusal) && refusal.Because != "" {
-		return refusal.Because
+	if errors.As(err, &refusal) && refusal.BecauseReason != "" {
+		return refusal.BecauseReason
 	}
 	return ReasonRejected
 }
@@ -38,10 +42,10 @@ func reasonOf(err error) Reason {
 const maxLoggedPath = 256
 
 func (g Guard) refuseUnauthenticated(
-	writer http.ResponseWriter, request *http.Request, because error,
-) {
+	writer http.ResponseWriter, request *http.Request, because error) {
 	reason := ReasonRejected
 	if !errors.Is(because, ErrNoCredential) {
+
 		reason = reasonOf(because)
 	}
 	g.Logger.WarnContext(request.Context(), "API request refused",

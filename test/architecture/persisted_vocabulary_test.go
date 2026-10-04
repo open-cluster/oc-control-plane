@@ -8,20 +8,10 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-func TestFindingVocabulariesSeparateHistoricalReadsFromNewOutput(t *testing.T) {
+func TestInvestigationVocabulariesAreFrozen(t *testing.T) {
 	t.Parallel()
 
 	assertVocabulary(t, "investigation.FindingKinds", investigation.FindingKinds, []string{
-		"cause",
-		"trigger",
-		"contributing_factor",
-		"symptom",
-		"propagation",
-		"ruled_out",
-		"unresolved",
-		"observation",
-	})
-	assertVocabulary(t, "investigation.GeneratedFindingKinds", investigation.GeneratedFindingKinds, []string{
 		"cause",
 		"contributing_factor",
 		"observation",
@@ -44,13 +34,11 @@ func TestTheHonestStopsAreFrozen(t *testing.T) {
 		investigation.StoppedByToolRuns,
 		investigation.StoppedByReasonerTurns,
 		investigation.StoppedByWallClock,
-		investigation.StoppedByStagnation,
 		investigation.StoppedByContext,
 	}, []string{
 		"tool_runs",
 		"reasoner_turns",
 		"wall_clock",
-		"stagnation",
 		"context",
 	})
 }

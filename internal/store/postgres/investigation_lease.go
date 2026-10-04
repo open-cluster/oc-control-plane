@@ -41,7 +41,6 @@ func (p *Database) ClaimInvestigation(
 		return uuid.UUID{}, investigation.Investigation{}, false,
 			fmt.Errorf("claiming an investigation: %w", err)
 	}
-	claimed.OrgID = organization.String()
 	return organization, claimed, true, nil
 }
 
@@ -183,7 +182,7 @@ func scanClaimedInvestigation(
 	row scanned, organization *uuid.UUID,
 ) (investigation.Investigation, error) {
 	var token uuid.UUID
-	found, err := scanInvestigation(prefixedRow{row: row, first: organization, token: &token}, "")
+	found, err := scanInvestigation(prefixedRow{row: row, first: organization, token: &token})
 	found.ClaimToken = token
 	return found, err
 }

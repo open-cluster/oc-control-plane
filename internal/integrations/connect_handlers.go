@@ -155,7 +155,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		h.fail(writer, request, err)
 		return
 	}
-	if principal.Organization() != organization || !principal.Can(authz.IntegrationCreate) {
+	if principal.Organization() != organization || !principal.HavePermission(authz.IntegrationCreate) {
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 		return
 	}
