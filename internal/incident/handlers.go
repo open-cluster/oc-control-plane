@@ -28,10 +28,30 @@ func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/incidents"
 
 	return []authz.Route{
-		{Method: http.MethodGet, Pattern: base, Permission: authz.IncidentRead, Handler: http.HandlerFunc(h.list)},
-		{Method: http.MethodGet, Pattern: base + "/{incident}", Permission: authz.IncidentRead, Handler: http.HandlerFunc(h.incident)},
-		{Method: http.MethodGet, Pattern: base + "/{incident}/alert-events", Permission: authz.IncidentRead, Handler: http.HandlerFunc(h.alertEvents)},
-		{Method: http.MethodPost, Pattern: base + "/{incident}/merge", Permission: authz.IncidentMerge, Handler: http.HandlerFunc(h.merge)},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base,
+			Permission: authz.IncidentRead,
+			Handler:    http.HandlerFunc(h.list),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/{incident}",
+			Permission: authz.IncidentRead,
+			Handler:    http.HandlerFunc(h.incident),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/{incident}/alert-events",
+			Permission: authz.IncidentRead,
+			Handler:    http.HandlerFunc(h.alertEvents),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/{incident}/merge",
+			Permission: authz.IncidentMerge,
+			Handler:    http.HandlerFunc(h.merge),
+		},
 	}
 }
 

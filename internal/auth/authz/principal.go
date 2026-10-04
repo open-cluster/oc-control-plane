@@ -80,7 +80,9 @@ func (p Principal) OrganizationName() string { return p.membership.DisplayName }
 
 func (p Principal) Role() Role { return p.membership.Role }
 
-func (p Principal) Can(permission Permission) bool { return p.membership.Role.Grants(permission) }
+func (p Principal) HavePermission(permission Permission) bool {
+	return p.membership.Role.Grants(permission)
+}
 
 func (p Principal) Actor() audit.Actor {
 	return audit.Actor{
