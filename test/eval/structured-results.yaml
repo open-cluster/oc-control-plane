@@ -78,7 +78,7 @@ fixtures:
       hypotheses: []
       actions: []
       limitations: []
-  - name: legacy-kind-is-not-generated
+  - name: removed-kind-is-rejected
     runs: 1
     valid: false
     errorContains: declared vocabulary

@@ -98,6 +98,32 @@ func TestStructuredConclusionEvaluationFixtures(t *testing.T) {
 	}
 }
 
+func TestStructuredConclusionRejectsRemovedFindingKinds(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"trigger", "symptom", "propagation", "unresolved"} {
+		t.Run(kind, func(t *testing.T) {
+			document := map[string]any{
+				"status": "answer_only", "summary": "A deployment preceded the alert.",
+				"impact": map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
+				"findings": []map[string]any{{
+					"statement": "Deployment abc123 preceded the alert.", "kind": kind,
+					"mechanism": "", "run_refs": []int{1}, "evidence_refs": []any{},
+				}},
+				"hypotheses": []any{}, "actions": []any{}, "limitations": []any{},
+			}
+			encoded, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = decodeConclusion(encoded, 1, nil); err == nil ||
+				!strings.Contains(err.Error(), "declared vocabulary") {
+				t.Fatalf("removed finding kind %q was accepted: %v", kind, err)
+			}
+		})
+	}
+}
+
 func TestStructuredConclusionRequiresCitationsForActions(t *testing.T) {
 	t.Parallel()
 

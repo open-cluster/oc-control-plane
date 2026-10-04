@@ -72,7 +72,7 @@ func boundText(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-func droppedRun(opened investigation.Investigation, call investigation.ToolCall, ordinal int, reason string) investigation.ToolRun {
+func droppedRun(opened investigation.Investigation, call toolCall, ordinal int, reason string) investigation.ToolRun {
 	now := time.Now().UTC()
 	return investigation.ToolRun{
 		Ordinal:     ordinal,
@@ -90,7 +90,7 @@ func droppedRun(opened investigation.Investigation, call investigation.ToolCall,
 func (r *Agent) execute(
 	ctx context.Context, opened investigation.Investigation, selected []selection,
 	credentials *credentialCache, origin *investigation.ConversationOrigin,
-	call investigation.ToolCall, ordinal int,
+	call toolCall, ordinal int,
 ) (investigation.ToolRun, error) {
 	run := investigation.ToolRun{
 		Ordinal:     ordinal,
@@ -185,8 +185,6 @@ func ceilingProgress(stoppedBy string) string {
 		return "Stopping the reads: the investigation used its turn budget"
 	case investigation.StoppedByWallClock:
 		return "Stopping the reads: the investigation is nearly out of time"
-	case investigation.StoppedByStagnation:
-		return "Stopping the reads: the last few produced no new evidence"
 	case investigation.StoppedByContext:
 		return "Stopping the reads: this turn has filled the model's working context"
 	default:

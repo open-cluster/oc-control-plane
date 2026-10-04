@@ -3014,14 +3014,9 @@ components:
           type: string
           enum:
             - cause
-            - trigger
             - contributing_factor
-            - symptom
-            - propagation
-            - ruled_out
-            - unresolved
             - observation
-          description: New Investigations generate cause, contributing_factor, observation, or ruled_out. Other values may appear only in retained historical results.
+            - ruled_out
         mechanism:
           type: string
           maxLength: 4096
@@ -3221,7 +3216,6 @@ components:
             - tool_runs
             - reasoner_turns
             - wall_clock
-            - stagnation
             - context
         error:
           type: string
@@ -3672,7 +3666,6 @@ components:
                 - tool_runs
                 - reasoner_turns
                 - wall_clock
-                - stagnation
                 - context
     FailedInvestigationEvent:
       type: object
@@ -3995,7 +3988,6 @@ components:
             - tool_runs
             - reasoner_turns
             - wall_clock
-            - stagnation
             - context
         error:
           type: string

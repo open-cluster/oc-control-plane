@@ -138,7 +138,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			return investigation.Conclusion{}, fmt.Errorf(
 				"a finding's statement is empty or past %d characters", maxStatementLength)
 		}
-		if !oneOf(finding.Kind, investigation.GeneratedFindingKinds) {
+		if !oneOf(finding.Kind, investigation.FindingKinds) {
 			return investigation.Conclusion{}, fmt.Errorf(
 				"a finding's kind %q is not in the declared vocabulary", finding.Kind)
 		}

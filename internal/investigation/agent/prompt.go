@@ -209,7 +209,7 @@ func impactSchema() map[string]any {
 func agentFindingSchema() map[string]any {
 	return object(properties{
 		"statement": stringField,
-		"kind":      enumField(investigation.GeneratedFindingKinds...),
+		"kind":      enumField(investigation.FindingKinds...),
 		"mechanism": stringField,
 		"run_refs":  array(integerField),
 		"evidence_refs": array(object(properties{
@@ -553,8 +553,6 @@ func renderBrief(brief *investigation.Brief) string {
 		establishedOf(brief.Findings))
 	writeFindings(out, "PRIORLY RULED OUT — reconsider when scope or evidence changes",
 		kindOf(brief.Findings, string(investigation.FindingRuledOut)))
-	writeFindings(out, "STILL OPEN — questions earlier turns could not settle",
-		kindOf(brief.Findings, string(investigation.FindingUnresolved)))
 	if len(brief.OpenHypotheses) > 0 {
 		out.WriteString("\nOPEN HYPOTHESES — explanations earlier turns did not settle:\n")
 		for _, hypothesis := range bounded(brief.OpenHypotheses, investigation.BriefMaxConstraints) {
@@ -624,8 +622,7 @@ func writeFindings(
 func establishedOf(findings []investigation.PriorFinding) []investigation.PriorFinding {
 	var kept []investigation.PriorFinding
 	for _, finding := range findings {
-		if finding.Kind == string(investigation.FindingRuledOut) ||
-			finding.Kind == string(investigation.FindingUnresolved) {
+		if finding.Kind == string(investigation.FindingRuledOut) {
 			continue
 		}
 		kept = append(kept, finding)

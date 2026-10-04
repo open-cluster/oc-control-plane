@@ -449,7 +449,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 			Summary: "ADA-PRIVATE-ANSWER: the pool size changed",
 			Findings: []investigation.Finding{{
 				Statement: "the deploy at 14:02 changed the pool size",
-				Kind:      investigation.FindingTrigger,
+				Kind:      investigation.FindingObservation,
 				RunRefs:   []int{1},
 			}},
 			Actions: []investigation.ActionProposal{{Title: "roll back the 14:02 deploy"}},
