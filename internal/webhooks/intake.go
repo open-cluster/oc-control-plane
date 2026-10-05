@@ -53,6 +53,8 @@ func (h Handlers) Router() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(alertEventsRoute, receiver.handleAlertEvents)
+
+	// slack event ------->
 	if h.Slack != nil && h.Slack.Serves() {
 		mux.HandleFunc(slackEventsRoute, receiver.handleSlackEvents)
 	}
