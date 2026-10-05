@@ -114,11 +114,10 @@ type offeredSource struct {
 }
 
 type toolCall struct {
-	ID           string
-	Tool         string
-	Purpose      string
-	HypothesisID string
-	Arguments    map[string]any
+	ID        string
+	Tool      string
+	Purpose   string
+	Arguments map[string]any
 }
 
 type toolFeedback struct {
@@ -480,8 +479,7 @@ func (r *Agent) Run(
 				now := time.Now().UTC()
 				run = investigation.ToolRun{
 					Ordinal: len(state.runs) + 1, Tool: call.Tool, Arguments: call.Arguments,
-					HypothesisID: boundText(call.HypothesisID, eventTextBound),
-					WindowFrom:   opened.WindowFrom, WindowUntil: opened.WindowUntil,
+					WindowFrom: opened.WindowFrom, WindowUntil: opened.WindowUntil,
 					Outcome:   investigation.RunFailed,
 					Error:     "not executed: an external read requires a purpose",
 					StartedAt: now, FinishedAt: now,
@@ -524,7 +522,6 @@ func (r *Agent) Run(
 					executedRead = true
 				}
 				run.Purpose = boundText(call.Purpose, eventTextBound)
-				run.HypothesisID = boundText(call.HypothesisID, eventTextBound)
 				if executedRead {
 					state.executedIdentities[identity] = run.Ordinal
 				}
@@ -656,7 +653,6 @@ func (r *Agent) announceToolStarted(
 	}
 	payload := investigation.ToolStartedPayload(investigation.ToolRun{
 		Ordinal: ordinal, Tool: call.Tool, Purpose: call.Purpose,
-		HypothesisID: call.HypothesisID, Arguments: call.Arguments,
 	}, source.integration.ID.String(), source.integration.Name)
 	r.announce(ctx, state.events, payload)
 }

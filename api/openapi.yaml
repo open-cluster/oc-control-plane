@@ -1197,6 +1197,23 @@ components:
       required: [auditRetentionDays]
       properties:
         auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
+    IntegrationToolArgument:
+      type: object
+      additionalProperties: false
+      required: [name, description, type]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, minLength: 1, maxLength: 2048 }
+        type: { type: string, enum: [string, integer] }
+        required: { type: boolean }
+    IntegrationTool:
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, minLength: 1, maxLength: 4096 }
+        arguments: { type: array, items: { $ref: "#/components/schemas/IntegrationToolArgument" } }
     IntegrationType:
       type: object
       additionalProperties: false
@@ -1217,7 +1234,7 @@ components:
         receivesWebhooks: { type: boolean }
         supportsConnect: { type: boolean }
         configurationSchema: { type: object, additionalProperties: true }
-        tools: { type: array, items: { type: object, additionalProperties: true } }
+        tools: { type: array, items: { $ref: "#/components/schemas/IntegrationTool" } }
         configured: { type: integer, minimum: 0 }
     IntegrationTypeList:
       type: object
@@ -1548,14 +1565,13 @@ components:
         items: { type: array, items: { $ref: "#/components/schemas/Investigation" } }
     ToolRun:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       required: [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt]
       properties:
         ordinal: { type: integer, minimum: 1 }
         integrationId: { $ref: "#/components/schemas/UUID" }
         tool: { type: string, minLength: 1, maxLength: 128 }
         purpose: { type: string, maxLength: 2048 }
-        hypothesisId: { type: string, maxLength: 128 }
         arguments: { type: object, additionalProperties: true }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
@@ -1618,15 +1634,13 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [ordinal, tool, integrationId, arguments]
+          required: [ordinal, tool, integrationId]
           properties:
             ordinal: { type: integer, minimum: 1 }
             tool: { type: string, minLength: 1, maxLength: 512 }
             integrationId: { type: string, minLength: 1, maxLength: 512 }
             integration: { type: string, maxLength: 512 }
-            arguments: { type: object, additionalProperties: true }
             purpose: { type: string, maxLength: 512 }
-            hypothesisId: { type: string, maxLength: 512 }
     ToolCompletedInvestigationEvent:
       type: object
       additionalProperties: false

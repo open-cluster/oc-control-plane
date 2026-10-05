@@ -81,7 +81,9 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
-		`SELECT count(*) = 15 FROM schema_migration`,
+		`SELECT count(*) = 16 FROM schema_migration`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_name='investigation_tool_run' AND column_name='hypothesis_id')`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,
 		`SELECT to_regclass('deployment_sign_in_flow') IS NULL`,
 		`SELECT to_regclass('oidc_sign_in_flow') IS NOT NULL`,
@@ -219,7 +221,7 @@ func TestIdentityRowCleanupMigrationPreservesCurrentIdentity(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
-		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work",
+		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work", "0016_remove_tool_run_hypothesis",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -308,7 +310,7 @@ func TestMinimalSessionMigrationPreservesOnlyLiveCredentials(t *testing.T) {
 
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
-	if err != nil || !reflect.DeepEqual(applied, []string{"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work"}) {
+	if err != nil || !reflect.DeepEqual(applied, []string{"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work", "0016_remove_tool_run_hypothesis"}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
 
@@ -380,8 +382,64 @@ func TestBaselineSerializesConcurrentStartup(t *testing.T) {
 		}
 		applied += len(<-results)
 	}
-	if applied != 15 {
-		t.Fatalf("concurrent startup applied %d migrations, want fifteen", applied)
+	if applied != 16 {
+		t.Fatalf("concurrent startup applied %d migrations, want sixteen", applied)
+	}
+}
+
+func TestToolRunHypothesisMigrationPreservesRunsAndArguments(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	organizationID, investigationID := organization(t, "tool-run-migration"), uuid.New()
+	if _, err = connection.Exec(ctx, `
+		DELETE FROM schema_migration WHERE version = '0016_remove_tool_run_hypothesis';
+		ALTER TABLE investigation_tool_run ADD COLUMN hypothesis_id text NOT NULL DEFAULT ''`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `INSERT INTO organization (org_id, display_name, created_by)
+		VALUES ($1, 'Tool Run Migration', 'test');
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `INSERT INTO investigation
+			(investigation_id, org_id, subject, window_from, window_until)
+		VALUES ($2, $1, 'preserve Tool Run provenance', now() - interval '1 hour', now())`,
+		organizationID, investigationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `INSERT INTO investigation_tool_run
+			(investigation_id, org_id, ordinal, tool, purpose, hypothesis_id, arguments,
+			 window_from, window_until, outcome, started_at, finished_at)
+		VALUES ($2, $1, 1, 'kubernetes.workload_runtime', 'inspect runtime', 'runtime-state',
+			'{"namespace":"shop"}'::jsonb, now() - interval '1 hour', now(), 1, now(), now())`,
+		organizationID, investigationID); err != nil {
+		t.Fatal(err)
+	}
+
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{"0016_remove_tool_run_hypothesis"}) {
+		t.Fatalf("applied = %v, error = %v", applied, err)
+	}
+	var preserved, removed bool
+	if err = connection.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM investigation_tool_run
+			WHERE investigation_id = $1 AND arguments = '{"namespace":"shop"}'::jsonb),
+		NOT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'investigation_tool_run'
+			  AND column_name = 'hypothesis_id')`, investigationID).Scan(&preserved, &removed); err != nil {
+		t.Fatal(err)
+	}
+	if !preserved || !removed {
+		t.Fatalf("Tool Run preserved = %t, hypothesis column removed = %t", preserved, removed)
 	}
 }
 
@@ -439,7 +497,7 @@ func TestReadableProviderMigrationMapsEveryCurrentProvider(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
 		"0009_single_organization_identity", "0010_minimal_browser_sessions",
-		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work",
+		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work", "0016_remove_tool_run_hypothesis",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -564,7 +622,7 @@ func TestCompatibilityMigrationPreservesProviderInstallationIdentity(t *testing.
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
-		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work",
+		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work", "0016_remove_tool_run_hypothesis",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -711,7 +769,7 @@ func TestDeliveryAndSessionCleanupMigrationPreservesAcceptedWork(t *testing.T) {
 		"0005_remove_membership_identity", "0006_simplify_identity_rows",
 		"0007_readable_integration_provider", "0008_contract_provider_installation",
 		"0009_single_organization_identity", "0010_minimal_browser_sessions",
-		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work",
+		"0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work", "0016_remove_tool_run_hypothesis",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}
@@ -805,7 +863,7 @@ func TestMembershipCleanupMigrationPreservesOnlyCurrentRelations(t *testing.T) {
 		"0004_simplify_membership_lifecycle", "0005_remove_membership_identity",
 		"0006_simplify_identity_rows", "0007_readable_integration_provider",
 		"0008_contract_provider_installation", "0009_single_organization_identity",
-		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work",
+		"0010_minimal_browser_sessions", "0011_automatic_incident_investigation", "0012_retire_alert_webhook_jobs", "0013_contract_slack_message_work", "0014_contract_webhook_delivery", "0015_rename_slack_message_work", "0016_remove_tool_run_hypothesis",
 	}) {
 		t.Fatalf("applied = %v, error = %v", applied, err)
 	}

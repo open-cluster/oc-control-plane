@@ -90,9 +90,10 @@ func TestLegacyAlertMigrationRepairsEveryStateAndPreservesManualAndSlackWork(t *
 	}
 	factsBefore := facts()
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 4 || applied[0] != "0012_retire_alert_webhook_jobs" ||
+	if err != nil || len(applied) != 5 || applied[0] != "0012_retire_alert_webhook_jobs" ||
 		applied[1] != "0013_contract_slack_message_work" ||
-		applied[2] != "0014_contract_webhook_delivery" || applied[3] != "0015_rename_slack_message_work" {
+		applied[2] != "0014_contract_webhook_delivery" || applied[3] != "0015_rename_slack_message_work" ||
+		applied[4] != "0016_remove_tool_run_hypothesis" {
 		t.Fatalf("alert backfill applied %v: %v", applied, err)
 	}
 	for index, incident := range incidents {

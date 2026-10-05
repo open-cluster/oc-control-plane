@@ -16,8 +16,7 @@ import (
 func toolDefinitions() []integrations.ToolDefinition {
 	channelTool := integrations.Tool{
 		Name:        "slack.list_channels",
-		Description: "Lists the channels.", WhenToUse: "First.",
-		WhenNotToUse: "Twice.", Permissions: "channels:read", Output: "Channels.",
+		Description: "List channels before reading their messages.",
 		Arguments: []integrations.ToolArgument{{
 			Name: "filter", Description: "a name filter",
 			Type: integrations.FieldString, Required: true,
@@ -108,9 +107,8 @@ func TestComplete_SendsTheGeneratedToolDefinitions(t *testing.T) {
 		t.Fatalf("tools = %+v", sent.Tools)
 	}
 	first := sent.Tools[0]
-	if !strings.Contains(first.Description, "Use when: First.") ||
-		!strings.Contains(first.Description, "Returns: Channels.") {
-		t.Errorf("description = %q; the composed description is what travels", first.Description)
+	if first.Description != "List channels before reading their messages." {
+		t.Errorf("description = %q; the authored description must travel unchanged", first.Description)
 	}
 	if first.InputSchema.Type != "object" ||
 		len(first.InputSchema.Required) != 1 || first.InputSchema.Required[0] != "filter" {

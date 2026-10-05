@@ -75,6 +75,24 @@ func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
 	}
 }
 
+func TestExternalToolCallsCarryPurposeAndInputWithoutAHypothesisAssociation(t *testing.T) {
+	definition := envelopeDefinition(integrations.ToolDefinition{
+		Name:        "github.read_commits",
+		InputSchema: map[string]any{"type": "object"},
+	})
+
+	properties, ok := definition.InputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %#v", definition.InputSchema["properties"])
+	}
+	if _, present := properties["hypothesisId"]; present {
+		t.Errorf("external Tool call still associates a Tool Run with a hypothesis: %#v", properties)
+	}
+	if properties["purpose"] == nil || properties["input"] == nil {
+		t.Errorf("purpose or input was removed with the hypothesis association: %#v", properties)
+	}
+}
+
 func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
 	t.Parallel()
 
@@ -155,8 +173,7 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 		Manifest: integrations.Manifest{Key: "stub", Name: "Stub",
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{{
-				Name: "stub.read", Description: "reads", WhenToUse: "when asked",
-				WhenNotToUse: "without a question", Permissions: "read", Output: "items",
+				Name: "stub.read", Description: "Read items when asked about them.",
 				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 					return integrations.ToolResult{}, nil
 				},
@@ -213,17 +230,14 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{
 				{
-					Name: "stub.read", Description: "reads",
-					WhenToUse: "always", WhenNotToUse: "never", Permissions: "none",
-					Output: "items",
+					Name: "stub.read", Description: "Read items.",
 					Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 						return integrations.ToolResult{}, nil
 					},
 				},
 				{
-					Name: "stub.search", Description: "searches",
-					WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
-					Output: "matches", Requires: []string{"search:read", "user_token"},
+					Name: "stub.search", Description: "Search items when their identity is unknown.",
+					RequiredGrants: []string{"search:read", "user_token"},
 					Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 						return integrations.ToolResult{}, nil
 					},
@@ -269,9 +283,8 @@ func TestTheOfferHoldsOnlyToolsTheVerifiedGrantsSupport(t *testing.T) {
 		Manifest: integrations.Manifest{Key: "gated", Name: "Gated",
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{{
-				Name: "gated.search", Description: "searches",
-				WhenToUse: "sometimes", WhenNotToUse: "never twice", Permissions: "search",
-				Output: "matches", Requires: []string{"user_token"},
+				Name: "gated.search", Description: "Search items with a user token.",
+				RequiredGrants: []string{"user_token"},
 				Run: func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 					return integrations.ToolResult{}, nil
 				},
@@ -302,14 +315,12 @@ func TestAConversationOriginOffersOnlyItsOwnThreadRead(t *testing.T) {
 			Category: integrations.CategoryAlerting,
 			Tools: []integrations.Tool{
 				{
-					Name: "chat.thread", Description: "reads the originating thread",
-					WhenToUse: "for its thread", WhenNotToUse: "for another thread",
-					Permissions: "history", Output: "messages", SupportsThreadScope: true, Run: read,
+					Name: "chat.thread", Description: "Read the originating thread.",
+					SupportsThreadScope: true, Run: read,
 				},
 				{
-					Name: "chat.channel", Description: "reads an entire channel",
-					WhenToUse: "when explicitly granted", WhenNotToUse: "for an implicit mention",
-					Permissions: "history", Output: "messages", Run: read,
+					Name: "chat.channel", Description: "Read an entire channel when explicitly granted.",
+					Run: read,
 				},
 			}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {

@@ -345,7 +345,6 @@ type runView struct {
 	IntegrationID string         `json:"integrationId,omitempty"`
 	Tool          string         `json:"tool"`
 	Purpose       string         `json:"purpose,omitempty"`
-	HypothesisID  string         `json:"hypothesisId,omitempty"`
 	Arguments     map[string]any `json:"arguments,omitempty"`
 	WindowFrom    string         `json:"windowFrom"`
 	WindowUntil   string         `json:"windowUntil"`
@@ -429,20 +428,19 @@ func detailViewOf(found Investigation, runs []ToolRun) detailView {
 	}
 	for _, run := range runs {
 		rendered := runView{
-			Ordinal:      run.Ordinal,
-			Tool:         run.Tool,
-			Purpose:      run.Purpose,
-			HypothesisID: run.HypothesisID,
-			Arguments:    run.Arguments,
-			WindowFrom:   run.WindowFrom.UTC().Format(time.RFC3339Nano),
-			WindowUntil:  run.WindowUntil.UTC().Format(time.RFC3339Nano),
-			Outcome:      outcomeWord(run.Outcome),
-			Truncated:    run.Truncated,
-			Summary:      run.Summary,
-			Sources:      run.Sources,
-			Error:        run.Error,
-			StartedAt:    stamp(run.StartedAt),
-			FinishedAt:   stamp(run.FinishedAt),
+			Ordinal:     run.Ordinal,
+			Tool:        run.Tool,
+			Purpose:     run.Purpose,
+			Arguments:   run.Arguments,
+			WindowFrom:  run.WindowFrom.UTC().Format(time.RFC3339Nano),
+			WindowUntil: run.WindowUntil.UTC().Format(time.RFC3339Nano),
+			Outcome:     outcomeWord(run.Outcome),
+			Truncated:   run.Truncated,
+			Summary:     run.Summary,
+			Sources:     run.Sources,
+			Error:       run.Error,
+			StartedAt:   stamp(run.StartedAt),
+			FinishedAt:  stamp(run.FinishedAt),
 		}
 		if run.IntegrationID != uuid.Nil {
 			rendered.IntegrationID = run.IntegrationID.String()

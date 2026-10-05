@@ -213,3 +213,17 @@ func TestDefinition_DeclaresTheRelayShape(t *testing.T) {
 		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
 	}
 }
+
+func TestWorkloadDescriptionDoesNotPresentCurrentStateAsHistory(t *testing.T) {
+	t.Parallel()
+
+	tool := Definition().Tools[0]
+	for _, limitation := range []string{
+		"current state does not prove what was running earlier",
+		"results are bounded and report truncation",
+	} {
+		if !strings.Contains(strings.ToLower(tool.Description), limitation) {
+			t.Errorf("%s description does not say %q: %q", tool.Name, limitation, tool.Description)
+		}
+	}
+}

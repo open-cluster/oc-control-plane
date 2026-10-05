@@ -33,7 +33,6 @@ func agentCalls(calls []CompletionCall) []toolCall {
 			translatedCall.Arguments = arguments
 		} else {
 			translatedCall.Purpose, _ = arguments["purpose"].(string)
-			translatedCall.HypothesisID, _ = arguments["hypothesisId"].(string)
 			translatedCall.Arguments, _ = arguments["input"].(map[string]any)
 			if translatedCall.Arguments == nil {
 				translatedCall.Arguments = map[string]any{}

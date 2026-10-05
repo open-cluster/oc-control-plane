@@ -2,17 +2,15 @@ package integrations
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
 func definedTool() Tool {
 	return Tool{
-		Name:        "example.read_things",
-		Description: "Reads one thing's records inside a time window.",
-		WhenToUse:   "To answer what changed before this broke.",
-		WhenNotToUse: "Not for finding the thing; that is example.list_things. " +
-			"Never repeatedly inside one investigation.",
+		Name: "example.read_things",
+		Description: "Read one thing's records inside a time window. Use to answer what " +
+			"changed before a failure. Do not use to find the thing; use " +
+			"example.list_things first. Results are bounded and report truncation.",
 		Arguments: []ToolArgument{
 			{Name: "thingId", Description: "The thing's stable id.",
 				Type: FieldInteger, Required: true},
@@ -21,25 +19,16 @@ func definedTool() Tool {
 			{Name: "since", Description: "Start of the window, RFC 3339.",
 				Type: FieldString},
 		},
-		Permissions: "the connected account's read grant",
-		Output:      "a bounded list of records, plus a truncated flag when more exist",
 	}
 }
 
-func TestDefinitionComposesTheModelFacingDescription(t *testing.T) {
+func TestDefinitionPassesTheAuthoredDescriptionThrough(t *testing.T) {
 	definition := definedTool().Definition()
 	if definition.Name != "example.read_things" {
 		t.Fatalf("name = %q", definition.Name)
 	}
-	for _, part := range []string{
-		"Reads one thing's records inside a time window.",
-		"Use when: To answer what changed before this broke.",
-		"Do not use when: Not for finding the thing",
-		"Returns: a bounded list of records",
-	} {
-		if !strings.Contains(definition.Description, part) {
-			t.Errorf("the composed description is missing %q:\n%s", part, definition.Description)
-		}
+	if definition.Description != definedTool().Description {
+		t.Fatalf("description = %q, want the authored description unchanged", definition.Description)
 	}
 }
 

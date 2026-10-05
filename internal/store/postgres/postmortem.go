@@ -101,7 +101,7 @@ func (p *Database) GenerationInput(
 	}
 
 	runs, err := pool.Query(ctx, `
-		SELECT r.investigation_id, r.ordinal, r.tool, r.purpose, r.hypothesis_id,
+		SELECT r.investigation_id, r.ordinal, r.tool, r.purpose,
 		       r.outcome, r.summary, r.started_at, r.finished_at
 		  FROM investigation_tool_run r
 		  JOIN investigation i
@@ -114,7 +114,7 @@ func (p *Database) GenerationInput(
 	for runs.Next() {
 		var evidence postmortem.RunEvidence
 		if err = runs.Scan(&evidence.InvestigationID, &evidence.Run.Ordinal,
-			&evidence.Run.Tool, &evidence.Run.Purpose, &evidence.Run.HypothesisID,
+			&evidence.Run.Tool, &evidence.Run.Purpose,
 			&evidence.Run.Outcome, &evidence.Run.Summary, &evidence.Run.StartedAt,
 			&evidence.Run.FinishedAt); err != nil {
 			runs.Close()

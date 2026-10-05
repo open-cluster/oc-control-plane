@@ -84,28 +84,34 @@ func tools(executor Executor) []integrations.Tool {
 	}
 	return []integrations.Tool{
 		{
-			Name: capability.KubernetesWorkloadRuntime, Description: "Read the current runtime state of one workload.",
-			WhenToUse:    "checking whether a named workload is available and which pods serve it",
-			WhenNotToUse: "listing a namespace or reading logs", Permissions: "Relay service-account read access to the workload and pods",
-			Arguments: workloadArguments,
-			Requires:  []string{capability.KubernetesWorkloadRuntime},
-			Output:    "bounded workload and pod runtime state", Run: run(capability.KubernetesWorkloadRuntime, workloadArguments),
+			Name: capability.KubernetesWorkloadRuntime,
+			Description: "Read the current runtime state of one named workload and the pods " +
+				"serving it. Use to check present availability and pod state. Do not use for " +
+				"namespace discovery, logs, or historical state; current state does not prove " +
+				"what was running earlier. Results are bounded and report truncation.",
+			Arguments:      workloadArguments,
+			RequiredGrants: []string{capability.KubernetesWorkloadRuntime},
+			Run:            run(capability.KubernetesWorkloadRuntime, workloadArguments),
 		},
 		{
-			Name: capability.KubernetesNamespaceEvents, Description: "Read bounded Kubernetes events in one namespace.",
-			WhenToUse:    "checking what Kubernetes reported during the investigation window",
-			WhenNotToUse: "reading application logs", Permissions: "Relay service-account list access to events",
-			Arguments: eventArguments,
-			Requires:  []string{capability.KubernetesNamespaceEvents},
-			Output:    "bounded events with source timestamps and truncation", Run: run(capability.KubernetesNamespaceEvents, eventArguments),
+			Name: capability.KubernetesNamespaceEvents,
+			Description: "Read bounded Kubernetes events from one namespace in the " +
+				"Investigation window. Use to check what Kubernetes reported about scheduling, " +
+				"health, and lifecycle changes. Do not use for application logs. Results retain " +
+				"source timestamps and report truncation.",
+			Arguments:      eventArguments,
+			RequiredGrants: []string{capability.KubernetesNamespaceEvents},
+			Run:            run(capability.KubernetesNamespaceEvents, eventArguments),
 		},
 		{
-			Name: capability.KubernetesContainerLogs, Description: "Read a bounded tail from one named container.",
-			WhenToUse:    "checking logs for a pod and container already identified",
-			WhenNotToUse: "searching every pod or reading outside the investigation window", Permissions: "Relay service-account read access to pod logs",
-			Arguments: logArguments,
-			Requires:  []string{capability.KubernetesContainerLogs},
-			Output:    "bounded log lines with truncation", Run: run(capability.KubernetesContainerLogs, logArguments),
+			Name: capability.KubernetesContainerLogs,
+			Description: "Read a bounded log tail from one named container in a known pod. " +
+				"Use after workload state identifies the pod and container relevant to the " +
+				"Investigation. Do not scan every pod or use this outside the Investigation " +
+				"window. Results report truncation.",
+			Arguments:      logArguments,
+			RequiredGrants: []string{capability.KubernetesContainerLogs},
+			Run:            run(capability.KubernetesContainerLogs, logArguments),
 		},
 	}
 }

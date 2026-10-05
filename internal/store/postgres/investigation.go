@@ -101,7 +101,7 @@ func (p *Database) InvestigationToolRuns(
 	}
 
 	runRows, err := pool.Query(ctx, `
-		SELECT integration_id, ordinal, tool, purpose, hypothesis_id, arguments,
+		SELECT integration_id, ordinal, tool, purpose, arguments,
 		       window_from, window_until, outcome, truncated, summary, sources, error,
 		       started_at, finished_at
 		  FROM investigation_tool_run
@@ -121,7 +121,7 @@ func (p *Database) InvestigationToolRuns(
 			runSources    []byte
 		)
 		if err := runRows.Scan(&integrationID, &run.Ordinal,
-			&run.Tool, &run.Purpose, &run.HypothesisID, &arguments,
+			&run.Tool, &run.Purpose, &arguments,
 			&run.WindowFrom, &run.WindowUntil, &run.Outcome,
 			&run.Truncated, &run.Summary, &runSources, &run.Error,
 			&run.StartedAt, &run.FinishedAt); err != nil {
@@ -237,15 +237,15 @@ func (p *Database) RecordToolRun(
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO investigation_tool_run (investigation_id, org_id,
 		                                    integration_id, ordinal, tool,
-		                                    purpose, hypothesis_id, arguments,
+		                                    purpose, arguments,
 		                                    window_from, window_until,
 		                                    outcome, truncated, summary, sources, error,
 		                                    started_at, finished_at)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		FROM investigation WHERE investigation_id = $1 AND org_id = $2 AND status = 1
-		AND lease_token = $18 AND lease_expires_at > clock_timestamp()`,
+		AND lease_token = $17 AND lease_expires_at > clock_timestamp()`,
 		id, organization, nullableUUID(run.IntegrationID), run.Ordinal,
-		run.Tool, run.Purpose, run.HypothesisID, arguments, run.WindowFrom, run.WindowUntil,
+		run.Tool, run.Purpose, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
 		run.StartedAt, run.FinishedAt, token)
 	if err != nil {

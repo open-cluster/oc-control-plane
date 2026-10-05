@@ -11,13 +11,9 @@ import (
 type Tool struct {
 	Name                string
 	Description         string
-	WhenToUse           string
-	WhenNotToUse        string
 	Arguments           []ToolArgument
-	Permissions         string
-	Requires            []string
+	RequiredGrants      []string
 	SupportsThreadScope bool
-	Output              string
 	Run                 func(ctx context.Context, request ToolRequest) (ToolResult, error)
 }
 
@@ -94,11 +90,8 @@ func (t Tool) Definition() ToolDefinition {
 		schema["required"] = toAny(required)
 	}
 	return ToolDefinition{
-		Name: t.Name,
-		Description: t.Description +
-			"\nUse when: " + t.WhenToUse +
-			"\nDo not use when: " + t.WhenNotToUse +
-			"\nReturns: " + t.Output,
+		Name:        t.Name,
+		Description: t.Description,
 		InputSchema: schema,
 	}
 }

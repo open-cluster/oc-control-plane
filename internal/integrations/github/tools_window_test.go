@@ -104,7 +104,7 @@ func TestNoToolPromisesAnUnboundedRecentTail(t *testing.T) {
 	t.Parallel()
 
 	for _, tool := range tools(nil, nil) {
-		text := tool.Description + " " + tool.WhenToUse + " " + tool.WhenNotToUse
+		text := tool.Description
 		for _, argument := range tool.Arguments {
 			text += " " + argument.Description
 		}

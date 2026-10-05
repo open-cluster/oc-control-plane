@@ -348,13 +348,9 @@ func TestSlackCatalogEntryRendersTheToolsAndTheWriteOnlySchema(t *testing.T) {
 	}
 	var catalog struct {
 		Types []struct {
-			Key                 string          `json:"key"`
-			ConfigurationSchema json.RawMessage `json:"configurationSchema"`
-			Tools               []struct {
-				Name         string `json:"name"`
-				WhenToUse    string `json:"whenToUse"`
-				WhenNotToUse string `json:"whenNotToUse"`
-			} `json:"tools"`
+			Key                 string            `json:"key"`
+			ConfigurationSchema json.RawMessage   `json:"configurationSchema"`
+			Tools               []json.RawMessage `json:"tools"`
 		} `json:"types"`
 	}
 	decodeInto(t, body, &catalog)
@@ -366,9 +362,20 @@ func TestSlackCatalogEntryRendersTheToolsAndTheWriteOnlySchema(t *testing.T) {
 		if len(entry.Tools) != 4 {
 			t.Errorf("slack serves %d tools, want 4", len(entry.Tools))
 		}
-		for _, tool := range entry.Tools {
-			if tool.WhenToUse == "" || tool.WhenNotToUse == "" {
-				t.Errorf("tool %s is rendered without its routing guidance", tool.Name)
+		for _, raw := range entry.Tools {
+			var tool map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &tool); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"name", "description"} {
+				if len(tool[field]) == 0 {
+					t.Errorf("tool is rendered without %s: %s", field, raw)
+				}
+			}
+			for _, removed := range []string{"whenToUse", "whenNotToUse", "permissions", "output"} {
+				if _, present := tool[removed]; present {
+					t.Errorf("tool still renders obsolete %s: %s", removed, raw)
+				}
 			}
 		}
 		if !strings.Contains(string(entry.ConfigurationSchema), `"writeOnly":true`) {

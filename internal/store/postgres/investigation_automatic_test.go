@@ -105,9 +105,10 @@ func TestAutomaticIncidentMigrationPreservesExistingInvestigationsAndOldWriters(
 	insert()
 	insert()
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 5 || applied[0] != "0011_automatic_incident_investigation" ||
+	if err != nil || len(applied) != 6 || applied[0] != "0011_automatic_incident_investigation" ||
 		applied[1] != "0012_retire_alert_webhook_jobs" || applied[2] != "0013_contract_slack_message_work" ||
-		applied[3] != "0014_contract_webhook_delivery" || applied[4] != "0015_rename_slack_message_work" {
+		applied[3] != "0014_contract_webhook_delivery" || applied[4] != "0015_rename_slack_message_work" ||
+		applied[5] != "0016_remove_tool_run_hypothesis" {
 		t.Fatalf("upgrade applied %v: %v", applied, err)
 	}
 	insert()
