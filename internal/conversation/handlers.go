@@ -138,7 +138,9 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusCreated, openedView{
 		conversationView: conversationViewOf(opened),
 		messageAcceptedView: messageAcceptedView{
-			Message: messageViewOf(said), Turn: turn, Queued: queued,
+			Message: messageViewOf(said),
+			Turn:    turn,
+			Queued:  queued,
 		},
 	})
 }
@@ -182,7 +184,9 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusAccepted, messageAcceptedView{
-		Message: messageViewOf(said), Turn: turn, Queued: queued,
+		Message: messageViewOf(said),
+		Turn:    turn,
+		Queued:  queued,
 	})
 }
 
