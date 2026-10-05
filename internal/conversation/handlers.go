@@ -31,13 +31,37 @@ type Handlers struct {
 
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/conversations"
-
 	return []authz.Route{
-		{Method: http.MethodGet, Pattern: base, Permission: authz.ConversationRead, Handler: http.HandlerFunc(h.list)},
-		{Method: http.MethodPost, Pattern: base, Permission: authz.ConversationWrite, Handler: http.HandlerFunc(h.open)},
-		{Method: http.MethodGet, Pattern: base + "/{conversation}", Permission: authz.ConversationRead, Handler: http.HandlerFunc(h.read)},
-		{Method: http.MethodGet, Pattern: base + "/{conversation}/turns", Permission: authz.ConversationRead, Handler: http.HandlerFunc(h.turns)},
-		{Method: http.MethodPost, Pattern: base + "/{conversation}/messages", Permission: authz.ConversationWrite, Handler: http.HandlerFunc(h.say)},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base,
+			Permission: authz.ConversationRead,
+			Handler:    http.HandlerFunc(h.list),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base,
+			Permission: authz.ConversationWrite,
+			Handler:    http.HandlerFunc(h.open),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/{conversation}",
+			Permission: authz.ConversationRead,
+			Handler:    http.HandlerFunc(h.read),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/{conversation}/turns",
+			Permission: authz.ConversationRead,
+			Handler:    http.HandlerFunc(h.turns),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/{conversation}/messages",
+			Permission: authz.ConversationWrite,
+			Handler:    http.HandlerFunc(h.say),
+		},
 	}
 }
 
@@ -162,9 +186,12 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	})
 }
 
-func (h Handlers) append(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, text string, window *Window,
+func (h Handlers) append(ctx context.Context,
+	principal authz.Principal,
+	organization uuid.UUID,
+	id uuid.UUID,
+	text string,
+	window *Window,
 ) (Message, *turnView, bool, error) {
 	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
 		Role:         RolePerson,
@@ -267,14 +294,16 @@ func (h Handlers) caller(request *http.Request) (authz.Principal, uuid.UUID) {
 	return principal, principal.Organization()
 }
 
-func (h Handlers) addressed(
-	writer http.ResponseWriter, request *http.Request,
+func (h Handlers) addressed(writer http.ResponseWriter, request *http.Request,
 ) (authz.Principal, uuid.UUID, uuid.UUID, bool) {
+
 	principal, organization := h.caller(request)
 	id, err := uuid.Parse(request.PathValue("conversation"))
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "conversation is not an identity"})
+			errorView{
+				Error: "conversation is not an identity",
+			})
 		return authz.Principal{}, uuid.UUID{}, uuid.UUID{}, false
 	}
 	return principal, organization, id, true

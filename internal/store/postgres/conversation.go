@@ -248,6 +248,7 @@ func (p *Database) AppendMessageAndOpenTurn(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, said conversation.NewMessage, lead time.Duration, maxPending int,
 ) (conversation.Message, conversation.Turn, bool, error) {
+
 	accepted, err := audited(ctx, p, principal, organization, audit.ActionConversationMessage,
 		func(ctx context.Context, transaction pgx.Tx) (
 			acceptedMessage, audit.Target, audit.Detail, error,
