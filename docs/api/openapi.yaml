@@ -2178,6 +2178,48 @@ components:
           type: integer
           minimum: 1
           maximum: 3650
+    IntegrationToolArgument:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - description
+        - type
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        type:
+          type: string
+          enum:
+            - string
+            - integer
+        required:
+          type: boolean
+    IntegrationTool:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        arguments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationToolArgument'
     IntegrationType:
       type: object
       additionalProperties: false
@@ -2254,8 +2296,7 @@ components:
         tools:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/IntegrationTool'
         configured:
           type: integer
           minimum: 0
@@ -3266,7 +3307,7 @@ components:
             $ref: '#/components/schemas/Investigation'
     ToolRun:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       required:
         - ordinal
         - tool
@@ -3288,9 +3329,6 @@ components:
         purpose:
           type: string
           maxLength: 2048
-        hypothesisId:
-          type: string
-          maxLength: 128
         arguments:
           type: object
           additionalProperties: true
@@ -3466,7 +3504,6 @@ components:
             - ordinal
             - tool
             - integrationId
-            - arguments
           properties:
             ordinal:
               type: integer
@@ -3482,13 +3519,7 @@ components:
             integration:
               type: string
               maxLength: 512
-            arguments:
-              type: object
-              additionalProperties: true
             purpose:
-              type: string
-              maxLength: 512
-            hypothesisId:
               type: string
               maxLength: 512
     ToolCompletedInvestigationEvent:

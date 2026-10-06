@@ -66,7 +66,7 @@ func recordedGrants(integration Integration) map[string]bool {
 
 func missingGrants(tool Tool, recorded map[string]bool) []string {
 	var missing []string
-	for _, required := range tool.Requires {
+	for _, required := range tool.RequiredGrants {
 		if !recorded[required] {
 			missing = append(missing, required)
 		}

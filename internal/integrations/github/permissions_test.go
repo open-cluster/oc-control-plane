@@ -68,30 +68,3 @@ func TestTheRequestedPermissionsAreTheUnionOfTheMap(t *testing.T) {
 		}
 	}
 }
-
-func TestAToolsPermissionLineIsRenderedFromItsMapping(t *testing.T) {
-	t.Parallel()
-
-	lines := map[string]string{}
-	for _, tool := range tools(nil, NewClient("")) {
-		lines[tool.Name] = tool.Permissions
-	}
-
-	pullRequest := lines["github.read_pull_request"]
-	if !strings.Contains(pullRequest, string(PermissionPullRequests)) ||
-		!strings.Contains(pullRequest, string(PermissionChecks)) {
-		t.Errorf("github.read_pull_request states %q, which is not what its endpoints need",
-			pullRequest)
-	}
-	if strings.Contains(pullRequest, string(PermissionContents)) {
-		t.Errorf("github.read_pull_request still claims Contents: %q", pullRequest)
-	}
-	for name, line := range lines {
-		if strings.Contains(line, "unmapped") {
-			t.Errorf("%s renders %q; its entry is missing from the map", name, line)
-		}
-		if !strings.Contains(line, "read-only") {
-			t.Errorf("%s states %q without saying the access is read-only", name, line)
-		}
-	}
-}

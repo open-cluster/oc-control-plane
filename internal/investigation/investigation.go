@@ -206,7 +206,6 @@ type ToolRun struct {
 	Ordinal       int
 	Tool          string
 	Purpose       string
-	HypothesisID  string
 	Arguments     map[string]any
 	WindowFrom    time.Time
 	WindowUntil   time.Time

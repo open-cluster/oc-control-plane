@@ -426,9 +426,9 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	if err = database.RecordToolRun(context.Background(), organization,
 		adaTurn.InvestigationID, claimToken(t, database, organization, adaTurn.InvestigationID), investigation.ToolRun{
 			Ordinal: 1, Tool: "kubernetes.workload_runtime",
-			Purpose:      "compare runtime state with the deploy",
-			HypothesisID: "deployment-trigger",
-			Outcome:      investigation.RunSucceeded, Summary: "1 workload",
+			Purpose:   "compare runtime state with the deploy",
+			Arguments: map[string]any{"namespace": "shop"},
+			Outcome:   investigation.RunSucceeded, Summary: "1 workload",
 			Sources:   []string{"checkout-api"},
 			StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(),
 		}); err != nil {
@@ -441,7 +441,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	}
 	if len(recordedRuns) != 1 || recordedRuns[0].Purpose !=
 		"compare runtime state with the deploy" ||
-		recordedRuns[0].HypothesisID != "deployment-trigger" {
+		recordedRuns[0].Arguments["namespace"] != "shop" {
 		t.Fatalf("recorded purpose metadata = %+v", recordedRuns)
 	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,

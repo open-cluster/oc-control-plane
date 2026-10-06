@@ -87,16 +87,8 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 		if !strings.HasPrefix(tool.Name, "github.") {
 			t.Errorf("tool name %q does not carry the provider prefix", tool.Name)
 		}
-		for field, value := range map[string]string{
-			"description":  tool.Description,
-			"whenToUse":    tool.WhenToUse,
-			"whenNotToUse": tool.WhenNotToUse,
-			"permissions":  tool.Permissions,
-			"output":       tool.Output,
-		} {
-			if strings.TrimSpace(value) == "" {
-				t.Errorf("%s declares no %s", tool.Name, field)
-			}
+		if strings.TrimSpace(tool.Description) == "" {
+			t.Errorf("%s declares no description", tool.Name)
 		}
 		if tool.Run == nil {
 			t.Errorf("%s declares no Run", tool.Name)
@@ -107,6 +99,29 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 					tool.Name, argument)
 			}
 		}
+	}
+}
+
+func TestDescriptionsDoNotTurnSourceControlSignalsIntoDeploymentProof(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]string{
+		toolReadCommits:      "a commit alone does not establish production rollout",
+		toolReadWorkflowRuns: "do not use a successful run to prove production health or deployment",
+		toolListReleases:     "do not treat a release as proof of production rollout",
+	}
+	for _, tool := range Definition(nil, NewClient("")).Tools {
+		limitation, checked := want[tool.Name]
+		if !checked {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(tool.Description), limitation) {
+			t.Errorf("%s description does not say %q: %q", tool.Name, limitation, tool.Description)
+		}
+		delete(want, tool.Name)
+	}
+	if len(want) != 0 {
+		t.Errorf("tools with deployment limitations were not declared: %v", want)
 	}
 }
 

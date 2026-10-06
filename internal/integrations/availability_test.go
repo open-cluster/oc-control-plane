@@ -9,7 +9,7 @@ import (
 func definitionWithTools() Definition {
 	return Definition{Manifest: Manifest{Tools: []Tool{
 		{Name: "slack.list_channels"},
-		{Name: "slack.search_messages", Requires: []string{"search:read"}},
+		{Name: "slack.search_messages", RequiredGrants: []string{"search:read"}},
 	}}}
 }
 

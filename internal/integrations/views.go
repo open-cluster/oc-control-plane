@@ -33,13 +33,9 @@ type typeView struct {
 }
 
 type toolView struct {
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	WhenToUse    string             `json:"whenToUse"`
-	WhenNotToUse string             `json:"whenNotToUse"`
-	Arguments    []toolArgumentView `json:"arguments,omitempty"`
-	Permissions  string             `json:"permissions"`
-	Output       string             `json:"output"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Arguments   []toolArgumentView `json:"arguments,omitempty"`
 }
 
 type toolArgumentView struct {
@@ -68,13 +64,7 @@ func typeViewOf(definition Definition, configured int, receivesWebhooks bool) ty
 			})
 		}
 		tools = append(tools, toolView{
-			Name:         tool.Name,
-			Description:  tool.Description,
-			WhenToUse:    tool.WhenToUse,
-			WhenNotToUse: tool.WhenNotToUse,
-			Arguments:    arguments,
-			Permissions:  tool.Permissions,
-			Output:       tool.Output,
+			Name: tool.Name, Description: tool.Description, Arguments: arguments,
 		})
 	}
 	return typeView{

@@ -152,7 +152,7 @@ func (r *records) AppendEvent(
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value.", WhenToUse: "To answer.", WhenNotToUse: "Never.", Permissions: "read", Output: "value", Run: run}}},
+		Manifest: integrations.Manifest{Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value to answer the question.", Run: run}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusVerified}
 		},
@@ -283,9 +283,9 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 		return integrations.ToolResult{Summary: request.Arguments["namespace"].(string)}, nil
 	}
 	tools := []integrations.Tool{
-		{Name: "kubernetes.workload.runtime", Description: "runtime", WhenToUse: "runtime state", WhenNotToUse: "never", Permissions: "read", Output: "state", Run: run},
-		{Name: "kubernetes.namespace.events", Description: "events", WhenToUse: "recent events", WhenNotToUse: "never", Permissions: "read", Output: "events", Run: run},
-		{Name: "kubernetes.pod.logs", Description: "logs", WhenToUse: "diagnosis", WhenNotToUse: "never", Permissions: "read", Output: "logs", Run: run},
+		{Name: "kubernetes.workload.runtime", Description: "Read runtime state.", Run: run},
+		{Name: "kubernetes.namespace.events", Description: "Read namespace events.", Run: run},
+		{Name: "kubernetes.pod.logs", Description: "Read pod logs for diagnosis.", Run: run},
 	}
 	catalog, err := integrations.NewCatalog(integrations.Definition{
 		Manifest: integrations.Manifest{Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools},
@@ -370,8 +370,8 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			}
 			catalog, err := integrations.NewCatalog(integrations.Definition{
 				Manifest: integrations.Manifest{Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
-					{Name: "chat.thread", Description: "thread", WhenToUse: "origin", WhenNotToUse: "elsewhere", Permissions: "read", Output: "messages", SupportsThreadScope: true, Run: read},
-					{Name: "chat.channel", Description: "channel", WhenToUse: "broad", WhenNotToUse: "mentions", Permissions: "read", Output: "messages", Run: read},
+					{Name: "chat.thread", Description: "Read the originating thread.", SupportsThreadScope: true, Run: read},
+					{Name: "chat.channel", Description: "Read a channel.", Run: read},
 				}},
 				Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 					return integrations.Verification{Status: integrations.StatusVerified}

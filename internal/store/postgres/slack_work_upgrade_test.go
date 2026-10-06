@@ -54,8 +54,9 @@ func TestSlackWorkContractionPreservesEveryDurableStateAndLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := database.Migrate(ctx)
-	if err != nil || len(applied) != 3 || applied[0] != "0013_contract_slack_message_work" ||
-		applied[1] != "0014_contract_webhook_delivery" || applied[2] != "0015_rename_slack_message_work" {
+	if err != nil || len(applied) != 4 || applied[0] != "0013_contract_slack_message_work" ||
+		applied[1] != "0014_contract_webhook_delivery" || applied[2] != "0015_rename_slack_message_work" ||
+		applied[3] != "0016_remove_tool_run_hypothesis" {
 		t.Fatalf("contraction applied %v: %v", applied, err)
 	}
 	var after string

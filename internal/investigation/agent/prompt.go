@@ -145,10 +145,6 @@ func envelopeDefinition(definition integrations.ToolDefinition) integrations.Too
 				"type":        "string",
 				"description": "Concise operator-visible reason for this read.",
 			},
-			"hypothesisId": map[string]any{
-				"type":        "string",
-				"description": "Stable visible hypothesis ID this read tests, when applicable.",
-			},
 			"input": definition.InputSchema,
 		},
 		"required":             []any{"input", "purpose"},

@@ -37,9 +37,9 @@ backend state, not a setup guide or the signal that makes Connect appear in the 
 
 ## Tool
 
-A bounded operation offered by an Integration. Its definition declares when it
-is useful, when it is not, its arguments, permissions, and result shape. Every external
-call states an operator-visible purpose and may name the visible hypothesis it tests.
+A bounded operation offered by an Integration. Its definition has one complete description,
+its arguments, and any verified grants required for availability. Every external call states
+an operator-visible purpose.
 
 ## Alert Event
 
@@ -79,8 +79,8 @@ the mechanism that produced impact.
 ## Tool Run
 
 One attempted Tool execution, successful or failed. Its one-based ordinal is the citation
-used within its Investigation. It records Integration, purpose, optional hypothesis,
-arguments, bounded window, outcome, truncation, summary, and source identifiers.
+used within its Investigation. It records Integration, purpose, arguments, bounded window,
+outcome, truncation, summary, and source identifiers.
 
 ## Action Proposal
 

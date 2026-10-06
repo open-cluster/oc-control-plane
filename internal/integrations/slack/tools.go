@@ -125,21 +125,12 @@ func listChannelsTool(client *Client) integrations.Tool {
 	}
 	return integrations.Tool{
 		Name: "slack.list_channels",
-		Description: "Lists the workspace's public, unarchived channels with their topics " +
-			"and purposes, walking the listing far enough that a filter match beyond the " +
-			"first page is still found.",
-		WhenToUse: "First, to see which channels exist and select the few worth reading " +
-			"by their names and topics. Prefer one unfiltered listing over guessing " +
-			"filter terms.",
-		WhenNotToUse: "Not for reading messages — it returns no message content. Not for " +
-			"finding where something was SAID; that is slack.search_messages. Never as a " +
-			"way to enumerate the workspace for its own sake.",
-		Arguments:   declared,
-		Permissions: "the bot token needs the channels:read scope",
-		Requires:    []string{"channels:read"},
-		Output: "a bounded list of channels, each with id, name, topic, purpose and member " +
-			"count, plus a truncated flag when more matched than were returned or the " +
-			"walk stopped before the workspace's end",
+		Description: "List public, unarchived Slack channels with IDs, names, topics, " +
+			"purposes, and member counts. Use to select relevant channels before reading " +
+			"history. Do not use to read messages or search for where a phrase was said. " +
+			"Results are bounded and report truncation.",
+		Arguments:      declared,
+		RequiredGrants: []string{"channels:read"},
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -217,21 +208,13 @@ func channelHistoryTool(client *Client) integrations.Tool {
 	}
 	return integrations.Tool{
 		Name: "slack.get_channel_history",
-		Description: "Reads one channel's messages inside a time window, bounded and " +
-			"flagged when the window holds more.",
-		WhenToUse: "To read what people said in a selected channel during the incident's " +
-			"window: deploy chatter, alarm reactions, operator actions.",
-		WhenNotToUse: "Not before channels are selected — choose them with " +
-			"slack.list_channels first. Not for a thread's replies; that is " +
-			"slack.get_thread_replies. Not across the whole workspace; that is " +
-			"slack.search_messages.",
-		Arguments: declared,
-		Permissions: "the bot token needs the channels:history scope; users:read resolves " +
-			"authors to names, and without it messages carry raw ids",
-		Requires: []string{"channels:history"},
-		Output: "a bounded list of messages, each with ts, the author resolved to a " +
-			"display name beside the raw id, text, thread marker, reply count and a " +
-			"permalink, plus a truncated flag when the window holds more",
+		Description: "Read messages from one known Slack channel in the Investigation " +
+			"window, including authors, thread markers, reply counts, and links. Use for " +
+			"incident discussion, reactions, and reported actions. Do not use for thread " +
+			"replies or workspace-wide search. Slack discussion is testimony and requires " +
+			"corroboration. Results are bounded and report truncation.",
+		Arguments:      declared,
+		RequiredGrants: []string{"channels:history"},
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -296,23 +279,14 @@ func threadRepliesTool(client *Client) integrations.Tool {
 	}
 	return integrations.Tool{
 		Name: "slack.get_thread_replies",
-		Description: "Reads one thread's messages in order, answering the newest tail of " +
-			"a bounded walk with the truncated flag set when the thread held more — the " +
-			"end of a war-room thread is where the conclusion lives.",
-		WhenToUse: "When channel history showed a message with replies and the discussion " +
-			"under it is what matters — triage threads, decision threads.",
-		WhenNotToUse: "Not for a channel's timeline; that is slack.get_channel_history. " +
-			"Not speculatively on every message — only where the reply count says a " +
-			"discussion happened.",
-		Arguments: declared,
-		Permissions: "the bot token needs the channels:history scope; users:read resolves " +
-			"authors to names",
-		Requires:            []string{"channels:history"},
+		Description: "Read the newest bounded tail of a known Slack thread in message " +
+			"order, including authors, text, and links. Use after channel history identifies " +
+			"a message with replies. Do not use for a channel timeline or speculatively on " +
+			"messages without replies. Slack discussion is testimony and requires " +
+			"corroboration. Results report truncation.",
+		Arguments:           declared,
+		RequiredGrants:      []string{"channels:history"},
 		SupportsThreadScope: true,
-		Output: "the thread's messages in order — the newest tail of what a bounded walk " +
-			"reached — each with ts, the author resolved to a display name, text and a " +
-			"permalink; the truncated flag reports a thread longer than what came back, " +
-			"and the summary says how much was walked and whether the thread continues",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -379,21 +353,14 @@ func searchMessagesTool(client *Client) integrations.Tool {
 	}
 	return integrations.Tool{
 		Name: "slack.search_messages",
-		Description: "Searches messages across the workspace for exact terms, bounded to " +
-			"the investigation's window, with the remainder flagged.",
-		WhenToUse: "When the right channel is unknown and an identifier is: an error " +
-			"message, a ticket number, a hostname. The matches carry channel ids, so " +
-			"the pivot to slack.get_channel_history needs no re-listing.",
-		WhenNotToUse: "Not as a substitute for reading a selected channel's window. Not " +
-			"with vague prose — the vendor matches terms, not meaning. Not repeatedly " +
-			"with rephrasings of one question.",
-		Arguments: declared,
-		Permissions: "classic message search works only with a user token granted the " +
-			"search:read scope; a bot token is never offered this tool",
-		Requires: []string{"search:read", grantUserToken},
-		Output: "a bounded list of matches, each with ts, author, text, the channel name " +
-			"and id it was said in and a permalink, plus a truncated flag when more " +
-			"matched",
+		Description: "Search Slack messages for exact identifiers across the workspace " +
+			"within the Investigation window. Use when the relevant channel is unknown and " +
+			"an error string, ticket, service, or hostname is available. Do not use vague " +
+			"prose or substitute search results for reading the selected channel. Slack " +
+			"discussion is testimony and requires corroboration. Results are bounded and " +
+			"report truncation.",
+		Arguments:      declared,
+		RequiredGrants: []string{"search:read", grantUserToken},
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {

@@ -64,17 +64,11 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 	}
 	return integrations.Tool{
 		Name: toolListRepositories,
-		Description: "Lists the repositories this installation selected, by stable id, " +
-			"with names and descriptions.",
-		WhenToUse: "First, to find which repository holds the failing service: filter by " +
-			"the incident's service name, then use the id everywhere after.",
-		WhenNotToUse: "Not for commit or pull-request content — it returns none. Never " +
-			"repeatedly inside one investigation; the selection does not change mid-incident.",
-		Arguments:   declared,
-		Permissions: permissionProse(toolListRepositories),
-		Output: "a bounded list of repositories, each with id, name, full name, privacy, " +
-			"archive state, default branch and description, plus a truncated flag when " +
-			"more matched than were returned or the walk stopped early",
+		Description: "List repositories accessible to this Integration, with stable IDs, " +
+			"names, descriptions, visibility, archive state, and default branches. Use to " +
+			"find the repository for an affected service before repository-specific reads. " +
+			"Do not use for commits or pull requests. Results are bounded and report truncation.",
+		Arguments: declared,
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -158,20 +152,11 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 	}
 	return integrations.Tool{
 		Name: toolReadCommits,
-		Description: "Reads one repository's commits inside a time window, newest first, " +
-			"bounded and flagged when the window holds more.",
-		WhenToUse: "To answer \"what changed before this broke\": read the incident's " +
-			"own window on the repository that owns the failing service.",
-		WhenNotToUse: "Not for a commit's actual diff — that is github.read_commit. " +
-			"Omitting the window does NOT widen the read to the repository's recent " +
-			"history: every read is clamped into the investigation's own window, which " +
-			"may be short, and the result states the window it actually covered.",
-		Arguments:   declared,
-		Permissions: permissionProse(toolReadCommits),
-		Output: "a bounded list of commits, each with sha, message, author, authored " +
-			"time and permalink, plus a truncated flag when the window holds more; an " +
-			"empty repository answers an empty list; a message like \"Merge pull " +
-			"request #123\" carries the number github.read_pull_request takes",
+		Description: "Read commits from an accessible repository in the Investigation " +
+			"window. Use when checking whether a code change preceded the incident. Do not " +
+			"use to prove deployment; a commit alone does not establish production rollout. " +
+			"Results are newest first, bounded, and report truncation.",
+		Arguments: declared,
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			values, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {

@@ -39,8 +39,8 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		}
 		if index < 2 {
 			if _, err = database.Exec(ctx, `INSERT INTO investigation_tool_run
-				(investigation_id,org_id,ordinal,tool,window_from,window_until,outcome,summary,started_at,finished_at)
-				VALUES ($1,$2,1,'read',now()-interval '1 hour',now(),1,$3,now(),now())`, id, surfaceOrg, id.String()); err != nil {
+				(investigation_id,org_id,ordinal,tool,arguments,window_from,window_until,outcome,summary,started_at,finished_at)
+				VALUES ($1,$2,1,'read','{"namespace":"shop"}'::jsonb,now()-interval '1 hour',now(),1,$3,now(),now())`, id, surfaceOrg, id.String()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -49,13 +49,23 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+ref.InvestigationID.String(), nil)
 		var source struct {
 			Runs []struct {
-				Ordinal int
-				Summary string
+				Ordinal   int
+				Summary   string
+				Arguments map[string]any
 			}
 		}
 		decodeInto(t, body, &source)
-		if status != http.StatusOK || len(source.Runs) != 1 || source.Runs[0].Ordinal != 1 || source.Runs[0].Summary != ref.InvestigationID.String() {
+		if status != http.StatusOK || len(source.Runs) != 1 || source.Runs[0].Ordinal != 1 ||
+			source.Runs[0].Summary != ref.InvestigationID.String() ||
+			source.Runs[0].Arguments["namespace"] != "shop" {
 			t.Fatalf("citation resolved to the wrong run: %d %s", status, body)
+		}
+		var contract struct {
+			Runs []map[string]json.RawMessage
+		}
+		decodeInto(t, body, &contract)
+		if _, present := contract.Runs[0]["hypothesisId"]; present {
+			t.Fatalf("Investigation detail still exposes hypothesisId: %s", body)
 		}
 		restore := plane.switchOrganization(t, neighbourOrg)
 		status, body = plane.call(t, http.MethodGet, plane.base(neighbourOrg)+"/investigations/"+ref.InvestigationID.String(), nil)

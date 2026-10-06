@@ -240,10 +240,9 @@ func checkDefinition(definition Definition) error {
 		case names[tool.Name]:
 			return fmt.Errorf("integration type %q declares tool %q twice",
 				definition.Key, tool.Name)
-		case tool.Description == "" || tool.WhenToUse == "" || tool.WhenNotToUse == "" ||
-			tool.Permissions == "" || tool.Output == "":
+		case tool.Description == "":
 			return fmt.Errorf("integration type %q tool %q is missing part of its "+
-				"contract; the model routes by the composed description, and an empty "+
+				"contract; the model routes by its description, and an empty "+
 				"field is a tool that gets used wrongly", definition.Key, tool.Name)
 		}
 		if err := checkArguments(string(definition.Key), tool); err != nil {
@@ -287,7 +286,8 @@ func (c Catalog) Manifests() []Manifest {
 		manifest.Tools = append([]Tool(nil), manifest.Tools...)
 		for index := range manifest.Tools {
 			manifest.Tools[index].Arguments = append([]ToolArgument(nil), manifest.Tools[index].Arguments...)
-			manifest.Tools[index].Requires = append([]string(nil), manifest.Tools[index].Requires...)
+			manifest.Tools[index].RequiredGrants = append(
+				[]string(nil), manifest.Tools[index].RequiredGrants...)
 		}
 		manifests = append(manifests, manifest)
 	}

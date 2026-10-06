@@ -14,9 +14,8 @@ func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 			DocumentationSlug: "integrations/collaboration/example",
 			Config: []Field{{Key: "token", Label: "Token",
 				Type: FieldString, Required: true, Secret: true}},
-			Tools: []Tool{{Name: "example.read", Description: "Reads an example.",
-				WhenToUse: "When an example is needed.", WhenNotToUse: "Without a target.",
-				Permissions: "examples:read", Output: "One example.", Run: inertTool}},
+			Tools: []Tool{{Name: "example.read", Description: "Read one known example. " +
+				"Use when its contents are needed. Do not use without a target.", Run: inertTool}},
 		},
 		Probe: inertProbe,
 	})

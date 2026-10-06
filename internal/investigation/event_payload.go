@@ -45,13 +45,11 @@ func ProgressPayload(text string) ProgressEventPayload {
 }
 
 type ToolStartedEventPayload struct {
-	Ordinal       int            `json:"ordinal"`
-	Tool          string         `json:"tool"`
-	IntegrationID string         `json:"integrationId"`
-	Integration   string         `json:"integration,omitempty"`
-	Arguments     map[string]any `json:"arguments"`
-	Purpose       string         `json:"purpose,omitempty"`
-	HypothesisID  string         `json:"hypothesisId,omitempty"`
+	Ordinal       int    `json:"ordinal"`
+	Tool          string `json:"tool"`
+	IntegrationID string `json:"integrationId"`
+	Integration   string `json:"integration,omitempty"`
+	Purpose       string `json:"purpose,omitempty"`
 }
 
 func (ToolStartedEventPayload) EventType() EventType { return EventToolStarted }
@@ -59,8 +57,7 @@ func (ToolStartedEventPayload) EventType() EventType { return EventToolStarted }
 func ToolStartedPayload(run ToolRun, integration, name string) ToolStartedEventPayload {
 	return ToolStartedEventPayload{
 		Ordinal: run.Ordinal, Tool: bounded(run.Tool, eventTextBound), IntegrationID: integration,
-		Integration: bounded(name, eventTextBound), Arguments: run.Arguments,
-		Purpose: bounded(run.Purpose, eventTextBound), HypothesisID: bounded(run.HypothesisID, eventTextBound),
+		Integration: bounded(name, eventTextBound), Purpose: bounded(run.Purpose, eventTextBound),
 	}
 }
 

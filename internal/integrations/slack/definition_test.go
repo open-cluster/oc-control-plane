@@ -100,16 +100,8 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 		if tool.Name == "" || !strings.HasPrefix(tool.Name, "slack.") {
 			t.Errorf("tool name %q does not carry the provider prefix", tool.Name)
 		}
-		for field, value := range map[string]string{
-			"description":  tool.Description,
-			"whenToUse":    tool.WhenToUse,
-			"whenNotToUse": tool.WhenNotToUse,
-			"permissions":  tool.Permissions,
-			"output":       tool.Output,
-		} {
-			if strings.TrimSpace(value) == "" {
-				t.Errorf("%s declares no %s", tool.Name, field)
-			}
+		if strings.TrimSpace(tool.Description) == "" {
+			t.Errorf("%s declares no description", tool.Name)
 		}
 		if tool.Run == nil {
 			t.Errorf("%s declares no Run", tool.Name)
@@ -123,7 +115,7 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	}
 }
 
-func TestVerifiedScopesMatchWhatTheToolsClaim(t *testing.T) {
+func TestEveryToolGrantIsKnownToVerification(t *testing.T) {
 	t.Parallel()
 
 	known := map[string]string{}
@@ -134,17 +126,28 @@ func TestVerifiedScopesMatchWhatTheToolsClaim(t *testing.T) {
 		known[scope] = cost
 	}
 
-	claimed := map[string]bool{}
 	for _, tool := range Definition(NewClient(""), nil, false).Tools {
-		for scope := range known {
-			if strings.Contains(tool.Permissions, scope) {
-				claimed[scope] = true
+		for _, grant := range tool.RequiredGrants {
+			if grant == grantUserToken {
+				continue
+			}
+			if _, exists := known[grant]; !exists {
+				t.Errorf("%s requires unknown grant %s", tool.Name, grant)
 			}
 		}
 	}
-	for scope := range known {
-		if !claimed[scope] {
-			t.Errorf("verification knows %s and no tool claims to need it", scope)
+}
+
+func TestMessageDescriptionsRequireCorroboration(t *testing.T) {
+	t.Parallel()
+
+	for _, tool := range Definition(NewClient(""), nil, false).Tools {
+		if tool.Name == "slack.list_channels" {
+			continue
+		}
+		const limitation = "testimony and requires corroboration"
+		if !strings.Contains(strings.ToLower(tool.Description), limitation) {
+			t.Errorf("%s description does not say %q: %q", tool.Name, limitation, tool.Description)
 		}
 	}
 }
