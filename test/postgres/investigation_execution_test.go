@@ -57,7 +57,6 @@ func TestResumingFromASequenceProducesExactlyTheMissingSuffix(t *testing.T) {
 		investigation.EventProgress,
 		investigation.EventToolStarted,
 		investigation.EventToolCompleted,
-		investigation.EventHypothesesUpdated,
 		investigation.EventConcluded,
 		investigation.EventFailed,
 		investigation.EventCancelled,
@@ -135,7 +134,10 @@ func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for sequence, eventType := range []int16{1, 5, 2, 8, 6} {
+	if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event DROP CONSTRAINT investigation_event_type_check`); err != nil {
+		t.Fatal(err)
+	}
+	for sequence, eventType := range []int16{1, 5, 2, 8, 10, 6} {
 		if _, err = pool.Exec(ctx, `
 			INSERT INTO investigation_event
 				(org_id, investigation_id, sequence, type, payload, at)
@@ -143,6 +145,10 @@ func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
 			organization, id, sequence+1, eventType); err != nil {
 			t.Fatalf("seeding event %d: %v", sequence+1, err)
 		}
+	}
+	if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event ADD CONSTRAINT investigation_event_type_check
+		CHECK (type IN (1, 2, 3, 4, 6, 7, 9)) NOT VALID`); err != nil {
+		t.Fatal(err)
 	}
 
 	events, err := database.Events(ctx, organization, id, 0, 0)
@@ -152,7 +158,7 @@ func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
 	if len(events) != 3 {
 		t.Fatalf("replay returned %d active events, want 3: %+v", len(events), events)
 	}
-	wantSequences := []int64{1, 3, 5}
+	wantSequences := []int64{1, 3, 6}
 	wantTypes := []investigation.EventType{
 		investigation.EventStarted, investigation.EventProgress, investigation.EventConcluded,
 	}

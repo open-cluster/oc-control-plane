@@ -110,12 +110,12 @@ func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integratio
 		INSERT INTO webhook_delivery (delivery_id, org_id, integration_id, content_digest, provider_identity)
 		VALUES ($4, $1, $2, $3, $8) RETURNING delivery_id, org_id, integration_id
 	), chat AS (
-		INSERT INTO conversation (conversation_id, org_id, surface, subject)
-		SELECT $6, org_id, 2, 'Slack replay' FROM delivery RETURNING conversation_id, org_id
+		INSERT INTO conversation (conversation_id, org_id, source, subject)
+		SELECT $6, org_id, 'slack', 'Slack replay' FROM delivery RETURNING conversation_id, org_id
 	), message AS (
 		INSERT INTO conversation_message
-			(conversation_id, org_id, sequence, role, actor_kind, actor_id, text, window_from, window_until)
-		SELECT conversation_id, org_id, 1, 1, 2, 'UREPLAY', 'investigate', now()-interval '1 hour', now()
+			(conversation_id, org_id, sequence, role, actor_id, text, window_from, window_until)
+		SELECT conversation_id, org_id, 1, 1, 'UREPLAY', 'investigate', now()-interval '1 hour', now()
 		FROM chat RETURNING conversation_id, org_id, sequence
 	)
 		INSERT INTO slack_message_work

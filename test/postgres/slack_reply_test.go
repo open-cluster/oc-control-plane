@@ -203,7 +203,7 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	ctx := context.Background()
 	opened, err := database.OpenConversation(ctx, ownerOf(t, organization), organization,
 		conversation.NewConversation{
-			Surface: conversation.SurfaceWeb, Subject: "asked in the console",
+			Source: conversation.SourceWeb, Subject: "asked in the console",
 			CreatedBy: "user-under-test",
 		})
 	if err != nil {
@@ -211,7 +211,7 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	}
 	if _, err := appendMessageForTest(database, ctx, ownerOf(t, organization), organization,
 		opened.ID, conversation.NewMessage{
-			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			Role:    conversation.RoleUser,
 			ActorID: "user-under-test", Text: "why is checkout failing?",
 		}); err != nil {
 		t.Fatalf("saying something: %v", err)

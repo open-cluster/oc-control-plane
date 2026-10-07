@@ -75,7 +75,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	}()
 	go func() {
 		_, _, _, err := database.AppendMessageAndOpenTurn(ctx, principal, organization, chat.ID,
-			conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			conversation.NewMessage{Role: conversation.RoleUser,
 				ActorID: principal.UserID().String(), Text: "investigate"}, time.Hour, 3)
 		web <- err
 	}()

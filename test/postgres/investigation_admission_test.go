@@ -19,7 +19,7 @@ func TestCreateInvestigationEnforcesBacklogAtomically(t *testing.T) {
 	database, organization, _ := twoOrganizationsInOneDatabase(t)
 	principal := ownerOf(t, organization)
 	wanted := investigation.NewInvestigation{
-		Question: "what changed?", Subject: "service",
+		Subject:    "service",
 		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String(),
 	}
 
@@ -60,7 +60,7 @@ func TestConversationAndDirectIngressShareOneAtomicBacklog(t *testing.T) {
 	principal := ownerOf(t, organization)
 	chat := openConversation(t, database, organization, "service")
 	wanted := investigation.NewInvestigation{
-		Question: "what changed?", Subject: "service",
+		Subject:    "service",
 		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String(),
 	}
 
@@ -79,7 +79,7 @@ func TestConversationAndDirectIngressShareOneAtomicBacklog(t *testing.T) {
 		<-start
 		_, _, _, err := database.AppendMessageAndOpenTurn(context.Background(), principal,
 			organization, chat.ID, conversation.NewMessage{
-				Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+				Role:    conversation.RoleUser,
 				ActorID: principal.UserID().String(), Text: "please investigate",
 			}, time.Hour, 1)
 		errorsSeen <- err
@@ -109,7 +109,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	principal := ownerOf(t, organization)
 	chat := openConversation(t, database, organization, "service")
 	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
-		conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+		conversation.NewMessage{Role: conversation.RoleUser,
 			ActorID: principal.UserID().String(), Text: "first"}); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 		t.Fatalf("claiming first turn: claimed=%t err=%v", claimed, err)
 	}
 	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
-		conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+		conversation.NewMessage{Role: conversation.RoleUser,
 			ActorID: principal.UserID().String(), Text: "follow up"}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := database.CreateInvestigation(context.Background(), principal, organization,
-		investigation.NewInvestigation{Question: "other", Subject: "other",
+		investigation.NewInvestigation{Subject: "other",
 			WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String()}, 1); err != nil {
 		t.Fatal(err)
 	}

@@ -43,8 +43,8 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 				Verification: "Database utilization remains below the limit.", RunRefs: []int{3},
 			}},
 			Hypotheses: []investigation.HypothesisResult{{
-				ID: "traffic-spike", Statement: "A traffic spike may also have contributed.",
-				Status: investigation.HypothesisUnresolved, Test: "Compare request volume with baseline.",
+				Statement: "A traffic spike may also have contributed.",
+				Status:    investigation.HypothesisUnresolved, Test: "Compare request volume with baseline.",
 			}},
 		}}},
 	}

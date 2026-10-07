@@ -117,20 +117,19 @@ func appendMessageForTest(
 	}
 	var written conversation.Message
 	var role conversation.Role
-	var actorKind conversation.ActorKind
 	var investigationID *uuid.UUID
 	if err = tx.QueryRow(ctx, `INSERT INTO conversation_message
-		(conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text, window_from, window_until)
+		(conversation_id, org_id, sequence, role, actor_id, actor_display, text, window_from, window_until)
 		SELECT $1, $2, coalesce((SELECT max(sequence) FROM conversation_message
-		 WHERE org_id = $2 AND conversation_id = $1), 0) + 1, $3, $4, $5, $6, $7, $8, $9
-		RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
-		          investigation_id, created_at`, id, organization, int16(said.Role), int16(said.ActorKind),
+		 WHERE org_id = $2 AND conversation_id = $1), 0) + 1, $3, $4, $5, $6, $7, $8
+		RETURNING sequence, role, actor_id, actor_display, text, source_reference,
+		          investigation_id, created_at`, id, organization, int16(said.Role),
 		said.ActorID, said.ActorDisplay, said.Text, window.From, window.Until).Scan(
-		&written.Sequence, &role, &actorKind, &written.ActorID, &written.ActorDisplay,
+		&written.Sequence, &role, &written.ActorID, &written.ActorDisplay,
 		&written.Text, &written.SourceReference, &investigationID, &written.CreatedAt); err != nil {
 		return conversation.Message{}, err
 	}
-	written.Role, written.ActorKind = role, actorKind
+	written.Role = role
 	if investigationID != nil {
 		written.InvestigationID = *investigationID
 	}

@@ -27,6 +27,11 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 	assertSchemaFields(t, findings["items"], "evidence_refs", "kind", "mechanism", "run_refs", "statement")
 	actions := properties["actions"].(map[string]any)
 	assertSchemaFields(t, actions["items"], "rationale", "run_refs", "title", "verification")
+	hypotheses := properties["hypotheses"].(map[string]any)
+	assertSchemaFields(t, hypotheses["items"], "run_refs", "statement", "status", "test")
+	if SchemaVersion != "9" {
+		t.Errorf("conclusion schema revision = %q, want 9", SchemaVersion)
+	}
 
 	document, err := json.Marshal(map[string]any{
 		"status":  "verified_cause",
@@ -143,5 +148,27 @@ func TestStructuredConclusionRequiresCitationsForActions(t *testing.T) {
 	}
 	if _, err := decodeConclusion(encoded, 1, nil); err == nil {
 		t.Fatal("an action without a Run reference was accepted")
+	}
+}
+
+func TestStructuredConclusionRejectsRemovedHypothesisIdentity(t *testing.T) {
+	t.Parallel()
+
+	document := map[string]any{
+		"status": "inconclusive", "summary": "The cause is not established.",
+		"impact":   map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
+		"findings": []map[string]any{},
+		"hypotheses": []map[string]any{{
+			"id": "legacy-hypothesis", "statement": "A deployment may be involved.",
+			"status": "unresolved", "test": "Inspect deployment history.", "run_refs": []int{},
+		}},
+		"actions": []map[string]any{}, "limitations": []map[string]any{},
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = decodeConclusion(encoded, 0, nil); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("removed hypothesis identity was accepted: %v", err)
 	}
 }

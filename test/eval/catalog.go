@@ -131,21 +131,21 @@ type Catalog struct {
 }
 
 type scenarioMetadata struct {
-	Name                     string    `yaml:"name"`
-	Revision                 string    `yaml:"revision"`
-	Situation                string    `yaml:"situation"`
-	ReferenceTime            time.Time `yaml:"referenceTime"`
-	Safety                   Safety    `yaml:"safety"`
-	Question                 string    `yaml:"question"`
-	FollowUps                []string  `yaml:"followUps"`
-	Distractors              []string  `yaml:"distractors"`
-	DistractorSlackToken     string    `yaml:"distractorSlackToken"`
-	DistractorInstallation   string    `yaml:"distractorInstallation"`
-	FailCommits              int       `yaml:"failCommits"`
-	MoreHistory              bool      `yaml:"moreHistory"`
-	MoreCommits              bool      `yaml:"moreCommits"`
-	RequireHypothesisUpdates bool      `yaml:"requireHypothesisUpdates"`
-	GeneratePostmortem       bool      `yaml:"generatePostmortem"`
+	Name                   string    `yaml:"name"`
+	Revision               string    `yaml:"revision"`
+	Situation              string    `yaml:"situation"`
+	ReferenceTime          time.Time `yaml:"referenceTime"`
+	Safety                 Safety    `yaml:"safety"`
+	Question               string    `yaml:"question"`
+	FollowUps              []string  `yaml:"followUps"`
+	Distractors            []string  `yaml:"distractors"`
+	DistractorSlackToken   string    `yaml:"distractorSlackToken"`
+	DistractorInstallation string    `yaml:"distractorInstallation"`
+	FailCommits            int       `yaml:"failCommits"`
+	MoreHistory            bool      `yaml:"moreHistory"`
+	MoreCommits            bool      `yaml:"moreCommits"`
+	RequireFinalHypotheses bool      `yaml:"requireFinalHypotheses"`
+	GeneratePostmortem     bool      `yaml:"generatePostmortem"`
 }
 
 func Load() (Catalog, error) {

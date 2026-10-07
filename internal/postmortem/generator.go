@@ -99,8 +99,7 @@ func DraftFrom(input GenerationInput) Postmortem {
 			}
 		}
 		for _, hypothesis := range conclusion.Hypotheses {
-			if (hypothesis.Status == investigation.HypothesisExploring ||
-				hypothesis.Status == investigation.HypothesisUnresolved) && hypothesis.Statement != "" {
+			if hypothesis.Status == investigation.HypothesisUnresolved && hypothesis.Statement != "" {
 				draft.OpenQuestions = append(draft.OpenQuestions, hypothesis.Statement)
 			}
 		}

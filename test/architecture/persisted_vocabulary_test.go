@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -21,10 +22,18 @@ func TestInvestigationVocabulariesAreFrozen(t *testing.T) {
 	assertVocabulary(t, "investigation.ConclusionStatuses", investigation.ConclusionStatuses,
 		[]string{"verified_cause", "supported_explanation", "inconclusive", "answer_only"})
 	assertVocabulary(t, "investigation.HypothesisStatuses", investigation.HypothesisStatuses,
-		[]string{"exploring", "supported", "ruled_out", "unresolved"})
+		[]string{"supported", "ruled_out", "unresolved"})
 	assertVocabulary(t, "investigation.LimitationTypes", investigation.LimitationTypes,
 		[]string{"missing_telemetry", "missing_access", "contradiction",
 			"unresolved_assumption", "essential_human_input"})
+}
+
+func TestConversationSourceVocabularyIsFrozen(t *testing.T) {
+	t.Parallel()
+
+	assertVocabulary(t, "Conversation sources",
+		[]string{string(conversation.SourceWeb), string(conversation.SourceSlack)},
+		[]string{"web", "slack"})
 }
 
 func TestTheHonestStopsAreFrozen(t *testing.T) {

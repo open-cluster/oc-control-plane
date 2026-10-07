@@ -26,7 +26,7 @@ The following path is the primary product walkthrough.
    keeps messages and prior cited Findings; each turn opens a new immutable Investigation.
 5. **Offered tools** derive from enabled Integrations and their verified grants. There is
    no provider switch inside the investigation loop. Every external call uses a common
-   envelope containing purpose, optional hypothesis ID, and provider-specific input.
+   envelope containing purpose and provider-specific input.
 6. **Selective preflight** runs only for incident work with exact safe identifiers. An
    exact namespace permits a Kubernetes event read; exact namespace, workload kind, and
    workload name permit a runtime read. OpenCluster never guesses identifiers or broadly
@@ -35,13 +35,12 @@ The following path is the primary product walkthrough.
    from the control plane. Kubernetes reads become a Relay Job executed through the
    customer’s outbound session.
 8. **Tool Run** records the attempt before it can support a conclusion: Integration,
-   ordinal, purpose, hypothesis ID, stripped provider input, applied window, outcome,
+   ordinal, purpose, stripped provider input, applied window, outcome,
    truncation, summary, and source identifiers. Results count against investigation
    budgets and may be cited.
-9. **Visible hypotheses** are complete bounded snapshots published through a local
-   semantic tool. Snapshots are versioned Investigation events, not private chain of
-   thought and not a separate table. Progress events describe the operational read in
-   flight.
+9. **Operational events** describe the read in flight using seven small versioned payloads.
+   Hypotheses are model-local during reasoning and appear only in the final structured
+   conclusion.
 10. **Cited Finding** names supporting Tool Run ordinals. A verified cause requires a
     confirmed causal Finding with a mechanism. Contradictions, missing telemetry, missing
     access, and unresolved assumptions remain explicit limitations.
@@ -72,8 +71,7 @@ reviewed and records the reviewer and time.
 ## AI contract
 
 The reasoning input is split into independently versioned safety policy, task instruction,
-structured Investigation bundle, native read tools, local hypothesis-update tool, and
-result schema.
+structured Investigation bundle, native read tools, and result schema.
 
 The conclusion decoder rejects invalid status combinations, nonexistent citations,
 causal Findings without mechanisms, unsafe action approval claims, and invented impact.

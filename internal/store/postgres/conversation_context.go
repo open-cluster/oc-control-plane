@@ -36,7 +36,7 @@ func (p *Database) ConversationBrief(
 	}
 	for _, message := range messages {
 		brief.Recent = append(brief.Recent, investigation.BriefMessage{
-			FromPerson:      message.Role == conversationRolePerson,
+			FromUser:        message.Role == conversationRoleUser,
 			Actor:           message.ActorDisplay,
 			Text:            briefExchangeText(message.Text),
 			Sequence:        message.Sequence,
@@ -106,7 +106,7 @@ func briefExchangeText(text string) string {
 	return boundedRunes(text, investigation.BriefMessageBound-len(suffix)) + suffix
 }
 
-const conversationRolePerson = 1
+const conversationRoleUser = 1
 
 func readPriorTurns(
 	ctx context.Context, pool querier, organization uuid.UUID, id uuid.UUID,
@@ -157,8 +157,7 @@ func readPriorTurns(
 				}
 			}
 			for _, hypothesis := range decoded.Hypotheses {
-				if (hypothesis.Status == investigation.HypothesisExploring ||
-					hypothesis.Status == investigation.HypothesisUnresolved) &&
+				if hypothesis.Status == investigation.HypothesisUnresolved &&
 					hypothesis.Statement != "" &&
 					len(brief.OpenHypotheses) < investigation.BriefMaxConstraints {
 					brief.OpenHypotheses = append(brief.OpenHypotheses,
@@ -220,7 +219,7 @@ func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uu
 			rows.Close()
 			return page, err
 		}
-		message.FromPerson = role == conversationRolePerson
+		message.FromUser = role == conversationRoleUser
 		message.Text = briefExchangeText(message.Text)
 		if owner != nil {
 			message.InvestigationID = *owner
@@ -319,26 +318,26 @@ func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	var surface conversation.Surface
+	var source conversation.Source
 	var integration *uuid.UUID
 	var channel, thread string
-	err = pool.QueryRow(ctx, `SELECT c.surface, i.integration_id,
+	err = pool.QueryRow(ctx, `SELECT c.source, i.integration_id,
 		COALESCE(s.channel_id, ''), COALESCE(s.thread_ts, '')
 		FROM conversation c
 		LEFT JOIN slack_conversation s ON s.org_id = c.org_id AND s.conversation_id = c.conversation_id
 		LEFT JOIN integration i ON i.org_id = c.org_id AND i.integration_id = s.integration_id
 		WHERE c.org_id = $1 AND c.conversation_id = $2`, organization, id).
-		Scan(&surface, &integration, &channel, &thread)
+		Scan(&source, &integration, &channel, &thread)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conversation.ErrUnknown
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading Conversation origin: %w", err)
 	}
-	if surface == conversation.SurfaceWeb && integration == nil && channel == "" && thread == "" {
+	if source == conversation.SourceWeb && integration == nil && channel == "" && thread == "" {
 		return nil, nil
 	}
-	if surface != conversation.SurfaceSlack || integration == nil || *integration == uuid.Nil || channel == "" || thread == "" {
+	if source != conversation.SourceSlack || integration == nil || *integration == uuid.Nil || channel == "" || thread == "" {
 		return nil, errors.New("Conversation provider origin is missing or inconsistent")
 	}
 	return &investigation.ConversationOrigin{IntegrationID: *integration, Channel: channel, Thread: thread}, nil

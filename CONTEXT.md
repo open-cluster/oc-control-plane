@@ -66,9 +66,16 @@ cancelled, or failed. It never resumes; a follow-up opens another immutable Inve
 
 ## Conversation
 
-The multi-turn context a person talks to. It contains ordered Messages and the immutable
-Investigations those messages opened. Prior cited Findings provide continuity without
-copying raw source payloads or private model reasoning.
+The multi-turn context a User talks to. Its immutable Source is `web` or `slack`. It
+contains ordered Messages and the immutable Investigations those Messages opened. Prior
+cited Findings provide continuity without copying raw source payloads or private model
+reasoning.
+
+## Message
+
+One ordered entry in a Conversation. Its role is `user` or `assistant`; the Conversation
+Source determines how a user Message is attributed. Messages assigned to an Investigation
+are the authoritative request for that turn.
 
 ## Finding
 

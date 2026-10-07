@@ -245,9 +245,8 @@ func aTurn() []investigation.Event {
 		progressed(1, investigation.EventStarted, nil),
 		progressed(2, investigation.EventToolCompleted,
 			map[string]any{"summary": "read 40 commits on checkout-api"}),
-		progressed(3, investigation.EventProgress, map[string]any{"message": "Checking impact"}),
-		progressed(4, investigation.EventHypothesesUpdated, map[string]any{"version": 1}),
-		progressed(5, investigation.EventConcluded,
+		progressed(3, investigation.EventProgress, map[string]any{"text": "Checking impact"}),
+		progressed(4, investigation.EventConcluded,
 			map[string]any{"summary": "The deploy at 14:02 is the cause."}),
 	}
 }
@@ -298,6 +297,21 @@ func TestAConcludedSummaryIsTheFinalAnswer(t *testing.T) {
 	}
 	if !strings.Contains(whole, "read 40 commits on checkout-api") {
 		t.Errorf("the completed read is not in the thread: %q", whole)
+	}
+}
+
+func TestAMultilineMaximumAnswerReachesSlackWhole(t *testing.T) {
+	t.Parallel()
+
+	summary := "line one\n" + strings.Repeat("界", 4087)
+	events := aTurn()
+	events[len(events)-1].Payload["summary"] = summary
+	fake := newSlackCallLog(t, true)
+	worker, state := answering(t, fake, events)
+	worker.answer(context.Background(), state.reply)
+
+	if whole := strings.Join(fake.carried(), ""); !strings.Contains(whole, summary) {
+		t.Fatalf("Slack did not receive the canonical multiline answer whole: length=%d", len([]rune(whole)))
 	}
 }
 

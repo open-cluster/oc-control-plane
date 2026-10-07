@@ -73,6 +73,7 @@ type openRequest struct {
 }
 
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
+
 	principal, organization := h.caller(request)
 	var asked openRequest
 	if !h.decode(writer, request, &asked) {
@@ -112,7 +113,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 
 	opened, err := h.Store.OpenConversation(ctx, principal, organization, NewConversation{
 		IncidentID: incidentID,
-		Surface:    SurfaceWeb,
+		Source:     SourceWeb,
 		Subject:    subject,
 		CreatedBy:  principal.UserID().String(),
 	})
@@ -198,8 +199,7 @@ func (h Handlers) append(ctx context.Context,
 	window *Window,
 ) (Message, *turnView, bool, error) {
 	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
-		Role:         RolePerson,
-		ActorKind:    ActorPrincipal,
+		Role:         RoleUser,
 		ActorID:      boundedRunes(principal.UserID().String(), MaxActorIDLength),
 		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
 		Text:         text,
@@ -341,6 +341,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	case errors.Is(err, ErrClosed):
 		writeJSON(writer, http.StatusConflict, errorView{
 			Error: "this conversation is closed; open a new one"})
+	case errors.Is(err, ErrSourceMismatch):
+		writeJSON(writer, http.StatusConflict, errorView{
+			Error: "this Conversation belongs to Slack; continue in Slack or create a web Conversation"})
 	case errors.Is(err, ErrQueueFull):
 		writeJSON(writer, http.StatusTooManyRequests, errorView{
 			Error: "this organization already has its limit of investigations waiting; " +

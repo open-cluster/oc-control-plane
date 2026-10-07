@@ -1,37 +1,17 @@
 package investigation
 
-import (
-	"time"
-
-	"github.com/google/uuid"
-)
+import "strings"
 
 type EventPayload interface {
 	EventType() EventType
 }
 
-type StartedEventPayload struct {
-	Subject     string `json:"subject"`
-	State       string `json:"state"`
-	WindowFrom  string `json:"windowFrom"`
-	WindowUntil string `json:"windowUntil"`
-	Question    string `json:"question,omitempty"`
-	Turn        int    `json:"turn,omitempty"`
-}
+type StartedEventPayload struct{}
 
 func (StartedEventPayload) EventType() EventType { return EventStarted }
 
-func StartedPayload(opened Investigation, executing bool) StartedEventPayload {
-	payload := StartedEventPayload{
-		Subject: bounded(opened.Subject, eventTextBound), State: "waiting",
-		WindowFrom:  opened.WindowFrom.UTC().Format(time.RFC3339Nano),
-		WindowUntil: opened.WindowUntil.UTC().Format(time.RFC3339Nano),
-		Question:    bounded(opened.Question, eventTextBound), Turn: opened.Turn,
-	}
-	if executing {
-		payload.State = "executing"
-	}
-	return payload
+func StartedPayload(Investigation, bool) StartedEventPayload {
+	return StartedEventPayload{}
 }
 
 type ProgressEventPayload struct {
@@ -48,8 +28,8 @@ type ToolStartedEventPayload struct {
 	Ordinal       int    `json:"ordinal"`
 	Tool          string `json:"tool"`
 	IntegrationID string `json:"integrationId"`
-	Integration   string `json:"integration,omitempty"`
-	Purpose       string `json:"purpose,omitempty"`
+	Integration   string `json:"integration"`
+	Purpose       string `json:"purpose"`
 }
 
 func (ToolStartedEventPayload) EventType() EventType { return EventToolStarted }
@@ -62,61 +42,56 @@ func ToolStartedPayload(run ToolRun, integration, name string) ToolStartedEventP
 }
 
 type ToolCompletedEventPayload struct {
-	Ordinal       int      `json:"ordinal"`
-	Tool          string   `json:"tool"`
-	Outcome       string   `json:"outcome"`
-	DurationMs    int64    `json:"durationMs"`
-	IntegrationID string   `json:"integrationId,omitempty"`
-	Summary       string   `json:"summary,omitempty"`
-	Error         string   `json:"error,omitempty"`
-	Truncated     bool     `json:"truncated,omitempty"`
-	WindowFrom    string   `json:"windowFrom,omitempty"`
-	WindowUntil   string   `json:"windowUntil,omitempty"`
-	Sources       []string `json:"sources,omitempty"`
+	Ordinal    int    `json:"ordinal"`
+	Outcome    string `json:"outcome"`
+	DurationMs int64  `json:"durationMs"`
+	Summary    string `json:"summary"`
+	Truncated  bool   `json:"truncated"`
 }
 
 func (ToolCompletedEventPayload) EventType() EventType { return EventToolCompleted }
 
 func ToolCompletedPayload(run ToolRun) ToolCompletedEventPayload {
-	payload := ToolCompletedEventPayload{
-		Ordinal: run.Ordinal, Tool: bounded(run.Tool, eventTextBound), Outcome: outcomeWord(run.Outcome),
-		DurationMs: run.FinishedAt.Sub(run.StartedAt).Milliseconds(), Summary: bounded(run.Summary, eventTextBound),
-		Error: bounded(run.Error, eventTextBound), Truncated: run.Truncated, Sources: run.Sources,
+	duration := run.FinishedAt.Sub(run.StartedAt).Milliseconds()
+	if duration < 0 {
+		duration = 0
 	}
-	if run.IntegrationID != uuid.Nil {
-		payload.IntegrationID = run.IntegrationID.String()
+	summary := strings.TrimSpace(run.Summary)
+	if summary == "" {
+		if run.Outcome == RunSucceeded {
+			summary = "Tool completed successfully"
+		} else if safeError := safeToolRunError(run.Error); safeError != "" {
+			summary = safeError
+		} else {
+			summary = "Tool failed"
+		}
 	}
-	if run.WindowApplied {
-		payload.WindowFrom = run.WindowFrom.UTC().Format(time.RFC3339)
-		payload.WindowUntil = run.WindowUntil.UTC().Format(time.RFC3339)
+	return ToolCompletedEventPayload{
+		Ordinal: run.Ordinal, Outcome: outcomeWord(run.Outcome), DurationMs: duration,
+		Summary: bounded(summary, eventTextBound), Truncated: run.Truncated,
 	}
-	return payload
 }
 
-type HypothesesEventPayload struct {
-	Version    int                `json:"version"`
-	Hypotheses []HypothesisResult `json:"hypotheses"`
-}
-
-func (HypothesesEventPayload) EventType() EventType { return EventHypothesesUpdated }
-
-func HypothesesUpdatedPayload(hypotheses []HypothesisResult) HypothesesEventPayload {
-	return HypothesesEventPayload{Version: EventSchemaVersion, Hypotheses: hypotheses}
+func safeToolRunError(reason string) string {
+	reason = strings.TrimSpace(reason)
+	switch reason {
+	case "not one of the tools the selected sources offer",
+		"the integration's credential could not be opened":
+		return reason
+	}
+	return ""
 }
 
 type ConcludedEventPayload struct {
-	Status    ConclusionStatus `json:"status"`
-	Findings  int              `json:"findings"`
-	Summary   string           `json:"summary,omitempty"`
-	StoppedBy string           `json:"stoppedBy,omitempty"`
+	Status  ConclusionStatus `json:"status"`
+	Summary string           `json:"summary"`
 }
 
 func (ConcludedEventPayload) EventType() EventType { return EventConcluded }
 
-func ConcludedPayload(conclusion Conclusion, stoppedBy string) ConcludedEventPayload {
+func ConcludedPayload(conclusion Conclusion, _ string) ConcludedEventPayload {
 	return ConcludedEventPayload{
-		Status: conclusion.Status, Findings: len(conclusion.Findings),
-		Summary: bounded(conclusion.Summary, MaxSummaryLength), StoppedBy: stoppedBy,
+		Status: conclusion.Status, Summary: bounded(conclusion.Summary, MaxSummaryLength),
 	}
 }
 

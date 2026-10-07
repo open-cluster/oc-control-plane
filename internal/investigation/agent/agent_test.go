@@ -190,8 +190,8 @@ func validUncertainConclusion(t *testing.T, refs []int) json.RawMessage {
 	}
 	document["status"] = "inconclusive"
 	document["hypotheses"] = []map[string]any{{
-		"id": "h1", "statement": "Another change may explain the alert.",
-		"status": "unresolved", "test": "Read the change history.", "run_refs": refs,
+		"statement": "Another change may explain the alert.",
+		"status":    "unresolved", "test": "Read the change history.", "run_refs": refs,
 	}}
 	raw, err := json.Marshal(document)
 	if err != nil {
@@ -383,8 +383,8 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			store.candidate = storeCandidates[0]
 			store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "Read this thread."}}
 			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
-				if len(prompt.Tools) != 3 || prompt.Tools[0].Name != "chat.thread" ||
-					prompt.Tools[1].Name != UpdateHypothesesToolName || prompt.Tools[2].Name != ConcludeToolName {
+				if len(prompt.Tools) != 2 || prompt.Tools[0].Name != "chat.thread" ||
+					prompt.Tools[1].Name != ConcludeToolName {
 					t.Fatalf("offered tools = %+v", prompt.Tools)
 				}
 				if call == 1 {

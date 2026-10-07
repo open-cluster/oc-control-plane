@@ -21,7 +21,7 @@
 </p>
 
 OpenCluster is an open-source AI SRE that investigates production incidents across the systems you already use. It
-gathers bounded read-only evidence, keeps competing hypotheses visible, and produces a structured conclusion that
+gathers bounded read-only evidence, evaluates competing hypotheses, and produces a structured conclusion that
 separates impact, causal findings, proposed actions, and limitations.
 
 Every material claim links back to a numbered Tool Run. OpenCluster never executes a mitigation: an action proposal
@@ -29,11 +29,11 @@ states its rationale and verification procedure so an on-call engineer can decid
 
 Investigation events include the Integration display name when a Tool starts and retain
 the canonical answer, up to 4,096 Unicode characters, when the Investigation concludes.
-Current event writers use typed payloads; composed HTTP regressions validate their actual
-serialized envelopes, including nested hypotheses, against OpenAPI.
+Current event writers use seven small typed payloads; composed HTTP regressions validate
+their actual serialized envelopes against OpenAPI.
 
-> OpenCluster is experimental pre-release software. APIs and storage may change without
-> upgrade compatibility until the first stable release; recreate pre-release databases.
+> OpenCluster is experimental pre-release software. APIs and storage may change before
+> the first stable release; follow the version-specific upgrade guidance.
 
 Licensed under the [Apache License 2.0](./LICENSE).
 
@@ -43,12 +43,12 @@ Licensed under the [Apache License 2.0](./LICENSE).
 2. OpenCluster groups it into an Incident and opens a Conversation and Investigation.
 3. The investigator reads only authorized connected sources, including Kubernetes through an outbound customer-side
    Relay.
-4. Operators watch hypotheses and operational progress while numbered Tool Runs execute.
+4. Operators watch operational progress while numbered Tool Runs execute.
 5. The conclusion reports impact, findings, hypotheses, action proposals, and limitations.
 6. After resolution, an operator can generate, correct, and review a draft Postmortem.
 
 Follow-up Messages queue behind an active Investigation. Each Organization has a limit of
-100 unassigned person Messages across Conversations; accepted work drains in bounded batches.
+100 unassigned user Messages across Conversations; accepted work drains in bounded batches.
 Investigations use complete assigned Messages. Input that cannot fit produces `needs_input`
 with the unprocessed Message sequences instead of silently truncating the request.
 Follow-ups receive a bounded recent exchange of Messages and completed answers, with
@@ -111,10 +111,11 @@ To enable the optional Relay transport, provide `OPENCLUSTER_RELAY_SPKI_PINS`, s
 set `relay.enabled=true` in the Helm release. The Relay initiates the connection; the control plane never dials into a
 customer cluster.
 
-This pre-release baseline does not upgrade an older OpenCluster database. Stop every old
-control-plane replica, back up PostgreSQL, recreate the application database, then start the
-new version and complete setup again. A backup supports recovery with its original version;
-it is not a supported import into this schema. See the
+Before this schema migration, stop every old control-plane replica and back up PostgreSQL.
+The migration refuses ambiguous retained Message attribution or a retained Investigation
+question without its assigned user Messages, and rolls back without changing the database.
+Repair that data or restore the old version before retrying. Unknown or unledgered pre-release
+schemas still require database recreation. See the
 [Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
 
 ## Architecture

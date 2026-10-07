@@ -896,7 +896,7 @@ paths:
               example: |+
                 id: 1
                 event: started
-                data: {"schemaVersion":1,"type":"started"}
+                data: {"organizationId":"11111111-1111-4111-8111-111111111111","investigationId":"22222222-2222-4222-8222-222222222222","sequence":1,"at":"2026-10-07T12:00:00Z","schemaVersion":2,"type":"started","payload":{}}
 
                 : heartbeat
 
@@ -3088,16 +3088,11 @@ components:
       type: object
       additionalProperties: false
       required:
-        - id
         - statement
         - status
         - test
         - runRefs
       properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 128
         statement:
           type: string
           minLength: 1
@@ -3105,12 +3100,12 @@ components:
         status:
           type: string
           enum:
-            - exploring
             - supported
             - ruled_out
             - unresolved
         test:
           type: string
+          minLength: 1
           maxLength: 4096
         runRefs:
           type: array
@@ -3214,9 +3209,6 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
-        question:
-          type: string
-          maxLength: 8192
         incidentId:
           $ref: '#/components/schemas/UUID'
         windowFrom:
@@ -3232,7 +3224,8 @@ components:
             - answer_only
         summary:
           type: string
-          maxLength: 32768
+          minLength: 1
+          maxLength: 4096
         impact:
           $ref: '#/components/schemas/Impact'
         findings:
@@ -3383,7 +3376,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3402,31 +3395,7 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required:
-            - subject
-            - state
-            - windowFrom
-            - windowUntil
-          properties:
-            subject:
-              type: string
-              minLength: 1
-              maxLength: 512
-            state:
-              type: string
-              enum:
-                - waiting
-                - executing
-            windowFrom:
-              $ref: '#/components/schemas/Timestamp'
-            windowUntil:
-              $ref: '#/components/schemas/Timestamp'
-            question:
-              type: string
-              maxLength: 512
-            turn:
-              type: integer
-              minimum: 1
+          properties: {}
     ProgressInvestigationEvent:
       type: object
       additionalProperties: false
@@ -3441,7 +3410,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3481,7 +3450,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3504,6 +3473,8 @@ components:
             - ordinal
             - tool
             - integrationId
+            - integration
+            - purpose
           properties:
             ordinal:
               type: integer
@@ -3513,14 +3484,14 @@ components:
               minLength: 1
               maxLength: 512
             integrationId:
+              $ref: '#/components/schemas/UUID'
+            integration:
               type: string
               minLength: 1
               maxLength: 512
-            integration:
-              type: string
-              maxLength: 512
             purpose:
               type: string
+              minLength: 1
               maxLength: 512
     ToolCompletedInvestigationEvent:
       type: object
@@ -3536,7 +3507,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3557,17 +3528,14 @@ components:
           additionalProperties: false
           required:
             - ordinal
-            - tool
             - outcome
             - durationMs
+            - summary
+            - truncated
           properties:
             ordinal:
               type: integer
               minimum: 1
-            tool:
-              type: string
-              minLength: 1
-              maxLength: 512
             outcome:
               type: string
               enum:
@@ -3577,70 +3545,12 @@ components:
               type: integer
               format: int64
               minimum: 0
-            integrationId:
-              $ref: '#/components/schemas/UUID'
             summary:
               type: string
-              maxLength: 4096
-            error:
-              type: string
-              maxLength: 4096
+              minLength: 1
+              maxLength: 512
             truncated:
               type: boolean
-            windowFrom:
-              $ref: '#/components/schemas/Timestamp'
-            windowUntil:
-              $ref: '#/components/schemas/Timestamp'
-            sources:
-              type: array
-              items:
-                type: string
-                maxLength: 2048
-    HypothesesUpdatedInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required:
-        - schemaVersion
-        - organizationId
-        - investigationId
-        - sequence
-        - at
-        - type
-        - payload
-      properties:
-        schemaVersion:
-          type: integer
-          const: 1
-        organizationId:
-          $ref: '#/components/schemas/OrganizationID'
-        conversationId:
-          $ref: '#/components/schemas/UUID'
-        investigationId:
-          $ref: '#/components/schemas/UUID'
-        sequence:
-          type: integer
-          format: int64
-          minimum: 1
-        at:
-          $ref: '#/components/schemas/Timestamp'
-        type:
-          type: string
-          const: hypotheses_updated
-        payload:
-          type: object
-          additionalProperties: false
-          required:
-            - version
-            - hypotheses
-          properties:
-            version:
-              type: integer
-              const: 1
-            hypotheses:
-              type: array
-              maxItems: 8
-              items:
-                $ref: '#/components/schemas/Hypothesis'
     ConcludedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -3655,7 +3565,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3676,7 +3586,7 @@ components:
           additionalProperties: false
           required:
             - status
-            - findings
+            - summary
           properties:
             status:
               type: string
@@ -3685,19 +3595,10 @@ components:
                 - supported_explanation
                 - inconclusive
                 - answer_only
-            findings:
-              type: integer
-              minimum: 0
             summary:
               type: string
+              minLength: 1
               maxLength: 4096
-            stoppedBy:
-              type: string
-              enum:
-                - tool_runs
-                - reasoner_turns
-                - wall_clock
-                - context
     FailedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -3712,7 +3613,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3737,7 +3638,7 @@ components:
             reason:
               type: string
               minLength: 1
-              maxLength: 4096
+              maxLength: 1024
     CancelledInvestigationEvent:
       type: object
       additionalProperties: false
@@ -3752,7 +3653,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3771,9 +3672,12 @@ components:
         payload:
           type: object
           additionalProperties: false
+          required:
+            - message
           properties:
             message:
               type: string
+              minLength: 1
               maxLength: 512
     UnknownInvestigationEvent:
       type: object
@@ -3789,7 +3693,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         organizationId:
           $ref: '#/components/schemas/OrganizationID'
         conversationId:
@@ -3825,7 +3729,6 @@ components:
         - $ref: '#/components/schemas/ProgressInvestigationEvent'
         - $ref: '#/components/schemas/ToolStartedInvestigationEvent'
         - $ref: '#/components/schemas/ToolCompletedInvestigationEvent'
-        - $ref: '#/components/schemas/HypothesesUpdatedInvestigationEvent'
         - $ref: '#/components/schemas/ConcludedInvestigationEvent'
         - $ref: '#/components/schemas/FailedInvestigationEvent'
         - $ref: '#/components/schemas/CancelledInvestigationEvent'
@@ -3909,7 +3812,7 @@ components:
       required:
         - id
         - subject
-        - surface
+        - source
         - state
         - createdAt
         - lastActivityAt
@@ -3920,7 +3823,7 @@ components:
           type: string
           minLength: 1
           maxLength: 512
-        surface:
+        source:
           type: string
           enum:
             - web
@@ -3945,7 +3848,6 @@ components:
       required:
         - sequence
         - role
-        - actorKind
         - text
         - createdAt
         - windowFrom
@@ -3962,13 +3864,8 @@ components:
         role:
           type: string
           enum:
-            - person
-            - agent
-        actorKind:
-          type: string
-          enum:
-            - principal
-            - external
+            - user
+            - assistant
         actorId:
           type: string
           maxLength: 256

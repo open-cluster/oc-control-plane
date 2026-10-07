@@ -29,7 +29,7 @@ func agentCalls(calls []CompletionCall) []toolCall {
 			_ = json.Unmarshal(call.Arguments, &arguments)
 		}
 		translatedCall := toolCall{ID: call.ID, Tool: call.Name}
-		if call.Name == UpdateHypothesesToolName || call.Name == historyToolName {
+		if call.Name == historyToolName {
 			translatedCall.Arguments = arguments
 		} else {
 			translatedCall.Purpose, _ = arguments["purpose"].(string)
@@ -80,6 +80,7 @@ func droppedRun(opened investigation.Investigation, call toolCall, ordinal int, 
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Outcome:     investigation.RunFailed,
+		Summary:     reason,
 		Error:       reason,
 		StartedAt:   now,
 		FinishedAt:  now,
