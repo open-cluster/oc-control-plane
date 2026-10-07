@@ -78,3 +78,31 @@ func TestInvestigationEventsUseTheSevenSmallPayloadContracts(t *testing.T) {
 		})
 	}
 }
+
+func TestToolCompletedUsesOnlyKnownSafeFailureDescriptions(t *testing.T) {
+	tests := []struct {
+		name string
+		run  ToolRun
+		want string
+	}{
+		{
+			name: "unavailable tool",
+			run: ToolRun{Outcome: RunFailed,
+				Error: "not one of the tools the selected sources offer"},
+			want: "not one of the tools the selected sources offer",
+		},
+		{
+			name: "provider error",
+			run: ToolRun{Outcome: RunFailed,
+				Error: "provider rejected token sk-secret-value"},
+			want: "Tool failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ToolCompletedPayload(test.run).Summary; got != test.want {
+				t.Fatalf("summary = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

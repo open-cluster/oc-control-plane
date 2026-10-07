@@ -88,7 +88,13 @@ UPDATE investigation_event
            'summary', left(COALESCE(
                NULLIF(btrim(payload ->> 'summary'), ''),
                CASE WHEN payload ->> 'outcome' = 'succeeded'
-                    THEN 'Tool completed successfully' ELSE 'Tool failed' END), 512),
+                    THEN 'Tool completed successfully'
+                    WHEN btrim(payload ->> 'error') IN (
+                        'not one of the tools the selected sources offer',
+                        'the integration''s credential could not be opened')
+                      OR btrim(payload ->> 'error') ~ '^not executed: '
+                    THEN btrim(payload ->> 'error')
+                    ELSE 'Tool failed' END), 512),
            'truncated', COALESCE((payload ->> 'truncated')::boolean, false))
        WHEN 6 THEN jsonb_build_object(
            'status', payload ->> 'status',

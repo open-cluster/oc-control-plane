@@ -50,7 +50,8 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 			($2, $1, 2, 2, '{"message":"Reading"}'),
 			($2, $1, 3, 5, '{"legacy":true}'),
 			($2, $1, 4, 10, '{"hypotheses":[]}'),
-			($2, $1, 5, 4, '{"ordinal":1,"outcome":"failed","error":"provider token sk-secret-value"}')`, org, investigationID); err != nil {
+			($2, $1, 5, 4, '{"ordinal":1,"outcome":"failed","error":"provider token sk-secret-value"}'),
+			($2, $1, 6, 4, '{"ordinal":2,"outcome":"failed","error":"not one of the tools the selected sources offer"}')`, org, investigationID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,6 +87,12 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	}
 	if strings.Contains(activePayload, "sk-secret-value") || !strings.Contains(activePayload, `"summary": "Tool failed"`) {
 		t.Fatalf("migrated failed completion exposed provider error: %s", activePayload)
+	}
+	if err = connection.QueryRow(ctx, `SELECT payload::text FROM investigation_event WHERE investigation_id=$1 AND sequence=6`, investigationID).Scan(&activePayload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(activePayload, `"summary": "not one of the tools the selected sources offer"`) {
+		t.Fatalf("migrated failed completion lost its safe error: %s", activePayload)
 	}
 	var retained int
 	if err = connection.QueryRow(ctx, `SELECT count(*) FROM investigation_event WHERE investigation_id=$1 AND type IN (5,10)`, investigationID).Scan(&retained); err != nil {

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -54,6 +55,7 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 	final := plane.awaitInvestigation(t, turn)
 	var result struct {
 		Status      string `json:"status"`
+		Summary     string `json:"summary"`
 		Limitations []struct {
 			Type             string  `json:"type"`
 			MessageSequences []int64 `json:"messageSequences"`
@@ -77,6 +79,17 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 	impact, ok := contract["impact"].(map[string]any)
 	if !ok || len(impact) != 2 || impact["summary"] != "Input was not processed." {
 		t.Fatalf("unprocessed impact does not use the reduced contract: %s", final)
+	}
+	status, eventsBody := plane.call(t, http.MethodGet,
+		plane.base(surfaceOrg)+"/investigations/"+turn+"/events", nil)
+	if status != http.StatusOK {
+		t.Fatalf("reading needs-input events = %d: %s", status, eventsBody)
+	}
+	events := assertSerializedEvents(t, eventsBody)
+	ending := events[len(events)-1]
+	payload := ending["payload"].(map[string]any)
+	if ending["type"] != "concluded" || payload["summary"] != result.Summary {
+		t.Fatalf("needs-input ending differs from terminal detail: %s", eventsBody)
 	}
 	select {
 	case <-prompts:

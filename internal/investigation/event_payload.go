@@ -60,6 +60,8 @@ func ToolCompletedPayload(run ToolRun) ToolCompletedEventPayload {
 	if summary == "" {
 		if run.Outcome == RunSucceeded {
 			summary = "Tool completed successfully"
+		} else if safeError := safeToolRunError(run.Error); safeError != "" {
+			summary = safeError
 		} else {
 			summary = "Tool failed"
 		}
@@ -68,6 +70,19 @@ func ToolCompletedPayload(run ToolRun) ToolCompletedEventPayload {
 		Ordinal: run.Ordinal, Outcome: outcomeWord(run.Outcome), DurationMs: duration,
 		Summary: bounded(summary, eventTextBound), Truncated: run.Truncated,
 	}
+}
+
+func safeToolRunError(reason string) string {
+	reason = strings.TrimSpace(reason)
+	switch reason {
+	case "not one of the tools the selected sources offer",
+		"the integration's credential could not be opened":
+		return reason
+	}
+	if strings.HasPrefix(reason, "not executed: ") {
+		return reason
+	}
+	return ""
 }
 
 type ConcludedEventPayload struct {
