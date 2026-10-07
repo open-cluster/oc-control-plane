@@ -106,35 +106,6 @@ func (p *Database) IntegrationByInstallation(
 	return integration, installed, nil
 }
 
-func (p *Database) InstallationOf(
-	ctx context.Context, organization uuid.UUID, integration uuid.UUID,
-) (integrations.Installation, bool, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return integrations.Installation{}, false, err
-	}
-	var installed integrations.Installation
-	var providerActor *string
-	var installationKey []string
-	err = pool.QueryRow(ctx, `
-		SELECT installation_key, provider_actor_id
-		  FROM integration_installation
-		 WHERE integration_id = $1 AND org_id = $2`,
-		integration, organization).Scan(&installationKey, &providerActor)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return integrations.Installation{}, false, nil
-	case err != nil:
-		return integrations.Installation{}, false,
-			fmt.Errorf("reading an integration installation: %w", err)
-	}
-	if providerActor != nil {
-		installed.ProviderActorID = *providerActor
-	}
-	installed.Key = integrations.InstallationKey(installationKey)
-	return installed, true, nil
-}
-
 func orEmptyGrants(grants []string) []string {
 	if grants == nil {
 		return []string{}

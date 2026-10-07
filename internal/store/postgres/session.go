@@ -24,7 +24,7 @@ func (p *Database) IssueSession(
 	ctx context.Context, organization uuid.UUID,
 	issued session.Session, digest []byte, actor audit.Actor, sourceAddress string, detail audit.Detail,
 ) (session.Session, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return session.Session{}, err
 	}
@@ -61,7 +61,7 @@ func (p *Database) IssueLocalSession(
 	detail audit.Detail,
 	previous string,
 ) (session.Session, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return session.Session{}, err
 	}
@@ -209,7 +209,7 @@ func (p *Database) PruneSessions(ctx context.Context) (int64, error) {
 func (p *Database) OrganizationAuditRetention(
 	ctx context.Context, organization uuid.UUID,
 ) (int, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}

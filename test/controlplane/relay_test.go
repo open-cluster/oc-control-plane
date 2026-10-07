@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -142,8 +143,14 @@ func issueBootstrapToken(t *testing.T, dsn, organization, token string) {
 
 	digest := sha256.Sum256([]byte(token))
 	ensureTestOrganization(t, dsn, organization)
-	if err := openDatabase(t, dsn).IssueBootstrapToken(
-		ctx, namedOrganization(t, organization), digest[:], time.Now().Add(time.Hour)); err != nil {
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("opening bootstrap fixture connection: %v", err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	if _, err = connection.Exec(ctx, `INSERT INTO relay_bootstrap_token
+		(bootstrap_digest, org_id, expires_at) VALUES ($1, $2, $3)`, digest[:],
+		namedOrganization(t, organization), time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("issuing the bootstrap token: %v", err)
 	}
 }

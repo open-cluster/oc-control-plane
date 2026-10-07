@@ -48,7 +48,7 @@ func (p *Database) Heartbeat(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	claim investigation.Claim,
 ) (bool, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return false, err
 	}

@@ -19,7 +19,7 @@ func aTurn(
 
 	opened := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, opened.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization, opened.ID,
+	turn, took, err := openTurnForTest(database, context.Background(), organization, opened.ID,
 		turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -93,7 +93,7 @@ func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
 	ctx := context.Background()
 	database, organization := migratedDatabase(t)
 	id := aTurn(t, database, organization)
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestReplaySkipsRetiredEventRowsWithoutRenumberingHistory(t *testing.T) {
 	ctx := context.Background()
 	database, organization := migratedDatabase(t)
 	id := aTurn(t, database, organization)
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestInvestigationCannotBeDeletedThroughItsEventHistory(t *testing.T) {
 	appendEvents(t, database, organization, id, investigation.EventStarted,
 		investigation.EventConcluded)
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestExpiredLeaseCannotBeRenewedBeforeRecovery(t *testing.T) {
 	ctx := context.Background()
 	conversation := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(ctx, organization, conversation.ID, turnWindowLead)
+	turn, took, err := openTurnForTest(database, ctx, organization, conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
@@ -458,7 +458,7 @@ func expireInvestigationLease(
 ) {
 	t.Helper()
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
 	for range turns {
 		conversation := openConversation(t, database, organization, "checkout is slow")
 		say(t, database, organization, conversation.ID, "what changed?")
-		turn, took, err := database.OpenTurn(context.Background(), organization,
+		turn, took, err := openTurnForTest(database, context.Background(), organization,
 			conversation.ID, turnWindowLead)
 		if err != nil || !took {
 			t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -539,7 +539,7 @@ func TestInvestigationsAreClaimedOldestFirst(t *testing.T) {
 	for range 3 {
 		conversation := openConversation(t, database, organization, "checkout is slow")
 		say(t, database, organization, conversation.ID, "what changed?")
-		turn, took, err := database.OpenTurn(context.Background(), organization,
+		turn, took, err := openTurnForTest(database, context.Background(), organization,
 			conversation.ID, turnWindowLead)
 		if err != nil || !took {
 			t.Fatalf("opening turn: took=%v err=%v", took, err)
@@ -563,7 +563,7 @@ func TestHeartbeatIsFencedByWorkerIdentity(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	conversation := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization,
+	turn, took, err := openTurnForTest(database, context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
@@ -587,7 +587,7 @@ func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	conversation := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization,
+	turn, took, err := openTurnForTest(database, context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -659,7 +659,7 @@ func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	conversation := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization,
+	turn, took, err := openTurnForTest(database, context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -686,7 +686,7 @@ func TestConcludingReleasesTheLease(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	conversation := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization,
+	turn, took, err := openTurnForTest(database, context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -738,7 +738,7 @@ func TestTerminalInvestigationUsageRoundTrips(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			conversation := openConversation(t, database, organization, test.name)
 			say(t, database, organization, conversation.ID, "what happened?")
-			turn, took, err := database.OpenTurn(context.Background(), organization,
+			turn, took, err := openTurnForTest(database, context.Background(), organization,
 				conversation.ID, turnWindowLead)
 			if err != nil || !took {
 				t.Fatalf("opening a turn: took=%v err=%v", took, err)
@@ -767,7 +767,7 @@ func TestFailedEventWritePreservesStreamStateForRetry(t *testing.T) {
 			ctx := context.Background()
 			database, org := migratedDatabase(t)
 			id := aTurn(t, database, org)
-			pool, err := database.Pool(org)
+			pool, err := poolForTest(database, org)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -859,7 +859,7 @@ func TestConclusionCommitsItsReplayEvent(t *testing.T) {
 	database, org := migratedDatabase(t)
 	conversation := openConversation(t, database, org, "durable completion")
 	say(t, database, org, conversation.ID, "what happened?")
-	turn, took, err := database.OpenTurn(ctx, org, conversation.ID, turnWindowLead)
+	turn, took, err := openTurnForTest(database, ctx, org, conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
@@ -885,11 +885,11 @@ func TestTerminalEventFailureRollsBackOutcome(t *testing.T) {
 			database, org := migratedDatabase(t)
 			conversation := openConversation(t, database, org, "terminal rollback")
 			say(t, database, org, conversation.ID, "what happened?")
-			turn, took, err := database.OpenTurn(ctx, org, conversation.ID, turnWindowLead)
+			turn, took, err := openTurnForTest(database, ctx, org, conversation.ID, turnWindowLead)
 			if err != nil || !took {
 				t.Fatalf("opening turn: took=%v err=%v", took, err)
 			}
-			pool, err := database.Pool(org)
+			pool, err := poolForTest(database, org)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -932,7 +932,7 @@ func TestLateProgressCannotFollowCompletion(t *testing.T) {
 	database, org := migratedDatabase(t)
 	conversation := openConversation(t, database, org, "no late progress")
 	say(t, database, org, conversation.ID, "what happened?")
-	turn, took, err := database.OpenTurn(ctx, org, conversation.ID, turnWindowLead)
+	turn, took, err := openTurnForTest(database, ctx, org, conversation.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}

@@ -333,9 +333,9 @@ func enqueueJob(
 		CapabilityVersion: capabilityVersionUnderTest,
 		Arguments:         arguments,
 	}
-	refusal, err := database.EnqueueJob(ctx, organization, job)
+	err := database.EnqueueVerifiedJob(ctx, organization, job)
 	if err != nil {
-		t.Fatalf("enqueueing a job: %v (%s)", err, refusal)
+		t.Fatalf("enqueueing a verified job: %v", err)
 	}
 	return job.ID
 }

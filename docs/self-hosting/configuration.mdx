@@ -167,7 +167,8 @@ and training terms before production use.
 
 The OSS binary uses one mounted AI deployment for every Organization.
 
-Back up retained installation data before an upgrade. Configuration conversion does not require deleting the database.
+Back up retained installation data before replacing a pre-release deployment. This baseline
+requires a fresh application database and does not import retained data from an older schema.
 
 The shared HTTP server allows 10 seconds for headers, 30 seconds to read a request,
 30 seconds to write a response, and 60 seconds for an idle connection. Restart after a

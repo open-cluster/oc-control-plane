@@ -263,10 +263,11 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	case <-ctx.Done():
 		t.Fatalf("the Relay-backed Tool did not finish: %v", ctx.Err())
 	}
-	pool, err := database.Pool(organization)
+	pool, err := pgx.Connect(context.Background(), plane.dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = pool.Close(context.Background()) }()
 	cancelledContext, cancelRead := context.WithCancel(ctx)
 	cancelled := make(chan answer, 1)
 	go func() {

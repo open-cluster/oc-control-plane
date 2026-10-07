@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
 	"github.com/open-cluster/oc-control-plane/internal/alertevent"
 )
 
@@ -34,7 +33,7 @@ func (p *Database) RecordDelivery(
 ) (DeliveryOutcome, error) {
 	// Delivery facts, Incident changes, and automatic Investigations commit together. The
 	// provider identity and lifecycle key make concurrent retries idempotent.
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return DeliveryOutcome{}, err
 	}
@@ -213,4 +212,50 @@ func regroupUpdatedAlertEvent(
 		return nil
 	}
 	return refreshIncident(ctx, transaction, organization, *incidentID)
+}
+
+type AlertAdmissionPolicy struct {
+	WindowLead     time.Duration
+	MaximumPending int
+}
+
+type AlertCapacityError struct{}
+
+func (AlertCapacityError) Error() string { return "pending Investigation capacity exhausted" }
+
+type AlertBatchTooLargeError struct{}
+
+func (AlertBatchTooLargeError) Error() string {
+	return "alert batch exceeds pending Investigation limit"
+}
+
+func openAlertInvestigations(
+	ctx context.Context, tx pgx.Tx, organization uuid.UUID,
+	incidents []uuid.UUID, policy AlertAdmissionPolicy,
+) error {
+	if len(incidents) == 0 {
+		return nil
+	}
+	if policy.MaximumPending > 0 && len(incidents) > policy.MaximumPending {
+		return AlertBatchTooLargeError{}
+	}
+	if err := reserveWaitingInvestigations(ctx, tx, organization, policy.MaximumPending, len(incidents)); err != nil {
+		if errors.Is(err, ErrInvestigationCapacity) {
+			return AlertCapacityError{}
+		}
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO investigation
+			(investigation_id, org_id, incident_id, subject, window_from,
+			 window_until, created_by, automatic_incident)
+		SELECT gen_random_uuid(), org_id, incident_id, title,
+		       first_seen_at - ($3 * interval '1 microsecond'), last_seen_at, 'webhook', true
+		  FROM incident
+		 WHERE org_id = $1 AND incident_id = ANY($2::uuid[])`,
+		organization, incidents, policy.WindowLead.Microseconds())
+	if err != nil {
+		return fmt.Errorf("opening automatic Incident Investigations: %w", err)
+	}
+	return nil
 }

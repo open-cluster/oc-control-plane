@@ -108,19 +108,19 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	database, organization, _ := twoOrganizationsInOneDatabase(t)
 	principal := ownerOf(t, organization)
 	chat := openConversation(t, database, organization, "service")
-	if _, err := database.AppendMessage(context.Background(), principal, organization, chat.ID,
+	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
 		conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 			ActorID: principal.UserID().String(), Text: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	turn, opened, err := database.OpenTurn(context.Background(), organization, chat.ID, time.Hour)
+	turn, opened, err := openTurnForTest(database, context.Background(), organization, chat.ID, time.Hour)
 	if err != nil || !opened {
 		t.Fatalf("opening first turn: opened=%t err=%v", opened, err)
 	}
 	if _, _, claimed, err := database.ClaimInvestigation(context.Background(), aClaim("worker")); err != nil || !claimed {
 		t.Fatalf("claiming first turn: claimed=%t err=%v", claimed, err)
 	}
-	if _, err := database.AppendMessage(context.Background(), principal, organization, chat.ID,
+	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
 		conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 			ActorID: principal.UserID().String(), Text: "follow up"}); err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	if drained, err := database.DrainQueuedConversation(context.Background(), time.Hour, 1); err != nil || !drained {
 		t.Fatalf("retrying durable drain: drained=%t err=%v", drained, err)
 	}
-	waiting, err := database.WaitingTurns(context.Background(), organization)
+	waiting, err := waitingTurnsForTest(database, context.Background(), organization)
 	if err != nil || waiting != 1 {
 		t.Fatalf("waiting=%d err=%v, want the follow-up Investigation", waiting, err)
 	}
@@ -177,7 +177,7 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	opened := openConversation(t, database, organization, "checkout is slow")
 	say(t, database, organization, opened.ID, "what changed?")
-	turn, took, err := database.OpenTurn(context.Background(), organization, opened.ID, turnWindowLead)
+	turn, took, err := openTurnForTest(database, context.Background(), organization, opened.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening the investigation: took=%v error=%v", took, err)
 	}
@@ -234,7 +234,7 @@ func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *te
 	integration := kubernetesIntegration(t, database, organization, registration)
 	conversation := openConversation(t, database, organization, "cancel cluster work")
 	say(t, database, organization, conversation.ID, "stop the active reads")
-	turn, opened, err := database.OpenTurn(context.Background(), organization,
+	turn, opened, err := openTurnForTest(database, context.Background(), organization,
 		conversation.ID, turnWindowLead)
 	if err != nil || !opened {
 		t.Fatalf("opening the investigation: opened=%v error=%v", opened, err)
@@ -248,7 +248,7 @@ func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *te
 			CapabilityID: "kubernetes.workload.runtime", CapabilityVersion: 1,
 			Arguments: []byte("bounded"),
 		}
-		if _, err := database.EnqueueJob(context.Background(), organization, job); err != nil {
+		if err := database.EnqueueVerifiedJob(context.Background(), organization, job); err != nil {
 			t.Fatalf("enqueueing investigation-owned Relay work: %v", err)
 		}
 		return job.ID
@@ -262,7 +262,7 @@ func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *te
 		organization, turn.InvestigationID); err != nil {
 		t.Fatalf("cancelling investigation-owned Relay work: %v", err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,12 +302,12 @@ func TestInvestigationCancellationCannotRacePastAConcurrentRelayJob(t *testing.T
 	integration := kubernetesIntegration(t, database, organization, registration)
 	conversation := openConversation(t, database, organization, "cancel concurrent cluster work")
 	say(t, database, organization, conversation.ID, "stop the concurrent read")
-	turn, opened, err := database.OpenTurn(context.Background(), organization, conversation.ID,
+	turn, opened, err := openTurnForTest(database, context.Background(), organization, conversation.ID,
 		turnWindowLead)
 	if err != nil || !opened {
 		t.Fatalf("opening the investigation: opened=%v error=%v", opened, err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestInvestigationCancellationCannotRacePastAConcurrentRelayJob(t *testing.T
 		Arguments: []byte("bounded")}
 	enqueued := make(chan error, 1)
 	go func() {
-		_, enqueueError := database.EnqueueJob(context.Background(), organization, job)
+		enqueueError := database.EnqueueVerifiedJob(context.Background(), organization, job)
 		enqueued <- enqueueError
 	}()
 	deadline := time.After(10 * time.Second)

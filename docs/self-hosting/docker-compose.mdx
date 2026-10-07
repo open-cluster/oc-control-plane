@@ -57,19 +57,18 @@ Adding `--volumes` deletes that local database. Back up PostgreSQL and retain cu
 the encryption key before moving or rebuilding a production deployment; without the
 same key, sealed integration credentials cannot be opened.
 
-## Upgrade from older v0.1 deployments
+## Replace an older pre-release deployment
 
-Before starting this version, stop every old control-plane replica and back up
-PostgreSQL. Do not use a rolling upgrade or run old and new binaries against the same
-database. Startup automatically applies the compatibility migrations before serving
-traffic; accepted legacy alerts receive their missing automatic Investigations while
-manual Investigations and Slack work are preserved.
+This baseline does not support an in-place upgrade from an older OpenCluster database.
+Stop every old control-plane replica and back up PostgreSQL before replacing the image.
+The backup can recover the old deployment with the same OpenCluster version; it is not a
+supported import into the new schema.
 
-For Compose, run `docker compose -f deploy/compose/compose.yaml stop control-plane`
-before replacing the image. Stop any replicas outside this stack too. Restart only
-the new version, then verify readiness and retained alert history. If startup refuses
-ambiguous historical Investigations, keep old replicas stopped and resolve the data
-explicitly; do not delete Investigations to force startup.
+For Compose, stop the stack and recreate its application database. Removing the
+`postgres_data` volume deletes retained history, Organizations, Users, Integrations, and
+credentials, so complete setup again after starting the new version. Startup refuses an
+older, unknown, or unledgered application schema before changing it. Do not run mixed
+versions or delete individual rows to force startup.
 
 ## Failure states
 

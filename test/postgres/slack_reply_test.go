@@ -40,7 +40,7 @@ func aSlackTurn(
 		t.Fatalf("recording a slack message: %v", err)
 	}
 
-	turn, opened, err := database.OpenTurn(ctx, organization, outcome.Conversation, time.Hour)
+	turn, opened, err := openTurnForTest(database, ctx, organization, outcome.Conversation, time.Hour)
 	if err != nil {
 		t.Fatalf("opening a turn: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSlackReplyCannotBeRetargetedBetweenAttempts(t *testing.T) {
 	ctx := context.Background()
 	investigation, integration := aSlackTurn(t, database, organization, "T-ORIGINAL", "C-ORIGINAL", "1700000001.1")
 	reply := claimed(t, database, investigation, time.Minute)
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ WHERE org_id=$1 AND conversation_id=$2`, organization, reply.Conversation); err 
 	if err := database.DeleteIntegration(ctx, ownerOf(t, organization), organization, integration); !errors.Is(err, integrations.ErrInUse) {
 		t.Fatalf("outstanding Webhook Job did not prevent disconnection: %v", err)
 	}
-	if _, _, _, _, found, err := database.SlackReplyState(ctx, organization, investigation); err != nil || !found {
+	if _, _, _, _, found, err := slackReplyStateForTest(database, ctx, organization, investigation); err != nil || !found {
 		t.Fatalf("refused disconnection removed reply state: found=%v, %v", found, err)
 	}
 }
@@ -181,7 +181,7 @@ func TestSlackMessageCannotBindAnotherOrganizationsIntegration(t *testing.T) {
 		t.Fatal("another Organization's Integration was accepted")
 	}
 
-	pool, poolErr := database.Pool(second)
+	pool, poolErr := poolForTest(database, second)
 	if poolErr != nil {
 		t.Fatal(poolErr)
 	}
@@ -209,14 +209,14 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening a console conversation: %v", err)
 	}
-	if _, err := database.AppendMessage(ctx, ownerOf(t, organization), organization,
+	if _, err := appendMessageForTest(database, ctx, ownerOf(t, organization), organization,
 		opened.ID, conversation.NewMessage{
 			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
 			ActorID: "user-under-test", Text: "why is checkout failing?",
 		}); err != nil {
 		t.Fatalf("saying something: %v", err)
 	}
-	if _, _, err := database.OpenTurn(ctx, organization, opened.ID, time.Hour); err != nil {
+	if _, _, err := openTurnForTest(database, ctx, organization, opened.ID, time.Hour); err != nil {
 		t.Fatalf("opening its turn: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 		t.Fatalf("advancing backwards: %v", err)
 	}
 
-	_, sequence, streamTS, _, found, err := database.SlackReplyState(ctx,
+	_, sequence, streamTS, _, found, err := slackReplyStateForTest(database, ctx,
 		organization, investigation)
 	if err != nil || !found {
 		t.Fatalf("reading the delivery = %v, found=%v", err, found)
@@ -278,7 +278,7 @@ func TestTheCursorOnlyEverMovesForward(t *testing.T) {
 		slack.Progress{Stream: slack.Stream{TS: "1700000999.999", Native: true}, Sequence: 13}); err != nil {
 		t.Fatalf("advancing: %v", err)
 	}
-	_, _, again, _, _, err := database.SlackReplyState(ctx, organization, investigation)
+	_, _, again, _, _, err := slackReplyStateForTest(database, ctx, organization, investigation)
 	if err != nil {
 		t.Fatalf("reading the delivery: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestGivingUpEndsTheDeliveryAndNotTheInvestigation(t *testing.T) {
 		t.Fatalf("giving up: %v", err)
 	}
 
-	status, _, _, note, found, err := database.SlackReplyState(ctx, organization, investigation)
+	status, _, _, note, found, err := slackReplyStateForTest(database, ctx, organization, investigation)
 	if err != nil || !found {
 		t.Fatalf("reading the delivery = %v, found=%v", err, found)
 	}
@@ -353,35 +353,6 @@ func TestADeliveredAnswerIsNeverClaimedAgain(t *testing.T) {
 	}
 }
 
-func TestTheThreadBindingIsReadableForDelivery(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	integration, err := connectSlack(t, database, organization, "Slack — Acme",
-		slackInstallation("T0ACME"))
-	if err != nil {
-		t.Fatalf("connecting slack: %v", err)
-	}
-	outcome, err := database.RecordSlackMessage(context.Background(), organization,
-		storage.SlackMessage{
-			Integration: integration.ID, ContentDigest: randomDigest(t),
-			Channel: "C0INCIDENTS", Thread: "1700000001.1",
-			Subject: "why?", ActorID: "U9SRE", ActorDisplay: "U9SRE", Text: "why?",
-		})
-	if err != nil {
-		t.Fatalf("recording a slack message: %v", err)
-	}
-
-	channel, thread, through, bound, err := database.SlackThreadOf(context.Background(),
-		organization, outcome.Conversation)
-	if err != nil || !bound {
-		t.Fatalf("reading the binding = %v, bound=%v", err, bound)
-	}
-	if channel != "C0INCIDENTS" || thread != "1700000001.1" || through != integration.ID {
-		t.Errorf("the binding answers %s/%s through %s", channel, thread, through)
-	}
-}
-
 func TestExpiredSlackClaimCannotAdvance(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -394,7 +365,7 @@ func TestExpiredSlackClaimCannotAdvance(t *testing.T) {
 	if err == nil {
 		t.Fatal("an expired worker advanced the reply")
 	}
-	_, sequence, message, _, found, err := database.SlackReplyState(ctx, org, id)
+	_, sequence, message, _, found, err := slackReplyStateForTest(database, ctx, org, id)
 	if err != nil || !found || sequence != 0 || message != "" {
 		t.Fatalf("stale write changed delivery: sequence=%d message=%q found=%v err=%v", sequence, message, found, err)
 	}
@@ -433,7 +404,7 @@ func TestReclaimedSlackReplyRejectsPreviousGeneration(t *testing.T) {
 	if err := database.RetrySlackReply(ctx, org, id, current.ClaimToken, time.Now(), "late retry", false); !errors.Is(err, slack.ErrReplyClaimLost) {
 		t.Fatalf("completed delivery accepted a retry: %v", err)
 	}
-	_, sequence, message, note, found, err := database.SlackReplyState(ctx, org, id)
+	_, sequence, message, note, found, err := slackReplyStateForTest(database, ctx, org, id)
 	if err != nil || !found || sequence != 2 || message != "current" || note != "" {
 		t.Fatalf("delivery changed: sequence=%d message=%q note=%q found=%v err=%v", sequence, message, note, found, err)
 	}

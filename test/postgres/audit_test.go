@@ -12,7 +12,7 @@ import (
 func TestRelayConflictStateRollsBackWhenItsAuditEventFails(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	registration := enrolledRelay(t, database, organization)
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestTheRecordIsDeletableOnlyInsideATransactionThatDeclaresItselfThePruner(t
 	recordAuditEvent(t, dsn, org, now.Add(-90*24*time.Hour))
 	recordAuditEvent(t, dsn, org, now.Add(-91*24*time.Hour))
 
-	pool, err := database.Pool(org)
+	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}

@@ -17,7 +17,7 @@ func (p *Database) OpenInventoryScopes(
 	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, requestedInterval time.Duration,
 ) ([]changes.Scope, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func (p *Database) RecordInventoryDelta(
 	ctx context.Context, organization uuid.UUID,
 	registrationID uuid.UUID, delta changes.Delta,
 ) (changes.Recorded, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return changes.Recorded{}, err
 	}
@@ -186,7 +186,7 @@ func (p *Database) RecordInventoryFreshness(
 	if len(stamps) == 0 {
 		return nil
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -212,81 +212,6 @@ func (p *Database) RecordInventoryFreshness(
 		}
 	}
 	return nil
-}
-
-func (p *Database) RecentChanges(
-	ctx context.Context, organization uuid.UUID,
-	integrationID uuid.UUID, namespace string, from, to time.Time, limit int,
-) (changes.WindowChanges, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return changes.WindowChanges{}, err
-	}
-	if limit < 1 {
-		return changes.WindowChanges{}, fmt.Errorf("a change window needs a positive bound")
-	}
-
-	answer := changes.WindowChanges{}
-	err = pool.QueryRow(ctx, `
-		SELECT integration_id, policy_revision, requested_interval_seconds,
-		       covered_since, baseline_at, last_confirmed_at, faulted, truncated
-		  FROM change_scope
-		 WHERE integration_id = $1 AND org_id = $2`,
-		integrationID, organization).Scan(
-		&answer.Scope.IntegrationID, &answer.Scope.PolicyRevision,
-		&scanSeconds{&answer.Scope.RequestedInterval}, &answer.Scope.CoveredSince,
-		&answer.Scope.BaselineAt, &answer.Scope.LastConfirmedAt,
-		&answer.Scope.Faulted, &answer.Scope.Truncated)
-	if err == pgx.ErrNoRows {
-		return changes.WindowChanges{}, nil
-	}
-	if err != nil {
-		return changes.WindowChanges{}, fmt.Errorf("reading the change scope: %w", err)
-	}
-	answer.Covered = answer.Scope.CoveredSince != nil
-
-	rows, err := pool.Query(ctx, `
-		SELECT change_event_id, integration_id, namespace, object_kind, object_name,
-		       object_uid, observed_revision, change_kind, observed_at, received_at, fields
-		  FROM change_event
-		 WHERE integration_id = $1
-		   AND org_id = $2
-		   AND namespace = $3
-		   AND change_kind <> 1
-		   AND observed_at >= $4
-		   AND observed_at < $5
-		 ORDER BY observed_at, change_event_id
-		 LIMIT $6`,
-		integrationID, organization, namespace, from, to, limit+1)
-	if err != nil {
-		return changes.WindowChanges{}, fmt.Errorf("reading the change window: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var event changes.Event
-		var kind, change int16
-		var fields []byte
-		if err = rows.Scan(&event.ID, &event.IntegrationID,
-			&event.Namespace, &kind, &event.Name, &event.UID, &event.ObservedRevision,
-			&change, &event.ObservedAt, &event.RecordedAt, &fields); err != nil {
-			return changes.WindowChanges{}, fmt.Errorf("reading a change event: %w", err)
-		}
-		event.Kind = changes.ObjectKind(kind)
-		event.Change = changes.ChangeKind(change)
-		if err = json.Unmarshal(fields, &event.Fields); err != nil {
-			return changes.WindowChanges{}, fmt.Errorf("decoding field changes: %w", err)
-		}
-		answer.Events = append(answer.Events, event)
-	}
-	if err = rows.Err(); err != nil {
-		return changes.WindowChanges{}, fmt.Errorf("reading the change window: %w", err)
-	}
-	if len(answer.Events) > limit {
-		answer.Events = answer.Events[:limit]
-		answer.Truncated = true
-	}
-	return answer, nil
 }
 
 func (p *Database) PruneChangesBefore(
@@ -324,25 +249,10 @@ func orEmptyFields(fields []changes.FieldChange) []changes.FieldChange {
 	return fields
 }
 
-type scanSeconds struct{ into *time.Duration }
-
-func (s *scanSeconds) Scan(value any) error {
-	switch v := value.(type) {
-	case int64:
-		*s.into = time.Duration(v) * time.Second
-		return nil
-	case int32:
-		*s.into = time.Duration(v) * time.Second
-		return nil
-	default:
-		return fmt.Errorf("requested_interval_seconds held %T", value)
-	}
-}
-
 func (p *Database) WorkloadInventory(
 	ctx context.Context, organization uuid.UUID, limit int,
 ) ([]string, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}

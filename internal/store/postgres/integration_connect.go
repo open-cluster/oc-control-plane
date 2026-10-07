@@ -15,7 +15,7 @@ func (p *Database) StartConnectFlow(
 	ctx context.Context, organization uuid.UUID, flow integrations.ConnectFlow,
 	state string,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}

@@ -5,12 +5,12 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io/fs"
 	"sort"
 	"strings"
 
 	"github.com/exaring/otelpgx"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,7 +46,7 @@ func OpenDatabase(ctx context.Context, dsn string) (*Database, error) {
 	return &Database{pool: pool}, nil
 }
 
-func (d *Database) Pool(organization uuid.UUID) (*pgxpool.Pool, error) {
+func (d *Database) poolForOrganization(organization uuid.UUID) (*pgxpool.Pool, error) {
 	if organization == uuid.Nil {
 		return nil, fmt.Errorf("%w: the empty organization names no tenant", ErrUnknownOrganization)
 	}
@@ -72,14 +72,6 @@ func (d *Database) Migrate(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return migrateDatabase(ctx, d.pool, pending)
-}
-
-func MigrationCount() int {
-	migrations, err := loadMigrations()
-	if err != nil {
-		return 0
-	}
-	return len(migrations)
 }
 
 type migration struct {
@@ -133,18 +125,44 @@ func migrateDatabase(
 		return nil, fmt.Errorf("acquiring the migration lock: %w", err)
 	}
 
-	if _, err = transaction.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migration
-		(
-			version    TEXT        NOT NULL PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`); err != nil {
-		return nil, fmt.Errorf("creating the migration ledger: %w", err)
-	}
-
-	present, err := appliedVersions(ctx, transaction)
+	ledgerExists, err := relationExists(ctx, transaction, "schema_migration")
 	if err != nil {
 		return nil, err
+	}
+	present := make(map[string]struct{})
+	if ledgerExists {
+		present, err = appliedVersions(ctx, transaction)
+		if err != nil {
+			return nil, err
+		}
+		known := make(map[string]struct{}, len(migrations))
+		for _, candidate := range migrations {
+			known[candidate.version] = struct{}{}
+		}
+		for version := range present {
+			if _, ok := known[version]; !ok {
+				return nil, incompatibleSchemaError(version)
+			}
+		}
+	}
+	if len(present) == 0 {
+		hasObjects, objectErr := hasApplicationObjects(ctx, transaction, ledgerExists)
+		if objectErr != nil {
+			return nil, objectErr
+		}
+		if hasObjects {
+			return nil, incompatibleSchemaError("")
+		}
+		if !ledgerExists {
+			if _, err = transaction.Exec(ctx, `
+				CREATE TABLE public.schema_migration
+				(
+					version    TEXT        NOT NULL PRIMARY KEY,
+					applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+				)`); err != nil {
+				return nil, fmt.Errorf("creating the migration ledger: %w", err)
+			}
+		}
 	}
 
 	for _, pending := range migrations {
@@ -155,7 +173,7 @@ func migrateDatabase(
 			return nil, fmt.Errorf("applying %s: %w", pending.version, err)
 		}
 		if _, err = transaction.Exec(ctx,
-			`INSERT INTO schema_migration (version) VALUES ($1)`, pending.version); err != nil {
+			`INSERT INTO public.schema_migration (version) VALUES ($1)`, pending.version); err != nil {
 			return nil, fmt.Errorf("recording %s: %w", pending.version, err)
 		}
 		applied = append(applied, pending.version)
@@ -167,8 +185,45 @@ func migrateDatabase(
 	return applied, nil
 }
 
+func relationExists(ctx context.Context, transaction pgx.Tx, name string) (bool, error) {
+	var exists bool
+	if err := transaction.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, name).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspecting the migration ledger: %w", err)
+	}
+	return exists, nil
+}
+
+func hasApplicationObjects(ctx context.Context, transaction pgx.Tx, ledgerExists bool) (bool, error) {
+	var exists bool
+	if err := transaction.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_class object
+			JOIN pg_namespace namespace ON namespace.oid = object.relnamespace
+			WHERE namespace.nspname = 'public'
+			  AND object.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+			  AND ($1 = false OR object.relname <> 'schema_migration')
+		) OR EXISTS (
+			SELECT 1
+			FROM pg_proc object
+			JOIN pg_namespace namespace ON namespace.oid = object.pronamespace
+			WHERE namespace.nspname = 'public'
+		)`, ledgerExists).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspecting the application schema: %w", err)
+	}
+	return exists, nil
+}
+
+func incompatibleSchemaError(version string) error {
+	detail := "unrecognized application objects"
+	if version != "" {
+		detail = fmt.Sprintf("unrecognized migration %q", version)
+	}
+	return fmt.Errorf("storage: %s; this pre-release database must be recreated", detail)
+}
+
 func appliedVersions(ctx context.Context, transaction pgx.Tx) (map[string]struct{}, error) {
-	rows, err := transaction.Query(ctx, `SELECT version FROM schema_migration`)
+	rows, err := transaction.Query(ctx, `SELECT version FROM public.schema_migration`)
 	if err != nil {
 		return nil, fmt.Errorf("reading the migration ledger: %w", err)
 	}

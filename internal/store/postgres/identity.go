@@ -60,11 +60,6 @@ func orEmptyText(value *string) string {
 	return *value
 }
 
-type querier interface {
-	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
-}
-
 func membershipOf(ctx context.Context, on querier, user uuid.UUID) (authz.Membership, error) {
 	var organization uuid.UUID
 	var displayName, role string
@@ -95,7 +90,7 @@ func (p *Database) ListMembers(
 	if principal.Organization() != organization {
 		return MemberList{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return MemberList{}, err
 	}

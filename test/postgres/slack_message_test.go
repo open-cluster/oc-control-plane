@@ -46,7 +46,7 @@ func TestSlackAcceptanceBeforeIdentityPersistenceIsAtLeastOnce(t *testing.T) {
 			if err := database.ConcludeInvestigation(ctx, org, id, claimToken(t, database, org, id), conclusionSaying("durable answer"), "", investigation.Usage{}); err != nil {
 				t.Fatal(err)
 			}
-			pool, err := database.Pool(org)
+			pool, err := poolForTest(database, org)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +89,7 @@ func TestSlackAcceptanceBeforeIdentityPersistenceIsAtLeastOnce(t *testing.T) {
 			if _, err = pool.Exec(ctx, `DROP TRIGGER pause_slack_identity ON slack_reply; DROP FUNCTION pause_slack_identity()`); err != nil {
 				t.Fatal(err)
 			}
-			_, sequence, message, _, found, err := database.SlackReplyState(ctx, org, id)
+			_, sequence, message, _, found, err := slackReplyStateForTest(database, ctx, org, id)
 			if err != nil || !found || sequence != 0 || message != "" {
 				t.Fatalf("interrupted identity was persisted: %d %q %v %v", sequence, message, found, err)
 			}
@@ -99,7 +99,7 @@ func TestSlackAcceptanceBeforeIdentityPersistenceIsAtLeastOnce(t *testing.T) {
 			runSlackWorker(t, worker)
 			deadline = time.Now().Add(5 * time.Second)
 			for {
-				status, _, message, _, _, readErr := database.SlackReplyState(ctx, org, id)
+				status, _, message, _, _, readErr := slackReplyStateForTest(database, ctx, org, id)
 				if readErr != nil {
 					t.Fatal(readErr)
 				}
@@ -134,7 +134,7 @@ func slackDelivery(t *testing.T, handler http.Handler) (*storage.Database, uuid.
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := database.Pool(org)
+	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestSlackRetriesTerminalCloseAfterCursorAdvanced(t *testing.T) {
 	runSlackWorker(t, worker)
 	deadline := time.Now().Add(8 * time.Second)
 	for {
-		status, _, _, _, _, err := database.SlackReplyState(ctx, org, id)
+		status, _, _, _, _, err := slackReplyStateForTest(database, ctx, org, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -236,7 +236,7 @@ func TestSlackNonterminalPassesReleaseRecoveryLease(t *testing.T) {
 			if initial == "progress" {
 				awaitSlackText(t, sent, "first batch")
 			} else {
-				pool, err := database.Pool(org)
+				pool, err := poolForTest(database, org)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -271,10 +271,10 @@ func TestSlackMessageCapacityDeferralDoesNotConsumeRetries(t *testing.T) {
 	database, organization := fixture.database, fixture.organization
 	chat := openConversation(t, database, organization, "pending work")
 	say(t, database, organization, chat.ID, "hold the pending slot")
-	if _, opened, err := database.OpenTurn(ctx, organization, chat.ID, turnWindowLead); err != nil || !opened {
+	if _, opened, err := openTurnForTest(database, ctx, organization, chat.ID, turnWindowLead); err != nil || !opened {
 		t.Fatalf("occupying capacity: %v, %v", opened, err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestSlackMessageLeaseRejectsOtherOrganizationsAndSupersededOwners(t *testin
 	if err := database.HeartbeatSlackMessageWork(ctx, organization, forged, time.Minute); !errors.Is(err, storage.ErrSlackMessageLeaseLost) {
 		t.Fatalf("incorrect owner renewed the lease: %v", err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestSlackMessageHeartbeatProtectsSlowProviderLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +478,7 @@ func TestSlackMessageRetryTerminatesAndReplayPreservesTheQuestion(t *testing.T) 
 	fixture := acceptedSlackMessage(t)
 	ctx := context.Background()
 	database, organization := fixture.database, fixture.organization
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestSlackMessageRecoveryAtPersistedAttemptLimitIsTerminal(t *testing.T) {
 	fixture := acceptedSlackMessage(t)
 	ctx := context.Background()
 	database, organization := fixture.database, fixture.organization
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestSlackAttemptTimeoutPreservesRetryBudget(t *testing.T) {
 			if err := database.ConcludeInvestigation(ctx, org, id, claimToken(t, database, org, id), conclusionSaying("durable answer"), "", investigation.Usage{}); err != nil {
 				t.Fatal(err)
 			}
-			pool, err := database.Pool(org)
+			pool, err := poolForTest(database, org)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -691,7 +691,7 @@ func TestSlackAttemptTimeoutPreservesRetryBudget(t *testing.T) {
 
 func TestFreshSlackWorkSchemaContainsOnlySlackState(t *testing.T) {
 	database, organization := migratedDatabase(t)
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +727,7 @@ func TestFreshSlackWorkSchemaContainsOnlySlackState(t *testing.T) {
 
 func TestSlackWorkSchemaRejectsDuplicateAndCrossOrganizationReferences(t *testing.T) {
 	fixture := acceptedSlackMessage(t)
-	pool, err := fixture.database.Pool(fixture.organization)
+	pool, err := poolForTest(fixture.database, fixture.organization)
 	if err != nil {
 		t.Fatal(err)
 	}

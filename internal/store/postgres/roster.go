@@ -60,7 +60,7 @@ func (p *Database) ListRelays(
 	if principal.Organization() != organization {
 		return RelayRoster{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return RelayRoster{}, err
 	}

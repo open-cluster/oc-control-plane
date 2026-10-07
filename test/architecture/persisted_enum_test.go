@@ -153,9 +153,10 @@ var (
 )
 
 var enumColumns = map[string]map[string][]int{
-	"lease.go":              {"status": jobStatusValues},
-	"result.go":             {"status": jobStatusValues},
-	"cancellation.go":       {"status": jobStatusValues},
+	"lease.go":  {"status": jobStatusValues},
+	"result.go": {"status": jobStatusValues},
+	"job.go": {"status": append(append([]int(nil), jobStatusValues...),
+		investigationStatusValues...)},
 	"relays.go":             {"status": jobStatusValues},
 	"slack_message_work.go": {"status": slackMessageStatusValues},
 	"webhook_delivery.go": {
@@ -170,8 +171,7 @@ var enumColumns = map[string]map[string][]int{
 	"slack_reply.go": {"status": slackReplyValues},
 	"investigation.go": {"status": append(append(append([]int(nil), investigationStatusValues...),
 		incidentStatusValues...), jobStatusValues...)},
-	"investigation_capacity.go": {"status": investigationStatusValues},
-	"conversation_brief.go": {
+	"conversation_context.go": {
 		"status": investigationStatusValues, "role": conversationRoleValues,
 	},
 	"investigation_lease.go": {"status": investigationStatusValues},
@@ -181,11 +181,7 @@ var enumColumns = map[string]map[string][]int{
 			incidentStatusValues...),
 		"role": conversationRoleValues,
 	},
-	"conversation_capacity.go": {"role": conversationRoleValues},
-	"conversation_window.go":   {"role": conversationRoleValues},
-	"conversation_history.go":  {"status": investigationStatusValues},
-	"investigation_message.go": {"role": conversationRoleValues},
-	"changes.go":               {"change_kind": changeKindValues},
+	"changes.go": {"change_kind": changeKindValues},
 }
 
 var scannedColumns = []string{

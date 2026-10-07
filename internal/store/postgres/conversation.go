@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
@@ -54,7 +53,7 @@ func (p *Database) OpenConversation(
 func (p *Database) Conversation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (conversation.Conversation, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return conversation.Conversation{}, err
 	}
@@ -79,7 +78,7 @@ func (p *Database) QueryConversations(
 	if principal.Organization() != organization {
 		return conversation.List{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return conversation.List{}, err
 	}
@@ -167,7 +166,7 @@ func (p *Database) ConversationDetail(
 	if err != nil {
 		return conversation.Detail{}, err
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return conversation.Detail{}, err
 	}
@@ -218,24 +217,6 @@ func conversationMessages(
 		return nil, fmt.Errorf("reading a conversation's messages: %w", err)
 	}
 	return said, nil
-}
-
-func (p *Database) AppendMessage(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, said conversation.NewMessage,
-) (conversation.Message, error) {
-	return audited(ctx, p, principal, organization, audit.ActionConversationMessage,
-		func(ctx context.Context, transaction pgx.Tx) (
-			conversation.Message, audit.Target, audit.Detail, error,
-		) {
-			written, err := appendMessage(ctx, transaction, organization, id, said, conversation.DefaultIncidentWindowLead)
-			if err != nil {
-				return conversation.Message{}, audit.Target{}, nil, err
-			}
-			return written,
-				audit.Target{Kind: audit.TargetConversation, ID: id.String()},
-				audit.Detail{"sequence": written.Sequence}, nil
-		})
 }
 
 type acceptedMessage struct {
@@ -317,59 +298,11 @@ func appendMessage(
 	return written, nil
 }
 
-func (p *Database) WaitingTurns(
-	ctx context.Context, organization uuid.UUID,
-) (int, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return 0, err
-	}
-	var waiting int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM investigation
-		 WHERE org_id = $1 AND status = 1 AND lease_worker = ''`,
-		organization).Scan(&waiting); err != nil {
-		return 0, fmt.Errorf("counting waiting turns: %w", err)
-	}
-	return waiting, nil
-}
-
-func (p *Database) OpenTurn(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID,
-	lead time.Duration,
-) (conversation.Turn, bool, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return conversation.Turn{}, false, err
-	}
-	transaction, err := pool.Begin(ctx)
-	if err != nil {
-		return conversation.Turn{}, false, fmt.Errorf("begin: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = transaction.Rollback(ctx)
-		}
-	}()
-
-	turn, opened, err := openTurn(ctx, transaction, organization, id, lead)
-	if err != nil || !opened {
-		return conversation.Turn{}, false, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return conversation.Turn{}, false, fmt.Errorf("commit: %w", err)
-	}
-	committed = true
-	return turn, true, nil
-}
-
 func (p *Database) DrainConversation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	lead time.Duration, maxPending int,
 ) (bool, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return false, err
 	}
@@ -674,4 +607,67 @@ func scanMessage(row scanned) (conversation.Message, error) {
 		message.WindowFrom, message.WindowUntil = *from, *until
 	}
 	return message, nil
+}
+
+const maxQueuedMessages = 100
+
+func reserveQueuedMessage(ctx context.Context, tx pgx.Tx, organization uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, organization.String()); err != nil {
+		return fmt.Errorf("locking organization Message capacity: %w", err)
+	}
+	var queued int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM conversation_message
+		WHERE org_id = $1 AND investigation_id IS NULL AND role = 1`, organization).Scan(&queued); err != nil {
+		return fmt.Errorf("counting queued Messages: %w", err)
+	}
+	if queued >= maxQueuedMessages {
+		return conversation.ErrQueueFull
+	}
+	return nil
+}
+
+func acceptedWindow(
+	ctx context.Context,
+	tx pgx.Tx,
+	org uuid.UUID,
+	id uuid.UUID,
+	requested *conversation.Window,
+	lead time.Duration,
+) (conversation.Window, error) {
+	if requested != nil {
+		normalized := requested.Normalized()
+		requested = &normalized
+	}
+	if requested != nil && !requested.Valid(time.Now()) {
+		return conversation.Window{}, conversation.ErrInvalidWindow
+	}
+	var from, until *time.Time
+	err := tx.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
+		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1
+		ORDER BY sequence LIMIT 1`, org, id).Scan(&from, &until)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return conversation.Window{}, err
+	}
+	if from != nil {
+		if requested != nil && (!requested.From.Equal(*from) || !requested.Until.Equal(*until)) {
+			return conversation.Window{}, conversation.ErrWindowConflict
+		}
+		return conversation.Window{From: *from, Until: *until}, nil
+	}
+	if requested != nil {
+		return *requested, nil
+	}
+	var incident *uuid.UUID
+	if err = tx.QueryRow(ctx, `SELECT incident_id FROM conversation WHERE org_id = $1 AND conversation_id = $2`, org, id).Scan(&incident); err != nil {
+		return conversation.Window{}, err
+	}
+	f, u, err := turnWindow(ctx, tx, org, incident, lead)
+	if err != nil {
+		return conversation.Window{}, err
+	}
+	window := (conversation.Window{From: f, Until: u}).Normalized()
+	if !window.Valid(time.Now()) {
+		return conversation.Window{}, conversation.ErrInvalidWindow
+	}
+	return window, nil
 }

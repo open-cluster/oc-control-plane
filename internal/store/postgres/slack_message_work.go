@@ -91,7 +91,7 @@ func (d *Database) ApplySlackMessageWork(
 	// Opening the Conversation turn and advancing the fenced work row share one transaction;
 	// the Message assignment is the idempotency boundary after a retry.
 	work.Organization = organization
-	pool, err := d.Pool(organization)
+	pool, err := d.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -205,7 +205,7 @@ func (d *Database) HeartbeatSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, lease time.Duration,
 ) error {
 	work.Organization = organization
-	pool, err := d.Pool(organization)
+	pool, err := d.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ func (d *Database) FailSlackMessageWork(
 func (d *Database) DeferSlackMessageWork(
 	ctx context.Context, organization uuid.UUID, work SlackMessageWork, delay time.Duration,
 ) error {
-	pool, err := d.Pool(organization)
+	pool, err := d.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -262,7 +262,7 @@ func (d *Database) transitionSlackMessageWork(
 	ctx context.Context, work SlackMessageWork, status SlackMessageWorkStatus, delay time.Duration,
 	class, message string,
 ) error {
-	pool, err := d.Pool(work.Organization)
+	pool, err := d.poolForOrganization(work.Organization)
 	if err != nil {
 		return err
 	}

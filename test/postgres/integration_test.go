@@ -212,7 +212,7 @@ func TestOneWorkspaceCannotBeClaimedTwice(t *testing.T) {
 		t.Fatalf("a second claim on one installation = %v, want ErrInstallationTaken", err)
 	}
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestAnIntegrationWithNoInstallationRoutesNothing(t *testing.T) {
 		t.Fatalf("creating a pasted-token slack integration: %v", err)
 	}
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}

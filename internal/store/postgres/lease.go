@@ -22,7 +22,7 @@ func (p *Database) ClaimJobs(
 ) ([]RelayJob, error) {
 	// Claiming commits before delivery so a crash leaves recoverable leased work. Each claim
 	// raises the epoch, fencing results from executions whose lease expired.
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (p *Database) AdoptInFlightLeases(
 	if len(adoption.InFlight) == 0 {
 		return nil, nil
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (p *Database) ReleaseStrandedLeases(
 ) (int64, error) {
 	// Call only after receiving a complete roster. The fence prevents corruption if the roster
 	// is wrong, but an omitted execution would be repeated.
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}
@@ -164,28 +164,6 @@ func (p *Database) ReleaseStrandedLeases(
 		organization, registrationID, holder)
 	if err != nil {
 		return 0, fmt.Errorf("releasing stranded leases: %w", err)
-	}
-	return tag.RowsAffected(), nil
-}
-
-func (p *Database) SweepExpiredLeases(
-	ctx context.Context, organization uuid.UUID,
-) (int64, error) {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return 0, err
-	}
-	tag, err := pool.Exec(ctx, `
-		UPDATE relay_job
-		   SET status           = 0,
-		       lease_session    = NULL,
-		       lease_expires_at = NULL
-		 WHERE org_id     = $1
-		   AND status           = 1
-		   AND lease_expires_at <= now()`,
-		organization)
-	if err != nil {
-		return 0, fmt.Errorf("sweeping expired leases: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }

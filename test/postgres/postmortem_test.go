@@ -23,7 +23,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		incident); !errors.Is(err, postmortem.ErrNotEligible) {
 		t.Fatalf("open incident generation error = %v", err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -106,7 +106,7 @@ const incidentAlertEventCount = `(SELECT count(*)::integer FROM alert_event a
 func (p *Database) QueryIncidents(
 	ctx context.Context, organization uuid.UUID, query incident.Query,
 ) (incident.Page, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return incident.Page{}, err
 	}
@@ -205,7 +205,7 @@ var incidentOrderings = map[string]struct {
 func (p *Database) Incident(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (incident.Incident, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return incident.Incident{}, err
 	}
@@ -232,7 +232,7 @@ func (p *Database) IncidentAlertEvents(
 	ctx context.Context, organization uuid.UUID,
 	id uuid.UUID, page incident.AlertEventPage,
 ) (incident.AlertEventList, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return incident.AlertEventList{}, err
 	}
