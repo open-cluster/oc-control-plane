@@ -602,7 +602,7 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
-              example: "id: 1\nevent: started\ndata: {\"schemaVersion\":1,\"type\":\"started\"}\n\n: heartbeat\n\n"
+              example: "id: 1\nevent: started\ndata: {\"sequence\":1,\"at\":\"2026-10-07T12:00:00Z\",\"schemaVersion\":2,\"type\":\"started\",\"payload\":{}}\n\n: heartbeat\n\n"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1629,7 +1629,7 @@ components:
           properties:
             ordinal: { type: integer, minimum: 1 }
             tool: { type: string, minLength: 1, maxLength: 512 }
-            integrationId: { type: string, minLength: 1, maxLength: 512 }
+            integrationId: { $ref: "#/components/schemas/UUID" }
             integration: { type: string, minLength: 1, maxLength: 512 }
             purpose: { type: string, minLength: 1, maxLength: 512 }
     ToolCompletedInvestigationEvent:
@@ -1647,7 +1647,7 @@ components:
             ordinal: { type: integer, minimum: 1 }
             outcome: { type: string, enum: [succeeded, failed] }
             durationMs: { type: integer, format: int64, minimum: 0 }
-            summary: { type: string, maxLength: 512 }
+            summary: { type: string, minLength: 1, maxLength: 512 }
             truncated: { type: boolean }
     ConcludedInvestigationEvent:
       type: object

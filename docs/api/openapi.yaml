@@ -896,7 +896,7 @@ paths:
               example: |+
                 id: 1
                 event: started
-                data: {"schemaVersion":1,"type":"started"}
+                data: {"sequence":1,"at":"2026-10-07T12:00:00Z","schemaVersion":2,"type":"started","payload":{}}
 
                 : heartbeat
 
@@ -3483,9 +3483,7 @@ components:
               minLength: 1
               maxLength: 512
             integrationId:
-              type: string
-              minLength: 1
-              maxLength: 512
+              $ref: '#/components/schemas/UUID'
             integration:
               type: string
               minLength: 1
@@ -3548,6 +3546,7 @@ components:
               minimum: 0
             summary:
               type: string
+              minLength: 1
               maxLength: 512
             truncated:
               type: boolean

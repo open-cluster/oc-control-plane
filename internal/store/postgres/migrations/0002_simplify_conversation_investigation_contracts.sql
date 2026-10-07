@@ -23,6 +23,7 @@ BEGIN
                  FROM conversation_message message
                 WHERE message.org_id = investigation.org_id
                   AND message.investigation_id = investigation.investigation_id
+                  AND message.conversation_id = investigation.conversation_id
                   AND message.role = 1))
     ) THEN
         RAISE EXCEPTION 'cannot remove Investigation question previews: retained nonempty questions have no authoritative assigned user Messages'
@@ -86,9 +87,8 @@ UPDATE investigation_event
            'durationMs', GREATEST(COALESCE((payload ->> 'durationMs')::bigint, 0), 0),
            'summary', left(COALESCE(
                NULLIF(btrim(payload ->> 'summary'), ''),
-               CASE WHEN payload ->> 'outcome' = 'succeeded' THEN 'Tool completed successfully'
-                    ELSE NULLIF(btrim(payload ->> 'error'), '') END,
-               'Tool failed'), 512),
+               CASE WHEN payload ->> 'outcome' = 'succeeded'
+                    THEN 'Tool completed successfully' ELSE 'Tool failed' END), 512),
            'truncated', COALESCE((payload ->> 'truncated')::boolean, false))
        WHEN 6 THEN jsonb_build_object(
            'status', payload ->> 'status',

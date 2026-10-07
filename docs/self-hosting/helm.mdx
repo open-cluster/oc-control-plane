@@ -87,6 +87,11 @@ back the migration without changing the old schema; repair the data with the old
 or restore the backup before retrying. Unknown or unledgered pre-release schemas still
 require a fresh application database and complete setup.
 
+Update API clients before the new Pods start. Conversations now expose `source` (`web` or
+`slack`) instead of `surface`; Message roles are `user` and `assistant` without `actorKind`;
+final hypotheses have no ID or `exploring` status; and Investigation event envelopes use
+`schemaVersion: 2` with seven compact payloads.
+
 ## Common failure and recovery
 
 If the rollout stalls, inspect

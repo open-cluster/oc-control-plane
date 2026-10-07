@@ -450,7 +450,7 @@ func TestTheBriefCarriesActionsWithTheirCanonicalAnswer(t *testing.T) {
 	}
 	var answer *investigation.Conclusion
 	for _, entry := range brief.Recent {
-		if entry.InvestigationID == turn.InvestigationID && !entry.FromPerson {
+		if entry.InvestigationID == turn.InvestigationID && !entry.FromUser {
 			answer = entry.Answer
 		}
 	}
@@ -627,7 +627,7 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 		}
 	}
 	if brief.Recent[0].Sequence != 1 || brief.Recent[2].Sequence != 2 ||
-		brief.Recent[1].InvestigationID != turn.InvestigationID || brief.Recent[1].FromPerson ||
+		brief.Recent[1].InvestigationID != turn.InvestigationID || brief.Recent[1].FromUser ||
 		brief.Recent[1].CreatedAt.IsZero() {
 		t.Fatalf("exchange lost source identity: %+v", brief.Recent)
 	}
@@ -830,7 +830,7 @@ func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testin
 	if err := pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM conversation_message WHERE org_id = $1 AND conversation_id = $2),
 		(SELECT count(*) FROM investigation WHERE org_id = $1 AND conversation_id = $2),
-		(SELECT count(*) FROM audit_event WHERE org_id = $1 AND action = 'conversation.message-appended' AND target_id = $2::text)`,
+		(SELECT count(*) FROM audit_event WHERE org_id = $1 AND action = 'conversation.message-sent' AND target_id = $2::text)`,
 		org, recorded.Conversation).Scan(&messages, &turns, &audits); err != nil {
 		t.Fatal(err)
 	}

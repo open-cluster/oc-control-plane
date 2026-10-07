@@ -46,7 +46,7 @@ func TestInvestigationEventsUseTheSevenSmallPayloadContracts(t *testing.T) {
 		{name: "started", payload: StartedPayload(Investigation{Subject: "must not leak"}, true), fields: []string{}},
 		{name: "progress", payload: ProgressPayload("reading evidence"), fields: []string{"text"}},
 		{name: "tool started", payload: ToolStartedPayload(ToolRun{Ordinal: 1, Tool: "github.read", Purpose: "read commits"}, "00000000-0000-0000-0000-000000000001", "GitHub"), fields: []string{"integration", "integrationId", "ordinal", "purpose", "tool"}},
-		{name: "tool completed", payload: ToolCompletedPayload(ToolRun{Ordinal: 1, Outcome: RunFailed, Error: "safe failure", StartedAt: time.Unix(0, 0), FinishedAt: time.Unix(0, int64(time.Second))}), fields: []string{"durationMs", "ordinal", "outcome", "summary", "truncated"}},
+		{name: "tool completed", payload: ToolCompletedPayload(ToolRun{Ordinal: 1, Outcome: RunFailed, Summary: "   ", Error: "provider token sk-secret-value", StartedAt: time.Unix(0, 0), FinishedAt: time.Unix(0, int64(time.Second))}), fields: []string{"durationMs", "ordinal", "outcome", "summary", "truncated"}},
 		{name: "concluded", payload: ConcludedPayload(Conclusion{Status: Inconclusive, Summary: "answer"}, "must not leak"), fields: []string{"status", "summary"}},
 		{name: "failed", payload: FailedPayload("safe reason"), fields: []string{"reason"}},
 		{name: "cancelled", payload: CancelledPayload(), fields: []string{"message"}},
@@ -69,8 +69,8 @@ func TestInvestigationEventsUseTheSevenSmallPayloadContracts(t *testing.T) {
 			if !reflect.DeepEqual(fields, test.fields) {
 				t.Fatalf("fields = %v, want %v: %s", fields, test.fields, document)
 			}
-			if test.name == "tool completed" && object["summary"] != "safe failure" {
-				t.Errorf("failed completion summary = %q, want safe error", object["summary"])
+			if test.name == "tool completed" && object["summary"] != "Tool failed" {
+				t.Errorf("failed completion summary = %q, want generic safe summary", object["summary"])
 			}
 			if test.name == "tool completed" && object["truncated"] != false {
 				t.Errorf("truncated:false was omitted: %s", document)

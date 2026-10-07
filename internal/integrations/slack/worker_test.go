@@ -300,6 +300,21 @@ func TestAConcludedSummaryIsTheFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAMultilineMaximumAnswerReachesSlackWhole(t *testing.T) {
+	t.Parallel()
+
+	summary := "line one\n" + strings.Repeat("界", 4087)
+	events := aTurn()
+	events[len(events)-1].Payload["summary"] = summary
+	fake := newSlackCallLog(t, true)
+	worker, state := answering(t, fake, events)
+	worker.answer(context.Background(), state.reply)
+
+	if whole := strings.Join(fake.carried(), ""); !strings.Contains(whole, summary) {
+		t.Fatalf("Slack did not receive the canonical multiline answer whole: length=%d", len([]rune(whole)))
+	}
+}
+
 func TestAFinalAnswerLinksOnlyTheInvestigation(t *testing.T) {
 	t.Parallel()
 

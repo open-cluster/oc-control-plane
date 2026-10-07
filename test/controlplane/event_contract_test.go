@@ -34,7 +34,7 @@ func (m *eventContractModel) Complete(ctx context.Context, prompt modelagent.Pro
 	if err := json.Unmarshal(completion.ToolCalls[0].Arguments, &document); err != nil {
 		return modelagent.Completion{}, err
 	}
-	document["summary"] = strings.Repeat("界", 4096)
+	document["summary"] = "line one\n" + strings.Repeat("界", 4087)
 	completion.ToolCalls[0].Arguments, err = json.Marshal(document)
 	return completion, err
 }

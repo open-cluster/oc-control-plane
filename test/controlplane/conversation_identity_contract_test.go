@@ -28,6 +28,10 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	}
 	var opened map[string]json.RawMessage
 	decodeInto(t, body, &opened)
+	var id string
+	if err := json.Unmarshal(opened["id"], &id); err != nil {
+		t.Fatal(err)
+	}
 	if string(opened["source"]) != `"web"` {
 		t.Errorf("source = %s, want web", opened["source"])
 	}
@@ -46,5 +50,30 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	}
 	if string(message["actorId"]) == `""` || string(message["actorDisplay"]) == `""` {
 		t.Errorf("trusted attribution was not retained: %s", body)
+	}
+
+	status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations", nil)
+	if status != http.StatusOK {
+		t.Fatalf("listing Conversations = %d: %s", status, body)
+	}
+	var listed struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	decodeInto(t, body, &listed)
+	if len(listed.Items) != 1 || string(listed.Items[0]["source"]) != `"web"` {
+		t.Fatalf("listed Conversation identity = %s", body)
+	}
+
+	status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations/"+id, nil)
+	if status != http.StatusOK {
+		t.Fatalf("reading Conversation = %d: %s", status, body)
+	}
+	var detail struct {
+		Source   string                       `json:"source"`
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	decodeInto(t, body, &detail)
+	if detail.Source != "web" || len(detail.Messages) != 1 || string(detail.Messages[0]["role"]) != `"user"` {
+		t.Fatalf("Conversation detail identity = %s", body)
 	}
 }

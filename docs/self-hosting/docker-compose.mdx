@@ -71,6 +71,12 @@ fresh application database. Removing the `postgres_data` volume deletes retained
 Organizations, Users, Integrations, and credentials, so complete setup again after starting
 the new version. Do not delete individual rows merely to force startup.
 
+This migration changes the API contract: Conversations expose `source` (`web` or `slack`)
+instead of `surface`; Message roles are `user` and `assistant` and no longer expose
+`actorKind`; final hypotheses have no ID or `exploring` status; and Investigation event
+envelopes use `schemaVersion: 2` with the seven payloads documented in the API reference.
+Update clients before bringing the new replicas online.
+
 ## Failure states
 
 - If PostgreSQL stays unhealthy, verify that the password file and DSN agree and that

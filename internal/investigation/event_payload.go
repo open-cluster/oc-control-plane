@@ -1,5 +1,7 @@
 package investigation
 
+import "strings"
+
 type EventPayload interface {
 	EventType() EventType
 }
@@ -54,10 +56,7 @@ func ToolCompletedPayload(run ToolRun) ToolCompletedEventPayload {
 	if duration < 0 {
 		duration = 0
 	}
-	summary := run.Summary
-	if summary == "" && run.Outcome == RunFailed {
-		summary = run.Error
-	}
+	summary := strings.TrimSpace(run.Summary)
 	if summary == "" {
 		if run.Outcome == RunSucceeded {
 			summary = "Tool completed successfully"

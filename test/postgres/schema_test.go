@@ -49,7 +49,8 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 			($2, $1, 1, 1, '{"question":"legacy"}'),
 			($2, $1, 2, 2, '{"message":"Reading"}'),
 			($2, $1, 3, 5, '{"legacy":true}'),
-			($2, $1, 4, 10, '{"hypotheses":[]}')`, org, investigationID); err != nil {
+			($2, $1, 4, 10, '{"hypotheses":[]}'),
+			($2, $1, 5, 4, '{"ordinal":1,"outcome":"failed","error":"provider token sk-secret-value"}')`, org, investigationID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,6 +81,12 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	if activePayload != "{}" {
 		t.Fatalf("started payload = %s, want empty object", activePayload)
 	}
+	if err = connection.QueryRow(ctx, `SELECT payload::text FROM investigation_event WHERE investigation_id=$1 AND sequence=5`, investigationID).Scan(&activePayload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(activePayload, "sk-secret-value") || !strings.Contains(activePayload, `"summary": "Tool failed"`) {
+		t.Fatalf("migrated failed completion exposed provider error: %s", activePayload)
+	}
 	var retained int
 	if err = connection.QueryRow(ctx, `SELECT count(*) FROM investigation_event WHERE investigation_id=$1 AND type IN (5,10)`, investigationID).Scan(&retained); err != nil {
 		t.Fatal(err)
@@ -106,6 +113,11 @@ func TestIssue150MigrationRefusesAmbiguousRetainedDataWithoutMutation(t *testing
 			kind: "question",
 			want: "retained nonempty questions",
 		},
+		{
+			name: "question message belongs to another conversation",
+			kind: "cross-conversation-question",
+			want: "retained nonempty questions",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -128,10 +140,30 @@ func TestIssue150MigrationRefusesAmbiguousRetainedDataWithoutMutation(t *testing
 					VALUES ($2,$1,1,1,2,'ambiguous',now()-interval '1 hour',now())`, org, recordID); err != nil {
 					t.Fatal(err)
 				}
-			} else if _, err := connection.Exec(ctx, `INSERT INTO investigation(
-				investigation_id,org_id,question,subject,window_from,window_until)
-				VALUES ($2,$1,'Only retained here','Checkout',now()-interval '1 hour',now())`, org, recordID); err != nil {
-				t.Fatal(err)
+			} else {
+				conversationID := uuid.Nil
+				if test.kind == "cross-conversation-question" {
+					conversationID = uuid.New()
+					otherConversation := uuid.New()
+					if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id,org_id,surface,subject)
+						VALUES ($2,$1,1,'Expected'),($3,$1,1,'Wrong')`, org, conversationID, otherConversation); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := connection.Exec(ctx, `INSERT INTO investigation(
+						investigation_id,org_id,question,subject,window_from,window_until,conversation_id,turn)
+						VALUES ($2,$1,'Only retained here','Checkout',now()-interval '1 hour',now(),$3,1)`, org, recordID, conversationID); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := connection.Exec(ctx, `INSERT INTO conversation_message(
+						conversation_id,org_id,sequence,role,actor_kind,text,investigation_id,window_from,window_until)
+						VALUES ($2,$1,1,1,1,'Wrong Conversation',$3,now()-interval '1 hour',now())`, org, otherConversation, recordID); err != nil {
+						t.Fatal(err)
+					}
+				} else if _, err := connection.Exec(ctx, `INSERT INTO investigation(
+					investigation_id,org_id,question,subject,window_from,window_until)
+					VALUES ($2,$1,'Only retained here','Checkout',now()-interval '1 hour',now())`, org, recordID); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			database := openDatabaseForTest(t, dsn)

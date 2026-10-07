@@ -36,7 +36,7 @@ func (p *Database) ConversationBrief(
 	}
 	for _, message := range messages {
 		brief.Recent = append(brief.Recent, investigation.BriefMessage{
-			FromPerson:      message.Role == conversationRoleUser,
+			FromUser:        message.Role == conversationRoleUser,
 			Actor:           message.ActorDisplay,
 			Text:            briefExchangeText(message.Text),
 			Sequence:        message.Sequence,
@@ -219,7 +219,7 @@ func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uu
 			rows.Close()
 			return page, err
 		}
-		message.FromPerson = role == conversationRoleUser
+		message.FromUser = role == conversationRoleUser
 		message.Text = briefExchangeText(message.Text)
 		if owner != nil {
 			message.InvestigationID = *owner

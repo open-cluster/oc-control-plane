@@ -206,6 +206,26 @@ func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 	if found[0].Messages != 1 {
 		t.Errorf("the conversation holds %d messages, want the question", found[0].Messages)
 	}
+	status, answer = plane.call(t, http.MethodGet,
+		plane.base(surfaceOrg)+"/conversations/"+found[0].ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("reading Slack Conversation = %d: %s", status, answer)
+	}
+	var detail struct {
+		Source   string `json:"source"`
+		Messages []struct {
+			Role         string  `json:"role"`
+			ActorID      string  `json:"actorId"`
+			ActorDisplay string  `json:"actorDisplay"`
+			ActorKind    *string `json:"actorKind"`
+		} `json:"messages"`
+	}
+	decodeInto(t, answer, &detail)
+	if detail.Source != "slack" || len(detail.Messages) != 1 ||
+		detail.Messages[0].Role != "user" || detail.Messages[0].ActorID != "U9SRE" ||
+		detail.Messages[0].ActorKind != nil {
+		t.Fatalf("public Slack identity = %s", answer)
+	}
 }
 
 func TestSlackEvents_ADirectMessageDoesNotOpenAConversation(t *testing.T) {

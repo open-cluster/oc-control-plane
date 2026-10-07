@@ -47,7 +47,7 @@ func (c *Conclusion) MarkMissingEvidence() {
 
 type BriefMessage struct {
 	Answer          *Conclusion `json:"answer,omitempty"`
-	FromPerson      bool        `json:"fromPerson"`
+	FromUser        bool        `json:"fromUser"`
 	Actor           string      `json:"actor,omitempty"`
 	Text            string      `json:"text"`
 	Sequence        int64       `json:"sequence,omitempty"`
