@@ -73,6 +73,7 @@ type openRequest struct {
 }
 
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
+
 	principal, organization := h.caller(request)
 	var asked openRequest
 	if !h.decode(writer, request, &asked) {
