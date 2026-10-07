@@ -69,8 +69,6 @@ var (
 	errNoConclusion = errors.New("the reasoner did not conclude when required to")
 )
 
-const UpdateHypothesesToolName = "update_hypotheses"
-
 type runState struct {
 	organization uuid.UUID
 	opened       investigation.Investigation
@@ -159,7 +157,7 @@ func (r *Agent) Run(
 		if err != nil {
 			return failRun("the Investigation's assigned Messages could not be read", investigation.Usage{})
 		}
-		if len(messages) == 0 && (opened.IncidentID == uuid.Nil || opened.Question != "") {
+		if len(messages) == 0 {
 			return failRun("the Investigation's assigned Messages are missing", investigation.Usage{})
 		}
 	}
@@ -177,7 +175,6 @@ func (r *Agent) Run(
 		oriented.HistoryBefore = messages[0].Sequence
 	}
 	if opened.ConversationID != uuid.Nil {
-		oriented.Question = ""
 		if len(messages) > 0 {
 			encoded, err := json.Marshal(messages)
 			if err != nil {
@@ -454,25 +451,6 @@ func (r *Agent) Run(
 				results = append(results, result)
 				continue
 			}
-			if call.Tool == UpdateHypothesesToolName {
-				result.Semantic = true
-				result.Run = investigation.ToolRun{
-					Tool: UpdateHypothesesToolName, Outcome: investigation.RunSucceeded,
-					Summary: "hypothesis snapshot accepted",
-				}
-				snapshot, snapshotErr := decodeHypothesisSnapshot(call.Arguments, len(state.runs))
-				if snapshotErr != nil {
-					result.Run.Outcome = investigation.RunFailed
-					result.Run.Error = snapshotErr.Error()
-				} else {
-					result.Run.Content = map[string]any{"accepted": true}
-					r.announce(ctx, events,
-						investigation.HypothesesUpdatedPayload(snapshot))
-				}
-				results = append(results, result)
-				continue
-			}
-
 			var run investigation.ToolRun
 			executedRead := false
 			if strings.TrimSpace(call.Purpose) == "" {
@@ -565,76 +543,6 @@ func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
 		prompt.ForceTool = ConcludeToolName
 	}
 	return prompt
-}
-
-func decodeHypothesisSnapshot(
-	arguments map[string]any, runs int,
-) ([]investigation.HypothesisResult, error) {
-	document, err := json.Marshal(arguments)
-	if err != nil {
-		return nil, fmt.Errorf("encoding the hypothesis snapshot: %w", err)
-	}
-	var input struct {
-		Hypotheses []struct {
-			ID        string                         `json:"id"`
-			Statement string                         `json:"statement"`
-			Status    investigation.HypothesisStatus `json:"status"`
-			Test      string                         `json:"test"`
-			RunRefs   []int                          `json:"run_refs"`
-		} `json:"hypotheses"`
-	}
-	if err := json.Unmarshal(document, &input); err != nil {
-		return nil, fmt.Errorf("the hypothesis snapshot is not the declared document: %w", err)
-	}
-	if len(input.Hypotheses) > investigation.MaxHypothesisSnapshotItems {
-		return nil, fmt.Errorf("the hypothesis snapshot has %d items; the limit is %d",
-			len(input.Hypotheses), investigation.MaxHypothesisSnapshotItems)
-	}
-	seen := make(map[string]bool, len(input.Hypotheses))
-	result := make([]investigation.HypothesisResult, 0, len(input.Hypotheses))
-	for _, hypothesis := range input.Hypotheses {
-		if strings.TrimSpace(hypothesis.ID) == "" || strings.TrimSpace(hypothesis.Statement) == "" ||
-			strings.TrimSpace(hypothesis.Test) == "" {
-			return nil, errors.New("each hypothesis requires id, statement, and test")
-		}
-		if seen[hypothesis.ID] {
-			return nil, fmt.Errorf("hypothesis id %q appears more than once", hypothesis.ID)
-		}
-		if len([]rune(hypothesis.ID)) > 128 {
-			return nil, errors.New("hypothesis id exceeds 128 characters")
-		}
-		seen[hypothesis.ID] = true
-		if !hypothesisStatusAllowed(hypothesis.Status) {
-			return nil, fmt.Errorf("hypothesis %q has invalid status %q", hypothesis.ID,
-				hypothesis.Status)
-		}
-		references := make(map[int]bool, len(hypothesis.RunRefs))
-		for _, run := range hypothesis.RunRefs {
-			if references[run] {
-				return nil, fmt.Errorf("hypothesis %q cites run %d more than once", hypothesis.ID, run)
-			}
-			references[run] = true
-			if run < 1 || run > runs {
-				return nil, fmt.Errorf("hypothesis %q cites run %d, but only %d runs exist",
-					hypothesis.ID, run, runs)
-			}
-		}
-		result = append(result, investigation.HypothesisResult{
-			ID:        boundText(hypothesis.ID, eventTextBound),
-			Statement: boundText(hypothesis.Statement, eventTextBound), Status: hypothesis.Status,
-			Test: boundText(hypothesis.Test, eventTextBound), RunRefs: append([]int{}, hypothesis.RunRefs...),
-		})
-	}
-	return result, nil
-}
-
-func hypothesisStatusAllowed(status investigation.HypothesisStatus) bool {
-	for _, allowed := range investigation.HypothesisStatuses {
-		if string(status) == allowed {
-			return true
-		}
-	}
-	return false
 }
 
 func offeredName(offeredSources []offeredSource, tool string) string {
@@ -840,7 +748,6 @@ func (r *Agent) orientation(
 ) orientation {
 	oriented := orientation{
 		Subject:     opened.Subject,
-		Question:    opened.Question,
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Sources:     offered,

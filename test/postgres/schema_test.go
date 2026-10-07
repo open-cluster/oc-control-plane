@@ -2,7 +2,10 @@ package storage_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +14,167 @@ import (
 	"github.com/jackc/pgx/v5"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection := baselineDatabase(t, ctx, dsn)
+	defer func() { _ = connection.Close(ctx) }()
+
+	org, conversationID, investigationID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id, display_name, created_by)
+		VALUES ($1, 'Organization', 'test')`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, surface, subject)
+		VALUES ($2, $1, 1, 'Checkout')`, org, conversationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO investigation(
+			investigation_id, org_id, question, subject, window_from, window_until, status,
+			conclusion, concluded_at, conversation_id, turn)
+		VALUES ($3, $1, 'Why did checkout fail?', 'Checkout', now() - interval '1 hour', now(), 2,
+			'{"hypotheses":[{"id":"legacy","statement":"Deploy","status":"exploring","test":"Read history","runRefs":[]}]}'::jsonb,
+			now(), $2, 1)`, org, conversationID, investigationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation_message(
+			conversation_id, org_id, sequence, role, actor_kind, actor_id, text, investigation_id,
+			window_from, window_until)
+		VALUES ($2, $1, 1, 1, 1, 'user-1', 'Why did checkout fail?', $3, now() - interval '1 hour', now());
+		`, org, conversationID, investigationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO investigation_event(investigation_id, org_id, sequence, type, payload) VALUES
+			($2, $1, 1, 1, '{"question":"legacy"}'),
+			($2, $1, 2, 2, '{"message":"Reading"}'),
+			($2, $1, 3, 5, '{"legacy":true}'),
+			($2, $1, 4, 10, '{"hypotheses":[]}')`, org, investigationID); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	applied, err := database.Migrate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(applied, []string{"0002_simplify_conversation_investigation_contracts"}) {
+		t.Fatalf("applied migrations = %v", applied)
+	}
+
+	var source string
+	var conclusion string
+	if err = connection.QueryRow(ctx, `SELECT source FROM conversation WHERE conversation_id=$1`, conversationID).Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT conclusion::text FROM investigation WHERE investigation_id=$1`, investigationID).Scan(&conclusion); err != nil {
+		t.Fatal(err)
+	}
+	if source != "web" || strings.Contains(conclusion, `"id"`) || !strings.Contains(conclusion, `"status": "unresolved"`) {
+		t.Fatalf("converted source/conclusion = %q/%s", source, conclusion)
+	}
+	var activePayload string
+	if err = connection.QueryRow(ctx, `SELECT payload::text FROM investigation_event WHERE investigation_id=$1 AND sequence=1`, investigationID).Scan(&activePayload); err != nil {
+		t.Fatal(err)
+	}
+	if activePayload != "{}" {
+		t.Fatalf("started payload = %s, want empty object", activePayload)
+	}
+	var retained int
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM investigation_event WHERE investigation_id=$1 AND type IN (5,10)`, investigationID).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained != 2 {
+		t.Fatalf("retained retired events = %d, want 2", retained)
+	}
+	if _, err = connection.Exec(ctx, `INSERT INTO investigation_event(investigation_id,org_id,sequence,type) VALUES ($1,$2,5,10)`, investigationID, org); err == nil {
+		t.Fatal("migration accepted a new retired event type")
+	}
+}
+
+func TestIssue150MigrationRefusesAmbiguousRetainedDataWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name, kind, want string
+	}{
+		{
+			name: "source conflicts with attribution",
+			kind: "attribution",
+			want: "retained user attribution conflicts",
+		},
+		{
+			name: "question has no authoritative message",
+			kind: "question",
+			want: "retained nonempty questions",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			dsn := postgresDSN(t)
+			connection := baselineDatabase(t, ctx, dsn)
+			defer func() { _ = connection.Close(ctx) }()
+			org, recordID := uuid.New(), uuid.New()
+			if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id,display_name,created_by)
+				VALUES ($1,'Organization','test')`, org); err != nil {
+				t.Fatal(err)
+			}
+			if test.kind == "attribution" {
+				if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id,org_id,surface,subject)
+					VALUES ($2,$1,1,'Checkout')`, org, recordID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := connection.Exec(ctx, `INSERT INTO conversation_message(
+					conversation_id,org_id,sequence,role,actor_kind,text,window_from,window_until)
+					VALUES ($2,$1,1,1,2,'ambiguous',now()-interval '1 hour',now())`, org, recordID); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := connection.Exec(ctx, `INSERT INTO investigation(
+				investigation_id,org_id,question,subject,window_from,window_until)
+				VALUES ($2,$1,'Only retained here','Checkout',now()-interval '1 hour',now())`, org, recordID); err != nil {
+				t.Fatal(err)
+			}
+
+			database := openDatabaseForTest(t, dsn)
+			if _, err := database.Migrate(ctx); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("migration error = %v, want %q", err, test.want)
+			}
+			var versions []string
+			if err := connection.QueryRow(ctx, `SELECT array_agg(version ORDER BY version) FROM schema_migration`).Scan(&versions); err != nil {
+				t.Fatal(err)
+			}
+			var oldSchema bool
+			if err := connection.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+				WHERE table_schema='public' AND table_name='conversation' AND column_name='surface')`).Scan(&oldSchema); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(versions, []string{"0001_current_schema"}) || !oldSchema {
+				t.Fatalf("refused migration mutated schema: versions=%v old_schema=%v", versions, oldSchema)
+			}
+		})
+	}
+}
+
+func baselineDatabase(t *testing.T, ctx context.Context, dsn string) *pgx.Conn {
+	t.Helper()
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, file, _, _ := runtime.Caller(0)
+	baseline, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "internal", "store", "postgres", "migrations", "0001_current_schema.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, string(baseline)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `CREATE TABLE schema_migration
+		(version TEXT NOT NULL PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+		INSERT INTO schema_migration(version) VALUES ('0001_current_schema')`); err != nil {
+		t.Fatal(err)
+	}
+	return connection
+}
 
 func TestOrganizationAuditRetentionUsesOrganizationValue(t *testing.T) {
 	ctx := context.Background()
@@ -49,8 +213,8 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(applied, []string{"0001_current_schema"}) {
-		t.Fatalf("fresh migration applied %v, want the current baseline only", applied)
+	if !reflect.DeepEqual(applied, []string{"0001_current_schema", "0002_simplify_conversation_investigation_contracts"}) {
+		t.Fatalf("fresh migration applied %v, want the baseline and issue 150 contraction", applied)
 	}
 	if applied, err := database.Migrate(ctx); err != nil || len(applied) != 0 {
 		t.Fatalf("repeated migration applied %v: %v", applied, err)
@@ -79,6 +243,16 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['conversation_id','org_id','incident_id','source','subject','state',
+			      'created_by','created_at','last_activity_at']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation'`,
+		`SELECT data_type = 'text' AND column_default = '''web''::text'
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation' AND column_name='source'`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='conversation_message' AND column_name='actor_kind')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='investigation' AND column_name='question')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
 			WHERE table_name='investigation_tool_run' AND column_name='hypothesis_id')`,
 		`SELECT to_regclass('deployment_initialization') IS NULL`,

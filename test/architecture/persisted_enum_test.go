@@ -62,7 +62,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"EventConcluded", int(investigation.EventConcluded), 6},
 		{"EventFailed", int(investigation.EventFailed), 7},
 		{"EventCancelled", int(investigation.EventCancelled), 9},
-		{"EventHypothesesUpdated", int(investigation.EventHypothesesUpdated), 10},
 
 		{"KindDeployment", int(changes.KindDeployment), 1},
 		{"KindStatefulSet", int(changes.KindStatefulSet), 2},
@@ -70,14 +69,10 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"KindConfigMap", int(changes.KindConfigMap), 4},
 		{"KindSecret", int(changes.KindSecret), 5},
 
-		{"SurfaceWeb", int(conversation.SurfaceWeb), 1},
-		{"SurfaceSlack", int(conversation.SurfaceSlack), 2},
 		{"StateOpen", int(conversation.StateOpen), 1},
 		{"StateClosed", int(conversation.StateClosed), 2},
-		{"RolePerson", int(conversation.RolePerson), 1},
-		{"RoleAgent", int(conversation.RoleAgent), 2},
-		{"ActorPrincipal", int(conversation.ActorPrincipal), 1},
-		{"ActorExternal", int(conversation.ActorExternal), 2},
+		{"RoleUser", int(conversation.RoleUser), 1},
+		{"RoleAssistant", int(conversation.RoleAssistant), 2},
 
 		{"ChangeBaseline", int(changes.ChangeBaseline), 1},
 		{"ChangeCreated", int(changes.ChangeCreated), 2},
@@ -112,9 +107,9 @@ func TestRetiredInvestigationEventNumbersAreNeverReused(t *testing.T) {
 		int(investigation.EventStarted), int(investigation.EventProgress),
 		int(investigation.EventToolStarted), int(investigation.EventToolCompleted),
 		int(investigation.EventConcluded), int(investigation.EventFailed),
-		int(investigation.EventCancelled), int(investigation.EventHypothesesUpdated),
+		int(investigation.EventCancelled),
 	}
-	for _, retired := range []int{5, 8} {
+	for _, retired := range []int{5, 8, 10} {
 		if containsValue(active, retired) {
 			t.Errorf("retired Investigation event number %d was reused", retired)
 		}
@@ -148,7 +143,7 @@ var (
 		int(changes.ChangeModified), int(changes.ChangeDeleted),
 	}
 	conversationRoleValues = []int{
-		int(conversation.RolePerson), int(conversation.RoleAgent),
+		int(conversation.RoleUser), int(conversation.RoleAssistant),
 	}
 )
 

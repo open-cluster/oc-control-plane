@@ -11,8 +11,6 @@ type Agent interface {
 	Run(context.Context, uuid.UUID, Investigation) error
 }
 
-const MaxHypothesisSnapshotItems = 8
-
 type Status int16
 
 const (
@@ -109,21 +107,18 @@ var FindingKinds = []string{
 type HypothesisStatus string
 
 const (
-	HypothesisExploring  HypothesisStatus = "exploring"
 	HypothesisSupported  HypothesisStatus = "supported"
 	HypothesisRuledOut   HypothesisStatus = "ruled_out"
 	HypothesisUnresolved HypothesisStatus = "unresolved"
 )
 
 var HypothesisStatuses = []string{
-	string(HypothesisExploring),
 	string(HypothesisSupported),
 	string(HypothesisRuledOut),
 	string(HypothesisUnresolved),
 }
 
 type HypothesisResult struct {
-	ID        string           `json:"id"`
 	Statement string           `json:"statement"`
 	Status    HypothesisStatus `json:"status"`
 	Test      string           `json:"test"`
@@ -183,7 +178,6 @@ func (u Usage) Add(other Usage) Usage {
 type Investigation struct {
 	ID             uuid.UUID
 	IncidentID     uuid.UUID
-	Question       string
 	ConversationID uuid.UUID
 	Turn           int
 	Subject        string
@@ -222,7 +216,6 @@ type ToolRun struct {
 
 type NewInvestigation struct {
 	IncidentID  uuid.UUID
-	Question    string
 	Subject     string
 	WindowFrom  time.Time
 	WindowUntil time.Time

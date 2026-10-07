@@ -245,9 +245,8 @@ func aTurn() []investigation.Event {
 		progressed(1, investigation.EventStarted, nil),
 		progressed(2, investigation.EventToolCompleted,
 			map[string]any{"summary": "read 40 commits on checkout-api"}),
-		progressed(3, investigation.EventProgress, map[string]any{"message": "Checking impact"}),
-		progressed(4, investigation.EventHypothesesUpdated, map[string]any{"version": 1}),
-		progressed(5, investigation.EventConcluded,
+		progressed(3, investigation.EventProgress, map[string]any{"text": "Checking impact"}),
+		progressed(4, investigation.EventConcluded,
 			map[string]any{"summary": "The deploy at 14:02 is the cause."}),
 	}
 }

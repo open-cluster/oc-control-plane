@@ -10,19 +10,19 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
-type Surface int16
+type Source string
 
 const (
-	SurfaceWeb Surface = iota + 1
-	SurfaceSlack
+	SourceWeb   Source = "web"
+	SourceSlack Source = "slack"
 )
 
-func (s Surface) String() string {
+func (s Source) String() string {
 	switch s {
-	case SurfaceWeb:
-		return "web"
-	case SurfaceSlack:
-		return "slack"
+	case SourceWeb:
+		return string(SourceWeb)
+	case SourceSlack:
+		return string(SourceSlack)
 	default:
 		return "unrecognised"
 	}
@@ -49,34 +49,16 @@ func (s State) String() string {
 type Role int16
 
 const (
-	RolePerson Role = iota + 1
-	RoleAgent
+	RoleUser Role = iota + 1
+	RoleAssistant
 )
 
 func (r Role) String() string {
 	switch r {
-	case RolePerson:
-		return "person"
-	case RoleAgent:
-		return "agent"
-	default:
-		return "unrecognised"
-	}
-}
-
-type ActorKind int16
-
-const (
-	ActorPrincipal ActorKind = iota + 1
-	ActorExternal
-)
-
-func (a ActorKind) String() string {
-	switch a {
-	case ActorPrincipal:
-		return "principal"
-	case ActorExternal:
-		return "external"
+	case RoleUser:
+		return "user"
+	case RoleAssistant:
+		return "assistant"
 	default:
 		return "unrecognised"
 	}
@@ -93,6 +75,7 @@ var (
 	ErrUnknown         = errors.New("conversation unknown")
 	ErrIncidentUnknown = errors.New("incident unknown")
 	ErrClosed          = errors.New("conversation closed")
+	ErrSourceMismatch  = errors.New("authenticated Messages cannot be appended to a Slack Conversation")
 	ErrBadCursor       = errors.New("after is not a page position from a previous response")
 	ErrQueueFull       = errors.New("this organization has too much work waiting")
 )
@@ -101,7 +84,7 @@ type Conversation struct {
 	ID             uuid.UUID
 	OrgID          string
 	IncidentID     uuid.UUID
-	Surface        Surface
+	Source         Source
 	Subject        string
 	State          State
 	CreatedBy      string
@@ -113,7 +96,6 @@ type Message struct {
 	WindowFrom, WindowUntil time.Time
 	Sequence                int64
 	Role                    Role
-	ActorKind               ActorKind
 	ActorID                 string
 	ActorDisplay            string
 	Text                    string
@@ -137,7 +119,7 @@ type Turn struct {
 
 type NewConversation struct {
 	IncidentID uuid.UUID
-	Surface    Surface
+	Source     Source
 	Subject    string
 	CreatedBy  string
 }
@@ -145,7 +127,6 @@ type NewConversation struct {
 type NewMessage struct {
 	Window       *Window
 	Role         Role
-	ActorKind    ActorKind
 	ActorID      string
 	ActorDisplay string
 	Text         string

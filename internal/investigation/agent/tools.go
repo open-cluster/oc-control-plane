@@ -29,7 +29,7 @@ func agentCalls(calls []CompletionCall) []toolCall {
 			_ = json.Unmarshal(call.Arguments, &arguments)
 		}
 		translatedCall := toolCall{ID: call.ID, Tool: call.Name}
-		if call.Name == UpdateHypothesesToolName || call.Name == historyToolName {
+		if call.Name == historyToolName {
 			translatedCall.Arguments = arguments
 		} else {
 			translatedCall.Purpose, _ = arguments["purpose"].(string)

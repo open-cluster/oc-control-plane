@@ -49,7 +49,7 @@ fixtures:
       findings:
         - {statement: checkout-api returned errors., kind: observation, mechanism: "", run_refs: [1], evidence_refs: []}
       hypotheses:
-        - {id: hypothesis-1, statement: A pool change may explain the errors., status: unresolved, test: Read the deployed pool configuration., run_refs: []}
+        - {statement: A pool change may explain the errors., status: unresolved, test: Read the deployed pool configuration., run_refs: []}
       actions: []
       limitations: []
   - name: supported-explanation
@@ -62,7 +62,7 @@ fixtures:
       findings:
         - {statement: The deployment increased database connection pressure., kind: contributing_factor, mechanism: Larger pools consumed the remaining connection capacity., run_refs: [1], evidence_refs: []}
       hypotheses:
-        - {id: hypothesis-1, statement: A concurrent traffic increase may also have contributed., status: exploring, test: Read request volume for the same window., run_refs: []}
+        - {statement: A concurrent traffic increase may also have contributed., status: unresolved, test: Read request volume for the same window., run_refs: []}
       actions: []
       limitations: []
   - name: unavailable-run-reference

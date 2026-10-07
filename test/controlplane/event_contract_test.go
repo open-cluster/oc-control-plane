@@ -13,32 +13,14 @@ import (
 	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-type hypothesisEventModel struct {
-	calls         int
-	tool          string
-	hypothesisID  string
-	duplicateRefs bool
+type eventContractModel struct {
+	calls int
+	tool  string
 }
 
-func (m *hypothesisEventModel) Complete(ctx context.Context, prompt modelagent.Prompt) (modelagent.Completion, error) {
+func (m *eventContractModel) Complete(ctx context.Context, prompt modelagent.Prompt) (modelagent.Completion, error) {
 	m.calls++
 	if m.calls == 1 {
-		id := m.hypothesisID
-		if id == "" {
-			id = "checkout"
-		}
-		return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
-			ID: "hypothesis", Name: modelagent.UpdateHypothesesToolName,
-			Arguments: json.RawMessage(`{"hypotheses":[{"id":"` + id + `","statement":"Checkout may be overloaded","status":"exploring","test":"Read workload metrics"}]}`),
-		}}}, nil
-	}
-	if m.calls == 3 && m.duplicateRefs {
-		return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
-			ID: "duplicate", Name: modelagent.UpdateHypothesesToolName,
-			Arguments: json.RawMessage(`{"hypotheses":[{"id":"checkout","statement":"Checkout may be overloaded","status":"exploring","test":"Read workload metrics","run_refs":[1,1]}]}`),
-		}}}, nil
-	}
-	if m.calls == 2 || m.calls == 3 {
 		return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
 			ID: "channels", Name: m.tool,
 			Arguments: json.RawMessage(`{"purpose":"Find the incident channel","input":{}}`),
@@ -57,27 +39,17 @@ func (m *hypothesisEventModel) Complete(ctx context.Context, prompt modelagent.P
 	return completion, err
 }
 
-func TestHypothesisAndAnswerEventsMatchSerializedSchema(t *testing.T) {
-	assertModelEventSchema(t, &hypothesisEventModel{tool: "slack.list_channels"},
-		[]string{"started", "hypotheses_updated", "tool_started", "tool_completed", "progress", "concluded"})
+func TestAvailableToolAndAnswerEventsMatchVersionTwoSchema(t *testing.T) {
+	assertModelEventSchema(t, &eventContractModel{tool: "slack.list_channels"},
+		[]string{"started", "tool_started", "tool_completed", "concluded"})
 }
 
-func TestUnavailableToolEventsMatchSerializedSchema(t *testing.T) {
-	assertModelEventSchema(t, &hypothesisEventModel{tool: "unavailable.read"},
-		[]string{"started", "hypotheses_updated", "tool_completed", "progress", "concluded"})
+func TestUnavailableToolCompletionMatchesVersionTwoSchemaWithoutAStart(t *testing.T) {
+	assertModelEventSchema(t, &eventContractModel{tool: "unavailable.read"},
+		[]string{"started", "tool_completed", "concluded"})
 }
 
-func TestOversizedHypothesisIdentityIsNotPublished(t *testing.T) {
-	assertModelEventSchema(t, &hypothesisEventModel{tool: "slack.list_channels", hypothesisID: strings.Repeat("h", 129)},
-		[]string{"started", "tool_started", "tool_completed", "progress", "concluded"})
-}
-
-func TestDuplicateHypothesisReferencesAreNotPublished(t *testing.T) {
-	assertModelEventSchema(t, &hypothesisEventModel{tool: "slack.list_channels", duplicateRefs: true},
-		[]string{"started", "hypotheses_updated", "tool_started", "tool_completed", "concluded"})
-}
-
-func assertModelEventSchema(t *testing.T, model *hypothesisEventModel, want []string) {
+func assertModelEventSchema(t *testing.T, model *eventContractModel, want []string) {
 	t.Helper()
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"}]}`
@@ -92,7 +64,7 @@ func assertModelEventSchema(t *testing.T, model *hypothesisEventModel, want []st
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("create Slack = %d: %s", status, body)
 	}
-	_, turn := plane.openConversation(t, "hypothesis schema", "investigate checkout")
+	_, turn := plane.openConversation(t, "event schema", "investigate checkout")
 	result := plane.awaitInvestigation(t, turn)
 	var final struct {
 		Summary string `json:"summary"`

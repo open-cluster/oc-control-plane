@@ -2,7 +2,10 @@ package investigation
 
 import (
 	"encoding/json"
+	"reflect"
+	"slices"
 	"testing"
+	"time"
 )
 
 func TestToolStartedEventCarriesProgressWithoutDuplicatingArguments(t *testing.T) {
@@ -27,5 +30,51 @@ func TestToolStartedEventCarriesProgressWithoutDuplicatingArguments(t *testing.T
 	if rendered["tool"] != "github.read_commits" ||
 		rendered["purpose"] != "check the change window" {
 		t.Errorf("progress metadata was lost: %s", document)
+	}
+}
+
+func TestInvestigationEventsUseTheSevenSmallPayloadContracts(t *testing.T) {
+	if EventSchemaVersion != 2 {
+		t.Fatalf("event schema version = %d, want 2", EventSchemaVersion)
+	}
+
+	cases := []struct {
+		name    string
+		payload EventPayload
+		fields  []string
+	}{
+		{name: "started", payload: StartedPayload(Investigation{Subject: "must not leak"}, true), fields: []string{}},
+		{name: "progress", payload: ProgressPayload("reading evidence"), fields: []string{"text"}},
+		{name: "tool started", payload: ToolStartedPayload(ToolRun{Ordinal: 1, Tool: "github.read", Purpose: "read commits"}, "00000000-0000-0000-0000-000000000001", "GitHub"), fields: []string{"integration", "integrationId", "ordinal", "purpose", "tool"}},
+		{name: "tool completed", payload: ToolCompletedPayload(ToolRun{Ordinal: 1, Outcome: RunFailed, Error: "safe failure", StartedAt: time.Unix(0, 0), FinishedAt: time.Unix(0, int64(time.Second))}), fields: []string{"durationMs", "ordinal", "outcome", "summary", "truncated"}},
+		{name: "concluded", payload: ConcludedPayload(Conclusion{Status: Inconclusive, Summary: "answer"}, "must not leak"), fields: []string{"status", "summary"}},
+		{name: "failed", payload: FailedPayload("safe reason"), fields: []string{"reason"}},
+		{name: "cancelled", payload: CancelledPayload(), fields: []string{"message"}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := json.Marshal(test.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var object map[string]any
+			if err := json.Unmarshal(document, &object); err != nil {
+				t.Fatal(err)
+			}
+			fields := make([]string, 0, len(object))
+			for field := range object {
+				fields = append(fields, field)
+			}
+			slices.Sort(fields)
+			if !reflect.DeepEqual(fields, test.fields) {
+				t.Fatalf("fields = %v, want %v: %s", fields, test.fields, document)
+			}
+			if test.name == "tool completed" && object["summary"] != "safe failure" {
+				t.Errorf("failed completion summary = %q, want safe error", object["summary"])
+			}
+			if test.name == "tool completed" && object["truncated"] != false {
+				t.Errorf("truncated:false was omitted: %s", document)
+			}
+		})
 	}
 }

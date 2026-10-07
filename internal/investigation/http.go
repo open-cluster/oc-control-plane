@@ -321,7 +321,6 @@ type investigationView struct {
 	ID               string             `json:"id"`
 	Status           string             `json:"status"`
 	Subject          string             `json:"subject"`
-	Question         string             `json:"question,omitempty"`
 	IncidentID       string             `json:"incidentId,omitempty"`
 	WindowFrom       string             `json:"windowFrom"`
 	WindowUntil      string             `json:"windowUntil"`
@@ -371,7 +370,6 @@ func investigationViewOf(found Investigation) investigationView {
 		ID:               found.ID.String(),
 		Status:           publicStatus(found),
 		Subject:          found.Subject,
-		Question:         found.Question,
 		WindowFrom:       found.WindowFrom.UTC().Format(time.RFC3339Nano),
 		WindowUntil:      found.WindowUntil.UTC().Format(time.RFC3339Nano),
 		ConclusionStatus: found.Conclusion.Status,

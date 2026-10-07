@@ -78,13 +78,14 @@ from measured Investigation concurrency and provider workloads before production
 v0.1 does not publish a qualified in-place upgrade path. Do not infer compatibility from
 image or chart tags; see [Feature availability](/feature-availability).
 
-This pre-release baseline requires a fresh application database. Back up PostgreSQL,
-disable any autoscaler that could restart old replicas, scale the old Deployment to zero,
-and wait for every old Pod to terminate. Recreate the application database, deploy the
-new version, and complete setup again. The backup can recover the old deployment with
-the same OpenCluster version; it is not a supported import into the new schema. Startup
-refuses an older, unknown, or unledgered application schema before mutation. Do not use
-a rolling upgrade or run mixed versions against one database.
+Back up PostgreSQL, disable any autoscaler that could restart old replicas, scale the old
+Deployment to zero, and wait for every old Pod to terminate. Do not use a rolling upgrade
+or run mixed versions against one database. The current ledgered baseline migrates only
+when retained user Message attribution agrees with each Conversation source and every
+retained nonempty Investigation question has assigned user Messages. A failed check rolls
+back the migration without changing the old schema; repair the data with the old version
+or restore the backup before retrying. Unknown or unledgered pre-release schemas still
+require a fresh application database and complete setup.
 
 ## Common failure and recovery
 

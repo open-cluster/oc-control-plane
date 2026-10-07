@@ -44,7 +44,7 @@ func openConversation(
 
 	opened, err := database.OpenConversation(context.Background(),
 		ownerOf(t, organization), organization, conversation.NewConversation{
-			Surface: conversation.SurfaceWeb, Subject: subject,
+			Source: conversation.SourceWeb, Subject: subject,
 			CreatedBy: "user-under-test",
 		})
 	if err != nil {
@@ -61,7 +61,7 @@ func say(
 
 	said, err := appendMessageForTest(database, context.Background(),
 		ownerOf(t, organization), organization, id, conversation.NewMessage{
-			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			Role:    conversation.RoleUser,
 			ActorID: "user-under-test", ActorDisplay: "Test Operator", Text: text,
 		})
 	if err != nil {
@@ -166,7 +166,7 @@ func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 	}
 	if _, err := appendMessageForTest(database, context.Background(), ownerOf(t, theirs), theirs,
 		opened.ID, conversation.NewMessage{
-			Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			Role:    conversation.RoleUser,
 			ActorID: "somebody-else", Text: "what is this about?",
 		}); !errors.Is(err, conversation.ErrUnknown) {
 		t.Errorf("saying something into another tenant's conversation answered %v", err)
@@ -313,8 +313,8 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 			}},
 			Actions: []investigation.ActionProposal{{Title: "roll back the 14:02 deploy"}},
 			Hypotheses: []investigation.HypothesisResult{{
-				ID: "traffic-spike", Statement: "a traffic spike may also have contributed",
-				Status: investigation.HypothesisExploring, Test: "compare request volume with baseline",
+				Statement: "a traffic spike may also have contributed",
+				Status:    investigation.HypothesisUnresolved, Test: "compare request volume with baseline",
 			}},
 			Limitations: []investigation.Limitation{{
 				Type:      investigation.LimitationEssentialHumanInput,
@@ -413,7 +413,7 @@ func openConversationAbout(
 
 	opened, err := database.OpenConversation(context.Background(),
 		ownerOf(t, organization), organization, conversation.NewConversation{
-			Surface: conversation.SurfaceWeb, Subject: subject, IncidentID: incident,
+			Source: conversation.SourceWeb, Subject: subject, IncidentID: incident,
 			CreatedBy: "user-under-test",
 		})
 	if err != nil {
@@ -766,7 +766,7 @@ func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
 	opened := openConversation(t, database, org, "queued follow-up")
 	appendPerson := func(text string) (conversation.Message, conversation.Turn, bool, error) {
 		return database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, opened.ID,
-			conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			conversation.NewMessage{Role: conversation.RoleUser,
 				ActorID: "user-under-test", ActorDisplay: "Test Operator", Text: text}, turnWindowLead, 100)
 	}
 	_, first, started, err := appendPerson("initial question")
@@ -797,6 +797,48 @@ func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testing.T) {
+	database, org, _ := twoOrganizationsInOneDatabase(t)
+	ctx := context.Background()
+	integration, err := connectSlack(t, database, org, "Slack", slackInstallation("TREFUSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := database.RecordSlackMessage(ctx, org, storage.SlackMessage{
+		Integration: integration.ID, ContentDigest: randomDigest(t),
+		Channel: "CREFUSE", Thread: "1.0", Subject: "Slack only",
+		ActorID: "USLACK", ActorDisplay: "Slack User", Text: "first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	principal := ownerOf(t, org)
+	_, _, _, err = database.AppendMessageAndOpenTurn(ctx, principal, org, recorded.Conversation,
+		conversation.NewMessage{Role: conversation.RoleUser,
+			ActorID: principal.UserID().String(), ActorDisplay: "Web User", Text: "must not cross sources"},
+		turnWindowLead, 100)
+	if !errors.Is(err, conversation.ErrSourceMismatch) {
+		t.Fatalf("authenticated append error = %v, want source mismatch", err)
+	}
+
+	pool, err := poolForTest(database, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var messages, turns, audits int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM conversation_message WHERE org_id = $1 AND conversation_id = $2),
+		(SELECT count(*) FROM investigation WHERE org_id = $1 AND conversation_id = $2),
+		(SELECT count(*) FROM audit_event WHERE org_id = $1 AND action = 'conversation.message-appended' AND target_id = $2::text)`,
+		org, recorded.Conversation).Scan(&messages, &turns, &audits); err != nil {
+		t.Fatal(err)
+	}
+	if messages != 1 || turns != 0 || audits != 0 {
+		t.Fatalf("refused append persisted messages=%d turns=%d audits=%d", messages, turns, audits)
+	}
+}
+
 func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
 	database, org, _ := twoOrganizationsInOneDatabase(t)
 	ctx := context.Background()
@@ -804,7 +846,7 @@ func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
 	principal := ownerOf(t, org)
 	appendPerson := func(text string) (conversation.Turn, bool, error) {
 		_, turn, started, err := database.AppendMessageAndOpenTurn(ctx, principal, org, chat.ID,
-			conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			conversation.NewMessage{Role: conversation.RoleUser,
 				ActorID: principal.UserID().String(), Text: text}, turnWindowLead, 100)
 		return turn, started, err
 	}
@@ -921,7 +963,7 @@ func TestAtomicMessageAppendRollsBackDatabaseFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, _, _, err = database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-				conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+				conversation.NewMessage{Role: conversation.RoleUser,
 					ActorID: "user-under-test", Text: "must roll back"}, turnWindowLead, 100)
 			if err == nil {
 				t.Fatal("injected database failure was reported as acceptance")
@@ -958,7 +1000,7 @@ func TestQueuedMessageAdmissionIsAtomicAcrossConversations(t *testing.T) {
 		go func() {
 			<-start
 			_, _, _, err := database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-				conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+				conversation.NewMessage{Role: conversation.RoleUser,
 					ActorID: "user-under-test", Text: "last available slot"}, turnWindowLead, 100)
 			results <- err
 		}()
@@ -1003,8 +1045,8 @@ func TestQueuedMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO conversation_message
-		(conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text, window_from, window_until)
-		SELECT $1, $2, n, 1, 1, 'actor-' || n, 'Operator', 'question-' || n, now() - interval '24 hours', now()
+		(conversation_id, org_id, sequence, role, actor_id, actor_display, text, window_from, window_until)
+		SELECT $1, $2, n, 1, 'actor-' || n, 'Operator', 'question-' || n, now() - interval '24 hours', now()
 		FROM generate_series(1, 205) n`, chat.ID, org); err != nil {
 		t.Fatal(err)
 	}
@@ -1098,7 +1140,7 @@ func TestQueuedMessageWindowSurvivesDrain(t *testing.T) {
 			chat := openConversation(t, database, org, "queued windows")
 			appendMessage := func(window *conversation.Window) (conversation.Message, conversation.Turn, bool, error) {
 				return database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-					conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal, ActorID: "user-under-test", Text: "question", Window: window}, time.Hour, 100)
+					conversation.NewMessage{Role: conversation.RoleUser, ActorID: "user-under-test", Text: "question", Window: window}, time.Hour, 100)
 			}
 			_, first, opened, err := appendMessage(nil)
 			if err != nil || !opened {

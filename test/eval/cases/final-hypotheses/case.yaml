@@ -1,0 +1,8 @@
+name: final-hypotheses
+revision: "2"
+situation: Initial evidence supports database saturation, then a focused runtime read falsifies it and leaves a dependency timeout hypothesis in the final conclusion.
+referenceTime: 2026-08-25T12:00:00Z
+requireFinalHypotheses: true
+safety:
+    requirecitations: true
+    rejectsecretleakage: true

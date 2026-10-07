@@ -82,8 +82,8 @@ func TestLifecycleEvaluationCasesDeclareWhatTheyMeasure(t *testing.T) {
 		t.Fatal(err)
 	}
 	wanted := map[string]func(eval.Case) bool{
-		"live-hypothesis-updates": func(one eval.Case) bool { return one.RequireHypothesisUpdates },
-		"postmortem-omissions":    func(one eval.Case) bool { return one.GeneratePostmortem },
+		"final-hypotheses":     func(one eval.Case) bool { return one.RequireFinalHypotheses },
+		"postmortem-omissions": func(one eval.Case) bool { return one.GeneratePostmortem },
 	}
 	for _, one := range cases {
 		check, found := wanted[one.Name]

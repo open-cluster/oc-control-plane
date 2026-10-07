@@ -59,16 +59,17 @@ same key, sealed integration credentials cannot be opened.
 
 ## Replace an older pre-release deployment
 
-This baseline does not support an in-place upgrade from an older OpenCluster database.
 Stop every old control-plane replica and back up PostgreSQL before replacing the image.
-The backup can recover the old deployment with the same OpenCluster version; it is not a
-supported import into the new schema.
+Do not run mixed versions against one database. The current ledgered baseline migrates in
+place only when retained user Message attribution agrees with each Conversation source and
+every retained nonempty Investigation question has assigned user Messages. If either check
+fails, startup refuses the migration and leaves the old schema unchanged. Repair the data
+with the old version or restore the backup before retrying.
 
-For Compose, stop the stack and recreate its application database. Removing the
-`postgres_data` volume deletes retained history, Organizations, Users, Integrations, and
-credentials, so complete setup again after starting the new version. Startup refuses an
-older, unknown, or unledgered application schema before changing it. Do not run mixed
-versions or delete individual rows to force startup.
+Unknown or unledgered pre-release schemas are still refused before mutation and require a
+fresh application database. Removing the `postgres_data` volume deletes retained history,
+Organizations, Users, Integrations, and credentials, so complete setup again after starting
+the new version. Do not delete individual rows merely to force startup.
 
 ## Failure states
 

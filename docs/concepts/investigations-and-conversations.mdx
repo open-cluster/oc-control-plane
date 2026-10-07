@@ -46,13 +46,14 @@ the same outcome. Failed final writes do not report a completed answer.
 An interrupted or superseded worker cannot append results or activity after losing ownership.
 
 Messages sent during an active Investigation wait for its completion. An Organization can
-have up to 100 unassigned person Messages waiting across its Conversations, alongside the
+have up to 100 unassigned user Messages waiting across its Conversations, alongside the
 separate limit for waiting Investigations. When capacity is full, new Messages are refused;
 retry after work progresses. Accepted Messages remain stored. Older backlogs larger than
 the limit drain in chronological batches of at most 100.
 
 Each Investigation receives the complete Messages assigned to it, in order, with their
-authors and timestamps. A shortened question preview does not replace those instructions.
+authors and timestamps. Those assigned user Messages are the authoritative request; there
+is no separate stored question preview.
 Optional history and inventory are omitted first if the initial request is too large.
 If the complete assigned batch still cannot fit, the result is `needs_input`: its limitation
 identifies the unprocessed Message sequences and asks you to narrow or split the request.
@@ -75,8 +76,8 @@ certainty; Findings do not carry a second confidence classification.
 
 Investigations represent other uncertainty as hypotheses or limitations instead.
 
-Hypotheses remain `exploring`, `supported`, `ruled_out`, or `unresolved`. Supported is
-weaker than verified. Limitations name missing access, telemetry, contradictions,
+Final hypotheses are `supported`, `ruled_out`, or `unresolved`. Supported is weaker than
+verified. Limitations name missing access, telemetry, contradictions,
 unresolved assumptions, or essential human input.
 
 Citations show what OpenCluster read, not that the source was complete or correct. Check

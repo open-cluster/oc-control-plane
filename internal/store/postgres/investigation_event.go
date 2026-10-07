@@ -65,7 +65,7 @@ func (p *Database) Events(
 		SELECT sequence, at, type, payload
 		  FROM investigation_event
 		 WHERE org_id = $1 AND investigation_id = $2 AND sequence > $3
-		   AND type NOT IN (5, 8)
+		   AND type NOT IN (5, 8, 10)
 		 ORDER BY sequence
 		 LIMIT $4`, organization, id, after, limit)
 	if err != nil {

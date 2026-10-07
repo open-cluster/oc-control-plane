@@ -19,14 +19,13 @@ import (
 type EventType int16
 
 const (
-	EventStarted           EventType = 1
-	EventProgress          EventType = 2
-	EventToolStarted       EventType = 3
-	EventToolCompleted     EventType = 4
-	EventConcluded         EventType = 6
-	EventFailed            EventType = 7
-	EventCancelled         EventType = 9
-	EventHypothesesUpdated EventType = 10
+	EventStarted       EventType = 1
+	EventProgress      EventType = 2
+	EventToolStarted   EventType = 3
+	EventToolCompleted EventType = 4
+	EventConcluded     EventType = 6
+	EventFailed        EventType = 7
+	EventCancelled     EventType = 9
 )
 
 func (t EventType) String() string {
@@ -45,8 +44,6 @@ func (t EventType) String() string {
 		return "failed"
 	case EventCancelled:
 		return "cancelled"
-	case EventHypothesesUpdated:
-		return "hypotheses_updated"
 	default:
 		return "unrecognised"
 	}
@@ -56,7 +53,7 @@ func (t EventType) Terminal() bool {
 	return t == EventConcluded || t == EventFailed || t == EventCancelled
 }
 
-const EventSchemaVersion = 1
+const EventSchemaVersion = 2
 
 type Event struct {
 	Sequence int64

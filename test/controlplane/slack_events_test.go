@@ -123,7 +123,7 @@ func mention(text, channel, ts, threadTS, user string) string {
 
 func (p *slackEventPlane) conversationsIn(t *testing.T) []struct {
 	ID       string
-	Surface  int16
+	Source   string
 	Subject  string
 	Messages int
 } {
@@ -137,7 +137,7 @@ func (p *slackEventPlane) conversationsIn(t *testing.T) []struct {
 	defer func() { _ = database.Close(ctx) }()
 
 	rows, err := database.Query(ctx, `
-		SELECT c.conversation_id, c.surface, c.subject,
+		SELECT c.conversation_id, c.source, c.subject,
 		       (SELECT count(*) FROM conversation_message m
 		         WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id)
 		  FROM conversation c
@@ -150,18 +150,18 @@ func (p *slackEventPlane) conversationsIn(t *testing.T) []struct {
 
 	var found []struct {
 		ID       string
-		Surface  int16
+		Source   string
 		Subject  string
 		Messages int
 	}
 	for rows.Next() {
 		var one struct {
 			ID       string
-			Surface  int16
+			Source   string
 			Subject  string
 			Messages int
 		}
-		if err := rows.Scan(&one.ID, &one.Surface, &one.Subject, &one.Messages); err != nil {
+		if err := rows.Scan(&one.ID, &one.Source, &one.Subject, &one.Messages); err != nil {
 			t.Fatalf("scanning a conversation: %v", err)
 		}
 		found = append(found, one)
@@ -197,8 +197,8 @@ func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 	if len(found) != 1 {
 		t.Fatalf("a mention produced %d conversations, want one: %+v", len(found), found)
 	}
-	if found[0].Surface != 2 {
-		t.Errorf("the conversation's surface = %d, want slack", found[0].Surface)
+	if found[0].Source != "slack" {
+		t.Errorf("the Conversation source = %q, want slack", found[0].Source)
 	}
 	if found[0].Subject != "why is checkout failing?" {
 		t.Errorf("subject = %q; the mention markup is not the question", found[0].Subject)

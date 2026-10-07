@@ -17,7 +17,7 @@ type errorView struct {
 type conversationView struct {
 	ID             string `json:"id"`
 	Subject        string `json:"subject"`
-	Surface        string `json:"surface"`
+	Source         string `json:"source"`
 	State          string `json:"state"`
 	IncidentID     string `json:"incidentId,omitempty"`
 	CreatedBy      string `json:"createdBy,omitempty"`
@@ -30,7 +30,6 @@ type messageView struct {
 	WindowUntil     string `json:"windowUntil"`
 	Sequence        int64  `json:"sequence"`
 	Role            string `json:"role"`
-	ActorKind       string `json:"actorKind"`
 	ActorID         string `json:"actorId,omitempty"`
 	ActorDisplay    string `json:"actorDisplay,omitempty"`
 	Text            string `json:"text"`
@@ -72,7 +71,7 @@ func conversationViewOf(found Conversation) conversationView {
 	view := conversationView{
 		ID:             found.ID.String(),
 		Subject:        found.Subject,
-		Surface:        found.Surface.String(),
+		Source:         found.Source.String(),
 		State:          found.State.String(),
 		CreatedBy:      found.CreatedBy,
 		CreatedAt:      stamp(found.CreatedAt),
@@ -88,7 +87,6 @@ func messageViewOf(message Message) messageView {
 	view := messageView{
 		Sequence:        message.Sequence,
 		Role:            message.Role.String(),
-		ActorKind:       message.ActorKind.String(),
 		ActorID:         message.ActorID,
 		ActorDisplay:    message.ActorDisplay,
 		Text:            message.Text,

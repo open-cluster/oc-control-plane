@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -11,7 +13,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-const SchemaVersion = "8"
+const SchemaVersion = "9"
 
 type properties map[string]any
 
@@ -89,7 +91,6 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			EvidenceRefs []investigation.EvidenceRef `json:"evidence_refs"`
 		} `json:"findings"`
 		Hypotheses []struct {
-			ID,
 			Statement,
 			Status,
 			Test string
@@ -106,9 +107,15 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			RunRefs         []int `json:"run_refs"`
 		} `json:"limitations"`
 	}
-	if err := json.Unmarshal(document, &jsonObject); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&jsonObject); err != nil {
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the conclusion is not the declared document: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return investigation.Conclusion{}, fmt.Errorf(
+			"the conclusion is not the declared document: trailing content")
 	}
 
 	if strings.TrimSpace(jsonObject.Summary) == "" {
@@ -172,7 +179,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 
 	// Hypotheses ------->
 	for _, hypothesis := range jsonObject.Hypotheses {
-		if hypothesis.ID == "" || hypothesis.Statement == "" || hypothesis.Test == "" ||
+		if hypothesis.Statement == "" || hypothesis.Test == "" ||
 			!oneOf(hypothesis.Status, investigation.HypothesisStatuses) {
 			return investigation.Conclusion{}, fmt.Errorf("a hypothesis is incomplete or has an invalid status")
 		}
@@ -180,7 +187,6 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			return investigation.Conclusion{}, err
 		}
 		conclusion.Hypotheses = append(conclusion.Hypotheses, investigation.HypothesisResult{
-			ID:        hypothesis.ID,
 			Statement: hypothesis.Statement,
 			Status:    investigation.HypothesisStatus(hypothesis.Status),
 			Test:      hypothesis.Test,
@@ -270,8 +276,7 @@ func validateConclusionStatus(conclusion investigation.Conclusion) error {
 		}
 		alternative := false
 		for _, hypothesis := range conclusion.Hypotheses {
-			alternative = alternative || hypothesis.Status == investigation.HypothesisExploring ||
-				hypothesis.Status == investigation.HypothesisUnresolved
+			alternative = alternative || hypothesis.Status == investigation.HypothesisUnresolved
 		}
 		if !alternative {
 			return fmt.Errorf("supported_explanation requires a plausible remaining alternative")

@@ -91,7 +91,7 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	err = connection.QueryRow(context.Background(), `
 		SELECT
 			(SELECT count(*) FROM investigation
-			  WHERE org_id = $2 AND concat_ws(' ', question, subject, conclusion::text, error) LIKE '%' || $1 || '%') +
+			  WHERE org_id = $2 AND concat_ws(' ', subject, conclusion::text, error) LIKE '%' || $1 || '%') +
 			(SELECT count(*) FROM investigation_event
 			  WHERE org_id = $2 AND payload::text LIKE '%' || $1 || '%') +
 			(SELECT count(*) FROM investigation_tool_run

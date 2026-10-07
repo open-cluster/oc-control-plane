@@ -133,7 +133,6 @@ func exchangeTools(orientation orientation) []integrations.ToolDefinition {
 	if orientation.HistoryBefore > 1 {
 		definitions = append(definitions, historyDefinition(orientation.HistoryBefore))
 	}
-	definitions = append(definitions, UpdateHypothesesDefinition())
 	return append(definitions, ConcludeDefinition())
 }
 
@@ -151,18 +150,6 @@ func envelopeDefinition(definition integrations.ToolDefinition) integrations.Too
 		"additionalProperties": false,
 	}
 	return definition
-}
-
-func UpdateHypothesesDefinition() integrations.ToolDefinition {
-	return integrations.ToolDefinition{
-		Name: UpdateHypothesesToolName,
-		Description: "Publish the complete current hypothesis snapshot for operators. " +
-			"Use stable IDs and replace the prior snapshot. This is local semantic state, " +
-			"not an external read and not private reasoning.",
-		InputSchema: object(properties{
-			"hypotheses": array(hypothesisSchema()),
-		}),
-	}
 }
 
 func ConcludeDefinition() integrations.ToolDefinition {
@@ -217,9 +204,9 @@ func agentFindingSchema() map[string]any {
 
 func hypothesisSchema() map[string]any {
 	return object(properties{
-		"id": stringField, "statement": stringField,
-		"status": enumField(investigation.HypothesisStatuses...),
-		"test":   stringField, "run_refs": array(integerField),
+		"statement": stringField,
+		"status":    enumField(investigation.HypothesisStatuses...),
+		"test":      stringField, "run_refs": array(integerField),
 	})
 }
 

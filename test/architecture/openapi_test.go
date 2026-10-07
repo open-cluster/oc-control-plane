@@ -497,12 +497,12 @@ func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
 	}
 
 	event := document.Components.Schemas["InvestigationEvent"]
-	if len(event.OneOf) != 9 {
-		t.Fatalf("InvestigationEvent has %d variants, want eight active events and one fallback", len(event.OneOf))
+	if len(event.OneOf) != 8 {
+		t.Fatalf("InvestigationEvent has %d variants, want seven active events and one fallback", len(event.OneOf))
 	}
 	for _, name := range []string{
 		"StartedInvestigationEvent", "ProgressInvestigationEvent", "ToolStartedInvestigationEvent",
-		"ToolCompletedInvestigationEvent", "HypothesesUpdatedInvestigationEvent", "ConcludedInvestigationEvent",
+		"ToolCompletedInvestigationEvent", "ConcludedInvestigationEvent",
 		"FailedInvestigationEvent", "CancelledInvestigationEvent", "UnknownInvestigationEvent",
 	} {
 		found := false

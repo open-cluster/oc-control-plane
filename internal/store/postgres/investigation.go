@@ -18,7 +18,7 @@ import (
 
 var _ investigation.HTTPStore = (*Database)(nil)
 
-const investigationColumns = `investigation_id, incident_id, question,
+const investigationColumns = `investigation_id, incident_id,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
 	       spend_output_tokens, created_by, created_at, concluded_at,
@@ -40,12 +40,11 @@ func (p *Database) CreateInvestigation(
 			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO investigation (investigation_id, org_id, incident_id,
-				                           question, subject, window_from, window_until,
+				                           subject, window_from, window_until,
 				                           created_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
 				RETURNING `+investigationColumns,
-				uuid.New(), organization, nullableUUID(wanted.IncidentID),
-				wanted.Question, wanted.Subject,
+				uuid.New(), organization, nullableUUID(wanted.IncidentID), wanted.Subject,
 				wanted.WindowFrom, wanted.WindowUntil, wanted.CreatedBy)
 
 			created, err := scanInvestigation(row)
@@ -471,8 +470,8 @@ func scanInvestigation(row scanned) (investigation.Investigation, error) {
 		conclusion     []byte
 		concludedAt    *time.Time
 	)
-	if err := row.Scan(&found.ID, &incidentID, &found.Question,
-		&conversationID, &turn, &found.Subject, &found.WindowFrom, &found.WindowUntil,
+	if err := row.Scan(&found.ID, &incidentID, &conversationID, &turn,
+		&found.Subject, &found.WindowFrom, &found.WindowUntil,
 		&found.Status, &conclusion, &found.StoppedBy,
 		&found.Error, &found.Usage.InputTokens,
 		&found.Usage.OutputTokens, &found.CreatedBy,

@@ -58,23 +58,6 @@ func tail(text string) string {
 	return string(runes[len(runes)-80:])
 }
 
-func TestAnEventReportsNoWindowForAReadThatDidNotUseOne(t *testing.T) {
-	t.Parallel()
-
-	payload := investigation.ToolCompletedPayload(investigation.ToolRun{
-		Ordinal: 1, Tool: "github.list_repositories", Outcome: investigation.RunSucceeded,
-		Summary:       "1 repositories matched",
-		WindowFrom:    time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC),
-		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
-		WindowApplied: false,
-	})
-
-	if payload.WindowFrom != "" {
-		t.Errorf("a listing that filtered by no window reports one: %v",
-			payload.WindowFrom)
-	}
-}
-
 func TestExternalToolCallsCarryPurposeAndInputWithoutAHypothesisAssociation(t *testing.T) {
 	definition := envelopeDefinition(integrations.ToolDefinition{
 		Name:        "github.read_commits",
@@ -90,23 +73,6 @@ func TestExternalToolCallsCarryPurposeAndInputWithoutAHypothesisAssociation(t *t
 	}
 	if properties["purpose"] == nil || properties["input"] == nil {
 		t.Errorf("purpose or input was removed with the hypothesis association: %#v", properties)
-	}
-}
-
-func TestAnEventReportsTheWindowForAReadThatUsedOne(t *testing.T) {
-	t.Parallel()
-
-	from := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
-	payload := investigation.ToolCompletedPayload(investigation.ToolRun{
-		Ordinal: 1, Tool: "github.read_commits", Outcome: investigation.RunSucceeded,
-		Summary: "0 commits in the window", WindowFrom: from,
-		WindowUntil:   time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC),
-		WindowApplied: true,
-	})
-
-	if payload.WindowFrom != from.Format(time.RFC3339) {
-		t.Errorf("windowFrom = %v; a windowed read must say what it covered",
-			payload.WindowFrom)
 	}
 }
 
