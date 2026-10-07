@@ -20,7 +20,7 @@ type StoredJobOutcome struct {
 func (p *Database) JobOutcome(
 	ctx context.Context, organization uuid.UUID, jobID uuid.UUID,
 ) (StoredJobOutcome, bool, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return StoredJobOutcome{}, false, err
 	}
@@ -76,7 +76,7 @@ func (p *Database) RecordResult(
 	fence JobFence,
 	outcome JobOutcome,
 ) (ResultRefusal, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}
@@ -109,7 +109,7 @@ func (p *Database) explainRefusedResult(
 	organization uuid.UUID,
 	fence JobFence,
 ) (ResultRefusal, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}

@@ -31,7 +31,7 @@ type SlackMessageOutcome struct {
 func (p *Database) RecordSlackMessage(
 	ctx context.Context, organization uuid.UUID, said SlackMessage,
 ) (SlackMessageOutcome, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return SlackMessageOutcome{}, err
 	}
@@ -168,7 +168,7 @@ func appendSlackMessage(
 func (p *Database) SlackMessageProviderReference(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID, sequence int64,
 ) (channel, message, reference string, err error) {
-	pool, poolErr := p.Pool(organization)
+	pool, poolErr := p.poolForOrganization(organization)
 	if poolErr != nil {
 		return "", "", "", poolErr
 	}
@@ -187,7 +187,7 @@ func (p *Database) SetSlackMessageSourceReference(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 	sequence int64, reference string, work SlackMessageWork,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -209,32 +209,10 @@ func (p *Database) SetSlackMessageSourceReference(
 	return nil
 }
 
-func (p *Database) SlackThreadOf(
-	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
-) (channel string, thread string, integration uuid.UUID, found bool, err error) {
-	pool, poolErr := p.Pool(organization)
-	if poolErr != nil {
-		return "", "", uuid.Nil, false, poolErr
-	}
-	scanErr := pool.QueryRow(ctx, `
-		SELECT channel_id, thread_ts, integration_id
-		  FROM slack_conversation
-		 WHERE conversation_id = $1 AND org_id = $2`,
-		conversationID, organization).Scan(&channel, &thread, &integration)
-	switch {
-	case errors.Is(scanErr, pgx.ErrNoRows):
-		return "", "", uuid.Nil, false, nil
-	case scanErr != nil:
-		return "", "", uuid.Nil, false,
-			fmt.Errorf("reading a slack thread binding: %w", scanErr)
-	}
-	return channel, thread, integration, true, nil
-}
-
 func (p *Database) UnnamedSlackAuthors(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
 ) ([]string, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +248,7 @@ func (p *Database) NameSlackAuthor(
 	if display == "" || display == actor {
 		return nil
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}

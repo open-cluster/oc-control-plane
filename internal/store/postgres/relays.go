@@ -29,7 +29,7 @@ func (p *Database) CountRelays(
 	if principal.Organization() != organization {
 		return RelayCounts{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return RelayCounts{}, err
 	}
@@ -83,7 +83,7 @@ func (p *Database) RelaySessionOpened(
 	ctx context.Context, organization uuid.UUID, registration, session uuid.UUID,
 	peer string,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (p *Database) RelaySessionOpened(
 func (p *Database) RelaySessionHeard(
 	ctx context.Context, organization uuid.UUID, registration, session uuid.UUID,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (p *Database) RelaySessionHeard(
 func (p *Database) RelaySessionClosed(
 	ctx context.Context, organization uuid.UUID, registration, session uuid.UUID,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (p *Database) RelayFailures(
 	if principal.Organization() != organization {
 		return RelayFailureList{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return RelayFailureList{}, err
 	}

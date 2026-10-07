@@ -24,7 +24,7 @@ func (p *Database) RecordSessionConflict(
 	registrationID uuid.UUID,
 	distinctHosts int,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (p *Database) RecordSessionConflict(
 func (p *Database) SessionConflict(
 	ctx context.Context, organization uuid.UUID, registrationID uuid.UUID,
 ) (SessionConflict, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return SessionConflict{}, err
 	}
@@ -113,7 +113,7 @@ func (p *Database) ClearSessionConflict(
 	if principal.Organization() != organization {
 		return 0, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}
@@ -162,7 +162,7 @@ func (p *Database) ClearSessionConflict(
 func (p *Database) explainUnwithdrawn(
 	ctx context.Context, organization uuid.UUID, registrationID uuid.UUID,
 ) (ConflictWithdrawal, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}

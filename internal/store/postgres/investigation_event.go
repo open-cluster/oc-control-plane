@@ -15,7 +15,7 @@ func (p *Database) AppendEvent(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	event investigation.Event,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (p *Database) Events(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	after int64, limit int,
 ) ([]investigation.Event, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}

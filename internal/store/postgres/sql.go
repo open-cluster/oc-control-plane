@@ -2,10 +2,17 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type querier interface {
+	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
+}
 
 type scanned interface {
 	Scan(destination ...any) error
@@ -30,4 +37,18 @@ func nullableText(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func decodeStringArray(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return []string{}, nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, err
+	}
+	if values == nil {
+		return []string{}, nil
+	}
+	return values, nil
 }

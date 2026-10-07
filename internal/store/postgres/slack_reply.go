@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 )
@@ -169,23 +168,49 @@ func (p *Database) RetrySlackReply(
 	})
 }
 
-func (p *Database) SlackReplyState(
-	ctx context.Context, organization uuid.UUID, investigation uuid.UUID,
-) (status int, sequence int64, streamTS string, note string, found bool, err error) {
-	pool, poolErr := p.Pool(organization)
-	if poolErr != nil {
-		return 0, 0, "", "", false, poolErr
+func (p *Database) ReleaseSlackReply(ctx context.Context, org uuid.UUID, id, owner uuid.UUID, at time.Time) error {
+	return p.withSlackReplyClaim(ctx, org, id, owner, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE slack_reply SET status = $3, lease_owner = NULL,
+			leased_until = NULL, next_attempt_at = $4, updated_at = now()
+			WHERE org_id = $1 AND investigation_id = $2`, org, id, SlackReplyPending, at.UTC())
+		return err
+	})
+}
+
+func (p *Database) withSlackReplyClaim(
+	ctx context.Context, org uuid.UUID, id, owner uuid.UUID,
+	write func(pgx.Tx) error,
+) error {
+	pool, err := p.poolForOrganization(org)
+	if err != nil {
+		return err
 	}
-	scanErr := pool.QueryRow(ctx, `
-		SELECT status, last_sequence, stream_ts, note
-		  FROM slack_reply
-		 WHERE investigation_id = $1 AND org_id = $2`,
-		investigation, organization).Scan(&status, &sequence, &streamTS, &note)
-	switch {
-	case errors.Is(scanErr, pgx.ErrNoRows):
-		return 0, 0, "", "", false, nil
-	case scanErr != nil:
-		return 0, 0, "", "", false, fmt.Errorf("reading a slack reply: %w", scanErr)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	return status, sequence, streamTS, note, true, nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	var locked uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT investigation_id FROM slack_reply
+		WHERE org_id = $1 AND investigation_id = $2 FOR UPDATE`, org, id).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return slack.ErrReplyClaimLost
+	}
+	if err != nil {
+		return fmt.Errorf("locking a slack reply: %w", err)
+	}
+	// Check expiry after locking because the wait may outlive the claim.
+	var owned bool
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(status = $4 AND lease_owner = $3
+		AND leased_until > clock_timestamp(), false) FROM slack_reply
+		WHERE org_id = $1 AND investigation_id = $2`, org, id, owner, SlackReplyDelivering).Scan(&owned); err != nil {
+		return err
+	}
+	if !owned {
+		return slack.ErrReplyClaimLost
+	}
+	if err = write(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
