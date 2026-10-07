@@ -179,9 +179,8 @@ func TestIssue150MigrationRefusesAmbiguousRetainedDataWithoutMutation(t *testing
 					t.Fatal(err)
 				}
 			} else {
-				conversationID := uuid.Nil
 				if test.kind == "cross-conversation-question" {
-					conversationID = uuid.New()
+					conversationID := uuid.New()
 					otherConversation := uuid.New()
 					if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id,org_id,surface,subject)
 						VALUES ($2,$1,1,'Expected'),($3,$1,1,'Wrong')`, org, conversationID, otherConversation); err != nil {
