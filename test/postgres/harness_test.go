@@ -8,12 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	slackwork "github.com/open-cluster/oc-control-plane/internal/webhooks/slack"
 	"github.com/testcontainers/testcontainers-go"
@@ -55,8 +59,154 @@ func openDatabaseForTest(t *testing.T, dsn string) *storage.Database {
 	if err != nil {
 		t.Fatalf("OpenDatabase: %v", err)
 	}
-	t.Cleanup(opened.Close)
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		opened.Close()
+		t.Fatalf("opening test-owned database pool: %v", err)
+	}
+	testDatabasePools.Store(opened, pool)
+	t.Cleanup(func() {
+		testDatabasePools.Delete(opened)
+		pool.Close()
+		opened.Close()
+	})
 	return opened
+}
+
+var testDatabasePools sync.Map
+
+func poolForTest(database *storage.Database, organization uuid.UUID) (*pgxpool.Pool, error) {
+	if organization == uuid.Nil {
+		return nil, storage.ErrUnknownOrganization
+	}
+	pool, ok := testDatabasePools.Load(database)
+	if !ok {
+		return nil, errors.New("test-owned database pool is unavailable")
+	}
+	return pool.(*pgxpool.Pool), nil
+}
+
+func appendMessageForTest(
+	database *storage.Database, ctx context.Context, _ authz.Principal, organization uuid.UUID,
+	id uuid.UUID, said conversation.NewMessage,
+) (conversation.Message, error) {
+	pool, err := poolForTest(database, organization)
+	if err != nil {
+		return conversation.Message{}, err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return conversation.Message{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var state conversation.State
+	if err = tx.QueryRow(ctx, `SELECT state FROM conversation
+		WHERE org_id = $1 AND conversation_id = $2 FOR UPDATE`, organization, id).Scan(&state); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return conversation.Message{}, conversation.ErrUnknown
+		}
+		return conversation.Message{}, err
+	}
+	if state != conversation.StateOpen {
+		return conversation.Message{}, conversation.ErrClosed
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	window := conversation.Window{From: now.Add(-conversation.DefaultIncidentWindowLead), Until: now}
+	if said.Window != nil {
+		window = said.Window.Normalized()
+	}
+	var written conversation.Message
+	var role conversation.Role
+	var actorKind conversation.ActorKind
+	var investigationID *uuid.UUID
+	if err = tx.QueryRow(ctx, `INSERT INTO conversation_message
+		(conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text, window_from, window_until)
+		SELECT $1, $2, coalesce((SELECT max(sequence) FROM conversation_message
+		 WHERE org_id = $2 AND conversation_id = $1), 0) + 1, $3, $4, $5, $6, $7, $8, $9
+		RETURNING sequence, role, actor_kind, actor_id, actor_display, text, source_reference,
+		          investigation_id, created_at`, id, organization, int16(said.Role), int16(said.ActorKind),
+		said.ActorID, said.ActorDisplay, said.Text, window.From, window.Until).Scan(
+		&written.Sequence, &role, &actorKind, &written.ActorID, &written.ActorDisplay,
+		&written.Text, &written.SourceReference, &investigationID, &written.CreatedAt); err != nil {
+		return conversation.Message{}, err
+	}
+	written.Role, written.ActorKind = role, actorKind
+	if investigationID != nil {
+		written.InvestigationID = *investigationID
+	}
+	written.WindowFrom, written.WindowUntil = window.From, window.Until
+	if _, err = tx.Exec(ctx, `UPDATE conversation SET last_activity_at = now()
+		WHERE org_id = $1 AND conversation_id = $2`, organization, id); err != nil {
+		return conversation.Message{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return conversation.Message{}, err
+	}
+	return written, nil
+}
+
+func openTurnForTest(
+	database *storage.Database, ctx context.Context, organization, conversationID uuid.UUID,
+	lead time.Duration,
+) (conversation.Turn, bool, error) {
+	opened, err := database.DrainConversation(ctx, organization, conversationID, lead, 1_000_000)
+	if err != nil || !opened {
+		return conversation.Turn{}, opened, err
+	}
+	pool, err := poolForTest(database, organization)
+	if err != nil {
+		return conversation.Turn{}, false, err
+	}
+	var turn conversation.Turn
+	var status investigation.Status
+	err = pool.QueryRow(ctx, `SELECT investigation_id, turn, status, created_at
+		FROM investigation WHERE org_id = $1 AND conversation_id = $2
+		ORDER BY turn DESC LIMIT 1`, organization, conversationID).Scan(
+		&turn.InvestigationID, &turn.Ordinal, &status, &turn.CreatedAt)
+	turn.Status = status.String()
+	return turn, err == nil, err
+}
+
+func waitingTurnsForTest(
+	database *storage.Database, ctx context.Context, organization uuid.UUID,
+) (int, error) {
+	pool, err := poolForTest(database, organization)
+	if err != nil {
+		return 0, err
+	}
+	var waiting int
+	err = pool.QueryRow(ctx, `SELECT count(*) FROM investigation
+		WHERE org_id = $1 AND status = 1 AND lease_worker = ''`, organization).Scan(&waiting)
+	return waiting, err
+}
+
+func slackReplyStateForTest(
+	database *storage.Database, ctx context.Context, organization, investigationID uuid.UUID,
+) (status int, sequence int64, streamTS, note string, found bool, err error) {
+	pool, err := poolForTest(database, organization)
+	if err != nil {
+		return 0, 0, "", "", false, err
+	}
+	err = pool.QueryRow(ctx, `SELECT status, last_sequence, stream_ts, note FROM slack_reply
+		WHERE investigation_id = $1 AND org_id = $2`, investigationID, organization).Scan(
+		&status, &sequence, &streamTS, &note)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, "", "", false, nil
+	}
+	return status, sequence, streamTS, note, err == nil, err
+}
+
+func issueBootstrapTokenForTest(
+	database *storage.Database, ctx context.Context, organization uuid.UUID,
+	digest []byte, expiresAt time.Time,
+) error {
+	pool, err := poolForTest(database, organization)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
+		VALUES ($1, $2, $3)`, digest, organization, expiresAt)
+	return err
 }
 
 func organization(t *testing.T, id string) uuid.UUID {
@@ -160,7 +310,7 @@ func runProbe(t *testing.T, required string) (string, error) {
 
 func claimToken(t *testing.T, database *storage.Database, org uuid.UUID, id uuid.UUID) uuid.UUID {
 	t.Helper()
-	pool, err := database.Pool(org)
+	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +353,7 @@ type storedSlackMessageWork struct {
 
 func readSlackMessageWork(t *testing.T, fixture slackMessageFixture) storedSlackMessageWork {
 	t.Helper()
-	pool, err := fixture.database.Pool(fixture.organization)
+	pool, err := poolForTest(fixture.database, fixture.organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +383,7 @@ func acceptedSlackMessage(t *testing.T) slackMessageFixture {
 		t.Fatal(err)
 	}
 	var delivery uuid.UUID
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,14 +20,14 @@ const moduleRoot = "../.."
 func TestBaselineUsesChangesVocabulary(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(moduleRoot, "internal", "store", "postgres", "migrations", "0001_schema.sql")
+	path := filepath.Join(moduleRoot, "internal", "store", "postgres", "migrations", "0001_current_schema.sql")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	schema := string(content)
 	for _, table := range []string{"change_event", "change_scope"} {
-		if !strings.Contains(schema, "CREATE TABLE "+table+" (") {
+		if !strings.Contains(schema, "CREATE TABLE public."+table+" (") {
 			t.Errorf("baseline does not create %s", table)
 		}
 	}
@@ -118,7 +118,6 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"Migrate":            "applies schema to the deployment database; touches no tenant row",
 		"Ping":               "reports deployment database reachability; reads no tenant data",
 		"Close":              "releases the deployment pool",
-		"MigrationCount":     "reports how many migrations the binary carries",
 		"IntegrationByID": "resolves a tenant FROM an opaque integration identifier; " +
 			"the row found is the authority, and no caller-supplied value selects it",
 		"IntegrationByInstallation": "resolves a tenant FROM a deployment-unique vendor " +

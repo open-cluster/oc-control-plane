@@ -114,7 +114,7 @@ func (p *Database) IntegrationByID(
 func (p *Database) Integration(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (integrations.Integration, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return integrations.Integration{}, err
 	}
@@ -141,7 +141,7 @@ func (p *Database) QueryIntegrations(
 	if principal.Organization() != organization {
 		return integrations.List{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return integrations.List{}, err
 	}
@@ -238,7 +238,7 @@ func (p *Database) CountIntegrationsByProvider(
 	if principal.Organization() != organization {
 		return nil, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +533,7 @@ func (p *Database) IntegrationRelayStatus(
 	if relayID == uuid.Nil {
 		return integrations.RelayStatus{}, nil
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return integrations.RelayStatus{}, err
 	}
@@ -590,7 +590,7 @@ func decodeCapabilityNames(raw []byte) ([]string, error) {
 func (p *Database) LastAcceptedDelivery(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (time.Time, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return time.Time{}, err
 	}

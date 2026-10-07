@@ -25,7 +25,7 @@ const postmortemColumns = `incident_id, status, revision, document, created_at,
 func (p *Database) GenerationInput(
 	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
 ) (postmortem.GenerationInput, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, err
 	}
@@ -192,7 +192,7 @@ func (p *Database) GenerationInput(
 func (p *Database) Postmortem(
 	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
 ) (postmortem.Postmortem, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return postmortem.Postmortem{}, err
 	}

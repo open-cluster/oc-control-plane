@@ -45,7 +45,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	if err != nil || !found {
 		t.Fatalf("Slack job: found=%t err=%v", found, err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 	if _, found, err := database.ClaimSlackMessageWork(ctx, "unused-alert-worker", time.Minute); err != nil || found {
 		t.Fatalf("new alert delivery queued webhook work: found=%t err=%v", found, err)
 	}
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 		t.Run(table, func(t *testing.T) {
 			database, organization := migratedDatabase(t)
 			ctx := context.Background()
-			pool, err := database.Pool(organization)
+			pool, err := poolForTest(database, organization)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -305,7 +305,7 @@ func TestConcurrentExactAlertDuplicatesOpenOneAutomaticInvestigation(t *testing.
 
 func assertNoAlertDeliveryFacts(t *testing.T, database *storage.Database, organization uuid.UUID) {
 	t.Helper()
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func recordIncident(
 ) uuid.UUID {
 	t.Helper()
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -407,7 +407,7 @@ func recordedIncidentMerge(
 ) bool {
 	t.Helper()
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestIncidentAlertEventCountIsDerivedFromAlertEvents(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	integration := alertmanagerIntegration(t, database, organization)
 	incidentID := recordIncident(t, database, organization, integration, "derived-count")
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestAutomaticIncidentInvestigationIsUniqueAndManualWorkCanCoexist(t *testin
 	database, organization, other := twoOrganizationsInOneDatabase(t)
 	integration := alertmanagerIntegration(t, database, organization)
 	incident := recordIncident(t, database, organization, integration, "automatic")
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestAutomaticIncidentInvestigationRequiresAnIncidentAndCannotBeAConversatio
 	incident := recordIncident(t, database, organization,
 		alertmanagerIntegration(t, database, organization), "shape")
 	chat := openConversation(t, database, organization, "service")
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -44,8 +45,12 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	ctx := context.Background()
 	dsn := postgresDSN(t)
 	database := openDatabaseForTest(t, dsn)
-	if _, err := database.Migrate(ctx); err != nil {
+	applied, err := database.Migrate(ctx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(applied, []string{"0001_current_schema"}) {
+		t.Fatalf("fresh migration applied %v, want the current baseline only", applied)
 	}
 	if applied, err := database.Migrate(ctx); err != nil || len(applied) != 0 {
 		t.Fatalf("repeated migration applied %v: %v", applied, err)
@@ -163,6 +168,115 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		VALUES ($1, $2, decode(repeat('01',32),'hex'), 'fingerprint', 'test', '{}'::jsonb)`,
 		uuid.New(), uuid.New()); err == nil {
 		t.Fatal("fresh schema accepted a tenant-root row without an Organization")
+	}
+}
+
+func TestUnrecognizedMigrationLedgerIsRefusedWithoutMutation(t *testing.T) {
+	for _, version := range []string{"0001_schema", "9999_unknown"} {
+		t.Run(version, func(t *testing.T) {
+			ctx := context.Background()
+			dsn := postgresDSN(t)
+			connection, err := pgx.Connect(ctx, dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = connection.Close(ctx) }()
+			if _, err = connection.Exec(ctx, `
+				CREATE TABLE schema_migration
+				(
+					version TEXT NOT NULL PRIMARY KEY,
+					applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+				);
+				CREATE TABLE legacy_marker(value TEXT NOT NULL);
+				INSERT INTO legacy_marker(value) VALUES ('preserve me')`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = connection.Exec(ctx,
+				`INSERT INTO schema_migration(version) VALUES ($1)`, version); err != nil {
+				t.Fatal(err)
+			}
+
+			database := openDatabaseForTest(t, dsn)
+			_, err = database.Migrate(ctx)
+			if err == nil || !strings.Contains(err.Error(), "pre-release database must be recreated") {
+				t.Fatalf("migration error = %v, want actionable recreation refusal", err)
+			}
+			var marker string
+			var versions []string
+			if err = connection.QueryRow(ctx, `SELECT value FROM legacy_marker`).Scan(&marker); err != nil {
+				t.Fatal(err)
+			}
+			if err = connection.QueryRow(ctx, `SELECT array_agg(version ORDER BY version) FROM schema_migration`).Scan(&versions); err != nil {
+				t.Fatal(err)
+			}
+			if marker != "preserve me" || !reflect.DeepEqual(versions, []string{version}) {
+				t.Fatalf("refusal mutated database: marker=%q versions=%v", marker, versions)
+			}
+		})
+	}
+}
+
+func TestUnledgeredApplicationSchemaIsRefusedWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	if _, err = connection.Exec(ctx, `CREATE TABLE organization (legacy_value TEXT NOT NULL);
+		INSERT INTO organization(legacy_value) VALUES ('preserve me')`); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	_, err = database.Migrate(ctx)
+	if err == nil || !strings.Contains(err.Error(), "pre-release database must be recreated") {
+		t.Fatalf("unledgered schema error = %v, want actionable recreation refusal", err)
+	}
+	var marker string
+	var ledgerAbsent bool
+	if err = connection.QueryRow(ctx, `SELECT legacy_value FROM organization`).Scan(&marker); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT to_regclass('schema_migration') IS NULL`).Scan(&ledgerAbsent); err != nil {
+		t.Fatal(err)
+	}
+	if marker != "preserve me" || !ledgerAbsent {
+		t.Fatalf("refusal mutated unledgered database: marker=%q ledger_absent=%v", marker, ledgerAbsent)
+	}
+}
+
+func TestEmptyLedgerDoesNotMaskApplicationObjects(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	if _, err = connection.Exec(ctx, `CREATE TABLE schema_migration
+		(version TEXT NOT NULL PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+		CREATE TABLE organization (legacy_value TEXT NOT NULL);
+		INSERT INTO organization(legacy_value) VALUES ('preserve me')`); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	_, err = database.Migrate(ctx)
+	if err == nil || !strings.Contains(err.Error(), "pre-release database must be recreated") {
+		t.Fatalf("empty-ledger schema error = %v, want actionable recreation refusal", err)
+	}
+	var marker string
+	var versions int
+	if err = connection.QueryRow(ctx, `SELECT legacy_value FROM organization`).Scan(&marker); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM schema_migration`).Scan(&versions); err != nil {
+		t.Fatal(err)
+	}
+	if marker != "preserve me" || versions != 0 {
+		t.Fatalf("refusal mutated empty-ledger database: marker=%q versions=%d", marker, versions)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -56,7 +55,7 @@ func (p *Database) EnrolRelay(
 	organization uuid.UUID,
 	enrolment RelayEnrolment,
 ) (uuid.UUID, EnrolmentRefusal, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return uuid.Nil, RefusalNone, err
 	}
@@ -175,33 +174,13 @@ func insertRegistration(ctx context.Context, transaction pgx.Tx, registration re
 	return nil
 }
 
-func (p *Database) IssueBootstrapToken(
-	ctx context.Context,
-	organization uuid.UUID,
-	tokenDigest []byte,
-	expiresAt time.Time,
-) error {
-	pool, err := p.Pool(organization)
-	if err != nil {
-		return err
-	}
-	_, err = pool.Exec(ctx, `
-		INSERT INTO relay_bootstrap_token (bootstrap_digest, org_id, expires_at)
-		VALUES ($1, $2, $3)`,
-		tokenDigest, organization, expiresAt)
-	if err != nil {
-		return fmt.Errorf("issuing bootstrap token: %w", err)
-	}
-	return nil
-}
-
 func (p *Database) VerifyRelayCredential(
 	ctx context.Context,
 	organization uuid.UUID,
 	registrationID uuid.UUID,
 	credentialDigest []byte,
 ) (bool, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return false, err
 	}

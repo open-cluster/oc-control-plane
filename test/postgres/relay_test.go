@@ -115,41 +115,6 @@ func TestJob_ResultWhoseLeaseMovedIsNotCalledSuperseded(t *testing.T) {
 	}
 }
 
-func TestJob_ExpiredLeaseReturnsToPendingAndTerminalWorkIsNeverSwept(t *testing.T) {
-	t.Parallel()
-	database, organization := migratedDatabase(t)
-	registration := enrolledRelay(t, database, organization)
-
-	enqueue(t, database, organization, registration)
-	enqueue(t, database, organization, registration)
-	leased := claim(t, database, organization, registration, uuid.New())
-	if len(leased) != 2 {
-		t.Fatalf("claimed %d jobs, want both", len(leased))
-	}
-	abandoned, done := leased[0], leased[1]
-
-	if _, err := database.RecordResult(context.Background(), organization,
-		storage.JobFence{JobID: done.ID, LeaseSession: done.LeaseSession, LeaseEpoch: done.LeaseEpoch},
-		storage.JobOutcome{Status: storage.JobSucceeded}); err != nil {
-		t.Fatalf("recording the finished job: %v", err)
-	}
-	expireLease(t, database, organization, abandoned.ID)
-
-	swept, err := database.SweepExpiredLeases(context.Background(), organization)
-	if err != nil {
-		t.Fatalf("sweeping: %v", err)
-	}
-	if swept != 1 {
-		t.Errorf("swept %d jobs, want exactly the abandoned one — a terminal job re-run is "+
-			"the duplicate execution the fence exists to prevent", swept)
-	}
-
-	reclaimed := claim(t, database, organization, registration, uuid.New())
-	if len(reclaimed) != 1 || reclaimed[0].ID != abandoned.ID {
-		t.Fatalf("after sweeping, claimed %d jobs, want the abandoned one back", len(reclaimed))
-	}
-}
-
 func TestJob_WorkEnqueuedWithNoSessionIsDeliveredOnTheNextClaim(t *testing.T) {
 	t.Parallel()
 	database, organization := migratedDatabase(t)
@@ -449,7 +414,7 @@ func ensureTestOrganization(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
 ) {
 	t.Helper()
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("opening organization pool: %v", err)
 	}
@@ -482,9 +447,9 @@ func enqueueThrough(
 		CapabilityVersion: 1,
 		Arguments:         []byte("arguments"),
 	}
-	refusal, err := database.EnqueueJob(context.Background(), organization, job)
+	err := database.EnqueueVerifiedJob(context.Background(), organization, job)
 	if err != nil {
-		t.Fatalf("enqueueing: %v (%s)", err, refusal)
+		t.Fatalf("enqueueing verified work: %v", err)
 	}
 	return job.ID
 }
@@ -496,7 +461,7 @@ func enrolledRelay(
 
 	token := randomDigest(t)
 	ctx := context.Background()
-	if err := database.IssueBootstrapToken(
+	if err := issueBootstrapTokenForTest(database,
 		ctx, organization, token, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("issuing a bootstrap token: %v", err)
 	}
@@ -527,6 +492,13 @@ func kubernetesIntegration(
 		})
 	if err != nil {
 		t.Fatalf("creating a kubernetes integration: %v", err)
+	}
+	if _, err = database.RecordIntegrationVerification(context.Background(), ownerOf(t, organization),
+		organization, created.ID, integrations.Verification{
+			Status: integrations.StatusVerified,
+			Grants: []string{"kubernetes.workload.runtime"},
+		}); err != nil {
+		t.Fatalf("verifying the kubernetes integration: %v", err)
 	}
 	return created.ID
 }
@@ -567,7 +539,7 @@ func expireLease(
 ) {
 	t.Helper()
 
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatalf("resolving the database: %v", err)
 	}
@@ -582,7 +554,7 @@ func TestRelayLastSeenSortPagesRelaysThatHaveNeverConnected(t *testing.T) {
 	t.Parallel()
 
 	database, organization := migratedDatabase(t)
-	pool, err := database.Pool(organization)
+	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
 	}

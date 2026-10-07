@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
@@ -67,7 +66,7 @@ func (p *Database) CreateInvestigation(
 func (p *Database) Investigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.Investigation{}, err
 	}
@@ -95,7 +94,7 @@ func (p *Database) Investigation(
 func (p *Database) InvestigationToolRuns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) ([]investigation.ToolRun, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +155,7 @@ func (p *Database) QueryInvestigations(
 	if principal.Organization() != organization {
 		return investigation.List{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.List{}, err
 	}
@@ -214,7 +213,7 @@ func (p *Database) RecordToolRun(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	run investigation.ToolRun,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -349,7 +348,7 @@ func (p *Database) endInvestigation(
 	status int16, conclusion []byte, stoppedBy, reason string,
 	usage investigation.Usage, payload investigation.EventPayload,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -415,7 +414,7 @@ const triggerColumns = `e.incident_id, e.integration_id, e.title, e.status,
 func (p *Database) TriggerIncident(
 	ctx context.Context, organization uuid.UUID, incident uuid.UUID,
 ) (investigation.Trigger, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.Trigger{}, err
 	}
@@ -435,7 +434,7 @@ func (p *Database) TriggerIncident(
 func (p *Database) InvestigationCandidates(
 	ctx context.Context, organization uuid.UUID,
 ) ([]integrations.Integration, error) {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
@@ -531,4 +530,38 @@ func orEmptyStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+var ErrInvestigationCapacity = errors.New("organization has reached its waiting investigation limit")
+
+func reserveWaitingInvestigations(
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID, maximum, requested int,
+) error {
+	if maximum <= 0 {
+		return nil
+	}
+	if _, err := transaction.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		organization.String()); err != nil {
+		return fmt.Errorf("locking organization waiting-investigation capacity: %w", err)
+	}
+	var waiting int
+	if err := transaction.QueryRow(ctx, `
+		SELECT count(*) FROM investigation
+		 WHERE org_id = $1 AND status = 1 AND lease_worker = ''`,
+		organization).Scan(&waiting); err != nil {
+		return fmt.Errorf("counting organization waiting investigations: %w", err)
+	}
+	if requested > maximum-waiting {
+		return ErrInvestigationCapacity
+	}
+	return nil
+}
+
+func lockInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, id uuid.UUID) error {
+	var found int
+	err := tx.QueryRow(ctx, `SELECT 1 FROM investigation WHERE org_id = $1 AND investigation_id = $2 FOR NO KEY UPDATE`, org, id).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return investigation.ErrUnknown
+	}
+	return err
 }

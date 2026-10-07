@@ -16,7 +16,7 @@ func (p *Database) ConversationTurns(
 	if _, err := p.Conversation(ctx, organization, id); err != nil {
 		return conversation.TurnPage{}, err
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return conversation.TurnPage{}, err
 	}

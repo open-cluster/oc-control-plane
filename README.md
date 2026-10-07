@@ -111,9 +111,11 @@ To enable the optional Relay transport, provide `OPENCLUSTER_RELAY_SPKI_PINS`, s
 set `relay.enabled=true` in the Helm release. The Relay initiates the connection; the control plane never dials into a
 customer cluster.
 
-Upgrading an older v0.1 deployment requires stopping every old control-plane replica
-before the new binary starts, repairs accepted alert work, and contracts the Slack work schema. Do not
-run mixed versions; see the [Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
+This pre-release baseline does not upgrade an older OpenCluster database. Stop every old
+control-plane replica, back up PostgreSQL, recreate the application database, then start the
+new version and complete setup again. A backup supports recovery with its original version;
+it is not a supported import into this schema. See the
+[Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
 
 ## Architecture
 
@@ -127,10 +129,10 @@ including post-acknowledgement source lookup, fenced leases, heartbeat, retry, a
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
-Credential key identity lives in the authenticated sealed envelope. Upgrades refuse retained installation
-refresh data that needs reconciliation before removing unsupported refresh fields.
+Credential key identity lives in the authenticated sealed envelope. Startup refuses an older, unknown, or
+unledgered application schema before mutation and reports that the pre-release database must be recreated.
 Slack reply attempts derive their destination from an immutable Conversation mapping; delivery cursors and
-leases remain owned by the reply. An upgrade refuses conflicting retained destinations.
+leases remain owned by the reply.
 
 Provider adapters offer native read tools behind one provider-independent investigation contract. Kubernetes libraries
 and customer cluster credentials never enter this module; the Relay executes the released, versioned capability protocol

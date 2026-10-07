@@ -21,7 +21,7 @@ var (
 func (p *Database) RecordEvent(
 	ctx context.Context, organization uuid.UUID, event audit.Event,
 ) error {
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func auditedWithAction[T any](
 	if principal.Organization() != organization {
 		return zero, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return zero, err
 	}
@@ -146,7 +146,7 @@ func (p *Database) AuditEvents(
 	if principal.Organization() != organization {
 		return audit.List{}, ErrNotAMember
 	}
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return audit.List{}, err
 	}
@@ -244,7 +244,7 @@ func (p *Database) PruneEventsBefore(
 ) (int64, error) {
 	// The pruning permission is transaction-local; a session setting could leak through the
 	// connection pool and authorize unrelated deletes.
-	pool, err := p.Pool(organization)
+	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return 0, err
 	}

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -113,18 +112,4 @@ func decodeTimeSortCursor(cursor, scope string) (*time.Time, *uuid.UUID, error) 
 		return nil, nil, ErrBadCursor
 	}
 	return &at, id, nil
-}
-
-func decodeStringArray(raw []byte) ([]string, error) {
-	if len(raw) == 0 {
-		return []string{}, nil
-	}
-	var values []string
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil, err
-	}
-	if values == nil {
-		return []string{}, nil
-	}
-	return values, nil
 }
