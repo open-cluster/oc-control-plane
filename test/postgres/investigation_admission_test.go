@@ -3,15 +3,173 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
+	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestCreateInvestigationEnforcesBacklogAtomically(t *testing.T) {
+	database, organization, _ := twoOrganizationsInOneDatabase(t)
+	principal := ownerOf(t, organization)
+	wanted := investigation.NewInvestigation{
+		Question: "what changed?", Subject: "service",
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String(),
+	}
+
+	start := make(chan struct{})
+	errorsSeen := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for range 2 {
+		go func() {
+			ready.Done()
+			<-start
+			_, err := database.CreateInvestigation(context.Background(), principal, organization, wanted, 1)
+			errorsSeen <- err
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	accepted, refused := 0, 0
+	for range 2 {
+		err := <-errorsSeen
+		switch {
+		case err == nil:
+			accepted++
+		case errors.Is(err, investigation.ErrQueueFull):
+			refused++
+		default:
+			t.Fatalf("CreateInvestigation: %v", err)
+		}
+	}
+	if accepted != 1 || refused != 1 {
+		t.Fatalf("accepted=%d refused=%d, want one of each", accepted, refused)
+	}
+}
+
+func TestConversationAndDirectIngressShareOneAtomicBacklog(t *testing.T) {
+	database, organization, _ := twoOrganizationsInOneDatabase(t)
+	principal := ownerOf(t, organization)
+	chat := openConversation(t, database, organization, "service")
+	wanted := investigation.NewInvestigation{
+		Question: "what changed?", Subject: "service",
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String(),
+	}
+
+	start := make(chan struct{})
+	errorsSeen := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	go func() {
+		ready.Done()
+		<-start
+		_, err := database.CreateInvestigation(context.Background(), principal, organization, wanted, 1)
+		errorsSeen <- err
+	}()
+	go func() {
+		ready.Done()
+		<-start
+		_, _, _, err := database.AppendMessageAndOpenTurn(context.Background(), principal,
+			organization, chat.ID, conversation.NewMessage{
+				Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+				ActorID: principal.UserID().String(), Text: "please investigate",
+			}, time.Hour, 1)
+		errorsSeen <- err
+	}()
+	ready.Wait()
+	close(start)
+
+	accepted, refused := 0, 0
+	for range 2 {
+		err := <-errorsSeen
+		switch {
+		case err == nil:
+			accepted++
+		case errors.Is(err, investigation.ErrQueueFull), errors.Is(err, conversation.ErrQueueFull):
+			refused++
+		default:
+			t.Fatalf("opening work: %v", err)
+		}
+	}
+	if accepted != 1 || refused != 1 {
+		t.Fatalf("accepted=%d refused=%d, want one of each", accepted, refused)
+	}
+}
+
+func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
+	database, organization, _ := twoOrganizationsInOneDatabase(t)
+	principal := ownerOf(t, organization)
+	chat := openConversation(t, database, organization, "service")
+	if _, err := database.AppendMessage(context.Background(), principal, organization, chat.ID,
+		conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			ActorID: principal.UserID().String(), Text: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	turn, opened, err := database.OpenTurn(context.Background(), organization, chat.ID, time.Hour)
+	if err != nil || !opened {
+		t.Fatalf("opening first turn: opened=%t err=%v", opened, err)
+	}
+	if _, _, claimed, err := database.ClaimInvestigation(context.Background(), aClaim("worker")); err != nil || !claimed {
+		t.Fatalf("claiming first turn: claimed=%t err=%v", claimed, err)
+	}
+	if _, err := database.AppendMessage(context.Background(), principal, organization, chat.ID,
+		conversation.NewMessage{Role: conversation.RolePerson, ActorKind: conversation.ActorPrincipal,
+			ActorID: principal.UserID().String(), Text: "follow up"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ConcludeInvestigation(context.Background(), organization,
+		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: "done"}, "", investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateInvestigation(context.Background(), principal, organization,
+		investigation.NewInvestigation{Question: "other", Subject: "other",
+			WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String()}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DrainConversation(context.Background(), organization, chat.ID, time.Hour, 1); !errors.Is(err, conversation.ErrQueueFull) {
+		t.Fatalf("DrainConversation error = %v, want queue full", err)
+	}
+	if _, _, claimed, err := database.ClaimInvestigation(context.Background(), aClaim("other-worker")); err != nil || !claimed {
+		t.Fatalf("claiming queued work: claimed=%t err=%v", claimed, err)
+	}
+	if drained, err := database.DrainQueuedConversation(context.Background(), time.Hour, 1); err != nil || !drained {
+		t.Fatalf("retrying durable drain: drained=%t err=%v", drained, err)
+	}
+	waiting, err := database.WaitingTurns(context.Background(), organization)
+	if err != nil || waiting != 1 {
+		t.Fatalf("waiting=%d err=%v, want the follow-up Investigation", waiting, err)
+	}
+}
+
+func awaitInvestigationAdmissionWaiters(t *testing.T, ctx context.Context, pool *pgxpool.Pool, wanted int) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event = 'advisory'
+			AND query LIKE '%pg_advisory_xact_lock(hashtextextended%'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == wanted {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatalf("admission waiters=%d, want %d: %v", waiting, wanted, ctx.Err())
+		}
+	}
+}
 
 func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 	t.Parallel()

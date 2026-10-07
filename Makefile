@@ -48,7 +48,7 @@ test-short:
 	cd $(HARNESS_MODULE) && CGO_ENABLED=0 go test -short -count=1 -timeout $(TEST_TIMEOUT) ./...
 
 test-postgres:
-	OC_REQUIRE_CONTAINERS=1 CGO_ENABLED=1 go test -race -count=1 -timeout $(TEST_TIMEOUT) ./internal/store/postgres
+	OC_REQUIRE_CONTAINERS=1 CGO_ENABLED=1 go test -race -count=1 -timeout $(TEST_TIMEOUT) ./test/postgres
 
 vuln:
 	govulncheck ./...

@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
+	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func changeScope(
