@@ -459,6 +459,7 @@ func (r *Agent) Run(
 					Ordinal: len(state.runs) + 1, Tool: call.Tool, Arguments: call.Arguments,
 					WindowFrom: opened.WindowFrom, WindowUntil: opened.WindowUntil,
 					Outcome:   investigation.RunFailed,
+					Summary:   "not executed: an external read requires a purpose",
 					Error:     "not executed: an external read requires a purpose",
 					StartedAt: now, FinishedAt: now,
 				}
@@ -686,6 +687,8 @@ func suppressedRun(
 		WindowFrom:  opened.WindowFrom,
 		WindowUntil: opened.WindowUntil,
 		Outcome:     investigation.RunFailed,
+		Summary: fmt.Sprintf("not executed: identical to run %d, whose result is already "+
+			"above", original),
 		Error: fmt.Sprintf("not executed: identical to run %d, whose result is already "+
 			"above; call a different tool, or the same tool with different arguments, "+
 			"to gather new evidence — or conclude", original),

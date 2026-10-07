@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -47,11 +48,16 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	}
 	if _, err := connection.Exec(ctx, `INSERT INTO investigation_event(investigation_id, org_id, sequence, type, payload) VALUES
 			($2, $1, 1, 1, '{"question":"legacy"}'),
-			($2, $1, 2, 2, '{"message":"Reading"}'),
+			($2, $1, 2, 2, '{"text":"Reading","message":"legacy"}'),
 			($2, $1, 3, 5, '{"legacy":true}'),
 			($2, $1, 4, 10, '{"hypotheses":[]}'),
 			($2, $1, 5, 4, '{"ordinal":1,"outcome":"failed","error":"provider token sk-secret-value"}'),
-			($2, $1, 6, 4, '{"ordinal":2,"outcome":"failed","error":"not one of the tools the selected sources offer"}')`, org, investigationID); err != nil {
+			($2, $1, 6, 4, '{"ordinal":2,"outcome":"failed","error":"not one of the tools the selected sources offer"}'),
+			($2, $1, 7, 3, '{"ordinal":3,"tool":"github.read","integrationId":"00000000-0000-0000-0000-000000000001","integration":"GitHub","purpose":"Read evidence","arguments":{"token":"secret"},"hypothesisId":"legacy"}'),
+			($2, $1, 8, 6, '{"status":"answer_only","summary":"The answer","question":"legacy"}'),
+			($2, $1, 9, 7, '{"reason":"Model failed","error":"legacy"}'),
+			($2, $1, 10, 9, '{"message":"Cancelled","reason":"legacy"}'),
+			($2, $1, 11, 4, '{"ordinal":4,"outcome":"failed","error":"not executed: token sk-secret-value"}')`, org, investigationID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,24 +81,49 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	if source != "web" || strings.Contains(conclusion, `"id"`) || !strings.Contains(conclusion, `"status": "unresolved"`) {
 		t.Fatalf("converted source/conclusion = %q/%s", source, conclusion)
 	}
-	var activePayload string
-	if err = connection.QueryRow(ctx, `SELECT payload::text FROM investigation_event WHERE investigation_id=$1 AND sequence=1`, investigationID).Scan(&activePayload); err != nil {
+	expectedPayloads := map[int]map[string]any{
+		1: {},
+		2: {"text": "Reading"},
+		5: {"ordinal": float64(1), "outcome": "failed", "durationMs": float64(0),
+			"summary": "Tool failed", "truncated": false},
+		6: {"ordinal": float64(2), "outcome": "failed", "durationMs": float64(0),
+			"summary": "not one of the tools the selected sources offer", "truncated": false},
+		7: {"ordinal": float64(3), "tool": "github.read",
+			"integrationId": "00000000-0000-0000-0000-000000000001",
+			"integration":   "GitHub", "purpose": "Read evidence"},
+		8:  {"status": "answer_only", "summary": "The answer"},
+		9:  {"reason": "Model failed"},
+		10: {"message": "Cancelled"},
+		11: {"ordinal": float64(4), "outcome": "failed", "durationMs": float64(0),
+			"summary": "Tool failed", "truncated": false},
+	}
+	rows, err := connection.Query(ctx, `SELECT sequence,payload::text FROM investigation_event
+		WHERE investigation_id=$1 AND type IN (1,2,3,4,6,7,9) ORDER BY sequence`, investigationID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if activePayload != "{}" {
-		t.Fatalf("started payload = %s, want empty object", activePayload)
+	defer rows.Close()
+	seenPayloads := make(map[int]bool, len(expectedPayloads))
+	for rows.Next() {
+		var sequence int
+		var raw string
+		if err = rows.Scan(&sequence, &raw); err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err = json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(payload, expectedPayloads[sequence]) {
+			t.Errorf("sequence %d payload = %#v, want %#v", sequence, payload, expectedPayloads[sequence])
+		}
+		seenPayloads[sequence] = true
 	}
-	if err = connection.QueryRow(ctx, `SELECT payload::text FROM investigation_event WHERE investigation_id=$1 AND sequence=5`, investigationID).Scan(&activePayload); err != nil {
+	if err = rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(activePayload, "sk-secret-value") || !strings.Contains(activePayload, `"summary": "Tool failed"`) {
-		t.Fatalf("migrated failed completion exposed provider error: %s", activePayload)
-	}
-	if err = connection.QueryRow(ctx, `SELECT payload::text FROM investigation_event WHERE investigation_id=$1 AND sequence=6`, investigationID).Scan(&activePayload); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(activePayload, `"summary": "not one of the tools the selected sources offer"`) {
-		t.Fatalf("migrated failed completion lost its safe error: %s", activePayload)
+	if len(seenPayloads) != len(expectedPayloads) {
+		t.Fatalf("validated active payloads = %v, want sequences %v", seenPayloads, expectedPayloads)
 	}
 	var retained int
 	if err = connection.QueryRow(ctx, `SELECT count(*) FROM investigation_event WHERE investigation_id=$1 AND type IN (5,10)`, investigationID).Scan(&retained); err != nil {

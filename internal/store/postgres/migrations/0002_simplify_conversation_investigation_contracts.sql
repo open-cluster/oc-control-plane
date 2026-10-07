@@ -91,8 +91,12 @@ UPDATE investigation_event
                     THEN 'Tool completed successfully'
                     WHEN btrim(payload ->> 'error') IN (
                         'not one of the tools the selected sources offer',
-                        'the integration''s credential could not be opened')
-                      OR btrim(payload ->> 'error') ~ '^not executed: '
+                        'the integration''s credential could not be opened',
+                        'not executed: an external read requires a purpose')
+                      OR btrim(payload ->> 'error') ~
+                         '^not executed: the investigation''s read budget of [0-9]+ was exhausted$'
+                      OR btrim(payload ->> 'error') ~
+                         '^not executed: identical to run [0-9]+, whose result is already above; call a different tool, or the same tool with different arguments, to gather new evidence — or conclude$'
                     THEN btrim(payload ->> 'error')
                     ELSE 'Tool failed' END), 512),
            'truncated', COALESCE((payload ->> 'truncated')::boolean, false))

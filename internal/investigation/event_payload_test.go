@@ -92,9 +92,9 @@ func TestToolCompletedUsesOnlyKnownSafeFailureDescriptions(t *testing.T) {
 			want: "not one of the tools the selected sources offer",
 		},
 		{
-			name: "provider error",
+			name: "provider error with a spoofed internal prefix",
 			run: ToolRun{Outcome: RunFailed,
-				Error: "provider rejected token sk-secret-value"},
+				Error: "not executed: provider rejected token sk-secret-value"},
 			want: "Tool failed",
 		},
 	}

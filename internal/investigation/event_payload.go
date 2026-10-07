@@ -79,9 +79,6 @@ func safeToolRunError(reason string) string {
 		"the integration's credential could not be opened":
 		return reason
 	}
-	if strings.HasPrefix(reason, "not executed: ") {
-		return reason
-	}
 	return ""
 }
 

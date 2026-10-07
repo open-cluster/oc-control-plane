@@ -3022,7 +3022,6 @@ components:
       properties:
         summary:
           type: string
-          minLength: 1
           maxLength: 4096
         runRefs:
           type: array

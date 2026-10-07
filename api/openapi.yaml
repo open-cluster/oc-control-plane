@@ -1467,7 +1467,7 @@ components:
       additionalProperties: false
       required: [summary, runRefs]
       properties:
-        summary: { type: string, minLength: 1, maxLength: 4096 }
+        summary: { type: string, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
     Finding:
       type: object
