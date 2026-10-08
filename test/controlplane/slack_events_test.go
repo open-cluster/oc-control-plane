@@ -43,7 +43,7 @@ func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 		cfg.SlackSigningSecret = slackSigningSecret
 		cfg.PublicURL = "http://" + apiAddress
 		dsn = cfg.DatabaseDSN
-	}, app.Options{SlackAPIURL: vendor.URL})
+	}, app.Options{Agent: &blockingAgentMain{}, SlackAPIURL: vendor.URL})
 	return &slackEventPlane{
 		integrationPlane: &integrationPlane{controlPlane: plane, api: apiAddress},
 		intake:           intakeAddress,
