@@ -16,8 +16,9 @@ import (
 )
 
 type RecoveryHandlers struct {
-	Database *storage.Database
-	Logger   *slog.Logger
+	Database       *storage.Database
+	Logger         *slog.Logger
+	AgentAvailable bool
 }
 
 func (h RecoveryHandlers) Routes() []authz.Route {
@@ -42,6 +43,11 @@ func (h RecoveryHandlers) recover(writer http.ResponseWriter, request *http.Requ
 	}
 	principal := authz.MustPrincipal(request.Context())
 	organization := principal.Organization()
+	if !h.AgentAvailable {
+		writeRecoveryJSON(writer, http.StatusServiceUnavailable,
+			"this deployment has no model provider configured, so it cannot investigate")
+		return
+	}
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
 	err = h.Database.RecoverSlackMessage(ctx, principal, organization, conversationID, sequence)
