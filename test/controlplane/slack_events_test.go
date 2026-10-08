@@ -30,10 +30,19 @@ type slackEventPlane struct {
 
 func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 	t.Helper()
+	return startSlackEventPlaneWithOptions(t, vendor,
+		app.Options{Agent: &blockingAgentMain{}})
+}
+
+func startSlackEventPlaneWithOptions(
+	t *testing.T, vendor *vendorFake, options app.Options,
+) *slackEventPlane {
+	t.Helper()
 
 	apiAddress := freeAddress(t)
 	intakeAddress := apiAddress
 	var dsn string
+	options.SlackAPIURL = vendor.URL
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
@@ -43,7 +52,7 @@ func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 		cfg.SlackSigningSecret = slackSigningSecret
 		cfg.PublicURL = "http://" + apiAddress
 		dsn = cfg.DatabaseDSN
-	}, app.Options{SlackAPIURL: vendor.URL})
+	}, options)
 	return &slackEventPlane{
 		integrationPlane: &integrationPlane{controlPlane: plane, api: apiAddress},
 		intake:           intakeAddress,
@@ -178,6 +187,22 @@ func (p *slackEventPlane) connectWorkspace(t *testing.T) {
 	status, landed := connectSlack(t, p.integrationPlane, "the-authorization-code")
 	if status != http.StatusOK {
 		t.Fatalf("connecting the workspace = %d: %s", status, landed)
+	}
+}
+
+func TestSlackEvents_ActionableMentionIsUnavailableWithoutAgent(t *testing.T) {
+	vendor := newVendorFake(t, "xoxb-installed-token")
+	vendor.grant("channels:read,channels:history,users:read")
+	plane := startSlackEventPlaneWithOptions(t, vendor, app.Options{})
+	plane.connectWorkspace(t)
+
+	status, answer := plane.deliverEvent(t,
+		mention("<@U0BOT> why is checkout failing?", "C0INCIDENTS", "1700000001.0", "", "U9SRE"))
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("a mention without an Agent answered %d: %s", status, answer)
+	}
+	if found := plane.conversationsIn(t); len(found) != 0 {
+		t.Fatalf("an unavailable mention created %+v", found)
 	}
 }
 
