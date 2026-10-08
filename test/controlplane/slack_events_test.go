@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,19 +191,60 @@ func (p *slackEventPlane) connectWorkspace(t *testing.T) {
 	}
 }
 
-func TestSlackEvents_ActionableMentionIsUnavailableWithoutAgent(t *testing.T) {
+func TestSlackEvents_AnActionableMentionRequiresAnAgentBeforeAcceptance(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
 	plane := startSlackEventPlaneWithOptions(t, vendor, app.Options{})
-	plane.connectWorkspace(t)
 
-	status, answer := plane.deliverEvent(t,
-		mention("<@U0BOT> why is checkout failing?", "C0INCIDENTS", "1700000001.0", "", "U9SRE"))
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("a mention without an Agent answered %d: %s", status, answer)
+	challenge := `{"type":"url_verification","challenge":"available-without-agent"}`
+	if status, body := plane.deliverEvent(t, challenge); status != http.StatusOK ||
+		!strings.Contains(body, "available-without-agent") {
+		t.Fatalf("challenge without an Agent = %d: %s", status, body)
 	}
-	if found := plane.conversationsIn(t); len(found) != 0 {
-		t.Fatalf("an unavailable mention created %+v", found)
+	unsigned := mention("<@U0BOT> forged", "C0INCIDENTS", "1700000010.1", "", "U9SRE")
+	if status, body := plane.postEvent(t, unsigned, nil); status != http.StatusUnauthorized {
+		t.Fatalf("unsigned mention without an Agent = %d: %s", status, body)
+	}
+	unknown := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER","team_id":"T0UNKNOWN",` +
+		`"event_id":"EvUnknown","event":{"type":"app_mention","channel":"C0INCIDENTS",` +
+		`"ts":"1700000011.1","user":"U9SRE","text":"<@U0BOT> unknown"}}`
+	if status, body := plane.deliverEvent(t, unknown); status != http.StatusUnauthorized {
+		t.Fatalf("unknown installation without an Agent = %d: %s", status, body)
+	}
+
+	plane.connectWorkspace(t)
+	direct := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER","team_id":"T0ACME",` +
+		`"event_id":"EvDirectNoAgent","event":{"type":"message","channel":"D0PRIVATE",` +
+		`"channel_type":"im","ts":"1700000012.1","user":"U9SRE","text":"ignore me"}}`
+	if status, body := plane.deliverEvent(t, direct); status != http.StatusOK {
+		t.Fatalf("ignored event without an Agent = %d: %s", status, body)
+	}
+
+	actionable := mention("<@U0BOT> why is checkout failing?", "C0INCIDENTS",
+		"1700000013.1", "", "U9SRE")
+	if status, body := plane.deliverEvent(t, actionable); status != http.StatusServiceUnavailable {
+		t.Fatalf("actionable mention without an Agent = %d: %s", status, body)
+	}
+
+	database, err := pgx.Connect(context.Background(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close(context.Background()) }()
+	var deliveries, conversations, messages, work, investigations int
+	err = database.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM webhook_delivery WHERE org_id = $1),
+		(SELECT count(*) FROM conversation WHERE org_id = $1),
+		(SELECT count(*) FROM conversation_message WHERE org_id = $1),
+		(SELECT count(*) FROM slack_message_work WHERE org_id = $1),
+		(SELECT count(*) FROM investigation WHERE org_id = $1)`, surfaceOrg).
+		Scan(&deliveries, &conversations, &messages, &work, &investigations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 0 || conversations != 0 || messages != 0 || work != 0 || investigations != 0 {
+		t.Fatalf("refused Slack mention persisted deliveries=%d Conversations=%d Messages=%d work=%d Investigations=%d",
+			deliveries, conversations, messages, work, investigations)
 	}
 }
 
