@@ -47,6 +47,45 @@ func TestAlertAdmissionWithoutAgentKeepsIncidentIntakeAvailable(t *testing.T) {
 	}
 }
 
+func TestAcceptedAlertWithoutAgentIsNotBackfilledAfterRestart(t *testing.T) {
+	plane := startAlertAdmissionIntakeWithOptions(t, 1, app.Options{})
+	body := string(alertmanagerPayload("no-backfill", "no-backfill"))
+	if status := plane.deliver(t, intakeSecret, body); status != http.StatusAccepted {
+		t.Fatalf("first delivery without Agent=%d", status)
+	}
+	plane.shutdown()
+
+	restarted := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.DatabaseDSN = plane.dsn
+		cfg.MaxPendingInvestigations = 1
+	}, app.Options{Agent: &blockingAgentMain{}})
+	replay := &intakePlane{
+		controlPlane: restarted,
+		address:      listeningAddress(t, restarted, ""),
+		integration:  plane.integration,
+		dsn:          plane.dsn,
+	}
+	if status := replay.deliver(t, intakeSecret, body); status != http.StatusOK {
+		t.Fatalf("accepted duplicate after Agent became available=%d", status)
+	}
+
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	var investigations int
+	if err = connection.QueryRow(ctx,
+		`SELECT count(*) FROM investigation WHERE org_id = $1`,
+		intakeOrganization).Scan(&investigations); err != nil {
+		t.Fatal(err)
+	}
+	if investigations != 0 {
+		t.Fatalf("accepted no-Agent delivery was backfilled into %d Investigations", investigations)
+	}
+}
+
 func TestAlertPendingCapacityReturnsRetryableServiceUnavailable(t *testing.T) {
 	plane := startAlertAdmissionIntake(t, 1)
 	first := string(alertmanagerPayload("first", "first"))
