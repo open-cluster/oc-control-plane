@@ -239,7 +239,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 			delivery := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
 				alertInvestigationEvent("stage", "stage", "Stage failure", "2026-09-29T10:00:00Z"))
 			if _, err = database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{AgentAvailable: true, }); err == nil {
+				storage.AlertAdmissionPolicy{AgentAvailable: true}); err == nil {
 				t.Fatalf("accepted delivery despite injected %s failure", table)
 			}
 			assertNoAlertDeliveryFacts(t, database, organization)
@@ -252,7 +252,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 				t.Fatal(err)
 			}
 			outcome, err := database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{AgentAvailable: true, })
+				storage.AlertAdmissionPolicy{AgentAvailable: true})
 			if err != nil || outcome.Duplicate || outcome.IncidentsOpened != 1 {
 				t.Fatalf("retry after %s failure: %+v, %v", table, outcome, err)
 			}
@@ -477,7 +477,7 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		go func() {
 			<-start
 			outcome, err := database.RecordDelivery(
-				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{AgentAvailable: true, })
+				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{AgentAvailable: true})
 			answers <- answer{outcome, err}
 		}()
 	}
