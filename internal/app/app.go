@@ -162,6 +162,7 @@ func Run(
 		Telemetry:  investigation.NewTelemetry(logger),
 		Logger:     logger,
 	}
+	agentAvailable := investigations != nil && investigations.Agent != nil
 	return serve(ctx, assembled{
 		config:            cfg,
 		logger:            logger,
@@ -170,6 +171,7 @@ func Run(
 		catalog:           catalog,
 		sealer:            sealer,
 		investigations:    investigations,
+		agentAvailable:    agentAvailable,
 		onListen:          options.OnListen,
 		inventoryInterval: inventoryInterval(options.InventoryInterval),
 		slackAPIURL:       options.SlackAPIURL,
@@ -239,6 +241,7 @@ type assembled struct {
 	catalog           integrations.Catalog
 	sealer            seal.Sealer
 	investigations    *investigation.Runner
+	agentAvailable    bool
 	onListen          func(net.Addr)
 	inventoryInterval time.Duration
 	slackAPIURL       string

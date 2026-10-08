@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
@@ -22,16 +23,21 @@ func TestAlertPendingCapacityReturnsRetryableServiceUnavailable(t *testing.T) {
 	if status := plane.deliver(t, intakeSecret, first); status != http.StatusAccepted {
 		t.Fatalf("first delivery=%d", status)
 	}
+	awaitAlertAgent(t, plane)
+	second := string(alertmanagerPayload("second", "second"))
+	if status := plane.deliver(t, intakeSecret, second); status != http.StatusAccepted {
+		t.Fatalf("second delivery=%d", status)
+	}
 	status, headers, body := deliverAlertAdmission(t, plane,
-		string(alertmanagerPayload("second", "second")))
+		string(alertmanagerPayload("third", "third")))
 	if status != http.StatusServiceUnavailable || headers.Get("Retry-After") == "" {
 		t.Fatalf("capacity refusal=%d Retry-After=%q: %s", status, headers.Get("Retry-After"), body)
 	}
 	if status := plane.deliver(t, intakeSecret, first); status != http.StatusOK {
 		t.Fatalf("exact accepted duplicate at full capacity=%d", status)
 	}
-	if events := plane.alertEvents(t); len(events) != 1 {
-		t.Fatalf("refused delivery retained %d Alert Events, want one from first delivery", len(events))
+	if events := plane.alertEvents(t); len(events) != 2 {
+		t.Fatalf("refused delivery retained %d Alert Events, want the two accepted deliveries", len(events))
 	}
 }
 
@@ -57,6 +63,11 @@ func TestAlertAdmissionEmitsDistinctOperationalSignals(t *testing.T) {
 	}
 	if status := plane.deliver(t, intakeSecret, acceptedBody); status != http.StatusOK {
 		t.Fatalf("duplicate delivery=%d", status)
+	}
+	awaitAlertAgent(t, plane)
+	if status := plane.deliver(t, intakeSecret,
+		string(alertmanagerPayload("waiting", "waiting"))); status != http.StatusAccepted {
+		t.Fatalf("waiting delivery=%d", status)
 	}
 	if status := plane.deliver(t, intakeSecret,
 		string(alertmanagerPayload("capacity", "capacity"))); status != http.StatusServiceUnavailable {
@@ -94,11 +105,11 @@ func TestAlertAdmissionEmitsDistinctOperationalSignals(t *testing.T) {
 		value  string
 		labels []string
 	}{
-		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="accepted"`}},
+		{"oc_webhooks_requests_total", "2", []string{`surface="alert"`, `result="accepted"`}},
 		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="duplicate"`}},
 		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="rate_limited"`}},
 		{"oc_webhooks_requests_total", "1", []string{`surface="alert"`, `result="rejected"`}},
-		{"oc_webhooks_alert_events_total", "1", nil},
+		{"oc_webhooks_alert_events_total", "2", nil},
 	} {
 		if !hasMetric(signal.name, signal.value, signal.labels...) {
 			t.Errorf("metrics do not expose %s=%s with %v:\n%s",
@@ -144,43 +155,55 @@ func TestAlertAdmissionCorrelatesAcceptedAndRefusedRequests(t *testing.T) {
 	}
 }
 
-func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *testing.T) {
+func TestAcceptedAlertInvestigationRemainsDurableWhenRestartedWithoutAgent(t *testing.T) {
 	plane := startAlertAdmissionIntake(t, 1)
 	if status := plane.deliver(t, intakeSecret, string(alertmanagerPayload("restart", "restart"))); status != http.StatusAccepted {
 		t.Fatalf("delivery before restart=%d", status)
 	}
+	awaitAlertAgent(t, plane)
 	plane.shutdown()
 	startControlPlane(t, func(cfg *config.Config) {
 		cfg.DatabaseDSN = plane.dsn
 		cfg.MaxPendingInvestigations = 1
 	})
-	database, err := storage.OpenDatabase(context.Background(), plane.dsn)
+	database, err := pgx.Connect(context.Background(), plane.dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
-	org, claimed, found, err := database.ClaimInvestigation(context.Background(),
-		investigation.Claim{Worker: "restart-runner", LeaseFor: time.Minute})
-	if err != nil || !found || org.String() != intakeOrganization {
-		t.Fatalf("claim after restart: org=%s found=%t err=%v", org, found, err)
+	defer func() { _ = database.Close(context.Background()) }()
+	var investigations int
+	var assigned bool
+	if err = database.QueryRow(context.Background(), `SELECT count(*), bool_and(lease_worker <> '')
+		FROM investigation WHERE org_id = $1`, intakeOrganization).Scan(&investigations, &assigned); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := database.Investigation(context.Background(), org, claimed.ID); err != nil {
-		t.Fatalf("reading Investigation after restart: %v", err)
-	}
-	if _, found, err := database.ClaimSlackMessageWork(context.Background(), "restart-worker", time.Minute); err != nil || found {
-		t.Fatalf("alert still depended on webhook job: found=%t err=%v", found, err)
+	if investigations != 1 || !assigned {
+		t.Fatalf("restart without an Agent changed accepted Investigation count=%d assigned=%t",
+			investigations, assigned)
 	}
 }
 
 func startAlertAdmissionIntake(t *testing.T, maximum int) *intakePlane {
 	t.Helper()
 	var dsn string
-	plane := startControlPlane(t, func(cfg *config.Config) {
+	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.MaxPendingInvestigations = maximum
+		cfg.InvestigationWorkers = 1
 		dsn = cfg.DatabaseDSN
-	})
+	}, app.Options{Agent: agent})
 	return &intakePlane{controlPlane: plane, address: listeningAddress(t, plane, ""),
-		integration: configureIntegration(t, dsn, intakeOrganization, intakeSecret), dsn: dsn}
+		integration: configureIntegration(t, dsn, intakeOrganization, intakeSecret), dsn: dsn,
+		agentStarted: agent.started}
+}
+
+func awaitAlertAgent(t *testing.T, plane *intakePlane) {
+	t.Helper()
+	select {
+	case <-plane.agentStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("automatic Investigation was not claimed")
+	}
 }
 
 func deliverAlertAdmission(t *testing.T, plane *intakePlane, body string) (int, http.Header, string) {

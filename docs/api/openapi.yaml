@@ -942,6 +942,8 @@ paths:
       responses:
         '201':
           $ref: '#/components/responses/ConversationOpened'
+        '503':
+          $ref: '#/components/responses/Unavailable'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: openConversation
@@ -1020,6 +1022,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
       operationId: appendConversationMessage
       summary: Append conversation message
       tags:
@@ -1214,6 +1218,8 @@ paths:
           $ref: '#/components/responses/NoContent'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: recoverSlackMessage

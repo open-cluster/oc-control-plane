@@ -117,15 +117,23 @@ func (f *vendorFake) probes() int {
 
 func startSlackPlane(t *testing.T, vendor *vendorFake) *integrationPlane {
 	t.Helper()
+	return startSlackPlaneWithOptions(t, vendor, app.Options{Agent: &blockingAgentMain{}})
+}
+
+func startSlackPlaneWithOptions(
+	t *testing.T, vendor *vendorFake, options app.Options,
+) *integrationPlane {
+	t.Helper()
 
 	apiAddress := freeAddress(t)
 	var dsn string
+	options.SlackAPIURL = vendor.URL
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		dsn = cfg.DatabaseDSN
-	}, app.Options{SlackAPIURL: vendor.URL})
+	}, options)
 	return &integrationPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
 }
 

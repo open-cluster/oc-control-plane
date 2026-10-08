@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,10 +31,20 @@ type slackEventPlane struct {
 
 func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 	t.Helper()
+	return startSlackEventPlaneWithOptions(t, vendor, app.Options{
+		Agent: &blockingAgentMain{},
+	})
+}
+
+func startSlackEventPlaneWithOptions(
+	t *testing.T, vendor *vendorFake, options app.Options,
+) *slackEventPlane {
+	t.Helper()
 
 	apiAddress := freeAddress(t)
 	intakeAddress := apiAddress
 	var dsn string
+	options.SlackAPIURL = vendor.URL
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
@@ -43,7 +54,7 @@ func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 		cfg.SlackSigningSecret = slackSigningSecret
 		cfg.PublicURL = "http://" + apiAddress
 		dsn = cfg.DatabaseDSN
-	}, app.Options{SlackAPIURL: vendor.URL})
+	}, options)
 	return &slackEventPlane{
 		integrationPlane: &integrationPlane{controlPlane: plane, api: apiAddress},
 		intake:           intakeAddress,
@@ -178,6 +189,63 @@ func (p *slackEventPlane) connectWorkspace(t *testing.T) {
 	status, landed := connectSlack(t, p.integrationPlane, "the-authorization-code")
 	if status != http.StatusOK {
 		t.Fatalf("connecting the workspace = %d: %s", status, landed)
+	}
+}
+
+func TestSlackEvents_AnActionableMentionRequiresAnAgentBeforeAcceptance(t *testing.T) {
+	vendor := newVendorFake(t, "xoxb-installed-token")
+	vendor.grant("channels:read,channels:history,users:read")
+	plane := startSlackEventPlaneWithOptions(t, vendor, app.Options{})
+
+	challenge := `{"type":"url_verification","challenge":"available-without-agent"}`
+	if status, body := plane.deliverEvent(t, challenge); status != http.StatusOK ||
+		!strings.Contains(body, "available-without-agent") {
+		t.Fatalf("challenge without an Agent = %d: %s", status, body)
+	}
+	unsigned := mention("<@U0BOT> forged", "C0INCIDENTS", "1700000010.1", "", "U9SRE")
+	if status, body := plane.postEvent(t, unsigned, nil); status != http.StatusUnauthorized {
+		t.Fatalf("unsigned mention without an Agent = %d: %s", status, body)
+	}
+	unknown := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER","team_id":"T0UNKNOWN",` +
+		`"event_id":"EvUnknown","event":{"type":"app_mention","channel":"C0INCIDENTS",` +
+		`"ts":"1700000011.1","user":"U9SRE","text":"<@U0BOT> unknown"}}`
+	if status, body := plane.deliverEvent(t, unknown); status != http.StatusUnauthorized {
+		t.Fatalf("unknown installation without an Agent = %d: %s", status, body)
+	}
+
+	plane.connectWorkspace(t)
+	direct := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER","team_id":"T0ACME",` +
+		`"event_id":"EvDirectNoAgent","event":{"type":"message","channel":"D0PRIVATE",` +
+		`"channel_type":"im","ts":"1700000012.1","user":"U9SRE","text":"ignore me"}}`
+	if status, body := plane.deliverEvent(t, direct); status != http.StatusOK {
+		t.Fatalf("ignored event without an Agent = %d: %s", status, body)
+	}
+
+	actionable := mention("<@U0BOT> why is checkout failing?", "C0INCIDENTS",
+		"1700000013.1", "", "U9SRE")
+	if status, body := plane.deliverEvent(t, actionable); status != http.StatusServiceUnavailable {
+		t.Fatalf("actionable mention without an Agent = %d: %s", status, body)
+	}
+
+	database, err := pgx.Connect(context.Background(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close(context.Background()) }()
+	var deliveries, conversations, messages, work, investigations int
+	err = database.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM webhook_delivery WHERE org_id = $1),
+		(SELECT count(*) FROM conversation WHERE org_id = $1),
+		(SELECT count(*) FROM conversation_message WHERE org_id = $1),
+		(SELECT count(*) FROM slack_message_work WHERE org_id = $1),
+		(SELECT count(*) FROM investigation WHERE org_id = $1)`, surfaceOrg).
+		Scan(&deliveries, &conversations, &messages, &work, &investigations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 0 || conversations != 0 || messages != 0 || work != 0 || investigations != 0 {
+		t.Fatalf("refused Slack mention persisted deliveries=%d Conversations=%d Messages=%d work=%d Investigations=%d",
+			deliveries, conversations, messages, work, investigations)
 	}
 }
 

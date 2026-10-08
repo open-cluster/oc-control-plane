@@ -159,6 +159,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 		WebhookTypes:            webhookTypes(webhookAdapters()),
 		Sealer:                  process.sealer,
 		Investigations:          process.investigations,
+		AgentAvailable:          process.agentAvailable,
 		StreamContext:           process.streamContext,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		MaxWaitingTurns:         cfg.MaxPendingInvestigations,
@@ -205,10 +206,11 @@ func webhookRouter(process assembled) http.Handler {
 		Database: process.database,
 		Logger:   process.logger,
 		Adapters: webhookAdapters(),
-		Slack:    newSlackAgent(cfg),
+		Slack:    newSlackAgent(cfg, process.agentAvailable),
 		AlertAdmission: storage.AlertAdmissionPolicy{
 			WindowLead:     defaultInvestigationWindowLead,
 			MaximumPending: cfg.MaxPendingInvestigations,
+			AgentAvailable: process.agentAvailable,
 		},
 	}.Router()
 }

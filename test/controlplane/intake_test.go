@@ -25,9 +25,10 @@ const (
 
 type intakePlane struct {
 	*controlPlane
-	address     string
-	integration uuid.UUID
-	dsn         string
+	address      string
+	integration  uuid.UUID
+	dsn          string
+	agentStarted <-chan uuid.UUID
 }
 
 func startIntake(t *testing.T) *intakePlane {

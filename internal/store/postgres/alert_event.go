@@ -217,6 +217,7 @@ func regroupUpdatedAlertEvent(
 type AlertAdmissionPolicy struct {
 	WindowLead     time.Duration
 	MaximumPending int
+	AgentAvailable bool
 }
 
 type AlertCapacityError struct{}
@@ -233,7 +234,7 @@ func openAlertInvestigations(
 	ctx context.Context, tx pgx.Tx, organization uuid.UUID,
 	incidents []uuid.UUID, policy AlertAdmissionPolicy,
 ) error {
-	if len(incidents) == 0 {
+	if !policy.AgentAvailable || len(incidents) == 0 {
 		return nil
 	}
 	if policy.MaximumPending > 0 && len(incidents) > policy.MaximumPending {

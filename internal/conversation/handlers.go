@@ -25,6 +25,7 @@ const (
 type Handlers struct {
 	Store           Store
 	Logger          *slog.Logger
+	AgentAvailable  bool
 	WindowLead      time.Duration
 	MaxWaitingTurns int
 }
@@ -107,6 +108,11 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 			Error: "the subject must be at most 512 characters"})
 		return
 	}
+	if strings.TrimSpace(asked.Message) != "" && !h.AgentAvailable {
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "this deployment has no model provider configured, so it cannot investigate"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
@@ -175,7 +181,11 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 			Error: "the message must be at most 8192 characters"})
 		return
 	}
-
+	if !h.AgentAvailable {
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{
+			Error: "this deployment has no model provider configured, so it cannot investigate"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
