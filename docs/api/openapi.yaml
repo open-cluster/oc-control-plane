@@ -942,6 +942,8 @@ paths:
       responses:
         '201':
           $ref: '#/components/responses/ConversationOpened'
+        '503':
+          $ref: '#/components/responses/Unavailable'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: openConversation
@@ -1020,6 +1022,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
       operationId: appendConversationMessage
       summary: Append conversation message
       tags:
@@ -1214,6 +1218,8 @@ paths:
           $ref: '#/components/responses/NoContent'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: recoverSlackMessage
@@ -1728,7 +1734,7 @@ components:
           schema:
             $ref: '#/components/schemas/WebhookStatus'
     AlertWebhookAccepted:
-      description: Delivery facts, Incident updates, and automatic Investigations for newly opened Incidents committed together.
+      description: Delivery facts and Incident updates committed together. When a model provider is configured, automatic Investigations for newly opened Incidents commit in the same transaction.
       content:
         application/json:
           schema:
@@ -1746,7 +1752,7 @@ components:
           schema:
             $ref: '#/components/schemas/WebhookStatus'
     AlertWebhookRejected:
-      description: Permanent malformed or conflicting delivery, or a batch opening more Incidents than the configured pending Investigation limit. No delivery changes are recorded.
+      description: Permanent malformed or conflicting delivery, or, when a model provider is configured, a batch opening more Incidents than the configured pending Investigation limit. No delivery changes are recorded.
       content:
         application/json:
           schema:
@@ -1764,7 +1770,7 @@ components:
           schema:
             $ref: '#/components/schemas/WebhookStatus'
     AlertWebhookUnavailable:
-      description: Admission capacity or pending Investigation capacity is temporarily exhausted, or the delivery could not be durably recorded. No delivery changes are recorded; retry and honor Retry-After when present.
+      description: Admission capacity is temporarily exhausted, or, when a model provider is configured, pending Investigation capacity is exhausted, or the delivery could not be durably recorded. No delivery changes are recorded; retry and honor Retry-After when present.
       headers:
         Retry-After:
           schema:

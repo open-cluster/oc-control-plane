@@ -31,8 +31,8 @@ type DeliveryOutcome struct {
 func (p *Database) RecordDelivery(
 	ctx context.Context, organization uuid.UUID, delivery Delivery, policy AlertAdmissionPolicy,
 ) (DeliveryOutcome, error) {
-	// Delivery facts, Incident changes, and automatic Investigations commit together. The
-	// provider identity and lifecycle key make concurrent retries idempotent.
+	// Delivery facts and Incident changes commit together. When AI admission is enabled,
+	// automatic Investigations join the same transaction.
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return DeliveryOutcome{}, err

@@ -243,3 +243,7 @@ type assembled struct {
 	inventoryInterval time.Duration
 	slackAPIURL       string
 }
+
+func (p assembled) agentAvailable() bool {
+	return p.investigations != nil && p.investigations.Agent != nil
+}

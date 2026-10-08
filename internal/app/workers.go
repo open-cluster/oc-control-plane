@@ -19,7 +19,7 @@ import (
 const auditPruneInterval = time.Hour
 
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
-	if process.investigations.Agent != nil {
+	if process.agentAvailable() {
 		group.Go(func() error {
 			process.investigations.Run(ctx)
 			return nil
@@ -91,8 +91,8 @@ func newSlackAgent(cfg config.Config, agentAvailable bool) *webhooks.SlackAgent 
 	isSlackConfigured(cfg)
 	return &webhooks.SlackAgent{
 		SigningSecret:   cfg.SlackSigningSecret,
-		AgentAvailable:  agentAvailable,
 		Enabled:         func(uuid.UUID) bool { return true },
+		AgentAvailable:  agentAvailable,
 		WindowLead:      defaultInvestigationWindowLead,
 		MaxWaitingTurns: cfg.MaxPendingInvestigations,
 	}
