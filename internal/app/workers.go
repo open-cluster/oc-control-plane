@@ -19,7 +19,7 @@ import (
 const auditPruneInterval = time.Hour
 
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
-	if process.investigations != nil && process.investigations.Agent != nil {
+	if process.agentAvailable() {
 		group.Go(func() error {
 			process.investigations.Run(ctx)
 			return nil
