@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/open-cluster/oc-control-plane/internal/app"
 )
 
 func TestIntegrationListingAppliesDocumentedCapabilities(t *testing.T) {
