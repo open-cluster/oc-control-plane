@@ -1,10 +1,13 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
@@ -76,4 +79,54 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	if detail.Source != "web" || len(detail.Messages) != 1 || string(detail.Messages[0]["role"]) != `"user"` {
 		t.Fatalf("Conversation detail identity = %s", body)
 	}
+}
+
+
+func TestConversationAIAdmissionRequiresAnAgentBeforeDurableMutation(t *testing.T) {
+	address := freeAddress(t)
+	var dsn string
+	running := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.HTTPListenAddress = address
+		digest := sha256.Sum256([]byte(surfaceToken))
+		cfg.BootstrapTokenDigest = digest[:]
+		dsn = cfg.DatabaseDSN
+	}, app.Options{})
+	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
+
+	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
+		map[string]any{"subject": "unavailable AI", "message": "what changed?"})
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("opening Conversation with a Message = %d, want 503: %s", status, body)
+	}
+
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil { t.Fatal(err) }
+	defer func() { _ = connection.Close(ctx) }()
+	for table, query := range map[string]string{
+		"conversation": "SELECT count(*) FROM conversation WHERE org_id = $1",
+		"message": "SELECT count(*) FROM conversation_message WHERE org_id = $1",
+		"investigation": "SELECT count(*) FROM investigation WHERE org_id = $1",
+	} {
+		var count int
+		if err = connection.QueryRow(ctx, query, surfaceOrg).Scan(&count); err != nil { t.Fatal(err) }
+		if count != 0 { t.Fatalf("%s count = %d after refused AI work, want 0", table, count) }
+	}
+
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
+		map[string]any{"subject": "continuity only"})
+	if status != http.StatusCreated { t.Fatalf("opening empty Conversation = %d: %s", status, body) }
+	var opened map[string]json.RawMessage
+	decodeInto(t, body, &opened)
+	var id string
+	if err = json.Unmarshal(opened["id"], &id); err != nil { t.Fatal(err) }
+
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations/"+id+"/messages",
+		map[string]any{"message": "now investigate"})
+	if status != http.StatusServiceUnavailable { t.Fatalf("appending Message without Agent = %d, want 503: %s", status, body) }
+
+	var messages, investigations int
+	if err = connection.QueryRow(ctx, "SELECT count(*) FROM conversation_message WHERE org_id = $1", surfaceOrg).Scan(&messages); err != nil { t.Fatal(err) }
+	if err = connection.QueryRow(ctx, "SELECT count(*) FROM investigation WHERE org_id = $1", surfaceOrg).Scan(&investigations); err != nil { t.Fatal(err) }
+	if messages != 0 || investigations != 0 { t.Fatalf("refused follow-up stored messages=%d investigations=%d", messages, investigations) }
 }
