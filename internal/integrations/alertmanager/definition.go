@@ -11,7 +11,8 @@ func Definition() integrations.Definition {
 			Name: "Prometheus Alertmanager",
 			Description: "Create incidents from firing and resolved Alertmanager alerts " +
 				"delivered through an authenticated webhook.",
-			Logo: "alertmanager", Category: integrations.CategoryAlerting,
+			Logo:              "alertmanager",
+			Category:          integrations.CategoryAlerting,
 			SourceURL:         "https://prometheus.io/docs/alerting/latest/configuration/#webhook_config",
 			DocumentationSlug: "integrations/alerting/alertmanager",
 			Config:            nil,

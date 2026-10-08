@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,6 +37,7 @@ func (Adapter) Authenticate(headers http.Header, integration integrations.Integr
 }
 
 func (Adapter) Normalize(body []byte) (alertevent.AlertDelivery, error) {
+	// validation ------->
 	if !utf8.Valid(body) {
 		return alertevent.AlertDelivery{}, fmt.Errorf("payload is not valid UTF-8")
 	}
@@ -45,6 +47,8 @@ func (Adapter) Normalize(body []byte) (alertevent.AlertDelivery, error) {
 	if err := rejectNullFields(body, "resolvedAt", "sourceUrl"); err != nil {
 		return alertevent.AlertDelivery{}, err
 	}
+
+	// JSON decode (unmarshall) ------>
 	var decoded payload
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -63,10 +67,9 @@ func (Adapter) Normalize(body []byte) (alertevent.AlertDelivery, error) {
 		resolved := decoded.ResolvedAt.UTC()
 		decoded.ResolvedAt = &resolved
 	}
+
 	labels := make(map[string]string, len(decoded.Labels)+1)
-	for key, value := range decoded.Labels {
-		labels[key] = value
-	}
+	maps.Copy(labels, decoded.Labels)
 	labels["severity"] = decoded.Severity
 
 	event := alertevent.AlertEvent{
@@ -87,8 +90,10 @@ func (Adapter) Normalize(body []byte) (alertevent.AlertDelivery, error) {
 	}
 	canonical, err := json.Marshal(decoded)
 	if err != nil {
-		return alertevent.AlertDelivery{}, fmt.Errorf("encoding canonical generic webhook: %w", err)
+		return alertevent.AlertDelivery{},
+			fmt.Errorf("encoding canonical generic webhook: %w", err)
 	}
+
 	digest := sha256.Sum256(canonical)
 	return alertevent.AlertDelivery{
 		ProviderIdentity: decoded.EventID,
@@ -99,6 +104,7 @@ func (Adapter) Normalize(body []byte) (alertevent.AlertDelivery, error) {
 }
 
 func validate(decoded payload) error {
+	// validation ------->
 	if err := boundedRequired("eventId", decoded.EventID, 256); err != nil {
 		return err
 	}
@@ -111,6 +117,8 @@ func validate(decoded payload) error {
 	if decoded.StartedAt.IsZero() {
 		return fmt.Errorf("startedAt is required and must be RFC 3339")
 	}
+
+	// status validation ------->
 	switch decoded.Status {
 	case "firing":
 		if decoded.ResolvedAt != nil {
@@ -126,6 +134,8 @@ func validate(decoded payload) error {
 	default:
 		return fmt.Errorf("status must be firing or resolved")
 	}
+
+	// severity validation ------->
 	if decoded.Severity != "info" && decoded.Severity != "warning" && decoded.Severity != "critical" {
 		return fmt.Errorf("severity must be info, warning, or critical")
 	}
@@ -135,6 +145,7 @@ func validate(decoded payload) error {
 	if err := validateMap("annotations", decoded.Annotations, 2048); err != nil {
 		return err
 	}
+
 	if decoded.SourceURL != "" {
 		if strings.ContainsRune(decoded.SourceURL, 0) {
 			return fmt.Errorf("sourceUrl contains a NUL character")
@@ -211,6 +222,7 @@ func (m *stringMap) UnmarshalJSON(data []byte) error {
 func rejectDuplicateKeys(body []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
+
 	if err := scanJSONValue(decoder); err != nil {
 		return fmt.Errorf("payload is not canonical JSON: %w", err)
 	}

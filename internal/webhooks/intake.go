@@ -239,6 +239,7 @@ var errNotAuthenticated = errors.New("not authenticated")
 func (h *receiver) authenticate(
 	ctx context.Context, integrationID uuid.UUID, request *http.Request,
 ) (integrations.Integration, Adapter, error) {
+
 	integration, err := h.Database.IntegrationByID(ctx, integrationID)
 	switch {
 	case errors.Is(err, integrations.ErrUnknown):

@@ -92,9 +92,9 @@ func (p *Database) CreateIntegration(
 		})
 }
 
-func (p *Database) IntegrationByID(
-	ctx context.Context, id uuid.UUID,
+func (p *Database) IntegrationByID(ctx context.Context, id uuid.UUID,
 ) (integrations.Integration, error) {
+
 	var organization uuid.UUID
 	row := p.pool.QueryRow(ctx, `
 			SELECT org_id, `+integrationColumns+`
@@ -637,8 +637,7 @@ func scanIntegration(row scanned, organization string) (integrations.Integration
 	return finishIntegration(found, nullable)
 }
 
-func scanIntegrationWithOrganization(
-	row scanned, organization *uuid.UUID,
+func scanIntegrationWithOrganization(row scanned, organization *uuid.UUID,
 ) (integrations.Integration, error) {
 	var (
 		found    integrations.Integration
