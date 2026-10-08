@@ -117,8 +117,7 @@ func (f *vendorFake) probes() int {
 
 func startSlackPlane(t *testing.T, vendor *vendorFake) *integrationPlane {
 	t.Helper()
-	return startSlackPlaneWithOptions(t, vendor,
-		app.Options{Agent: &blockingAgentMain{}})
+	return startSlackPlaneWithOptions(t, vendor, app.Options{})
 }
 
 func startSlackPlaneWithOptions(
