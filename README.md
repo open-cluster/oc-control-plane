@@ -40,7 +40,7 @@ Licensed under the [Apache License 2.0](./LICENSE).
 ## Product workflow
 
 1. Alertmanager sends an Alert Event.
-2. OpenCluster groups it into an Incident and opens a Conversation and Investigation.
+2. OpenCluster groups it into an Incident and, when an Agent is available, opens an automatic Investigation.
 3. The investigator reads only authorized connected sources, including Kubernetes through an outbound customer-side
    Relay.
 4. Operators watch operational progress while numbered Tool Runs execute.
@@ -125,8 +125,9 @@ conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQ
 `/api/v1`, `/webhooks/v1`, and process probes directly on localhost. A separate gRPC listener accepts
 outbound Relay sessions.
 
-Alert acceptance creates automatic Investigations atomically. Slack owns the asynchronous inbound Message worker,
-including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and Admin recovery.
+Alert acceptance always records Alert Events and Incidents; when an Agent is available it also creates automatic
+Investigations atomically. Slack owns the asynchronous inbound Message worker, including post-acknowledgement source
+lookup, fenced leases, heartbeat, retry, and Admin recovery.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
 installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
