@@ -125,12 +125,14 @@ func (h Handlers) Routes() []authz.Route {
 	routes = append(routes, conversation.Handlers{
 		Store:           h.Database,
 		Logger:          h.Logger,
+		AgentAvailable:  h.Investigations != nil && h.Investigations.Agent != nil,
 		WindowLead:      h.InvestigationWindowLead,
 		MaxWaitingTurns: h.MaxWaitingTurns,
 	}.Routes()...)
 	routes = append(routes, webhookslack.RecoveryHandlers{
-		Database: h.Database,
-		Logger:   h.Logger,
+		Database:       h.Database,
+		Logger:         h.Logger,
+		AgentAvailable: h.Investigations != nil && h.Investigations.Agent != nil,
 	}.Routes()...)
 	return routes
 }
