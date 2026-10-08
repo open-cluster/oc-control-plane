@@ -63,7 +63,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 		alertInvestigationEvent("c", "c", "C", "2026-09-29T10:00:00Z"))
 	accepted := make(chan error, 1)
 	go func() {
-		_, err := database.RecordDelivery(ctx, organization, delivery, storage.AlertAdmissionPolicy{MaximumPending: 3})
+		_, err := database.RecordDelivery(ctx, organization, delivery, storage.AlertAdmissionPolicy{AgentAvailable: true, MaximumPending: 3})
 		accepted <- err
 	}()
 	awaitBlockedAlertInvestigationInsert(t, ctx, pool)
@@ -135,7 +135,7 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 		alertInvestigationEvent("a", "group", "Checkout unavailable", "2026-09-29T10:00:00Z"))
 	ctx := context.Background()
 	outcome, err := database.RecordDelivery(ctx, organization, delivery,
-		storage.AlertAdmissionPolicy{WindowLead: time.Hour})
+		storage.AlertAdmissionPolicy{AgentAvailable: true, WindowLead: time.Hour})
 	if err != nil || outcome.IncidentsOpened != 1 {
 		t.Fatalf("accepting alert: %+v, %v", outcome, err)
 	}
@@ -172,7 +172,7 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 func TestAlertBatchRefusalRollsBackAndRetrySucceedsAfterCapacityIsClaimed(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	ctx := context.Background()
-	policy := storage.AlertAdmissionPolicy{WindowLead: time.Hour, MaximumPending: 2}
+	policy := storage.AlertAdmissionPolicy{AgentAvailable: true, WindowLead: time.Hour, MaximumPending: 2}
 	existing := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
 		alertInvestigationEvent("existing", "existing", "Existing failure", "2026-09-29T09:00:00Z"))
 	if _, err := database.RecordDelivery(ctx, organization, existing, policy); err != nil {
@@ -208,7 +208,7 @@ func TestOversizedAlertBatchIsPermanentAndLeavesNoDeliveryFacts(t *testing.T) {
 		alertInvestigationEvent("two", "two", "Second failure", "2026-09-29T10:00:00Z"))
 	ctx := context.Background()
 	_, err := database.RecordDelivery(ctx, organization, delivery,
-		storage.AlertAdmissionPolicy{MaximumPending: 1})
+		storage.AlertAdmissionPolicy{AgentAvailable: true, MaximumPending: 1})
 	var permanent storage.AlertBatchTooLargeError
 	if !errors.As(err, &permanent) {
 		t.Fatalf("oversized batch error=%v, want permanent refusal", err)
@@ -239,7 +239,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 			delivery := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
 				alertInvestigationEvent("stage", "stage", "Stage failure", "2026-09-29T10:00:00Z"))
 			if _, err = database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{}); err == nil {
+				storage.AlertAdmissionPolicy{AgentAvailable: true, }); err == nil {
 				t.Fatalf("accepted delivery despite injected %s failure", table)
 			}
 			assertNoAlertDeliveryFacts(t, database, organization)
@@ -252,7 +252,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 				t.Fatal(err)
 			}
 			outcome, err := database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{})
+				storage.AlertAdmissionPolicy{AgentAvailable: true, })
 			if err != nil || outcome.Duplicate || outcome.IncidentsOpened != 1 {
 				t.Fatalf("retry after %s failure: %+v, %v", table, outcome, err)
 			}
@@ -276,7 +276,7 @@ func TestConcurrentExactAlertDuplicatesOpenOneAutomaticInvestigation(t *testing.
 		go func() {
 			<-start
 			outcome, err := database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{MaximumPending: 1})
+				storage.AlertAdmissionPolicy{AgentAvailable: true, MaximumPending: 1})
 			answers <- answer{outcome, err}
 		}()
 	}
@@ -477,7 +477,7 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		go func() {
 			<-start
 			outcome, err := database.RecordDelivery(
-				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{})
+				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{AgentAvailable: true, })
 			answers <- answer{outcome, err}
 		}()
 	}
