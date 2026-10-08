@@ -20,8 +20,8 @@ The following path is the primary product walkthrough.
 2. **Alert Event** records what fired, its source identity, source timestamps, labels, and
    annotations. Intake never decides a cause.
 3. **Incident** groups Alert Events using the source’s grouping identity. The first alert
-   creates the Incident, Conversation, and initial Investigation. Resolution occurs when
-   no grouped Alert Event remains firing.
+   creates the Incident and, when an Agent is available, an automatic Investigation.
+   Resolution occurs when no grouped Alert Event remains firing.
 4. **Conversation and Investigation** separate continuity from execution. A Conversation
    keeps messages and prior cited Findings; each turn opens a new immutable Investigation.
 5. **Offered tools** derive from enabled Integrations and their verified grants. There is
