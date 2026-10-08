@@ -159,7 +159,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 		WebhookTypes:            webhookTypes(webhookAdapters()),
 		Sealer:                  process.sealer,
 		Investigations:          process.investigations,
-		AgentAvailable:          process.investigations != nil && process.investigations.Agent != nil,
+		AgentAvailable:          process.agentAvailable(),
 		StreamContext:           process.streamContext,
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		MaxWaitingTurns:         cfg.MaxPendingInvestigations,
@@ -202,7 +202,7 @@ func authHandlers(process assembled) (identity.Handlers, error) {
 
 func webhookRouter(process assembled) http.Handler {
 	cfg := process.config
-	agentAvailable := process.investigations != nil && process.investigations.Agent != nil
+	agentAvailable := process.agentAvailable()
 	return webhooks.Handlers{
 		Database: process.database,
 		Logger:   process.logger,
