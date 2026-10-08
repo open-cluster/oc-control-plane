@@ -26,6 +26,7 @@ const slackEventsRoute = "POST " + SlackEventsPath
 type SlackAgent struct {
 	SigningSecret   string
 	Enabled         func(uuid.UUID) bool
+	AgentAvailable  bool
 	WindowLead      time.Duration
 	MaxWaitingTurns int
 }
@@ -122,6 +123,12 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 	case !envelope.AddressedToUs(routing.ProviderActorID):
 		h.counters.countRequest(ctx, surfaceSlack, resultAccepted)
 		writeStatus(writer, http.StatusOK, "ignored")
+		return
+	}
+	if !h.Slack.AgentAvailable {
+		h.counters.countRequest(ctx, surfaceSlack, resultError)
+		writeStatus(writer, http.StatusServiceUnavailable,
+			"this deployment has no model provider configured, so it cannot investigate")
 		return
 	}
 
