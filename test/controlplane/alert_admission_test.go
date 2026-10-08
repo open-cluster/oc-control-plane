@@ -204,8 +204,30 @@ func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *te
 
 func startAlertAdmissionIntake(t *testing.T, maximum int) *intakePlane {
 	t.Helper()
-	return startAlertAdmissionIntakeWithOptions(t, maximum,
-		app.Options{Agent: &blockingAgentMain{}})
+	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	plane := startAlertAdmissionIntakeWithOptions(t, maximum, app.Options{Agent: agent})
+
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `
+		INSERT INTO investigation
+			(investigation_id, org_id, subject, window_from, window_until, created_by)
+		VALUES (gen_random_uuid(), $1, 'capacity worker blocker',
+		        now() - interval '1 minute', now(), 'test')`, intakeOrganization); err != nil {
+		_ = connection.Close(ctx)
+		t.Fatal(err)
+	}
+	_ = connection.Close(ctx)
+
+	select {
+	case <-agent.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the capacity test Agent was not claimed")
+	}
+	return plane
 }
 
 func startAlertAdmissionIntakeWithOptions(
@@ -215,6 +237,9 @@ func startAlertAdmissionIntakeWithOptions(
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.MaxPendingInvestigations = maximum
+		if options.Agent != nil {
+			cfg.InvestigationWorkers = 1
+		}
 		dsn = cfg.DatabaseDSN
 	}, options)
 	return &intakePlane{controlPlane: plane, address: listeningAddress(t, plane, ""),
