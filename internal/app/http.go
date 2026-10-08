@@ -205,8 +205,10 @@ func webhookRouter(process assembled) http.Handler {
 		Database: process.database,
 		Logger:   process.logger,
 		Adapters: webhookAdapters(),
-		Slack:    newSlackAgent(cfg),
+		Slack: newSlackAgent(cfg,
+			process.investigations != nil && process.investigations.Agent != nil),
 		AlertAdmission: storage.AlertAdmissionPolicy{
+			AgentAvailable: process.investigations != nil && process.investigations.Agent != nil,
 			WindowLead:     defaultInvestigationWindowLead,
 			MaximumPending: cfg.MaxPendingInvestigations,
 		},
