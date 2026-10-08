@@ -634,6 +634,7 @@ paths:
         required: true
       responses:
         "201": { $ref: "#/components/responses/ConversationOpened" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}:
     parameters: &conversation-path
@@ -679,6 +680,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/incidents/{incident}/postmortem:
     parameters: *incident-path
     get:
@@ -802,6 +804,7 @@ paths:
       responses:
         "204": { $ref: "#/components/responses/NoContent" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         default: { $ref: "#/components/responses/ErrorResponse" }
 
 components:
@@ -1023,14 +1026,14 @@ components:
     ConversationMessageAccepted: { description: Message accepted; turn is absent when queued behind an active turn., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
     Postmortem: { description: Postmortem., content: { application/json: { schema: { $ref: "#/components/schemas/Postmortem" } } } }
     WebhookAccepted: { description: Delivery durably accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
-    AlertWebhookAccepted: { description: "Delivery facts, Incident updates, and automatic Investigations for newly opened Incidents committed together.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    AlertWebhookAccepted: { description: "Delivery facts and Incident updates committed together. When an Agent is available, automatic Investigations for newly opened Incidents commit in the same transaction.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookDuplicate: { description: Delivery was already accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookRejected: { description: Permanent malformed delivery., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
-    AlertWebhookRejected: { description: "Permanent malformed or conflicting delivery, or a batch opening more Incidents than the configured pending Investigation limit. No delivery changes are recorded.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
+    AlertWebhookRejected: { description: "Permanent malformed or conflicting delivery, or, when an Agent is available, a batch opening more Incidents than the configured pending Investigation limit. No delivery changes are recorded.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookUnauthorized: { description: Missing or invalid webhook credential., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     WebhookOversized: { description: Body exceeds 1 MiB., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     AlertWebhookUnavailable:
-      description: Admission capacity or pending Investigation capacity is temporarily exhausted, or the delivery could not be durably recorded. No delivery changes are recorded; retry and honor Retry-After when present.
+      description: Admission capacity is temporarily exhausted, or, when an Agent is available, pending Investigation capacity is exhausted, or the delivery could not be durably recorded. No delivery changes are recorded; retry and honor Retry-After when present.
       headers:
         Retry-After: { schema: { type: integer, minimum: 1 } }
       content:
