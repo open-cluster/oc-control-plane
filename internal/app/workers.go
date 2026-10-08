@@ -19,13 +19,13 @@ import (
 const auditPruneInterval = time.Hour
 
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
-	if process.investigations.Agent != nil {
+	if process.agentAvailable() {
 		group.Go(func() error {
 			process.investigations.Run(ctx)
 			return nil
 		})
+		startSlackMessageWorker(ctx, group, process)
 	}
-	startSlackMessageWorker(ctx, group, process)
 	startAuditPruner(ctx, group, process)
 	startSessionPruner(ctx, group, process)
 	startChangesPruner(ctx, group, process)
@@ -87,11 +87,12 @@ func startChangesPruner(ctx context.Context, group *errgroup.Group, process asse
 		slog.Int("retention_days", defaultChangeRetentionDays))
 }
 
-func newSlackAgent(cfg config.Config) *webhooks.SlackAgent {
+func newSlackAgent(cfg config.Config, agentAvailable bool) *webhooks.SlackAgent {
 	isSlackConfigured(cfg)
 	return &webhooks.SlackAgent{
 		SigningSecret:   cfg.SlackSigningSecret,
 		Enabled:         func(uuid.UUID) bool { return true },
+		AgentAvailable:  agentAvailable,
 		WindowLead:      defaultInvestigationWindowLead,
 		MaxWaitingTurns: cfg.MaxPendingInvestigations,
 	}

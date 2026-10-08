@@ -40,7 +40,7 @@ Licensed under the [Apache License 2.0](./LICENSE).
 ## Product workflow
 
 1. Alertmanager sends an Alert Event.
-2. OpenCluster groups it into an Incident and opens a Conversation and Investigation.
+2. OpenCluster groups it into an Incident and, when an Agent is available, opens an automatic Investigation. Alert intake does not create a Conversation.
 3. The investigator reads only authorized connected sources, including Kubernetes through an outbound customer-side
    Relay.
 4. Operators watch operational progress while numbered Tool Runs execute.
@@ -125,7 +125,7 @@ conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQ
 `/api/v1`, `/webhooks/v1`, and process probes directly on localhost. A separate gRPC listener accepts
 outbound Relay sessions.
 
-Alert acceptance creates automatic Investigations atomically. Slack owns the asynchronous inbound Message worker,
+Alert acceptance always records Incident state. When an Agent is available, automatic Investigations join that transaction. Slack owns the asynchronous inbound Message worker,
 including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and Admin recovery.
 
 Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
@@ -147,7 +147,7 @@ Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
 - Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
 - Background cleanup removes expired sessions in bounded passes, including before any Organization exists.
 - Webhooks have one bounded pre-authentication admission budget per process; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
-- Alert acceptance records Incident updates and automatic Investigations atomically; each newly opened Incident gets one, within the shared pending Investigation limit.
+- Alert acceptance always records Incident updates; when an Agent is available, each newly opened Incident gets one automatic Investigation in the same transaction and within the shared pending Investigation limit.
 - Authenticated API requests resolve the User's sole current Organization and Role before handlers run.
 - A User has at most one current Organization Membership; Organization Admins cannot replace an existing User's password or manage their global sessions.
 - Local Users change their own password after reauthentication. Deployment operators can recover an existing local User through stdin; see [credential recovery](docs/security/overview.mdx).

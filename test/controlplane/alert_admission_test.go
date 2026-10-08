@@ -9,12 +9,82 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
+
+func TestAlertAdmissionWithoutAgentKeepsIncidentIntakeAvailable(t *testing.T) {
+	plane := startAlertAdmissionIntakeWithOptions(t, 1, app.Options{})
+	if status := plane.deliver(t, intakeSecret,
+		string(alertmanagerPayload("no-agent", "no-agent"))); status != http.StatusAccepted {
+		t.Fatalf("delivery without an Agent=%d", status)
+	}
+
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+
+	var incidents, investigations int
+	if err = connection.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM incident WHERE org_id = $1),
+		       (SELECT count(*) FROM investigation WHERE org_id = $1)`,
+		intakeOrganization).Scan(&incidents, &investigations); err != nil {
+		t.Fatal(err)
+	}
+	if incidents != 1 || investigations != 0 {
+		t.Fatalf("without Agent: incidents=%d investigations=%d, want 1 and 0",
+			incidents, investigations)
+	}
+}
+
+func TestAcceptedAlertWithoutAgentIsNotBackfilledAfterRestart(t *testing.T) {
+	plane := startAlertAdmissionIntakeWithOptions(t, 1, app.Options{})
+	body := string(alertmanagerPayload("no-backfill", "no-backfill"))
+	if status := plane.deliver(t, intakeSecret, body); status != http.StatusAccepted {
+		t.Fatalf("first delivery without Agent=%d", status)
+	}
+	plane.shutdown()
+
+	restarted := startControlPlaneRunning(t, func(cfg *config.Config) {
+		cfg.DatabaseDSN = plane.dsn
+		cfg.MaxPendingInvestigations = 1
+	}, app.Options{Agent: &blockingAgentMain{}})
+	replay := &intakePlane{
+		controlPlane: restarted,
+		address:      listeningAddress(t, restarted, ""),
+		integration:  plane.integration,
+		dsn:          plane.dsn,
+	}
+	if status := replay.deliver(t, intakeSecret, body); status != http.StatusOK {
+		t.Fatalf("accepted duplicate after Agent became available=%d", status)
+	}
+
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(ctx) }()
+	var investigations int
+	if err = connection.QueryRow(ctx,
+		`SELECT count(*) FROM investigation WHERE org_id = $1`,
+		intakeOrganization).Scan(&investigations); err != nil {
+		t.Fatal(err)
+	}
+	if investigations != 0 {
+		t.Fatalf("accepted no-Agent delivery was backfilled into %d Investigations", investigations)
+	}
+}
 
 func TestAlertPendingCapacityReturnsRetryableServiceUnavailable(t *testing.T) {
 	plane := startAlertAdmissionIntake(t, 1)
@@ -174,11 +244,44 @@ func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *te
 
 func startAlertAdmissionIntake(t *testing.T, maximum int) *intakePlane {
 	t.Helper()
+	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	plane := startAlertAdmissionIntakeWithOptions(t, maximum, app.Options{Agent: agent})
+
+	ctx := context.Background()
+	connection, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `
+		INSERT INTO investigation
+			(investigation_id, org_id, subject, window_from, window_until, created_by)
+		VALUES (gen_random_uuid(), $1, 'capacity worker blocker',
+		        now() - interval '1 minute', now(), 'test')`, intakeOrganization); err != nil {
+		_ = connection.Close(ctx)
+		t.Fatal(err)
+	}
+	_ = connection.Close(ctx)
+
+	select {
+	case <-agent.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the capacity test Agent was not claimed")
+	}
+	return plane
+}
+
+func startAlertAdmissionIntakeWithOptions(
+	t *testing.T, maximum int, options app.Options,
+) *intakePlane {
+	t.Helper()
 	var dsn string
-	plane := startControlPlane(t, func(cfg *config.Config) {
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.MaxPendingInvestigations = maximum
+		if options.Agent != nil {
+			cfg.InvestigationWorkers = 1
+		}
 		dsn = cfg.DatabaseDSN
-	})
+	}, options)
 	return &intakePlane{controlPlane: plane, address: listeningAddress(t, plane, ""),
 		integration: configureIntegration(t, dsn, intakeOrganization, intakeSecret), dsn: dsn}
 }

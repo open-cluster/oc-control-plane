@@ -31,8 +31,8 @@ type DeliveryOutcome struct {
 func (p *Database) RecordDelivery(
 	ctx context.Context, organization uuid.UUID, delivery Delivery, policy AlertAdmissionPolicy,
 ) (DeliveryOutcome, error) {
-	// Delivery facts, Incident changes, and automatic Investigations commit together. The
-	// provider identity and lifecycle key make concurrent retries idempotent.
+	// Delivery facts and Incident changes commit together. When AI admission is enabled,
+	// automatic Investigations join the same transaction.
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return DeliveryOutcome{}, err
@@ -215,6 +215,7 @@ func regroupUpdatedAlertEvent(
 }
 
 type AlertAdmissionPolicy struct {
+	AgentAvailable bool
 	WindowLead     time.Duration
 	MaximumPending int
 }
@@ -233,7 +234,7 @@ func openAlertInvestigations(
 	ctx context.Context, tx pgx.Tx, organization uuid.UUID,
 	incidents []uuid.UUID, policy AlertAdmissionPolicy,
 ) error {
-	if len(incidents) == 0 {
+	if len(incidents) == 0 || !policy.AgentAvailable {
 		return nil
 	}
 	if policy.MaximumPending > 0 && len(incidents) > policy.MaximumPending {

@@ -14,11 +14,54 @@ import (
 
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestTerminalSlackMessageRecoveryIsUnavailableWithoutAgent(t *testing.T) {
+	plane := startSlackPlaneWithOptions(t, newVendorFake(t, "xoxb-terminal-work"), app.Options{})
+	status, body := plane.createSlack(t, "Terminal webhook source", "xoxb-terminal-work")
+	if status != http.StatusCreated {
+		t.Fatalf("creating Slack = %d: %s", status, body)
+	}
+	var created createdBody
+	decodeInto(t, body, &created)
+
+	ctx := context.Background()
+	database, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close(ctx) }()
+	conversationID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
+		"terminal-no-agent", []byte(`{"event_id":"terminal-slack-no-agent"}`), 8)
+	base := plane.base(surfaceOrg) + "/slack/conversations/" + conversationID + "/messages/1/recover"
+
+	if status, body = plane.call(t, http.MethodPost, base, nil); status != http.StatusServiceUnavailable {
+		t.Fatalf("recovery without Agent = %d: %s", status, body)
+	}
+	var workStatus, attempts int
+	if err = database.QueryRow(ctx, `SELECT status, attempts FROM slack_message_work
+		WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = 1`,
+		surfaceOrg, conversationID).Scan(&workStatus, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if workStatus != 4 || attempts != 8 {
+		t.Fatalf("unavailable recovery mutated work: status=%d attempts=%d", workStatus, attempts)
+	}
+	var audits int
+	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_event
+		WHERE org_id = $1 AND action = 'slack-message.recovered' AND target_id = $2`,
+		surfaceOrg, conversationID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if audits != 0 {
+		t.Fatalf("unavailable recovery wrote %d audit events", audits)
+	}
+}
 
 func TestTerminalSlackMessageCanBeRecoveredByConversationAndMessage(t *testing.T) {
 	plane := startSlackPlane(t, newVendorFake(t, "xoxb-terminal-work"))

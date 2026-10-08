@@ -31,6 +31,7 @@ type Handlers struct {
 	Catalog                 integrations.Catalog
 	WebhookTypes            map[integrations.Provider]bool
 	Investigations          *investigation.Runner
+	AgentAvailable          bool
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
 	Sealer                  seal.Sealer
@@ -125,12 +126,14 @@ func (h Handlers) Routes() []authz.Route {
 	routes = append(routes, conversation.Handlers{
 		Store:           h.Database,
 		Logger:          h.Logger,
+		AgentAvailable:  h.AgentAvailable,
 		WindowLead:      h.InvestigationWindowLead,
 		MaxWaitingTurns: h.MaxWaitingTurns,
 	}.Routes()...)
 	routes = append(routes, webhookslack.RecoveryHandlers{
-		Database: h.Database,
-		Logger:   h.Logger,
+		Database:       h.Database,
+		Logger:         h.Logger,
+		AgentAvailable: h.AgentAvailable,
 	}.Routes()...)
 	return routes
 }

@@ -63,7 +63,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 		alertInvestigationEvent("c", "c", "C", "2026-09-29T10:00:00Z"))
 	accepted := make(chan error, 1)
 	go func() {
-		_, err := database.RecordDelivery(ctx, organization, delivery, storage.AlertAdmissionPolicy{MaximumPending: 3})
+		_, err := database.RecordDelivery(ctx, organization, delivery, storage.AlertAdmissionPolicy{AgentAvailable: true, MaximumPending: 3})
 		accepted <- err
 	}()
 	awaitBlockedAlertInvestigationInsert(t, ctx, pool)
@@ -135,7 +135,7 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 		alertInvestigationEvent("a", "group", "Checkout unavailable", "2026-09-29T10:00:00Z"))
 	ctx := context.Background()
 	outcome, err := database.RecordDelivery(ctx, organization, delivery,
-		storage.AlertAdmissionPolicy{WindowLead: time.Hour})
+		storage.AlertAdmissionPolicy{AgentAvailable: true, WindowLead: time.Hour})
 	if err != nil || outcome.IncidentsOpened != 1 {
 		t.Fatalf("accepting alert: %+v, %v", outcome, err)
 	}
@@ -169,10 +169,72 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 	}
 }
 
+func TestAlertDeliveryWithoutAnAgentPreservesIncidentIntakeWithoutAIAdmission(t *testing.T) {
+	database, organization := migratedDatabase(t)
+	ctx := context.Background()
+	principal := ownerOf(t, organization)
+	if _, err := database.CreateInvestigation(ctx, principal, organization,
+		investigation.NewInvestigation{
+			Subject:     "existing queued work",
+			WindowFrom:  time.Now().Add(-time.Hour),
+			WindowUntil: time.Now(),
+			CreatedBy:   principal.UserID().String(),
+		}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	integration := alertmanagerIntegration(t, database, organization)
+	firing := alertInvestigationDelivery(integration,
+		alertInvestigationEvent("no-agent", "no-agent", "Checkout unavailable", "2026-09-29T10:00:00Z"))
+	policy := storage.AlertAdmissionPolicy{MaximumPending: 1}
+	outcome, err := database.RecordDelivery(ctx, organization, firing, policy)
+	if err != nil || outcome.IncidentsOpened != 1 {
+		t.Fatalf("recording alert without an Agent at full AI capacity: %+v, %v", outcome, err)
+	}
+
+	resolvedEvent := firing.AlertEvents[0]
+	resolvedEvent.Status = alertevent.AlertEventResolved
+	resolvedEvent.ResolvedAt = time.Date(2026, 9, 29, 11, 0, 0, 0, time.UTC)
+	resolution := alertInvestigationDelivery(integration, resolvedEvent)
+	if outcome, err = database.RecordDelivery(ctx, organization, resolution, policy); err != nil || outcome.Duplicate {
+		t.Fatalf("resolving alert without an Agent: %+v, %v", outcome, err)
+	}
+
+	redelivery, err := database.RecordDelivery(ctx, organization, firing,
+		storage.AlertAdmissionPolicy{
+			MaximumPending: 1,
+			AgentAvailable: true,
+		})
+	if err != nil || !redelivery.Duplicate {
+		t.Fatalf("redelivering skipped alert after enabling Agent: %+v, %v", redelivery, err)
+	}
+
+	page, err := database.QueryIncidents(ctx, organization, incident.Query{Sort: "lastSeenAt", Limit: 50})
+	if err != nil || len(page.Incidents) != 1 || page.Incidents[0].Status != incident.StatusResolved {
+		t.Fatalf("Incident intake without an Agent: %+v, %v", page, err)
+	}
+	pool, err := poolForTest(database, organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var alerts, conversations, investigations int
+	if err = pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM alert_event WHERE org_id = $1),
+		(SELECT count(*) FROM conversation WHERE org_id = $1),
+		(SELECT count(*) FROM investigation WHERE org_id = $1)`, organization).
+		Scan(&alerts, &conversations, &investigations); err != nil {
+		t.Fatal(err)
+	}
+	if alerts != 1 || conversations != 0 || investigations != 1 {
+		t.Fatalf("no-Agent alert intake stored Alert Events=%d Conversations=%d Investigations=%d",
+			alerts, conversations, investigations)
+	}
+}
+
 func TestAlertBatchRefusalRollsBackAndRetrySucceedsAfterCapacityIsClaimed(t *testing.T) {
 	database, organization := migratedDatabase(t)
 	ctx := context.Background()
-	policy := storage.AlertAdmissionPolicy{WindowLead: time.Hour, MaximumPending: 2}
+	policy := storage.AlertAdmissionPolicy{AgentAvailable: true, WindowLead: time.Hour, MaximumPending: 2}
 	existing := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
 		alertInvestigationEvent("existing", "existing", "Existing failure", "2026-09-29T09:00:00Z"))
 	if _, err := database.RecordDelivery(ctx, organization, existing, policy); err != nil {
@@ -208,7 +270,7 @@ func TestOversizedAlertBatchIsPermanentAndLeavesNoDeliveryFacts(t *testing.T) {
 		alertInvestigationEvent("two", "two", "Second failure", "2026-09-29T10:00:00Z"))
 	ctx := context.Background()
 	_, err := database.RecordDelivery(ctx, organization, delivery,
-		storage.AlertAdmissionPolicy{MaximumPending: 1})
+		storage.AlertAdmissionPolicy{AgentAvailable: true, MaximumPending: 1})
 	var permanent storage.AlertBatchTooLargeError
 	if !errors.As(err, &permanent) {
 		t.Fatalf("oversized batch error=%v, want permanent refusal", err)
@@ -239,7 +301,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 			delivery := alertInvestigationDelivery(alertmanagerIntegration(t, database, organization),
 				alertInvestigationEvent("stage", "stage", "Stage failure", "2026-09-29T10:00:00Z"))
 			if _, err = database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{}); err == nil {
+				storage.AlertAdmissionPolicy{AgentAvailable: true}); err == nil {
 				t.Fatalf("accepted delivery despite injected %s failure", table)
 			}
 			assertNoAlertDeliveryFacts(t, database, organization)
@@ -252,7 +314,7 @@ func TestFailureAtEveryAlertAcceptanceWriteStageRollsBackTheCompleteDelivery(t *
 				t.Fatal(err)
 			}
 			outcome, err := database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{})
+				storage.AlertAdmissionPolicy{AgentAvailable: true})
 			if err != nil || outcome.Duplicate || outcome.IncidentsOpened != 1 {
 				t.Fatalf("retry after %s failure: %+v, %v", table, outcome, err)
 			}
@@ -276,7 +338,7 @@ func TestConcurrentExactAlertDuplicatesOpenOneAutomaticInvestigation(t *testing.
 		go func() {
 			<-start
 			outcome, err := database.RecordDelivery(ctx, organization, delivery,
-				storage.AlertAdmissionPolicy{MaximumPending: 1})
+				storage.AlertAdmissionPolicy{AgentAvailable: true, MaximumPending: 1})
 			answers <- answer{outcome, err}
 		}()
 	}
@@ -477,7 +539,7 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		go func() {
 			<-start
 			outcome, err := database.RecordDelivery(
-				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{})
+				context.Background(), organization, delivery(fingerprint, byte(index+1)), storage.AlertAdmissionPolicy{AgentAvailable: true})
 			answers <- answer{outcome, err}
 		}()
 	}
