@@ -634,6 +634,7 @@ paths:
         required: true
       responses:
         "201": { $ref: "#/components/responses/ConversationOpened" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}:
     parameters: &conversation-path
@@ -679,6 +680,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/incidents/{incident}/postmortem:
     parameters: *incident-path
     get:
@@ -802,6 +804,7 @@ paths:
       responses:
         "204": { $ref: "#/components/responses/NoContent" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         default: { $ref: "#/components/responses/ErrorResponse" }
 
 components:
