@@ -41,7 +41,7 @@ type integrationPlane struct {
 
 func startIntegrationPlane(t *testing.T) *integrationPlane {
 	t.Helper()
-	return startIntegrationPlaneWithOptions(t, app.Options{})
+	return startIntegrationPlaneWithOptions(t, app.Options{Agent: &blockingAgentMain{}})
 }
 
 func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integrationPlane {
