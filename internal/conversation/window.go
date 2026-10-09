@@ -11,6 +11,9 @@ var (
 	ErrWindowConflict = errors.New("the queued batch has a different window; retry after it opens")
 )
 
+const MinimumQuestionWindow = 24 * time.Hour
+const DefaultIncidentWindowLead = 2 * time.Hour
+
 type Window struct {
 	From  time.Time
 	Until time.Time
@@ -59,10 +62,6 @@ func (input windowInput) parse(now time.Time) (*Window, error) {
 	}
 	return &w, nil
 }
-
-const MinimumQuestionWindow = 24 * time.Hour
-
-const DefaultIncidentWindowLead = 2 * time.Hour
 
 func QuestionWindow(lead time.Duration) time.Duration {
 	if lead > MinimumQuestionWindow {

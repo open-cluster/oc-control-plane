@@ -24,7 +24,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			return
 		}
 		name := capabilityID
-		arguments := fmt.Sprintf(`{"namespace":%q,"workloadKind":"Deployment","workloadName":%q,"maxPods":10}`,
+		arguments := fmt.Sprintf(`{"purpose":"Read the affected workload's current state","input":{"namespace":%q,"workloadKind":"Deployment","workloadName":%q,"maxPods":10}}`,
 			fixtureNamespace, fixtureWorkload)
 		if calls.Add(1) > 1 {
 			name = "conclude"
@@ -58,11 +58,29 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 func (h *harness) assertInvestigation(t *testing.T) {
 	t.Helper()
 	base := "http://" + h.plane.httpAddress + "/api/v1"
-	status, body := h.apiRequest(t, http.MethodPost,
-		base+"/integrations/"+h.integration.String()+"/verify", nil)
-	if status != http.StatusOK {
-		t.Fatalf("verifying the real Relay integration = %d: %s", status, body)
-	}
+	h.await(t, "a verified Relay workload Tool", time.Minute, func(context.Context) (bool, error) {
+		status, body := h.apiRequest(t, http.MethodPost,
+			base+"/integrations/"+h.integration.String()+"/verify", nil)
+		if status != http.StatusOK {
+			return false, fmt.Errorf("verifying the real Relay Integration = %d: %s", status, body)
+		}
+		var verified struct {
+			Status           string `json:"status"`
+			ToolAvailability []struct {
+				Tool      string `json:"tool"`
+				Available bool   `json:"available"`
+			} `json:"toolAvailability"`
+		}
+		if err := json.Unmarshal(body, &verified); err != nil {
+			return false, err
+		}
+		for _, tool := range verified.ToolAvailability {
+			if verified.Status == "verified" && tool.Tool == capabilityID && tool.Available {
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("Relay workload Tool is unavailable: %s", body)
+	})
 
 	incident := uuid.New()
 	now := time.Now().UTC()
@@ -75,7 +93,7 @@ func (h *harness) assertInvestigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating the investigation incident: %v", err)
 	}
-	status, body = h.apiRequest(t, http.MethodPost, base+"/investigations",
+	status, body := h.apiRequest(t, http.MethodPost, base+"/investigations",
 		map[string]string{"incidentId": incident.String()})
 	if status != http.StatusAccepted {
 		t.Fatalf("opening the investigation = %d: %s", status, body)
@@ -113,6 +131,25 @@ func (h *harness) assertInvestigation(t *testing.T) {
 				bytes.Contains(conclusion, []byte(fixtureWorkload)) &&
 				bytes.Contains(conclusion, []byte(`"runRefs": [1]`)), nil
 		})
+	var successfulRuns int
+	err = h.truth.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM investigation_tool_run
+		WHERE org_id = $1 AND investigation_id = $2 AND integration_id = $3
+		  AND ordinal = 1 AND tool = $4 AND outcome = 1`,
+		organization, opened.ID, h.integration, capabilityID).Scan(&successfulRuns)
+	if err != nil || successfulRuns != 1 {
+		t.Fatalf("Investigation must record one successful Relay read: runs=%d err=%v", successfulRuns, err)
+	}
+	var jobs int
+	var job jobRecord
+	err = h.truth.pool.QueryRow(context.Background(), `
+		SELECT count(*), max(status), (array_agg(result))[1] FROM relay_job
+		WHERE org_id = $1 AND investigation_id = $2 AND integration_id = $3 AND capability_id = $4`,
+		organization, opened.ID, h.integration, capabilityID).Scan(&jobs, &job.Status, &job.Result)
+	if err != nil || jobs != 1 || job.Status != jobSucceeded {
+		t.Fatalf("Investigation must have one succeeded Relay Job: jobs=%d status=%s err=%v", jobs, job.Status, err)
+	}
+	assertReadTheFixture(t, decodeResult(t, job.Result))
 }
 
 func (h *harness) apiRequest(t *testing.T, method, url string, payload any) (int, []byte) {

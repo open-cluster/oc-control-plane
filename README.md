@@ -166,7 +166,7 @@ See [SECURITY.md](./SECURITY.md) and the
 
 ## Develop
 
-Development requires Go 1.26.6, Docker, Docker Compose, and Helm 3.
+Development requires Go 1.26.9, Docker, Docker Compose, and Helm 3.
 
 ```bash
 make tools

@@ -159,6 +159,8 @@ fields and retry outcomes.
 
 Read the Incident and its automatically opened Investigation:
 
+The automatic Investigation is present only when a model provider was available when the Alert Event was accepted.
+
 ```bash
 curl --fail --cookie .secrets/session-cookie http://localhost:8080/api/v1/incidents
 curl --fail --cookie .secrets/session-cookie http://localhost:8080/api/v1/investigations

@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,8 +17,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"golang.org/x/net/http2"
 )
 
 type TLSTerminator struct {
@@ -69,13 +66,9 @@ func (t *TLSTerminator) Close() error {
 
 func h2cReverseProxy(target *url.URL, acknowledgements *acknowledgementProbe) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Transport = &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, network, address)
-		},
-	}
+	var protocols http.Protocols
+	protocols.SetUnencryptedHTTP2(true)
+	proxy.Transport = &http.Transport{Protocols: &protocols}
 	proxy.ModifyResponse = func(response *http.Response) error {
 		if strings.HasPrefix(response.Header.Get("Content-Type"), "application/grpc") {
 			response.Body = &acknowledgementBody{upstream: response.Body, probe: acknowledgements}
