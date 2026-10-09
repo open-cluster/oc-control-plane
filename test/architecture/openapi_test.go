@@ -94,6 +94,16 @@ func TestOpenAPISeparatesAlertAndSlackBackpressureContracts(t *testing.T) {
 	if got := slack["503"].Ref; got != "#/components/responses/WebhookUnavailable" {
 		t.Errorf("Slack 503 response = %q, want unchanged unavailable contract", got)
 	}
+
+	for operation, responses := range map[string]map[string]openAPIReference{
+		"open Conversation":     document.Paths["/api/v1/conversations"].Post.Responses,
+		"append Message":        document.Paths["/api/v1/conversations/{conversation}/messages"].Post.Responses,
+		"recover Slack Message": document.Paths["/api/v1/slack/conversations/{conversation}/messages/{sequence}/recover"].Post.Responses,
+	} {
+		if got := responses["503"].Ref; got != "#/components/responses/Unavailable" {
+			t.Errorf("%s 503 response = %q, want unavailable contract", operation, got)
+		}
+	}
 }
 
 func TestOpenAPIRetiresDedicatedRelayConflictHistory(t *testing.T) {

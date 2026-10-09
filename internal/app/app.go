@@ -117,6 +117,7 @@ func Run(
 		}
 	}
 
+	// integrations catalog ------>
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(kubernetes.RelayExecutor{Database: database}),

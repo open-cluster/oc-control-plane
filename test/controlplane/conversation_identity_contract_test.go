@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -82,70 +84,97 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 }
 
 func TestConversationAIAdmissionRequiresAnAgentBeforeDurableMutation(t *testing.T) {
-	address := freeAddress(t)
+	apiAddress := freeAddress(t)
 	var dsn string
-	running := startControlPlaneRunning(t, func(cfg *config.Config) {
-		cfg.HTTPListenAddress = address
+	controlPlane := startControlPlane(t, func(cfg *config.Config) {
+		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		dsn = cfg.DatabaseDSN
-	}, app.Options{})
-	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
+	})
+	plane := &integrationPlane{controlPlane: controlPlane, api: apiAddress}
 
-	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
-		map[string]any{"subject": "unavailable AI", "message": "what changed?"})
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("opening Conversation with a Message = %d, want 503: %s", status, body)
+	status, body := plane.call(t, http.MethodPost,
+		plane.base(surfaceOrg)+"/conversations",
+		map[string]any{"subject": "unavailable execution", "message": "what happened?"})
+	if status != http.StatusServiceUnavailable ||
+		!strings.Contains(body, "no model provider configured") {
+		t.Fatalf("opening Conversation without an Agent = %d: %s", status, body)
 	}
 
-	ctx := context.Background()
-	connection, err := pgx.Connect(ctx, dsn)
+	database, err := pgx.Connect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = connection.Close(ctx) }()
-	for table, query := range map[string]string{
-		"conversation": "SELECT count(*) FROM conversation WHERE org_id = $1",
-		"message": "SELECT count(*) FROM conversation_message WHERE org_id = $1",
-		"investigation": "SELECT count(*) FROM investigation WHERE org_id = $1",
-	} {
-		var count int
-		if err = connection.QueryRow(ctx, query, surfaceOrg).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != 0 {
-			t.Fatalf("%s count = %d after refused AI work, want 0", table, count)
-		}
+	defer func() { _ = database.Close(context.Background()) }()
+	var conversations, messages, investigations, successAudits int
+	err = database.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM conversation WHERE org_id = $1),
+		(SELECT count(*) FROM conversation_message WHERE org_id = $1),
+		(SELECT count(*) FROM investigation WHERE org_id = $1),
+		(SELECT count(*) FROM audit_event
+		  WHERE org_id = $1 AND action IN ('conversation.opened', 'conversation.message-sent'))`,
+		surfaceOrg).Scan(&conversations, &messages, &investigations, &successAudits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversations != 0 || messages != 0 || investigations != 0 || successAudits != 0 {
+		t.Fatalf("refused initial Message persisted Conversations=%d Messages=%d Investigations=%d success audits=%d",
+			conversations, messages, investigations, successAudits)
 	}
 
-	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
-		map[string]any{"subject": "continuity only"})
+	base := plane.base(surfaceOrg) + "/conversations"
+
+	status, body = plane.call(t, http.MethodPost, base,
+		map[string]any{"subject": "retained operational history"})
 	if status != http.StatusCreated {
-		t.Fatalf("opening empty Conversation = %d: %s", status, body)
+		t.Fatalf("opening empty Conversation without an Agent = %d: %s", status, body)
 	}
-	var opened map[string]json.RawMessage
-	decodeInto(t, body, &opened)
-	var id string
-	if err = json.Unmarshal(opened["id"], &id); err != nil {
+	var opened struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(body), &opened); err != nil || opened.ID == "" {
+		t.Fatalf("decoding opened Conversation: %v: %s", err, body)
+	}
+	for _, path := range []string{base, base + "/" + opened.ID, base + "/" + opened.ID + "/turns"} {
+		if status, body = plane.call(t, http.MethodGet, path, nil); status != http.StatusOK {
+			t.Fatalf("reading retained Conversation at %s = %d: %s", path, status, body)
+		}
+	}
+	var beforeActivity time.Time
+	var beforeMessages, beforeInvestigations, beforeAudits int
+	err = database.QueryRow(context.Background(), `SELECT c.last_activity_at,
+		(SELECT count(*) FROM conversation_message WHERE org_id = c.org_id AND conversation_id = c.conversation_id),
+		(SELECT count(*) FROM investigation WHERE org_id = c.org_id AND conversation_id = c.conversation_id),
+		(SELECT count(*) FROM audit_event WHERE org_id = c.org_id AND action = 'conversation.message-sent')
+		FROM conversation c WHERE c.org_id = $1 AND c.conversation_id = $2`,
+		surfaceOrg, opened.ID).Scan(&beforeActivity, &beforeMessages, &beforeInvestigations, &beforeAudits)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations/"+id+"/messages",
-		map[string]any{"message": "now investigate"})
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("appending Message without Agent = %d, want 503: %s", status, body)
+	status, body = plane.call(t, http.MethodPost, base+"/"+opened.ID+"/messages",
+		map[string]any{"message": "do not strand this"})
+	if status != http.StatusServiceUnavailable ||
+		!strings.Contains(body, "no model provider configured") {
+		t.Fatalf("following up without an Agent = %d: %s", status, body)
 	}
 
-	var messages, investigations int
-	if err = connection.QueryRow(ctx,
-		"SELECT count(*) FROM conversation_message WHERE org_id = $1", surfaceOrg).Scan(&messages); err != nil {
+	var afterActivity time.Time
+	var afterMessages, afterInvestigations, afterAudits int
+	err = database.QueryRow(context.Background(), `SELECT c.last_activity_at,
+		(SELECT count(*) FROM conversation_message WHERE org_id = c.org_id AND conversation_id = c.conversation_id),
+		(SELECT count(*) FROM investigation WHERE org_id = c.org_id AND conversation_id = c.conversation_id),
+		(SELECT count(*) FROM audit_event WHERE org_id = c.org_id AND action = 'conversation.message-sent')
+		FROM conversation c WHERE c.org_id = $1 AND c.conversation_id = $2`,
+		surfaceOrg, opened.ID).Scan(&afterActivity, &afterMessages, &afterInvestigations, &afterAudits)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = connection.QueryRow(ctx,
-		"SELECT count(*) FROM investigation WHERE org_id = $1", surfaceOrg).Scan(&investigations); err != nil {
-		t.Fatal(err)
-	}
-	if messages != 0 || investigations != 0 {
-		t.Fatalf("refused follow-up stored messages=%d investigations=%d", messages, investigations)
+	if !afterActivity.Equal(beforeActivity) || afterMessages != beforeMessages ||
+		afterInvestigations != beforeInvestigations || afterAudits != beforeAudits {
+		t.Fatalf("refused follow-up changed activity=%v Messages=%d Investigations=%d audits=%d; before activity=%v Messages=%d Investigations=%d audits=%d",
+			afterActivity, afterMessages, afterInvestigations, afterAudits,
+			beforeActivity, beforeMessages, beforeInvestigations, beforeAudits)
 	}
 }

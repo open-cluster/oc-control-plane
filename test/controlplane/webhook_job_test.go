@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/http"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,44 +24,63 @@ import (
 )
 
 func TestTerminalSlackMessageRecoveryIsUnavailableWithoutAgent(t *testing.T) {
-	plane := startSlackPlaneWithOptions(t, newVendorFake(t, "xoxb-terminal-work"), app.Options{})
-	status, body := plane.createSlack(t, "Terminal webhook source", "xoxb-terminal-work")
+	vendor := newVendorFake(t, "xoxb-terminal-no-agent")
+	plane := startSlackPlaneWithOptions(t, vendor, app.Options{})
+	status, body := plane.createSlack(t, "Terminal Slack source", "xoxb-terminal-no-agent")
 	if status != http.StatusCreated {
-		t.Fatalf("creating Slack = %d: %s", status, body)
+		t.Fatalf("creating Slack Integration = %d: %s", status, body)
 	}
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	ctx := context.Background()
-	database, err := pgx.Connect(ctx, plane.dsn)
+	database, err := pgx.Connect(context.Background(), plane.dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = database.Close(ctx) }()
+	defer func() { _ = database.Close(context.Background()) }()
 	conversationID := recordTerminalSlackMessageWork(t, database, created.Integration.ID,
-		"terminal-no-agent", []byte(`{"event_id":"terminal-slack-no-agent"}`), 8)
-	base := plane.base(surfaceOrg) + "/slack/conversations/" + conversationID + "/messages/1/recover"
+		"terminal-without-agent", []byte(`{"event_id":"terminal-without-agent"}`), 8)
 
-	if status, body = plane.call(t, http.MethodPost, base, nil); status != http.StatusServiceUnavailable {
-		t.Fatalf("recovery without Agent = %d: %s", status, body)
+	type recoveryState struct {
+		Status         int
+		Attempts       int
+		LeaseOwner     string
+		LeaseEpoch     int64
+		LeaseExpiresAt *time.Time
+		AvailableAt    time.Time
+		FailureClass   string
+		FailureMessage string
+		UpdatedAt      time.Time
+		SuccessAudits  int
 	}
-	var workStatus, attempts int
-	if err = database.QueryRow(ctx, `SELECT status, attempts FROM slack_message_work
-		WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = 1`,
-		surfaceOrg, conversationID).Scan(&workStatus, &attempts); err != nil {
-		t.Fatal(err)
+	readState := func() recoveryState {
+		t.Helper()
+		var state recoveryState
+		err := database.QueryRow(context.Background(), `SELECT status, attempts, lease_owner,
+			lease_epoch, lease_expires_at, available_at, failure_class, failure_message, updated_at,
+			(SELECT count(*) FROM audit_event
+			  WHERE org_id = work.org_id AND action = 'slack-message.recovered')
+			FROM slack_message_work work
+			WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = 1`,
+			surfaceOrg, conversationID).Scan(&state.Status, &state.Attempts, &state.LeaseOwner,
+			&state.LeaseEpoch, &state.LeaseExpiresAt, &state.AvailableAt, &state.FailureClass,
+			&state.FailureMessage, &state.UpdatedAt, &state.SuccessAudits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
 	}
-	if workStatus != 4 || attempts != 8 {
-		t.Fatalf("unavailable recovery mutated work: status=%d attempts=%d", workStatus, attempts)
+	before := readState()
+
+	status, body = plane.call(t, http.MethodPost,
+		plane.base(surfaceOrg)+"/slack/conversations/"+conversationID+"/messages/1/recover", nil)
+	if status != http.StatusServiceUnavailable ||
+		!strings.Contains(body, "no model provider configured") {
+		t.Fatalf("recovering Slack Message without an Agent = %d: %s", status, body)
 	}
-	var audits int
-	if err = database.QueryRow(ctx, `SELECT count(*) FROM audit_event
-		WHERE org_id = $1 AND action = 'slack-message.recovered' AND target_id = $2`,
-		surfaceOrg, conversationID).Scan(&audits); err != nil {
-		t.Fatal(err)
-	}
-	if audits != 0 {
-		t.Fatalf("unavailable recovery wrote %d audit events", audits)
+	after := readState()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("refused Slack recovery changed work state: before=%+v after=%+v", before, after)
 	}
 }
 

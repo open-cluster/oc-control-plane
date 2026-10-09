@@ -34,16 +34,18 @@ func TestAlertAdmissionWithoutAgentKeepsIncidentIntakeAvailable(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 
-	var incidents, investigations int
+	var alerts, incidents, conversations, investigations int
 	if err = connection.QueryRow(ctx, `
-		SELECT (SELECT count(*) FROM incident WHERE org_id = $1),
+		SELECT (SELECT count(*) FROM alert_event WHERE org_id = $1),
+		       (SELECT count(*) FROM incident WHERE org_id = $1),
+		       (SELECT count(*) FROM conversation WHERE org_id = $1),
 		       (SELECT count(*) FROM investigation WHERE org_id = $1)`,
-		intakeOrganization).Scan(&incidents, &investigations); err != nil {
+		intakeOrganization).Scan(&alerts, &incidents, &conversations, &investigations); err != nil {
 		t.Fatal(err)
 	}
-	if incidents != 1 || investigations != 0 {
-		t.Fatalf("without Agent: incidents=%d investigations=%d, want 1 and 0",
-			incidents, investigations)
+	if alerts != 1 || incidents != 1 || conversations != 0 || investigations != 0 {
+		t.Fatalf("without Agent: Alert Events=%d Incidents=%d Conversations=%d Investigations=%d",
+			alerts, incidents, conversations, investigations)
 	}
 }
 

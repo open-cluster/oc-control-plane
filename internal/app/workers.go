@@ -46,8 +46,9 @@ func startSlackMessageWorker(ctx context.Context, group *errgroup.Group, process
 		Owner:           uuid.NewString(),
 		Lease:           time.Minute,
 		RetryBase:       time.Second,
-		MaxAttempts:     8, Logger: process.logger,
-		Counters: slackwork.NewMessageInstruments(process.logger),
+		MaxAttempts:     8,
+		Logger:          process.logger,
+		Counters:        slackwork.NewMessageInstruments(process.logger),
 	}
 	group.Go(func() error {
 		worker.Run(ctx)

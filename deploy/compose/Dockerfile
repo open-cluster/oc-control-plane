@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.9-alpine AS build
 
 RUN apk add --no-cache ca-certificates git
 WORKDIR /src
