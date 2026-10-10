@@ -62,8 +62,8 @@ func (p *Database) BootstrapLocalUser(
 	}
 	var organization uuid.UUID
 	if err = transaction.QueryRow(ctx, `
-		INSERT INTO organization (display_name, created_by)
-		VALUES ($1, $2) RETURNING org_id`, organizationName, user.ID.String()).Scan(&organization); err != nil {
+		INSERT INTO organization (display_name)
+		VALUES ($1) RETURNING org_id`, organizationName).Scan(&organization); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("creating the first organization: %w", err)
 	}
 	if _, err = transaction.Exec(ctx, `

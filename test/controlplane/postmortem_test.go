@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
 )
 
@@ -65,6 +66,7 @@ func TestResolvedIncidentPostmortemDraftCanBeCorrectedRegeneratedAndReviewed(t *
 		t.Fatal(err)
 	}
 	if draft.Status != postmortem.StatusReviewed || draft.ReviewedAt.IsZero() ||
+		draft.ReviewedByUserID == nil || *draft.ReviewedByUserID == uuid.Nil ||
 		draft.Impact != "A subset of checkout requests failed." {
 		t.Fatalf("reviewed draft = %+v", draft)
 	}

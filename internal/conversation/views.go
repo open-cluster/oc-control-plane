@@ -18,7 +18,6 @@ type conversationView struct {
 	ID             string `json:"id"`
 	Subject        string `json:"subject"`
 	Source         string `json:"source"`
-	State          string `json:"state"`
 	IncidentID     string `json:"incidentId,omitempty"`
 	CreatedBy      string `json:"createdBy,omitempty"`
 	CreatedAt      string `json:"createdAt"`
@@ -30,8 +29,8 @@ type messageView struct {
 	WindowUntil     string `json:"windowUntil"`
 	Sequence        int64  `json:"sequence"`
 	Role            string `json:"role"`
-	ActorID         string `json:"actorId,omitempty"`
-	ActorDisplay    string `json:"actorDisplay,omitempty"`
+	AuthorID        string `json:"authorId,omitempty"`
+	AuthorName      string `json:"authorName,omitempty"`
 	Text            string `json:"text"`
 	SourceReference string `json:"sourceReference,omitempty"`
 	InvestigationID string `json:"investigationId,omitempty"`
@@ -42,7 +41,6 @@ type turnView struct {
 	InvestigationID string `json:"investigationId"`
 	Turn            int    `json:"turn"`
 	Status          string `json:"status"`
-	Answer          string `json:"answer,omitempty"`
 	StoppedBy       string `json:"stoppedBy,omitempty"`
 	Error           string `json:"error,omitempty"`
 	CreatedAt       string `json:"createdAt"`
@@ -72,7 +70,6 @@ func conversationViewOf(found Conversation) conversationView {
 		ID:             found.ID.String(),
 		Subject:        found.Subject,
 		Source:         found.Source.String(),
-		State:          found.State.String(),
 		CreatedBy:      found.CreatedBy,
 		CreatedAt:      stamp(found.CreatedAt),
 		LastActivityAt: stamp(found.LastActivityAt),
@@ -87,8 +84,8 @@ func messageViewOf(message Message) messageView {
 	view := messageView{
 		Sequence:        message.Sequence,
 		Role:            message.Role.String(),
-		ActorID:         message.ActorID,
-		ActorDisplay:    message.ActorDisplay,
+		AuthorID:        message.AuthorID,
+		AuthorName:      message.AuthorName,
 		Text:            message.Text,
 		SourceReference: message.SourceReference,
 		CreatedAt:       stamp(message.CreatedAt),
@@ -108,7 +105,6 @@ func turnViewOf(turn Turn) turnView {
 		InvestigationID: turn.InvestigationID.String(),
 		Turn:            turn.Ordinal,
 		Status:          turn.Status,
-		Answer:          turn.Answer,
 		StoppedBy:       turn.StoppedBy,
 		Error:           turn.Error,
 		CreatedAt:       stamp(turn.CreatedAt),

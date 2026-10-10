@@ -99,16 +99,13 @@ func appendMessageForTest(
 		return conversation.Message{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var state conversation.State
-	if err = tx.QueryRow(ctx, `SELECT state FROM conversation
-		WHERE org_id = $1 AND conversation_id = $2 FOR UPDATE`, organization, id).Scan(&state); err != nil {
+	var found int
+	if err = tx.QueryRow(ctx, `SELECT 1 FROM conversation
+		WHERE org_id = $1 AND conversation_id = $2 FOR UPDATE`, organization, id).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.Message{}, conversation.ErrUnknown
 		}
 		return conversation.Message{}, err
-	}
-	if state != conversation.StateOpen {
-		return conversation.Message{}, conversation.ErrClosed
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	window := conversation.Window{From: now.Add(-conversation.DefaultIncidentWindowLead), Until: now}
@@ -119,13 +116,13 @@ func appendMessageForTest(
 	var role conversation.Role
 	var investigationID *uuid.UUID
 	if err = tx.QueryRow(ctx, `INSERT INTO conversation_message
-		(conversation_id, org_id, sequence, role, actor_id, actor_display, text, window_from, window_until)
+		(conversation_id, org_id, sequence, role, author_id, author_name, text, window_from, window_until)
 		SELECT $1, $2, coalesce((SELECT max(sequence) FROM conversation_message
 		 WHERE org_id = $2 AND conversation_id = $1), 0) + 1, $3, $4, $5, $6, $7, $8
-		RETURNING sequence, role, actor_id, actor_display, text, source_reference,
+		RETURNING sequence, role, author_id, author_name, text, source_reference,
 		          investigation_id, created_at`, id, organization, int16(said.Role),
-		said.ActorID, said.ActorDisplay, said.Text, window.From, window.Until).Scan(
-		&written.Sequence, &role, &written.ActorID, &written.ActorDisplay,
+		said.AuthorID, said.AuthorName, said.Text, window.From, window.Until).Scan(
+		&written.Sequence, &role, &written.AuthorID, &written.AuthorName,
 		&written.Text, &written.SourceReference, &investigationID, &written.CreatedAt); err != nil {
 		return conversation.Message{}, err
 	}
@@ -376,7 +373,7 @@ func acceptedSlackMessage(t *testing.T) slackMessageFixture {
 	}
 	outcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: integration.ID, ContentDigest: randomDigest(t),
-		Channel: "CWORK", Thread: "1.0", Subject: "accepted question", ActorID: "UWORK", Text: "why?",
+		Channel: "CWORK", Thread: "1.0", Subject: "accepted question", AuthorID: "UWORK", Text: "why?",
 	})
 	if err != nil {
 		t.Fatal(err)

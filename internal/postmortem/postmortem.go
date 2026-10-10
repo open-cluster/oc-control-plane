@@ -67,7 +67,7 @@ type Postmortem struct {
 	CreatedAt           time.Time        `json:"createdAt"`
 	UpdatedAt           time.Time        `json:"updatedAt"`
 	ReviewedAt          time.Time        `json:"reviewedAt,omitempty"`
-	ReviewedBy          string           `json:"reviewedBy,omitempty"`
+	ReviewedByUserID    *uuid.UUID       `json:"reviewedByUserId,omitempty"`
 }
 
 type AlertEvent struct {

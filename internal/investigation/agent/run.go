@@ -165,7 +165,7 @@ func (r *Agent) Run(
 	if err != nil {
 		return failRun("the connected sources could not be read", investigation.Usage{})
 	}
-	brief := r.conversationBrief(ctx, organization, opened, events)
+	brief := r.conversationBrief(ctx, organization, opened)
 	offered := offeredSourcesForConversation(r.Catalog, candidates, origin)
 	r.announce(ctx, events,
 		investigation.StartedPayload(opened, true))

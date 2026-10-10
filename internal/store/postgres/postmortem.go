@@ -20,7 +20,7 @@ import (
 var _ postmortem.Store = (*Database)(nil)
 
 const postmortemColumns = `incident_id, status, revision, document, created_at,
-	updated_at, reviewed_at, reviewed_by`
+	updated_at, reviewed_at, reviewed_by_user_id`
 
 func (p *Database) GenerationInput(
 	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
@@ -163,7 +163,7 @@ func (p *Database) GenerationInput(
 	}
 
 	messages, err := pool.Query(ctx, `
-		SELECT m.actor_display, m.text, m.created_at
+		SELECT m.author_name, m.text, m.created_at
 		  FROM conversation_message m
 		  JOIN conversation c
 		    ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
@@ -230,6 +230,8 @@ func (p *Database) ReplaceDraft(
 ) (postmortem.Postmortem, error) {
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemRegenerated,
 		func(ctx context.Context, tx pgx.Tx) (postmortem.Postmortem, error) {
+			draft.ReviewedAt = time.Time{}
+			draft.ReviewedByUserID = nil
 			document, err := json.Marshal(draft)
 			if err != nil {
 				return postmortem.Postmortem{}, err
@@ -237,7 +239,7 @@ func (p *Database) ReplaceDraft(
 			return scanPostmortem(tx.QueryRow(ctx, `
 				UPDATE postmortem
 				   SET status = $3, revision = $4, document = $5, updated_at = now(),
-				       reviewed_at = NULL, reviewed_by = ''
+				       reviewed_at = NULL, reviewed_by_user_id = NULL
 				 WHERE incident_id = $1 AND org_id = $2
 				RETURNING `+postmortemColumns,
 				draft.IncidentID, organization, postmortem.StatusDraft,
@@ -281,7 +283,7 @@ func (p *Database) Review(
 		func(ctx context.Context, tx pgx.Tx) (postmortem.Postmortem, error) {
 			reviewed, err := scanPostmortem(tx.QueryRow(ctx, `
 				UPDATE postmortem
-				   SET status = $3, reviewed_at = now(), reviewed_by = $4, updated_at = now()
+				   SET status = $3, reviewed_at = now(), reviewed_by_user_id = $4, updated_at = now()
 				 WHERE incident_id = $1 AND org_id = $2 AND status = $5
 				RETURNING `+postmortemColumns,
 				incidentID, organization, postmortem.StatusReviewed,
@@ -317,18 +319,18 @@ func (p *Database) writePostmortem(
 
 func scanPostmortem(row scanned) (postmortem.Postmortem, error) {
 	var (
-		found      postmortem.Postmortem
-		incidentID uuid.UUID
-		status     string
-		revision   int
-		document   []byte
-		createdAt  time.Time
-		updatedAt  time.Time
-		reviewedAt *time.Time
-		reviewedBy string
+		found            postmortem.Postmortem
+		incidentID       uuid.UUID
+		status           string
+		revision         int
+		document         []byte
+		createdAt        time.Time
+		updatedAt        time.Time
+		reviewedAt       *time.Time
+		reviewedByUserID *uuid.UUID
 	)
 	if err := row.Scan(&incidentID, &status, &revision, &document,
-		&createdAt, &updatedAt, &reviewedAt, &reviewedBy); err != nil {
+		&createdAt, &updatedAt, &reviewedAt, &reviewedByUserID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return postmortem.Postmortem{}, postmortem.ErrUnknown
 		}
@@ -342,7 +344,7 @@ func scanPostmortem(row scanned) (postmortem.Postmortem, error) {
 	found.Revision = revision
 	found.CreatedAt = createdAt
 	found.UpdatedAt = updatedAt
-	found.ReviewedBy = reviewedBy
+	found.ReviewedByUserID = reviewedByUserID
 	if reviewedAt != nil {
 		found.ReviewedAt = *reviewedAt
 	}

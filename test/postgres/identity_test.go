@@ -76,8 +76,8 @@ func TestMembershipIsUniqueByUserAndRemovalKeepsTheUser(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	var another uuid.UUID
-	if err = connection.QueryRow(ctx, `INSERT INTO organization (display_name,created_by)
-		VALUES ('Another',$1) RETURNING org_id`, user.ID.String()).Scan(&another); err != nil {
+	if err = connection.QueryRow(ctx, `INSERT INTO organization (display_name)
+		VALUES ('Another') RETURNING org_id`).Scan(&another); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = connection.Exec(ctx, `INSERT INTO organization_membership (org_id,user_id,role)

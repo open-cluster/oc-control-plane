@@ -37,7 +37,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	}
 	if _, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: slack.ID, ContentDigest: randomDigest(t), Channel: "CSHARED", Thread: "1.0",
-		Subject: "slack question", ActorID: "USHARED", Text: "investigate",
+		Subject: "slack question", AuthorID: "USHARED", Text: "investigate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	go func() {
 		_, _, _, err := database.AppendMessageAndOpenTurn(ctx, principal, organization, chat.ID,
 			conversation.NewMessage{Role: conversation.RoleUser,
-				ActorID: principal.UserID().String(), Text: "investigate"}, time.Hour, 3)
+				AuthorID: principal.UserID().String(), Text: "investigate"}, time.Hour, 3)
 		web <- err
 	}()
 	go func() { slackResult <- database.ApplySlackMessageWork(ctx, organization, work, time.Hour, 3) }()
@@ -178,7 +178,6 @@ func TestAlertDeliveryWithoutAnAgentPreservesIncidentIntakeWithoutAIAdmission(t 
 			Subject:     "existing queued work",
 			WindowFrom:  time.Now().Add(-time.Hour),
 			WindowUntil: time.Now(),
-			CreatedBy:   principal.UserID().String(),
 		}, 0); err != nil {
 		t.Fatal(err)
 	}

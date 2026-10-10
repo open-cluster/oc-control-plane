@@ -281,15 +281,15 @@ func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 	var detail struct {
 		Source   string `json:"source"`
 		Messages []struct {
-			Role         string  `json:"role"`
-			ActorID      string  `json:"actorId"`
-			ActorDisplay string  `json:"actorDisplay"`
-			ActorKind    *string `json:"actorKind"`
+			Role       string  `json:"role"`
+			AuthorID   string  `json:"authorId"`
+			AuthorName string  `json:"authorName"`
+			ActorKind  *string `json:"actorKind"`
 		} `json:"messages"`
 	}
 	decodeInto(t, answer, &detail)
 	if detail.Source != "slack" || len(detail.Messages) != 1 ||
-		detail.Messages[0].Role != "user" || detail.Messages[0].ActorID != "U9SRE" ||
+		detail.Messages[0].Role != "user" || detail.Messages[0].AuthorID != "U9SRE" ||
 		detail.Messages[0].ActorKind != nil {
 		t.Fatalf("public Slack identity = %s", answer)
 	}
@@ -333,9 +333,12 @@ func TestSlackEvents_AcceptedMentionRecordsAuditedSourceProvenance(t *testing.T)
 	for {
 		var reference string
 		err = database.QueryRow(ctx, `
-			SELECT source_reference
-			  FROM conversation_message
-			 WHERE org_id = $1 AND provider_channel_id = 'C0INCIDENTS'`,
+			SELECT message.source_reference
+			  FROM conversation_message message
+			  JOIN slack_conversation slack
+			    ON slack.org_id = message.org_id
+			   AND slack.conversation_id = message.conversation_id
+			 WHERE message.org_id = $1 AND slack.channel_id = 'C0INCIDENTS'`,
 			surfaceOrg).Scan(&reference)
 		if err == nil && reference != "" {
 			const want = "https://acme.slack.com/archives/C0INCIDENTS/p1700000007123"

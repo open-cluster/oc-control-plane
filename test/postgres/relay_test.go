@@ -418,8 +418,8 @@ func ensureTestOrganization(
 	if err != nil {
 		t.Fatalf("opening organization pool: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO organization(org_id, display_name, created_by)
-VALUES ($1, 'Test Organization', 'test') ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO organization(org_id, display_name)
+VALUES ($1, 'Test Organization') ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
 		t.Fatalf("creating test organization: %v", err)
 	}
 }

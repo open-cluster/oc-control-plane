@@ -20,7 +20,7 @@ func (p *Database) ConversationBrief(
 	if tail <= 0 || tail > investigation.BriefRecentMessages {
 		tail = investigation.BriefRecentMessages
 	}
-	_, err := p.Conversation(ctx, organization, id)
+	_, err := p.conversationByID(ctx, organization, id)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
@@ -37,7 +37,7 @@ func (p *Database) ConversationBrief(
 	for _, message := range messages {
 		brief.Recent = append(brief.Recent, investigation.BriefMessage{
 			FromUser:        message.Role == conversationRoleUser,
-			Actor:           message.ActorDisplay,
+			Author:          message.AuthorName,
 			Text:            briefExchangeText(message.Text),
 			Sequence:        message.Sequence,
 			CreatedAt:       message.CreatedAt,
@@ -204,7 +204,7 @@ func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uu
 	if err != nil {
 		return page, err
 	}
-	rows, err := pool.Query(ctx, `SELECT sequence, role, actor_display, text, created_at, investigation_id
+	rows, err := pool.Query(ctx, `SELECT sequence, role, author_name, text, created_at, investigation_id
 		FROM conversation_message WHERE org_id=$1 AND conversation_id=$2 AND sequence<$3
 		ORDER BY sequence DESC LIMIT $4`, org, id, before, investigation.BriefRecentMessages+1)
 	if err != nil {
@@ -215,7 +215,7 @@ func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uu
 		var message investigation.BriefMessage
 		var role int16
 		var owner *uuid.UUID
-		if err = rows.Scan(&message.Sequence, &role, &message.Actor, &message.Text, &message.CreatedAt, &owner); err != nil {
+		if err = rows.Scan(&message.Sequence, &role, &message.Author, &message.Text, &message.CreatedAt, &owner); err != nil {
 			rows.Close()
 			return page, err
 		}
@@ -304,6 +304,17 @@ func historyAnswers(ctx context.Context, pool querier, org uuid.UUID, id uuid.UU
 func mergeExchange(messages, answers []investigation.BriefMessage) []investigation.BriefMessage {
 	exchange := make([]investigation.BriefMessage, 0, len(messages)+len(answers))
 	for _, message := range messages {
+		if !message.FromUser && message.InvestigationID != uuid.Nil {
+			index := slices.IndexFunc(answers, func(answer investigation.BriefMessage) bool {
+				return answer.InvestigationID == message.InvestigationID
+			})
+			if index >= 0 {
+				message.Answer = answers[index].Answer
+				remaining := make([]investigation.BriefMessage, 0, len(answers)-1)
+				remaining = append(remaining, answers[:index]...)
+				answers = append(remaining, answers[index+1:]...)
+			}
+		}
 		for len(answers) > 0 && answers[0].CreatedAt.Before(message.CreatedAt) {
 			exchange = append(exchange, answers[0])
 			answers = answers[1:]
@@ -338,7 +349,7 @@ func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUI
 		return nil, nil
 	}
 	if source != conversation.SourceSlack || integration == nil || *integration == uuid.Nil || channel == "" || thread == "" {
-		return nil, errors.New("Conversation provider origin is missing or inconsistent")
+		return nil, errors.New("conversation provider origin is missing or inconsistent")
 	}
 	return &investigation.ConversationOrigin{IntegrationID: *integration, Channel: channel, Thread: thread}, nil
 }
@@ -357,7 +368,7 @@ func (p *Database) InvestigationMessages(ctx context.Context, org uuid.UUID, con
 	if !exists {
 		return nil, investigation.ErrUnknown
 	}
-	rows, err := pool.Query(ctx, `SELECT sequence, actor_display, created_at, text
+	rows, err := pool.Query(ctx, `SELECT sequence, author_name, created_at, text
 		FROM conversation_message WHERE org_id = $1 AND conversation_id = $2
 		AND investigation_id = $3 AND role = 1 ORDER BY sequence LIMIT $4`,
 		org, conversationID, id, maxQueuedMessages+1)
@@ -368,7 +379,7 @@ func (p *Database) InvestigationMessages(ctx context.Context, org uuid.UUID, con
 	var messages []investigation.AssignedMessage
 	for rows.Next() {
 		var message investigation.AssignedMessage
-		if err := rows.Scan(&message.Sequence, &message.Actor, &message.CreatedAt, &message.Text); err != nil {
+		if err := rows.Scan(&message.Sequence, &message.Author, &message.CreatedAt, &message.Text); err != nil {
 			return nil, err
 		}
 		messages = append(messages, message)

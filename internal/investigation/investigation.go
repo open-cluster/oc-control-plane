@@ -190,7 +190,6 @@ type Investigation struct {
 	StoppedBy      string
 	Error          string
 	Usage          Usage
-	CreatedBy      string
 	CreatedAt      time.Time
 	ConcludedAt    time.Time
 }
@@ -219,7 +218,6 @@ type NewInvestigation struct {
 	Subject     string
 	WindowFrom  time.Time
 	WindowUntil time.Time
-	CreatedBy   string
 }
 
 type Trigger struct {

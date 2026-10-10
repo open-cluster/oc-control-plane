@@ -178,7 +178,7 @@ func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integratio
 		SELECT $6, org_id, 'slack', 'Slack replay' FROM delivery RETURNING conversation_id, org_id
 	), message AS (
 		INSERT INTO conversation_message
-			(conversation_id, org_id, sequence, role, actor_id, text, window_from, window_until)
+			(conversation_id, org_id, sequence, role, author_id, text, window_from, window_until)
 		SELECT conversation_id, org_id, 1, 1, 'UREPLAY', 'investigate', now()-interval '1 hour', now()
 		FROM chat RETURNING conversation_id, org_id, sequence
 	)

@@ -16,7 +16,7 @@ const (
 
 type AssignedMessage struct {
 	Sequence  int64     `json:"sequence"`
-	Actor     string    `json:"actor"`
+	Author    string    `json:"author"`
 	CreatedAt time.Time `json:"createdAt"`
 	Text      string    `json:"text"`
 }
@@ -48,7 +48,7 @@ func (c *Conclusion) MarkMissingEvidence() {
 type BriefMessage struct {
 	Answer          *Conclusion `json:"answer,omitempty"`
 	FromUser        bool        `json:"fromUser"`
-	Actor           string      `json:"actor,omitempty"`
+	Author          string      `json:"author,omitempty"`
 	Text            string      `json:"text"`
 	Sequence        int64       `json:"sequence,omitempty"`
 	CreatedAt       time.Time   `json:"createdAt,omitzero"`

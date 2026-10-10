@@ -50,11 +50,18 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	if string(message["role"]) != `"user"` {
 		t.Errorf("role = %s, want user", message["role"])
 	}
-	if _, present := message["actorKind"]; present {
-		t.Errorf("retired actorKind was exposed: %s", body)
+	for _, retired := range []string{"actorKind", "actorId", "actorDisplay"} {
+		if _, present := message[retired]; present {
+			t.Errorf("retired %s was exposed: %s", retired, body)
+		}
 	}
-	if string(message["actorId"]) == `""` || string(message["actorDisplay"]) == `""` {
+	authorID, hasAuthorID := message["authorId"]
+	authorName, hasAuthorName := message["authorName"]
+	if !hasAuthorID || !hasAuthorName || string(authorID) == `""` || string(authorName) == `""` {
 		t.Errorf("trusted attribution was not retained: %s", body)
+	}
+	if _, present := opened["state"]; present {
+		t.Errorf("unsupported Conversation state was exposed: %s", body)
 	}
 
 	status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations", nil)
@@ -67,6 +74,13 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	decodeInto(t, body, &listed)
 	if len(listed.Items) != 1 || string(listed.Items[0]["source"]) != `"web"` {
 		t.Fatalf("listed Conversation identity = %s", body)
+	}
+	if _, present := listed.Items[0]["state"]; present {
+		t.Errorf("listed Conversation exposed unsupported state: %s", body)
+	}
+	if status, body = plane.call(t, http.MethodGet,
+		plane.base(surfaceOrg)+"/conversations?state=open", nil); status != http.StatusBadRequest {
+		t.Errorf("retired state filter = %d, want 400: %s", status, body)
 	}
 
 	status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations/"+id, nil)

@@ -147,8 +147,8 @@ func (h *receiver) acceptSlackMessage(
 		Thread:        envelope.Thread(),
 		MessageID:     envelope.Event.TS,
 		Subject:       slack.Subject(envelope.Event.Text),
-		ActorID:       conversation.Bounded(envelope.Event.User, conversation.MaxActorIDLength),
-		ActorDisplay:  conversation.Bounded(envelope.Event.User, conversation.MaxActorDisplayLength),
+		AuthorID:      conversation.Bounded(envelope.Event.User, conversation.MaxAuthorIDLength),
+		AuthorName:    conversation.Bounded(envelope.Event.User, conversation.MaxAuthorNameLength),
 		Text:          conversation.Bounded(envelope.Event.Text, conversation.MaxMessageTextLength),
 	})
 	if err != nil {

@@ -27,6 +27,11 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	principal := ownerOf(t, organization)
+	if _, err = pool.Exec(context.Background(), `INSERT INTO app_user(user_id, issuer, subject, email)
+		VALUES ($1, 'test', $2, 'reviewer@example.test')`, principal.UserID(), principal.UserID().String()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(context.Background(), `
 		UPDATE incident
 		   SET status = 2, resolved_at = now(), updated_at = now()
@@ -39,7 +44,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		t.Fatalf("generation input = %+v err=%v", input, err)
 	}
 	draft := postmortem.DraftFrom(input)
-	created, err := database.CreateDraft(context.Background(), ownerOf(t, organization),
+	created, err := database.CreateDraft(context.Background(), principal,
 		organization, draft)
 	if err != nil || created.Revision != 1 || created.Status != postmortem.StatusDraft ||
 		created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
@@ -48,7 +53,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 
 	draft.Revision = 2
 	draft.Resolution = "Rolled back the deployment."
-	replaced, err := database.ReplaceDraft(context.Background(), ownerOf(t, organization),
+	replaced, err := database.ReplaceDraft(context.Background(), principal,
 		organization, draft)
 	if err != nil || replaced.Revision != 2 || replaced.Resolution != draft.Resolution {
 		t.Fatalf("replaced = %+v err=%v", replaced, err)
@@ -58,12 +63,12 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		Title: "Bound database pools", Owner: "Database team", Deadline: "2026-09-15",
 		Verification: "Database utilization remains below the limit.", RunRefs: []int{3},
 	}}
-	corrected, err := database.Correct(context.Background(), ownerOf(t, organization),
+	corrected, err := database.Correct(context.Background(), principal,
 		organization, incident, postmortem.Corrections{Impact: &impact, ActionItems: &actions})
 	if err != nil || corrected.Impact != impact || corrected.ActionItems[0].Owner != "Database team" {
 		t.Fatalf("corrected = %+v err=%v", corrected, err)
 	}
-	reviewed, err := database.Review(context.Background(), ownerOf(t, organization),
+	reviewed, err := database.Review(context.Background(), principal,
 		organization, incident)
 	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.ReviewedAt.IsZero() {
 		t.Fatalf("reviewed = %+v err=%v", reviewed, err)

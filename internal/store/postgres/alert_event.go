@@ -249,9 +249,9 @@ func openAlertInvestigations(
 	_, err := tx.Exec(ctx, `
 		INSERT INTO investigation
 			(investigation_id, org_id, incident_id, subject, window_from,
-			 window_until, created_by, automatic_incident)
+			 window_until, automatic_incident)
 		SELECT gen_random_uuid(), org_id, incident_id, title,
-		       first_seen_at - ($3 * interval '1 microsecond'), last_seen_at, 'webhook', true
+		       first_seen_at - ($3 * interval '1 microsecond'), last_seen_at, true
 		  FROM incident
 		 WHERE org_id = $1 AND incident_id = ANY($2::uuid[])`,
 		organization, incidents, policy.WindowLead.Microseconds())

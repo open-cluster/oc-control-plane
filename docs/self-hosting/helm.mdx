@@ -81,15 +81,17 @@ image or chart tags; see [Feature availability](/feature-availability).
 Back up PostgreSQL, disable any autoscaler that could restart old replicas, scale the old
 Deployment to zero, and wait for every old Pod to terminate. Do not use a rolling upgrade
 or run mixed versions against one database. The current ledgered baseline migrates only
-when retained user Message attribution agrees with each Conversation source and every
-retained nonempty Investigation question has assigned user Messages. A failed check rolls
-back the migration without changing the old schema; repair the data with the old version
-or restore the backup before retrying. Unknown or unledgered pre-release schemas still
+when retained user Message attribution agrees with each Conversation source, every
+retained nonempty Investigation question has assigned user Messages, and any nonempty
+Postmortem reviewer is the UUID of an existing User. A failed check rolls back the migration
+without changing the old schema; repair the data with the old version or restore the backup
+before retrying. Unknown or unledgered pre-release schemas still
 require a fresh application database and complete setup.
 
 Update API clients before the new Pods start. Conversations now expose `source` (`web` or
-`slack`) instead of `surface`; Message roles are `user` and `assistant` without `actorKind`;
-final hypotheses have no ID or `exploring` status; and Investigation event envelopes use
+`slack`) instead of `surface` and have no lifecycle `state`; Message roles are `user` and
+`assistant`, attribution uses `authorId` and `authorName`, and replies are assistant Messages
+rather than Turn answers. Final hypotheses have no ID or `exploring` status; Investigation event envelopes use
 `schemaVersion: 2` with seven compact payloads.
 
 ## Common failure and recovery

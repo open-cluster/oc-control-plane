@@ -13,7 +13,7 @@ import (
 func (p *Database) ConversationTurns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, limit int, cursor string,
 ) (conversation.TurnPage, error) {
-	if _, err := p.Conversation(ctx, organization, id); err != nil {
+	if _, err := p.conversationByID(ctx, organization, id); err != nil {
 		return conversation.TurnPage{}, err
 	}
 	pool, err := p.poolForOrganization(organization)
@@ -40,8 +40,7 @@ func readConversationTurns(
 	}
 	limit = pageLimit(limit)
 	rows, err := queries.Query(ctx, `
-		SELECT investigation_id, turn, status, coalesce(conclusion->>'summary', ''),
-		       stopped_by, error, created_at, concluded_at
+		SELECT investigation_id, turn, status, stopped_by, error, created_at, concluded_at
 		  FROM investigation
 		 WHERE org_id = $1 AND conversation_id = $2
 		   AND ($3::integer = 0 OR (turn, investigation_id) > ($3, $4::uuid))
@@ -56,7 +55,7 @@ func readConversationTurns(
 		var turn conversation.Turn
 		var status int16
 		var concludedAt *time.Time
-		if err := rows.Scan(&turn.InvestigationID, &turn.Ordinal, &status, &turn.Answer,
+		if err := rows.Scan(&turn.InvestigationID, &turn.Ordinal, &status,
 			&turn.StoppedBy, &turn.Error, &turn.CreatedAt, &concludedAt); err != nil {
 			return conversation.TurnPage{}, fmt.Errorf("scanning conversation turn: %w", err)
 		}

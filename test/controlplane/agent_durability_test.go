@@ -38,8 +38,8 @@ func TestSlackMessageWorkWaitsForAnAgentAndProcessesAfterRestart(t *testing.T) {
 		Thread:        "1700000100.1",
 		MessageID:     "1700000100.1",
 		Subject:       "durable question",
-		ActorID:       "U9SRE",
-		ActorDisplay:  "SRE",
+		AuthorID:      "U9SRE",
+		AuthorName:    "SRE",
 		Text:          "what happened?",
 	})
 	if err != nil {

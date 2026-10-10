@@ -130,7 +130,6 @@ func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *test
 		ID         string `json:"id"`
 		IncidentID string `json:"incidentId"`
 		Subject    string `json:"subject"`
-		State      string `json:"state"`
 	}
 	listConversations := func(query string) []conversationRow {
 		t.Helper()
@@ -151,9 +150,6 @@ func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *test
 	}
 	if rows := listConversations("?incidentId=" + firstIncident); len(rows) != 1 || rows[0].IncidentID != firstIncident {
 		t.Errorf("conversation incident filter returned %+v", rows)
-	}
-	if rows := listConversations("?state=closed"); len(rows) != 0 {
-		t.Errorf("conversation state filter returned %+v", rows)
 	}
 	ascending := listConversations("?sort=lastActivityAt")
 	descending := listConversations("?sort=-lastActivityAt")

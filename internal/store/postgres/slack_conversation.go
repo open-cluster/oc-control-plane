@@ -17,8 +17,8 @@ type SlackMessage struct {
 	Thread        string
 	MessageID     string
 	Subject       string
-	ActorID       string
-	ActorDisplay  string
+	AuthorID      string
+	AuthorName    string
 	Text          string
 }
 
@@ -102,7 +102,7 @@ func bindThread(
 		INSERT INTO conversation (conversation_id, org_id, source, subject, created_by)
 		VALUES ($1, $2, $3, $4, $5)`,
 		opened, organization, string(conversation.SourceSlack),
-		said.Subject, said.ActorID); err != nil {
+		said.Subject, said.AuthorID); err != nil {
 		return uuid.Nil, false, fmt.Errorf("opening a slack conversation: %w", err)
 	}
 	tag, err := transaction.Exec(ctx, `
@@ -132,7 +132,7 @@ func appendSlackMessage(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	conversationID uuid.UUID, said SlackMessage,
 ) (int64, error) {
-	if _, err := lockConversation(ctx, transaction, organization, conversationID); err != nil {
+	if err := lockConversation(ctx, transaction, organization, conversationID); err != nil {
 		return 0, err
 	}
 	window, err := acceptedWindow(ctx, transaction, organization, conversationID, nil, conversation.DefaultIncidentWindowLead)
@@ -142,17 +142,17 @@ func appendSlackMessage(
 	var sequence int64
 	if err := transaction.QueryRow(ctx, `
 		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
-		                                  actor_id, actor_display, text,
-		                                  provider_channel_id, provider_message_id, window_from, window_until)
+		                                  author_id, author_name, text,
+		                                  provider_message_id, window_from, window_until)
 		SELECT $1, $2,
 		       coalesce((SELECT max(sequence)
 		                   FROM conversation_message
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
-		       $3, $4, $5, $6, $7, $8, $9, $10
+		       $3, $4, $5, $6, $7, $8, $9
 		RETURNING sequence`,
 		conversationID, organization,
 		int16(conversation.RoleUser),
-		said.ActorID, said.ActorDisplay, said.Text, said.Channel, said.MessageID, window.From, window.Until).Scan(&sequence); err != nil {
+		said.AuthorID, said.AuthorName, said.Text, said.MessageID, window.From, window.Until).Scan(&sequence); err != nil {
 		return 0, fmt.Errorf("appending a slack message: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -173,9 +173,12 @@ func (p *Database) SlackMessageProviderReference(
 		return "", "", "", poolErr
 	}
 	err = pool.QueryRow(ctx, `
-		SELECT provider_channel_id, provider_message_id, source_reference
-		  FROM conversation_message
-		 WHERE org_id = $1 AND conversation_id = $2 AND sequence = $3`,
+		SELECT slack.channel_id, message.provider_message_id, message.source_reference
+		  FROM conversation_message message
+		  JOIN slack_conversation slack
+		    ON slack.org_id = message.org_id
+		   AND slack.conversation_id = message.conversation_id
+		 WHERE message.org_id = $1 AND message.conversation_id = $2 AND message.sequence = $3`,
 		organization, conversationID, sequence).Scan(&channel, &message, &reference)
 	if err != nil {
 		return "", "", "", fmt.Errorf("reading slack message provider reference: %w", err)
@@ -217,10 +220,10 @@ func (p *Database) UnnamedSlackAuthors(
 		return nil, err
 	}
 	rows, err := pool.Query(ctx, `
-		SELECT DISTINCT actor_id
+		SELECT DISTINCT author_id
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2
-		   AND role = $3 AND actor_id <> '' AND actor_display = actor_id`,
+		   AND role = $3 AND author_id <> '' AND author_name = author_id`,
 		organization, conversationID, int16(conversation.RoleUser))
 	if err != nil {
 		return nil, fmt.Errorf("reading unnamed slack authors: %w", err)
@@ -229,11 +232,11 @@ func (p *Database) UnnamedSlackAuthors(
 
 	var unnamed []string
 	for rows.Next() {
-		var actor string
-		if err := rows.Scan(&actor); err != nil {
+		var author string
+		if err := rows.Scan(&author); err != nil {
 			return nil, fmt.Errorf("scanning an unnamed slack author: %w", err)
 		}
-		unnamed = append(unnamed, actor)
+		unnamed = append(unnamed, author)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading unnamed slack authors: %w", err)
@@ -243,9 +246,9 @@ func (p *Database) UnnamedSlackAuthors(
 
 func (p *Database) NameSlackAuthor(
 	ctx context.Context, organization uuid.UUID, conversationID uuid.UUID,
-	actor, display string,
+	author, name string,
 ) error {
-	if display == "" || display == actor {
+	if name == "" || name == author {
 		return nil
 	}
 	pool, err := p.poolForOrganization(organization)
@@ -254,11 +257,11 @@ func (p *Database) NameSlackAuthor(
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE conversation_message
-		   SET actor_display = $4
+		   SET author_name = $4
 		 WHERE org_id = $1 AND conversation_id = $2
-		   AND role = $5 AND actor_id = $3`,
-		organization, conversationID, actor,
-		conversation.Bounded(display, conversation.MaxActorDisplayLength),
+		   AND role = $5 AND author_id = $3`,
+		organization, conversationID, author,
+		conversation.Bounded(name, conversation.MaxAuthorNameLength),
 		int16(conversation.RoleUser)); err != nil {
 		return fmt.Errorf("naming a slack author: %w", err)
 	}

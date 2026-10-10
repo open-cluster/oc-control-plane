@@ -51,12 +51,13 @@ Follow-up Messages queue behind an active Investigation. Each Organization has a
 100 unassigned user Messages across Conversations; accepted work drains in bounded batches.
 Investigations use complete assigned Messages. Input that cannot fit produces `needs_input`
 with the unprocessed Message sequences instead of silently truncating the request.
-Follow-ups receive a bounded recent exchange of Messages and completed answers, with
+Follow-ups receive a bounded recent exchange of user and assistant Messages, with
 timestamps and source identities retained. The investigator can request bounded older
-Conversation pages when needed; corrections stay ordered and prior answers keep their
-owning Investigation and evidence references.
-Terminal outcomes and their replay events commit together; failed event writes cannot
-leave a completed result without its ending event.
+Conversation pages when needed; corrections stay ordered and prior replies keep their
+owning Investigation and evidence references. Turn records expose execution metadata;
+the assistant Message is the Conversation reply.
+Successful conclusions, their assistant Messages, and replay events commit together;
+failed final writes cannot leave a partial completed result.
 Event streams refresh bounded write deadlines, survive ordinary HTTP timeouts, and close
 during shutdown. Proxy buffering and timeout requirements are in the
 [API reference](./docs/api-reference/overview.mdx#investigation-event-streams).
@@ -112,10 +113,11 @@ set `relay.enabled=true` in the Helm release. The Relay initiates the connection
 customer cluster.
 
 Before this schema migration, stop every old control-plane replica and back up PostgreSQL.
-The migration refuses ambiguous retained Message attribution or a retained Investigation
-question without its assigned user Messages, and rolls back without changing the database.
-Repair that data or restore the old version before retrying. Unknown or unledgered pre-release
-schemas still require database recreation. See the
+The migration refuses ambiguous retained Message attribution, a retained Investigation
+question without its assigned user Messages, or nonempty Postmortem reviewer attribution
+that is not an existing User UUID. It rolls back without changing the database. Repair that
+data or restore the old version before retrying. Unknown or unledgered pre-release schemas
+still require database recreation. See the
 [Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
 
 ## Architecture
