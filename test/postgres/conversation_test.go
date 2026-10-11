@@ -61,8 +61,8 @@ func say(
 
 	said, err := appendMessageForTest(database, context.Background(),
 		ownerOf(t, organization), organization, id, conversation.NewMessage{
-			Role:    conversation.RoleUser,
-			ActorID: "user-under-test", ActorDisplay: "Test Operator", Text: text,
+			Role:     conversation.RoleUser,
+			AuthorID: "user-under-test", AuthorName: "Test Operator", Text: text,
 		})
 	if err != nil {
 		t.Fatalf("appending a message: %v", err)
@@ -150,12 +150,6 @@ func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 	database, mine, theirs := twoOrganizationsInOneDatabase(t)
 	opened := openConversation(t, database, mine, "checkout is slow")
 
-	if _, err := database.Conversation(context.Background(), theirs,
-		opened.ID); !errors.Is(err, conversation.ErrUnknown) {
-		t.Errorf("reading %s as %s answered %v, want conversation unknown; a caller must "+
-			"not learn that an identifier exists somewhere they cannot reach",
-			opened.ID, theirs, err)
-	}
 	if _, err := database.ConversationDetail(context.Background(), theirs, opened.ID,
 		50); !errors.Is(err, conversation.ErrUnknown) {
 		t.Errorf("reading the detail across tenants answered %v", err)
@@ -166,8 +160,8 @@ func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
 	}
 	if _, err := appendMessageForTest(database, context.Background(), ownerOf(t, theirs), theirs,
 		opened.ID, conversation.NewMessage{
-			Role:    conversation.RoleUser,
-			ActorID: "somebody-else", Text: "what is this about?",
+			Role:     conversation.RoleUser,
+			AuthorID: "somebody-else", Text: "what is this about?",
 		}); !errors.Is(err, conversation.ErrUnknown) {
 		t.Errorf("saying something into another tenant's conversation answered %v", err)
 	}
@@ -189,25 +183,6 @@ func TestTheConversationListingNarrowsServerSide(t *testing.T) {
 	if len(listed.Conversations) != 2 {
 		t.Errorf("%d conversations matched %q, want 2", len(listed.Conversations),
 			"CHECKOUT")
-	}
-
-	listed, err = database.QueryConversations(context.Background(),
-		ownerOf(t, organization), organization,
-		conversation.Page{State: conversation.StateOpen})
-	if err != nil {
-		t.Fatalf("filtering by state: %v", err)
-	}
-	if len(listed.Conversations) != 3 {
-		t.Errorf("%d open conversations, want 3", len(listed.Conversations))
-	}
-	listed, err = database.QueryConversations(context.Background(),
-		ownerOf(t, organization), organization,
-		conversation.Page{State: conversation.StateClosed})
-	if err != nil {
-		t.Fatalf("filtering by state: %v", err)
-	}
-	if len(listed.Conversations) != 0 {
-		t.Errorf("%d closed conversations, want none", len(listed.Conversations))
 	}
 
 	listed, err = database.QueryConversations(context.Background(),
@@ -626,7 +601,7 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 			t.Fatalf("exchange[%d] = %q, want %q", n, brief.Recent[n].Text, text)
 		}
 	}
-	if brief.Recent[0].Sequence != 1 || brief.Recent[2].Sequence != 2 ||
+	if brief.Recent[0].Sequence != 1 || brief.Recent[1].Sequence != 2 || brief.Recent[2].Sequence != 3 ||
 		brief.Recent[1].InvestigationID != turn.InvestigationID || brief.Recent[1].FromUser ||
 		brief.Recent[1].CreatedAt.IsZero() {
 		t.Fatalf("exchange lost source identity: %+v", brief.Recent)
@@ -639,13 +614,13 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Messages) != 2 {
-		t.Fatalf("answer was duplicated into authored Messages: %+v", detail.Messages)
+	if len(detail.Messages) != 3 || detail.Messages[1].Role != conversation.RoleAssistant {
+		t.Fatalf("answer was not represented by one assistant Message: %+v", detail.Messages)
 	}
 	for range 14 {
 		say(t, database, organization, opened.ID, "later discussion")
 	}
-	history, err := database.ConversationHistory(ctx, organization, opened.ID, 3)
+	history, err := database.ConversationHistory(ctx, organization, opened.ID, 4)
 	if err != nil || len(history.Exchange) != len(want) {
 		t.Fatalf("older exchange = %+v, error=%v", history, err)
 	}
@@ -722,7 +697,7 @@ func TestProviderConversationRequiresAnIntactOriginBinding(t *testing.T) {
 	}
 	chat, err := database.RecordSlackMessage(ctx, org, storage.SlackMessage{
 		Integration: integration.ID, ContentDigest: randomDigest(t), Channel: "CORIGIN", Thread: "1.0",
-		Subject: "origin", ActorID: "UORIGIN", Text: "question",
+		Subject: "origin", AuthorID: "UORIGIN", Text: "question",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -767,7 +742,7 @@ func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
 	appendPerson := func(text string) (conversation.Message, conversation.Turn, bool, error) {
 		return database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, opened.ID,
 			conversation.NewMessage{Role: conversation.RoleUser,
-				ActorID: "user-under-test", ActorDisplay: "Test Operator", Text: text}, turnWindowLead, 100)
+				AuthorID: "user-under-test", AuthorName: "Test Operator", Text: text}, turnWindowLead, 100)
 	}
 	_, first, started, err := appendPerson("initial question")
 	if err != nil || !started {
@@ -792,7 +767,9 @@ func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Messages) != 2 || detail.Messages[1].InvestigationID != second.InvestigationID {
+	if len(detail.Messages) != 3 || detail.Messages[1].InvestigationID != second.InvestigationID ||
+		detail.Messages[2].Role != conversation.RoleAssistant ||
+		detail.Messages[2].InvestigationID != first.InvestigationID {
 		t.Fatalf("persisted Messages = %+v", detail.Messages)
 	}
 }
@@ -807,7 +784,7 @@ func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testin
 	recorded, err := database.RecordSlackMessage(ctx, org, storage.SlackMessage{
 		Integration: integration.ID, ContentDigest: randomDigest(t),
 		Channel: "CREFUSE", Thread: "1.0", Subject: "Slack only",
-		ActorID: "USLACK", ActorDisplay: "Slack User", Text: "first",
+		AuthorID: "USLACK", AuthorName: "Slack User", Text: "first",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -816,7 +793,7 @@ func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testin
 	principal := ownerOf(t, org)
 	_, _, _, err = database.AppendMessageAndOpenTurn(ctx, principal, org, recorded.Conversation,
 		conversation.NewMessage{Role: conversation.RoleUser,
-			ActorID: principal.UserID().String(), ActorDisplay: "Web User", Text: "must not cross sources"},
+			AuthorID: principal.UserID().String(), AuthorName: "Web User", Text: "must not cross sources"},
 		turnWindowLead, 100)
 	if !errors.Is(err, conversation.ErrSourceMismatch) {
 		t.Fatalf("authenticated append error = %v, want source mismatch", err)
@@ -847,7 +824,7 @@ func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
 	appendPerson := func(text string) (conversation.Turn, bool, error) {
 		_, turn, started, err := database.AppendMessageAndOpenTurn(ctx, principal, org, chat.ID,
 			conversation.NewMessage{Role: conversation.RoleUser,
-				ActorID: principal.UserID().String(), Text: text}, turnWindowLead, 100)
+				AuthorID: principal.UserID().String(), Text: text}, turnWindowLead, 100)
 		return turn, started, err
 	}
 	first, started, err := appendPerson("initial question")
@@ -904,13 +881,17 @@ func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opened != 1 || len(detail.Turns) != 2 || len(detail.Messages) != 11 {
+	if opened != 1 || len(detail.Turns) != 2 || len(detail.Messages) != 12 {
 		t.Fatalf("drains=%d turns=%d Messages=%d", opened, len(detail.Turns), len(detail.Messages))
 	}
-	for _, message := range detail.Messages[1:] {
-		if message.InvestigationID != second.InvestigationID {
+	for _, message := range detail.Messages {
+		if message.Role == conversation.RoleUser && message.Sequence > 1 && message.InvestigationID != second.InvestigationID {
 			t.Fatalf("follow-up not assigned to the one next turn: %+v", message)
 		}
+	}
+	if assistant := detail.Messages[len(detail.Messages)-1]; assistant.Role != conversation.RoleAssistant ||
+		assistant.InvestigationID != first.InvestigationID {
+		t.Fatalf("first reply was not retained as one assistant Message: %+v", assistant)
 	}
 }
 
@@ -922,7 +903,7 @@ func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	said := storage.SlackMessage{Integration: integration.ID, ContentDigest: randomDigest(t),
-		Channel: "CQUEUE", Thread: "1.0", Subject: "queue", ActorID: "UQUEUE", Text: "first"}
+		Channel: "CQUEUE", Thread: "1.0", Subject: "queue", AuthorID: "UQUEUE", Text: "first"}
 	if _, err := database.RecordSlackMessage(ctx, org, said); err != nil {
 		t.Fatal(err)
 	}
@@ -964,7 +945,7 @@ func TestAtomicMessageAppendRollsBackDatabaseFailures(t *testing.T) {
 			}
 			_, _, _, err = database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
 				conversation.NewMessage{Role: conversation.RoleUser,
-					ActorID: "user-under-test", Text: "must roll back"}, turnWindowLead, 100)
+					AuthorID: "user-under-test", Text: "must roll back"}, turnWindowLead, 100)
 			if err == nil {
 				t.Fatal("injected database failure was reported as acceptance")
 			}
@@ -1001,7 +982,7 @@ func TestQueuedMessageAdmissionIsAtomicAcrossConversations(t *testing.T) {
 			<-start
 			_, _, _, err := database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
 				conversation.NewMessage{Role: conversation.RoleUser,
-					ActorID: "user-under-test", Text: "last available slot"}, turnWindowLead, 100)
+					AuthorID: "user-under-test", Text: "last available slot"}, turnWindowLead, 100)
 			results <- err
 		}()
 	}
@@ -1045,7 +1026,7 @@ func TestQueuedMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO conversation_message
-		(conversation_id, org_id, sequence, role, actor_id, actor_display, text, window_from, window_until)
+		(conversation_id, org_id, sequence, role, author_id, author_name, text, window_from, window_until)
 		SELECT $1, $2, n, 1, 'actor-' || n, 'Operator', 'question-' || n, now() - interval '24 hours', now()
 		FROM generate_series(1, 205) n`, chat.ID, org); err != nil {
 		t.Fatal(err)
@@ -1063,14 +1044,6 @@ func TestQueuedMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
 		}
 		if count != want || first != batch*100+1 || last != batch*100+want {
 			t.Fatalf("batch %d: count=%d first=%d last=%d", batch, count, first, last)
-		}
-		var actor string
-		if err := pool.QueryRow(ctx, `SELECT created_by FROM investigation
-			WHERE org_id = $1 AND investigation_id = $2`, org, turn.InvestigationID).Scan(&actor); err != nil {
-			t.Fatal(err)
-		}
-		if actor != fmt.Sprintf("actor-%d", last) {
-			t.Fatalf("batch attributed to %q, want actor-%d", actor, last)
 		}
 		if err := database.ConcludeInvestigation(ctx, org, turn.InvestigationID,
 			claimToken(t, database, org, turn.InvestigationID), conclusionSaying("answer"), "", investigation.Usage{}); err != nil {
@@ -1140,7 +1113,7 @@ func TestQueuedMessageWindowSurvivesDrain(t *testing.T) {
 			chat := openConversation(t, database, org, "queued windows")
 			appendMessage := func(window *conversation.Window) (conversation.Message, conversation.Turn, bool, error) {
 				return database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-					conversation.NewMessage{Role: conversation.RoleUser, ActorID: "user-under-test", Text: "question", Window: window}, time.Hour, 100)
+					conversation.NewMessage{Role: conversation.RoleUser, AuthorID: "user-under-test", Text: "question", Window: window}, time.Hour, 100)
 			}
 			_, first, opened, err := appendMessage(nil)
 			if err != nil || !opened {
@@ -1188,7 +1161,7 @@ func TestInvestigationMessagesPreserveOnlyTheirAssignedBatch(t *testing.T) {
 	var want []investigation.AssignedMessage
 	for n := range 15 {
 		message := say(t, database, org, chat.ID, strings.Repeat("界", 1100)+fmt.Sprintf(" correction-%d", n))
-		want = append(want, investigation.AssignedMessage{Sequence: message.Sequence, Actor: message.ActorDisplay,
+		want = append(want, investigation.AssignedMessage{Sequence: message.Sequence, Author: message.AuthorName,
 			CreatedAt: message.CreatedAt, Text: message.Text})
 	}
 	turn, started, err := openTurnForTest(database, ctx, org, chat.ID, turnWindowLead)
@@ -1201,7 +1174,7 @@ func TestInvestigationMessagesPreserveOnlyTheirAssignedBatch(t *testing.T) {
 		t.Fatalf("assigned Messages: count=%d err=%v", len(got), err)
 	}
 	for n := range want {
-		if got[n].Sequence != want[n].Sequence || got[n].Actor != want[n].Actor ||
+		if got[n].Sequence != want[n].Sequence || got[n].Author != want[n].Author ||
 			!got[n].CreatedAt.Equal(want[n].CreatedAt) || got[n].Text != want[n].Text {
 			t.Fatalf("assigned Message %d lost ordering, attribution, time or text", n)
 		}

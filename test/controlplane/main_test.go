@@ -368,8 +368,8 @@ func seedTestOrganization(t *testing.T, dsn, organization, email string) {
 	}
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
-			VALUES ($1,'Operations',$2)`, organization, userID.String()); err != nil {
+		if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name)
+			VALUES ($1,'Operations')`, organization); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = transaction.Exec(ctx, `INSERT INTO organization_membership
@@ -381,8 +381,8 @@ func seedTestOrganization(t *testing.T, dsn, organization, email string) {
 			t.Fatal(err)
 		}
 	default:
-		if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
-			VALUES ($1,'Operations',$2)`, organization, userID); err != nil {
+		if _, err = transaction.Exec(ctx, `INSERT INTO organization (org_id,display_name)
+			VALUES ($1,'Operations')`, organization); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = transaction.Exec(ctx, `UPDATE organization_membership SET org_id=$1 WHERE user_id=$2`, organization, userID); err != nil {
@@ -405,8 +405,8 @@ func ensureTestOrganization(t *testing.T, dsn, organization string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(ctx) }()
-	if _, err = connection.Exec(ctx, `INSERT INTO organization (org_id,display_name,created_by)
-		VALUES ($1,'Test Organization','test') ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
+	if _, err = connection.Exec(ctx, `INSERT INTO organization (org_id,display_name)
+		VALUES ($1,'Test Organization') ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
 		t.Fatal(err)
 	}
 }

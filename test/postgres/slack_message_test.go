@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -411,7 +412,7 @@ func TestSlackMessageHeartbeatProtectsSlowProviderLookup(t *testing.T) {
 	outcome, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: integration.ID, ContentDigest: randomDigest(t),
 		Channel: "CHEARTBEAT", Thread: "1700000001.000001", MessageID: "1700000001.000001",
-		Subject: "slow provider", ActorID: "UWORK", Text: "why?",
+		Subject: "slow provider", AuthorID: "UWORK", Text: "why?",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -471,6 +472,18 @@ func TestSlackMessageHeartbeatProtectsSlowProviderLookup(t *testing.T) {
 	if err != nil || len(detail.Turns) != 1 || len(detail.Messages) != 1 ||
 		detail.Messages[0].SourceReference != "https://test.slack.com/archives/CHEARTBEAT/p1700000001000001" {
 		t.Fatalf("slow lookup lost the accepted turn or source reference: %+v, %v", detail, err)
+	}
+	channel, messageID, reference, err := database.SlackMessageProviderReference(
+		ctx, organization, outcome.Conversation, detail.Messages[0].Sequence)
+	if err != nil || channel != "CHEARTBEAT" || messageID != "1700000001.000001" ||
+		reference != detail.Messages[0].SourceReference {
+		t.Fatalf("provider reference = %q/%q/%q, err=%v", channel, messageID, reference, err)
+	}
+	other := uuid.New()
+	ensureTestOrganization(t, database, other)
+	if _, _, _, err = database.SlackMessageProviderReference(
+		ctx, other, outcome.Conversation, detail.Messages[0].Sequence); err == nil {
+		t.Fatal("another Organization read a Slack Message provider reference")
 	}
 }
 
@@ -608,7 +621,7 @@ func TestSlackMessageWorkerQueuesFollowupUntilTheCurrentTurnEnds(t *testing.T) {
 	}
 	if _, err := database.RecordSlackMessage(ctx, organization, storage.SlackMessage{
 		Integration: fixture.integration, ContentDigest: randomDigest(t), Channel: "CWORK", Thread: "1.0",
-		Subject: "follow-up", ActorID: "UWORK", Text: "check the next thing",
+		Subject: "follow-up", AuthorID: "UWORK", Text: "check the next thing",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -628,8 +641,10 @@ func TestSlackMessageWorkerQueuesFollowupUntilTheCurrentTurnEnds(t *testing.T) {
 		t.Fatalf("draining the queued follow-up: %v, %v", drained, err)
 	}
 	detail, err = database.ConversationDetail(ctx, organization, fixture.conversation, 50)
-	if err != nil || len(detail.Turns) != 2 || len(detail.Messages) != 2 ||
-		detail.Messages[1].InvestigationID != detail.Turns[1].InvestigationID {
+	if err != nil || len(detail.Turns) != 2 || len(detail.Messages) != 3 ||
+		detail.Messages[1].InvestigationID != detail.Turns[1].InvestigationID ||
+		detail.Messages[2].Role != conversation.RoleAssistant ||
+		detail.Messages[2].InvestigationID != first {
 		t.Fatalf("queued follow-up lost its next turn: %+v, %v", detail, err)
 	}
 	if worked, err := worker.ProcessOne(ctx); err != nil || worked {

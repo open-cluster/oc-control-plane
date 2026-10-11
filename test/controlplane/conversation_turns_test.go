@@ -56,6 +56,34 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	if len(page.Turns) != 1 || page.Turns[0].InvestigationID != accepted.Turn.InvestigationID || page.Turns[0].Turn != 2 || page.Next != nil {
 		t.Fatalf("last page = %s", body)
 	}
+	var rawPage struct {
+		Turns []map[string]json.RawMessage `json:"turns"`
+	}
+	decodeInto(t, body, &rawPage)
+	if _, present := rawPage.Turns[0]["answer"]; present {
+		t.Fatalf("Turn exposed the Conversation reply: %s", body)
+	}
+	status, body = plane.call(t, http.MethodGet, path, nil)
+	if status != http.StatusOK {
+		t.Fatalf("Conversation detail = %d: %s", status, body)
+	}
+	var detail struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	decodeInto(t, body, &detail)
+	wantRoles := []string{`"user"`, `"assistant"`, `"user"`, `"assistant"`}
+	if len(detail.Messages) != len(wantRoles) {
+		t.Fatalf("Conversation messages = %s", body)
+	}
+	for index, role := range wantRoles {
+		if string(detail.Messages[index]["role"]) != role {
+			t.Fatalf("Message %d role = %s, want %s: %s", index+1,
+				detail.Messages[index]["role"], role, body)
+		}
+		if role == `"assistant"` && len(detail.Messages[index]["investigationId"]) == 0 {
+			t.Fatalf("assistant Message %d has no Investigation: %s", index+1, body)
+		}
+	}
 	for _, query := range []string{"limit=0", "limit=201", "limit=", "limit=1&limit=2", "cursor=", "cursor=bad", "cursor=a&cursor=b", "search=answer", "sort=turn", "unknown=value", "cursor=%zz", "limit=1;sort=turn"} {
 		if status, body := plane.call(t, http.MethodGet, path+"/turns?"+query, nil); status != http.StatusBadRequest {
 			t.Errorf("query %s = %d: %s", query, status, body)

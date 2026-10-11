@@ -69,8 +69,6 @@ func TestPersistedEnumValuesAreFrozen(t *testing.T) {
 		{"KindConfigMap", int(changes.KindConfigMap), 4},
 		{"KindSecret", int(changes.KindSecret), 5},
 
-		{"StateOpen", int(conversation.StateOpen), 1},
-		{"StateClosed", int(conversation.StateClosed), 2},
 		{"RoleUser", int(conversation.RoleUser), 1},
 		{"RoleAssistant", int(conversation.RoleAssistant), 2},
 

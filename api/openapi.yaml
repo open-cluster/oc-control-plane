@@ -618,7 +618,6 @@ paths:
         - { $ref: "#/components/parameters/ConversationSearch" }
         - { $ref: "#/components/parameters/ConversationSort" }
         - { $ref: "#/components/parameters/ConversationIncidentFilter" }
-        - { $ref: "#/components/parameters/ConversationStateFilter" }
       responses:
         "200": { $ref: "#/components/responses/ConversationList" }
         default: { $ref: "#/components/responses/ErrorResponse" }
@@ -935,11 +934,6 @@ components:
       in: query
       required: false
       schema: { $ref: "#/components/schemas/UUID" }
-    ConversationStateFilter:
-      name: state
-      in: query
-      required: false
-      schema: { type: string, enum: [open, closed] }
     LastEventID:
       name: Last-Event-ID
       in: header
@@ -1554,7 +1548,6 @@ components:
         stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, context] }
         error: { type: string, maxLength: 4096 }
         usage: { type: object, additionalProperties: false, required: [inputTokens, outputTokens], properties: { inputTokens: { type: integer, format: int64, minimum: 0 }, outputTokens: { type: integer, format: int64, minimum: 0 } } }
-        createdBy: { type: string, maxLength: 256 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
         concludedAt: { $ref: "#/components/schemas/Timestamp" }
     InvestigationList:
@@ -1755,12 +1748,11 @@ components:
     Conversation:
       type: object
       additionalProperties: false
-      required: [id, subject, source, state, createdAt, lastActivityAt]
+      required: [id, subject, source, createdAt, lastActivityAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
         subject: { type: string, minLength: 1, maxLength: 512 }
         source: { type: string, enum: [web, slack] }
-        state: { type: string, enum: [open, closed] }
         incidentId: { $ref: "#/components/schemas/UUID" }
         createdBy: { type: string, maxLength: 256 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
@@ -1774,8 +1766,8 @@ components:
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
         sequence: { type: integer, format: int64, minimum: 1 }
         role: { type: string, enum: [user, assistant] }
-        actorId: { type: string, maxLength: 256 }
-        actorDisplay: { type: string, maxLength: 256 }
+        authorId: { type: string, maxLength: 256 }
+        authorName: { type: string, maxLength: 256 }
         text: { type: string, minLength: 1, maxLength: 8192 }
         sourceReference: { type: string, maxLength: 1024 }
         investigationId: { $ref: "#/components/schemas/UUID" }
@@ -1788,7 +1780,6 @@ components:
         investigationId: { $ref: "#/components/schemas/UUID" }
         turn: { type: integer, minimum: 1 }
         status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
-        answer: { type: string, maxLength: 32768 }
         stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, context] }
         error: { type: string, maxLength: 4096 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
@@ -1893,7 +1884,7 @@ components:
         createdAt: { $ref: "#/components/schemas/Timestamp" }
         updatedAt: { $ref: "#/components/schemas/Timestamp" }
         reviewedAt: { $ref: "#/components/schemas/Timestamp" }
-        reviewedBy: { type: string, maxLength: 256 }
+        reviewedByUserId: { $ref: "#/components/schemas/UUID" }
     PostmortemCorrections:
       allOf:
         - { $ref: "#/components/schemas/PostmortemHumanInput" }

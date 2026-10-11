@@ -16,7 +16,7 @@ import (
 
 var _ conversation.Store = (*Database)(nil)
 
-const conversationColumns = `conversation_id, incident_id, source, subject, state,
+const conversationColumns = `conversation_id, incident_id, source, subject,
 	       created_by, created_at, last_activity_at`
 
 func (p *Database) OpenConversation(
@@ -35,7 +35,7 @@ func (p *Database) OpenConversation(
 				uuid.New(), organization, nullableUUID(wanted.IncidentID),
 				string(wanted.Source), wanted.Subject, wanted.CreatedBy)
 
-			opened, err := scanConversation(row, organization.String())
+			opened, err := scanConversation(row)
 			if err != nil {
 				if isForeignKeyViolation(err) {
 					return conversation.Conversation{}, audit.Target{}, nil,
@@ -50,7 +50,7 @@ func (p *Database) OpenConversation(
 		})
 }
 
-func (p *Database) Conversation(
+func (p *Database) conversationByID(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (conversation.Conversation, error) {
 	pool, err := p.poolForOrganization(organization)
@@ -61,7 +61,7 @@ func (p *Database) Conversation(
 		SELECT `+conversationColumns+`
 		  FROM conversation
 		 WHERE conversation_id = $1 AND org_id = $2`, id, organization)
-	found, err := scanConversation(row, organization.String())
+	found, err := scanConversation(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return conversation.Conversation{}, conversation.ErrUnknown
 	}
@@ -118,11 +118,6 @@ func (p *Database) QueryConversations(
 		arguments = append(arguments, page.Incident)
 		narrowing += fmt.Sprintf(" AND incident_id = $%d", len(arguments))
 	}
-	if page.State != 0 {
-		arguments = append(arguments, int16(page.State))
-		narrowing += fmt.Sprintf(" AND state = $%d", len(arguments))
-	}
-
 	direction := "ASC"
 	if descending {
 		direction = "DESC"
@@ -142,7 +137,7 @@ func (p *Database) QueryConversations(
 		Conversations: make([]conversation.Conversation, 0, limit),
 	}
 	for rows.Next() {
-		found, scanErr := scanConversation(rows, organization.String())
+		found, scanErr := scanConversation(rows)
 		if scanErr != nil {
 			return conversation.List{}, scanErr
 		}
@@ -162,7 +157,7 @@ func (p *Database) QueryConversations(
 func (p *Database) ConversationDetail(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, messages int,
 ) (conversation.Detail, error) {
-	found, err := p.Conversation(ctx, organization, id)
+	found, err := p.conversationByID(ctx, organization, id)
 	if err != nil {
 		return conversation.Detail{}, err
 	}
@@ -191,9 +186,9 @@ func conversationMessages(
 		limit = defaultPageSize
 	}
 	rows, err := queries.Query(ctx, `
-		SELECT sequence, role, actor_id, actor_display, text, source_reference,
+		SELECT sequence, role, author_id, author_name, text, source_reference,
 		       investigation_id, created_at, window_from, window_until
-		  FROM (SELECT sequence, role, actor_id, actor_display, text, source_reference,
+		  FROM (SELECT sequence, role, author_id, author_name, text, source_reference,
 		               investigation_id, created_at, window_from, window_until
 		          FROM conversation_message
 		         WHERE org_id = $1 AND conversation_id = $2
@@ -261,20 +256,16 @@ func (p *Database) AppendMessageAndOpenTurn(
 func validateAuthenticatedAppend(
 	ctx context.Context, transaction pgx.Tx, organization, id uuid.UUID,
 ) error {
-	var state int16
 	var source conversation.Source
 	err := transaction.QueryRow(ctx, `
-		SELECT state, source
+		SELECT source
 		  FROM conversation
-		 WHERE conversation_id = $1 AND org_id = $2`, id, organization).Scan(&state, &source)
+		 WHERE conversation_id = $1 AND org_id = $2`, id, organization).Scan(&source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return conversation.ErrUnknown
 	}
 	if err != nil {
 		return fmt.Errorf("validating an authenticated append: %w", err)
-	}
-	if conversation.State(state) != conversation.StateOpen {
-		return conversation.ErrClosed
 	}
 	if source != conversation.SourceWeb {
 		return conversation.ErrSourceMismatch
@@ -291,12 +282,8 @@ func appendMessage(
 			return conversation.Message{}, err
 		}
 	}
-	state, err := lockConversation(ctx, transaction, organization, id)
-	if err != nil {
+	if err := lockConversation(ctx, transaction, organization, id); err != nil {
 		return conversation.Message{}, err
-	}
-	if state != conversation.StateOpen {
-		return conversation.Message{}, conversation.ErrClosed
 	}
 	window, err := acceptedWindow(ctx, transaction, organization, id, said.Window, lead)
 	if err != nil {
@@ -304,15 +291,15 @@ func appendMessage(
 	}
 	row := transaction.QueryRow(ctx, `
 		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
-		                                  actor_id, actor_display, text, window_from, window_until)
+		                                  author_id, author_name, text, window_from, window_until)
 		SELECT $1, $2,
 		       coalesce((SELECT max(sequence) FROM conversation_message
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
 		       $3, $4, $5, $6, $7, $8
-		RETURNING sequence, role, actor_id, actor_display, text, source_reference,
+		RETURNING sequence, role, author_id, author_name, text, source_reference,
 		          investigation_id, created_at, window_from, window_until`,
 		id, organization, int16(said.Role),
-		said.ActorID, said.ActorDisplay, said.Text, window.From, window.Until)
+		said.AuthorID, said.AuthorName, said.Text, window.From, window.Until)
 	written, err := scanMessage(row)
 	if err != nil {
 		return conversation.Message{}, fmt.Errorf("appending a message: %w", err)
@@ -372,8 +359,7 @@ func (p *Database) DrainQueuedConversation(
 		    ON message.org_id = conversation.org_id
 		   AND message.conversation_id = conversation.conversation_id
 		   AND message.investigation_id IS NULL AND message.role = 1
-		 WHERE conversation.state = 1
-		   AND NOT EXISTS (
+		 WHERE NOT EXISTS (
 		       SELECT 1 FROM investigation
 		        WHERE investigation.org_id = conversation.org_id
 		          AND investigation.conversation_id = conversation.conversation_id
@@ -411,23 +397,18 @@ func openTurn(
 	id uuid.UUID, lead time.Duration,
 ) (conversation.Turn, bool, error) {
 	var (
-		state      int16
 		incidentID *uuid.UUID
 		subject    string
 	)
 	if err := transaction.QueryRow(ctx, `
-		SELECT state, incident_id, subject
+		SELECT incident_id, subject
 		  FROM conversation
 		 WHERE conversation_id = $1 AND org_id = $2
-		   FOR UPDATE`, id, organization).Scan(
-		&state, &incidentID, &subject); err != nil {
+		   FOR UPDATE`, id, organization).Scan(&incidentID, &subject); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.Turn{}, false, conversation.ErrUnknown
 		}
 		return conversation.Turn{}, false, fmt.Errorf("locking a conversation: %w", err)
-	}
-	if conversation.State(state) != conversation.StateOpen {
-		return conversation.Turn{}, false, conversation.ErrClosed
 	}
 	var running bool
 	if err := transaction.QueryRow(ctx, `
@@ -440,7 +421,7 @@ func openTurn(
 		return conversation.Turn{}, false, nil
 	}
 
-	lastSequence, opener, err := queuedBatch(ctx, transaction, organization, id)
+	lastSequence, err := queuedBatch(ctx, transaction, organization, id)
 	if err != nil {
 		return conversation.Turn{}, false, err
 	}
@@ -463,16 +444,15 @@ func openTurn(
 	err = transaction.QueryRow(ctx, `
 		INSERT INTO investigation (investigation_id, org_id, incident_id,
 		                           subject, window_from, window_until, conversation_id,
-		                           turn, created_by)
+		                           turn)
 		SELECT $1, $2, $3, $4, $5, $6, $7,
 		       coalesce((SELECT max(turn)
 		                   FROM investigation existing
 		                  WHERE existing.org_id = $2
-		                    AND existing.conversation_id = $7), 0) + 1,
-		       $8
+		                    AND existing.conversation_id = $7), 0) + 1
 		RETURNING turn, created_at`,
 		investigationID, organization, incidentID, subject, from, until,
-		id, opener).Scan(&ordinal, &createdAt)
+		id).Scan(&ordinal, &createdAt)
 	if err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("opening a turn: %w", err)
 	}
@@ -497,29 +477,28 @@ func openTurn(
 func queuedBatch(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID,
-) (int64, string, error) {
+) (int64, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT sequence, actor_id
+		SELECT sequence
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL
 		   AND role = 1
 		 ORDER BY sequence LIMIT $3`, organization, id, maxQueuedMessages)
 	if err != nil {
-		return 0, "", fmt.Errorf("reading queued messages: %w", err)
+		return 0, fmt.Errorf("reading queued messages: %w", err)
 	}
 	defer rows.Close()
 
 	var lastSequence int64
-	var actor string
 	for rows.Next() {
-		if err := rows.Scan(&lastSequence, &actor); err != nil {
-			return 0, "", fmt.Errorf("scanning a queued message: %w", err)
+		if err := rows.Scan(&lastSequence); err != nil {
+			return 0, fmt.Errorf("scanning a queued message: %w", err)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, "", fmt.Errorf("reading queued messages: %w", err)
+		return 0, fmt.Errorf("reading queued messages: %w", err)
 	}
-	return lastSequence, actor, nil
+	return lastSequence, nil
 }
 
 func turnWindow(
@@ -556,19 +535,19 @@ func turnWindow(
 func lockConversation(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID,
-) (conversation.State, error) {
-	var state int16
+) error {
+	var found int
 	if err := transaction.QueryRow(ctx, `
-		SELECT state
+		SELECT 1
 		  FROM conversation
 		 WHERE conversation_id = $1 AND org_id = $2
-		   FOR UPDATE`, id, organization).Scan(&state); err != nil {
+		   FOR UPDATE`, id, organization).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, conversation.ErrUnknown
+			return conversation.ErrUnknown
 		}
-		return 0, fmt.Errorf("locking a conversation: %w", err)
+		return fmt.Errorf("locking a conversation: %w", err)
 	}
-	return conversation.State(state), nil
+	return nil
 }
 
 func boundedRunes(text string, limit int) string {
@@ -583,21 +562,17 @@ func investigationStatusWord(status int16) string {
 	return investigation.Status(status).String()
 }
 
-func scanConversation(
-	row scanned, organization string,
-) (conversation.Conversation, error) {
+func scanConversation(row scanned) (conversation.Conversation, error) {
 	var (
-		found      = conversation.Conversation{OrgID: organization}
+		found      conversation.Conversation
 		incidentID *uuid.UUID
 		source     conversation.Source
-		state      int16
 	)
-	if err := row.Scan(&found.ID, &incidentID, &source, &found.Subject, &state,
+	if err := row.Scan(&found.ID, &incidentID, &source, &found.Subject,
 		&found.CreatedBy, &found.CreatedAt, &found.LastActivityAt); err != nil {
 		return conversation.Conversation{}, err
 	}
 	found.Source = source
-	found.State = conversation.State(state)
 	if incidentID != nil {
 		found.IncidentID = *incidentID
 	}
@@ -611,8 +586,8 @@ func scanMessage(row scanned) (conversation.Message, error) {
 		investigationID *uuid.UUID
 		from, until     *time.Time
 	)
-	if err := row.Scan(&message.Sequence, &role, &message.ActorID,
-		&message.ActorDisplay, &message.Text, &message.SourceReference, &investigationID,
+	if err := row.Scan(&message.Sequence, &role, &message.AuthorID,
+		&message.AuthorName, &message.Text, &message.SourceReference, &investigationID,
 		&message.CreatedAt, &from, &until); err != nil {
 		return conversation.Message{}, fmt.Errorf("scanning a message: %w", err)
 	}

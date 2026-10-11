@@ -421,7 +421,6 @@ func (r *Agent) conversationBrief(
 	ctx context.Context,
 	organization uuid.UUID,
 	opened investigation.Investigation,
-	_ *investigation.EventStream,
 ) *investigation.Brief {
 	if opened.ConversationID == uuid.Nil {
 		return nil
@@ -547,8 +546,8 @@ func renderBrief(brief *investigation.Brief) string {
 			speaker := "OpenCluster"
 			if message.FromUser {
 				speaker = "operator"
-				if message.Actor != "" {
-					speaker = "operator " + message.Actor
+				if message.Author != "" {
+					speaker = "operator " + message.Author
 				}
 			}
 			out.WriteString("- " + speaker)

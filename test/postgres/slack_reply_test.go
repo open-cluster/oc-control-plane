@@ -32,8 +32,8 @@ func aSlackTurn(
 		Channel:       channel,
 		Thread:        thread,
 		Subject:       "why is checkout failing?",
-		ActorID:       "U9SRE",
-		ActorDisplay:  "U9SRE",
+		AuthorID:      "U9SRE",
+		AuthorName:    "U9SRE",
 		Text:          "why is checkout failing?",
 	})
 	if err != nil {
@@ -141,7 +141,7 @@ func TestSlackConversationRetainsItsExactOriginatingThread(t *testing.T) {
 		storage.SlackMessage{
 			Integration: integration.ID, ContentDigest: randomDigest(t),
 			Channel: "C-INCIDENT", Thread: "1710000000.1", MessageID: "1710000000.2",
-			Subject: "checkout latency", ActorID: "U-SRE", ActorDisplay: "On-call",
+			Subject: "checkout latency", AuthorID: "U-SRE", AuthorName: "On-call",
 			Text: "why is checkout slow?",
 		})
 	if err != nil {
@@ -174,7 +174,7 @@ func TestSlackMessageCannotBindAnotherOrganizationsIntegration(t *testing.T) {
 		Channel:       "C-SECOND",
 		Thread:        "1700000002.1",
 		Subject:       "must not cross the organization boundary",
-		ActorID:       "U-SECOND",
+		AuthorID:      "U-SECOND",
 		Text:          "investigate",
 	})
 	if err == nil {
@@ -211,8 +211,8 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	}
 	if _, err := appendMessageForTest(database, ctx, ownerOf(t, organization), organization,
 		opened.ID, conversation.NewMessage{
-			Role:    conversation.RoleUser,
-			ActorID: "user-under-test", Text: "why is checkout failing?",
+			Role:     conversation.RoleUser,
+			AuthorID: "user-under-test", Text: "why is checkout failing?",
 		}); err != nil {
 		t.Fatalf("saying something: %v", err)
 	}

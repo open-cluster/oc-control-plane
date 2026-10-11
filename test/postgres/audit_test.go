@@ -83,8 +83,8 @@ func declareRetention(t *testing.T, dsn string, organization uuid.UUID, days int
 	defer func() { _ = connection.Close(context.Background()) }()
 
 	if _, err = connection.Exec(context.Background(), `
-		INSERT INTO organization (org_id, display_name, created_by, audit_retention_days)
-		VALUES ($1::uuid, $1::text, 'retention-test', $2)
+		INSERT INTO organization (org_id, display_name, audit_retention_days)
+		VALUES ($1::uuid, $1::text, $2)
 		ON CONFLICT (org_id) DO UPDATE SET audit_retention_days = EXCLUDED.audit_retention_days`,
 		organization, days); err != nil {
 		t.Fatalf("declaring a retention schedule: %v", err)
@@ -94,8 +94,8 @@ func declareRetention(t *testing.T, dsn string, organization uuid.UUID, days int
 func ensureOrganization(t *testing.T, connection *pgx.Conn, organization uuid.UUID) {
 	t.Helper()
 	if _, err := connection.Exec(context.Background(), `
-		INSERT INTO organization (org_id, display_name, created_by)
-		VALUES ($1::uuid, $1::text, 'retention-test')
+		INSERT INTO organization (org_id, display_name)
+		VALUES ($1::uuid, $1::text)
 		ON CONFLICT (org_id) DO NOTHING`, organization); err != nil {
 		t.Fatalf("creating organization: %v", err)
 	}

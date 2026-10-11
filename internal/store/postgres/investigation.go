@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -21,7 +22,7 @@ var _ investigation.HTTPStore = (*Database)(nil)
 const investigationColumns = `investigation_id, incident_id,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
-	       spend_output_tokens, created_by, created_at, concluded_at,
+	       spend_output_tokens, created_at, concluded_at,
 	       lease_worker <> '' AND lease_expires_at > now()`
 
 func (p *Database) CreateInvestigation(
@@ -40,12 +41,11 @@ func (p *Database) CreateInvestigation(
 			}
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO investigation (investigation_id, org_id, incident_id,
-				                           subject, window_from, window_until,
-				                           created_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				                           subject, window_from, window_until)
+				VALUES ($1, $2, $3, $4, $5, $6)
 				RETURNING `+investigationColumns,
 				uuid.New(), organization, nullableUUID(wanted.IncidentID), wanted.Subject,
-				wanted.WindowFrom, wanted.WindowUntil, wanted.CreatedBy)
+				wanted.WindowFrom, wanted.WindowUntil)
 
 			created, err := scanInvestigation(row)
 			if err != nil {
@@ -264,7 +264,7 @@ func (p *Database) ConcludeInvestigation(
 		return fmt.Errorf("encoding conclusion: %w", err)
 	}
 	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", usage,
+		encoded, stoppedBy, "", boundedRunes(conclusion.Summary, conversation.MaxMessageTextLength), usage,
 		investigation.ConcludedPayload(conclusion, stoppedBy))
 }
 
@@ -273,7 +273,7 @@ func (p *Database) FailInvestigation(
 	reason string, usage investigation.Usage,
 ) error {
 	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusFailed),
-		[]byte("{}"), "", reason, usage, investigation.FailedPayload(reason))
+		[]byte("{}"), "", reason, "", usage, investigation.FailedPayload(reason))
 }
 
 func (p *Database) CancelInvestigation(
@@ -292,13 +292,12 @@ func (p *Database) CancelInvestigation(
 				   SET status = $3,
 				       concluded_at = now(),
 				       cancel_requested_at = now(),
-				       cancelled_by = $4,
 				       lease_worker = '',
 				       lease_token = NULL,
 				       lease_expires_at = NULL
 				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 				RETURNING `+investigationColumns,
-				id, organization, int16(investigation.StatusCancelled), principal.UserID().String())
+				id, organization, int16(investigation.StatusCancelled))
 			ended, err := scanInvestigation(row)
 			if errors.Is(err, pgx.ErrNoRows) {
 				var exists bool
@@ -345,7 +344,7 @@ func (p *Database) CancelInvestigation(
 func (p *Database) endInvestigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	status int16, conclusion []byte, stoppedBy, reason string,
-	usage investigation.Usage, payload investigation.EventPayload,
+	assistantReply string, usage investigation.Usage, payload investigation.EventPayload,
 ) error {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
@@ -360,6 +359,21 @@ func (p *Database) endInvestigation(
 		return fmt.Errorf("beginning terminal transition: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
+	var conversationID *uuid.UUID
+	if err = transaction.QueryRow(ctx, `
+		SELECT conversation_id
+		  FROM investigation
+		 WHERE investigation_id = $1 AND org_id = $2`, id, organization).Scan(&conversationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return investigation.ErrUnknown
+		}
+		return fmt.Errorf("reading an investigation's Conversation: %w", err)
+	}
+	if conversationID != nil {
+		if err = lockConversation(ctx, transaction, organization, *conversationID); err != nil {
+			return err
+		}
+	}
 	if err = lockInvestigation(ctx, transaction, organization, id); err != nil {
 		return err
 	}
@@ -395,6 +409,29 @@ func (p *Database) endInvestigation(
 		 WHERE investigation_id = $1 AND org_id = $2`,
 		id, organization, int16(payload.EventType()), encodedPayload); err != nil {
 		return fmt.Errorf("recording terminal event: %w", err)
+	}
+	if conversationID != nil && assistantReply != "" {
+		if _, err = transaction.Exec(ctx, `
+			INSERT INTO conversation_message
+			    (conversation_id, org_id, sequence, role, author_id, author_name,
+			     text, investigation_id, window_from, window_until)
+			SELECT turn.conversation_id, turn.org_id,
+			       coalesce((SELECT max(sequence) FROM conversation_message message
+			                  WHERE message.org_id = turn.org_id
+			                    AND message.conversation_id = turn.conversation_id), 0) + 1,
+			       $3, '', '', $4, turn.investigation_id, turn.window_from, turn.window_until
+			  FROM investigation turn
+			 WHERE turn.investigation_id = $1 AND turn.org_id = $2
+			   AND turn.conversation_id IS NOT NULL`,
+			id, organization, int16(conversation.RoleAssistant), assistantReply); err != nil {
+			return fmt.Errorf("recording an assistant Message: %w", err)
+		}
+		if _, err = transaction.Exec(ctx, `
+			UPDATE conversation
+			   SET last_activity_at = now()
+			 WHERE conversation_id = $1 AND org_id = $2`, *conversationID, organization); err != nil {
+			return fmt.Errorf("stamping a completed Conversation: %w", err)
+		}
 	}
 	return transaction.Commit(ctx)
 }
@@ -474,8 +511,8 @@ func scanInvestigation(row scanned) (investigation.Investigation, error) {
 		&found.Subject, &found.WindowFrom, &found.WindowUntil,
 		&found.Status, &conclusion, &found.StoppedBy,
 		&found.Error, &found.Usage.InputTokens,
-		&found.Usage.OutputTokens, &found.CreatedBy,
-		&found.CreatedAt, &concludedAt, &found.Executing); err != nil {
+		&found.Usage.OutputTokens, &found.CreatedAt, &concludedAt,
+		&found.Executing); err != nil {
 		return investigation.Investigation{}, err
 	}
 	if conversationID != nil {

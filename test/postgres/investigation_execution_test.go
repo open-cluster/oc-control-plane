@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	conversationpkg "github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -881,6 +882,15 @@ func TestConclusionCommitsItsReplayEvent(t *testing.T) {
 		events[0].Payload["summary"] != "canonical answer" {
 		t.Fatalf("completion returned without its replay event: %+v", events)
 	}
+	detail, err := database.ConversationDetail(ctx, org, conversation.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Messages) != 2 || detail.Messages[1].Role != conversationpkg.RoleAssistant ||
+		detail.Messages[1].Text != "canonical answer" ||
+		detail.Messages[1].InvestigationID != turn.InvestigationID {
+		t.Fatalf("completion did not commit one assistant Message: %+v", detail.Messages)
+	}
 }
 
 func TestTerminalEventFailureRollsBackOutcome(t *testing.T) {
@@ -918,6 +928,13 @@ func TestTerminalEventFailureRollsBackOutcome(t *testing.T) {
 			if found.Status != investigation.StatusRunning || found.Usage.InputTokens != 0 || found.Conclusion.Summary != "" || !found.ConcludedAt.IsZero() {
 				t.Fatalf("terminal failure committed outcome: %+v", found)
 			}
+			detail, err := database.ConversationDetail(ctx, org, conversation.ID, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(detail.Messages) != 1 {
+				t.Fatalf("terminal failure committed a Message: %+v", detail.Messages)
+			}
 			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event DROP CONSTRAINT reject_terminal_test`); err != nil {
 				t.Fatal(err)
 			}
@@ -927,6 +944,17 @@ func TestTerminalEventFailureRollsBackOutcome(t *testing.T) {
 			events, err := database.Events(ctx, org, turn.InvestigationID, 0, 0)
 			if err != nil || len(events) != 1 || events[0].Sequence != 1 || !events[0].Type.Terminal() {
 				t.Fatalf("retry lost terminal event or sequence: %+v err=%v", events, err)
+			}
+			detail, err = database.ConversationDetail(ctx, org, conversation.ID, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantMessages := 2
+			if failure {
+				wantMessages = 1
+			}
+			if len(detail.Messages) != wantMessages {
+				t.Fatalf("terminal retry committed %d Messages, want %d: %+v", len(detail.Messages), wantMessages, detail.Messages)
 			}
 		})
 	}

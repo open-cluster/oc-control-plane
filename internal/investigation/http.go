@@ -89,7 +89,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		Subject:     subjectOf(trigger),
 		WindowFrom:  window.from,
 		WindowUntil: window.until,
-		CreatedBy:   principal.UserID().String(),
 	}, h.MaxPending)
 	if err != nil {
 		h.fail(writer, request, err)
@@ -334,7 +333,6 @@ type investigationView struct {
 	StoppedBy        string             `json:"stoppedBy,omitempty"`
 	Error            string             `json:"error,omitempty"`
 	Usage            usageView          `json:"usage"`
-	CreatedBy        string             `json:"createdBy,omitempty"`
 	CreatedAt        string             `json:"createdAt"`
 	ConcludedAt      string             `json:"concludedAt,omitempty"`
 }
@@ -381,7 +379,6 @@ func investigationViewOf(found Investigation) investigationView {
 		Usage: usageView{
 			InputTokens: found.Usage.InputTokens, OutputTokens: found.Usage.OutputTokens,
 		},
-		CreatedBy: found.CreatedBy,
 		CreatedAt: stamp(found.CreatedAt),
 	}
 	if found.IncidentID != uuid.Nil {

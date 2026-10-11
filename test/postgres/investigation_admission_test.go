@@ -20,7 +20,7 @@ func TestCreateInvestigationEnforcesBacklogAtomically(t *testing.T) {
 	principal := ownerOf(t, organization)
 	wanted := investigation.NewInvestigation{
 		Subject:    "service",
-		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String(),
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
 	}
 
 	start := make(chan struct{})
@@ -61,7 +61,7 @@ func TestConversationAndDirectIngressShareOneAtomicBacklog(t *testing.T) {
 	chat := openConversation(t, database, organization, "service")
 	wanted := investigation.NewInvestigation{
 		Subject:    "service",
-		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String(),
+		WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
 	}
 
 	start := make(chan struct{})
@@ -79,8 +79,8 @@ func TestConversationAndDirectIngressShareOneAtomicBacklog(t *testing.T) {
 		<-start
 		_, _, _, err := database.AppendMessageAndOpenTurn(context.Background(), principal,
 			organization, chat.ID, conversation.NewMessage{
-				Role:    conversation.RoleUser,
-				ActorID: principal.UserID().String(), Text: "please investigate",
+				Role:     conversation.RoleUser,
+				AuthorID: principal.UserID().String(), Text: "please investigate",
 			}, time.Hour, 1)
 		errorsSeen <- err
 	}()
@@ -110,7 +110,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	chat := openConversation(t, database, organization, "service")
 	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
 		conversation.NewMessage{Role: conversation.RoleUser,
-			ActorID: principal.UserID().String(), Text: "first"}); err != nil {
+			AuthorID: principal.UserID().String(), Text: "first"}); err != nil {
 		t.Fatal(err)
 	}
 	turn, opened, err := openTurnForTest(database, context.Background(), organization, chat.ID, time.Hour)
@@ -122,7 +122,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	}
 	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
 		conversation.NewMessage{Role: conversation.RoleUser,
-			ActorID: principal.UserID().String(), Text: "follow up"}); err != nil {
+			AuthorID: principal.UserID().String(), Text: "follow up"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.ConcludeInvestigation(context.Background(), organization,
@@ -131,7 +131,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	}
 	if _, err := database.CreateInvestigation(context.Background(), principal, organization,
 		investigation.NewInvestigation{Subject: "other",
-			WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(), CreatedBy: principal.UserID().String()}, 1); err != nil {
+			WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now()}, 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.DrainConversation(context.Background(), organization, chat.ID, time.Hour, 1); !errors.Is(err, conversation.ErrQueueFull) {
@@ -220,10 +220,42 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 	}
 	for _, event := range events.Events {
 		if event.Action == audit.ActionInvestigationCancelled {
+			if event.Actor != principal.Actor() || event.Target.Kind != audit.TargetInvestigation ||
+				event.Target.ID != turn.InvestigationID.String() {
+				t.Fatalf("cancellation audit attribution = actor %+v target %+v", event.Actor, event.Target)
+			}
 			return
 		}
 	}
 	t.Fatal("cancelling an investigation produced no atomic audit event")
+}
+
+func TestManualInvestigationCreationAuditUsesPrincipalAndInvestigationTarget(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	principal := ownerOf(t, organization)
+	opened, err := database.CreateInvestigation(context.Background(), principal, organization,
+		investigation.NewInvestigation{
+			Subject: "manual", WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+		}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := database.AuditEvents(context.Background(), principal, organization, audit.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events.Events {
+		if event.Action == audit.ActionInvestigationOpened {
+			if event.Actor != principal.Actor() || event.Target.Kind != audit.TargetInvestigation ||
+				event.Target.ID != opened.ID.String() {
+				t.Fatalf("creation audit attribution = actor %+v target %+v", event.Actor, event.Target)
+			}
+			return
+		}
+	}
+	t.Fatal("creating an Investigation produced no atomic audit event")
 }
 
 func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *testing.T) {

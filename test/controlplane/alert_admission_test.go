@@ -256,9 +256,9 @@ func startAlertAdmissionIntake(t *testing.T, maximum int) *intakePlane {
 	}
 	if _, err = connection.Exec(ctx, `
 		INSERT INTO investigation
-			(investigation_id, org_id, subject, window_from, window_until, created_by)
+			(investigation_id, org_id, subject, window_from, window_until)
 		VALUES (gen_random_uuid(), $1, 'capacity worker blocker',
-		        now() - interval '1 minute', now(), 'test')`, intakeOrganization); err != nil {
+		        now() - interval '1 minute', now())`, intakeOrganization); err != nil {
 		_ = connection.Close(ctx)
 		t.Fatal(err)
 	}

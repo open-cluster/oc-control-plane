@@ -210,11 +210,11 @@ func (h Handlers) append(ctx context.Context,
 	window *Window,
 ) (Message, *turnView, bool, error) {
 	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
-		Role:         RoleUser,
-		ActorID:      boundedRunes(principal.UserID().String(), MaxActorIDLength),
-		ActorDisplay: boundedRunes(principal.Actor().DisplayName, MaxActorDisplayLength),
-		Text:         text,
-		Window:       window,
+		Role:       RoleUser,
+		AuthorID:   boundedRunes(principal.UserID().String(), MaxAuthorIDLength),
+		AuthorName: boundedRunes(principal.Actor().DisplayName, MaxAuthorNameLength),
+		Text:       text,
+		Window:     window,
 	}, h.WindowLead, h.MaxWaitingTurns)
 	if err != nil {
 		return Message{}, nil, false, err
@@ -230,7 +230,7 @@ var listSpec = listing.Spec{
 	Searchable:  true,
 	Sortable:    []string{"lastActivityAt"},
 	DefaultSort: listing.Sort{Field: "lastActivityAt", Descending: true},
-	Filters:     []string{"incidentId", "state"},
+	Filters:     []string{"incidentId"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -261,18 +261,6 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 		}
 		page.Incident = id
 	}
-	switch parsed.Filter("state") {
-	case "":
-	case "open":
-		page.State = StateOpen
-	case "closed":
-		page.State = StateClosed
-	default:
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "state is open or closed"})
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
@@ -349,9 +337,6 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "conversation not found"})
 	case errors.Is(err, ErrIncidentUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
-	case errors.Is(err, ErrClosed):
-		writeJSON(writer, http.StatusConflict, errorView{
-			Error: "this conversation is closed; open a new one"})
 	case errors.Is(err, ErrSourceMismatch):
 		writeJSON(writer, http.StatusConflict, errorView{
 			Error: "this Conversation belongs to Slack; continue in Slack or create a web Conversation"})

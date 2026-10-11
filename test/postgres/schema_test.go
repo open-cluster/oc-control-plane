@@ -40,9 +40,12 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := connection.Exec(ctx, `INSERT INTO conversation_message(
-			conversation_id, org_id, sequence, role, actor_kind, actor_id, text, investigation_id,
+			conversation_id, org_id, sequence, role, actor_kind, actor_id, actor_display, text,
+			investigation_id, provider_channel_id, provider_message_id, source_reference,
 			window_from, window_until)
-		VALUES ($2, $1, 1, 1, 1, 'user-1', 'Why did checkout fail?', $3, now() - interval '1 hour', now());
+		VALUES ($2, $1, 1, 1, 1, 'user-1', 'User One', 'Why did checkout fail?', $3,
+			'C1', '1700000000.000001', 'https://example.slack.com/archives/C1/p1700000000000001',
+			now() - interval '1 hour', now());
 		`, org, conversationID, investigationID); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +69,10 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(applied, []string{"0002_simplify_conversation_investigation_contracts"}) {
+	if !reflect.DeepEqual(applied, []string{
+		"0002_simplify_conversation_investigation_contracts",
+		"0003_cleanup_conversation_schema",
+	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
 
@@ -80,6 +86,21 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	}
 	if source != "web" || strings.Contains(conclusion, `"id"`) || !strings.Contains(conclusion, `"status": "unresolved"`) {
 		t.Fatalf("converted source/conclusion = %q/%s", source, conclusion)
+	}
+	var sequence int64
+	var authorID, authorName, providerMessageID, sourceReference string
+	var assigned uuid.UUID
+	if err = connection.QueryRow(ctx, `SELECT sequence, author_id, author_name, investigation_id,
+		provider_message_id, source_reference FROM conversation_message
+		WHERE org_id=$1 AND conversation_id=$2`, org, conversationID).Scan(
+		&sequence, &authorID, &authorName, &assigned, &providerMessageID, &sourceReference); err != nil {
+		t.Fatal(err)
+	}
+	if sequence != 1 || authorID != "user-1" || authorName != "User One" || assigned != investigationID ||
+		providerMessageID != "1700000000.000001" ||
+		sourceReference != "https://example.slack.com/archives/C1/p1700000000000001" {
+		t.Fatalf("converted Message identity = %d %q %q %s %q %q", sequence, authorID, authorName,
+			assigned, providerMessageID, sourceReference)
 	}
 	expectedPayloads := map[int]map[string]any{
 		1: {},
@@ -223,6 +244,84 @@ func TestIssue150MigrationRefusesAmbiguousRetainedDataWithoutMutation(t *testing
 	}
 }
 
+func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgresDSN(t)
+	connection := baselineDatabase(t, ctx, dsn)
+	defer func() { _ = connection.Close(ctx) }()
+
+	org, integrationID := uuid.New(), uuid.New()
+	reviewedIncident, draftIncident := uuid.New(), uuid.New()
+	if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id, display_name, created_by)
+		VALUES ($1, 'Organization', 'test')`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO integration(integration_id, org_id, provider, name)
+		VALUES ($2, $1, 'github', 'GitHub')`, org, integrationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO incident(incident_id, org_id, integration_id, grouping_key, grouping_basis,
+			title, status, first_seen_at, last_seen_at, updated_at)
+		VALUES ($3, $1, $2, 'reviewed', 1, 'Reviewed incident', 1, now(), now(), now()),
+		       ($4, $1, $2, 'draft', 1, 'Draft incident', 1, now(), now(), now())`,
+		org, integrationID, reviewedIncident, draftIncident); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO postmortem(
+			incident_id, org_id, status, revision, document, updated_at, reviewed_at, reviewed_by)
+		VALUES ($2, $1, 'reviewed', 1, '{"reviewedBy":"legacy"}', now(), now(), 'not-a-user'),
+		       ($3, $1, 'draft', 1, '{"reviewedBy":""}', now(), NULL, '')`,
+		org, reviewedIncident, draftIncident); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(ctx); err == nil || !strings.Contains(err.Error(), "not a User identity") {
+		t.Fatalf("malformed reviewer migration error = %v", err)
+	}
+	var versions []string
+	if err := connection.QueryRow(ctx, `SELECT array_agg(version ORDER BY version) FROM schema_migration`).Scan(&versions); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(versions, []string{"0001_current_schema"}) {
+		t.Fatalf("failed cleanup migration ledger = %v", versions)
+	}
+
+	reviewerID := uuid.MustParse("01890f3e-7b1a-7cc0-98c4-dc0c0c07398f")
+	if _, err := connection.Exec(ctx, `UPDATE postmortem SET reviewed_by=$2 WHERE incident_id=$1`, reviewedIncident, reviewerID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx); err == nil || !strings.Contains(err.Error(), "does not reference a User") {
+		t.Fatalf("orphan reviewer migration error = %v", err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO app_user(user_id, issuer, subject, email)
+		VALUES ($1, 'test', 'reviewer', 'reviewer@example.com')`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := database.Migrate(ctx)
+	if err != nil || !reflect.DeepEqual(applied, []string{
+		"0002_simplify_conversation_investigation_contracts",
+		"0003_cleanup_conversation_schema",
+	}) {
+		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
+	}
+
+	var converted *uuid.UUID
+	var reviewedMetadata, draftMetadata bool
+	if err := connection.QueryRow(ctx, `SELECT reviewed_by_user_id, document ? 'reviewedBy'
+		FROM postmortem WHERE incident_id=$1`, reviewedIncident).Scan(&converted, &reviewedMetadata); err != nil {
+		t.Fatal(err)
+	}
+	var draftReviewer *uuid.UUID
+	if err := connection.QueryRow(ctx, `SELECT reviewed_by_user_id, document ? 'reviewedBy'
+		FROM postmortem WHERE incident_id=$1`, draftIncident).Scan(&draftReviewer, &draftMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if converted == nil || *converted != reviewerID || draftReviewer != nil || reviewedMetadata || draftMetadata {
+		t.Fatalf("converted reviewers = %v/%v metadata=%v/%v", converted, draftReviewer, reviewedMetadata, draftMetadata)
+	}
+}
+
 func baselineDatabase(t *testing.T, ctx context.Context, dsn string) *pgx.Conn {
 	t.Helper()
 	connection, err := pgx.Connect(ctx, dsn)
@@ -258,8 +357,8 @@ func TestOrganizationAuditRetentionUsesOrganizationValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close(ctx) }()
-	if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id,display_name,created_by)
-VALUES ($1,'Organization A','test')`, org); err != nil {
+	if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id,display_name)
+VALUES ($1,'Organization A')`, org); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.SetOrganizationAuditRetention(ctx, ownerOf(t, org), org, 30); err != nil {
@@ -282,8 +381,12 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(applied, []string{"0001_current_schema", "0002_simplify_conversation_investigation_contracts"}) {
-		t.Fatalf("fresh migration applied %v, want the baseline and issue 150 contraction", applied)
+	if !reflect.DeepEqual(applied, []string{
+		"0001_current_schema",
+		"0002_simplify_conversation_investigation_contracts",
+		"0003_cleanup_conversation_schema",
+	}) {
+		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}
 	if applied, err := database.Migrate(ctx); err != nil || len(applied) != 0 {
 		t.Fatalf("repeated migration applied %v: %v", applied, err)
@@ -313,11 +416,15 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 
 	for _, assertion := range []string{
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
-			ARRAY['conversation_id','org_id','incident_id','source','subject','state',
+			ARRAY['conversation_id','org_id','incident_id','source','subject',
 			      'created_by','created_at','last_activity_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation'`,
-		`SELECT data_type = 'text' AND column_default = '''web''::text'
+		`SELECT data_type = 'text' AND column_default IS NULL
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation' AND column_name='source'`,
+		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
+			ARRAY['conversation_id','org_id','sequence','role','author_id','author_name','text',
+			      'investigation_id','created_at','provider_message_id','source_reference','window_from','window_until']
+			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation_message'`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
 			WHERE table_schema='public' AND table_name='conversation_message' AND column_name='actor_kind')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -358,6 +465,13 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND column_name='org_id' AND data_type<>'uuid')`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND column_name='organization_id')`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='organization' AND column_name='audit_retention_days')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public'
+			AND table_name='organization' AND column_name='created_by')`,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public'
+			AND table_name='investigation' AND column_name IN ('created_by','cancelled_by'))`,
+		`SELECT data_type='uuid' AND is_nullable='YES' FROM information_schema.columns
+			WHERE table_schema='public' AND table_name='postmortem' AND column_name='reviewed_by_user_id'`,
+		`SELECT to_regclass('organization_membership_user_idx') IS NULL`,
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='session' AND column_name='credential_digest')`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
 			ARRAY['user_id','issuer','subject','email','display_name','disabled_at','created_at']
@@ -399,12 +513,20 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 	var generatedID uuid.UUID
 	var retention int
-	if err := connection.QueryRow(ctx, `INSERT INTO organization (display_name,created_by)
-		VALUES ('Defaulted','test') RETURNING org_id,audit_retention_days`).Scan(&generatedID, &retention); err != nil {
+	if err := connection.QueryRow(ctx, `INSERT INTO organization (display_name)
+		VALUES ('Defaulted') RETURNING org_id,audit_retention_days`).Scan(&generatedID, &retention); err != nil {
 		t.Fatal(err)
 	}
 	if generatedID == uuid.Nil || retention != 90 {
 		t.Fatalf("Organization defaults = %s/%d, want generated UUID and 90-day retention", generatedID, retention)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, subject)
+		VALUES ($1, $2, 'Missing source')`, uuid.New(), generatedID); err == nil {
+		t.Fatal("Conversation source defaulted instead of being required")
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, source, subject)
+		VALUES ($1, $2, 'email', 'Invalid source')`, uuid.New(), generatedID); err == nil {
+		t.Fatal("Conversation accepted an invalid Source")
 	}
 	if _, err := connection.Exec(ctx, `INSERT INTO relay_registration
 		(registration_id, org_id, credential_digest, cluster_fingerprint, relay_version, capabilities)
