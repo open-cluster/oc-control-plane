@@ -7,168 +7,140 @@
 </p>
 
 <p align="center">
-  <a href="https://docs.open-cluster.io/"><img alt="Documentation status" src="https://github.com/open-cluster/oc-control-plane/actions/workflows/docs.yml/badge.svg"></a>
+  <a href="https://docs.open-cluster.io/"><img alt="Documentation" src="https://github.com/open-cluster/oc-control-plane/actions/workflows/docs.yml/badge.svg"></a>
   <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/github/license/open-cluster/oc-control-plane"></a>
 </p>
 
 <p align="center">
   <a href="https://docs.open-cluster.io/getting-started/quickstart">Quickstart</a> ·
-  <a href="https://docs.open-cluster.io/api-reference/overview">API reference</a> ·
+  <a href="https://docs.open-cluster.io/api-reference/overview">API</a> ·
   <a href="https://docs.open-cluster.io/security/overview">Security</a> ·
   <a href="https://docs.open-cluster.io/developers/contributing">Contributing</a> ·
-  <a href="https://discord.gg/8HrEBhUagE">Discord</a> ·
-  <a href="https://x.com/openclusterio">X</a>
+  <a href="https://discord.gg/pdFEgFr66">Discord</a>
 </p>
 
-OpenCluster is an open-source AI SRE that investigates production incidents across the systems you already use. It
-gathers bounded read-only evidence, evaluates competing hypotheses, and produces a structured conclusion that
-separates impact, causal findings, proposed actions, and limitations.
+OpenCluster is an open-source AI SRE for production incident investigation.
 
-Every material claim links back to a numbered Tool Run. OpenCluster never executes a mitigation: an action proposal
-states its rationale and verification procedure so an on-call engineer can decide safely.
+It connects alerts with context from Kubernetes, GitHub, Slack, and other operational
+systems to determine impact, investigate likely causes, and recommend what to do next.
 
-Investigation events include the Integration display name when a Tool starts and retain
-the canonical answer, up to 4,096 Unicode characters, when the Investigation concludes.
-Current event writers use seven small typed payloads; composed HTTP regressions validate
-their actual serialized envelopes against OpenAPI.
+Every material Finding is backed by the Tool Runs that support it, so operators can inspect
+how a conclusion was reached instead of treating the AI response as a black box.
+Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
 
-> OpenCluster is experimental pre-release software. APIs and storage may change before
-> the first stable release; follow the version-specific upgrade guidance.
+> OpenCluster is pre-release software. APIs and storage may change before the first stable release.
 
-Licensed under the [Apache License 2.0](./LICENSE).
+## How it works
 
-## Product workflow
+1. An alert opens or updates an **Incident**, or an operator starts a **Conversation**.
+2. OpenCluster opens a bounded **Investigation**.
+3. The investigator selects authorized **Tools** from connected **Integrations**.
+4. Tool Runs gather operational context and are recorded as evidence.
+5. The Investigation produces impact, Findings, hypotheses, Action Proposals, and limitations.
+6. Follow-up questions continue through the same Conversation without changing earlier Investigations.
+7. Resolved Incidents can produce reviewed **Postmortems**.
 
-1. Alertmanager sends an Alert Event.
-2. OpenCluster groups it into an Incident and, when an Agent is available, opens an automatic Investigation. Alert intake does not create a Conversation.
-3. The investigator reads only authorized connected sources, including Kubernetes through an outbound customer-side
-   Relay.
-4. Operators watch operational progress while numbered Tool Runs execute.
-5. The conclusion reports impact, findings, hypotheses, action proposals, and limitations.
-6. After resolution, an operator can generate, correct, and review a draft Postmortem.
+An Investigation is immutable once completed. Follow-ups create new Investigations while
+retaining bounded Conversation context and previously cited Findings.
 
-Follow-up Messages queue behind an active Investigation. Each Organization has a limit of
-100 unassigned user Messages across Conversations; accepted work drains in bounded batches.
-Investigations use complete assigned Messages. Input that cannot fit produces `needs_input`
-with the unprocessed Message sequences instead of silently truncating the request.
-Follow-ups receive a bounded recent exchange of user and assistant Messages, with
-timestamps and source identities retained. The investigator can request bounded older
-Conversation pages when needed; corrections stay ordered and prior replies keep their
-owning Investigation and evidence references. Turn records expose execution metadata;
-the assistant Message is the Conversation reply.
-Successful conclusions, their assistant Messages, and replay events commit together;
-failed final writes cannot leave a partial completed result.
-Event streams refresh bounded write deadlines, survive ordinary HTTP timeouts, and close
-during shutdown. Proxy buffering and timeout requirements are in the
-[API reference](./docs/api-reference/overview.mdx#investigation-event-streams).
-Expired worker leases cannot be renewed; recovery ends the interrupted Investigation.
-Each claim has a unique token fencing progress, Tool Runs and terminal writes. PostgreSQL
-allocates replay sequences under the same Investigation lock used by terminal transitions.
-Stop old control-plane replicas before upgrading to claim-token fencing; interrupted
-Investigations are recovered as failed rather than resumed by an older worker.
-Slack delivery also uses unique claim tokens. Normal flush scheduling releases ownership
-independently of crash recovery; provider acceptance remains an
-[at-least-once boundary](./docs/integrations/collaboration/slack.mdx#reply-delivery).
-Stop old replicas before upgrading Slack delivery fencing as well.
-Messages may select an explicit time window; queued batches retain their accepted bounds.
-See [question windows](docs/concepts/investigations-and-conversations.mdx) for defaults and conflicts.
-Reused Finding citations retain their originating Investigation and Tool Run; unavailable evidence is marked in result detail.
+## Integrations
 
-Conversation detail includes the first 50 turns; use `turnsNext` with the turns endpoint
-to continue reading in order, with up to 200 turns per page.
+OpenCluster currently supports:
 
-## Quick start
+- **Kubernetes** — workload state, events, and logs through the OpenCluster Relay
+- **GitHub** — repository and change context
+- **Slack** — operational context and threaded conversations
+- **Prometheus Alertmanager** — alert and Incident intake
 
-You need Docker with Docker Compose. Create local files for the database password, DSN, administrator bootstrap token,
-model API key, and 32-byte sealing key. Secrets are mounted from files and never placed directly in environment values.
+Integrations expose only the capabilities that were successfully verified for that connection.
 
-```bash
-export OPENCLUSTER_POSTGRES_PASSWORD_FILE=/absolute/path/postgres-password
-export OPENCLUSTER_DATABASE_DSN_FILE=/absolute/path/postgres-dsn
-export OPENCLUSTER_BOOTSTRAP_TOKEN_FILE=/absolute/path/admin-bootstrap-token
-export OPENCLUSTER_ENCRYPTION_KEY_FILE=/absolute/path/32-byte-encryption-key
-export OPENCLUSTER_AI_API_KEY_FILE=/absolute/path/model-api-key
-export OPENCLUSTER_AI_PROVIDER=anthropic
-export OPENCLUSTER_AI_MODEL=claude-sonnet-5
-export OPENCLUSTER_RUNTIME_UID=$(id -u)
-export OPENCLUSTER_RUNTIME_GID=$(id -g)
-docker compose -f deploy/compose/compose.yaml up --build
-```
+See the [integration documentation](https://docs.open-cluster.io/integrations).
 
-The PostgreSQL DSN must use host `postgres`, database `opencluster`, user `opencluster`, and the password stored in the
-password file. The bootstrap token must contain at least 32 characters. Compose publishes the API at
-`http://localhost:8080`; it does not include a browser console. Use the quickstart's API requests to create the
-first administrator and connect an alert source.
+## Capabilities
 
-Send a test alert, then connect at least one evidence source:
+OpenCluster currently ships observation and read capabilities.
 
-- Kubernetes through an optional Relay for workload runtime, namespace events, and logs.
-- GitHub for repository and change evidence.
-- Slack for operational testimony and follow-up conversations.
+The capability model is not permanently limited to reads. State-changing capabilities must
+add explicit authorization, human approval, idempotency, auditability, and verification
+before they are enabled.
 
-See the [quickstart](./docs/getting-started/quickstart.mdx) for the full walkthrough.
-
-To enable the optional Relay transport, provide `OPENCLUSTER_RELAY_SPKI_PINS`, start Compose with `--profile relay`, or
-set `relay.enabled=true` in the Helm release. The Relay initiates the connection; the control plane never dials into a
-customer cluster.
-
-Before this schema migration, stop every old control-plane replica and back up PostgreSQL.
-The migration refuses ambiguous retained Message attribution, a retained Investigation
-question without its assigned user Messages, or nonempty Postmortem reviewer attribution
-that is not an existing User UUID. It rolls back without changing the database. Repair that
-data or restore the old version before retrying. Unknown or unledgered pre-release schemas
-still require database recreation. See the
-[Compose upgrade guidance](./docs/self-hosting/docker-compose.mdx).
+Today, OpenCluster recommends actions but does not execute production changes.
 
 ## Architecture
 
-The control plane owns Organizations, Integrations, Alert Events, Incidents, Conversations, Investigations, Tool Runs,
-conclusions, Postmortems, and audit events in PostgreSQL. Compose runs PostgreSQL and the control plane, publishing
-`/api/v1`, `/webhooks/v1`, and process probes directly on localhost. A separate gRPC listener accepts
-outbound Relay sessions.
+OpenCluster is split into a control plane and an optional customer-side Relay.
 
-Alert acceptance always records Incident state. When an Agent is available, automatic Investigations join that transaction. Slack owns the asynchronous inbound Message worker,
-including post-acknowledgement source lookup, fenced leases, heartbeat, retry, and Admin recovery.
+### Control plane
 
-Provider manifests own Integration catalog metadata. PostgreSQL retains stable kind codes and enforces that each
-installation belongs to an Integration of the same kind; startup does not reconcile a second catalog table.
-Credential key identity lives in the authenticated sealed envelope. Startup refuses an older, unknown, or
-unledgered application schema before mutation and reports that the pre-release database must be recreated.
-Slack reply attempts derive their destination from an immutable Conversation mapping; delivery cursors and
-leases remain owned by the reply.
+The control plane receives API requests and webhooks, groups alerts into Incidents,
+coordinates Conversations and Investigations, selects eligible Integration Tools, runs the
+reasoning loop, records Tool Runs and results, and exposes progress and conclusions to the UI
+or Slack.
 
-Provider adapters offer native read tools behind one provider-independent investigation contract. Kubernetes libraries
-and customer cluster credentials never enter this module; the Relay executes the released, versioned capability protocol
-inside the customer boundary.
+PostgreSQL is the durable source of truth. Customer-owned state is explicitly scoped to an
+Organization, and operational mutations are audited.
 
-Read the complete [alert-to-action architecture walkthrough](./ARCHITECTURE.md).
+### Relay
 
-## Capability security model
+The Relay runs inside the customer environment and opens an outbound gRPC session to the
+control plane.
 
-- Customer data and Tool execution are Organization-scoped; authentication and User-owned sessions are deployment-wide.
-- Slack-origin Investigations require a verified originating thread; unavailable optional history cannot widen tool access.
-- Background cleanup removes expired sessions in bounded passes, including before any Organization exists.
-- Webhooks have one bounded pre-authentication admission budget per process; see [limits](docs/self-hosting/configuration.mdx#webhook-admission-limits).
-- Alert acceptance always records Incident updates; when an Agent is available, each newly opened Incident gets one automatic Investigation in the same transaction and within the shared pending Investigation limit.
-- Authenticated API requests resolve the User's sole current Organization and Role before handlers run.
-- A User has at most one current Organization Membership; Organization Admins cannot replace an existing User's password or manage their global sessions.
-- Local Users change their own password after reauthentication. Deployment operators can recover an existing local User through stdin; see [credential recovery](docs/security/overview.mdx).
-- Connected content and prior history remain untrusted data. Current assigned Messages express requests within the verified tool scope.
-- The application supplies every security-eligible Tool; the model chooses relevance and sequence. Each call is validated and records an operator-visible purpose.
-- Workload and namespace names alone never trigger reads across Integrations.
-- Secrets are file-backed or sealed; credential-shaped fields are removed from logs, events, audit details, prompts, and
-  API responses.
-- OpenCluster proposes production changes but exposes no execution endpoint.
-- State-changing proposals always require human approval.
+It executes approved Kubernetes capabilities close to the cluster, while Kubernetes
+credentials remain inside the customer boundary. The control plane never receives those
+cluster credentials.
 
-OpenCluster currently ships observation/read tools. The capability runtime does not assume that all future capabilities are reads. State-changing capabilities will require explicit authorization, approval, idempotency and audit semantics before they are enabled.
+### Investigation flow
+
+```text
+Alert / operator question
+          │
+          ▼
+   Incident / Conversation
+          │
+          ▼
+     Investigation
+          │
+          ▼
+   Eligible Integrations
+          │
+          ▼
+       Tool Runs
+          │
+          ▼
+      Conclusion
+   ┌──────┼─────────┐
+   │      │         │
+Findings Actions Limitations
+```
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete design.
+
+## Security
+
+- Tenant-owned data is explicitly scoped to an Organization.
+- Connected content and Conversation Messages are treated as untrusted data.
+- Tools are available only through verified Integration capabilities.
+- Credentials are sealed or digested and are not exposed through product APIs.
+- Material Findings cite supporting Tool Runs.
+- Current Action Proposals do not execute production changes.
 
 See [SECURITY.md](./SECURITY.md) and the
-[security model](./docs/security/overview.mdx).
+[security documentation](https://docs.open-cluster.io/security/overview).
 
-## Develop
+## Quick start
 
-Development requires Go 1.26.9, Docker, Docker Compose, and Helm 3.
+The fastest way to run OpenCluster locally is with Docker Compose:
+
+```bash
+docker compose -f deploy/compose/compose.yaml up --build
+```
+
+A local deployment requires PostgreSQL, an administrator bootstrap token, an encryption
+key, and a supported model provider.
+
+Follow the [Quickstart](https://docs.open-cluster.io/getting-started/quickstart) for full setup.
+
+## Development
 
 ```bash
 make tools
@@ -176,20 +148,14 @@ make test-short
 make verify
 ```
 
-`make verify` runs lint, build, unit and PostgreSQL integration tests, vulnerability and license checks, deployment
-validation, and evaluation gates. The real Relay protocol E2E proof lives in the nested `test/e2e` module.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
 
 ## Documentation
 
-- [Product documentation](./docs/index.mdx)
-- [API reference](./docs/api-reference/overview.mdx)
-- [Domain glossary](./CONTEXT.md)
+- [Product documentation](https://docs.open-cluster.io/)
 - [Architecture](./ARCHITECTURE.md)
-- [Contributor requirements](./AGENTS.md)
-
-Every shipped Integration must have a navigable product page. Run `make docs`
-for navigation, frontmatter, internal-link, publication, credential-literal, accessibility, Integration-page, OpenAPI
-drift, API-surface, and configuration-key checks; `make verify` includes it.
+- [Domain glossary](./CONTEXT.md)
+- [Roadmap](./ROADMAP.md)
 
 ## Contributing
 
