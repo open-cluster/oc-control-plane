@@ -220,10 +220,42 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 	}
 	for _, event := range events.Events {
 		if event.Action == audit.ActionInvestigationCancelled {
+			if event.Actor != principal.Actor() || event.Target.Kind != audit.TargetInvestigation ||
+				event.Target.ID != turn.InvestigationID.String() {
+				t.Fatalf("cancellation audit attribution = actor %+v target %+v", event.Actor, event.Target)
+			}
 			return
 		}
 	}
 	t.Fatal("cancelling an investigation produced no atomic audit event")
+}
+
+func TestManualInvestigationCreationAuditUsesPrincipalAndInvestigationTarget(t *testing.T) {
+	t.Parallel()
+
+	database, organization := migratedDatabase(t)
+	principal := ownerOf(t, organization)
+	opened, err := database.CreateInvestigation(context.Background(), principal, organization,
+		investigation.NewInvestigation{
+			Subject: "manual", WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+		}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := database.AuditEvents(context.Background(), principal, organization, audit.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events.Events {
+		if event.Action == audit.ActionInvestigationOpened {
+			if event.Actor != principal.Actor() || event.Target.Kind != audit.TargetInvestigation ||
+				event.Target.ID != opened.ID.String() {
+				t.Fatalf("creation audit attribution = actor %+v target %+v", event.Actor, event.Target)
+			}
+			return
+		}
+	}
+	t.Fatal("creating an Investigation produced no atomic audit event")
 }
 
 func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *testing.T) {

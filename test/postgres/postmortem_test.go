@@ -70,7 +70,8 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	}
 	reviewed, err := database.Review(context.Background(), principal,
 		organization, incident)
-	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.ReviewedAt.IsZero() {
+	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.ReviewedAt.IsZero() ||
+		reviewed.ReviewedByUserID == nil || *reviewed.ReviewedByUserID != principal.UserID() {
 		t.Fatalf("reviewed = %+v err=%v", reviewed, err)
 	}
 
