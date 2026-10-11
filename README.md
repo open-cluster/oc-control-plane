@@ -16,7 +16,7 @@
   <a href="https://docs.open-cluster.io/api-reference/overview">API reference</a> ·
   <a href="https://docs.open-cluster.io/security/overview">Security</a> ·
   <a href="https://docs.open-cluster.io/developers/contributing">Contributing</a> ·
-  <a href="https://discord.gg/pdFEgFr66">Discord</a> ·
+  <a href="https://discord.gg/8HrEBhUagE">Discord</a> ·
   <a href="https://x.com/openclusterio">X</a>
 </p>
 
