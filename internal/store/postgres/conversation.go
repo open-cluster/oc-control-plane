@@ -312,7 +312,7 @@ func appendMessage(
 	return written, nil
 }
 
-func (p *Database) DrainConversation(
+func (p *Database) OpenNextConversationTurn(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	lead time.Duration, maxPending int,
 ) (bool, error) {
@@ -341,7 +341,7 @@ func (p *Database) DrainConversation(
 	return true, nil
 }
 
-func (p *Database) DrainQueuedConversation(
+func (p *Database) OpenQueuedConversationTurn(
 	ctx context.Context, lead time.Duration, maxPending int,
 ) (bool, error) {
 	transaction, err := p.pool.Begin(ctx)

@@ -145,7 +145,7 @@ func openTurnForTest(
 	database *storage.Database, ctx context.Context, organization, conversationID uuid.UUID,
 	lead time.Duration,
 ) (conversation.Turn, bool, error) {
-	opened, err := database.DrainConversation(ctx, organization, conversationID, lead, 1_000_000)
+	opened, err := database.OpenNextConversationTurn(ctx, organization, conversationID, lead, 1_000_000)
 	if err != nil || !opened {
 		return conversation.Turn{}, opened, err
 	}

@@ -20,8 +20,8 @@ type RunnerStore interface {
 	Heartbeat(context.Context, uuid.UUID, uuid.UUID, Claim) (bool, error)
 	RecoverStale(context.Context, string, int) (int, error)
 	Investigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
-	DrainConversation(context.Context, uuid.UUID, uuid.UUID, time.Duration, int) (bool, error)
-	DrainQueuedConversation(context.Context, time.Duration, int) (bool, error)
+	OpenNextConversationTurn(context.Context, uuid.UUID, uuid.UUID, time.Duration, int) (bool, error)
+	OpenQueuedConversationTurn(context.Context, time.Duration, int) (bool, error)
 }
 
 type Runner struct {
@@ -34,10 +34,10 @@ type Runner struct {
 	Logger     *slog.Logger
 	Telemetry  *Telemetry
 
-	identity sync.Once
-	worker   string
-	mu       sync.Mutex
-	stops    map[uuid.UUID]context.CancelFunc
+	identity       sync.Once
+	worker         string
+	mu             sync.Mutex
+	runningCancels map[uuid.UUID]context.CancelFunc
 }
 
 func (r *Runner) Run(ctx context.Context) {
@@ -59,25 +59,25 @@ func (r *Runner) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer running.Done()
-		r.drainQueuedConversations(ctx)
+		r.admitQueuedConversations(ctx)
 	}()
 	<-ctx.Done()
-	r.cancelAll()
+	r.cancelRunningInvestigations()
 	running.Wait()
 }
 
 func (r *Runner) Cancel(id uuid.UUID) {
 	r.mu.Lock()
-	stop := r.stops[id]
+	cancelRun := r.runningCancels[id]
 	r.mu.Unlock()
-	if stop != nil {
-		stop()
+	if cancelRun != nil {
+		cancelRun()
 	}
 }
 
 func (r *Runner) workerLoop(ctx context.Context) {
 	for ctx.Err() == nil {
-		organization, opened, claimed, err := r.Store.ClaimInvestigation(ctx, r.claim())
+		organization, investigation, claimed, err := r.Store.ClaimInvestigation(ctx, r.workerClaim())
 		if err != nil {
 			r.logError(ctx, "investigations could not be claimed", err)
 		}
@@ -85,7 +85,7 @@ func (r *Runner) workerLoop(ctx context.Context) {
 			r.wait(ctx, claimInterval)
 			continue
 		}
-		r.runClaimed(ctx, organization, opened)
+		r.runClaimed(ctx, organization, investigation)
 	}
 }
 
@@ -93,21 +93,21 @@ func (r *Runner) runClaimed(
 	ctx context.Context, organization uuid.UUID, investigation Investigation,
 ) {
 	r.Telemetry.claimed(investigation.CreatedAt)
-	runCtx, stop := context.WithTimeout(ctx, investigationTimeout)
-	r.trackRunning(investigation.ID, stop)
-	done := make(chan struct{})
-	watchDone := make(chan struct{})
+	runCtx, cancelRun := context.WithTimeout(ctx, investigationTimeout)
+	r.trackRunning(investigation.ID, cancelRun)
+	agentDone := make(chan struct{})
+	monitorDone := make(chan struct{})
 	go func() {
-		defer close(watchDone)
-		claim := r.claim()
+		defer close(monitorDone)
+		claim := r.workerClaim()
 		claim.Token = investigation.ClaimToken
-		r.watchClaim(runCtx, stop, done, organization, investigation.ID, claim)
+		r.monitorClaim(runCtx, cancelRun, agentDone, organization, investigation.ID, claim)
 	}()
 
 	err := r.Agent.Run(runCtx, organization, investigation)
-	close(done)
-	stop()
-	<-watchDone
+	close(agentDone)
+	cancelRun()
+	<-monitorDone
 	r.untrackRunning(investigation.ID)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -118,13 +118,13 @@ func (r *Runner) runClaimed(
 			return
 		}
 	}
-	r.drainConversation(ctx, organization, investigation)
+	r.openNextConversationTurn(ctx, organization, investigation)
 }
 
-// watchClaim keeps the lease alive and stops local execution when the
+// monitorClaim keeps the lease alive and stops local execution when the
 // Investigation is cancelled or the claim is lost.
-func (r *Runner) watchClaim(
-	ctx context.Context, stop context.CancelFunc, done <-chan struct{},
+func (r *Runner) monitorClaim(
+	ctx context.Context, cancelRun context.CancelFunc, agentDone <-chan struct{},
 	organization uuid.UUID, id uuid.UUID, claim Claim,
 ) {
 	renew := time.NewTicker(heartbeatInterval)
@@ -135,12 +135,12 @@ func (r *Runner) watchClaim(
 		select {
 		case <-ctx.Done():
 			return
-		case <-done:
+		case <-agentDone:
 			return
 		case <-cancelled.C:
 			found, err := r.Store.Investigation(ctx, organization, id)
 			if err == nil && found.Status == StatusCancelled {
-				stop()
+				cancelRun()
 				return
 			}
 		case <-renew.C:
@@ -150,7 +150,7 @@ func (r *Runner) watchClaim(
 				continue
 			}
 			if !held {
-				stop()
+				cancelRun()
 				return
 			}
 		}
@@ -171,16 +171,16 @@ func (r *Runner) recoverLoop(ctx context.Context) {
 	}
 }
 
-func (r *Runner) drainQueuedConversations(ctx context.Context) {
+func (r *Runner) admitQueuedConversations(ctx context.Context) {
 	for r.wait(ctx, claimInterval) {
-		if _, err := r.Store.DrainQueuedConversation(ctx, r.WindowLead, r.MaxPending); err != nil {
+		if _, err := r.Store.OpenQueuedConversationTurn(ctx, r.WindowLead, r.MaxPending); err != nil {
 			r.logError(ctx, "queued conversation work could not be admitted", err)
 		}
 	}
 }
 
-// drainConversation admits queued Messages after the current Investigation ends.
-func (r *Runner) drainConversation(
+// openNextConversationTurn admits queued Messages after the current Investigation ends.
+func (r *Runner) openNextConversationTurn(
 	ctx context.Context, organization uuid.UUID, finished Investigation,
 ) {
 	if finished.ConversationID == uuid.Nil {
@@ -188,13 +188,13 @@ func (r *Runner) drainConversation(
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if _, err := r.Store.DrainConversation(writeCtx, organization,
+	if _, err := r.Store.OpenNextConversationTurn(writeCtx, organization,
 		finished.ConversationID, r.WindowLead, r.MaxPending); err != nil {
 		r.logError(writeCtx, "a conversation's queued messages could not be taken up", err)
 	}
 }
 
-func (r *Runner) claim() Claim {
+func (r *Runner) workerClaim() Claim {
 	return Claim{
 		Worker:   r.workerName(),
 		LeaseFor: leaseDuration,
@@ -216,31 +216,31 @@ func (r *Runner) workerName() string {
 }
 
 // trackRunning makes a running Investigation cancellable by this process.
-func (r *Runner) trackRunning(id uuid.UUID, stop context.CancelFunc) {
+func (r *Runner) trackRunning(id uuid.UUID, cancelRun context.CancelFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.stops == nil {
-		r.stops = make(map[uuid.UUID]context.CancelFunc)
+	if r.runningCancels == nil {
+		r.runningCancels = make(map[uuid.UUID]context.CancelFunc)
 	}
-	r.stops[id] = stop
+	r.runningCancels[id] = cancelRun
 }
 
 // untrackRunning removes a finished Investigation from the local cancellation registry.
 func (r *Runner) untrackRunning(id uuid.UUID) {
 	r.mu.Lock()
-	delete(r.stops, id)
+	delete(r.runningCancels, id)
 	r.mu.Unlock()
 }
 
-func (r *Runner) cancelAll() {
+func (r *Runner) cancelRunningInvestigations() {
 	r.mu.Lock()
-	stops := make([]context.CancelFunc, 0, len(r.stops))
-	for _, stop := range r.stops {
-		stops = append(stops, stop)
+	runningCancels := make([]context.CancelFunc, 0, len(r.runningCancels))
+	for _, cancelRun := range r.runningCancels {
+		runningCancels = append(runningCancels, cancelRun)
 	}
 	r.mu.Unlock()
-	for _, stop := range stops {
-		stop()
+	for _, cancelRun := range runningCancels {
+		cancelRun()
 	}
 }
 
