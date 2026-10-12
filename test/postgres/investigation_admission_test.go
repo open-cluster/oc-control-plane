@@ -134,13 +134,13 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 			WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now()}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.DrainConversation(context.Background(), organization, chat.ID, time.Hour, 1); !errors.Is(err, conversation.ErrQueueFull) {
-		t.Fatalf("DrainConversation error = %v, want queue full", err)
+	if _, err := database.OpenNextConversationTurn(context.Background(), organization, chat.ID, time.Hour, 1); !errors.Is(err, conversation.ErrQueueFull) {
+		t.Fatalf("OpenNextConversationTurn error = %v, want queue full", err)
 	}
 	if _, _, claimed, err := database.ClaimInvestigation(context.Background(), aClaim("other-worker")); err != nil || !claimed {
 		t.Fatalf("claiming queued work: claimed=%t err=%v", claimed, err)
 	}
-	if drained, err := database.DrainQueuedConversation(context.Background(), time.Hour, 1); err != nil || !drained {
+	if drained, err := database.OpenQueuedConversationTurn(context.Background(), time.Hour, 1); err != nil || !drained {
 		t.Fatalf("retrying durable drain: drained=%t err=%v", drained, err)
 	}
 	waiting, err := waitingTurnsForTest(database, context.Background(), organization)

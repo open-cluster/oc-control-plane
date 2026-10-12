@@ -51,7 +51,7 @@ func (s *runnerStore) Investigation(
 	return Investigation{Status: status}, nil
 }
 
-func (s *runnerStore) DrainConversation(
+func (s *runnerStore) OpenNextConversationTurn(
 	_ context.Context, _ uuid.UUID, id uuid.UUID, _ time.Duration, _ int,
 ) (bool, error) {
 	s.mu.Lock()
@@ -60,7 +60,7 @@ func (s *runnerStore) DrainConversation(
 	return true, nil
 }
 
-func (s *runnerStore) DrainQueuedConversation(context.Context, time.Duration, int) (bool, error) {
+func (s *runnerStore) OpenQueuedConversationTurn(context.Context, time.Duration, int) (bool, error) {
 	if s.drainAttempts != nil {
 		select {
 		case s.drainAttempts <- struct{}{}:
