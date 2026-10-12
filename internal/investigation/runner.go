@@ -59,7 +59,7 @@ func (r *Runner) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer running.Done()
-		r.drainLoop(ctx)
+		r.drainQueuedConversations(ctx)
 	}()
 	<-ctx.Done()
 	r.cancelAll()
@@ -94,21 +94,21 @@ func (r *Runner) runClaimed(
 ) {
 	r.Telemetry.claimed(investigation.CreatedAt)
 	runCtx, stop := context.WithTimeout(ctx, investigationTimeout)
-	r.track(investigation.ID, stop)
+	r.trackRunning(investigation.ID, stop)
 	done := make(chan struct{})
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
 		claim := r.claim()
 		claim.Token = investigation.ClaimToken
-		r.watch(runCtx, stop, done, organization, investigation.ID, claim)
+		r.watchClaim(runCtx, stop, done, organization, investigation.ID, claim)
 	}()
 
 	err := r.Agent.Run(runCtx, organization, investigation)
 	close(done)
 	stop()
 	<-watchDone
-	r.untrack(investigation.ID)
+	r.untrackRunning(investigation.ID)
 	if err != nil {
 		if ctx.Err() == nil {
 			r.logError(ctx, "an investigation could not be terminalized", err)
@@ -118,10 +118,12 @@ func (r *Runner) runClaimed(
 			return
 		}
 	}
-	r.drain(ctx, organization, investigation)
+	r.drainConversation(ctx, organization, investigation)
 }
 
-func (r *Runner) watch(
+// watchClaim keeps the lease alive and stops local execution when the
+// Investigation is cancelled or the claim is lost.
+func (r *Runner) watchClaim(
 	ctx context.Context, stop context.CancelFunc, done <-chan struct{},
 	organization uuid.UUID, id uuid.UUID, claim Claim,
 ) {
@@ -169,7 +171,7 @@ func (r *Runner) recoverLoop(ctx context.Context) {
 	}
 }
 
-func (r *Runner) drainLoop(ctx context.Context) {
+func (r *Runner) drainQueuedConversations(ctx context.Context) {
 	for r.wait(ctx, claimInterval) {
 		if _, err := r.Store.DrainQueuedConversation(ctx, r.WindowLead, r.MaxPending); err != nil {
 			r.logError(ctx, "queued conversation work could not be admitted", err)
@@ -177,7 +179,8 @@ func (r *Runner) drainLoop(ctx context.Context) {
 	}
 }
 
-func (r *Runner) drain(
+// drainConversation admits queued Messages after the current Investigation ends.
+func (r *Runner) drainConversation(
 	ctx context.Context, organization uuid.UUID, finished Investigation,
 ) {
 	if finished.ConversationID == uuid.Nil {
@@ -212,7 +215,8 @@ func (r *Runner) workerName() string {
 	return r.worker
 }
 
-func (r *Runner) track(id uuid.UUID, stop context.CancelFunc) {
+// trackRunning makes a running Investigation cancellable by this process.
+func (r *Runner) trackRunning(id uuid.UUID, stop context.CancelFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stops == nil {
@@ -221,7 +225,8 @@ func (r *Runner) track(id uuid.UUID, stop context.CancelFunc) {
 	r.stops[id] = stop
 }
 
-func (r *Runner) untrack(id uuid.UUID) {
+// untrackRunning removes a finished Investigation from the local cancellation registry.
+func (r *Runner) untrackRunning(id uuid.UUID) {
 	r.mu.Lock()
 	delete(r.stops, id)
 	r.mu.Unlock()
