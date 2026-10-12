@@ -90,35 +90,35 @@ func (r *Runner) workerLoop(ctx context.Context) {
 }
 
 func (r *Runner) runClaimed(
-	ctx context.Context, organization uuid.UUID, opened Investigation,
+	ctx context.Context, organization uuid.UUID, investigation Investigation,
 ) {
-	r.Telemetry.claimed(opened.CreatedAt)
+	r.Telemetry.claimed(investigation.CreatedAt)
 	runCtx, stop := context.WithTimeout(ctx, investigationTimeout)
-	r.track(opened.ID, stop)
+	r.track(investigation.ID, stop)
 	done := make(chan struct{})
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
 		claim := r.claim()
-		claim.Token = opened.ClaimToken
-		r.watch(runCtx, stop, done, organization, opened.ID, claim)
+		claim.Token = investigation.ClaimToken
+		r.watch(runCtx, stop, done, organization, investigation.ID, claim)
 	}()
 
-	err := r.Agent.Run(runCtx, organization, opened)
+	err := r.Agent.Run(runCtx, organization, investigation)
 	close(done)
 	stop()
 	<-watchDone
-	r.untrack(opened.ID)
+	r.untrack(investigation.ID)
 	if err != nil {
 		if ctx.Err() == nil {
 			r.logError(ctx, "an investigation could not be terminalized", err)
 		}
-		found, readErr := r.Store.Investigation(ctx, organization, opened.ID)
+		found, readErr := r.Store.Investigation(ctx, organization, investigation.ID)
 		if readErr != nil || found.Status == StatusRunning {
 			return
 		}
 	}
-	r.drain(ctx, organization, opened)
+	r.drain(ctx, organization, investigation)
 }
 
 func (r *Runner) watch(
@@ -192,7 +192,10 @@ func (r *Runner) drain(
 }
 
 func (r *Runner) claim() Claim {
-	return Claim{Worker: r.workerName(), LeaseFor: leaseDuration}
+	return Claim{
+		Worker:   r.workerName(),
+		LeaseFor: leaseDuration,
+	}
 }
 
 func (r *Runner) workerName() string {

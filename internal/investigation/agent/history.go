@@ -22,7 +22,10 @@ func historyDefinition(before int64) integrations.ToolDefinition {
 }
 
 func (r *Agent) readHistory(ctx context.Context, state *runState, call toolCall) investigation.ToolRun {
-	result := investigation.ToolRun{Tool: historyToolName, Outcome: investigation.RunFailed}
+	result := investigation.ToolRun{
+		Tool:    historyToolName,
+		Outcome: investigation.RunFailed,
+	}
 	if state.opened.ConversationID == uuid.Nil || state.historyBefore <= 1 {
 		result.Error = "earlier Conversation history is not available for this input"
 		return result
